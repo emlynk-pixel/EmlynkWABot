@@ -200,7 +200,7 @@ flowchart TD
     O --> P{Document type identified?}
     P -->|No| E9[Record DOC_TYPE_UNKNOWN]
     E9 --> E10[Set REVIEW_REQUIRED or request resubmission]
-    E10 --> E11[Send unknown-document message + support number]
+    E10 --> E11[Send unknown-document message ]
     P -->|Yes| Q{Document type supported?}
     Q -->|No| E12[Record DOC_TYPE_UNSUPPORTED]
     E12 --> E13[Send unsupported-document message + support number]
