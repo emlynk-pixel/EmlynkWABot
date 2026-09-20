@@ -177,7 +177,7 @@ flowchart TD
     A[Client sends PDF/photo via WhatsApp] --> B[Bot acknowledges receipt]
     B --> C[Document Intake API]
     C --> D[Record whatsapp_message_id + received_at]
-    D --> E[Validate MIME, size, structure and malware]
+    D --> E[Validate size, structure and malware]
     E -->|Invalid| E1[Record error + customer-facing corrective message]
     E1 --> E2[Do not process]
     E -->|Valid| F[Store in temporary staging]
