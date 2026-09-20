@@ -647,18 +647,20 @@ Unrecognized, unclear, corrupted, unsupported, or conflicting documents must nev
 Required path:
 
 ```text
-undefined/
+pending/
   {mobile_number}/
-    uncleared-docs/
+    undefined/
+      uncleared-docs/
 ```
 
 Example:
 
 ```text
-undefined/
+pending/
   94771234567/
-    uncleared-docs/
-      document_20260920_143522.pdf
+    undefined/
+      uncleared-docs/
+        document_20260920_143522.pdf
 ```
 
 The document should remain available for administrator review.
@@ -1453,7 +1455,7 @@ WhatsApp
 WhatsApp
  -> Download
  -> Classification fails
- -> Store under undefined/{mobile}/uncleared-docs/
+ -> Store under pending/{mobile}/undefined/uncleared-docs/
  -> Flag for admin review
 ```
 
@@ -1584,7 +1586,7 @@ The exact SQL representation of `picture` should be chosen according to storage 
 9. Missing trusted fields may be populated from valid, sufficiently confident passport extraction.
 10. Low-confidence extraction must not overwrite existing trusted data.
 11. Unknown documents must not be deleted automatically.
-12. Unknown documents must be stored under `undefined/{mobile_number}/uncleared-docs/`.
+12. Unknown documents must be stored under `pending/{mobile_number}/undefined/uncleared-docs/`.
 13. Temporary documents remain until required documents are complete and finalization succeeds.
 14. Temporary cleanup occurs only after successful permanent finalization.
 15. Police report reminder date is submitted date plus 21 days.
@@ -1663,7 +1665,7 @@ The exact SQL representation of `picture` should be chosen according to storage 
 
 **Given** a document cannot be confidently classified,  
 **When** processing ends,  
-**Then** it must be stored under `undefined/{mobile_number}/uncleared-docs/`.
+**Then** it must be stored under `pending/{mobile_number}/undefined/uncleared-docs/`.
 
 ## AC-12 — Temporary Document
 
@@ -1796,7 +1798,6 @@ The exact SQL representation of `picture` should be chosen according to storage 
 - One document
 - Two documents
 - Three documents
-- Expired temporary record
 - Finalization success
 - Finalization failure
 - Storage failure
