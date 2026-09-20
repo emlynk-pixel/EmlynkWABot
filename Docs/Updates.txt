@@ -3,4 +3,11 @@ Feat:- When user send wrong doc or unclear doc , user save that users details wi
 Feat:- Scan the police report slip and get submitted date and add countdown for , three weeks ( with submitted date and forward ), send msg to the user
 
 ***File size in DB is not important **
-**Add flag ( alert ) to wrong doc verify process** confidence level
+
+
+**Add flag ( alert ) to wrong doc verify process** confidence level ( Filter it by nested If ) detailed way 
+**Status check police slip have uploaded ? ** ( 21 )
+**do not add temporary data expired date , remove it** ( 23 )
+**combine temporary data and undefined in ** ( 25 Storage Architecture )
+**Add asyncs to background processing ** ( 29)
+**Detailed Error handling ** ( 32 )
