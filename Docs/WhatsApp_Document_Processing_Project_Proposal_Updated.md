@@ -669,35 +669,32 @@ The document should remain available for administrator review.
 
 # 17. Temporary Document Workflow
 
-A client may send documents across multiple WhatsApp messages.
+A client does **not** need to wait until all three required documents are available. Each document is processed independently as soon as it is received.
 
 Example:
 
 ```text
-Police Report
-Medical
-Passport
+Police Report  -> process immediately
+Medical        -> process immediately
+Passport       -> process immediately
 ```
 
-If only the first two are received, the system must not finalize the client package.
+Each incoming document is first placed in temporary storage. The bot then verifies the document type and its processing/OCR confidence level. A confidence level below **40%** sends the document to the undefined folder for administrator review. A confidence level of **40% or higher** allows the document and its extracted data to proceed to the permanent/original database workflow, with the file renamed according to its document type.
 
 ```mermaid
 flowchart TD
-    A[Document Received] --> B[Identify or Create Temporary Context]
-    B --> C[Store Temporary File]
-    C --> D[Create temporary_data Record]
-    D --> E{All Required Documents Present}
-    E -->|No| F[Wait for More Documents]
-    F --> A
-    E -->|Yes| G[Validate Complete Set]
-    G --> H{Validation Successful}
-    H -->|No| I[Keep Temporary and Flag]
-    H -->|Yes| J[Copy to Permanent Storage]
-    J --> K[Create Permanent Document Records]
-    K --> L[Update User]
-    L --> M{Finalization Successful}
-    M -->|No| N[Retry and Keep Temporary Data]
-    M -->|Yes| O[Delete Temporary Files and Records]
+    A[Document Received] --> B[Store in Temporary Folder]
+    B --> C[Create temporary_data Record]
+    C --> D[Classify and Analyze Document]
+    D --> E[Verify Document Confidence Level]
+    E --> F{Confidence Below 40 Percent}
+    F -->|Yes| G[Move to Undefined Folder]
+    G --> H[Flag for Admin Review]
+    F -->|No| I[Rename File Using Document Type]
+    I --> J[Pass Document and Extracted Data to Original Database]
+    J --> K[Store in Permanent Document Location]
+    K --> L[Create or Update documents Record]
+    L --> M[Remove Temporary Copy After Successful Save]
 ```
 
 Temporary identity can use:

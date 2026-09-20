@@ -1,3 +1,6 @@
 Feat:- Add medical upload and admin dashboard
 Feat:- When user send wrong doc or unclear doc , user save that users details with error.
 Feat:- Scan the police report slip and get submitted date and add countdown for , three weeks ( with submitted date and forward ), send msg to the user
+
+***File size in DB is not important **
+**Add flag ( alert ) to wrong doc verify process** confidence level
