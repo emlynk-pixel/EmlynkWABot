@@ -184,7 +184,7 @@ flowchart TD
     D -->|Yes| F{File present and supported media type?}
     F -->|No| E3[Record DOC_MISSING or DOC_INVALID]
     E3 --> E4[Send customer error + support number]
-    F -->|Yes| G[Validate size, MIME, extension and PDF/image structure]
+    F -->|Yes| G[Validate size, extension and PDF/image structure]
     G --> H{File valid?}
     H -->|No| E5[Record DOC_INVALID / DOC_CORRUPTED / DOC_TOO_LARGE]
     E5 --> E6[Send customer error + support number]
