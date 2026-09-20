@@ -4,7 +4,7 @@
 **Prepared for:** Agency Management, Technical Team & Project Stakeholders
 **Prepared by:** Solution Architecture Team
 **Document Type:** Feature Extension Proposal — Existing WhatsApp Bot
-**Status:** Draft for Review — contains open questions requiring client confirmation before implementation
+**Status:** Revised Technical Proposal — implementation-ready architecture with clearly identified configuration items requiring agency confirmation
 
 ---
 
@@ -48,6 +48,7 @@
 36. Conclusion
 37. Recommended Next Steps
 38. Decision Log
+39. Final Implementation Readiness Checklist
 
 ---
 
@@ -59,9 +60,9 @@ The system will automatically identify each client, classify the incoming docume
 
 The proposal recommends an **internal UUID as the database primary key** (not the passport number), **asynchronous, queue-based AI processing** rather than synchronous processing, and a **document storage path keyed by internal client ID rather than passport number**. Reasons for each recommendation are detailed in Sections 12–14 and 29.
 
-The proposal also includes a cost model built from **official Google Cloud pricing** (Section 17) so the agency can judge, before committing, whether "extract everything useful" or "extract only what's needed today" is the more economical strategy at its expected volume.
+The proposal includes a cost model in Section 17. Pricing figures must be re-checked against the current official Google Cloud pricing pages immediately before client approval and procurement, because vendor pricing can change.
 
-This is a **planning document**. Several inputs — exact document volume, exact fields required per document type, data retention rules, and staff permission levels — are not yet confirmed by the agency and are listed as **Open Questions** (Section 33) and a **Decision Log** (Section 38). Nothing below should be treated as final until those are answered.
+This is a **technical implementation proposal**. The architecture, database model, workflow, error-handling model, diagrams, security controls, and operational design are defined. A small set of business/configuration values — such as the final document list, extraction fields, support number, retention period, expected volume, and staff permissions — must be supplied by the agency before production configuration and final effort/cost approval.
 
 ---
 
@@ -87,8 +88,9 @@ Extend the existing WhatsApp bot with a **Document Intake Pipeline**:
 2. The bot validates and stores the file, then queues it for AI-based processing.
 3. A backend service classifies the document type, extracts structured fields using a Google Cloud document-processing API, and identifies the submitting client — primarily via passport number when available, falling back to the WhatsApp mobile number otherwise.
 4. Structured data is written to a SQL database; the original file is stored in versioned, access-controlled object storage.
-5. The client receives a WhatsApp confirmation once processing completes.
+5. The client receives a WhatsApp status message appropriate to the processing result: received, completed, needs resubmission, needs staff review, or processing failed.
 6. Authorized staff search and retrieve a client's full record — profile, passport data, and every submitted document — by mobile number or passport number through a secure staff interface.
+7. If the document type is missing, unknown, unsupported, or inconsistent with the expected document, the system sends a clear customer-facing message and the configured WhatsApp support number. Technical error details are never exposed to the customer.
 
 ## 5. Project Objectives
 
@@ -108,7 +110,7 @@ Extend the existing WhatsApp bot with a **Document Intake Pipeline**:
 - Relational database schema for clients, passports, mobile contacts, documents, and processing metadata.
 - Object storage integration with a defined naming/versioning convention.
 - Client identification and de-duplication logic.
-- A staff-facing search/retrieval capability (API-first; UI is a candidate to scope separately — see Open Questions).
+- A staff-facing search/retrieval API and a defined human-verification workflow; a web UI may be implemented as part of the same phase or separately, but the backend review capability is required for production.
 - Security controls: encryption, RBAC, audit logging, signed URLs.
 - Monitoring and cost-tracking for AI usage.
 
@@ -170,40 +172,109 @@ flowchart TB
 
 ## 10. Detailed Workflow
 
-The brief's original workflow was largely synchronous. Because AI document processing can take anywhere from under a second (simple OCR) to several seconds (complex extraction, retries, large multi-page PDFs), and because WhatsApp conversations should stay responsive, **asynchronous, queue-based processing is recommended**:
+The document-processing workflow is asynchronous and queue-based. The client receives an immediate acknowledgement, while validation, classification, extraction, client matching, persistence, and verification continue in the backend.
 
 ```mermaid
 flowchart TD
-    A[Client sends PDF/photo via WhatsApp] --> B[Bot acknowledges receipt immediately]
-    B --> C[Document Intake API: validate file type, size, MIME]
-    C -->|Invalid| C1[Reject with clear WhatsApp error message]
-    C -->|Valid| D[Store in temporary staging storage]
-    D --> E[Enqueue processing job]
-    E --> F[Worker picks up job]
-    F --> G[Call AI service: classify + extract]
-    G --> H{Passport document?}
-    H -->|Yes| I[Extract Passport ID + MRZ fields]
-    H -->|No| J[Extract document-type-specific fields]
-    I --> K{Passport ID already exists in DB?}
-    K -->|Yes| L[Attach document to existing client]
-    K -->|No| M[Create new client + passport record]
-    J --> N{Client already identified this session/number?}
-    N -->|Yes| L
-    N -->|No| O[Create provisional client keyed by mobile number, pending passport link]
-    L --> P[Persist extracted structured data to SQL]
-    M --> P
-    O --> P
-    P --> Q[Move file from staging to permanent object storage]
-    Q --> R[Write audit log entry]
-    R --> S[Send WhatsApp confirmation to client]
-    S --> T[Available to staff via search]
+    A[Client sends document via WhatsApp] --> B[Existing Bot receives message/media]
+    B --> C[Document Intake API]
+    C --> D{Webhook/message valid?}
+    D -->|No| E1[Log invalid request]
+    E1 --> E2[Send customer error + support number]
+    D -->|Yes| F{File present and supported media type?}
+    F -->|No| E3[Record DOC_MISSING or DOC_INVALID]
+    E3 --> E4[Send customer error + support number]
+    F -->|Yes| G[Validate size, MIME, extension and PDF/image structure]
+    G --> H{File valid?}
+    H -->|No| E5[Record DOC_INVALID / DOC_CORRUPTED / DOC_TOO_LARGE]
+    E5 --> E6[Send customer error + support number]
+    H -->|Yes| I[Malware / security scan]
+    I --> J{Scan passed?}
+    J -->|No| E7[Quarantine file + record security event]
+    E7 --> E8[Send safe customer error + support number]
+    J -->|Yes| K[Store in temporary staging]
+    K --> L[Create RECEIVED document record + idempotency key]
+    L --> M[Enqueue processing job]
+    M --> N[Send 'received / processing' WhatsApp message]
+    N --> O[AI classification]
+    O --> P{Document type identified?}
+    P -->|No| E9[Record DOC_TYPE_UNKNOWN]
+    E9 --> E10[Set REVIEW_REQUIRED or request resubmission]
+    E10 --> E11[Send unknown-document message + support number]
+    P -->|Yes| Q{Document type supported?}
+    Q -->|No| E12[Record DOC_TYPE_UNSUPPORTED]
+    E12 --> E13[Send unsupported-document message + support number]
+    Q -->|Yes| R{Document matches expected type / current request?}
+    R -->|No| E14[Record DOC_TYPE_MISMATCH]
+    E14 --> E15[Send wrong-document message + support number]
+    R -->|Yes| S[Extract document-specific fields]
+    S --> T{Required fields present and valid?}
+    T -->|No| E16[Record DOC_REQUIRED_FIELD_MISSING or DOC_UNREADABLE]
+    E16 --> E17[Request clearer / complete resubmission + support number]
+    T -->|Yes| U[Validate formats, MRZ/checksum where applicable, confidence]
+    U --> V{Client identified?}
+    V -->|Passport match| W[Attach to existing client]
+    V -->|Mobile/session match| X[Attach to existing or provisional client]
+    V -->|No reliable match| Y[Create provisional client + REVIEW_REQUIRED]
+    W --> Z[Persist structured data in SQL]
+    X --> Z
+    Y --> Z
+    Z --> AA{Confidence and business rules passed?}
+    AA -->|Yes| AB[Move/copy file to permanent object storage]
+    AA -->|No| AC[Set REVIEW_REQUIRED]
+    AC --> AD[Staff verifies/corrects data]
+    AD --> AE{Staff verification successful?}
+    AE -->|No| AF[Set FAILED or REQUEST_RESUBMISSION]
+    AF --> AG[Send appropriate customer message + support number]
+    AE -->|Yes| AB
+    AB --> AH[Write audit log + processing history]
+    AH --> AI[Set COMPLETED]
+    AI --> AJ[Send successful WhatsApp confirmation]
 ```
 
-**Why asynchronous/queue-based:**
-- WhatsApp expects a fast acknowledgment; AI calls should never block the chat response.
-- A queue naturally absorbs bursts (e.g., many clients submitting documents around a deadline) without overloading the AI service or hitting its rate limits.
-- Failed AI calls can be retried from the queue without the client re-sending the document.
-- It creates a natural point to add virus scanning, deduplication checks, and confidence-based routing to human review without changing the client-facing flow.
+### 10.1 Processing status lifecycle
+
+```text
+RECEIVED
+  -> VALIDATING
+  -> STORED
+  -> QUEUED
+  -> CLASSIFYING
+  -> EXTRACTING
+  -> MATCHING
+  -> REVIEW_REQUIRED (when confidence/rules require human verification)
+  -> VERIFIED
+  -> COMPLETED
+
+Failure paths:
+  VALIDATING -> FAILED_VALIDATION
+  CLASSIFYING -> DOC_TYPE_UNKNOWN / DOC_TYPE_UNSUPPORTED / DOC_TYPE_MISMATCH
+  EXTRACTING -> FAILED_PROCESSING / DOC_UNREADABLE / DOC_REQUIRED_FIELD_MISSING
+  Any transient infrastructure failure -> RETRY_PENDING -> PROCESSING
+  Permanent failure after retry limit -> FAILED
+```
+
+### 10.2 Customer notification rules
+
+The backend must not send a generic success message after every AI call. Notifications are tied to the final business state:
+
+- **Received:** document has been received and is being processed.
+- **Completed:** processing and validation completed successfully.
+- **Needs resubmission:** the document is missing, unreadable, corrupted, unsupported, or the required information cannot be extracted.
+- **Needs staff review:** the document was received but requires manual verification; the customer should not be told that extracted information is final.
+- **Processing failed:** a recoverable/retried process ultimately failed; customer is given a safe retry message and support number.
+
+### 10.3 Idempotency and retries
+
+Every inbound WhatsApp media event must have an idempotency key based on the provider message/media identifier. Duplicate webhook deliveries must not create duplicate `DOCUMENTS` records or duplicate AI charges. Transient failures use exponential backoff with a bounded retry count. Permanently failed jobs move to a dead-letter/manual-review queue and remain auditable.
+
+### 10.4 Support-number configuration
+
+Customer-facing support messages use one centrally configured value rather than hard-coded text:
+
+`SUPPORT_WHATSAPP_NUMBER=[AGENCY_SUPPORT_WHATSAPP_NUMBER]`
+
+The production configuration must contain the agency's actual WhatsApp support number before go-live.
 
 ## 11. AI Document Processing
 
@@ -231,27 +302,32 @@ This is flagged as an **architectural decision requiring a short technical spike
 
 | Option | Advantages | Disadvantages |
 |---|---|---|
-| **Passport Number as primary key** | Conceptually simple; matches the business's mental model | Passport numbers are reissued/changed on renewal, sometimes reused by issuing authorities across different documents, may be entered inconsistently (case, spacing, OCR errors); using it as a PK means every foreign-key relationship must be corrected if the value is later found wrong; a client without a passport yet (e.g., only a police report submitted so far) can't get a record at all |
-| **Internal UUID as primary key, Passport Number as a UNIQUE indexed column** (recommended) | Client record can be created before a passport is ever seen; passport corrections/renewals become a simple update, not a cascading key change; foreign keys stay stable even if identity data changes; standard practice for systems handling mutable natural identifiers | Slightly more application logic needed to resolve "which client does this passport/mobile number belong to" |
+| **Passport Number as primary key** | Simple business concept | Mutable on renewal/correction; OCR can be wrong; a client may exist before a passport is submitted; changing a natural key complicates foreign-key relationships |
+| **Internal UUID as primary key, Passport Number as UNIQUE business identifier** | Stable references, supports provisional clients and passport renewals, safer foreign keys, supports identity correction without changing the client PK | Requires explicit client-resolution logic |
 
-**Recommendation:** use an internal UUID (`client_id`) as the primary key across the schema, with `passport_number` stored as a `UNIQUE, NULLABLE` column on a related `passports` table (nullable because a client may exist before any passport is captured).
+**Decision:** use `client_id` as the SQL primary key. Passport number is a unique business identifier in `PASSPORTS` when known. It is not the database primary key.
 
-### 12.2 Mobile number: unique column vs. separate table
+### 12.2 Mobile number
 
-A single client may use more than one number (a personal number vs. the number they message the bot from), and numbers change over time. A separate `mobile_contacts` table (one client → many numbers, one flagged as primary/WhatsApp-linked) is recommended over a single unique column, so a number change or a second number doesn't require altering the client record itself.
+Mobile numbers are stored in a separate `MOBILE_CONTACTS` table. A client may have multiple numbers, while the WhatsApp sender number is recorded as the originating contact for each submission. Numbers are normalized to international E.164 format before matching. A mobile number should not be treated as an absolute identity proof when conflicting identity information exists; conflicts are routed to review.
 
-### 12.3 Core tables (proposed)
+### 12.3 Core tables
 
 ```mermaid
 erDiagram
     CLIENTS ||--o{ MOBILE_CONTACTS : has
-    CLIENTS ||--o| PASSPORTS : has
+    CLIENTS ||--o{ PASSPORTS : owns
     CLIENTS ||--o{ DOCUMENTS : owns
     DOCUMENT_TYPES ||--o{ DOCUMENTS : classifies
     DOCUMENTS ||--o{ DOCUMENT_EXTRACTIONS : produces
-    DOCUMENTS ||--o{ AI_PROCESSING_LOGS : logged_by
-    DOCUMENTS ||--o{ AUDIT_LOGS : referenced_in
+    DOCUMENTS ||--o{ AI_PROCESSING_LOGS : has
+    DOCUMENTS ||--o{ PROCESSING_ERRORS : may_have
+    DOCUMENTS ||--o{ DOCUMENT_REVIEW_HISTORY : reviewed_in
+    STAFF_USERS ||--o{ DOCUMENT_REVIEW_HISTORY : performs
     STAFF_USERS ||--o{ AUDIT_LOGS : performs
+    CLIENTS ||--o{ AUDIT_LOGS : referenced_by
+    DOCUMENTS ||--o{ AUDIT_LOGS : referenced_by
+    STAFF_USERS ||--o{ AUDIT_LOGS : referenced_by
 
     CLIENTS {
         uuid client_id PK
@@ -259,7 +335,18 @@ erDiagram
         string nationality
         string gender
         date date_of_birth
+        string address
         string status
+        timestamp created_at
+        timestamp updated_at
+    }
+    MOBILE_CONTACTS {
+        uuid contact_id PK
+        uuid client_id FK
+        string mobile_number UK
+        string country_code
+        boolean is_whatsapp_primary
+        boolean is_verified
         timestamp created_at
         timestamp updated_at
     }
@@ -271,17 +358,10 @@ erDiagram
         date date_of_issue
         date date_of_expiry
         string mrz_raw
-        string extraction_confidence
+        decimal extraction_confidence
+        boolean is_current
         timestamp created_at
         timestamp updated_at
-    }
-    MOBILE_CONTACTS {
-        uuid contact_id PK
-        uuid client_id FK
-        string mobile_number UK
-        string country_code
-        boolean is_whatsapp_primary
-        timestamp created_at
     }
     DOCUMENT_TYPES {
         uuid document_type_id PK
@@ -289,11 +369,13 @@ erDiagram
         string display_name
         boolean requires_passport_link
         jsonb expected_fields_schema
+        boolean active
     }
     DOCUMENTS {
         uuid document_id PK
         uuid client_id FK
         uuid document_type_id FK
+        string source_message_id UK
         string storage_path UK
         string original_filename
         string mime_type
@@ -301,7 +383,9 @@ erDiagram
         string sha256_hash
         int version_number
         string status
+        string classification_confidence
         timestamp uploaded_at
+        timestamp processed_at
     }
     DOCUMENT_EXTRACTIONS {
         uuid extraction_id PK
@@ -311,6 +395,7 @@ erDiagram
         boolean requires_review
         boolean reviewed
         uuid reviewed_by_staff_id FK
+        string processor_version
         timestamp extracted_at
     }
     AI_PROCESSING_LOGS {
@@ -322,7 +407,30 @@ erDiagram
         numeric estimated_cost_usd
         string result_status
         text error_message
+        timestamp started_at
         timestamp processed_at
+    }
+    PROCESSING_ERRORS {
+        uuid error_id PK
+        uuid document_id FK
+        string error_code
+        string error_type
+        text customer_message_key
+        text technical_details
+        int retry_count
+        boolean customer_notified
+        timestamp created_at
+        timestamp resolved_at
+    }
+    DOCUMENT_REVIEW_HISTORY {
+        uuid review_id PK
+        uuid document_id FK
+        uuid staff_id FK
+        string action
+        jsonb before_data
+        jsonb after_data
+        text review_notes
+        timestamp created_at
     }
     STAFF_USERS {
         uuid staff_id PK
@@ -330,20 +438,37 @@ erDiagram
         string role
         boolean active
         timestamp created_at
+        timestamp updated_at
     }
     AUDIT_LOGS {
         uuid audit_id PK
         uuid staff_id FK
+        uuid client_id FK
         uuid document_id FK
         string action
         string ip_address
+        text details
         timestamp occurred_at
     }
 ```
 
-### 12.4 Handling passport check-and-create
+### 12.4 Important constraints and indexes
 
-When a passport is scanned: normalize the extracted number (trim, uppercase, strip spaces), look it up in `passports.passport_number`. If found, attach the new document to the existing `client_id`. If not found, create a new `clients` row and a linked `passports` row. This lookup-then-create logic must run inside a database transaction with a unique constraint on `passport_number` as the final safety net against race conditions (e.g., two documents for the same new client arriving at nearly the same time).
+- `CLIENTS.client_id` is the immutable primary key.
+- `PASSPORTS.passport_number` is unique after normalization; it may be nullable until a passport is captured.
+- `MOBILE_CONTACTS.mobile_number` is indexed; uniqueness policy should allow historical numbers if the business requires it, while preventing two active clients from claiming the same verified WhatsApp number without review.
+- `DOCUMENTS.source_message_id` is unique to enforce webhook idempotency.
+- `DOCUMENTS.sha256_hash` is indexed for duplicate-file detection.
+- Index `PASSPORTS.passport_number`, `MOBILE_CONTACTS.mobile_number`, `DOCUMENTS.client_id`, `DOCUMENTS.status`, and `PROCESSING_ERRORS.error_code`.
+- Foreign keys use stable UUIDs, not passport numbers.
+
+### 12.5 Client merge and correction
+
+If later evidence shows that two provisional client records represent the same person, the system must support a controlled staff-approved merge. The merge operation records the source client, target client, staff user, reason, timestamp, and affected documents. A destructive delete should not be used as the normal merge mechanism; the audit trail must remain intact.
+
+### 12.6 Passport renewal
+
+A passport renewal creates a new `PASSPORTS` record linked to the same `client_id` and marks the previous passport as non-current. Documents remain associated with the client and retain their historical passport relationship where applicable.
 
 ## 13. Document/Object Storage Architecture
 
@@ -511,44 +636,182 @@ Recommended default field sets per document type (to be confirmed/extended per O
 
 ## 19. ER Diagram
 
-See Section 12.3 for the full entity-relationship diagram.
+The ER diagram below is the canonical version for this proposal. It includes document-processing errors, staff review history, audit relationships, idempotency metadata, passport history, and mobile contacts.
+
+```mermaid
+erDiagram
+    CLIENTS ||--o{ MOBILE_CONTACTS : has
+    CLIENTS ||--o{ PASSPORTS : owns
+    CLIENTS ||--o{ DOCUMENTS : owns
+    DOCUMENT_TYPES ||--o{ DOCUMENTS : classifies
+    DOCUMENTS ||--o{ DOCUMENT_EXTRACTIONS : produces
+    DOCUMENTS ||--o{ AI_PROCESSING_LOGS : has
+    DOCUMENTS ||--o{ PROCESSING_ERRORS : may_have
+    DOCUMENTS ||--o{ DOCUMENT_REVIEW_HISTORY : reviewed_in
+    STAFF_USERS ||--o{ DOCUMENT_REVIEW_HISTORY : performs
+    STAFF_USERS ||--o{ AUDIT_LOGS : performs
+    CLIENTS ||--o{ AUDIT_LOGS : referenced_by
+    DOCUMENTS ||--o{ AUDIT_LOGS : referenced_by
+
+    CLIENTS {
+        uuid client_id PK
+        string full_name
+        string nationality
+        date date_of_birth
+        string address
+        string status
+        timestamp created_at
+        timestamp updated_at
+    }
+    MOBILE_CONTACTS {
+        uuid contact_id PK
+        uuid client_id FK
+        string mobile_number UK
+        boolean is_whatsapp_primary
+        boolean is_verified
+    }
+    PASSPORTS {
+        uuid passport_id PK
+        uuid client_id FK
+        string passport_number UK
+        string issuing_country
+        date date_of_issue
+        date date_of_expiry
+        boolean is_current
+    }
+    DOCUMENT_TYPES {
+        uuid document_type_id PK
+        string type_code UK
+        string display_name
+        boolean active
+    }
+    DOCUMENTS {
+        uuid document_id PK
+        uuid client_id FK
+        uuid document_type_id FK
+        string source_message_id UK
+        string storage_path UK
+        string sha256_hash
+        string status
+        timestamp uploaded_at
+        timestamp processed_at
+    }
+    DOCUMENT_EXTRACTIONS {
+        uuid extraction_id PK
+        uuid document_id FK
+        jsonb extracted_fields
+        string confidence_level
+        boolean requires_review
+        uuid reviewed_by_staff_id FK
+        string processor_version
+        timestamp extracted_at
+    }
+    AI_PROCESSING_LOGS {
+        uuid log_id PK
+        uuid document_id FK
+        string ai_service_used
+        string processor_version
+        int pages_processed
+        numeric estimated_cost_usd
+        string result_status
+        timestamp processed_at
+    }
+    PROCESSING_ERRORS {
+        uuid error_id PK
+        uuid document_id FK
+        string error_code
+        string error_type
+        text technical_details
+        int retry_count
+        boolean customer_notified
+        timestamp created_at
+        timestamp resolved_at
+    }
+    DOCUMENT_REVIEW_HISTORY {
+        uuid review_id PK
+        uuid document_id FK
+        uuid staff_id FK
+        string action
+        jsonb before_data
+        jsonb after_data
+        text review_notes
+        timestamp created_at
+    }
+    STAFF_USERS {
+        uuid staff_id PK
+        string username UK
+        string role
+        boolean active
+    }
+    AUDIT_LOGS {
+        uuid audit_id PK
+        uuid staff_id FK
+        uuid client_id FK
+        uuid document_id FK
+        string action
+        text details
+        timestamp occurred_at
+    }
+```
+
+`PROCESSING_ERRORS` is intentionally part of the ERD so failed validation, unknown document types, unsupported document types, extraction failures, retry exhaustion, and infrastructure errors can be persisted and audited rather than being lost in application logs.
 
 ## 20. Activity Diagram
 
 ```mermaid
 flowchart TD
     Start([Client sends document]) --> Recv[Bot receives document]
-    Recv --> ValidFile{File valid? Type/size/MIME}
-    ValidFile -->|No| RejectMsg[Send rejection message to client]
+    Recv --> Idem{Duplicate webhook/message?}
+    Idem -->|Yes| IdemEnd[Return existing processing status]
+    Idem -->|No| ValidFile{File present and valid?}
+    ValidFile -->|No| RejectMsg[Record validation error + send customer error/support number]
     RejectMsg --> End1([End])
-    ValidFile -->|Yes| ScanMalware{Passes malware scan?}
-    ScanMalware -->|No| Quarantine[Quarantine file, alert staff]
+    ValidFile -->|Yes| ScanMalware{Malware scan passed?}
+    ScanMalware -->|No| Quarantine[Quarantine + security alert + customer safe error]
     Quarantine --> End2([End])
-    ScanMalware -->|Yes| TempStore[Store in temporary staging]
-    TempStore --> Enqueue[Enqueue for AI processing]
-    Enqueue --> AIProc[AI service: classify document]
-    AIProc --> DupCheck{Duplicate of existing document via hash?}
-    DupCheck -->|Yes| FlagDup[Flag as duplicate, link to existing document]
-    FlagDup --> Notify
-    DupCheck -->|No| ExtractType{Document type}
-    ExtractType -->|Passport| ExtractPassport[Extract passport fields + MRZ]
-    ExtractType -->|Other| ExtractOther[Extract type-specific fields]
-    ExtractPassport --> PassportExists{Passport number exists in DB?}
-    PassportExists -->|Yes| AttachExisting[Attach document to existing client]
-    PassportExists -->|No| CreateClient[Create new client + passport record]
-    ExtractOther --> ClientKnown{Client already resolved this conversation?}
-    ClientKnown -->|Yes| AttachExisting
-    ClientKnown -->|No| ProvisionalClient[Create/find provisional client by mobile number]
-    AttachExisting --> Confidence{Extraction confidence high?}
-    CreateClient --> Confidence
-    ProvisionalClient --> Confidence
-    Confidence -->|High| AutoStore[Auto-store structured data]
-    Confidence -->|Low| ReviewQueue[Route to staff verification queue]
-    AutoStore --> MoveFile[Move file to permanent storage]
-    ReviewQueue --> MoveFile
-    MoveFile --> AuditWrite[Write audit log entry]
-    AuditWrite --> Notify[Send WhatsApp confirmation]
-    Notify --> End3([End])
+    ScanMalware -->|Yes| TempStore[Store temporary file]
+    TempStore --> Enqueue[Enqueue processing job]
+    Enqueue --> Ack[Send received/processing message]
+    Ack --> AIProc[AI classify + extract]
+    AIProc --> AIResult{AI call successful?}
+    AIResult -->|No| Retry{Retry available?}
+    Retry -->|Yes| Enqueue
+    Retry -->|No| ProcError[PROCESSING_ERROR + FAILED/manual queue]
+    ProcError --> NotifyFail[Send processing-failed message + support number]
+    NotifyFail --> End3([End])
+    AIResult -->|Yes| DupCheck{Duplicate file hash?}
+    DupCheck -->|Yes| DupRecord[Link/record duplicate submission]
+    DupRecord --> NotifyDup[Send duplicate/already-received message]
+    NotifyDup --> End4([End])
+    DupCheck -->|No| TypeCheck{Document type identified and supported?}
+    TypeCheck -->|Unknown| Unknown[DOC_TYPE_UNKNOWN + review/resubmission]
+    Unknown --> UnknownMsg[Send unknown-document message + support number]
+    UnknownMsg --> End5([End])
+    TypeCheck -->|Unsupported| Unsupported[DOC_TYPE_UNSUPPORTED]
+    Unsupported --> UnsupportedMsg[Send unsupported-document message + support number]
+    UnsupportedMsg --> End6([End])
+    TypeCheck -->|Mismatch| Mismatch[DOC_TYPE_MISMATCH]
+    Mismatch --> MismatchMsg[Send wrong-document message + support number]
+    MismatchMsg --> End7([End])
+    TypeCheck -->|Valid| Extract[Extract required fields]
+    Extract --> Required{Required fields valid?}
+    Required -->|No| Missing[DOC_REQUIRED_FIELD_MISSING / DOC_UNREADABLE]
+    Missing --> MissingMsg[Request clear/complete resubmission + support number]
+    MissingMsg --> End8([End])
+    Required -->|Yes| Match[Resolve client by passport/mobile/session rules]
+    Match --> Confidence{Confidence and business validation passed?}
+    Confidence -->|No| Review[REVIEW_REQUIRED]
+    Review --> Staff[Staff verifies/corrects fields]
+    Staff --> ReviewOK{Verified?}
+    ReviewOK -->|No| StaffResubmit[Request customer resubmission or mark failed]
+    StaffResubmit --> End9([End])
+    ReviewOK -->|Yes| Persist[Persist verified data]
+    Confidence -->|Yes| Persist[Persist verified data]
+    Persist --> Permanent[Move to permanent object storage]
+    Permanent --> Audit[Write audit + processing history]
+    Audit --> Complete[COMPLETED]
+    Complete --> Success[Send success confirmation]
+    Success --> End10([End])
 ```
 
 ## 21. Sequence Diagram
@@ -557,36 +820,72 @@ flowchart TD
 sequenceDiagram
     participant U as Client
     participant WA as WhatsApp
-    participant Bot as WhatsApp Bot
-    participant BE as Backend/Intake API
-    participant AI as AI Service
+    participant Bot as Existing Bot
+    participant API as Document Intake API
+    participant Store as Staging/Object Storage
+    participant Q as Processing Queue
+    participant Worker as AI Worker
+    participant AI as Google AI Service
     participant DB as SQL Database
-    participant OBJ as Object Storage
+    participant Notify as Notification Service
     participant St as Staff
 
-    U->>WA: Send document (PDF)
-    WA->>Bot: Deliver message + media
-    Bot->>BE: Forward document reference
-    BE->>BE: Validate file + malware scan
-    BE->>OBJ: Store in temporary staging
-    BE->>Bot: Acknowledge receipt
-    Bot->>WA: "Document received, processing..."
-    BE->>AI: Submit for classification + extraction
-    AI-->>BE: Structured fields + confidence
-    BE->>DB: Resolve client (passport/mobile), upsert records
-    BE->>OBJ: Move file to permanent storage path
-    BE->>DB: Write document + extraction + audit records
-    BE->>Bot: Processing complete
-    Bot->>WA: Confirmation message
-    WA->>U: "Your passport has been received"
+    U->>WA: Send document
+    WA->>Bot: Message + media reference
+    Bot->>API: Forward message/media metadata
+    API->>DB: Check idempotency key
+    alt Duplicate webhook
+        DB-->>API: Existing document found
+        API-->>Bot: Return existing status
+    else New document
+        API->>API: Validate file, size, MIME and security rules
+        alt Invalid file
+            API->>DB: Write PROCESSING_ERROR
+            API->>Notify: Send customer error + support number
+            Notify->>WA: Error message
+            WA-->>U: Clear correction instructions
+        else Valid file
+            API->>Store: Save temporary staging file
+            API->>DB: Create RECEIVED/STORED document record
+            API->>Q: Enqueue processing job
+            API->>Notify: Send received message
+            Notify->>WA: "Document received, processing..."
+            Q->>Worker: Deliver processing job
+            Worker->>AI: Classify + extract
+            AI-->>Worker: Type + fields + confidence
+            alt Unknown/unsupported/wrong document type
+                Worker->>DB: Write PROCESSING_ERROR + status
+                Worker->>Notify: Send specific error + support number
+                Notify->>WA: Specific customer message
+                WA-->>U: Correction/support instructions
+            else Valid document
+                Worker->>DB: Resolve client + persist extraction
+                alt Low confidence / validation failure
+                    Worker->>DB: Set REVIEW_REQUIRED
+                    St->>API: Open review task
+                    API->>DB: Load extraction + original file metadata
+                    St->>API: Confirm/correct data
+                    API->>DB: Save review history + verified data
+                end
+                Worker->>Store: Move/copy to permanent path
+                Worker->>DB: Write audit + processing log
+                Worker->>DB: Set COMPLETED
+                Worker->>Notify: Send completion message
+                Notify->>WA: Success confirmation
+                WA-->>U: Document processed
+            end
+        end
+    end
 
-    St->>BE: Search by passport number or mobile number
-    BE->>DB: Query client + documents
-    DB-->>BE: Client profile + document list
-    BE->>OBJ: Request signed URL (on demand)
-    OBJ-->>BE: Time-limited signed URL
-    BE-->>St: Client profile + secure document links
-    BE->>DB: Write audit log entry
+    St->>API: Search by passport/mobile
+    API->>DB: Query client + document metadata
+    DB-->>API: Matching records
+    API-->>St: Profile + document metadata
+    St->>API: Request document
+    API->>Store: Generate signed URL
+    Store-->>API: Short-lived signed URL
+    API->>DB: Write access audit event
+    API-->>St: Secure document URL
 ```
 
 ## 22. Data Flow Diagram
@@ -659,31 +958,119 @@ These are a proposed starting point, not a final contract, and should be reconci
 
 ## 25. Error Handling
 
-| Failure | Handling |
-|---|---|
-| Invalid/corrupted/unsupported PDF | Reject at intake with a clear WhatsApp message; do not enqueue |
-| File too large | Reject at intake with size-limit guidance |
-| AI API failure/timeout | Automatic retry with backoff (e.g., 3 attempts); after final failure, route to a staff error queue |
-| OCR/extraction failure or low confidence | Route to human verification (Section 26) rather than failing silently |
-| Missing/duplicate passport number | Duplicate: attach to existing client. Missing: create provisional client, flag for follow-up |
-| Unknown document type | Store the file, flag as "unclassified," route to staff for manual type assignment |
-| Database or object storage failure | Job remains in queue and is retried; client is not told "success" until both writes are confirmed |
-| WhatsApp API/network failure | Standard delivery retry behavior of the messaging platform; backend processing continues independently of confirmation delivery |
-| Rate limiting / AI service unavailable | Queue absorbs the backlog; jobs process once capacity/availability returns, with monitoring alerting staff if backlog grows abnormally |
+Error handling is split into **customer-safe messages**, **internal technical diagnostics**, **retryable failures**, and **manual-review failures**. Customers never receive stack traces, SQL errors, provider error payloads, API keys, or internal identifiers.
+
+### 25.1 Standard error codes
+
+| Error Code | Meaning | Customer action | Backend action |
+|---|---|---|---|
+| `DOC_MISSING` | No document/media attached | Send the required document | Record error; do not enqueue |
+| `DOC_INVALID` | Unsupported file format or malformed media | Send supported PDF/image | Record error; do not enqueue |
+| `DOC_TOO_LARGE` | File exceeds configured limit | Send smaller/compressed file | Record error; do not enqueue |
+| `DOC_CORRUPTED` | File cannot be opened/read | Re-export or resend file | Record error; do not enqueue |
+| `DOC_UNREADABLE` | Scan/image quality prevents reliable extraction | Send clearer complete copy | Route to resubmission |
+| `DOC_TYPE_UNKNOWN` | AI cannot identify document type | Send correct document or contact support | Set `REVIEW_REQUIRED`/resubmission |
+| `DOC_TYPE_UNSUPPORTED` | Document type is not configured | Send a supported document or contact support | Record unsupported type |
+| `DOC_TYPE_MISMATCH` | Document is different from the expected/requested type | Send the requested document | Record mismatch |
+| `DOC_REQUIRED_FIELD_MISSING` | Required field cannot be extracted | Send clearer/complete document | Route to resubmission/review |
+| `CLIENT_MATCH_CONFLICT` | Passport/mobile/session identifiers conflict | Contact support if requested | Route to staff review; never auto-merge |
+| `AI_PROCESSING_FAILED` | AI processing failed after retries | Resend or contact support | Retry then dead-letter/manual queue |
+| `DB_WRITE_FAILED` | Database persistence failed | No action unless requested | Retry transaction/job |
+| `STORAGE_FAILED` | Object-storage operation failed | No action unless requested | Retry job; do not mark complete |
+| `WHATSAPP_SEND_FAILED` | Notification delivery failed | No action; message may retry | Retry notification and alert if persistent |
+| `SYSTEM_ERROR` | Unexpected internal failure | Contact support | Log full technical details and alert |
+
+### 25.2 Customer-facing messages
+
+The following messages are the standard templates. Replace `[SUPPORT NUMBER]` with the configured agency WhatsApp support number before production.
+
+**Document received**
+
+> We received your document and are processing it. We will send you an update once processing is complete.
+
+**Missing document**
+
+> We did not receive a document with your message. Please send the required document as a PDF or supported image. If you need help, please contact our WhatsApp Support Team: **[SUPPORT NUMBER]**.
+
+**Invalid/corrupted document**
+
+> We could not open or process the document you sent. Please check that the file is valid and send it again. If the issue continues, please contact our WhatsApp Support Team: **[SUPPORT NUMBER]**.
+
+**Document too large**
+
+> The document you sent is larger than the allowed file size. Please reduce the file size and send it again. If you need assistance, please contact our WhatsApp Support Team: **[SUPPORT NUMBER]**.
+
+**Wrong document type**
+
+> We could not process this document because it does not appear to be the required document type. Please send the requested document as a clear PDF or supported image. If you need assistance, please contact our WhatsApp Support Team: **[SUPPORT NUMBER]**.
+
+**Document type cannot be identified**
+
+> We could not identify the type of document you sent. Please send a clear and complete document. If you are unsure which document to send, please contact our WhatsApp Support Team: **[SUPPORT NUMBER]**.
+
+**Unsupported document type**
+
+> The document you sent is not currently supported by our system. Please send one of the requested document types. If you need assistance, please contact our WhatsApp Support Team: **[SUPPORT NUMBER]**.
+
+**Unreadable/missing information**
+
+> We could not read some of the required information in your document. Please send a clearer, complete copy with all relevant information visible. For assistance, please contact our WhatsApp Support Team: **[SUPPORT NUMBER]**.
+
+**Processing failed**
+
+> We could not complete the processing of your document at this time. Please try sending it again. If the problem continues, please contact our WhatsApp Support Team: **[SUPPORT NUMBER]**.
+
+**Needs staff review**
+
+> We received your document, but it requires an additional verification step. Our team will review it before the information is finalized. If you need assistance, please contact our WhatsApp Support Team: **[SUPPORT NUMBER]**.
+
+**Duplicate document**
+
+> We have already received this document. No further action is required unless our team asks you to send an updated copy. For assistance, please contact our WhatsApp Support Team: **[SUPPORT NUMBER]**.
+
+### 25.3 Internal error handling rules
+
+1. Every processing failure creates a `PROCESSING_ERRORS` record.
+2. Retryable errors use bounded exponential backoff.
+3. Non-retryable validation errors are not repeatedly sent to the AI service.
+4. AI/provider failures are retried without requiring the customer to resend the document.
+5. Duplicate WhatsApp webhook deliveries are idempotent.
+6. A document is never marked `COMPLETED` until the required database and object-storage writes succeed.
+7. Customer notification failure does not roll back successful document processing; notification delivery is a separate retryable job.
+8. Permanent failures move to a dead-letter/manual-review queue.
+9. Technical details are stored internally and are never copied into customer messages.
+10. Every staff correction or manual classification is audited.
 
 ## 26. AI Accuracy & Human Verification
 
 ```mermaid
 flowchart TD
-    Extract[AI Extracted Data] --> Rules[Validation rules: format, checksum, required fields]
+    Extract[AI Extracted Data] --> Rules[Validation: format, required fields, MRZ/checksum where applicable]
     Rules --> Conf{Confidence + validation passed?}
-    Conf -->|High| Auto[Automatic storage]
-    Conf -->|Low| Review[Routed to staff verification queue]
-    Review --> StaffCheck[Staff confirms or corrects fields]
-    StaffCheck --> Auto
+    Conf -->|High| Auto[Automatic verification]
+    Conf -->|Low / conflict| Review[REVIEW_REQUIRED]
+    Review --> StaffCheck[Staff reviews original document + extracted fields]
+    StaffCheck --> Correct[Correct / confirm extracted data]
+    Correct --> History[Write DOCUMENT_REVIEW_HISTORY + AUDIT_LOGS]
+    History --> Auto
+    Auto --> Complete[COMPLETED]
 ```
 
-Fields that should always be validated before being treated as authoritative: **passport number** (MRZ checksum validation, format pattern), **date of birth**, **passport expiry date**, and **full name** (cross-checked for basic plausibility, e.g., non-empty, expected character set). A combination of OCR confidence scores from the AI service, regex/format validation, and MRZ checksum validation should determine whether a document auto-stores or is routed to a staff reviewer; this threshold should be tuned during a pilot rather than fixed in advance.
+Fields that should be validated before being treated as authoritative include passport number, MRZ/checksum where available, date of birth, passport expiry date, and full name. The system should combine AI confidence, schema validation, format rules, and identity consistency checks. The exact confidence threshold should be determined during the pilot using labeled sample documents.
+
+### Human verification requirements
+
+The production design requires a staff-review capability, even if the first release does not include a full web UI. At minimum, the backend must support:
+
+- A queue of `REVIEW_REQUIRED` documents.
+- Retrieval of the original document through a short-lived signed URL.
+- Display of extracted fields and confidence indicators.
+- Staff correction/confirmation of fields.
+- Mandatory review reason/notes for material corrections.
+- Review history and audit trail.
+- Controlled reprocessing after correction when required.
+
+AI/OCR extraction must not be described as proof that a document is genuine. Authenticity/fraud detection is a separate capability and remains outside the current scope.
 
 ## 27. Scalability
 
@@ -755,25 +1142,40 @@ Recommended metrics and logs: application logs (intake, processing, staff API), 
 - The agency will provide or arrange the necessary AI/API credentials.
 - The agency will confirm applicable legal/privacy requirements for the jurisdictions it operates in.
 
-## 33. Open Questions
+## 33. Open Questions and Production Configuration
 
-1. What exact document types must be supported (confirm the full list beyond the 10 examples given)?
-2. What fields must be extracted from each document type?
-3. What is the expected monthly document/client volume?
-4. Which countries' passports will be processed (affects MRZ/format handling)?
-5. Should expired passports be accepted, and if so, how should that be flagged?
-6. How long should documents and extracted data be retained?
-7. Which staff roles should exist, and what should each be authorized to view or download?
-8. Should staff be able to download original documents, or only view extracted data plus a preview?
-9. Should staff be able to edit AI-extracted data directly, and if so, is that edit itself audited?
-10. What should happen when AI extraction is later found to be incorrect after the client was already notified of success?
-11. Which specific Google AI service(s) should be used for each document type (to be confirmed after a technical pilot)?
-12. What is the expected/approved AI processing budget per month?
-13. Is detailed extraction (Option B, Section 17) required for all documents, or only certain types?
-14. What data residency/compliance requirements apply, and in which countries?
-15. How should passport renewals (same client, new passport number) be handled — link as history, or treat as a new passport record under the same client?
-16. Can multiple WhatsApp numbers belong to one client, and if so, how should that be confirmed (e.g., staff-approved merge vs. automatic)?
-17. Is a staff-facing UI in scope for this phase, or API-only with a follow-on UI phase?
+The architecture is complete, but the following business inputs must be confirmed before production configuration and final effort/cost estimation. They are configuration decisions, not unresolved architecture defects.
+
+1. **Supported document list:** confirm the final 10+ document types.
+2. **Required fields:** confirm fields to extract for each document type.
+3. **Volume:** confirm clients/month, documents/client, average pages/document, peak submissions, and maximum file size.
+4. **Passport coverage:** confirm countries/passport formats to be supported.
+5. **Expired passports:** confirm acceptance and business handling.
+6. **Retention:** confirm retention periods for original files, extracted data, logs, and backups.
+7. **Staff roles:** confirm who can search, view, download, correct, merge, and delete/archive records.
+8. **Human-review UI:** confirm whether the staff UI is included in this phase; the backend review capability is required either way.
+9. **Privacy/data residency:** confirm applicable jurisdictions, contractual requirements, and approved Google Cloud region(s).
+10. **AI service selection:** finalize per document type after the technical pilot.
+11. **AI budget:** confirm approved monthly AI-processing budget and alert thresholds.
+12. **Extraction depth:** confirm which document types need detailed extraction versus minimal identity/status extraction.
+13. **Passport renewals:** use the same `client_id` with historical passport records unless the agency specifies a different business rule.
+14. **Multiple mobile numbers:** confirm staff-approved merge/verification policy for conflicting numbers.
+15. **WhatsApp support number:** provide the production support number to replace `[SUPPORT NUMBER]` and configure `SUPPORT_WHATSAPP_NUMBER`.
+16. **WhatsApp provider limits:** confirm media size, supported MIME types, webhook retry behavior, and message/template requirements with the existing provider.
+17. **Disaster recovery:** confirm required RPO/RTO and backup retention.
+
+### 33.1 Required production configuration
+
+```text
+SUPPORT_WHATSAPP_NUMBER=[AGENCY_SUPPORT_WHATSAPP_NUMBER]
+MAX_DOCUMENT_SIZE_MB=[CONFIRM_LIMIT]
+ALLOWED_MIME_TYPES=[CONFIRM_TYPES]
+DOCUMENT_RETENTION_DAYS=[CONFIRM_POLICY]
+AI_MONTHLY_BUDGET_USD=[CONFIRM_BUDGET]
+GOOGLE_CLOUD_REGION=[CONFIRM_REGION]
+```
+
+The values above are intentionally placeholders because the source requirements do not provide the agency's actual support number, file limit, retention policy, budget, or cloud region. They must not be invented in the final implementation.
 
 ## 34. Cost Considerations
 
@@ -814,15 +1216,53 @@ This proposal extends the agency's existing WhatsApp bot with a structured, audi
 
 ## 38. Decision Log
 
-| Decision needed | Status |
+| Decision | Current decision/status |
 |---|---|
-| Which Google AI service(s) per document type (Section 11) | Pending technical pilot |
-| Extraction depth: minimal vs. detailed (Section 17) | Pending agency business decision |
-| Approved AI processing budget | Pending |
-| Database architecture: UUID PK + passport as UNIQUE (Section 12) | Recommended by this proposal — pending agency sign-off |
-| Document retention period | Pending |
-| Staff roles and permission levels | Pending |
-| Applicable privacy/compliance jurisdictions | Pending legal/compliance confirmation |
-| Expected monthly document/client volume | Pending |
-| Full list of supported document types and required fields | Pending |
-| Whether a staff-facing UI is in scope for this phase | Pending
+| Database primary key | **Confirmed architecture:** internal UUID `client_id` |
+| Passport identifier | **Confirmed architecture:** normalized unique business identifier in `PASSPORTS`; not SQL PK |
+| Mobile identifier | **Confirmed architecture:** normalized contact record in `MOBILE_CONTACTS`; conflicts require review |
+| Processing model | **Confirmed architecture:** asynchronous queue-based processing |
+| Error persistence | **Confirmed architecture:** `PROCESSING_ERRORS` + application logs + audit trail |
+| Webhook idempotency | **Confirmed architecture:** unique `source_message_id` / provider message identifier |
+| Document duplicate detection | **Confirmed architecture:** SHA-256 hash plus business-level duplicate rules |
+| Human verification | **Confirmed requirement:** `REVIEW_REQUIRED` workflow and review history |
+| Customer support escalation | **Confirmed requirement:** all relevant customer errors include configured WhatsApp support number |
+| Customer technical-error exposure | **Confirmed rule:** never expose stack traces, provider errors, database errors, or internal IDs |
+| Passport renewal | **Proposed default:** new passport record under same client |
+| Google AI service per document type | Pending technical pilot using representative samples |
+| Extraction depth | Pending agency business decision by document type |
+| Approved AI budget | Pending agency confirmation |
+| Retention period | Pending agency/legal confirmation |
+| Staff roles and permissions | Pending agency confirmation |
+| Staff UI scope | Pending agency confirmation; backend review capability is required |
+| Supported document types and fields | Pending final agency list |
+| WhatsApp support number | Pending agency value; required before production |
+| Cloud region/data residency | Pending agency/legal confirmation |
+| RPO/RTO and backup retention | Pending agency confirmation |
+
+## 39. Final Implementation Readiness Checklist
+
+Before production go-live, confirm all of the following:
+
+- [ ] Existing WhatsApp bot webhook/media API reviewed and integration contract approved.
+- [ ] Final document-type list approved.
+- [ ] Required extraction fields approved per document type.
+- [ ] Representative sample documents available for AI pilot/testing.
+- [ ] AI processor/model selected per document type and pricing verified against current official pricing.
+- [ ] SQL schema/migrations deployed and constraints tested.
+- [ ] Object storage bucket, encryption, lifecycle, versioning, and signed URLs configured.
+- [ ] Malware/file validation implemented.
+- [ ] Webhook idempotency implemented and tested.
+- [ ] Queue retry and dead-letter handling implemented.
+- [ ] `PROCESSING_ERRORS` and audit logging implemented.
+- [ ] `REVIEW_REQUIRED` staff workflow implemented.
+- [ ] Client merge/unmerge controls and audit trail implemented.
+- [ ] Passport renewal/history handling tested.
+- [ ] Customer-facing error messages approved.
+- [ ] Actual WhatsApp support number configured in `SUPPORT_WHATSAPP_NUMBER`.
+- [ ] Staff RBAC and least-privilege access tested.
+- [ ] Retention, backup, RPO/RTO, and data-residency decisions approved.
+- [ ] AI cost alerts and monitoring dashboard configured.
+- [ ] End-to-end failure/recovery tests passed.
+- [ ] Production rollback/runbook approved.
+
