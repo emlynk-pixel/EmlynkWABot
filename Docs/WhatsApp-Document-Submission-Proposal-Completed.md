@@ -180,18 +180,18 @@ flowchart TD
     B --> C[Document Intake API]
     C --> D{Webhook/message valid?}
     D -->|No| E1[Log invalid request]
-    E1 --> E2[Send customer error + support number]
+    E1 --> E2[Send customer error]
     D -->|Yes| F{File present and supported media type?}
     F -->|No| E3[Record DOC_MISSING or DOC_INVALID]
-    E3 --> E4[Send customer error + support number]
+    E3 --> E4[Send customer error]
     F -->|Yes| G[Validate size, extension and PDF/image structure]
     G --> H{File valid?}
     H -->|No| E5[Record DOC_INVALID / DOC_CORRUPTED / DOC_TOO_LARGE]
-    E5 --> E6[Send customer error + support number]
+    E5 --> E6[Send customer error]
     H -->|Yes| I[Malware / security scan]
     I --> J{Scan passed?}
     J -->|No| E7[Quarantine file + record security event]
-    E7 --> E8[Send safe customer error + support number]
+    E7 --> E8[Send safe customer error ]
     J -->|Yes| K[Store in temporary staging]
     K --> L[Create RECEIVED document record + idempotency key]
     L --> M[Enqueue processing job]
@@ -206,11 +206,11 @@ flowchart TD
     E12 --> E13[Send unsupported-document message]
     Q -->|Yes| R{Document matches expected type / current request?}
     R -->|No| E14[Record DOC_TYPE_MISMATCH]
-    E14 --> E15[Send wrong-document message + support number]
+    E14 --> E15[Send wrong-document message ]
     R -->|Yes| S[Extract document-specific fields]
     S --> T{Required fields present and valid?}
     T -->|No| E16[Record DOC_REQUIRED_FIELD_MISSING or DOC_UNREADABLE]
-    E16 --> E17[Request clearer / complete resubmission + support number]
+    E16 --> E17[Request clearer / complete resubmission]
     T -->|Yes| U[Validate formats, checksum where applicable, confidence]
     U --> V{Client identified?}
     V -->|Passport match| W[Attach to existing client]
@@ -225,7 +225,7 @@ flowchart TD
     AC --> AD[Staff verifies/corrects data]
     AD --> AE{Staff verification successful?}
     AE -->|No| AF[Set FAILED or REQUEST_RESUBMISSION]
-    AF --> AG[Send appropriate customer message + support number]
+    AF --> AG[Send appropriate customer message ]
     AE -->|Yes| AB
     AB --> AH[Write audit log + processing history]
     AH --> AI[Set COMPLETED]
