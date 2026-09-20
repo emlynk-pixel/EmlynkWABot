@@ -203,7 +203,7 @@ flowchart TD
     E10 --> E11[Send unknown-document message ]
     P -->|Yes| Q{Document type supported?}
     Q -->|No| E12[Record DOC_TYPE_UNSUPPORTED]
-    E12 --> E13[Send unsupported-document message + support number]
+    E12 --> E13[Send unsupported-document message]
     Q -->|Yes| R{Document matches expected type / current request?}
     R -->|No| E14[Record DOC_TYPE_MISMATCH]
     E14 --> E15[Send wrong-document message + support number]
@@ -211,7 +211,7 @@ flowchart TD
     S --> T{Required fields present and valid?}
     T -->|No| E16[Record DOC_REQUIRED_FIELD_MISSING or DOC_UNREADABLE]
     E16 --> E17[Request clearer / complete resubmission + support number]
-    T -->|Yes| U[Validate formats, MRZ/checksum where applicable, confidence]
+    T -->|Yes| U[Validate formats, checksum where applicable, confidence]
     U --> V{Client identified?}
     V -->|Passport match| W[Attach to existing client]
     V -->|Mobile/session match| X[Attach to existing or provisional client]
