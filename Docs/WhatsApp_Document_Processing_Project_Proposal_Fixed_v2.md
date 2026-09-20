@@ -772,7 +772,10 @@ When a police report slip/receipt is received:
 4. Validate the date.
 5. Store the date with the relevant document/workflow record.
 6. Calculate the reminder date.
-7. Display countdown/status in the dashboard.
+7. Set the police report workflow status to `PENDING`.
+8. Display countdown/status in the dashboard.
+9. When an administrator later uploads and finalizes the actual police report, create/update the corresponding document record and mark the police report workflow as `COMPLETED`.
+10. The reminder process must check for a completed/finalized police report before sending any warning. Once completed, the countdown and warning messages stop.
 
 Formula:
 
@@ -793,6 +796,8 @@ Reminder Date:  2026-09-22
 
 Before the 21-day countdown is calculated, the system must first check whether a police report slip has been uploaded for the client. If no slip has been uploaded, the status remains `NOT_UPLOADED` / `MISSING` and no countdown is started. If the slip exists, the system processes the slip, extracts the submitted date, validates it, and starts the 21-day calculation.
 
+Before every countdown evaluation or warning message, the system must also check whether the administrator has already uploaded and finalized the actual police report. The finalized police-report document record is the source of truth. If the actual police report is finalized, the status becomes `COMPLETED`, the countdown stops, and no further due-soon, due-today, or overdue warning is generated.
+
 ```mermaid
 flowchart TD
     A[Check Client Police Report Slip Status] --> B{Police Slip Uploaded}
@@ -804,16 +809,21 @@ flowchart TD
     F -->|No| G[Manual Review]
     G --> N
     F -->|Yes| H[Calculate Submitted Date Plus 21 Days]
-    H --> I[Calculate Remaining Days]
-    I --> J{Status}
-    J -->|More Than 7 Days| K[Pending]
-    J -->|1 to 7 Days| L[Due Soon]
-    J -->|Zero Days| M[Due Today]
-    J -->|Less Than Zero| O[Overdue]
-    K --> N
+    H --> I{Actual Police Report Finalized by Admin}
+    I -->|Yes| P[Status: Completed]
+    P --> Q[Stop Countdown and Warning Messages]
+    Q --> N
+    I -->|No| J[Calculate Remaining Days]
+    J --> K{Status}
+    K -->|More Than 7 Days| L[Pending]
+    K -->|1 to 7 Days| M[Due Soon]
+    K -->|Zero Days| O[Due Today]
+    K -->|Less Than Zero| R[Overdue]
     L --> N
-    M --> N
-    O --> N
+    M --> S[Generate Warning if Configured]
+    O --> S
+    R --> S
+    S --> N
 ```
 
 The application should use a single agreed timezone for date calculations, preferably the business operating timezone, and should store timestamps in a consistent format such as UTC while converting for display.
@@ -889,10 +899,10 @@ Examples:
 ```text
 documents.processing_status = 'FAILED'
 documents.verification_status = 'CONFLICT'
-police submitted_date + 21 days <= CURRENT_DATE
+police submitted_date + 21 days <= CURRENT_DATE AND finalized police report does not exist
 ```
 
-For police-report alerts, the application calculates the current status from the stored date rather than persisting a duplicate alert record.
+For police-report alerts, the application first checks whether the actual police report has already been uploaded and finalized by an administrator. If a finalized police-report document exists, the status is `COMPLETED` and no reminder alert is produced. Otherwise, the application calculates the current status from the stored slip submission date rather than persisting a duplicate alert record.
 
 ---
 
@@ -1687,15 +1697,21 @@ The exact SQL representation of `picture` should be chosen according to storage 
 
 ## AC-17 — Due Today
 
-**Given** the current date equals the calculated reminder date,  
+**Given** the current date equals the calculated reminder date and the actual police report has not been finalized by an administrator,  
 **When** the dashboard is loaded,  
 **Then** the police report must appear as `Due Today`.
 
 ## AC-18 — Overdue
 
-**Given** the current date is after the calculated reminder date,  
+**Given** the current date is after the calculated reminder date and the actual police report has not been finalized by an administrator,  
 **When** the dashboard is loaded,  
 **Then** the police report must appear as `Overdue`.
+
+## AC-18A — Police Report Completion Stops Reminders
+
+**Given** a police report slip started the 21-day countdown,  
+**When** an administrator uploads and finalizes the actual police report before or after the reminder date,  
+**Then** the system must mark the workflow as `COMPLETED`, stop the countdown, and generate no further warning messages for that police report.
 
 ## AC-19 — Duplicate Webhook
 
@@ -1796,6 +1812,8 @@ The exact SQL representation of `picture` should be chosen according to storage 
 - 3 days remaining
 - Due today
 - Overdue
+- Admin uploads/finalizes actual police report while countdown is active
+- Completed police report stops future warning messages
 
 ## 43.6 Security Tests
 
@@ -1937,10 +1955,12 @@ Partial and complete submissions.
 ### Tasks
 - Date extraction
 - +21-day calculation
+- Check whether the actual police report has been uploaded/finalized by an administrator before each reminder evaluation
+- Stop countdown and warnings when the police report is completed
 - Dashboard statuses
 
 ### Testing
-Date boundary tests.
+Date boundary tests and completion/reminder-stop tests.
 
 ---
 
