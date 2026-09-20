@@ -1,0 +1,2 @@
+Feat:- Add medical upload and admin dashboard
+Feat:- When user send wrong doc or unclear doc , user save that users details with error.
