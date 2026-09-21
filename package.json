@@ -16,5 +16,10 @@
   "bugs": {
     "url": "https://github.com/emlynk-pixel/EmlynkWABot/issues"
   },
-  "homepage": "https://github.com/emlynk-pixel/EmlynkWABot#readme"
+  "homepage": "https://github.com/emlynk-pixel/EmlynkWABot#readme",
+  "dependencies": {
+    "@prisma/client": "^7.10.0",
+    "dotenv": "^18.0.1",
+    "prisma": "^7.10.0"
+  }
 }

@@ -1,0 +1,91 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+//Added admin table
+
+model Admin {
+  adminId      String   @id @map("admin_id")
+  name         String
+  email        String   @unique
+  passwordHash String?  @map("password_hash")
+  role         String
+  status       String   @default("ACTIVE")
+  createdDate  DateTime @default(now()) @map("created_date")
+  updatedDate  DateTime @updatedAt @map("updated_date")
+
+  @@map("admins")
+}
+
+//added user table
+
+model User {
+  passportId         String          @id @map("passport_id")
+  uniqueId           String          @unique @map("unique_id")
+  firstName          String?         @map("first_name")
+  otherName          String?         @map("other_name")
+  dateOfBirth        DateTime?       @map("date_of_birth")
+  placeOfBirth       String?         @map("place_of_birth")
+  passportExpiryDate DateTime?       @map("passport_expiry_date")
+  picture            String?
+  whatsappNumber     String?         @map("whatsapp_number")
+  contactNumber      String?         @map("contact_number")
+  address            String?
+  job                String?
+  createdDate        DateTime        @default(now()) @map("created_date")
+  updatedDate        DateTime        @updatedAt @map("updated_date")
+  documents          Document[]
+  temporaryData      TemporaryData[]
+
+  @@map("users")
+}
+
+//added document table
+
+model Document {
+  documentId         String   @id @map("document_id")
+  passportId         String   @map("passport_id")
+  documentType       String   @map("document_type")
+  originalFilename   String   @map("original_filename")
+  storedFilename     String   @map("stored_filename")
+  storagePath        String   @map("storage_path")
+  mimeType           String?  @map("mime_type")
+  fileSize           BigInt?  @map("file_size")
+  receivedDate       DateTime @map("received_date")
+  processingStatus   String   @map("processing_status")
+  verificationStatus String   @map("verification_status")
+  ocrConfidence      Decimal? @map("ocr_confidence")
+  createdDate        DateTime @default(now()) @map("created_date")
+  updatedDate        DateTime @updatedAt @map("updated_date")
+
+  user User @relation(fields: [passportId], references: [passportId])
+
+  @@map("documents")
+}
+
+//added temporary table
+
+model TemporaryData {
+  temporaryId          String   @id @map("temporary_id")
+  passportId           String?  @map("passport_id")
+  uniqueId             String?  @map("unique_id")
+  whatsappNumber       String?  @map("whatsapp_number")
+  documentType         String   @map("document_type")
+  temporaryStoragePath String   @map("temporary_storage_path")
+  processingStatus     String   @map("processing_status")
+  createdDate          DateTime @default(now()) @map("created_date")
+
+  user User? @relation(fields: [passportId], references: [passportId])
+
+  @@map("temporary_data")
+}
