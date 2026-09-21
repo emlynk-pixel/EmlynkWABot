@@ -1,3 +1,9 @@
 # Credentials and secrets
 Gmail.txt
-*.env
+node_modules/
+.env
+.env.*
+!.env.example
+logs/
+*.log
+.DS_Store
