@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: emlynk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: emlynk_user
+      POSTGRES_PASSWORD: emlynk_password
+      POSTGRES_DB: emlynk_docs
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
