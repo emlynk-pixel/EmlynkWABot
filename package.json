@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -18,8 +19,10 @@
   },
   "homepage": "https://github.com/emlynk-pixel/EmlynkWABot#readme",
   "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "dotenv": "^18.0.1",
+    "pg": "^8.23.0",
     "prisma": "^7.10.0"
   }
 }
