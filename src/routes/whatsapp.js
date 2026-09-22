@@ -28,16 +28,66 @@ router.get("/webhook", (req,res) => {
 router.post("/webhook", (req,res) => {
     //Whatsapp message eka front end eka server eka data eka gannawa
 
-    console.log(
-        "Whatsapp webhook event",
-         JSON.stringify(req.body,null,2)
-    );
+    try{
 
-    //Heavy documments move to background queue and process
+        //META API message validation
+        const entry = req.body?.entry?.[0];
+        const changge = entry?.changes?.[0];
+        const value = change?.value;
 
-    return res.sendStatus(200);
+        if (!value?.message || value.message.length === 0){
+            return res.sendStatus(200);
+        }
 
-  
+        //Process first incomingg mmessage
+        const message = value.message[0];
+        const senderNumber = message.from;
+        const messageId = message.id;
+
+        //Message type
+
+        const messageType = MessageChannel.type;
+
+
+        let mediaId = null;
+        let fileName = null;
+        let mimeType = null;
+
+        if(messaggeType === "document"){
+            mediaId = message.doument?.id || null;
+            fileName = message.doument?.name || null;
+            mimeType = message.doumment?.mime_type || null;
+        }
+
+        
+
+        console.log("WhatsApp Message Parsed:", {
+            senderNumber,
+            messageId,
+            messageType,
+            fileName,
+            mediaId,
+            mimeType
+        });
+
+        //Give quick success response for meta webhook
+        return res.sendStatus(200);
+    } catch(error){
+        console.error("Whatsapp webhook parsing error:", error)
+        return res.sendStatus(500);
+    }
+
 });
 
 export default router;
+
+        
+
+
+
+
+        
+
+
+
+
