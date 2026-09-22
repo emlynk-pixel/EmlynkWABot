@@ -7,6 +7,8 @@ node_modules/
 logs/
 *.log
 .DS_Store
+node_modules
+
 
 /generated/prisma
 prisma/seed.js
