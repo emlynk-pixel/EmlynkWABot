@@ -390,13 +390,13 @@ Create a `.env` file in the project root directory (you can copy values from `.e
 PORT=3000
 
 # PostgreSQL Connection String (Docker Container)
-DATABASE_URL="postgresql://emlynk_user:emlynk_password@localhost:5432/emlynk_docs?schema=public"
+DATABASE_URL="Add Databbase URl Here"
 
 # JWT Authentication Secret
 JWT_SECRET="your-super-secret-jwt-key-change-in-production"
 
 # WhatsApp Business API Webhook Verification Token
-WHATSAPP_VERIFY_TOKEN="emlynk_whatsapp_verify_token_2026"
+WHATSAPP_VERIFY_TOKEN="Add whatsapp verify token here"
 ```
 
 > [!CAUTION]
