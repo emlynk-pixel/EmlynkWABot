@@ -52,29 +52,10 @@ router.post("/webhook", async (req, res) => {
         let mimeType = null;
 
         // FIX: messageType spelling saha document property names
-        const documentMetadata = extractDocumentMetadata(message);
+        
         if (messageType === "document") {
 
-            try{
-
-                const mediaUrl = await getWhatsappMediaUrl(documentMetadata.mediaId);
-                const fileBuffer = await downloadWhatsappMedia(mediaUrl);
-
-                console.log("WhatsApp media downloaded:", {
-                    messageId,
-                    fileName,
-                    mimeType,
-                    fileSize: fileBuffer.length,
-                    
-                });
-
-
-
-            }catch(error){
-                console.error("WhatsApp mmedia download failed:", error.message);
-                return res.sendStatus(200);
-            }
-
+            const documentMetadata = extractDocumentMetadata(message);
 
             if (!documentMetadata.valid) {
                 console.warn("Invalid Whatsapp document event", {
@@ -90,6 +71,28 @@ router.post("/webhook", async (req, res) => {
             mediaId = documentMetadata.mediaId;
             fileName = documentMetadata.fileName;
             mimeType = documentMetadata.mimeType;
+
+            try{
+                const mediaUrl = await getWhatsappMediaUrl(mediaId);
+                const fileBuffer = await downloadWhatsappMedia(mediaUrl);
+
+                
+                console.log("WhatsApp media downloaded:", {
+                    messageId,
+                    fileName,
+                    mimeType,
+                    fileSize: fileBuffer.length,
+                    
+                });
+
+
+
+            }catch(error){
+                console.error("WhatsApp media download failed:", error.message);
+                return res.sendStatus(200); 
+            }
+
+            
             
         }
 

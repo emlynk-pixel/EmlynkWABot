@@ -47,9 +47,14 @@ export async function getWhatsappMediaUrl(MediaId){
 //Download actual binary file content from media url
 
 export async function downloadWhatsappMedia(mediaUrl){
+
+    if (!process.env.WHATSAPP_ACCESS_TOKEN){
+        throw new Error("WHATSAPP_ACCESS_TOKEN not found in env variables");
+    }
+
     const response = await fetch(mediaUrl, {
         method: "GET",
-        header: {
+        headers: {
             Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
         },
     });
@@ -58,6 +63,7 @@ export async function downloadWhatsappMedia(mediaUrl){
     // IF download req is fail 
 
     if (!response.ok){
+        const errorData = await response.text();
         throw new Error(
             `Failed to download Whatsapp media: ${response.status} - ${errorData}`
         );
