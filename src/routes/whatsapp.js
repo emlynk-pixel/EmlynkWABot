@@ -1,6 +1,8 @@
 import express from "express";
+import { extractDocumentMetadata } from "../utils/whatsappMedia.js";
 
 const router = express.Router();
+
 
 // Meta me GET request eka use karala ape webhook endpoint eka verify karanawa
 router.get("/webhook", (req, res) => {
@@ -49,17 +51,28 @@ router.post("/webhook", (req, res) => {
         let mimeType = null;
 
         // FIX: messageType spelling saha document property names
+        const documentMetadata = extractDocumentMetadata(message);
         if (messageType === "document") {
-            // Media download karanna passe use karana Meta media ID eka
-            mediaId = message.document?.id || null;
 
-            // Original uploaded filename eka
-            fileName = message.document?.filename || null;
 
-            // Example: application/pdf
-            mimeType = message.document?.mime_type || null;
+            if (!documentMetadata.valid) {
+                console.warn("Invalid Whatsapp document event", {
+                    messageId,
+                    senderNumber,
+                    reason: documentMetadata.reason,
+                });
+                return res.sendStatus(200);
+
+            }
+
+            //Valid document mmetadata
+            mediaId = documentMetadata.mediaId;
+            fileName = documentMetadata.fileName;
+            mimeType = documentMetadata.mimeType;
+            
         }
 
+    
         console.log("WhatsApp Message Parsed:", {
             senderNumber,
             messageId,
