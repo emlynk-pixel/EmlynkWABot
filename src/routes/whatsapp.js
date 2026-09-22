@@ -1,5 +1,6 @@
 import express from "express";
 import { extractDocumentMetadata } from "../utils/whatsappMedia.js";
+import {getWhatsappMediaUrl,downloadWhatsappMedia} from "../services/whatsappMediaService.js"
 
 const router = express.Router();
 
@@ -22,7 +23,7 @@ router.get("/webhook", (req, res) => {
     return res.sendStatus(403);
 });
 
-router.post("/webhook", (req, res) => {
+router.post("/webhook", async (req, res) => {
     try {
         // Meta webhook payload eken main values tika gannawa
         const entry = req.body?.entry?.[0];
@@ -53,6 +54,26 @@ router.post("/webhook", (req, res) => {
         // FIX: messageType spelling saha document property names
         const documentMetadata = extractDocumentMetadata(message);
         if (messageType === "document") {
+
+            try{
+
+                const mediaUrl = await getWhatsappMediaUrl(documentMetadata.mediaId);
+                const fileBuffer = await downloadWhatsappMedia(mediaUrl);
+
+                console.log("WhatsApp media downloaded:", {
+                    messageId,
+                    fileName,
+                    mimeType,
+                    fileSize: fileBuffer.length,
+                    
+                });
+
+
+
+            }catch(error){
+                console.error("WhatsApp mmedia download failed:", error.message);
+                return res.sendStatus(200);
+            }
 
 
             if (!documentMetadata.valid) {
