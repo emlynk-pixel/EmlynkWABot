@@ -16,7 +16,7 @@ CREATE TABLE "admins" (
 CREATE TABLE "users" (
     "passport_id" TEXT NOT NULL,
     "unique_id" TEXT NOT NULL,
-    "first_name" TEXT,
+    "first_name" TEXT NOT NULL,
     "other_name" TEXT,
     "date_of_birth" TIMESTAMP(3),
     "place_of_birth" TEXT,
@@ -55,9 +55,9 @@ CREATE TABLE "documents" (
 -- CreateTable
 CREATE TABLE "temporary_data" (
     "temporary_id" TEXT NOT NULL,
-    "passport_id" TEXT,
-    "unique_id" TEXT,
-    "whatsapp_number" TEXT,
+    "passport_id" TEXT NOT NULL,
+    "unique_id" TEXT NOT NULL,
+    "whatsapp_number" TEXT NOT NULL,
     "document_type" TEXT NOT NULL,
     "temporary_storage_path" TEXT NOT NULL,
     "processing_status" TEXT NOT NULL,
