@@ -2,7 +2,7 @@ import express from "express";
 import { extractDocumentMetadata } from "../utils/whatsappMedia.js";
 import {getWhatsappMediaUrl,downloadWhatsappMedia} from "../services/whatsappMediaService.js";
 import { verifyWhatsappSignature } from "../middleware/verifyWhatsAppSignature.js";
-
+import { isMessageProcessed, markMessageAsProcessed } from "../utils/messageIdempotency.js";
 
 const router = express.Router();
 
@@ -52,6 +52,16 @@ router.post("/webhook",verifyWhatsappSignature, async (req, res) => {
         let mediaId = null;
         let fileName = null;
         let mimeType = null;
+
+        //Ignore duplicates messages
+
+        if(isMessageProcessed(messageId)){
+            console.log("Duplicate WhatsApp message ignored:", messageId);
+
+            return res.sendStatus(200);
+        }
+
+
 
         // FIX: messageType spelling saha document property names
         
@@ -107,6 +117,8 @@ router.post("/webhook",verifyWhatsappSignature, async (req, res) => {
             mediaId,
             mimeType
         });
+
+        markMessageAsProcessed(messageId);
 
         // Meta webhook ekata quick success response ekak denawa
         return res.sendStatus(200);
