@@ -9,6 +9,8 @@ logs/
 .DS_Store
 node_modules
 storage/temp
+Docs/DB.txt
+Docs/DB
 
 
 /generated/prisma
