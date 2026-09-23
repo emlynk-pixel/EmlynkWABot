@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
+import supabase from "../config/supabase.js";
 
 //Temp folder for save docs
 
@@ -49,24 +50,27 @@ export async function saveTemporaryFile({
 
 const storedFileName = `${crypto.randomUUID()}${extension}`;
 
-const storagePath = path.join(
-    TEMP_DIRECTORY,
-    storedFileName
-);
 
 
+const storagePath = `temporary/${storedFileName}`;
 
-//Save the file buffer async without block execution
+const { data, error} = await supabase.storage
+    .from(process.env.SUPABASE_BUCKET)
+    .upload(storagePath,fileBuffer,{
+        contentType: mimeType,
+        upsert: false,
+    });
 
-await fs.writeFile(
-    storagePath,
-    fileBuffer
+    if (error){
+        throw new Error(
+            `Supabase temporary upload failed: ${error.message}`
+        );
+    }
 
-);
 
-return{
-    storedFileName,
-    storagePath,
-};
+    return{
+       storedFileName,
+       storagePath,
+    };
 
 }
