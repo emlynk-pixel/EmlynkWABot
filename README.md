@@ -316,13 +316,22 @@ EmlynkWABot/
     │   ├── prisma.js             # Shared Prisma Client instance
     │   └── prisma-test.js        # Prisma connection tester
     ├── middleware/               # HTTP middleware
-    │   └── auth.js               # JWT Bearer token authentication middleware
+    │   ├── auth.js               # JWT Bearer token authentication middleware
+    │   └── verifyWhatsAppSignature.js # Meta webhook HMAC SHA-256 signature verification
     ├── routes/                   # API Route definitions
     │   ├── auth.js               # Admin authentication endpoints (/auth/login, /auth/me)
     │   └── whatsapp.js           # WhatsApp Webhook endpoints (/whatsapp/webhook)
+    ├── services/                 # Business logic & integration services
+    │   ├── documentClassificationService.js # Filename & MIME type document classifier
+    │   ├── temporaryDataService.js          # DB service for temporary_data records
+    │   ├── temporaryStorageService.js       # Disk storage service for temp uploads
+    │   └── whatsappMediaService.js          # Graph API media URL fetcher & downloader
     └── utils/                    # Utility functions
+        ├── fileValidation.js     # Document MIME type and size validator
+        ├── messageIdempotency.js # WhatsApp message deduplication tracker
         ├── password.js           # Bcrypt hash generation and comparison
-        └── password-test.js      # Password utility tester
+        ├── password-test.js      # Password utility tester
+        └── whatsappMedia.js      # Document payload metadata extractor
 ```
 
 ---
@@ -340,9 +349,15 @@ EmlynkWABot/
 | **Admin Login Endpoint** | ✅ Completed | `POST /auth/login` verifies credentials and returns 1h JWT |
 | **JWT Auth Middleware** | ✅ Completed | `authenticateAdmin` validates `Authorization: Bearer <token>` |
 | **Protected Admin Route** | ✅ Completed | `GET /auth/me` returns authenticated admin profile |
-| **WhatsApp Webhook Verification** | 🚧 In Progress | `GET /whatsapp/webhook` verifies Meta `hub.verify_token` |
-| **WhatsApp Event Ingestion** | 🚧 In Progress | `POST /whatsapp/webhook` accepts JSON payload stub |
-| **Document Classification & OCR** | ⏳ Planned | Document AI / OCR integration for passport & slip processing |
+| **WhatsApp Webhook Verification** | ✅ Completed | `GET /whatsapp/webhook` verifies Meta `hub.verify_token` |
+| **WhatsApp Signature Verification** | ✅ Completed | `verifyWhatsappSignature` middleware validates HMAC SHA-256 Meta signatures |
+| **WhatsApp Message Ingestion** | ✅ Completed | `POST /whatsapp/webhook` ingests payloads & extracts document metadata |
+| **Message Deduplication & Idempotency** | ✅ Completed | `isMessageProcessed` & `markMessageAsProcessed` prevent duplicate message processing |
+| **WhatsApp Media Download Service** | ✅ Completed | Fetches Graph API media URLs & downloads file buffers into backend |
+| **Document File & MIME Validation** | ✅ Completed | `validateDocumentFile` checks MIME type constraints and size limits |
+| **Temporary File & DB Storage** | ✅ Completed | Saves files in temp storage & creates `temporary_data` records via `createTemporaryDocumentRecord` |
+| **Document Classification Engine** | 🚧 In Progress | Initial filename & MIME classifier (`classifyDocument`) complete; OCR engine in progress |
+| **Passport OCR & Full Extraction** | ⏳ Planned | Tesseract.js / Document AI integration for passport & slip processing |
 | **Identity Conflict Engine** | ⏳ Planned | Reconciliation matrix matching WhatsApp number & Passport ID |
 | **21-Day Police Report Countdown** | ⏳ Planned | Submission date extraction & background reminder scheduler |
 | **Private Object Storage** | ⏳ Planned | Secure document renaming & upload to object storage |
@@ -356,12 +371,12 @@ EmlynkWABot/
 |:---:|---|:---:|---|
 | **Phase 1** | Existing System & Data Analysis | ✅ Completed | Excel workbook structure analysis, field mapping & migration rules |
 | **Phase 2** | Database Preparation | ✅ Completed | Prisma ORM setup, core 4 models, migrations, DB seed script |
-| **Phase 3** | WhatsApp Integration | 🚧 In Progress | Meta Webhook verification, payload receiver & media download pipeline |
-| **Phase 4** | Document Ingestion | ⏳ Planned | Multi-file payload parsing, MIME type validation & size checking |
-| **Phase 5** | Classification & OCR | ⏳ Planned | Passport OCR text extraction, slip submission date identification |
+| **Phase 3** | WhatsApp Integration | ✅ Completed | Meta Webhook verification, HMAC SHA-256 signature verification & webhook route |
+| **Phase 4** | Document Ingestion | ✅ Completed | WhatsApp Graph API media download, MIME validation & duplicate idempotency tracking |
+| **Phase 5** | Classification & OCR | 🚧 In Progress | Filename & MIME classification service active; OCR / Document AI extraction in progress |
 | **Phase 6** | Passport Verification | ⏳ Planned | Identity matching rules, conflict detection & anti-overwrite checks |
 | **Phase 7** | Permanent Storage | ⏳ Planned | Structured folder naming convention & private cloud storage upload |
-| **Phase 8** | Temporary Workflow | ⏳ Planned | Pending data management via `temporary_data` table |
+| **Phase 8** | Temporary Workflow | ✅ Completed | Disk storage & `temporary_data` table integration for incoming unverified files |
 | **Phase 9** | Police Report Countdown | ⏳ Planned | 21-day countdown service & Admin completion suppression handler |
 | **Phase 10** | Admin Dashboard | ⏳ Planned | REST API for dashboard, flag review UI & manual override controls |
 | **Phase 11** | Reporting and Alerts | ⏳ Planned | System alert metrics, overdue reports & missing document summaries |
