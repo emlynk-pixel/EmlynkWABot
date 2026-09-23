@@ -1,6 +1,8 @@
 import express from "express";
 import { extractDocumentMetadata } from "../utils/whatsappMedia.js";
-import {getWhatsappMediaUrl,downloadWhatsappMedia} from "../services/whatsappMediaService.js"
+import {getWhatsappMediaUrl,downloadWhatsappMedia} from "../services/whatsappMediaService.js";
+import { verifyWhatsappSignature } from "../middleware/verifyWhatsAppSignature.js";
+
 
 const router = express.Router();
 
@@ -23,7 +25,7 @@ router.get("/webhook", (req, res) => {
     return res.sendStatus(403);
 });
 
-router.post("/webhook", async (req, res) => {
+router.post("/webhook",verifyWhatsappSignature, async (req, res) => {
     try {
         // Meta webhook payload eken main values tika gannawa
         const entry = req.body?.entry?.[0];
