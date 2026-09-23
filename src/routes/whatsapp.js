@@ -11,6 +11,10 @@ import { getWhatsappMediaUrl, downloadWhatsappMedia } from "../services/whatsapp
 import { saveTemporaryFile } from "../services/temporaryStorageService.js";
 import { createTemporaryDocumentRecord } from "../services/temporaryDataService.js";
 import { classifyDocument } from "../services/documentClassificationService.js";
+import { extractDocumentText } from "../services/ocrService.js";
+
+
+
 
 const router = express.Router();
 
@@ -70,6 +74,7 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
       return res.sendStatus(200);
     }
 
+//////////////////////////////////////////////////////////////  
     // Process document messages
     if (messageType === "document") {
       const documentMetadata = extractDocumentMetadata(message);
@@ -82,6 +87,14 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
         });
         return res.sendStatus(200);
       }
+//////////////////////////////////////////////////////////////  
+
+
+
+
+
+
+//////////////////////////////////////////////////////////////  
 
       // Valid document metadata
       mediaId = documentMetadata.mediaId;
@@ -112,6 +125,17 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           mimeType,
           fileSize: fileBuffer.length,
         });
+
+//////////////////////////////////////////////////////////////  
+
+
+
+
+
+
+
+//////////////////////////////////////////////////////////////  
+
 
         // Save temporary storage
         const temporaryFile = await saveTemporaryFile({
@@ -161,6 +185,37 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           mimeType,
           fileSize: fileBuffer.length,
         });
+
+//////////////////////////////////////////////////////////////  
+
+
+
+        //Read actual content from Downloaded Doc
+//////////////////////////////////////////////////////////////
+
+        const textExtraction = await extractDocumentText({
+
+            fileBuffer,
+            mimeType,
+        });
+
+        console.log( " Document text extraction result:", {
+            messageId,
+            success: textExtraction.success,
+            method: textExtraction.method,
+            textLength: textExtraction.text.length || 0,
+            confidence: textExtraction.confidence ?? null,
+
+        });
+
+//////////////////////////////////////////////////////////////  
+
+
+
+
+
+
+
       } catch (error) {
         console.error("WhatsApp media download failed:", error.message);
         return res.sendStatus(200);
