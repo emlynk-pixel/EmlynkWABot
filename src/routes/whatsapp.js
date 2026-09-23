@@ -4,6 +4,7 @@ import {getWhatsappMediaUrl,downloadWhatsappMedia} from "../services/whatsappMed
 import { verifyWhatsappSignature } from "../middleware/verifyWhatsAppSignature.js";
 import { isMessageProcessed, markMessageAsProcessed } from "../utils/messageIdempotency.js";
 import { validateDocumentFile } from "../utils/fileValidation.js";
+import { saveTemporaryFile } from "../services/temporaryStorageService.js";
 
 const router = express.Router();
 
@@ -113,6 +114,20 @@ router.post("/webhook",verifyWhatsappSignature, async (req, res) => {
                     fileSize: fileBuffer.length,
                 });
 
+                //Save temp storage ********************
+
+                const temporaryFile = await saveTemporaryFile({
+                    fileBuffer,
+                    originalFileName: fileName,
+                    mimeType,
+                });
+
+                console.log("WhatsApp Document temmporary stored:", {
+                    messageId,
+                    storedFileName: temporaryFile.storedFileName,
+                    storagePath: temporaryFile.storagePath,
+                });
+
                 
                 console.log("WhatsApp media downloaded:", {
                     messageId,
@@ -121,6 +136,8 @@ router.post("/webhook",verifyWhatsappSignature, async (req, res) => {
                     fileSize: fileBuffer.length,
                     
                 });
+
+                
 
 
 
