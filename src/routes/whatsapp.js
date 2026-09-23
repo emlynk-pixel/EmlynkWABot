@@ -3,6 +3,7 @@ import { extractDocumentMetadata } from "../utils/whatsappMedia.js";
 import {getWhatsappMediaUrl,downloadWhatsappMedia} from "../services/whatsappMediaService.js";
 import { verifyWhatsappSignature } from "../middleware/verifyWhatsAppSignature.js";
 import { isMessageProcessed, markMessageAsProcessed } from "../utils/messageIdempotency.js";
+import { validateDocumentFile } from "../utils/fileValidation.js";
 
 const router = express.Router();
 
@@ -52,6 +53,7 @@ router.post("/webhook",verifyWhatsappSignature, async (req, res) => {
         let mediaId = null;
         let fileName = null;
         let mimeType = null;
+        
 
         //Ignore duplicates messages
 
@@ -60,7 +62,6 @@ router.post("/webhook",verifyWhatsappSignature, async (req, res) => {
 
             return res.sendStatus(200);
         }
-
 
 
         // FIX: messageType spelling saha document property names
@@ -87,6 +88,30 @@ router.post("/webhook",verifyWhatsappSignature, async (req, res) => {
             try{
                 const mediaUrl = await getWhatsappMediaUrl(mediaId);
                 const fileBuffer = await downloadWhatsappMedia(mediaUrl);
+
+                //File Validation
+
+                const fileValidation = validateDocumentFile({
+                    mimeType,
+                    fileSize: fileBuffer.length,
+                });
+
+                if (!fileValidation.valid){
+                    console.warn("WhatsApp document validation failed:", {
+                        messageId,
+                        reason: fileValidation.reason,
+                    });
+
+                    return res.sendStatus(200);
+                }
+
+                console.log("WhatsApp document validation passed",{
+
+                    messageId,
+                    fileName,
+                    mimeType,
+                    fileSize: fileBuffer.length,
+                });
 
                 
                 console.log("WhatsApp media downloaded:", {
