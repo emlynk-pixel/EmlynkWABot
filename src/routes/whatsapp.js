@@ -10,6 +10,7 @@ import { extractDocumentMetadata } from "../utils/whatsappMedia.js";
 import { getWhatsappMediaUrl, downloadWhatsappMedia } from "../services/whatsappMediaService.js";
 import { saveTemporaryFile } from "../services/temporaryStorageService.js";
 import { createTemporaryDocumentRecord } from "../services/temporaryDataService.js";
+import { classifyDocument } from "../services/documentClassificationService.js";
 
 const router = express.Router();
 
@@ -119,9 +120,25 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           mimeType,
         });
 
+        const classification = classifyDocument({
+
+            fileName,
+            mimeType,
+            
+        });
+
+        console.log("Initial document classification",{
+
+            messageId,
+            documentType: classification.documentType,
+            confidence: classification.confidence,
+            source: classification.source,
+        });
+
         const temporaryRecord = await createTemporaryDocumentRecord({
           whatsappNumber: senderNumber,
           temporaryStoragePath: temporaryFile.storagePath,
+          documentType: classification.documentType,
         });
 
         console.log("Temporary document record created:", {
