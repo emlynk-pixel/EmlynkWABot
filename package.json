@@ -20,7 +20,7 @@
   },
   "homepage": "https://github.com/emlynk-pixel/EmlynkWABot#readme",
   "dependencies": {
-    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/adapter-pg": "6.19.3",
     "@prisma/client": "6.19.3",
     "@supabase/supabase-js": "^2.117.1",
     "bcrypt": "^6.0.0",
