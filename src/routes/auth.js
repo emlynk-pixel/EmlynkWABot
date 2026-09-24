@@ -7,31 +7,28 @@ import { authenticateAdmin } from "../middleware/auth.js";
 
 const router = express.Router();
 
-// Admin login endpoint
+// Admin login
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Check if email and pw are missing
     if (!email || !password) {
       return res.status(400).json({
         message: "Email and password are required",
       });
     }
 
-    //Find admin record from DB using email
     const admin = await prisma.admin.findUnique({
       where: { email },
     });
 
-    //if admin is not found return generic login error
+    // Same message for unknown email and wrong password, so emails can't be probed.
     if (!admin || !admin.passwordHash) {
       return res.status(401).json({
         message: "Invalid email or password",
       });
     }
 
-    //compare the entered password with stored bcrypt hash
     const passwordMatches = await comparePassword(
       password,
       admin.passwordHash
@@ -43,7 +40,6 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    //Create JWT Token for successful login
     const token = jwt.sign(
       {
         adminId: admin.adminId,
@@ -69,27 +65,23 @@ router.post("/login", async (req, res) => {
   }
 });
 
-export default router;
-
-
-router.get("/me", authenticateAdmin, async (req,res) => {
-  try{
+// Current admin's profile, looked up from the token's adminId.
+router.get("/me", authenticateAdmin, async (req, res) => {
+  try {
     const admin = await prisma.admin.findUnique({
       where: {
-        //finding the admin from DB using the token's AdminID
         adminId: req.admin.adminId,
       },
-      select:{
+      select: {
         adminId: true,
         email: true,
         name: true,
         role: true,
         status: true,
       },
-
     });
 
-    if(!admin){
+    if (!admin) {
       return res.status(404).json({
         message: "Admin not found!",
       });
@@ -99,15 +91,13 @@ router.get("/me", authenticateAdmin, async (req,res) => {
       message: "Admin profile successfully fetched",
       admin,
     });
-
-
-  }catch(error){
+  } catch (error) {
     console.error("Protected admin route error", error.message);
 
     return res.status(500).json({
-       message: "Internal Server Error",
+      message: "Internal Server Error",
     });
   }
 });
 
-
+export default router;

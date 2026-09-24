@@ -1,59 +1,34 @@
-export function classifyDocument({
-    fileName,
-    mimeType,
-}){
+// Quick first guess from the filename. It's only a hint: users often send
+// files with random names, so content-based classification has the final say.
 
-    if(!fileName){
-        return {
-            documentType: "UNKNOWN",
-            confidence: 0,
-            source: "FILENAME",
+// Checked in order. The first match wins.
+const FILENAME_RULES = [
+    { documentType: "PASSPORT", keywords: ["passport", "travel document"] },
+    { documentType: "MEDICAL", keywords: ["medical", "health"] },
+    { documentType: "POLICE_REPORT", keywords: ["police", "clearance"] },
+];
 
-        };
+const FILENAME_MATCH_CONFIDENCE = 50;
+
+export function classifyDocument({ fileName }) {
+    if (fileName) {
+        const normalizedFileName = fileName.toLowerCase();
+
+        const rule = FILENAME_RULES.find(({ keywords }) =>
+            keywords.some((keyword) => normalizedFileName.includes(keyword))
+        );
+
+        if (rule) {
+            return {
+                documentType: rule.documentType,
+                confidence: FILENAME_MATCH_CONFIDENCE,
+                source: "FILENAME",
+            };
+        }
     }
 
-    //Covert file name into Lowercase
-
-    const normalizedFileName = fileName.toLowerCase();
-
-    //Matching filename patterns to determine document type
-
-    if(
-        normalizedFileName.includes("passport")||
-        normalizedFileName.includes("travel document")
-
-    ){
-        return {
-            documentType: "PASSPORT",
-            confidence: 50,
-            source: "FILENAME",
-        };
-    }
-
-    if(
-        normalizedFileName.includes("medical")||
-        normalizedFileName.includes("health")
-    ){
-        return{
-            documentType: "MEDICAL",
-            confidence: 50,
-            source: "FILENAME",
-        };
-    }
-
-    if(
-        normalizedFileName.includes("police") ||
-        normalizedFileName.includes("clearance")
-    ){
-        return{
-            documentType: "POLICE_REPORT",
-            confidence: 50,
-            source: "FILENAME",
-        };
-    }
-
-    return{
-        documentType:"UNKNOWN",
+    return {
+        documentType: "UNKNOWN",
         confidence: 0,
         source: "FILENAME",
     };

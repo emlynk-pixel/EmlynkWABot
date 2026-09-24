@@ -1,16 +1,10 @@
-//Keep procssed ID in memory ( temporary )
-
+// In-memory only: cleared on restart and not shared between instances.
+// To be replaced by a database-backed check later.
 const processedMessageIds = new Set();
-
-//Check msg ID Lready processsed
 
 export function isMessageProcessed(messageId){
     return processedMessageIds.has(messageId);
 }
-
-
-
-//Keep successfully processed IDs
 
 export function markMessageAsProcessed(messageId){
     processedMessageIds.add(messageId);

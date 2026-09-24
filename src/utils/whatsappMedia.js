@@ -1,30 +1,22 @@
-//Extract media metadata from whatsapp document messages
-
+// Pull the media fields out of a WhatsApp document message.
 export function extractDocumentMetadata(message){
-    //Reject if not document msg
-
     if(!message || message.type !== "document"){
         return{
             valid: false,
             reason: "NOT_A_DOCUMENT",
-
         };
-
     }
 
-    //If not meta media ID file cannot download
-
+    // Without a media ID there's nothing to download.
     if(!message.document?.id){
         return{
-            valid:false,
-            reason:"NO_MEDIA_ID",
+            valid: false,
+            reason: "NO_MEDIA_ID",
         };
     }
 
-    //Return valid document mmetadata
-
     return{
-        valid:true,
+        valid: true,
         mediaId: message.document.id,
         fileName: message.document.filename,
         mimeType: message.document.mime_type,
