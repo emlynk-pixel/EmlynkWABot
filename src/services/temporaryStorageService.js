@@ -1,35 +1,15 @@
-import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 import supabase from "../config/supabase.js";
 
-//Temp folder for save docs
-
-const TEMP_DIRECTORY = path.join(
-
-    process.cwd(),
-    "storage",
-    "temp"
-
-);
-
-//Save downloaded doc buffer in temp storage
-
+// Upload a received document to the private bucket under temporary/.
 export async function saveTemporaryFile({
-
     fileBuffer,
     originalFileName,
     mimeType,
 }) {
 
-    //Create temp dir if doesnt exits
-
-    await fs.mkdir(TEMP_DIRECTORY, {
-        recursive: true,
-    });
-
-    //Get extension from original file
-
+    // Fall back to the MIME type when the filename has no extension.
     let extension = path.extname(originalFileName || "");
 
     if (!extension){
@@ -44,17 +24,12 @@ export async function saveTemporaryFile({
 
     }
 
-
-
-//Generate Unique temporary fileName
-
+// UUID name so the sender's filename never ends up in the storage path.
 const storedFileName = `${crypto.randomUUID()}${extension}`;
-
-
 
 const storagePath = `temporary/${storedFileName}`;
 
-const { data, error} = await supabase.storage
+const { error } = await supabase.storage
     .from(process.env.SUPABASE_BUCKET)
     .upload(storagePath,fileBuffer,{
         contentType: mimeType,
