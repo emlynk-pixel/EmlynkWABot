@@ -4,7 +4,7 @@ import express from "express";
 import { verifyWhatsappSignature } from "../middleware/verifyWhatsAppSignature.js";
 import { isMessageProcessed, markMessageAsProcessed } from "../utils/messageIdempotency.js";
 import { validateDocumentFile } from "../utils/fileValidation.js";
-import { extractDocumentMetadata } from "../utils/whatsappMedia.js";
+import { extractDocumentMetadata, SUPPORTED_MEDIA_MESSAGE_TYPES } from "../utils/whatsappMedia.js";
 
 // Services
 import { getWhatsappMediaUrl, downloadWhatsappMedia } from "../services/whatsappMediaService.js";
@@ -72,7 +72,8 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
       return res.sendStatus(200);
     }
 
-    if (messageType === "document") {
+    // Documents and photos share the same processing from here on.
+    if (SUPPORTED_MEDIA_MESSAGE_TYPES.includes(messageType)) {
       const documentMetadata = extractDocumentMetadata(message);
 
       if (!documentMetadata.valid) {
