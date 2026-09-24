@@ -1,0 +1,2 @@
+PASSPORT  Passport No N1234567  Surname PERERA
+Date of Birth 31/02/1990  Date of Expiry 11/05/2030

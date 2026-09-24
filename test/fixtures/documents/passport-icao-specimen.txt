@@ -1,0 +1,12 @@
+UTOPIA
+PASSPORT
+Type P   Code UTO   Passport No L898902C3
+Surname ERIKSSON
+Given Names ANNA MARIA
+Nationality UTOPIAN
+Date of Birth 12 AUG/AOUT 1974
+Sex F   Place of Birth ZENITH
+Date of Issue 16 APR 2007   Authority PASSPORT OFFICE
+Date of Expiry 15 APR 2012
+P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<
+L898902C36UTO7408122F1204159ZE184226B<<<<<10

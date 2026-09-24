@@ -1,0 +1,8 @@
+PASSPORT
+Passport No N1234567
+Surname PERERA
+Given Names KAMAL NIMAL
+Date of Birth 12/03/1990  Place of Birth COLOMBO
+Date of Expiry 11/05/2030
+P<LKAPERERA<<KAMAL<NIMAL<<<<<<<<<<<<<<<<<<<<
+N1234567<9LKA9003129M3005110<<<<<<<<<<<<<<02
