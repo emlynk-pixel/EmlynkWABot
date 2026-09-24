@@ -5,6 +5,7 @@ import { verifyWhatsappSignature } from "../middleware/verifyWhatsAppSignature.j
 import { isMessageProcessed, markMessageAsProcessed } from "../utils/messageIdempotency.js";
 import { validateDocumentFile } from "../utils/fileValidation.js";
 import { extractDocumentMetadata, SUPPORTED_MEDIA_MESSAGE_TYPES } from "../utils/whatsappMedia.js";
+import { sha256Hex } from "../utils/fileChecksum.js";
 
 // Services
 import { getWhatsappMediaUrl, downloadWhatsappMedia } from "../services/whatsappMediaService.js";
@@ -114,6 +115,10 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           fileSize: fileBuffer.length,
         });
 
+        // Fingerprint of the exact bytes received, for duplicate detection.
+        // Calculated once here and passed along; never logged.
+        const fileSha256 = sha256Hex(fileBuffer);
+
         const temporaryFile = await saveTemporaryFile({
           fileBuffer,
           originalFileName: fileName,
@@ -137,6 +142,7 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           whatsappNumber: senderNumber,
           temporaryStoragePath: temporaryFile.storagePath,
           documentType: classification.documentType,
+          fileSha256,
         });
 
         console.log("Temporary document record created:", {
@@ -169,6 +175,7 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           fileName,
           mimeType,
           fileBuffer,
+          fileSha256,
           filenameClassification: classification,
         });
 

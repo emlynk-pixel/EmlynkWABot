@@ -41,6 +41,10 @@ export function createFakePrisma(users = []) {
             },
         },
         temporaryData: {
+            async create({ data }) {
+                calls.push({ method: "temporaryData.create", data });
+                return { ...data };
+            },
             async update({ where, data }) {
                 calls.push({ method: "temporaryData.update", where, data });
                 return { ...where, ...data };

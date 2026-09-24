@@ -9,6 +9,7 @@ async function resolveDb(db) {
 export async function createTemporaryDocumentRecord({
     whatsappNumber,
     temporaryStoragePath,
+    fileSha256,
 }, { db } = {}){
     const temporaryId = crypto.randomUUID();
 
@@ -25,6 +26,7 @@ export async function createTemporaryDocumentRecord({
             documentType,
             temporaryStoragePath,
             processingStatus,
+            fileSha256,
         },
     });
 

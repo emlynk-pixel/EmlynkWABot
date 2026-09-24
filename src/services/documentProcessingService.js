@@ -12,6 +12,7 @@ import { findUsersByPassportId, findUsersByWhatsappNumber } from "./userLookupSe
 import { decideIdentity, IDENTITY_STATUS } from "./identityVerificationService.js";
 import { reconcilePassportFields, applyReconciliationUpdates } from "./fieldReconciliationService.js";
 import { updateTemporaryDocumentRecord } from "./temporaryDataService.js";
+import { sha256Hex } from "../utils/fileChecksum.js";
 
 // temporary_data.processing_status values after processing, taken from
 // the proposal (§24 state machine, §32 error table). The confidence-band
@@ -126,11 +127,14 @@ export async function processDocument({
     fileName,
     mimeType,
     fileBuffer,
+    fileSha256,
     filenameClassification,
     deps = {},
 }) {
     const { db, extractText = extractDocumentText } = deps;
     const state = { stage: "TEXT_EXTRACTION", recordUpdated: false };
+    // The route passes the checksum it already calculated; fall back for other callers.
+    state.fileSha256 = fileSha256 ?? sha256Hex(fileBuffer);
 
     try {
         state.textExtraction = await extractText({ fileBuffer, mimeType });
