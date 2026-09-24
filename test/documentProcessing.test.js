@@ -9,7 +9,12 @@ import {
 } from "../src/services/documentProcessingService.js";
 
 import { createFakePrisma } from "./helpers/fakePrisma.js";
+import { createFakeBucket } from "./helpers/fakeStorage.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
+
+// Every run uses the fake bucket, so tests never reach real Supabase storage.
+const TEMP_PATH = "temporary/tmp-1.pdf";
+const NOW = new Date("2026-09-24T07:05:03Z");
 
 const loadFile = (name) =>
     readFileSync(
@@ -49,8 +54,12 @@ async function run({
     users = makeUsers(),
     extractText,
     db,
+    documents = [],
+    temporaryData = [],
+    bucket,
 }) {
-    const fakeDb = db ?? createFakePrisma(users);
+    const fakeDb = db ?? createFakePrisma(users, { documents, temporaryData });
+    const fakeBucket = bucket ?? createFakeBucket([TEMP_PATH]);
 
     const result = await processDocument({
         temporaryId: "tmp-1",
@@ -58,8 +67,11 @@ async function run({
         fileName,
         mimeType,
         fileBuffer: file ? loadFile(file) : Buffer.alloc(0),
+        temporaryStoragePath: TEMP_PATH,
         deps: {
             db: fakeDb,
+            bucket: fakeBucket,
+            now: NOW,
             ...(extractText ? { extractText } : {}),
         },
     });
@@ -71,6 +83,7 @@ async function run({
     return {
         ...result,
         db: fakeDb,
+        bucket: fakeBucket,
         recordUpdate,
     };
 }

@@ -23,6 +23,12 @@ function maskPhoneNumber(phoneNumber) {
   return value.length <= 4 ? "****" : "*".repeat(value.length - 4) + value.slice(-4);
 }
 
+// WhatsApp sends the message time as Unix seconds (a string).
+function messageReceivedAt(message) {
+  const seconds = Number(message?.timestamp);
+  return Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000) : undefined;
+}
+
 /*
   GET /webhook
   Meta calls this once when the webhook URL is registered.
@@ -176,6 +182,8 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           mimeType,
           fileBuffer,
           fileSha256,
+          temporaryStoragePath: temporaryFile.storagePath,
+          receivedAt: messageReceivedAt(message),
           filenameClassification: classification,
         });
 

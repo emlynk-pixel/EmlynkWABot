@@ -13,6 +13,8 @@ import { decideIdentity, IDENTITY_STATUS } from "./identityVerificationService.j
 import { reconcilePassportFields, applyReconciliationUpdates } from "./fieldReconciliationService.js";
 import { updateTemporaryDocumentRecord } from "./temporaryDataService.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
+import { checkClientChecksum, CHECKSUM_OUTCOME } from "./documentChecksumService.js";
+import { decidePlacement, placeDocument } from "./storagePlacementService.js";
 
 // temporary_data.processing_status values after processing, taken from
 // the proposal (§24 state machine, §32 error table). The confidence-band
@@ -25,6 +27,7 @@ export const PROCESSING_STATUS = Object.freeze({
     UNDEFINED: "UNDEFINED",
     CONFLICT: "CONFLICT",
     MANUAL_REVIEW: "MANUAL_REVIEW",
+    DUPLICATE: "DUPLICATE",
     FAILED: "FAILED",
 });
 
@@ -67,7 +70,8 @@ function safeErrorMessage(error) {
 // flags and field names. No document text, names, dates or passport numbers.
 function summarize(state) {
     const { stage, error, textExtraction, resolvedType, confidence, passport, fieldConfidence,
-        policeDate, identity, reconciliation, applied, processingStatus, recordUpdated } = state;
+        policeDate, identity, reconciliation, applied, processingStatus, recordUpdated,
+        checksum, placement } = state;
 
     return {
         stage,
@@ -105,6 +109,16 @@ function summarize(state) {
                 notes: identity.notes,
             }
             : null,
+        // No storage paths: they contain passport numbers or client references.
+        storage: placement
+            ? {
+                checksum: checksum?.outcome ?? null,
+                placement: placement.placement,
+                verificationStatus: placement.stored?.verificationStatus ?? null,
+                documentStored: Boolean(placement.stored?.documentId),
+                pendingCopy: Boolean(placement.pendingStoragePath),
+            }
+            : null,
         reconciliation: reconciliation
             ? {
                 matched: reconciliation.matchedFields.map((f) => f.field),
@@ -117,9 +131,11 @@ function summarize(state) {
 }
 
 // Run Phase 5 (classification, OCR, confidence, passport fields, police
-// date) and Phase 6 (identity, reconciliation) for one stored document,
-// then update its temporary_data row. Never throws: a failure is recorded
-// as FAILED with the stage it happened in, so the webhook keeps working.
+// date), Phase 6 (identity, reconciliation) and Phase 7 (checksum checks,
+// permanent or pending copy) for one stored document, then update its
+// temporary_data row. The temporary object is never deleted (Phase 8).
+// Never throws: a failure is recorded as FAILED with the stage it happened
+// in, so the webhook keeps working.
 // Returns { summary } (safe to log) and { details } (extracted values, not logged).
 export async function processDocument({
     temporaryId,
@@ -128,10 +144,12 @@ export async function processDocument({
     mimeType,
     fileBuffer,
     fileSha256,
+    temporaryStoragePath,
+    receivedAt,
     filenameClassification,
     deps = {},
 }) {
-    const { db, extractText = extractDocumentText } = deps;
+    const { db, bucket, now = new Date(), extractText = extractDocumentText } = deps;
     const state = { stage: "TEXT_EXTRACTION", recordUpdated: false };
     // The route passes the checksum it already calculated; fall back for other callers.
     state.fileSha256 = fileSha256 ?? sha256Hex(fileBuffer);
@@ -175,6 +193,23 @@ export async function processDocument({
             whatsappLookup,
         });
 
+        // One existing, non-provisional client: the only case where a
+        // document may be linked to or stored under a client.
+        const clientIdentified = LINKABLE_IDENTITIES.has(state.identity.status)
+            && !state.identity.provisional
+            && Boolean(state.identity.passportId);
+
+        // Before reconciliation, so a file that is a duplicate or belongs to
+        // another client never writes to this client's record.
+        state.stage = "DUPLICATE_CHECK";
+        if (clientIdentified) {
+            state.checksum = await checkClientChecksum(
+                { passportId: state.identity.passportId, fileSha256: state.fileSha256 },
+                { db }
+            );
+        }
+        const checksumAllowsWrites = !state.checksum || state.checksum.outcome === CHECKSUM_OUTCOME.NEW;
+
         state.stage = "RECONCILIATION";
         const passportUser = passportLookup?.users.length === 1 ? passportLookup.users[0] : null;
         if (isPassportDocument && passportUser && state.identity.status !== IDENTITY_STATUS.PASSPORT_ID_UNRESOLVED) {
@@ -183,21 +218,48 @@ export async function processDocument({
                 passportExtraction: state.passport,
                 fieldConfidence: state.fieldConfidence,
             });
-            ({ applied: state.applied } = await applyReconciliationUpdates({
-                identity: state.identity,
-                reconciliation: state.reconciliation,
-                db,
-            }));
+            if (checksumAllowsWrites) {
+                ({ applied: state.applied } = await applyReconciliationUpdates({
+                    identity: state.identity,
+                    reconciliation: state.reconciliation,
+                    db,
+                }));
+            }
         }
 
-        state.stage = "RECORD_UPDATE";
-        state.processingStatus = determineProcessingStatus(state);
+        state.stage = "STORAGE";
+        const decision = decidePlacement({
+            processingStatus: determineProcessingStatus(state),
+            band: state.confidence.band,
+            documentType,
+            clientIdentified,
+            uniqueId: state.identity.uniqueId,
+            checksumOutcome: state.checksum?.outcome,
+        });
+        state.placement = await placeDocument(decision, {
+            temporaryId,
+            temporaryStoragePath,
+            whatsappNumber,
+            passportId: state.identity.passportId,
+            documentType,
+            band: state.confidence.band,
+            mimeType,
+            originalFileName: fileName,
+            fileSize: fileBuffer.length,
+            fileSha256: state.fileSha256,
+            documentConfidence: state.confidence.documentConfidence,
+            receivedAt,
+        }, { db, bucket, now });
+        state.processingStatus = state.placement.processingStatus;
 
-        const linkUser = LINKABLE_IDENTITIES.has(state.identity.status) && !state.identity.provisional;
+        state.stage = "RECORD_UPDATE";
+        // A file that belongs to another client is never linked to this one.
+        const linkUser = clientIdentified && state.checksum?.outcome !== CHECKSUM_OUTCOME.CROSS_CLIENT_CONFLICT;
         await updateTemporaryDocumentRecord(temporaryId, {
             documentType,
             processingStatus: state.processingStatus,
             ...(linkUser ? { passportId: state.identity.passportId, uniqueId: state.identity.uniqueId } : {}),
+            ...(state.placement.pendingStoragePath ? { pendingStoragePath: state.placement.pendingStoragePath } : {}),
         }, { db });
         state.recordUpdated = true;
         state.stage = "COMPLETED";
@@ -206,7 +268,11 @@ export async function processDocument({
         state.processingStatus = PROCESSING_STATUS.FAILED;
 
         try {
-            await updateTemporaryDocumentRecord(temporaryId, { processingStatus: PROCESSING_STATUS.FAILED }, { db });
+            // Keep a pending copy traceable even if a later step failed.
+            await updateTemporaryDocumentRecord(temporaryId, {
+                processingStatus: PROCESSING_STATUS.FAILED,
+                ...(state.placement?.pendingStoragePath ? { pendingStoragePath: state.placement.pendingStoragePath } : {}),
+            }, { db });
             state.recordUpdated = true;
         } catch (updateError) {
             state.error = `${safeErrorMessage(error)}; status update failed: ${safeErrorMessage(updateError)}`;
