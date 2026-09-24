@@ -34,7 +34,7 @@ async function loadInput(args) {
 }
 
 // Compare OCR settings on an image: the old default, each setting on its
-// own, and the production behaviour (rotateAuto + Sauvola retry).
+// own, and the production behaviour (default read, then alternatives if weak).
 async function compareImageSettings(buffer) {
     const worker = await createWorker("eng");
     const rows = [];
@@ -43,6 +43,7 @@ async function compareImageSettings(buffer) {
         const variants = [
             { label: "otsu (old default)", thresholding: OCR_THRESHOLDING.OTSU, rotateAuto: false },
             { label: "otsu + rotateAuto", thresholding: OCR_THRESHOLDING.OTSU, rotateAuto: true },
+            { label: "sauvola", thresholding: OCR_THRESHOLDING.SAUVOLA, rotateAuto: false },
             { label: "sauvola + rotateAuto", thresholding: OCR_THRESHOLDING.SAUVOLA, rotateAuto: true },
         ];
 
@@ -54,7 +55,7 @@ async function compareImageSettings(buffer) {
 
         const production = await recognizeImage(worker, buffer);
         rows.push({
-            label: `production (${production.thresholding})`,
+            label: `production (${production.thresholding}${production.rotateAuto ? " + rotateAuto" : ""})`,
             confidence: Math.round(production.confidence),
             ...describeTextForDiagnostics(production.text),
         });

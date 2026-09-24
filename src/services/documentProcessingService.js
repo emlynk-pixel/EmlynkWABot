@@ -77,6 +77,7 @@ function summarize(state) {
         typeSource: resolvedType?.source ?? null,
         extractionMethod: textExtraction?.method ?? null,
         ocrThresholding: textExtraction?.thresholding ?? null,
+        ocrRotateAuto: textExtraction?.rotateAuto ?? null,
         confidence: confidence
             ? {
                 extraction: confidence.extractionConfidence,

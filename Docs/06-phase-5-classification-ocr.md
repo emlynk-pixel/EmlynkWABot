@@ -73,14 +73,20 @@ Tesseract downloads `eng.traineddata` from the jsDelivr CDN on first use and cac
 
 ### OCR settings for phone photos
 
-WhatsApp photos are often tilted, shadowed and recompressed. Every OCR read (images and scanned-PDF pages) uses:
+WhatsApp photos are often tilted, shadowed and recompressed. Each OCR read (images and scanned-PDF pages) works like this:
 
-- `rotateAuto`: Tesseract straightens small tilts before reading.
-- A **Sauvola retry** when confidence is below 70: the page is read again with Sauvola thresholding (adapts to local brightness, so shadows hurt less), and the more confident result is kept. Good reads are never re-run, because Sauvola can be slightly worse on clean images.
+1. **Default read**: Otsu thresholding, no rotation. If confidence is 70 or more, it's used as is.
+2. **If weaker**, three alternatives are tried:
+   - Otsu + `rotateAuto` (Tesseract straightens small tilts)
+   - Sauvola thresholding (adapts to local brightness, so shadows hurt less)
+   - Sauvola + `rotateAuto`
+3. The **most confident read of all four** is kept, including the default. The result is therefore never worse than the default read.
 
-The OCR result records which thresholding was used (`thresholding: "OTSU"` or `"SAUVOLA"`); the log summary shows it as `ocrThresholding`.
+Why rotation isn't always on: on a real police certificate photo, `rotateAuto` detected a false angle and dropped confidence from 59 to 32 (Sauvola + rotation: 41). Keeping the default read as a candidate prevents that.
 
-Measured on synthetic phone-photo fixtures: a harsh police certificate photo went from confidence 63 to 84; a passport photo still reads both MRZ lines with valid check digits; clean images, the medical image and scanned PDFs are unchanged.
+The OCR result records the winning settings (`thresholding: "OTSU" | "SAUVOLA"`, `rotateAuto: true | false`); the log summary shows them as `ocrThresholding` and `ocrRotateAuto`.
+
+Measured on synthetic phone-photo fixtures: a harsh police certificate photo went from confidence 63 (default) to about 86 (best alternative); good photos, including a passport photo whose MRZ reads with valid check digits, are read once with the default settings, as before.
 
 ### Diagnosing a document that isn't classified
 

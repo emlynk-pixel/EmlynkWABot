@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import {
     extractDocumentText,
     recognizeImage,
-    SAUVOLA_RETRY_BELOW_CONFIDENCE,
+    OCR_RETRY_BELOW_CONFIDENCE,
     TEXT_EXTRACTION_METHODS,
 } from "../src/services/ocrService.js";
 import { classifyDocumentContent } from "../src/services/documentClassificationService.js";
@@ -66,8 +66,10 @@ describe("extractDocumentText", () => {
     });
 });
 
-// A stand-in Tesseract worker that returns a set confidence per thresholding method.
-function fakeWorker(confidenceByThresholding) {
+// A stand-in Tesseract worker. Confidence depends on both settings, keyed
+// as "<thresholding>-<rotateAuto>", e.g. "0-false" (Otsu, no rotation) or
+// "2-true" (Sauvola with rotation). Missing keys read nothing.
+function fakeWorker(confidenceBySettings) {
     const calls = [];
     let thresholding = "0";
     return {
@@ -78,61 +80,79 @@ function fakeWorker(confidenceByThresholding) {
         },
         async recognize(image, options) {
             calls.push({ recognize: options });
-            const confidence = confidenceByThresholding[thresholding];
+            const confidence = confidenceBySettings[`${thresholding}-${options.rotateAuto}`] ?? 0;
             return { data: { text: confidence ? `text read with ${thresholding}` : "", confidence } };
         },
     };
 }
 
+const readsOf = (worker) =>
+    worker.calls.filter((c) => c.recognize).map((c) => c.recognize.rotateAuto);
+
 describe("recognizeImage (OCR settings)", () => {
-    test("a good read is kept and not retried", async () => {
-        const worker = fakeWorker({ 0: 88, 2: 95 });
+    test("a good default read is kept: Otsu, no rotation, one read only", async () => {
+        const worker = fakeWorker({ "0-false": 88, "2-true": 95 });
         const page = await recognizeImage(worker, Buffer.from("img"));
 
         assert.equal(page.thresholding, "OTSU");
+        assert.equal(page.rotateAuto, false);
         assert.equal(page.confidence, 88);
-        assert.equal(worker.calls.filter((c) => c.recognize).length, 1);
+        assert.deepEqual(readsOf(worker), [false]);
     });
 
-    test("every read straightens small tilts (rotateAuto)", async () => {
-        const worker = fakeWorker({ 0: 50, 2: 60 });
+    test("regression: rotation that makes a real photo worse is not chosen (59 kept over 32 and 41)", async () => {
+        // Confidences from the real police certificate diagnostic.
+        const worker = fakeWorker({ "0-false": 59, "0-true": 32, "2-false": 45, "2-true": 41 });
+        const page = await recognizeImage(worker, Buffer.from("img"));
+
+        assert.equal(page.confidence, 59);
+        assert.equal(page.thresholding, "OTSU");
+        assert.equal(page.rotateAuto, false);
+    });
+
+    test(`a weak default read (< ${OCR_RETRY_BELOW_CONFIDENCE}) tries every alternative`, async () => {
+        const worker = fakeWorker({ "0-false": 59 });
         await recognizeImage(worker, Buffer.from("img"));
 
-        const reads = worker.calls.filter((c) => c.recognize);
-        assert.ok(reads.every((c) => c.recognize.rotateAuto === true));
+        const settings = worker.calls.filter((c) => c.setParameters).map((c) => c.setParameters.thresholding_method);
+        assert.deepEqual(settings, ["0", "0", "2", "2"]);
+        assert.deepEqual(readsOf(worker), [false, true, false, true]);
     });
 
-    test(`a weak read (< ${SAUVOLA_RETRY_BELOW_CONFIDENCE}) is retried with Sauvola and the better result kept`, async () => {
-        const worker = fakeWorker({ 0: 59, 2: 81 });
+    test("the most confident alternative wins when it beats the default", async () => {
+        const worker = fakeWorker({ "0-false": 63, "0-true": 84, "2-false": 81, "2-true": 86 });
         const page = await recognizeImage(worker, Buffer.from("img"));
 
+        assert.equal(page.confidence, 86);
         assert.equal(page.thresholding, "SAUVOLA");
-        assert.equal(page.confidence, 81);
+        assert.equal(page.rotateAuto, true);
     });
 
-    test("if the Sauvola retry is worse, the first read is kept", async () => {
-        const worker = fakeWorker({ 0: 59, 2: 40 });
+    test("Sauvola without rotation can win", async () => {
+        const worker = fakeWorker({ "0-false": 50, "0-true": 30, "2-false": 77, "2-true": 35 });
         const page = await recognizeImage(worker, Buffer.from("img"));
 
-        assert.equal(page.thresholding, "OTSU");
-        assert.equal(page.confidence, 59);
+        assert.equal(page.confidence, 77);
+        assert.equal(page.thresholding, "SAUVOLA");
+        assert.equal(page.rotateAuto, false);
     });
 
     test("thresholding is set on every read, so a retry can't leak into the next page", async () => {
-        const worker = fakeWorker({ 0: 59, 2: 81 });
+        const worker = fakeWorker({ "0-false": 59, "2-true": 81 });
         await recognizeImage(worker, Buffer.from("page1"));
         await recognizeImage(worker, Buffer.from("page2"));
 
         const settings = worker.calls.filter((c) => c.setParameters).map((c) => c.setParameters.thresholding_method);
-        assert.deepEqual(settings, ["0", "2", "0", "2"]);
+        assert.deepEqual(settings, ["0", "0", "2", "2", "0", "0", "2", "2"]);
     });
 
-    test("blank image: nothing read either way", async () => {
-        const worker = fakeWorker({ 0: 0, 2: 0 });
+    test("blank image: nothing read with any setting", async () => {
+        const worker = fakeWorker({});
         const page = await recognizeImage(worker, Buffer.from("img"));
 
         assert.equal(page.text, "");
         assert.equal(page.confidence, 0);
+        assert.equal(page.rotateAuto, false);
     });
 });
 
@@ -143,7 +163,7 @@ describe("phone photos (real OCR, synthetic fixtures)", () => {
 
         assert.equal(classification.documentType, "POLICE_REPORT");
         // The old default settings read this photo at about 63.
-        assert.ok(result.confidence >= SAUVOLA_RETRY_BELOW_CONFIDENCE, `confidence ${result.confidence}`);
+        assert.ok(result.confidence >= OCR_RETRY_BELOW_CONFIDENCE, `confidence ${result.confidence}`);
         assert.ok(classification.indicators.includes("police_clearance"));
     });
 

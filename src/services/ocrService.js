@@ -22,36 +22,54 @@ export const TEXT_EXTRACTION_METHODS = Object.freeze({
 // How Tesseract turns the image into black text on white. Otsu (default)
 // uses one cut-off for the whole page; Sauvola adapts to local brightness,
 // which rescues shadowed phone photos but can be slightly worse on clean
-// images. So Sauvola is only a retry for weak reads.
+// images. So Sauvola is only tried when the default read is weak.
 export const OCR_THRESHOLDING = Object.freeze({
     OTSU: { name: "OTSU", tesseractValue: "0" },
     SAUVOLA: { name: "SAUVOLA", tesseractValue: "2" },
 });
 
-export const SAUVOLA_RETRY_BELOW_CONFIDENCE = 70;
+// Below this, the default read is retried with the alternative settings.
+export const OCR_RETRY_BELOW_CONFIDENCE = 70;
 
-// rotateAuto straightens small tilts, common in phone photos. Parameters
-// stick to the worker, so thresholding is set on every read.
-async function readPage(worker, image, thresholding) {
+// Tried in order after a weak default read. rotateAuto straightens small
+// tilts, but on some real photos it detects a false angle and makes the
+// read worse, so it's an alternative rather than always on.
+const OCR_ALTERNATIVES = [
+    { thresholding: OCR_THRESHOLDING.OTSU, rotateAuto: true },
+    { thresholding: OCR_THRESHOLDING.SAUVOLA, rotateAuto: false },
+    { thresholding: OCR_THRESHOLDING.SAUVOLA, rotateAuto: true },
+];
+
+// Parameters stick to the worker, so thresholding is set on every read.
+async function readPage(worker, image, thresholding, rotateAuto) {
     await worker.setParameters({ thresholding_method: thresholding.tesseractValue });
-    const result = await worker.recognize(image, { rotateAuto: true });
+    const result = await worker.recognize(image, { rotateAuto });
 
     return {
         text: result.data.text?.trim() || "",
         confidence: result.data.confidence || 0,
         thresholding: thresholding.name,
+        rotateAuto,
     };
 }
 
-// Read one image; retry a weak read with Sauvola and keep the better one.
+// Read one image with the default settings (Otsu, no rotation). If that's
+// weak, try the alternatives and keep the most confident read of all of
+// them, including the default, so the result is never worse than before.
 export async function recognizeImage(worker, image) {
-    const first = await readPage(worker, image, OCR_THRESHOLDING.OTSU);
-    if (first.confidence >= SAUVOLA_RETRY_BELOW_CONFIDENCE) {
-        return first;
+    let best = await readPage(worker, image, OCR_THRESHOLDING.OTSU, false);
+    if (best.confidence >= OCR_RETRY_BELOW_CONFIDENCE) {
+        return best;
     }
 
-    const retry = await readPage(worker, image, OCR_THRESHOLDING.SAUVOLA);
-    return retry.confidence > first.confidence ? retry : first;
+    for (const { thresholding, rotateAuto } of OCR_ALTERNATIVES) {
+        const attempt = await readPage(worker, image, thresholding, rotateAuto);
+        if (attempt.confidence > best.confidence) {
+            best = attempt;
+        }
+    }
+
+    return best;
 }
 
 // OCR several images with one worker. Starting a worker is the slow part.
@@ -143,6 +161,7 @@ export async function extractTextFromScannedPdf(fileBuffer) {
         pagesProcessed: pages.length,
         totalPages: screenshots.total,
         thresholding: pages.map((page) => page.thresholding),
+        rotateAuto: pages.map((page) => page.rotateAuto),
     };
 }
 
@@ -156,6 +175,7 @@ export async function extractTextFromImage(fileBuffer) {
         method: TEXT_EXTRACTION_METHODS.OCR,
         confidence: page.confidence,
         thresholding: page.thresholding,
+        rotateAuto: page.rotateAuto,
     };
 }
 
