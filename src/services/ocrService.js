@@ -1,13 +1,10 @@
-//OCR Settings 
-
 import { createWorker } from "tesseract.js";
 import { PDFParse } from "pdf-parse";
-//Minimun usabble text length
 
+// Below this, a PDF is treated as scanned (image-only) rather than text-based.
 const MIN_TEXT_LENGTH = 30;
 
-// PDF file ekakin embedded/selectable text extract karanawa
-
+// Read the embedded text layer of a PDF.
 export async function extractTextFromPdf(fileBuffer){
 
     let parser;
@@ -47,16 +44,14 @@ export async function extractTextFromPdf(fileBuffer){
     }
 }
 
-// Image file ekak OCR karala text extract karanawa
-
-
+// Run Tesseract OCR on a JPEG/PNG image.
 export async function extractTextFromImage(fileBuffer){
     const worker = await createWorker("eng");
 
     try{
 
         const result = await worker.recognize(fileBuffer);
-        const text = result.data.text?.trim() || " "; //pdf eke text nattam ethakota use karanwa
+        const text = result.data.text?.trim() || "";
 
         return{
             success: text.length > 0,
@@ -70,8 +65,7 @@ export async function extractTextFromImage(fileBuffer){
 }
 
 
-//Correct text extraction according to MIME Type
-
+// Pick the extraction method based on MIME type.
 export async function extractDocumentText({
     fileBuffer,
     mimeType,
@@ -85,10 +79,11 @@ export async function extractDocumentText({
             return pdfResult;
         }
 
+        // Scanned-PDF OCR isn't implemented yet. Flag it for later.
         return {
             success: false,
             text: "",
-            mmethod: "SCANNED_PDF_OCR_REQUIRED",
+            method: "SCANNED_PDF_OCR_REQUIRED",
         };
     }
 
