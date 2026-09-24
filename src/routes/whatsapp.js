@@ -13,22 +13,20 @@ import { createTemporaryDocumentRecord } from "../services/temporaryDataService.
 import { classifyDocument } from "../services/documentClassificationService.js";
 import { extractDocumentText } from "../services/ocrService.js";
 
-
-
-
 const router = express.Router();
 
 /*
-GET /webhook
- Verification endpoint for Meta WhatsApp Webhook
- */
+  GET /webhook
+  Meta calls this once when the webhook URL is registered.
+*/
 router.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
+  const expectedToken = process.env.WHATSAPP_VERIFY_TOKEN;
 
-  // Check if the mode and token are correct
-  if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+  // Without the expectedToken check, an unset env var would match a missing token.
+  if (expectedToken && mode === "subscribe" && token === expectedToken) {
     console.log("Webhook verified successfully!");
     return res.status(200).send(challenge);
   }
@@ -38,44 +36,35 @@ router.get("/webhook", (req, res) => {
 
 /*
   POST /webhook
-  Endpoint to receive and process incoming WhatsApp webhook events
- */
+  Incoming WhatsApp events (messages, status updates, etc.).
+*/
 router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
   try {
-    // Meta webhook payload eken main values tika gannawa
     const entry = req.body?.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
 
-    // FIX: Meta payload eke property eka "messages"
+    // Status updates and other events have no messages. Acknowledge and ignore them.
     if (!value?.messages || value.messages.length === 0) {
       return res.sendStatus(200);
     }
 
-    // First incoming message eka process karanawa
+    // Only the first message in the event is handled for now.
     const message = value.messages[0];
-
-    // Sender WhatsApp number
     const senderNumber = message.from;
-
-    // Unique WhatsApp message ID
     const messageId = message.id;
-
-    // FIX: Message type eka message object eken gannawa
     const messageType = message.type;
 
     let mediaId = null;
     let fileName = null;
     let mimeType = null;
 
-    // Ignore duplicate messages
+    // Meta may deliver the same event more than once.
     if (isMessageProcessed(messageId)) {
       console.log("Duplicate WhatsApp message ignored:", messageId);
       return res.sendStatus(200);
     }
 
-//////////////////////////////////////////////////////////////  
-    // Process document messages
     if (messageType === "document") {
       const documentMetadata = extractDocumentMetadata(message);
 
@@ -87,25 +76,16 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
         });
         return res.sendStatus(200);
       }
-//////////////////////////////////////////////////////////////  
 
-
-
-
-
-
-//////////////////////////////////////////////////////////////  
-
-      // Valid document metadata
       mediaId = documentMetadata.mediaId;
       fileName = documentMetadata.fileName;
       mimeType = documentMetadata.mimeType;
 
+      // Failures here still return 200 so Meta doesn't keep retrying the same message.
       try {
         const mediaUrl = await getWhatsappMediaUrl(mediaId);
         const fileBuffer = await downloadWhatsappMedia(mediaUrl);
 
-        // File Validation
         const fileValidation = validateDocumentFile({
           mimeType,
           fileSize: fileBuffer.length,
@@ -126,37 +106,23 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           fileSize: fileBuffer.length,
         });
 
-//////////////////////////////////////////////////////////////  
-
-
-
-
-
-
-
-//////////////////////////////////////////////////////////////  
-
-
-        // Save temporary storage
         const temporaryFile = await saveTemporaryFile({
           fileBuffer,
           originalFileName: fileName,
           mimeType,
         });
 
+        // Filename is only a hint. Content-based classification comes later.
         const classification = classifyDocument({
-
-            fileName,
-            mimeType,
-            
+          fileName,
+          mimeType,
         });
 
-        console.log("Initial document classification",{
-
-            messageId,
-            documentType: classification.documentType,
-            confidence: classification.confidence,
-            source: classification.source,
+        console.log("Initial document classification", {
+          messageId,
+          documentType: classification.documentType,
+          confidence: classification.confidence,
+          source: classification.source,
         });
 
         const temporaryRecord = await createTemporaryDocumentRecord({
@@ -173,7 +139,7 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           temporaryStoragePath: temporaryRecord.temporaryStoragePath,
         });
 
-        console.log("WhatsApp Document temmporary stored:", {
+        console.log("WhatsApp document temporarily stored:", {
           messageId,
           storedFileName: temporaryFile.storedFileName,
           storagePath: temporaryFile.storagePath,
@@ -186,38 +152,25 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           fileSize: fileBuffer.length,
         });
 
-//////////////////////////////////////////////////////////////  
-
-
-
-        //Read actual content from Downloaded Doc
-//////////////////////////////////////////////////////////////
-
+        // Only the length is logged. The text itself may contain passport details.
         const textExtraction = await extractDocumentText({
-
-            fileBuffer,
-            mimeType,
+          fileBuffer,
+          mimeType,
         });
 
-        console.log( " Document text extraction result:", {
-            messageId,
-            success: textExtraction.success,
-            method: textExtraction.method,
-            textLength: textExtraction.text.length || 0,
-            confidence: textExtraction.confidence ?? null,
-
+        console.log("Document text extraction result:", {
+          messageId,
+          success: textExtraction.success,
+          method: textExtraction.method,
+          textLength: textExtraction.text.length || 0,
+          confidence: textExtraction.confidence ?? null,
         });
-
-//////////////////////////////////////////////////////////////  
-
-
-
-
-
-
-
       } catch (error) {
-        console.error("WhatsApp media download failed:", error.message);
+        // Covers download, upload, DB insert and OCR, not only the download.
+        console.error("WhatsApp document processing failed:", {
+          messageId,
+          error: error.message,
+        });
         return res.sendStatus(200);
       }
     }
@@ -233,7 +186,6 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
 
     markMessageAsProcessed(messageId);
 
-    // Meta webhook ekata quick success response ekak denawa
     return res.sendStatus(200);
   } catch (error) {
     console.error("WhatsApp webhook parsing error:", error);
