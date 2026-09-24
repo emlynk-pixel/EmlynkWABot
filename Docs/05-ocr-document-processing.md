@@ -142,11 +142,11 @@ OCR
 Extract text
 ```
 
-Scanned-PDF OCR fallback is part of the OCR implementation roadmap.
+Scanned-PDF OCR fallback is implemented (method `PDF_OCR`): the first 3 pages are rendered and read with Tesseract. Corrupt PDFs are reported separately as `PDF_PARSE_FAILED`. See `Docs/06-phase-5-classification-ocr.md`.
 
 ## Content-Based Classification
 
-Content-based classification will analyze the extracted text instead of relying only on the original filename.
+Content-based classification analyzes the extracted text instead of relying only on the original filename. Implemented in Phase 5; see `Docs/06-phase-5-classification-ocr.md` for the exact indicators and rules.
 
 Example passport signals may include:
 
@@ -278,14 +278,17 @@ Implemented:
 - Supabase temporary storage
 - Temporary database records
 - Direct PDF text extraction
-- Image OCR foundation
+- Image OCR
+- Scanned PDF OCR fallback
+- Content-based classification
+- Passport field extraction
+- Confidence bands (proposal §17)
+- Police report date extraction
+- Identity verification and field reconciliation (Phase 6, see `Docs/07-phase-6-passport-verification.md`)
 
 Next:
 
-- Scanned PDF OCR fallback
-- Content-based classification
-- OCR field extraction
-- Confidence workflow
-- Passport verification
-- Document rename rules
-- Permanent document storage
+- Document rename rules (Phase 7)
+- Permanent document storage (Phase 7)
+- Temporary finalization (Phase 8)
+- Police report countdown (Phase 9)

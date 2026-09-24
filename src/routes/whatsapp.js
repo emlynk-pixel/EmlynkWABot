@@ -11,7 +11,7 @@ import { getWhatsappMediaUrl, downloadWhatsappMedia } from "../services/whatsapp
 import { saveTemporaryFile } from "../services/temporaryStorageService.js";
 import { createTemporaryDocumentRecord } from "../services/temporaryDataService.js";
 import { classifyDocument } from "../services/documentClassificationService.js";
-import { extractDocumentText } from "../services/ocrService.js";
+import { processDocument } from "../services/documentProcessingService.js";
 
 const router = express.Router();
 
@@ -159,18 +159,22 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           fileSize: fileBuffer.length,
         });
 
-        // Only the length is logged. The text itself may contain passport details.
-        const textExtraction = await extractDocumentText({
-          fileBuffer,
+        // OCR, classification, confidence, field extraction, identity checks.
+        // Never throws; failures are recorded on the temporary record.
+        // The summary holds statuses and field names only, no document data.
+        const { summary } = await processDocument({
+          temporaryId: temporaryRecord.temporaryId,
+          whatsappNumber: senderNumber,
+          fileName,
           mimeType,
+          fileBuffer,
+          filenameClassification: classification,
         });
 
-        console.log("Document text extraction result:", {
+        console.log("Document processing result:", {
           messageId,
-          success: textExtraction.success,
-          method: textExtraction.method,
-          textLength: textExtraction.text.length || 0,
-          confidence: textExtraction.confidence ?? null,
+          temporaryId: temporaryRecord.temporaryId,
+          ...summary,
         });
       } catch (error) {
         // Covers download, upload, DB insert and OCR, not only the download.

@@ -28,7 +28,7 @@ The WhatsApp document intake flow is structurally sound. Webhook signatures are 
 | BUG-004 | Low | OCR | Typo `mmethod` in scanned-PDF result | **Fixed** |
 | BUG-005 | Low | OCR | Blank OCR output is reported as `success: true` | **Fixed** |
 | BUG-006 | Low | Logging | Every processing failure logged as "media download failed" | **Fixed** |
-| BUG-007 | Low | OCR | Corrupt PDFs are reported the same way as scanned PDFs | **Open** (new) |
+| BUG-007 | Low | OCR | Corrupt PDFs are reported the same way as scanned PDFs | **Fixed** (Phase 5) |
 
 The largest remaining risks are the **idempotency race** (processing runs before the webhook responds), **in-memory idempotency** that is lost on restart, the **migration file mismatch** (BUG-001), and the **Prisma client/adapter major-version mismatch**.
 
@@ -185,7 +185,7 @@ console.error("WhatsApp document processing failed:", { messageId, error: error.
 **Severity:** Low
 **File:** `src/services/ocrService.js`
 **Function:** `extractDocumentText`
-**Status:** Open (found during verification)
+**Status:** Fixed in Phase 5. `extractTextFromPdf` returns `method: "PDF_PARSE_FAILED"`, and no OCR is attempted on a corrupt PDF. Covered by `test/ocrService.test.js`.
 
 **Problem**
 When `pdf-parse` fails (for example "Invalid PDF structure"), `extractTextFromPdf` returns `success: false`, and `extractDocumentText` then reports `method: "SCANNED_PDF_OCR_REQUIRED"`. A corrupt file cannot be told apart from a genuine scanned PDF.
@@ -325,8 +325,8 @@ Return a distinct result (for example an `error` flag or a `PDF_PARSE_FAILED` me
 | Area | Current behaviour |
 |---|---|
 | PDF text extraction | `pdf-parse` v2 `PDFParse.getText()`. Success requires ≥ 30 characters. Parser destroyed in `finally`. |
-| Low-text / scanned PDF | Returns `success: false, method: "SCANNED_PDF_OCR_REQUIRED"`. No OCR fallback yet (roadmap). |
-| Corrupt PDF | Reported the same as scanned (BUG-007). |
+| Low-text / scanned PDF | OCR fallback: first 3 pages rendered and OCR'd (`PDF_OCR`). Added in Phase 5. |
+| Corrupt PDF | `PDF_PARSE_FAILED` (BUG-007, fixed). |
 | Image OCR | Tesseract `eng`, JPEG/PNG only. Worker terminated in `finally`. Confidence returned (0–100). Blank images now return `success: false`. |
 | Error handling | PDF errors are caught and return `success: false`. Image OCR errors go to the route's inner `catch`. |
 | Large PDFs | All pages are extracted; no page limit. |
@@ -379,7 +379,7 @@ These are unimplemented or divergent features, not bugs.
 **Small follow-ups**
 
 4. RISK-001 — mark the message as processed right after the duplicate check.
-5. BUG-007 — distinguish corrupt PDFs from scanned PDFs (with the scanned-PDF OCR work).
+5. ~~BUG-007 — distinguish corrupt PDFs from scanned PDFs.~~ Fixed in Phase 5.
 6. RISK-008 / RISK-009 — fetch timeouts and a `SUPABASE_BUCKET` check.
 7. SEC-005 — derive the stored extension from the validated MIME type.
 8. DB-003 — decide the `ocr_confidence` scale.

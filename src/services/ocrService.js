@@ -4,6 +4,53 @@ import { PDFParse } from "pdf-parse";
 // Below this, a PDF is treated as scanned (image-only) rather than text-based.
 const MIN_TEXT_LENGTH = 30;
 
+// Passports, police reports and medical reports are 1-2 pages. The limit
+// keeps a long upload from tying up the webhook with OCR.
+const MAX_SCANNED_PDF_PAGES = 3;
+
+// Render pages at 2x (about 144 DPI). Tesseract is noticeably worse below that.
+const SCANNED_PDF_RENDER_SCALE = 2;
+
+export const TEXT_EXTRACTION_METHODS = Object.freeze({
+    PDF_TEXT: "PDF_TEXT",
+    PDF_OCR: "PDF_OCR",
+    PDF_PARSE_FAILED: "PDF_PARSE_FAILED",
+    OCR: "OCR",
+    UNSUPPORTED_DOCUMENT_TYPE: "UNSUPPORTED_DOCUMENT_TYPE",
+});
+
+// OCR several images with one worker. Starting a worker is the slow part.
+async function recognizeImages(images) {
+    const worker = await createWorker("eng");
+
+    try {
+        const pages = [];
+        for (const image of images) {
+            const result = await worker.recognize(image);
+            pages.push({
+                text: result.data.text?.trim() || "",
+                confidence: result.data.confidence || 0,
+            });
+        }
+        return pages;
+    } finally {
+        await worker.terminate();
+    }
+}
+
+// Weight each page's confidence by how much text it produced, so a
+// near-empty page doesn't drag down a well-read one.
+function combinePages(pages) {
+    const text = pages.map((page) => page.text).filter(Boolean).join("\n");
+    const totalLength = pages.reduce((sum, page) => sum + page.text.length, 0);
+
+    const confidence = totalLength > 0
+        ? pages.reduce((sum, page) => sum + page.confidence * page.text.length, 0) / totalLength
+        : 0;
+
+    return { text, confidence: Math.round(confidence * 100) / 100 };
+}
+
 // Read the embedded text layer of a PDF.
 export async function extractTextFromPdf(fileBuffer) {
     let parser;
@@ -13,13 +60,15 @@ export async function extractTextFromPdf(fileBuffer) {
             data: fileBuffer,
         });
 
-        const result = await parser.getText();
+        // No page markers: "-- 1 of 3 --" lines would make a scanned PDF
+        // look like it has text.
+        const result = await parser.getText({ pageJoiner: "" });
         const text = result.text?.trim() || "";
 
         return {
             success: text.length >= MIN_TEXT_LENGTH,
             text,
-            method: "PDF_TEXT",
+            method: TEXT_EXTRACTION_METHODS.PDF_TEXT,
         };
     } catch (error) {
         console.error("PDF text extraction failed:", error.message);
@@ -27,7 +76,7 @@ export async function extractTextFromPdf(fileBuffer) {
         return {
             success: false,
             text: "",
-            method: "PDF_TEXT",
+            method: TEXT_EXTRACTION_METHODS.PDF_PARSE_FAILED,
         };
     } finally {
         if (parser) {
@@ -36,23 +85,45 @@ export async function extractTextFromPdf(fileBuffer) {
     }
 }
 
+// Scanned PDFs have no text layer, so render the first pages and OCR them.
+export async function extractTextFromScannedPdf(fileBuffer) {
+    const parser = new PDFParse({ data: fileBuffer });
+
+    let screenshots;
+    try {
+        screenshots = await parser.getScreenshot({
+            first: MAX_SCANNED_PDF_PAGES,
+            scale: SCANNED_PDF_RENDER_SCALE,
+            imageBuffer: true,
+            imageDataUrl: false,
+        });
+    } finally {
+        await parser.destroy();
+    }
+
+    const pages = await recognizeImages(screenshots.pages.map((page) => Buffer.from(page.data)));
+    const { text, confidence } = combinePages(pages);
+
+    return {
+        success: text.length > 0,
+        text,
+        method: TEXT_EXTRACTION_METHODS.PDF_OCR,
+        confidence,
+        pagesProcessed: pages.length,
+        totalPages: screenshots.total,
+    };
+}
+
 // Run Tesseract OCR on a JPEG/PNG image.
 export async function extractTextFromImage(fileBuffer) {
-    const worker = await createWorker("eng");
+    const [page] = await recognizeImages([fileBuffer]);
 
-    try {
-        const result = await worker.recognize(fileBuffer);
-        const text = result.data.text?.trim() || "";
-
-        return {
-            success: text.length > 0,
-            text,
-            method: "OCR",
-            confidence: result.data.confidence || 0,
-        };
-    } finally {
-        await worker.terminate();
-    }
+    return {
+        success: page.text.length > 0,
+        text: page.text,
+        method: TEXT_EXTRACTION_METHODS.OCR,
+        confidence: page.confidence,
+    };
 }
 
 // Pick the extraction method based on MIME type.
@@ -63,16 +134,12 @@ export async function extractDocumentText({
     if (mimeType === "application/pdf") {
         const pdfResult = await extractTextFromPdf(fileBuffer);
 
-        if (pdfResult.success) {
+        // A PDF that can't be parsed at all is corrupt, not scanned. OCR won't help.
+        if (pdfResult.success || pdfResult.method === TEXT_EXTRACTION_METHODS.PDF_PARSE_FAILED) {
             return pdfResult;
         }
 
-        // Scanned-PDF OCR isn't implemented yet. Flag it for later.
-        return {
-            success: false,
-            text: "",
-            method: "SCANNED_PDF_OCR_REQUIRED",
-        };
+        return await extractTextFromScannedPdf(fileBuffer);
     }
 
     if (mimeType === "image/jpeg" || mimeType === "image/png") {
@@ -82,6 +149,6 @@ export async function extractDocumentText({
     return {
         success: false,
         text: "",
-        method: "UNSUPPORTED_DOCUMENT_TYPE",
+        method: TEXT_EXTRACTION_METHODS.UNSUPPORTED_DOCUMENT_TYPE,
     };
 }

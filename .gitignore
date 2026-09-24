@@ -15,3 +15,6 @@ Docs/DB
 
 /generated/prisma
 prisma/seed.js
+
+# Tesseract language data, downloaded and cached at runtime
+*.traineddata
