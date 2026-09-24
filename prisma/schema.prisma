@@ -10,7 +10,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
 
 //Added admin table
@@ -69,8 +69,11 @@ model Document {
   createdDate        DateTime @default(now()) @map("created_date")
   updatedDate        DateTime @updatedAt @map("updated_date")
 
-  user User @relation(fields: [passportId], references: [passportId])
+  user       User    @relation(fields: [passportId], references: [passportId])
+  fileSha256 String? @map("file_sha256") @db.Char(64)
 
+  @@unique([passportId, fileSha256])
+  @@index([fileSha256])
   @@map("documents")
 }
 
@@ -86,7 +89,9 @@ model TemporaryData {
   processingStatus     String   @map("processing_status")
   createdDate          DateTime @default(now()) @map("created_date")
 
-  user User? @relation(fields: [passportId], references: [passportId])
+  user       User?   @relation(fields: [passportId], references: [passportId])
+  fileSha256 String? @map("file_sha256") @db.Char(64)
 
+  @@index([whatsappNumber, fileSha256])
   @@map("temporary_data")
 }
