@@ -89,8 +89,10 @@ model TemporaryData {
   processingStatus     String   @map("processing_status")
   createdDate          DateTime @default(now()) @map("created_date")
 
-  user       User?   @relation(fields: [passportId], references: [passportId])
-  fileSha256 String? @map("file_sha256") @db.Char(64)
+  user               User?   @relation(fields: [passportId], references: [passportId])
+  fileSha256         String? @map("file_sha256") @db.Char(64)
+  // Exact object path of the copy placed in pending/ (Phase 7), if any.
+  pendingStoragePath String? @map("pending_storage_path")
 
   @@index([whatsappNumber, fileSha256])
   @@map("temporary_data")
