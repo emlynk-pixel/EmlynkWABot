@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/app.js",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "diagnose:document": "node scripts/diagnoseDocument.js"
   },
   "repository": {
     "type": "git",

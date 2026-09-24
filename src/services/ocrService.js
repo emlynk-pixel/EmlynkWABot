@@ -19,6 +19,41 @@ export const TEXT_EXTRACTION_METHODS = Object.freeze({
     UNSUPPORTED_DOCUMENT_TYPE: "UNSUPPORTED_DOCUMENT_TYPE",
 });
 
+// How Tesseract turns the image into black text on white. Otsu (default)
+// uses one cut-off for the whole page; Sauvola adapts to local brightness,
+// which rescues shadowed phone photos but can be slightly worse on clean
+// images. So Sauvola is only a retry for weak reads.
+export const OCR_THRESHOLDING = Object.freeze({
+    OTSU: { name: "OTSU", tesseractValue: "0" },
+    SAUVOLA: { name: "SAUVOLA", tesseractValue: "2" },
+});
+
+export const SAUVOLA_RETRY_BELOW_CONFIDENCE = 70;
+
+// rotateAuto straightens small tilts, common in phone photos. Parameters
+// stick to the worker, so thresholding is set on every read.
+async function readPage(worker, image, thresholding) {
+    await worker.setParameters({ thresholding_method: thresholding.tesseractValue });
+    const result = await worker.recognize(image, { rotateAuto: true });
+
+    return {
+        text: result.data.text?.trim() || "",
+        confidence: result.data.confidence || 0,
+        thresholding: thresholding.name,
+    };
+}
+
+// Read one image; retry a weak read with Sauvola and keep the better one.
+export async function recognizeImage(worker, image) {
+    const first = await readPage(worker, image, OCR_THRESHOLDING.OTSU);
+    if (first.confidence >= SAUVOLA_RETRY_BELOW_CONFIDENCE) {
+        return first;
+    }
+
+    const retry = await readPage(worker, image, OCR_THRESHOLDING.SAUVOLA);
+    return retry.confidence > first.confidence ? retry : first;
+}
+
 // OCR several images with one worker. Starting a worker is the slow part.
 async function recognizeImages(images) {
     const worker = await createWorker("eng");
@@ -26,11 +61,7 @@ async function recognizeImages(images) {
     try {
         const pages = [];
         for (const image of images) {
-            const result = await worker.recognize(image);
-            pages.push({
-                text: result.data.text?.trim() || "",
-                confidence: result.data.confidence || 0,
-            });
+            pages.push(await recognizeImage(worker, image));
         }
         return pages;
     } finally {
@@ -111,6 +142,7 @@ export async function extractTextFromScannedPdf(fileBuffer) {
         confidence,
         pagesProcessed: pages.length,
         totalPages: screenshots.total,
+        thresholding: pages.map((page) => page.thresholding),
     };
 }
 
@@ -123,6 +155,7 @@ export async function extractTextFromImage(fileBuffer) {
         text: page.text,
         method: TEXT_EXTRACTION_METHODS.OCR,
         confidence: page.confidence,
+        thresholding: page.thresholding,
     };
 }
 

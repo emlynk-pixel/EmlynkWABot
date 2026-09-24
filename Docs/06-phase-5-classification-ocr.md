@@ -71,6 +71,23 @@ No new dependencies. Scanned-PDF rendering uses `pdf-parse`'s `getScreenshot()`,
 
 Tesseract downloads `eng.traineddata` from the jsDelivr CDN on first use and caches it in the working directory. `*.traineddata` is gitignored.
 
+### OCR settings for phone photos
+
+WhatsApp photos are often tilted, shadowed and recompressed. Every OCR read (images and scanned-PDF pages) uses:
+
+- `rotateAuto`: Tesseract straightens small tilts before reading.
+- A **Sauvola retry** when confidence is below 70: the page is read again with Sauvola thresholding (adapts to local brightness, so shadows hurt less), and the more confident result is kept. Good reads are never re-run, because Sauvola can be slightly worse on clean images.
+
+The OCR result records which thresholding was used (`thresholding: "OTSU"` or `"SAUVOLA"`); the log summary shows it as `ocrThresholding`.
+
+Measured on synthetic phone-photo fixtures: a harsh police certificate photo went from confidence 63 to 84; a passport photo still reads both MRZ lines with valid check digits; clean images, the medical image and scanned PDFs are unchanged.
+
+### Diagnosing a document that isn't classified
+
+`npm run diagnose:document -- <file>` or `npm run diagnose:document -- --storage-path temporary/<uuid>.jpeg`
+
+Prints, for each OCR setting: confidence, character/line/word counts, letter ratio, classification scores and matched indicator IDs, MRZ line count, and which words from a fixed vocabulary list OCR recognized (exactly or as near-misses). It never prints document text, and a file downloaded from Supabase is kept in memory only.
+
 ## Classification
 
 The filename is only a hint. Content decides.
