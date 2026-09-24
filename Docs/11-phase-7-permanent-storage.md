@@ -7,7 +7,8 @@
 | Item | State |
 |---|---|
 | Design decisions | Agreed (this document) |
-| `prisma/schema.prisma` checksum fields | Edited locally, **not committed** |
+| `prisma/schema.prisma` checksum fields | Committed (`1919ea1`) |
+| `temporary_data.pending_storage_path` | Decided, **not yet in `schema.prisma`** |
 | Migration for the checksum fields | **Not created, not applied** |
 | Application code | **No changes yet** |
 
@@ -48,6 +49,8 @@ processDocument()                   src/services/documentProcessingService.js
 | D7 | Duplicate detection | **SHA-256 checksum**, stored on both `documents` and `temporary_data`. |
 | D8 | Same client, same file | Status **`DUPLICATE`**. No copy, no new `documents` row, no new version. |
 | D9 | Same file already stored for another client | Status **`CONFLICT`**. Never attached to either client automatically. |
+| D10 | `DUPLICATE` storage | **Not copied to `pending/`.** The temporary record keeps status `DUPLICATE`; Phase 8 cleans up the temporary copy. |
+| D11 | Where a `pending/` copy is recorded | New nullable column **`temporary_data.pending_storage_path`** holding the exact object path. |
 
 ## Storage Paths
 
@@ -130,7 +133,7 @@ The unmodified original filename is also stored in `documents.original_filename`
 
 ### Fields
 
-Added to `prisma/schema.prisma` (local edit, migration pending):
+In `prisma/schema.prisma` (committed in `1919ea1`, migration pending):
 
 ```prisma
 model Document {
@@ -210,6 +213,7 @@ The `SLIGHTLY_UNCLEAR` warning from §17 is not visible in `verification_status`
 ## temporary_data During Phase 7
 
 - `temporary_storage_path` **keeps pointing at `temporary/…`**, because Phase 8 needs it to delete the temporary copy (D1).
+- `pending_storage_path` holds the exact `pending/…` object path when a copy is placed there (D11); otherwise null.
 - `processing_status` is set according to the placement rules table.
 - `file_sha256` is set when the row is created.
 - Phase 8 can find the permanent record of a temporary row through `passport_id` + `file_sha256`, so no extra link column is needed.
@@ -244,7 +248,7 @@ Nothing in Phase 7 deletes a temporary file or anything in `pending/`.
 
 ## Schema and Migration Plan
 
-The schema edit is local and uncommitted. **No migration has been created or applied.**
+The checksum fields are committed in `schema.prisma`. `pending_storage_path` still has to be added. **No migration has been created or applied.**
 
 Expected migration SQL (only adds columns and indexes):
 
@@ -255,7 +259,11 @@ CREATE INDEX "documents_file_sha256_idx" ON "documents"("file_sha256");
 
 ALTER TABLE "temporary_data" ADD COLUMN "file_sha256" CHAR(64);
 CREATE INDEX "temporary_data_whatsapp_number_file_sha256_idx" ON "temporary_data"("whatsapp_number", "file_sha256");
+
+ALTER TABLE "temporary_data" ADD COLUMN "pending_storage_path" TEXT;
 ```
+
+**Existing drift to resolve first:** the live database has `temporary_data.whatsapp_number` and `users.first_name` as `NOT NULL`, while the migration history and `schema.prisma` have them nullable. See the drift analysis before creating this migration.
 
 Steps when approved:
 
@@ -271,7 +279,7 @@ Steps when approved:
 
 | File | Change |
 |---|---|
-| `prisma/schema.prisma` + new migration | Checksum fields (edited, migration pending) |
+| `prisma/schema.prisma` + new migration | Checksum fields (committed), `pending_storage_path` (to add), migration pending |
 | `src/utils/fileChecksum.js` (new) | SHA-256 of a buffer |
 | `src/routes/whatsapp.js` | Calculate the checksum after validation; pass it on |
 | `src/services/temporaryDataService.js` | Save `file_sha256`; status updates |
@@ -293,9 +301,7 @@ Steps when approved:
 7. **7.7** Manual tests on real Supabase, including private-bucket access checks (§43.6).
 8. **7.8** Update this document from "design" to "implemented".
 
-## Open Item
+## Resolved Items
 
-**Recording where a `pending/` copy was placed.** `temporary_storage_path` must keep the `temporary/` path for Phase 8 (D1), and `documents` has no row for pending files, so the `pending/` path is currently stored nowhere. A reviewer needs to find it. Options to decide before checkpoint 7.6:
-
-- **A.** Add a nullable `temporary_data.pending_storage_path` column in the same checksum migration.
-- **B.** Make pending paths predictable from the record, e.g. include the `temporary_id` in the file name: `document_YYYYMMDD_HHMMSS_{temporary_id}.<ext>`.
+- **Where a `pending/` copy is recorded:** new nullable column `temporary_data.pending_storage_path` (D11).
+- **`DUPLICATE` copies:** none; the temporary copy is cleaned up in Phase 8 (D10).
