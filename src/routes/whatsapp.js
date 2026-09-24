@@ -15,6 +15,13 @@ import { extractDocumentText } from "../services/ocrService.js";
 
 const router = express.Router();
 
+// Keep full phone numbers out of logs. The last 4 digits are enough to tell senders apart.
+function maskPhoneNumber(phoneNumber) {
+  if (!phoneNumber) return phoneNumber;
+  const value = String(phoneNumber);
+  return value.length <= 4 ? "****" : "*".repeat(value.length - 4) + value.slice(-4);
+}
+
 /*
   GET /webhook
   Meta calls this once when the webhook URL is registered.
@@ -71,7 +78,7 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
       if (!documentMetadata.valid) {
         console.warn("Invalid Whatsapp document event", {
           messageId,
-          senderNumber,
+          senderNumber: maskPhoneNumber(senderNumber),
           reason: documentMetadata.reason,
         });
         return res.sendStatus(200);
@@ -133,7 +140,7 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
 
         console.log("Temporary document record created:", {
           temporaryId: temporaryRecord.temporaryId,
-          whatsappNumber: temporaryRecord.whatsappNumber,
+          whatsappNumber: maskPhoneNumber(temporaryRecord.whatsappNumber),
           documentType: temporaryRecord.documentType,
           processingStatus: temporaryRecord.processingStatus,
           temporaryStoragePath: temporaryRecord.temporaryStoragePath,
@@ -176,7 +183,7 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
     }
 
     console.log("WhatsApp Message Parsed:", {
-      senderNumber,
+      senderNumber: maskPhoneNumber(senderNumber),
       messageId,
       messageType,
       fileName,
