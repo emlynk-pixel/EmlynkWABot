@@ -33,7 +33,7 @@ model Admin {
 model User {
   passportId         String          @id @map("passport_id")
   uniqueId           String          @unique @map("unique_id")
-  firstName          String?         @map("first_name")
+  firstName          String          @map("first_name")
   otherName          String?         @map("other_name")
   dateOfBirth        DateTime?       @map("date_of_birth")
   placeOfBirth       String?         @map("place_of_birth")
@@ -83,7 +83,7 @@ model TemporaryData {
   temporaryId          String   @id @map("temporary_id")
   passportId           String?  @map("passport_id")
   uniqueId             String?  @map("unique_id")
-  whatsappNumber       String?  @map("whatsapp_number")
+  whatsappNumber       String   @map("whatsapp_number")
   documentType         String   @map("document_type")
   temporaryStoragePath String   @map("temporary_storage_path")
   processingStatus     String   @map("processing_status")
