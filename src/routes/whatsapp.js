@@ -8,7 +8,7 @@ import { extractDocumentMetadata, SUPPORTED_MEDIA_MESSAGE_TYPES } from "../utils
 import { sha256Hex } from "../utils/fileChecksum.js";
 
 // Services
-import { getWhatsappMediaUrl, downloadWhatsappMedia } from "../services/whatsappMediaService.js";
+import { getWhatsappMediaUrl, downloadWhatsappMedia, MediaRejectedError } from "../services/whatsappMediaService.js";
 import { saveTemporaryFile } from "../services/temporaryStorageService.js";
 import { createTemporaryDocumentRecord } from "../services/temporaryDataService.js";
 import { classifyDocument } from "../services/documentClassificationService.js";
@@ -193,6 +193,16 @@ router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
           ...summary,
         });
       } catch (error) {
+        // Too large or wrong type according to Meta's metadata or the download
+        // itself: handled like any other failed validation.
+        if (error instanceof MediaRejectedError) {
+          console.warn("WhatsApp document validation failed:", {
+            messageId,
+            reason: error.reason,
+          });
+          return res.sendStatus(200);
+        }
+
         // Covers download, upload, DB insert and OCR, not only the download.
         console.error("WhatsApp document processing failed:", {
           messageId,

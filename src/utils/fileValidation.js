@@ -1,11 +1,11 @@
-const ALLOWED_MIME_TYPES = [
+export const ALLOWED_MIME_TYPES = [
     "application/pdf",
     "image/jpeg",
     "image/png"
 ];
 
 // Temporary limit until the final size rules are agreed.
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 // Check a downloaded file before it is stored.
 export function validateDocumentFile({
