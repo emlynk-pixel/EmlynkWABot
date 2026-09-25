@@ -5,7 +5,7 @@ import {
     resolveDocumentType,
     DOCUMENT_TYPES,
 } from "./documentClassificationService.js";
-import { assessDocumentConfidence, assessPassportFieldConfidence } from "./confidenceService.js";
+import { assessDocumentConfidence, assessPassportFieldConfidence, DOCUMENT_FLAGS } from "./confidenceService.js";
 import { extractPassportFields } from "./passportExtractionService.js";
 import { extractPoliceReportDate, POLICE_DATE_STATUS } from "./policeReportDateService.js";
 import { findUsersByPassportId, findUsersByWhatsappNumber } from "./userLookupService.js";
@@ -47,6 +47,22 @@ const POLICE_DATE_NEEDS_REVIEW = new Set([
     POLICE_DATE_STATUS.INVALID,
     POLICE_DATE_STATUS.NOT_FOUND,
 ]);
+
+// Explicit reasons a person must look at the document before it may enter
+// a client folder. Low confidence alone is not one: a plain UNCLEAR document
+// (and an accepted low-quality passport) is stored under the client for
+// review. Used for placement only; processing statuses are unchanged.
+const REVIEW_BLOCKING_FLAGS = [
+    DOCUMENT_FLAGS.WRONG_DOCUMENT_SUSPECTED,
+    DOCUMENT_FLAGS.CLASSIFIED_FROM_FILENAME_ONLY,
+    DOCUMENT_FLAGS.POLICE_TYPE_UNCLEAR,
+];
+
+export function hasReviewBlocker({ confidence, identity, policeDate }) {
+    return Boolean(identity?.reviewRequired)
+        || REVIEW_BLOCKING_FLAGS.some((flag) => confidence?.flags?.includes(flag))
+        || POLICE_DATE_NEEDS_REVIEW.has(policeDate?.status);
+}
 
 // Most serious problem first: failure, conflict, unusable document, then
 // anything a person has to look at. Otherwise the confidence band.
@@ -248,6 +264,7 @@ export async function processDocument({
             clientIdentified,
             uniqueId: state.identity.uniqueId,
             checksumOutcome: state.checksum?.outcome,
+            reviewBlocked: hasReviewBlocker(state),
         });
         state.placement = await placeDocument(decision, {
             temporaryId,

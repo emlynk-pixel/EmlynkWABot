@@ -19,9 +19,11 @@ export const PLACEMENT = Object.freeze({
 const CLIENT_BANDS = new Set(["VERIFIED", "HIGH_CONFIDENCE", "SLIGHTLY_UNCLEAR", "UNCLEAR"]);
 
 // Pure decision. `clientIdentified` means Phase 6 linked the document to
-// exactly one existing client (not provisional). Rules are checked in order;
-// anything that must not be attached to a client automatically goes to pending/.
-export function decidePlacement({ processingStatus, band, documentType, clientIdentified, uniqueId, checksumOutcome }) {
+// exactly one existing client (not provisional). `reviewBlocked` means a
+// specific reason needs a person (identity, wrong document, police slip
+// date), not just low confidence. Rules are checked in order; anything that
+// must not be attached to a client automatically goes to pending/.
+export function decidePlacement({ processingStatus, band, documentType, clientIdentified, uniqueId, checksumOutcome, reviewBlocked = false }) {
     // Same client already has this exact file (D8): nothing new is stored.
     if (checksumOutcome === CHECKSUM_OUTCOME.DUPLICATE) {
         return { placement: PLACEMENT.NONE, processingStatus: "DUPLICATE", pendingOwner: null };
@@ -38,6 +40,13 @@ export function decidePlacement({ processingStatus, band, documentType, clientId
 
     // Conflicts, unusable documents and anything needing review (D5).
     if (["CONFLICT", "UNDEFINED", "MANUAL_REVIEW"].includes(processingStatus)) {
+        return pending(processingStatus);
+    }
+
+    // In the UNCLEAR band the status stays UNCLEAR even when there is also a
+    // review reason, and UNCLEAR may enter the client folder. A review reason
+    // must still keep the file out of it, whatever the band.
+    if (reviewBlocked) {
         return pending(processingStatus);
     }
 

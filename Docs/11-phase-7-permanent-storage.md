@@ -60,10 +60,13 @@ Checked in order (`decidePlacement()` in `src/services/storagePlacementService.j
 | 1 | Same client already has this checksum | none | — | no | `DUPLICATE` |
 | 2 | Another client has this checksum | `pending/unidentified/{temporary_id}/…` | timestamp | no | `CONFLICT` |
 | 3 | Status `CONFLICT`, `UNDEFINED` or `MANUAL_REVIEW` | `pending/{unique_id or unidentified}/…` | timestamp | no | unchanged |
+| 3a | A review reason is present (see below), whatever the band | `pending/{unique_id or unidentified}/…` | timestamp | no | unchanged (e.g. `UNCLEAR`) |
 | 4 | Band `VERIFIED` / `HIGH_CONFIDENCE` / `SLIGHTLY_UNCLEAR` / `UNCLEAR`, client identified, type is PASSPORT / POLICE_SLIP / POLICE_REPORT / MEDICAL | `clients/{passport_id}/{folder}/` | standard (`UNCLEAR`: sanitized original) | yes | band name |
 | 5 | Anything else (e.g. clear document, no identified client) | `pending/{unique_id or unidentified}/…` | timestamp | no | unchanged |
 
 Before any pending copy: if the same sender's same checksum is **already stored in `pending/`** (an earlier `temporary_data` row with a `pending_storage_path`), the status is `DUPLICATE` and nothing is copied. An earlier attempt that never reached `pending/` does not count, so a failed upload can be sent again.
+
+**Review reasons (rule 3a).** Identity needs review (e.g. SEC-008 "no WhatsApp on record", or the record has another WhatsApp), `WRONG_DOCUMENT_SUSPECTED`, `CLASSIFIED_FROM_FILENAME_ONLY`, `POLICE_TYPE_UNCLEAR`, or a police slip whose date is `AMBIGUOUS` / `INVALID` / `NOT_FOUND` (`hasReviewBlocker()` in `documentProcessingService.js`). In the `UNCLEAR` band the processing status stays `UNCLEAR`, so without this rule such a document would have entered the client folder. Low confidence alone is not a review reason: a plain `UNCLEAR` document, and an accepted low-quality passport, still go to the client folder as `REVIEW_REQUIRED`.
 
 "Client identified" means the Phase 6 identity is `VERIFIED_MATCH`, `PASSPORT_MATCH_ONLY` or `WHATSAPP_MATCH_ONLY`, not provisional, with a passport ID.
 
