@@ -18,6 +18,9 @@ import { copyToFreeName, removeObject } from "./permanentStorageService.js";
 import { clientFolderPath, DOCUMENT_STORAGE_TYPES, standardFileName, extensionForMimeType } from "../utils/storageNaming.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { safeErrorText } from "../utils/safeLog.js";
+import { businessDateOf, isValidBusinessDate } from "../utils/businessDay.js";
+import { DOCUMENT_TYPES } from "./documentClassificationService.js";
+import { toYmd, ymdToDate } from "./policeCountdownService.js";
 
 export const REVIEW_ACTION = Object.freeze({
     APPROVE: "APPROVE",
@@ -48,25 +51,66 @@ const typeName = (documentType) => documentType.toLowerCase().replace(/_/g, " ")
 
 // ---------------------------------------------------------------- request
 
+// Same bounds as the OCR date reader (policeReportDateService.js).
+const EARLIEST_POLICE_DATE = "2000-01-01";
+
 // Body of POST …/approve and …/keep-pending: { reason }. Required (1-500
 // characters after trimming) for Keep Pending, optional for Approve.
-// Returns { reason } or { errors }.
-export function parseReviewActionBody(body, { reasonRequired }) {
+// Approve also takes { policeSubmittedDate: "YYYY-MM-DD" } for a police slip
+// (a real date from 2000 up to today in Sri Lanka).
+// Returns { reason, policeSubmittedDate } or { errors }.
+export function parseReviewActionBody(body, { reasonRequired, acceptsPoliceDate = false, now = new Date() }) {
     if (body !== undefined && (body === null || typeof body !== "object" || Array.isArray(body))) {
         return { errors: [{ field: "body", message: "must be a JSON object" }] };
     }
+    const errors = [];
+    let reason = null;
     const value = body?.reason;
     if (value === undefined || value === null || (typeof value === "string" && value.trim() === "")) {
-        return reasonRequired ? { errors: [{ field: "reason", message: "is required" }] } : { reason: null };
+        if (reasonRequired) errors.push({ field: "reason", message: "is required" });
+    } else if (typeof value !== "string") {
+        errors.push({ field: "reason", message: "must be text" });
+    } else if (value.trim().length > MAX_REASON_LENGTH) {
+        errors.push({ field: "reason", message: `must be at most ${MAX_REASON_LENGTH} characters` });
+    } else {
+        reason = value.trim();
     }
-    if (typeof value !== "string") {
-        return { errors: [{ field: "reason", message: "must be text" }] };
+
+    let policeSubmittedDate = null;
+    const date = acceptsPoliceDate ? body?.policeSubmittedDate : undefined;
+    if (date !== undefined && date !== null && date !== "") {
+        if (!isValidBusinessDate(date)) {
+            errors.push({ field: "policeSubmittedDate", message: "must be a date as YYYY-MM-DD" });
+        } else if (date < EARLIEST_POLICE_DATE || date > businessDateOf(now)) {
+            errors.push({ field: "policeSubmittedDate", message: "must be between 2000-01-01 and today" });
+        } else {
+            policeSubmittedDate = date;
+        }
     }
-    const reason = value.trim();
-    if (reason.length > MAX_REASON_LENGTH) {
-        return { errors: [{ field: "reason", message: `must be at most ${MAX_REASON_LENGTH} characters` }] };
+    return errors.length ? { errors } : { reason, policeSubmittedDate };
+}
+
+// The submitted date an approval stores for a police slip, or an error.
+//   storedDate: the slip's date already on record (read by OCR), if any.
+//   givenDate:  the date the admin entered, if any.
+// A slip without a date needs one; a slip whose date OCR read keeps it
+// (the admin confirms it; a different date is refused). Other document
+// types take no date.
+function policeDateForApproval({ documentType, storedDate, givenDate }) {
+    if (documentType !== DOCUMENT_TYPES.POLICE_SLIP) {
+        if (givenDate) throw new ReviewActionError(400, "POLICE_DATE_NOT_APPLICABLE", "A submitted date is only taken when approving a police slip.");
+        return null;
     }
-    return { reason };
+    if (storedDate) {
+        if (givenDate && givenDate !== storedDate) {
+            throw new ReviewActionError(409, "POLICE_DATE_ALREADY_SET", `The submitted date ${storedDate} was read from the slip and can't be changed here.`);
+        }
+        return storedDate;
+    }
+    if (!givenDate) {
+        throw new ReviewActionError(400, "POLICE_DATE_REQUIRED", "Enter the submitted date shown on the police slip to approve it.");
+    }
+    return givenDate;
 }
 
 // ---------------------------------------------------------------- locks
@@ -94,7 +138,7 @@ const pendingSelect = {
     temporaryId: true, passportId: true, documentType: true, processingStatus: true, pendingStoragePath: true,
     fileSha256: true, processingSummary: true, createdDate: true,
 };
-const documentSelect = { documentId: true, passportId: true, documentType: true, verificationStatus: true, temporaryId: true };
+const documentSelect = { documentId: true, passportId: true, documentType: true, verificationStatus: true, temporaryId: true, policeSubmittedDate: true };
 
 const findPending = (db, temporaryId) =>
     db.temporaryData.findFirst({ where: { AND: [{ temporaryId }, REVIEW_PENDING_WHERE] }, select: pendingSelect });
@@ -140,8 +184,12 @@ export async function reviewActionAvailability({ db, reviewId }) {
         documentType: row.documentType,
         exceptDocumentId: parsed.kind === REVIEW_KIND.DOCUMENT ? row.documentId : null,
     });
+    // A police slip without a stored date can only be approved with one.
+    const needsPoliceDate = row.documentType === DOCUMENT_TYPES.POLICE_SLIP && !toYmd(row.policeSubmittedDate);
     return {
-        approve: blocker ? { available: false, code: blocker.code, message: blocker.message } : { available: true, code: null, message: null },
+        approve: blocker
+            ? { available: false, code: blocker.code, message: blocker.message, needsPoliceDate }
+            : { available: true, code: null, message: null, needsPoliceDate },
         keepPending: { available: true, code: null, message: null },
     };
 }
@@ -157,13 +205,17 @@ export function toAuditEntry(row, adminName = row.admin?.name ?? null) {
         reason: row.reason ?? null,
         previousStatus: row.previousStatus,
         newStatus: row.newStatus,
+        policeSubmittedDate: toYmd(row.policeSubmittedDate),
         createdDate: row.createdDate instanceof Date ? row.createdDate.toISOString() : row.createdDate,
     };
 }
 
-function createAudit(tx, { admin, action, temporaryId = null, documentId = null, passportId = null, previousStatus, newStatus, reason }) {
+function createAudit(tx, { admin, action, temporaryId = null, documentId = null, passportId = null, previousStatus, newStatus, reason, policeSubmittedDate = null }) {
     return tx.auditLog.create({
-        data: { auditId: crypto.randomUUID(), adminId: admin.adminId, action, temporaryId, documentId, passportId, previousStatus, newStatus, reason },
+        data: {
+            auditId: crypto.randomUUID(), adminId: admin.adminId, action, temporaryId, documentId, passportId, previousStatus, newStatus, reason,
+            policeSubmittedDate: policeSubmittedDate ? ymdToDate(policeSubmittedDate) : null,
+        },
     });
 }
 
@@ -203,11 +255,13 @@ export async function getReviewItemWithActions({ db, reviewId }) {
 // audit entry. Storage can't join the database transaction, so the copy is
 // removed again if the transaction fails; the pending file is only removed
 // after the transaction has committed.
-async function approvePending({ db, bucket, admin, temporaryId, reason }) {
+async function approvePending({ db, bucket, admin, temporaryId, reason, policeSubmittedDate: givenDate }) {
     const before = await findPending(db, temporaryId);
     if (!before) throw notFound();
     const blocker = await approvalBlocker(db, { passportId: before.passportId, documentType: before.documentType });
     if (blocker) throw blocker;
+    // A waiting slip has no stored date (only slips filed under a client keep theirs).
+    const policeSubmittedDate = policeDateForApproval({ documentType: before.documentType, storedDate: null, givenDate });
 
     const mimeType = mimeTypeForPath(before.pendingStoragePath);
     if (!mimeType) {
@@ -271,6 +325,7 @@ async function approvePending({ db, bucket, admin, temporaryId, reason }) {
                     ocrConfidence: typeof confidence === "number" ? Math.round(confidence * 100) / 100 : null,
                     fileSha256,
                     temporaryId: row.temporaryId,
+                    policeSubmittedDate: policeSubmittedDate ? ymdToDate(policeSubmittedDate) : null,
                 },
             });
             await tx.temporaryData.update({
@@ -286,6 +341,7 @@ async function approvePending({ db, bucket, admin, temporaryId, reason }) {
                 previousStatus: row.processingStatus,
                 newStatus: VERIFICATION_STATUS.VERIFIED,
                 reason,
+                policeSubmittedDate,
             });
             return { documentId, storedFilename: copy.fileName, audit, pendingPath: row.pendingStoragePath };
         }, TRANSACTION_OPTIONS);
@@ -325,9 +381,10 @@ async function approvePending({ db, bucket, admin, temporaryId, reason }) {
 
 // DOCUMENT item: the file is already in the client folder (REVIEW_REQUIRED);
 // approval marks it VERIFIED. No storage change.
-async function approveDocument({ db, admin, documentId, reason }) {
+async function approveDocument({ db, admin, documentId, reason, policeSubmittedDate: givenDate }) {
     const before = await findReviewDocument(db, documentId);
     if (!before) throw notFound();
+    policeDateForApproval({ documentType: before.documentType, storedDate: toYmd(before.policeSubmittedDate), givenDate });
 
     const outcome = await db.$transaction(async (tx) => {
         await lockDocumentRow(tx, documentId);
@@ -337,7 +394,16 @@ async function approveDocument({ db, admin, documentId, reason }) {
         const blocker = await approvalBlocker(tx, { passportId: row.passportId, documentType: row.documentType, exceptDocumentId: row.documentId });
         if (blocker) throw blocker;
 
-        await tx.document.update({ where: { documentId }, data: { verificationStatus: VERIFICATION_STATUS.VERIFIED } });
+        const storedDate = toYmd(row.policeSubmittedDate);
+        const policeSubmittedDate = policeDateForApproval({ documentType: row.documentType, storedDate, givenDate });
+        await tx.document.update({
+            where: { documentId },
+            data: {
+                verificationStatus: VERIFICATION_STATUS.VERIFIED,
+                // Only a slip that had no date gets the one the admin entered.
+                ...(policeSubmittedDate && !storedDate ? { policeSubmittedDate: ymdToDate(policeSubmittedDate) } : {}),
+            },
+        });
         const audit = await createAudit(tx, {
             admin,
             action: REVIEW_ACTION.APPROVE,
@@ -347,6 +413,7 @@ async function approveDocument({ db, admin, documentId, reason }) {
             previousStatus: VERIFICATION_STATUS.REVIEW_REQUIRED,
             newStatus: VERIFICATION_STATUS.VERIFIED,
             reason,
+            policeSubmittedDate,
         });
         return { audit };
     }, TRANSACTION_OPTIONS);
@@ -354,12 +421,12 @@ async function approveDocument({ db, admin, documentId, reason }) {
     return { documentId, storedFilename: null, location: "CLIENT", pendingCopyRemoved: null, audit: outcome.audit };
 }
 
-export async function approveReviewItem({ db, bucket, admin, reviewId, reason = null }) {
+export async function approveReviewItem({ db, bucket, admin, reviewId, reason = null, policeSubmittedDate = null }) {
     const parsed = parseReviewId(reviewId);
     if (!parsed) throw notFound();
     const result = parsed.kind === REVIEW_KIND.PENDING
-        ? await approvePending({ db, bucket, admin, temporaryId: parsed.id, reason })
-        : await approveDocument({ db, admin, documentId: parsed.id, reason });
+        ? await approvePending({ db, bucket, admin, temporaryId: parsed.id, reason, policeSubmittedDate })
+        : await approveDocument({ db, admin, documentId: parsed.id, reason, policeSubmittedDate });
 
     return {
         action: REVIEW_ACTION.APPROVE,
@@ -369,6 +436,7 @@ export async function approveReviewItem({ db, bucket, admin, reviewId, reason = 
             storedFilename: result.storedFilename,
             verificationStatus: VERIFICATION_STATUS.VERIFIED,
             location: result.location,
+            policeSubmittedDate: toYmd(result.audit.policeSubmittedDate),
         },
         pendingCopyRemoved: result.pendingCopyRemoved,
         audit: toAuditEntry(result.audit, admin.name ?? null),

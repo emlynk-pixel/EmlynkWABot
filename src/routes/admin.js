@@ -21,6 +21,7 @@ import {
     parseReviewActionBody,
     ReviewActionError,
 } from "../services/adminReviewActionService.js";
+import { listPoliceWorkflow, parsePoliceListQuery } from "../services/adminPoliceService.js";
 
 // Loaded lazily so tests can pass a fake client without touching the DB.
 async function resolveDb(db) {
@@ -95,6 +96,16 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
         return res.json(await listReviewQueue({ db: client, params: parsed.params }));
     });
 
+    // Police Workflow: every client's 21-day status, calculated (read-only).
+    router.get("/police", async (req, res) => {
+        const parsed = parsePoliceListQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await listPoliceWorkflow({ db: client, params: parsed.params }));
+    });
+
     const invalidReviewId = (res) => res.status(400).json({
         message: "Invalid review ID",
         errors: [{ field: "reviewId", message: "must be pending-<id> or document-<id>" }],
@@ -130,15 +141,18 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
     });
 
     // Review actions. The admin comes from the token (req.admin), never the body.
-    const reviewAction = (action, { reasonRequired, needsBucket }) => async (req, res) => {
+    const reviewAction = (action, { reasonRequired, needsBucket, acceptsPoliceDate = false }) => async (req, res) => {
         if (!parseReviewId(req.params.reviewId)) return invalidReviewId(res);
-        const parsed = parseReviewActionBody(req.body, { reasonRequired });
+        const parsed = parseReviewActionBody(req.body, { reasonRequired, acceptsPoliceDate });
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const [client, storage] = await Promise.all([resolveDb(db), needsBucket ? resolveBucket(bucket) : null]);
         try {
-            const result = await action({ db: client, bucket: storage, admin: req.admin, reviewId: req.params.reviewId, reason: parsed.reason });
+            const result = await action({
+                db: client, bucket: storage, admin: req.admin, reviewId: req.params.reviewId,
+                reason: parsed.reason, policeSubmittedDate: parsed.policeSubmittedDate,
+            });
             return res.json(result);
         } catch (error) {
             if (error instanceof ReviewActionError) {
@@ -149,7 +163,8 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
     };
 
     // PENDING: pending/ -> client folder, VERIFIED. DOCUMENT: REVIEW_REQUIRED -> VERIFIED.
-    router.post("/review/:reviewId/approve", reviewAction(approveReviewItem, { reasonRequired: false, needsBucket: true }));
+    // A police slip is approved with its submitted date (entered, or confirmed if OCR read it).
+    router.post("/review/:reviewId/approve", reviewAction(approveReviewItem, { reasonRequired: false, needsBucket: true, acceptsPoliceDate: true }));
     // Stays pending and in the queue; the reason is required.
     router.post("/review/:reviewId/keep-pending", reviewAction(keepReviewItemPending, { reasonRequired: true, needsBucket: false }));
 

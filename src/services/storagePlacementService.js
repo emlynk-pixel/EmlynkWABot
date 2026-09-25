@@ -107,6 +107,7 @@ export async function placeDocument(decision, context, { db, bucket, now = new D
             documentConfidence: context.documentConfidence,
             receivedAt: context.receivedAt,
             temporaryId: context.temporaryId,
+            policeSubmittedDate: context.policeSubmittedDate ?? null,
         },
         { db, bucket, now }
     );

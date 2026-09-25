@@ -63,6 +63,7 @@ export async function storeClientDocument({
     documentConfidence,
     receivedAt,
     temporaryId,
+    policeSubmittedDate,
 }, { db, bucket, now = new Date() } = {}) {
     const verificationStatus = verificationStatusForBand(band);
     const extension = extensionForMimeType(mimeType);
@@ -114,6 +115,9 @@ export async function storeClientDocument({
                 fileSha256,
                 // Submission it came from (review reason, processing summary).
                 temporaryId: temporaryId ?? null,
+                // Police slips: the resolved submitted date ("YYYY-MM-DD"),
+                // start of the 21-day countdown. Null for everything else.
+                policeSubmittedDate: policeSubmittedDate ? new Date(`${policeSubmittedDate}T00:00:00.000Z`) : null,
             },
         });
     } catch (error) {

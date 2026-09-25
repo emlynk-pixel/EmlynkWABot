@@ -163,6 +163,8 @@ describe("POLICE_SLIP pipeline", () => {
         assert.equal(summary.storage.placement, "CLIENT");
         assert.ok(objects.includes("clients/N1234567/police-slip/police_slip.pdf"));
         assert.equal(db.documentRows[0].documentType, POLICE_SLIP);
+        // Checkpoint 5: the resolved submitted date is stored on the document (DATE column).
+        assert.equal(db.documentRows[0].policeSubmittedDate.toISOString(), "2026-09-01T00:00:00.000Z");
 
         assert.equal(summary.policeWorkflowEvent, POLICE_WORKFLOW_EVENT.SLIP_RECEIVED);
         assert.deepEqual(details.policeWorkflow, {
@@ -207,6 +209,7 @@ describe("POLICE_REPORT pipeline", () => {
         assert.equal(summary.storage.verificationStatus, "VERIFIED");
         assert.ok(objects.includes("clients/N1234567/police-report/police_report.pdf"));
         assert.equal(db.documentRows[0].documentType, POLICE_REPORT);
+        assert.equal(db.documentRows[0].policeSubmittedDate, null, "only slips keep a submitted date");
         assert.equal(recordUpdate.data.passportId, "N1234567");
         assert.equal(summary.policeWorkflowEvent, POLICE_WORKFLOW_EVENT.REPORT_RECEIVED);
     });
@@ -306,7 +309,7 @@ describe("police identity (non-passport rules unchanged)", () => {
     });
 });
 
-describe("Phase 9 preparation (nothing stored yet)", () => {
+describe("Police Workflow data (Phase 9 events are still only prepared)", () => {
     test("due date = submitted date + 21 days", () => {
         assert.equal(POLICE_REPORT_DUE_DAYS, 21);
         assert.equal(policeReportDueDate("2026-09-01"), "2026-09-22");
@@ -334,5 +337,10 @@ describe("regression guards", () => {
         assert.equal(summary.documentType, "MEDICAL");
         assert.equal(summary.policeDate, null);
         assert.equal(summary.policeWorkflowEvent, null);
+    });
+
+    test("medical documents never get a police submitted date stored", async () => {
+        const { db } = await run({ text: loadDocumentText("medical-gamca") });
+        for (const row of db.documentRows) assert.equal(row.policeSubmittedDate, null);
     });
 });

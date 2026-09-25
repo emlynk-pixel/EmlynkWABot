@@ -32,6 +32,16 @@ export function formatDate(iso: string | null | undefined): string {
     return Number.isNaN(date.getTime()) ? "—" : dateFormat.format(date);
 }
 
+// A calendar day "YYYY-MM-DD" (e.g. a police slip date), shown as that day.
+export function formatDay(ymd: string | null | undefined): string {
+    return ymd ? formatDate(`${ymd}T12:00:00+05:30`) : "—";
+}
+
+// Today in Sri Lanka as "YYYY-MM-DD" (the latest date a slip can carry).
+export function todayInSriLanka(now: Date = new Date()): string {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: BUSINESS_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
     if (!iso) return "—";
     const date = new Date(iso);

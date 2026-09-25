@@ -231,6 +231,7 @@ erDiagram
         decimal ocr_confidence
         char file_sha256
         string temporary_id FK
+        date police_submitted_date
         datetime created_date
         datetime updated_date
     }
@@ -260,6 +261,7 @@ erDiagram
         string previous_status
         string new_status
         string reason
+        date police_submitted_date
         datetime created_date
     }
 
@@ -390,7 +392,7 @@ EmlynkWABot/
 | **Identity Conflict Engine** | ✅ Completed | Passport/WhatsApp identity matrix, conflict detection, field reconciliation — `Docs/07` |
 | **21-Day Police Report Countdown** | ⏳ Planned | Submission date extraction & background reminder scheduler |
 | **Private Object Storage** | ✅ Completed | Private Supabase bucket, client folders, versioning, checksum duplicates, pending storage — `Docs/11`, `Docs/12` |
-| **Admin Dashboard UI** | 🚧 In Progress | Phase 10 Checkpoints 1–4: login, shell; Overview, Documents, Client Details, Review Queue, Review Detail with Approve / Keep Pending and audit log |
+| **Admin Dashboard UI** | 🚧 In Progress | Phase 10 Checkpoints 1–5: login, shell; Overview, Documents, Client Details, Review Queue, Review Detail with Approve / Keep Pending and audit log, Police Workflow (21-day status) |
 
 ---
 
@@ -406,8 +408,8 @@ EmlynkWABot/
 | **Phase 6** | Passport Verification | ✅ Completed | Identity matching rules, conflict detection & anti-overwrite checks — `Docs/07` |
 | **Phase 7** | Permanent Storage | ✅ Completed | Structured folder naming, private cloud storage, checksums, pending storage — `Docs/11`, `Docs/12` |
 | **Phase 8** | Temporary Workflow | ✅ Completed | Disk storage & `temporary_data` table integration for incoming unverified files |
-| **Phase 9** | Police Report Countdown | ⏳ Planned | 21-day countdown service & Admin completion suppression handler |
-| **Phase 10** | Admin Dashboard | 🚧 In Progress | Checkpoints 1–4: admin frontend, admin API, review queue/detail, review actions (Approve, Keep Pending; no reject) with append-only audit log. Next: Police Workflow |
+| **Phase 9** | Police Report Countdown | 🚧 Partly | Done in Phase 10 Checkpoint 5: slip submitted date stored, calculated 21-day status (stops when a verified police report exists), dashboard views. Not done: reminders/warnings (Phase 11) |
+| **Phase 10** | Admin Dashboard | 🚧 In Progress | Checkpoints 1–5: admin frontend, admin API, review queue/detail, review actions (Approve, Keep Pending; no reject) with append-only audit log, Police Workflow. Remaining: Clients list, Missing-documents view, more daily figures |
 | **Phase 11** | Reporting and Alerts | ⏳ Planned | System alert metrics, overdue reports & missing document summaries |
 | **Phase 12** | Security, QA & Deployment | ⏳ Planned | Role-based authorization, load testing, production Docker container |
 
@@ -550,6 +552,7 @@ All routes need `Authorization: Bearer <token>` of an **ACTIVE** admin (checked 
 | `GET` | `/api/admin/review/:reviewId/file` | The item's file, streamed from private storage for the in-page preview |
 | `POST` | `/api/admin/review/:reviewId/approve` | Approve: waiting file moved to the client folder as VERIFIED (or stored document marked VERIFIED); audit entry |
 | `POST` | `/api/admin/review/:reviewId/keep-pending` | Keep Pending with a required reason: item stays pending and in the queue; audit entry |
+| `GET` | `/api/admin/police` | Police Workflow: every client's 21-day status (overdue, due today, due soon, pending, date missing, not uploaded, completed), filter and paging |
 
 ---
 

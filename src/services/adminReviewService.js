@@ -13,6 +13,7 @@ import { DOCUMENT_TYPES } from "./documentClassificationService.js";
 import { REVIEW_REASON, REVIEW_REASON_CATEGORY } from "./reviewReason.js";
 import { clientName } from "../utils/clientName.js";
 import { ALLOWED_MIME_TYPES } from "../utils/fileValidation.js";
+import { toYmd } from "./policeCountdownService.js";
 
 // Submissions waiting for a person: a file in pending/ (shared with the
 // Overview and client page). A FAILED submission is not a review item by
@@ -292,7 +293,7 @@ async function loadReviewRecord(db, reviewId) {
         where: { AND: [{ documentId: parsed.id }, REVIEW_DOCUMENT_WHERE] },
         select: {
             documentId: true, documentType: true, processingStatus: true, verificationStatus: true, ocrConfidence: true,
-            receivedDate: true, storedFilename: true, storagePath: true, mimeType: true, fileSize: true,
+            receivedDate: true, storedFilename: true, storagePath: true, mimeType: true, fileSize: true, policeSubmittedDate: true,
             user: { select: clientSelect },
             temporaryData: { select: { temporaryId: true, reviewReason: true, processingSummary: true, whatsappNumber: true, createdDate: true } },
         },
@@ -333,6 +334,8 @@ export async function getReviewItem({ db, reviewId }) {
             verificationStatus: kind === REVIEW_KIND.DOCUMENT ? row.verificationStatus : null,
             receivedDate: toIso(kind === REVIEW_KIND.DOCUMENT ? row.receivedDate : row.createdDate),
             confidence: kind === REVIEW_KIND.DOCUMENT ? toNumber(row.ocrConfidence) : summaryConfidence(summary),
+            // Stored police slips: the submitted date on record (null otherwise).
+            policeSubmittedDate: kind === REVIEW_KIND.DOCUMENT ? toYmd(row.policeSubmittedDate) : null,
         },
         client: toClient(row.user),
         // Who sent it (admins compare this with the client record).

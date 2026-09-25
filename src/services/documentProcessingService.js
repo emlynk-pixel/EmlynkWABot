@@ -280,9 +280,13 @@ export async function processDocument({
             fileSha256: state.fileSha256,
             documentConfidence: state.confidence.documentConfidence,
             receivedAt,
+            // Only a police slip's resolved date is kept (Police Workflow countdown).
+            policeSubmittedDate: documentType === DOCUMENT_TYPES.POLICE_SLIP && state.policeDate?.status === POLICE_DATE_STATUS.RESOLVED
+                ? state.policeDate.date
+                : null,
         }, { db, bucket, now });
         state.processingStatus = state.placement.processingStatus;
-        // Phase 9 input only; nothing is stored for it yet.
+        // Phase 9 event (not stored itself; the slip's date is, see placeDocument above).
         state.policeWorkflow = policeWorkflowEvent({
             documentType,
             policeDate: state.policeDate,
@@ -324,8 +328,8 @@ export async function processDocument({
 
     return {
         summary: summarize(state),
-        // Not for logging. The police date has no column until Phase 7/9,
-        // so it's kept here in the result rather than stored.
+        // Not for logging. A police slip's resolved date is also stored on
+        // its documents row (police_submitted_date) when filed under the client.
         details: {
             policeDate: state.policeDate
                 ? { status: state.policeDate.status, date: state.policeDate.date, kind: state.policeDate.kind, confidence: state.policeDate.confidence }

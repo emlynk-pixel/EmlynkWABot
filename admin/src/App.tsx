@@ -6,6 +6,7 @@ import { DocumentsPage } from "./pages/DocumentsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { OverviewPage } from "./pages/OverviewPage";
+import { PoliceWorkflowPage } from "./pages/PoliceWorkflowPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { SectionPlaceholder } from "./pages/SectionPlaceholder";
@@ -29,7 +30,7 @@ export function AppRoutes() {
                 <Route path="review/:id" element={<ReviewDetailPage />} />
                 <Route path="clients" element={<SectionPlaceholder title="Clients" description="Client profiles and their submitted documents. Open a client from the Documents or Overview page." />} />
                 <Route path="clients/:passportId" element={<ClientDetailsPage />} />
-                <Route path="police" element={<SectionPlaceholder title="Police Workflow" description="Police slips, final reports and the 21-day follow-up." />} />
+                <Route path="police" element={<PoliceWorkflowPage />} />
                 <Route path="*" element={<NotFoundPage />} />
             </Route>
         </Routes>

@@ -14,7 +14,7 @@ import { ApiError } from "../api/client";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
 import { Confidence } from "../components/Confidence";
-import { documentTypeLabel, formatDateTime, formatFileSize, humanize, shortId } from "../components/format";
+import { documentTypeLabel, formatDateTime, formatDay, formatFileSize, humanize, shortId, todayInSriLanka } from "../components/format";
 import { Icon } from "../components/Icon";
 import { AUDIT_ACTIONS, IDENTITY_NOTES, REVIEW_REASONS, reviewReasonLabel, reviewReasonTone } from "../components/reviewLabels";
 import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
@@ -133,6 +133,7 @@ function AuditLog({ entries }: { entries: AuditEntry[] }) {
                         </div>
                         <p className="text-body-sm text-ink">{entry.adminName ?? "Unknown admin"}</p>
                         <p className="text-body-sm text-ink-soft">{entry.reason ?? <span className="text-ink-subtle">No reason given</span>}</p>
+                        {entry.policeSubmittedDate && <p className="text-label-sm text-ink-muted">Police slip submitted date: {formatDay(entry.policeSubmittedDate)}</p>}
                     </li>
                 );
             })}
@@ -184,14 +185,23 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const [approved, setApproved] = useState<ApproveResult | null>(null);
     const [keepReason, setKeepReason] = useState("");
     const [reasonError, setReasonError] = useState<string | null>(null);
+    const [policeDate, setPoliceDate] = useState("");
+    const [policeDateError, setPoliceDateError] = useState<string | null>(null);
 
     const approveBlocked = item.actions?.approve.available === false ? item.actions.approve.message : null;
+    // A police slip is approved with its submitted date: confirmed when OCR
+    // read it, entered by the admin otherwise.
+    const isPoliceSlip = item.document.documentType === "POLICE_SLIP";
+    const storedPoliceDate = item.document.policeSubmittedDate;
+    const needsPoliceDate = isPoliceSlip && !storedPoliceDate;
     const auditLog = approved ? [approved.audit, ...item.auditLog] : item.auditLog;
     const verificationStatus = approved ? approved.document.verificationStatus : item.document.verificationStatus;
 
     const open = (which: "approve" | "keep") => {
         setError(null);
         setReasonError(null);
+        setPoliceDateError(null);
+        if (which === "approve") setPoliceDate("");
         setNotice(null);
         if (which === "keep") setKeepReason("");
         setDialog(which);
@@ -209,18 +219,21 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
 
     const confirmApprove = async () => {
         if (!token || busy) return;
+        if (needsPoliceDate && !policeDate) {
+            setPoliceDateError("Enter the submitted date shown on the police slip.");
+            return;
+        }
         setBusy(true);
         setError(null);
         try {
-            const result = await approveReviewItem(token, item.reviewId);
+            const result = await approveReviewItem(token, item.reviewId, needsPoliceDate ? { policeSubmittedDate: policeDate } : {});
             setApproved(result);
             setDialog(null);
-            setNotice({
-                tone: "success",
-                text: result.document.storedFilename
-                    ? `Approved. The document was stored in the client folder as ${result.document.storedFilename} and marked as verified.`
-                    : "Approved. The document is marked as verified.",
-            });
+            const stored = result.document.storedFilename
+                ? `Approved. The document was stored in the client folder as ${result.document.storedFilename} and marked as verified.`
+                : "Approved. The document is marked as verified.";
+            const slipDate = result.document.policeSubmittedDate ? ` The 21-day follow-up runs from ${formatDay(result.document.policeSubmittedDate)}.` : "";
+            setNotice({ tone: "success", text: stored + slipDate });
         } catch (caught) {
             fail(caught);
         } finally {
@@ -303,6 +316,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             <Row label="Received">{formatDateTime(item.document.receivedDate)}</Row>
                             <Row label="Processing status"><StatusBadge status={item.document.processingStatus} /></Row>
                             {verificationStatus && <Row label="Verification status"><StatusBadge status={verificationStatus} /></Row>}
+                            {isPoliceSlip && <Row label="Slip submitted date">{formatDay(approved?.document.policeSubmittedDate ?? storedPoliceDate)}</Row>}
                             <Row label="Confidence"><Confidence value={item.document.confidence} /></Row>
                             <Row label="Review reason"><ToneBadge tone={reviewReasonTone(item.reviewReason)}>{reviewReasonLabel(item.reviewReason)}</ToneBadge></Row>
                         </dl>
@@ -359,6 +373,37 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             ? "This will move the document to permanent client storage and mark it as verified."
                             : "The document is already in the client folder. It will be marked as verified."}
                     </p>
+                    {isPoliceSlip && storedPoliceDate && (
+                        <p className="mt-3 text-body-sm text-ink">
+                            Submitted date read from the slip: <span className="font-medium">{formatDay(storedPoliceDate)}</span>. The 21-day follow-up runs from this date.
+                        </p>
+                    )}
+                    {needsPoliceDate && (
+                        <div className="mt-3">
+                            <label htmlFor="police-date" className="block text-label-md text-ink">
+                                Submitted date on the police slip <span aria-hidden="true" className="text-critical">*</span>
+                            </label>
+                            <input
+                                id="police-date"
+                                type="date"
+                                required
+                                min="2000-01-01"
+                                max={todayInSriLanka()}
+                                value={policeDate}
+                                disabled={busy}
+                                aria-invalid={policeDateError ? "true" : undefined}
+                                aria-describedby={policeDateError ? "police-date-error" : "police-date-hint"}
+                                onChange={(event) => {
+                                    setPoliceDate(event.target.value);
+                                    setPoliceDateError(null);
+                                }}
+                                className="mt-1 h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            />
+                            {policeDateError
+                                ? <p id="police-date-error" className="mt-1 text-label-sm text-critical">{policeDateError}</p>
+                                : <p id="police-date-hint" className="mt-1 text-label-sm text-ink-muted">The date could not be read from the slip. The 21-day follow-up runs from this date; it is recorded in the audit log.</p>}
+                        </div>
+                    )}
                     <DialogError message={error} />
                     <div className="mt-4 flex justify-end gap-2">
                         <button type="button" className={secondaryButton} disabled={busy} onClick={close} autoFocus>Cancel</button>

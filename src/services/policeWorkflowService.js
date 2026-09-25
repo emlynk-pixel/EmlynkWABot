@@ -2,10 +2,12 @@ import { DOCUMENT_TYPES } from "./documentClassificationService.js";
 import { POLICE_DATE_STATUS } from "./policeReportDateService.js";
 
 // What a stored police document means for the police workflow (proposal
-// §20-21). Pure: nothing is saved and no countdown or reminder exists yet.
-// Phase 9 will persist these events:
-//   POLICE_SLIP_RECEIVED   -> store submittedDate, due date, workflow PENDING
-//   POLICE_REPORT_RECEIVED -> workflow COMPLETED, stop countdown and alerts
+// §20-21). Pure: the event itself is not saved. Since Phase 10 Checkpoint 5
+// a slip's submitted date is stored on the document and the status is
+// calculated from the documents (policeCountdownService.js):
+//   POLICE_SLIP_RECEIVED   -> the countdown runs from submittedDate
+//   POLICE_REPORT_RECEIVED -> a VERIFIED report completes the workflow
+// Reminders and alerts are not built (Phase 11).
 
 export const POLICE_REPORT_DUE_DAYS = 21;
 

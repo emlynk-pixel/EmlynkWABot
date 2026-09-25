@@ -55,6 +55,7 @@ function createFakeDashboardDb({ admins, documents = [docRow()], user = null, pe
         },
         user: {
             count: async (args) => record("user.count", args, 12),
+            findMany: async (args) => record("user.findMany", args, [CLIENT]), // Police Workflow counts
             findUnique: async (args) => record("user.findUnique", args, user && args.where.passportId === user.passportId ? user : null),
         },
         document: {
@@ -65,7 +66,9 @@ function createFakeDashboardDb({ admins, documents = [docRow()], user = null, pe
         temporaryData: {
             count: async (args) => record("temporaryData.count", args, args?.where?.pendingStoragePath ? 4 : 9), // waiting for review
             groupBy: async (args) => record("temporaryData.groupBy", args,
-                args.by[0] === "documentType"
+                args.by[0] === "passportId"
+                    ? [] // police slips waiting in pending/, per client
+                    : args.by[0] === "documentType"
                     ? [{ documentType: "PASSPORT", _count: { _all: 5 } }, { documentType: "MEDICAL", _count: { _all: 2 } }]
                     : args.where
                         ? [{ processingStatus: "MANUAL_REVIEW", _count: { _all: 3 } }, { processingStatus: "CONFLICT", _count: { _all: 1 } }]
@@ -222,7 +225,7 @@ describe("GET /api/admin/overview", () => {
         const before = db.calls.length;
         await http.get("/api/admin/overview");
         const dashboardCalls = db.calls.slice(before).filter((c) => !c.method.startsWith("admin."));
-        assert.equal(dashboardCalls.length, 10);
+        assert.equal(dashboardCalls.length, 13); // 10 + 3 for the police due counts (Checkpoint 5)
         const recent = dashboardCalls.find((c) => c.method === "document.findMany");
         assert.ok(recent.args.select.user, "client joined in the same query");
         assert.equal(recent.args.take, 8);
@@ -353,7 +356,9 @@ describe("GET /api/admin/clients/:passportId", () => {
         assert.deepEqual(body.missingDocumentTypes, []);
         assert.equal(body.police.latestSlip.documentId, "doc-s");
         assert.equal(body.police.latestReport.documentId, "doc-r");
-        assert.equal(body.police.countdown, undefined, "no Phase 9 countdown yet");
+        // A verified police report completes the workflow (Checkpoint 5; details in adminPolice.test.js).
+        assert.equal(body.police.countdown.status, "COMPLETED");
+        assert.equal(body.police.countdown.report.documentId, "doc-r");
     });
 
     test("passport ID is matched case-insensitively; documents and pending items in two queries", async () => {

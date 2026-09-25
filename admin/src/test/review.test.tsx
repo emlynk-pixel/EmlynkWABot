@@ -40,7 +40,7 @@ const ITEM: ReviewItem = {
     kind: "PENDING",
     reviewReason: "IDENTITY_NOT_CONFIRMED",
     reviewCategory: "IDENTITY",
-    document: { documentId: null, temporaryId: TEMP_ID, documentType: "PASSPORT", processingStatus: "MANUAL_REVIEW", verificationStatus: null, receivedDate: "2026-09-24T01:00:00.000Z", confidence: 71 },
+    document: { documentId: null, temporaryId: TEMP_ID, documentType: "PASSPORT", processingStatus: "MANUAL_REVIEW", verificationStatus: null, receivedDate: "2026-09-24T01:00:00.000Z", confidence: 71, policeSubmittedDate: null },
     client: CLIENT_REF,
     submission: { whatsappNumber: "94770000000", receivedDate: "2026-09-24T01:00:00.000Z" },
     processing: {
@@ -63,6 +63,7 @@ const auditEntry = (overrides: Partial<AuditEntry> = {}): AuditEntry => ({
     reason: "Waiting for a clearer photo",
     previousStatus: "MANUAL_REVIEW",
     newStatus: "MANUAL_REVIEW",
+    policeSubmittedDate: null,
     createdDate: "2026-09-25T04:30:00.000Z",
     ...overrides,
 });
@@ -70,7 +71,7 @@ const auditEntry = (overrides: Partial<AuditEntry> = {}): AuditEntry => ({
 const APPROVE_RESULT: ApproveResult = {
     action: "APPROVE",
     reviewId: `pending-${TEMP_ID}`,
-    document: { documentId: DOC_ID, storedFilename: "passport.pdf", verificationStatus: "VERIFIED", location: "CLIENT" },
+    document: { documentId: DOC_ID, storedFilename: "passport.pdf", verificationStatus: "VERIFIED", location: "CLIENT", policeSubmittedDate: null },
     pendingCopyRemoved: true,
     audit: auditEntry({ auditId: "a0000000-0000-4000-8000-000000000002", action: "APPROVE", reason: null, newStatus: "VERIFIED" }),
 };

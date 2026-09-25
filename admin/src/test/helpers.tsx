@@ -84,6 +84,7 @@ export const OVERVIEW: Overview = {
         pendingByStatus: { MANUAL_REVIEW: 9, CONFLICT: 5 },
         items: [{ temporaryId: "tmp-1", documentType: "POLICE_SLIP", processingStatus: "MANUAL_REVIEW", receivedDate: "2026-09-25T03:00:00.000Z", client: CLIENT_REF }],
     },
+    police: { dueSoon: 2, dueToday: 1, overdue: 3 },
 };
 
 export function documentList(items: DocumentItem[], { page = 1, pageSize = 25, total = items.length } = {}): DocumentList {
@@ -114,6 +115,10 @@ export const CLIENT_DETAILS: ClientDetails = {
     missingDocumentTypes: ["MEDICAL"],
     police: {
         latestSlip: null,
-        latestReport: { documentId: "bbbb0000-0000-4000-8000-000000000002", receivedDate: "2026-09-24T07:05:03.000Z", verificationStatus: "VERIFIED" },
+        latestReport: { documentId: "bbbb0000-0000-4000-8000-000000000002", receivedDate: "2026-09-24T07:05:03.000Z", verificationStatus: "VERIFIED", policeSubmittedDate: null },
+        countdown: {
+            status: "COMPLETED", submittedDate: null, dueDate: null, daysRemaining: null, slip: null,
+            report: { documentId: "bbbb0000-0000-4000-8000-000000000002", receivedDate: "2026-09-24T07:05:03.000Z" }, slipAwaitingReview: false,
+        },
     },
 };

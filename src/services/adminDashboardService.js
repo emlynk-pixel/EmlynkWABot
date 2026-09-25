@@ -15,6 +15,8 @@ import { VERIFICATION_STATUS } from "./clientDocumentService.js";
 import { businessDateOf, businessDayRange } from "../utils/businessDay.js";
 import { clientName } from "../utils/clientName.js";
 import { REVIEW_PENDING_WHERE } from "./adminReviewService.js";
+import { countdownFromDocuments, policeDueCounts } from "./adminPoliceService.js";
+import { toYmd } from "./policeCountdownService.js";
 
 export { clientName };
 
@@ -104,6 +106,7 @@ export async function getOverview({ db, now = new Date() }) {
         pendingGroups,
         recentDocuments,
         pendingPreview,
+        policeDue,
     ] = await Promise.all([
         db.user.count(),
         db.document.count(),
@@ -120,6 +123,8 @@ export async function getOverview({ db, now = new Date() }) {
             orderBy: [{ createdDate: "desc" }, { temporaryId: "asc" }],
             take: REVIEW_QUEUE_PREVIEW_LIMIT,
         }),
+        // Police Workflow (Checkpoint 5): reports due soon, due today, overdue.
+        policeDueCounts({ db, today }),
     ]);
 
     return {
@@ -141,6 +146,7 @@ export async function getOverview({ db, now = new Date() }) {
             pendingByStatus: countsBy(pendingGroups, "processingStatus"),
             items: pendingPreview.map(toPendingItem),
         },
+        police: policeDue,
     };
 }
 
@@ -327,14 +333,15 @@ export function requiredDocumentStatus({ documents, pendingItems }) {
     });
 }
 
-// Latest stored police slip and final police report, as they are. The
-// 21-day countdown and workflow status come with Phase 9.
+// Latest stored police slip and final police report, as they are.
 function latestOfType(documents, documentType) {
     const doc = documents.find((d) => d.documentType === documentType);
-    return doc ? { documentId: doc.documentId, receivedDate: doc.receivedDate, verificationStatus: doc.verificationStatus } : null;
+    return doc
+        ? { documentId: doc.documentId, receivedDate: toIso(doc.receivedDate), verificationStatus: doc.verificationStatus, policeSubmittedDate: toYmd(doc.policeSubmittedDate) }
+        : null;
 }
 
-export async function getClientDetails({ db, passportId }) {
+export async function getClientDetails({ db, passportId, now = new Date() }) {
     const id = passportId.toUpperCase();
     const [user, pendingRows] = await Promise.all([
         db.user.findUnique({
@@ -354,7 +361,7 @@ export async function getClientDetails({ db, passportId }) {
                 createdDate: true,
                 updatedDate: true,
                 documents: {
-                    select: documentSelect,
+                    select: { ...documentSelect, policeSubmittedDate: true },
                     orderBy: [{ receivedDate: "desc" }, { documentId: "asc" }],
                 },
             },
@@ -395,8 +402,14 @@ export async function getClientDetails({ db, passportId }) {
         requiredDocuments,
         missingDocumentTypes: requiredDocuments.filter((r) => r.status === REQUIREMENT_STATUS.MISSING).map((r) => r.documentType),
         police: {
-            latestSlip: latestOfType(documents, DOCUMENT_TYPES.POLICE_SLIP),
-            latestReport: latestOfType(documents, DOCUMENT_TYPES.POLICE_REPORT),
+            latestSlip: latestOfType(user.documents, DOCUMENT_TYPES.POLICE_SLIP),
+            latestReport: latestOfType(user.documents, DOCUMENT_TYPES.POLICE_REPORT),
+            // 21-day follow-up (Checkpoint 5), calculated, never stored.
+            countdown: countdownFromDocuments(
+                user.documents,
+                pendingRows.filter((row) => row.documentType === DOCUMENT_TYPES.POLICE_SLIP).length,
+                businessDateOf(now)
+            ),
         },
     };
 }

@@ -57,6 +57,34 @@ function Breakdown({ counts, label, dotClass }: { counts: Record<string, number>
     );
 }
 
+// Final police reports by 21-day status; each links to the filtered Police Workflow.
+function PoliceDue({ police }: { police: Overview["police"] }) {
+    const items = [
+        { label: "Overdue", value: police.overdue, status: "OVERDUE", critical: true },
+        { label: "Due today", value: police.dueToday, status: "DUE_TODAY", critical: true },
+        { label: "Due soon (1–7 days)", value: police.dueSoon, status: "DUE_SOON", critical: false },
+    ];
+    return (
+        <Card className="space-y-3 p-4">
+            <SectionHeading
+                title="Police reports"
+                description="Final police reports due 21 days after the police slip was submitted"
+                action={<Link to="/police" className="text-label-md text-primary hover:underline">Open Police Workflow</Link>}
+            />
+            <ul className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Police reports by status">
+                {items.map((item) => (
+                    <li key={item.status}>
+                        <Link to={`/police?status=${item.status}`} className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2 hover:bg-canvas-muted">
+                            <span className="text-body-sm text-ink">{item.label}</span>
+                            <span className={`text-headline-md tabular-nums ${item.critical && item.value > 0 ? "text-critical" : "text-ink"}`}>{formatNumber(item.value)}</span>
+                        </Link>
+                    </li>
+                ))}
+            </ul>
+        </Card>
+    );
+}
+
 function OverviewContent({ data }: { data: Overview }) {
     const { kpis, reviewQueue } = data;
     return (
@@ -67,6 +95,8 @@ function OverviewContent({ data }: { data: Overview }) {
                 <KpiCard label="Pending review" value={kpis.pendingReview} hint="Waiting files + stored files to review" icon="fact_check" />
                 <KpiCard label="Received today" value={kpis.receivedToday} hint={`WhatsApp submissions on ${formatDate(`${data.businessDate}T12:00:00+05:30`)}`} icon="mail" />
             </div>
+
+            <PoliceDue police={data.police} />
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
                 <Card className="space-y-4 p-4 lg:col-span-7">

@@ -3,10 +3,11 @@ import { Link, useParams } from "react-router";
 import { getClientDetails, type ClientDetails } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
 import { DocumentsTable } from "../components/DocumentsTable";
-import { documentTypeLabel, formatDate, formatDateTime } from "../components/format";
+import { documentTypeLabel, formatDate, formatDateTime, formatDay } from "../components/format";
 import { Icon } from "../components/Icon";
+import { daysLeftLabel, policeStatusLabel } from "../components/policeLabels";
 import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
-import { StatusBadge } from "../components/StatusBadge";
+import { StatusBadge, ToneBadge, statusTone } from "../components/StatusBadge";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
     return (
@@ -29,6 +30,33 @@ function PoliceDocument({ label, doc }: { label: string; doc: ClientDetails["pol
             ) : (
                 <p className="mt-1 text-body-sm text-ink-muted">Not received</p>
             )}
+        </div>
+    );
+}
+
+// The 21-day follow-up for the final police report (calculated by the backend).
+function PoliceCountdownPanel({ countdown }: { countdown: ClientDetails["police"]["countdown"] }) {
+    const note: Record<string, string> = {
+        COMPLETED: "A verified police report is on file. The follow-up is complete.",
+        DATE_MISSING: countdown.slipAwaitingReview
+            ? "A police slip is waiting for review. The countdown starts once its submitted date is known."
+            : "The police slip's submitted date is not known yet, so no countdown is running.",
+        NOT_UPLOADED: "No police slip has been received, so no countdown is running.",
+    };
+    return (
+        <div className="rounded-lg border border-border p-3" aria-label="Police report follow-up" role="group">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-label-caps uppercase text-ink-subtle">21-day follow-up</p>
+                <ToneBadge tone={statusTone(countdown.status)}>{policeStatusLabel(countdown.status)}</ToneBadge>
+            </div>
+            {countdown.submittedDate && (
+                <dl className="mt-2 grid grid-cols-3 gap-2 text-body-sm">
+                    <div><dt className="text-label-sm text-ink-subtle">Slip submitted</dt><dd className="text-ink">{formatDay(countdown.submittedDate)}</dd></div>
+                    <div><dt className="text-label-sm text-ink-subtle">Report due</dt><dd className="text-ink">{formatDay(countdown.dueDate)}</dd></div>
+                    <div><dt className="text-label-sm text-ink-subtle">Days</dt><dd className={countdown.daysRemaining !== null && countdown.daysRemaining <= 0 ? "font-medium text-critical" : "text-ink"}>{daysLeftLabel(countdown)}</dd></div>
+                </dl>
+            )}
+            {note[countdown.status] && <p className="mt-2 text-body-sm text-ink-muted">{note[countdown.status]}</p>}
         </div>
     );
 }
@@ -91,7 +119,8 @@ function ClientContent({ data }: { data: ClientDetails }) {
                         <PoliceDocument label="Police slip" doc={data.police.latestSlip} />
                         <PoliceDocument label="Police report" doc={data.police.latestReport} />
                     </div>
-                    <p className="text-label-sm text-ink-subtle">The 21-day follow-up for police reports is added in Phase 9.</p>
+                    <PoliceCountdownPanel countdown={data.police.countdown} />
+                    <Link to="/police" className="inline-block text-label-md text-primary hover:underline">Open Police Workflow</Link>
                 </Card>
             </div>
 

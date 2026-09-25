@@ -1,16 +1,16 @@
 # Phase 10 — Admin Dashboard
 
-Status: **Checkpoint 4 implemented (not yet committed). Neither Phase 10 migration is applied to the live database.**
+Status: **Checkpoint 5 implemented (not yet committed). None of the three Phase 10 migrations is applied to the live database.**
 
 | Checkpoint | Scope | Status |
 |---|---|---|
 | 1 | Frontend scaffold, admin login, route guard, dashboard shell | Done (`d0d7323`) |
 | 2 | Read-only admin API (`/api/admin`), Overview, Documents, Client Details | Done (`90a0d6e`) |
 | 3 | Review data migration, Review Queue, read-only Review Detail with secure file preview | Done (`4572bc0`) |
-| 4 | Review actions (Approve, Keep Pending) with an append-only audit log | Implemented |
-| 5 | Police Workflow (full version needs Phase 9 data) | Planned |
+| 4 | Review actions (Approve, Keep Pending) with an append-only audit log | Done (`10bf997`) |
+| 5 | Police Workflow: slip submitted date stored, calculated 21-day status, Police Workflow page, client countdown, Overview counts | Implemented |
 
-Not built: a reject action (by business rule there is none, see §4c), assigning a client to an unlinked file, uploads, exports, WhatsApp messaging, Settings, client editing, batch actions, the Clients list page, and anything from Phase 9 (21-day countdown).
+Not built: a reject action (by business rule there is none, see §4c), assigning a client to an unlinked file, uploads (including the admin upload of the actual police report), exports, WhatsApp messaging, reminders or warnings for police reports (Phase 11), scheduled jobs, Settings, global search, client editing, batch actions, the Clients list page and the Missing-documents view.
 
 Visual source of truth: Stitch project **EmlynkWABot Admin Dashboard UI** (`13688778730186190970`), design system **Precision Enterprise Console**. The Stitch project is read-only for development; nothing is generated or changed there from the code.
 
@@ -72,9 +72,9 @@ Backend files for the dashboard:
 | `/admin/documents` | Documents | Documents Directory | Real data (Checkpoint 2) |
 | `/admin/clients/:passportId` | Client details | Client Details | Real data (Checkpoint 2) |
 | `/admin/review` | Review Queue | Review Queue | Real data (Checkpoint 3) |
-| `/admin/review/:id` | Review detail | Document Review Detail | Real data, actions disabled (Checkpoint 3) |
+| `/admin/review/:id` | Review detail | Document Review Detail | Real data (Checkpoint 3); Approve / Keep Pending (Checkpoint 4); police slip date (Checkpoint 5) |
 | `/admin/clients` | Clients list | — | Placeholder; clients are opened from Documents/Overview |
-| `/admin/police` | Police Workflow | Police Workflow | Placeholder (Checkpoint 5 / Phase 9) |
+| `/admin/police` | Police Workflow | Police Workflow | Real data (Checkpoint 5) |
 
 Every route except `/admin/login` is behind the route guard. Settings, global search, Sync and Export from the design are not built yet.
 
@@ -131,8 +131,9 @@ Responses never contain storage paths, checksums or the sender numbers of submis
 | `submissionsByStatus` / `submissionsByType` | submission counts by pipeline outcome / detected type |
 | `recentDocuments` | latest 8 stored documents with client name and passport ID |
 | `reviewQueue` | `total`, `pendingFiles`, `reviewRequiredDocuments`, `pendingByStatus`, latest 5 waiting files |
+| `police` | `dueSoon`, `dueToday`, `overdue`: clients by Police Workflow status (§4d) |
 
-Ten queries run in parallel; the client is joined in the same query (no per-row lookups).
+Thirteen queries run in parallel (three of them for the police counts); the client is joined in the same query (no per-row lookups).
 
 ### `GET /api/admin/documents`
 
@@ -161,7 +162,7 @@ A malformed or repeated parameter gives 400 with field messages; unknown paramet
 | `pendingItems` | the client's files waiting in `pending/` (up to 50) |
 | `requiredDocuments` | per required type: `VERIFIED` > `REVIEW_REQUIRED` > `PENDING_REVIEW` > `MISSING` |
 | `missingDocumentTypes` | required types with nothing received |
-| `police` | latest stored police slip and final police report (no countdown — Phase 9) |
+| `police` | latest stored police slip (with its `policeSubmittedDate`) and final police report, and `countdown`: the client's Police Workflow status (§4d) |
 
 Required documents are **Passport, Police report, Medical** (proposal §22 client view and AC-22). A police slip is shown but never counts as the police report. No other requirement is assumed.
 
@@ -247,7 +248,7 @@ Only two review actions exist: **Approve** and **Keep Pending**. There is **no r
 
 ### `POST /api/admin/review/:reviewId/approve`
 
-Body: `{ "reason": "…" }` (optional, at most 500 characters).
+Body: `{ "reason": "…" }` (optional, at most 500 characters). For a police slip also `{ "policeSubmittedDate": "YYYY-MM-DD" }` (§4d).
 
 | Item | What happens |
 |---|---|
@@ -316,17 +317,63 @@ Rules:
 - The migration is additive: one new table, three indexes (`temporary_id`, `document_id`, `admin_id`, each with `created_date`), the foreign key, RLS/revoke and the trigger. No existing table, column or row is changed.
 - Review Detail shows the entries for the item, newest first (a stored document also shows those made while it was pending): action, admin, reason, time.
 
-**Deployment dependency:** the backend code of Checkpoints 3 and 4 uses the columns and the table from both Phase 10 migrations (`20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`). Apply both migrations before deploying this code; deploying the code first breaks the review pages and document processing. Neither is applied to the live database yet.
+| `police_submitted_date` | Approval of a police slip: the submitted date the admin entered or confirmed (added in Checkpoint 5, §4d) |
+
+**Deployment dependency:** the backend code of Checkpoints 3–5 uses the columns and the table from all three Phase 10 migrations (`20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`, `20260925170000_phase10_police_submitted_date`). Apply them, in order, before deploying this code; deploying the code first breaks the review pages, the dashboard and document processing. None is applied to the live database yet.
+
+## 4d. Police Workflow (Checkpoint 5)
+
+The minimal Phase 9 data needed for the Police Workflow screen. Reminders, WhatsApp warnings, scheduled jobs and notifications are **not** part of it (Phase 11), and neither is an admin upload of the actual police report.
+
+### Data — migration `20260925170000_phase10_police_submitted_date`
+
+| Column | Meaning |
+|---|---|
+| `documents.police_submitted_date` (`DATE`, nullable) | A police slip's submitted date: the start of the 21-day wait. |
+| `audit_logs.police_submitted_date` (`DATE`, nullable) | The date an admin entered or confirmed when approving a police slip. |
+
+Additive only: existing rows get `NULL`, nothing is updated, dropped or renamed. No status, reminder or alert is stored (proposal §23): the status is calculated on every request.
+
+Where the date comes from:
+- **Pipeline:** a `POLICE_SLIP` filed under the client with a `RESOLVED` date (the existing rule of the police date reader, `policeReportDateService.js`) gets that date. Only slips; every other document keeps `NULL`. A slip in `pending/` has no stored date.
+- **Approve** (§4c): a police slip without a stored date needs `policeSubmittedDate` (400 `POLICE_DATE_REQUIRED` otherwise) — every waiting slip, and stored slips from before this migration. A stored slip whose date OCR read keeps it: the approval confirms it, and a different date is refused (409 `POLICE_DATE_ALREADY_SET`). Other types take no date (400 `POLICE_DATE_NOT_APPLICABLE`). The date must be a real date from 2000-01-01 up to today in Sri Lanka (400 otherwise). The date used is written to the document and to the audit entry in the same transaction. The one-verified-document-per-type rule is unchanged.
+
+### Status (`src/services/policeCountdownService.js`)
+
+`due date = submitted date + 21 days`; `days left = due date − today`, counted in Sri Lanka calendar days (the day changes at midnight Asia/Colombo).
+
+| Status | When (checked in this order) |
+|---|---|
+| `COMPLETED` | The client has a `VERIFIED` `POLICE_REPORT`, whenever it arrived (also before the slip). The countdown stops. A `REVIEW_REQUIRED` report does not count. |
+| `PENDING` | More than 7 days left |
+| `DUE_SOON` | 1–7 days left |
+| `DUE_TODAY` | 0 days left |
+| `OVERDUE` | The due date has passed |
+| `DATE_MISSING` | A police slip exists (stored, or waiting in `pending/`) but no submitted date is known |
+| `NOT_UPLOADED` | No police slip |
+
+The countdown uses the stored slip (`VERIFIED` or `REVIEW_REQUIRED`) with the latest submitted date; a `REVIEW_REQUIRED` slip with a readable date starts it.
+
+### `GET /api/admin/police`
+
+| Parameter | Values | Default |
+|---|---|---|
+| `status` | one status above | all |
+| `passportId` | letters and digits | all |
+| `page` / `pageSize` | 1–10000 / 1–100 | 1 / 25 |
+
+Response: `businessDate`, `items` (per client: `client`, `status`, `submittedDate`, `dueDate`, `daysRemaining` — negative when overdue, `null` when completed or without a date — `slip`, `report`, `slipAwaitingReview`), `pagination`, `summary` (`total`, `byStatus` for every client, before the status filter) and `filters`. Order: most urgent first (`OVERDUE`, `DUE_TODAY`, `DUE_SOON`, `PENDING`, `DATE_MISSING`, `NOT_UPLOADED`, `COMPLETED`), then fewest days left, then passport ID. Read-only; three queries whatever the number of clients (clients, their police documents, slips waiting per client); no storage paths.
 
 ## 5. Pages and data
 
 | Page | API | Shows |
 |---|---|---|
-| Overview | `GET /overview` | 4 KPI cards, processing-status and type breakdowns (count + share), recent documents table, review-queue summary with the latest waiting files; Refresh |
+| Overview | `GET /overview` | 4 KPI cards, police reports overdue / due today / due soon (each links to the filtered Police Workflow), processing-status and type breakdowns (count + share), recent documents table, review-queue summary with the latest waiting files; Refresh |
 | Documents | `GET /documents` | search, type, date range, sort, verification chips with counts, table (ID, client, type, status, confidence, received, "View client"), pagination; filters are kept in the URL |
-| Client details | `GET /clients/:passportId` | profile card, required-document checklist with missing summary, police slip/report panel, stored documents table, files waiting for review |
+| Client details | `GET /clients/:passportId` | profile card, required-document checklist with missing summary, police slip/report panel with the 21-day follow-up (status, slip submitted, report due, days left or overdue, or why no countdown runs), stored documents table, files waiting for review |
+| Police Workflow | `GET /police` | status cards (overdue, due today, due soon, pending; click to filter), status select with counts for all seven statuses, table (client, status, slip submitted, report due, days, police slip, final report, "View client"), pagination; filter and page in the URL |
 | Review Queue | `GET /review` | summary cards (pending reviews, identity issues, quality / OCR issues, conflicts), filters (source, reason, type, order), table (item, client, type, review reason, confidence, received, status, "Review"), pagination; filters in the URL |
-| Review detail | `GET /review/:id`, `GET /review/:id/file`, `POST /review/:id/approve`, `POST /review/:id/keep-pending` | file preview (image or PDF) on the left; review-reason banner, document information (client, sender, received, statuses, confidence), identity, processing details, audit log and the **Approve** / **Keep Pending** buttons on the right. Approve asks for confirmation ("This will move the document to permanent client storage and mark it as verified."); Keep Pending asks for a required reason. While a request runs both buttons and the dialog are disabled. Success shows a message: after Approve the page shows the item as verified with the new audit entry and a link back to the queue (which reloads without it); after Keep Pending the item is reloaded with the new entry. Errors (e.g. a 409 conflict) are shown in the dialog with the server's message and nothing is marked done. If Approve isn't possible, the button is disabled with the reason. |
+| Review detail | `GET /review/:id`, `GET /review/:id/file`, `POST /review/:id/approve`, `POST /review/:id/keep-pending` | file preview (image or PDF) on the left; review-reason banner, document information (client, sender, received, statuses, confidence), identity, processing details, audit log and the **Approve** / **Keep Pending** buttons on the right. Approve asks for confirmation ("This will move the document to permanent client storage and mark it as verified."); Keep Pending asks for a required reason. While a request runs both buttons and the dialog are disabled. Success shows a message: after Approve the page shows the item as verified with the new audit entry and a link back to the queue (which reloads without it); after Keep Pending the item is reloaded with the new entry. Errors (e.g. a 409 conflict) are shown in the dialog with the server's message and nothing is marked done. If Approve isn't possible, the button is disabled with the reason. For a police slip the Approve dialog shows the submitted date read from the slip, or asks for it (required date field, 2000-01-01 to today); the audit log shows the date. |
 
 Every page has loading, error (with "Try again") and empty states. A 401 from the API signs the admin out (session expired or admin deactivated). API calls live only in `admin/src/api/`; pages use the typed functions through `useAdminResource`.
 
@@ -377,6 +424,11 @@ Checked manually for Checkpoint 2 (not in the automated suite): the service quer
 
 Checked manually for Checkpoint 3 (not in the automated suite): the migration on a throwaway PostgreSQL 16 (Docker) as described in §4a; the real pipeline and the new queries against that database (six synthetic submissions: verified, SEC-008, low-confidence medical, identity conflict, police slip without date, failed — reasons, summaries without PII, document link, queue/filters/paging, detail, file lookup, overview total = queue total, `SET NULL`); and the production build in headless Chrome against that database (login redirect, queue rows = database, image and PDF previews from `blob:` URLs, disabled actions, stored document item, unknown item, no CSP violations or console errors). The live database was not changed (checked before and after).
 
+| Backend, Checkpoint 5 (`node:test`) | `npm test` (`test/adminPolice.test.js`; additions in `test/policeDocuments.test.js`, `test/adminApi.test.js`) | thresholds 30/8/7/3/1/0/−1/−40 days, month/year/leap-year boundaries, `NOT_UPLOADED`, `DATE_MISSING` (undated slip, slip waiting in pending/), `COMPLETED` by a verified report (also before the slip, also without a slip), `REVIEW_REQUIRED` report doesn't complete, `REVIEW_REQUIRED` slip starts the countdown, latest date wins; `/police` order, counts, filter, paging, 5 invalid-parameter cases, 401, three queries only; Overview counts; client countdown; the Colombo midnight (18:29 vs 18:31 UTC); approve body date rules; waiting slip needs the date and records it on document and audit entry; OCR date confirmed, different date refused; undated stored slip gets the entered date; no date for other types; one-verified-slip rule unchanged; migration additive, no stored status; pipeline stores the resolved slip date and never a date for reports or medicals |
+| Frontend, Checkpoint 5 (Vitest) | `npm run admin:test` (`police.test.tsx`, updated `dashboard.test.tsx`) | Police Workflow rows (status, dates, days text, slip/report, link), status cards and counts; filter by select and by card, paging; loading, error + retry, empty filtered view; protected route; Overview counts and links; client countdown (overdue, waiting slip, no slip); Approve of a slip: required date field, no request without it, date sent and shown in the message and audit log; OCR date shown for confirmation without a field; server refusal shown; no date field for other types |
+
+Checked manually for Checkpoint 5 (not in the automated suite): all three migrations on a throwaway PostgreSQL 16 (Docker): the new migration applied on top of rows in every table (including an audit entry), the original columns of every existing row unchanged, both new columns `DATE NULL` and empty, no drift, the append-only trigger still active. The new code with the real Prisma client against that database: `DATE` round trip through the pipeline's write, the `/police` queries (including the per-client group of waiting slips), a legacy verified slip without a date shown as `DATE_MISSING`, a second slip blocked by the one-verified-slip rule, approval without the date refused and with it stored on the document and the audit entry, order, Overview counts and completion by a verified report. The production build in headless Chrome (fake database, synthetic data): Police Workflow rows and card filter, Overview counts, client countdown, Approve of a waiting slip (date required, then accepted and shown), no failed requests, no CSP violations or console errors. The live database was not used.
+
 Checked manually for Checkpoint 4 (not in the automated suite): both Phase 10 migrations on a throwaway PostgreSQL 16 (Docker): existing rows byte-identical after the new migration; RLS on and no `anon`/`authenticated` rights on `audit_logs`; `UPDATE`, `DELETE` and `TRUNCATE` rejected by the trigger; deleting an admin with entries refused; no drift between the database and `schema.prisma`. Then the action services with the real Prisma client against that database (real transactions and row locks): same item approved twice at once, two items of one type at once, existing verified passport, a failure after the copy (real rollback, copy removed), concurrent identical Keep Pending, history with admin names, stored document approved in place, FAILED without pending copy, Prisma update/delete of an entry rejected. Finally the production build in headless Chrome (fake database, synthetic data): approve with confirmation, file moved, queue without the item, Keep Pending with required reason, audit entries, Approve disabled for an unlinked file, no failed requests, no CSP violations or console errors. The live database was not used.
 
 ## 9. Decisions (2026-09-25)
@@ -391,10 +443,23 @@ Checked manually for Checkpoint 4 (not in the automated suite): both Phase 10 mi
 | Apply the migration to the live database | On hold |
 | Review actions: Approve and Keep Pending only; no reject workflow, unclear documents stay pending and are never deleted | Business rule (Checkpoint 4) |
 | Approval never replaces an existing verified document of the same type (blocked with 409) | Business rule (Checkpoint 4) |
+| Checkpoint 5 includes only the minimal Phase 9 data: `documents.police_submitted_date`, storing a resolved slip date, a calculated status | Approved (Checkpoint 5) |
+| The date is stored in `documents.police_submitted_date`, not in `processing_summary` | Approved (Checkpoint 5) |
+| A `VERIFIED` `POLICE_REPORT` completes the workflow, also when it arrived before the slip; a `REVIEW_REQUIRED` report does not | Approved (Checkpoint 5) |
+| When approving a slip the admin enters or confirms the submitted date; recorded in the audit log (`audit_logs.police_submitted_date`) | Approved (Checkpoint 5) |
+| A `REVIEW_REQUIRED` slip with a readable date starts the countdown | Approved (Checkpoint 5) |
+| One verified document per type also for police slips; no replacement or versioning | Approved (Checkpoint 5) |
+| Thresholds in Sri Lanka calendar days: >7 `PENDING`, 1–7 `DUE_SOON`, 0 `DUE_TODAY`, <0 `OVERDUE` | Approved (Checkpoint 5) |
+| Admin upload of the actual police report; reminders, WhatsApp warnings, scheduled jobs, notifications | Out of scope (Checkpoint 5) |
 
 ## 10. Known limitations and dependencies
 
-- **Migrations not applied to the live database** — `20260925150000_phase10_review_data` and `20260925160000_phase10_review_audit_log` are on hold; do not deploy the backend code before both are applied (§4c).
+- **Migrations not applied to the live database** — `20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log` and `20260925170000_phase10_police_submitted_date` are on hold; do not deploy the backend code before all three are applied (§4c).
+- **Verified police slips stored before Checkpoint 5 have no date:** they show `DATE_MISSING`, no action can set their date (they are not review items), and a newer slip for the same client can't be approved (one verified slip per type). No backfill.
+- **A waiting slip's OCR date is not kept:** `temporary_data` has no date column and the processing summary holds no dates, so approving a waiting slip always needs the date entered from the preview.
+- **What counts as a resolved date** is the existing reader's rule: a single date labelled submitted, else issued, else an unlabelled one (confidence 60). The reader decides "not in the future" by the UTC date.
+- **Police statuses are calculated over all clients on each `/police` and Overview request** (three queries, then in memory). Fine for thousands of clients; a larger client base would need the calculation in SQL.
+- **No reminders:** due-soon, due-today and overdue are only shown on the dashboard. Warnings and notifications belong to Phase 11.
 - **Processing failures are not shown in the dashboard:** a `FAILED` submission without a pending copy is not a review item (decision 2026-09-25). Its reason and summary are saved on the row; a separate view for failures can be decided later.
 - **Older items:** submissions processed before the migration have no saved summary or reason ("Not recorded"); older stored `REVIEW_REQUIRED` documents have no link and are shown as `LOW_CONFIDENCE`. No backfill: the missing data was never saved.
 - **Unlinked files can't be approved:** a waiting file with no client (identity conflict, unknown passport, another client's file) or of type `UNKNOWN` can only be kept pending; choosing a client or type is not built.
@@ -408,4 +473,4 @@ Checked manually for Checkpoint 4 (not in the automated suite): both Phase 10 mi
 
 ## 11. Next checkpoints
 
-5. Police Workflow (full version depends on Phase 9 data).
+Not yet planned in detail. Open items for the complete dashboard: Clients list page, Missing-documents view, the Daily Summary figures of proposal §22 not yet shown, assigning a client or type to an unlinked waiting file, a view for failed submissions, a rule for replacing a verified document (including police slips), and Phase 11 reminders.

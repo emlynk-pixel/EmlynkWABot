@@ -182,7 +182,10 @@ describe("Client details", () => {
         expect(screen.getByText("Missing")).toBeInTheDocument();
         expect(screen.getByText("12 Mar 1990")).toBeInTheDocument();
         expect(screen.getByText("Not received")).toBeInTheDocument(); // police slip
-        expect(screen.getByText("The 21-day follow-up for police reports is added in Phase 9.")).toBeInTheDocument();
+        // Checkpoint 5: the 21-day follow-up (a verified police report completes it).
+        const followUp = screen.getByRole("group", { name: "Police report follow-up" });
+        expect(followUp).toHaveTextContent("Completed");
+        expect(followUp).toHaveTextContent("A verified police report is on file.");
         expect(within(screen.getByRole("table", { name: "Submitted documents" })).getAllByRole("row")).toHaveLength(3);
         expect(screen.getByRole("heading", { name: "Waiting for review" })).toBeInTheDocument();
     });

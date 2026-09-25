@@ -139,15 +139,15 @@ describe("migration 20260925160000_phase10_review_audit_log", () => {
 
 describe("request body", () => {
     test("Keep Pending needs a reason; Approve's is optional; trimmed and bounded", () => {
-        assert.deepEqual(parseReviewActionBody({ reason: "  blurry photo  " }, { reasonRequired: true }), { reason: "blurry photo" });
+        assert.deepEqual(parseReviewActionBody({ reason: "  blurry photo  " }, { reasonRequired: true }), { reason: "blurry photo", policeSubmittedDate: null });
         assert.equal(parseReviewActionBody({}, { reasonRequired: true }).errors[0].field, "reason");
         assert.equal(parseReviewActionBody({ reason: "   " }, { reasonRequired: true }).errors[0].message, "is required");
         assert.equal(parseReviewActionBody(undefined, { reasonRequired: true }).errors[0].field, "reason");
         assert.equal(parseReviewActionBody({ reason: 5 }, { reasonRequired: true }).errors[0].message, "must be text");
         assert.ok(parseReviewActionBody({ reason: "x".repeat(MAX_REASON_LENGTH + 1) }, { reasonRequired: true }).errors);
-        assert.deepEqual(parseReviewActionBody({ reason: "x".repeat(MAX_REASON_LENGTH) }, { reasonRequired: true }), { reason: "x".repeat(MAX_REASON_LENGTH) });
-        assert.deepEqual(parseReviewActionBody(undefined, { reasonRequired: false }), { reason: null });
-        assert.deepEqual(parseReviewActionBody({}, { reasonRequired: false }), { reason: null });
+        assert.deepEqual(parseReviewActionBody({ reason: "x".repeat(MAX_REASON_LENGTH) }, { reasonRequired: true }), { reason: "x".repeat(MAX_REASON_LENGTH), policeSubmittedDate: null });
+        assert.deepEqual(parseReviewActionBody(undefined, { reasonRequired: false }), { reason: null, policeSubmittedDate: null });
+        assert.deepEqual(parseReviewActionBody({}, { reasonRequired: false }), { reason: null, policeSubmittedDate: null });
         assert.equal(parseReviewActionBody([], { reasonRequired: false }).errors[0].field, "body");
     });
 });
@@ -414,7 +414,7 @@ describe("POST /review/:reviewId/keep-pending", () => {
         assert.equal(detail.body.auditLog.length, 1);
         assert.deepEqual(
             { ...detail.body.auditLog[0], auditId: undefined, createdDate: undefined },
-            { auditId: undefined, action: "KEEP_PENDING", adminId: "admin-active", adminName: "Active Admin", reason: "Waiting for a clearer photo", previousStatus: "MANUAL_REVIEW", newStatus: "MANUAL_REVIEW", createdDate: undefined }
+            { auditId: undefined, action: "KEEP_PENDING", adminId: "admin-active", adminName: "Active Admin", reason: "Waiting for a clearer photo", previousStatus: "MANUAL_REVIEW", newStatus: "MANUAL_REVIEW", policeSubmittedDate: null, createdDate: undefined }
         );
     });
 
@@ -484,7 +484,7 @@ describe("review detail: audit log and available actions", () => {
         let detail = await call("GET", `/review/pending-${TEMP}`);
         assert.deepEqual(detail.body.auditLog, []);
         assert.deepEqual(detail.body.actions, {
-            approve: { available: true, code: null, message: null },
+            approve: { available: true, code: null, message: null, needsPoliceDate: false },
             keepPending: { available: true, code: null, message: null },
         });
         assert.equal("reject" in detail.body.actions, false);

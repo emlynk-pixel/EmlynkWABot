@@ -45,6 +45,8 @@ export type Overview = {
         pendingByStatus: Record<string, number>;
         items: PendingItem[];
     };
+    // Police Workflow (Checkpoint 5): final police reports by countdown status.
+    police: { dueSoon: number; dueToday: number; overdue: number };
 };
 
 export type DocumentListParams = {
@@ -89,10 +91,46 @@ export type ClientDetails = {
     requiredDocuments: { documentType: string; status: RequirementStatus; storedCount: number; pendingCount: number }[];
     missingDocumentTypes: string[];
     police: {
-        latestSlip: { documentId: string; receivedDate: string; verificationStatus: string } | null;
-        latestReport: { documentId: string; receivedDate: string; verificationStatus: string } | null;
+        latestSlip: { documentId: string; receivedDate: string; verificationStatus: string; policeSubmittedDate: string | null } | null;
+        latestReport: { documentId: string; receivedDate: string; verificationStatus: string; policeSubmittedDate: string | null } | null;
+        countdown: PoliceCountdown;
     };
 };
+
+// ---------------------------------------------------------------- police workflow (Checkpoint 5)
+// Calculated by the backend every time; dates are "YYYY-MM-DD" (Sri Lanka).
+
+export type PoliceStatus = "OVERDUE" | "DUE_TODAY" | "DUE_SOON" | "PENDING" | "DATE_MISSING" | "NOT_UPLOADED" | "COMPLETED";
+
+export type PoliceCountdown = {
+    status: PoliceStatus;
+    submittedDate: string | null;
+    dueDate: string | null;
+    daysRemaining: number | null; // negative when overdue; null when completed or no date
+    slip: { documentId: string; verificationStatus: string; receivedDate: string | null } | null;
+    report: { documentId: string; receivedDate: string | null } | null;
+    slipAwaitingReview: boolean;
+};
+
+export type PoliceListItem = PoliceCountdown & { client: ClientRef };
+
+export type PoliceList = {
+    businessDate: string;
+    items: PoliceListItem[];
+    pagination: { page: number; pageSize: number; total: number; totalPages: number };
+    summary: { total: number; byStatus: Record<PoliceStatus, number> };
+};
+
+export type PoliceListParams = { page?: number; pageSize?: number; status?: PoliceStatus };
+
+export function getPoliceWorkflow(token: string, params: PoliceListParams, signal?: AbortSignal): Promise<PoliceList> {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null) query.set(key, String(value));
+    }
+    const suffix = query.toString();
+    return apiRequest<PoliceList>(`/api/admin/police${suffix ? `?${suffix}` : ""}`, { token, signal });
+}
 
 export function getOverview(token: string, signal?: AbortSignal): Promise<Overview> {
     return apiRequest<Overview>("/api/admin/overview", { token, signal });
@@ -185,6 +223,7 @@ export type ReviewItem = {
         verificationStatus: string | null;
         receivedDate: string;
         confidence: number | null;
+        policeSubmittedDate: string | null; // stored police slips only
     };
     client: ClientRef | null;
     submission: { whatsappNumber: string; receivedDate: string } | null;
@@ -207,16 +246,18 @@ export type AuditEntry = {
     reason: string | null;
     previousStatus: string;
     newStatus: string;
+    policeSubmittedDate: string | null; // police slip approvals
     createdDate: string;
 };
 
 type ActionAvailability = { available: boolean; code: string | null; message: string | null };
-export type ReviewActions = { approve: ActionAvailability; keepPending: ActionAvailability };
+// needsPoliceDate: a police slip without a stored submitted date is approved with one.
+export type ReviewActions = { approve: ActionAvailability & { needsPoliceDate?: boolean }; keepPending: ActionAvailability };
 
 export type ApproveResult = {
     action: "APPROVE";
     reviewId: string;
-    document: { documentId: string; storedFilename: string | null; verificationStatus: "VERIFIED"; location: "CLIENT" };
+    document: { documentId: string; storedFilename: string | null; verificationStatus: "VERIFIED"; location: "CLIENT"; policeSubmittedDate: string | null };
     pendingCopyRemoved: boolean | null;
     audit: AuditEntry;
 };
@@ -236,8 +277,11 @@ export function getReviewItem(token: string, reviewId: string, signal?: AbortSig
     return apiRequest<ReviewItem>(`/api/admin/review/${encodeURIComponent(reviewId)}`, { token, signal });
 }
 
-export function approveReviewItem(token: string, reviewId: string, reason?: string): Promise<ApproveResult> {
-    return apiRequest<ApproveResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/approve`, { method: "POST", token, body: reason ? { reason } : {} });
+export function approveReviewItem(token: string, reviewId: string, options: { reason?: string; policeSubmittedDate?: string } = {}): Promise<ApproveResult> {
+    const body: Record<string, string> = {};
+    if (options.reason) body.reason = options.reason;
+    if (options.policeSubmittedDate) body.policeSubmittedDate = options.policeSubmittedDate;
+    return apiRequest<ApproveResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/approve`, { method: "POST", token, body });
 }
 
 export function keepReviewItemPending(token: string, reviewId: string, reason: string): Promise<KeepPendingResult> {
