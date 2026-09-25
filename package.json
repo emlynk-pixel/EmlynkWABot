@@ -9,7 +9,11 @@
     "test": "node --test \"test/**/*.test.js\"",
     "diagnose:document": "node scripts/diagnoseDocument.js",
     "admin:create": "node scripts/createAdmin.js",
-    "db:check": "node scripts/checkDatabaseConnection.js"
+    "db:check": "node scripts/checkDatabaseConnection.js",
+    "admin:install": "npm --prefix admin install",
+    "admin:dev": "npm --prefix admin run dev",
+    "admin:build": "npm --prefix admin run build",
+    "admin:test": "npm --prefix admin test"
   },
   "repository": {
     "type": "git",

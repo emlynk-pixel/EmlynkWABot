@@ -272,6 +272,7 @@ erDiagram
 | **Containerization** | Docker & Docker Compose | Containerized local PostgreSQL service |
 | **Security & Auth** | `bcrypt` (v6.0), `jsonwebtoken` (v9.0) | Password hashing & JWT access token middleware |
 | **Configuration** | `dotenv` (v18.0) | Environment variable management |
+| **Admin Dashboard** | React 19, TypeScript, Vite, Tailwind CSS v4, React Router | `admin/` frontend, served by Express under `/admin` (Phase 10) |
 
 ### Planned Stack & Integrations
 
@@ -281,7 +282,6 @@ erDiagram
 | **Document Intelligence** | Document AI / Google Vision OCR | Automated passport text & slip date extraction |
 | **Background Processing** | Redis + BullMQ / Async Queue | Asynchronous long-running OCR and storage tasks |
 | **Object Storage** | AWS S3 / MinIO Private Storage | Secure, private client document bucket |
-| **Admin Interface** | Modern Web Dashboard | Frontend dashboard for administrative document review |
 
 ---
 
@@ -296,6 +296,10 @@ EmlynkWABot/
 ├── package-lock.json             # Dependency lockfile
 ├── prisma7.config.ts             # Prisma seed configuration
 ├── README.md                     # Project documentation
+│
+├── admin/                        # Admin dashboard (React + TypeScript + Vite), served at /admin
+│   ├── vite.config.ts            # base /admin/, dev proxy to the backend, Vitest
+│   └── src/                      # api/, auth/, layout/, pages/, components/, test/
 │
 ├── Docs/                         # Project design specs & progress logs
 │   ├── 01-initial-backend-database-setup.md
@@ -365,7 +369,7 @@ EmlynkWABot/
 | **Identity Conflict Engine** | ⏳ Planned | Reconciliation matrix matching WhatsApp number & Passport ID |
 | **21-Day Police Report Countdown** | ⏳ Planned | Submission date extraction & background reminder scheduler |
 | **Private Object Storage** | ⏳ Planned | Secure document renaming & upload to object storage |
-| **Admin Dashboard UI** | ⏳ Planned | Administrative portal for manual document review & override |
+| **Admin Dashboard UI** | 🚧 In Progress | Phase 10 Checkpoint 1: `admin/` app, login, route guard, dashboard shell (no data yet) |
 
 ---
 
@@ -382,7 +386,7 @@ EmlynkWABot/
 | **Phase 7** | Permanent Storage | ⏳ Planned | Structured folder naming convention & private cloud storage upload |
 | **Phase 8** | Temporary Workflow | ✅ Completed | Disk storage & `temporary_data` table integration for incoming unverified files |
 | **Phase 9** | Police Report Countdown | ⏳ Planned | 21-day countdown service & Admin completion suppression handler |
-| **Phase 10** | Admin Dashboard | ⏳ Planned | REST API for dashboard, flag review UI & manual override controls |
+| **Phase 10** | Admin Dashboard | 🚧 In Progress | Checkpoint 1 done: admin frontend, login & dashboard shell. Next: read-only admin API |
 | **Phase 11** | Reporting and Alerts | ⏳ Planned | System alert metrics, overdue reports & missing document summaries |
 | **Phase 12** | Security, QA & Deployment | ⏳ Planned | Role-based authorization, load testing, production Docker container |
 
@@ -477,6 +481,18 @@ Verify backend health by visiting or requesting `http://localhost:3000/health`:
 }
 ```
 
+### Admin Dashboard
+
+```bash
+npm run admin:install   # once
+npm run admin:dev       # development: http://localhost:5173/admin/ (proxies /auth to :3000)
+npm run admin:build     # production build into admin/dist, then `npm start`
+                        # and open http://localhost:3000/admin/
+npm run admin:test      # frontend tests
+```
+
+Sign in with an admin account created by `npm run admin:create`. Details: [`Docs/14-phase-10-admin-dashboard.md`](Docs/14-phase-10-admin-dashboard.md).
+
 ---
 
 ## Available API Endpoints
@@ -486,6 +502,7 @@ Verify backend health by visiting or requesting `http://localhost:3000/health`:
 | Method | Endpoint | Protection | Description |
 |---|---|:---:|---|
 | `GET` | `/health` | Public | Returns service status and health message |
+| `GET` | `/admin/*` | Public page, data behind JWT | Admin dashboard (built React app); client-side routes fall back to `index.html` |
 
 ---
 
@@ -655,6 +672,8 @@ Comprehensive setup logs, implementation history, and architectural proposals ar
 - 📄 [`Docs/01-initial-backend-database-setup.md`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/01-initial-backend-database-setup.md): Node.js init, Docker PostgreSQL, & Prisma setup log.
 - 📄 [`Docs/02-seed-data.md`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/02-seed-data.md): Database seeding documentation and sample entity records.
 - 📄 [`Docs/03-admin-authentication.md`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/03-admin-authentication.md): Admin authentication, bcrypt hashing, and JWT middleware specs.
+- 📄 [`Docs/13-security-overview.md`](Docs/13-security-overview.md): Security status, controls and findings.
+- 📄 [`Docs/14-phase-10-admin-dashboard.md`](Docs/14-phase-10-admin-dashboard.md): Admin dashboard structure, authentication flow and how to run it.
 - 📄 [`Docs/WhatsApp_Document_Processing_Project_Proposal_Final.md`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/WhatsApp_Document_Processing_Project_Proposal_Final.md): Complete technical design proposal & specification.
 
 ---

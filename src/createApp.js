@@ -4,10 +4,12 @@ import authRoutes from "./routes/auth.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { trustProxyHops } from "./config/env.js";
+import { createAdminFrontendRouter, DEFAULT_ADMIN_DIST_DIR } from "./adminFrontend.js";
 
 // Builds the Express app without starting a server, so tests can use it.
 // Environment variables must already be loaded (src/app.js does that first).
-export function createApp() {
+// Options exist for tests: another admin build folder, a fake-DB auth router.
+export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = authRoutes } = {}) {
     const app = express();
 
     // Don't advertise the framework (SEC-015).
@@ -32,8 +34,11 @@ export function createApp() {
         })
     );
 
-    app.use("/auth", authRoutes);
+    app.use("/auth", authRouter);
     app.use("/whatsapp", whatsappRoutes);
+
+    // Admin dashboard (built React app from admin/), same origin as /auth.
+    app.use("/admin", createAdminFrontendRouter({ distDir: adminDistDir }));
 
     app.get("/health", (req, res) => {
         res.json({

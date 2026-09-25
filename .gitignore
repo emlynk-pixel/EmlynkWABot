@@ -18,3 +18,6 @@ prisma/seed.js
 
 # Tesseract language data, downloaded and cached at runtime
 *.traineddata
+
+# Admin dashboard build output (npm run admin:build)
+admin/dist/
