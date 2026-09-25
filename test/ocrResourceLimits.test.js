@@ -329,6 +329,10 @@ describe("9. resource-limit errors carry no document data", () => {
         assert.equal(summary.stage, "TEXT_EXTRACTION");
         assert.equal(summary.error, "OCR resource limit: IMAGE_TOO_LARGE");
         assert.ok(!JSON.stringify(summary).includes("Synthetic Person"));
-        assert.deepEqual(db.calls.at(-1).data, { processingStatus: "FAILED" });
+        const { processingSummary, reviewReason, ...status } = db.calls.at(-1).data;
+        assert.deepEqual(status, { processingStatus: "FAILED" });
+        assert.equal(reviewReason, "PROCESSING_FAILED");
+        assert.equal(processingSummary.error, "OCR resource limit: IMAGE_TOO_LARGE");
+        assert.ok(!JSON.stringify(processingSummary).includes("Synthetic Person"), "stored summary has no file name");
     });
 });

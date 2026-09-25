@@ -62,6 +62,7 @@ export async function storeClientDocument({
     fileSha256,
     documentConfidence,
     receivedAt,
+    temporaryId,
 }, { db, bucket, now = new Date() } = {}) {
     const verificationStatus = verificationStatusForBand(band);
     const extension = extensionForMimeType(mimeType);
@@ -111,6 +112,8 @@ export async function storeClientDocument({
                 verificationStatus,
                 ocrConfidence: Math.round(documentConfidence * 100) / 100,
                 fileSha256,
+                // Submission it came from (review reason, processing summary).
+                temporaryId: temporaryId ?? null,
             },
         });
     } catch (error) {

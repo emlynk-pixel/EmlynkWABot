@@ -63,7 +63,7 @@ function createFakeDashboardDb({ admins, documents = [docRow()], user = null, pe
             groupBy: async (args) => record("document.groupBy", args, groups.documentVerification ?? [{ verificationStatus: "VERIFIED", _count: { _all: 7 } }, { verificationStatus: "REVIEW_REQUIRED", _count: { _all: 3 } }]),
         },
         temporaryData: {
-            count: async (args) => record("temporaryData.count", args, args?.where?.pendingStoragePath ? 4 : 9),
+            count: async (args) => record("temporaryData.count", args, args?.where?.pendingStoragePath ? 4 : 9), // waiting for review
             groupBy: async (args) => record("temporaryData.groupBy", args,
                 args.by[0] === "documentType"
                     ? [{ documentType: "PASSPORT", _count: { _all: 5 } }, { documentType: "MEDICAL", _count: { _all: 2 } }]

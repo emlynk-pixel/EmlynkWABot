@@ -24,7 +24,17 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
 
     // Standard security headers (nosniff, frame denial, HSTS, a strict CSP
     // for anything rendered). The API only returns JSON and plain text.
-    app.use(helmet());
+    // blob: is allowed for images and frames only: the admin Review Detail
+    // shows a document it fetched with the admin's token as a local blob: URL
+    // (no storage URL or credential in the page). Scripts stay 'self' only.
+    app.use(helmet({
+        contentSecurityPolicy: {
+            directives: {
+                "img-src": ["'self'", "data:", "blob:"],
+                "frame-src": ["'self'", "blob:"],
+            },
+        },
+    }));
 
     app.use(
         express.json({

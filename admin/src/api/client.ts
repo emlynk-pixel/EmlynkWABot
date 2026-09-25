@@ -58,3 +58,24 @@ export async function apiRequest<T>(path: string, { method = "GET", body, token,
 
     return (await response.json()) as T;
 }
+
+// Same rules as apiRequest, for a binary response (the review file preview).
+export async function apiRequestBlob(path: string, { token, signal }: Pick<RequestOptions, "token" | "signal"> = {}): Promise<Blob> {
+    let response: Response;
+    try {
+        response = await fetch(path, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            credentials: "same-origin",
+            cache: "no-store",
+            signal,
+        });
+    } catch (error) {
+        if ((error as Error)?.name === "AbortError") throw error;
+        throw new ApiError(0, "Cannot reach the server. Check your connection and try again.");
+    }
+    if (!response.ok) {
+        const message = response.status >= 500 ? FALLBACK_MESSAGE : (await readMessage(response)) ?? FALLBACK_MESSAGE;
+        throw new ApiError(response.status, message);
+    }
+    return response.blob();
+}

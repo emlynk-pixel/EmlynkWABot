@@ -13,6 +13,10 @@
 import { DOCUMENT_TYPES } from "./documentClassificationService.js";
 import { VERIFICATION_STATUS } from "./clientDocumentService.js";
 import { businessDateOf, businessDayRange } from "../utils/businessDay.js";
+import { clientName } from "../utils/clientName.js";
+import { REVIEW_PENDING_WHERE } from "./adminReviewService.js";
+
+export { clientName };
 
 // Proposal §22 (client view) and AC-22: a client needs a passport, a final
 // police report and a medical. The police slip is an intermediate document
@@ -34,15 +38,11 @@ export const RECENT_DOCUMENTS_LIMIT = 8;
 export const REVIEW_QUEUE_PREVIEW_LIMIT = 5;
 const CLIENT_PENDING_ITEMS_LIMIT = 50;
 
-// Files waiting in pending/ for a person (the review queue in this checkpoint).
-const PENDING_FILE_WHERE = { pendingStoragePath: { not: null } };
+// Submissions waiting for a person: a file in pending/. Same definition as
+// the Review Queue (adminReviewService.js); FAILED alone does not count.
+const PENDING_FILE_WHERE = REVIEW_PENDING_WHERE;
 
 const clientSelect = { passportId: true, uniqueId: true, firstName: true, otherName: true };
-
-// Legacy columns: first_name holds the given names, other_name the surname.
-export function clientName(user) {
-    return [user?.firstName, user?.otherName].filter(Boolean).join(" ").trim() || null;
-}
 
 const toClient = (user) => (user ? { passportId: user.passportId, uniqueId: user.uniqueId, name: clientName(user) } : null);
 const toNumber = (value) => (value === null || value === undefined ? null : Number(value));

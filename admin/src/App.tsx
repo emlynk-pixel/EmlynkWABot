@@ -6,6 +6,8 @@ import { DocumentsPage } from "./pages/DocumentsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { OverviewPage } from "./pages/OverviewPage";
+import { ReviewDetailPage } from "./pages/ReviewDetailPage";
+import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { SectionPlaceholder } from "./pages/SectionPlaceholder";
 
 // Routes are relative to the /admin base (see main.tsx). Each maps to a
@@ -23,7 +25,8 @@ export function AppRoutes() {
             >
                 <Route index element={<OverviewPage />} />
                 <Route path="documents" element={<DocumentsPage />} />
-                <Route path="review" element={<SectionPlaceholder title="Review Queue" description="Documents waiting for an administrator's decision." />} />
+                <Route path="review" element={<ReviewQueuePage />} />
+                <Route path="review/:id" element={<ReviewDetailPage />} />
                 <Route path="clients" element={<SectionPlaceholder title="Clients" description="Client profiles and their submitted documents. Open a client from the Documents or Overview page." />} />
                 <Route path="clients/:passportId" element={<ClientDetailsPage />} />
                 <Route path="police" element={<SectionPlaceholder title="Police Workflow" description="Police slips, final reports and the 21-day follow-up." />} />

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { humanize } from "./format";
 
 // Stitch status semantic system: text / tinted background / border.
@@ -44,12 +45,17 @@ export function statusLabel(status: string): string {
     return LABELS[status] ?? humanize(status);
 }
 
-export function StatusBadge({ status }: { status: string }) {
+// A pill in one of the status tones, with any label.
+export function ToneBadge({ tone, children }: { tone: Tone; children: ReactNode }) {
     return (
-        <span className={`inline-flex h-[22px] items-center whitespace-nowrap rounded-full border px-2 text-label-sm ${TONE_CLASSES[statusTone(status)]}`}>
-            {statusLabel(status)}
+        <span className={`inline-flex h-[22px] items-center whitespace-nowrap rounded-full border px-2 text-label-sm ${TONE_CLASSES[tone]}`}>
+            {children}
         </span>
     );
+}
+
+export function StatusBadge({ status }: { status: string }) {
+    return <ToneBadge tone={statusTone(status)}>{statusLabel(status)}</ToneBadge>;
 }
 
 export function toneDotClass(tone: Tone): string {

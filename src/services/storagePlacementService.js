@@ -106,6 +106,7 @@ export async function placeDocument(decision, context, { db, bucket, now = new D
             fileSha256: context.fileSha256,
             documentConfidence: context.documentConfidence,
             receivedAt: context.receivedAt,
+            temporaryId: context.temporaryId,
         },
         { db, bucket, now }
     );

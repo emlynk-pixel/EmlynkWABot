@@ -1,4 +1,4 @@
-import { apiRequest } from "./client";
+import { apiRequest, apiRequestBlob } from "./client";
 
 // Read-only admin dashboard API (src/routes/admin.js, /api/admin/*).
 // Every call needs the signed-in admin's token.
@@ -109,4 +109,104 @@ export function listDocuments(token: string, params: DocumentListParams, signal?
 
 export function getClientDetails(token: string, passportId: string, signal?: AbortSignal): Promise<ClientDetails> {
     return apiRequest<ClientDetails>(`/api/admin/clients/${encodeURIComponent(passportId)}`, { token, signal });
+}
+
+// ---------------------------------------------------------------- review (Checkpoint 3)
+
+export type ReviewKind = "PENDING" | "DOCUMENT";
+export type ReviewCategory = "IDENTITY" | "QUALITY" | "CONFLICT" | "OTHER";
+
+export type ReviewQueueItem = {
+    reviewId: string;
+    kind: ReviewKind;
+    documentType: string;
+    processingStatus: string;
+    verificationStatus: string | null;
+    reviewReason: string | null; // null: processed before reasons were recorded
+    reviewCategory: ReviewCategory | null;
+    confidence: number | null;
+    receivedDate: string;
+    client: ClientRef | null;
+};
+
+export type ReviewQueueParams = {
+    page?: number;
+    pageSize?: number;
+    kind?: "ALL" | ReviewKind;
+    documentType?: string;
+    reviewReason?: string;
+    passportId?: string;
+    order?: "asc" | "desc";
+};
+
+export type ReviewQueue = {
+    items: ReviewQueueItem[];
+    pagination: { page: number; pageSize: number; total: number; totalPages: number };
+    summary: {
+        total: number;
+        pending: number;
+        documents: number;
+        byReason: Record<string, number>;
+        byCategory: Record<ReviewCategory, number>;
+    };
+};
+
+// The PII-free processing summary saved by the pipeline (all fields optional:
+// it grows over time and older submissions have none).
+export type ProcessingSummary = {
+    stage?: string;
+    error?: string | null;
+    processingStatus?: string;
+    documentType?: string | null;
+    typeSource?: string | null;
+    extractionMethod?: string | null;
+    ocrThresholding?: string | string[] | null;
+    ocrRotateAuto?: boolean | boolean[] | null;
+    ocrUpscaled?: boolean | null;
+    confidence?: { extraction: number; classification: number; document: number; band: string; measuredBand?: string; flags: string[] } | null;
+    passport?: { status: string; missingFields: string[]; mrzLinesFound: number; mrzCompositeCheckValid?: boolean | null; passportIdBand: string | null } | null;
+    policeDate?: { status: string; kind: string | null } | null;
+    passportAcceptance?: { accepted: boolean; failedConditions: string[] } | null;
+    identity?: { status: string; reviewRequired: boolean; provisional: boolean; notes: string[] } | null;
+    storage?: { checksum: string | null; placement: string; verificationStatus: string | null; documentStored: boolean; pendingCopy: boolean } | null;
+    reconciliation?: { matched: string[]; filled: string[]; conflicts: string[]; skipped: string[] } | null;
+};
+
+export type ReviewItem = {
+    reviewId: string;
+    kind: ReviewKind;
+    reviewReason: string | null;
+    reviewCategory: ReviewCategory | null;
+    document: {
+        documentId: string | null;
+        temporaryId: string | null;
+        documentType: string;
+        processingStatus: string;
+        verificationStatus: string | null;
+        receivedDate: string;
+        confidence: number | null;
+    };
+    client: ClientRef | null;
+    submission: { whatsappNumber: string; receivedDate: string } | null;
+    processing: ProcessingSummary | null;
+    file: { name: string; mimeType: string | null; size: number | null; location: "PENDING" | "CLIENT"; previewUrl: string | null };
+};
+
+export function getReviewQueue(token: string, params: ReviewQueueParams, signal?: AbortSignal): Promise<ReviewQueue> {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+    }
+    const suffix = query.toString();
+    return apiRequest<ReviewQueue>(`/api/admin/review${suffix ? `?${suffix}` : ""}`, { token, signal });
+}
+
+export function getReviewItem(token: string, reviewId: string, signal?: AbortSignal): Promise<ReviewItem> {
+    return apiRequest<ReviewItem>(`/api/admin/review/${encodeURIComponent(reviewId)}`, { token, signal });
+}
+
+// The file comes through the backend with the admin's token; the page shows
+// it from a local blob: URL, so no storage URL or credential is exposed.
+export function getReviewFile(token: string, previewUrl: string, signal?: AbortSignal): Promise<Blob> {
+    return apiRequestBlob(previewUrl, { token, signal });
 }

@@ -129,8 +129,9 @@ describe("processDocument", () => {
                 }
             );
 
+            const { processingSummary, reviewReason, ...linked } = recordUpdate.data;
             assert.deepEqual(
-                recordUpdate.data,
+                linked,
                 {
                     documentType: "PASSPORT",
                     processingStatus: "VERIFIED",
@@ -138,6 +139,14 @@ describe("processDocument", () => {
                     uniqueId: "0001",
                 }
             );
+
+            // Phase 10 review data: nothing to review, and the stored summary
+            // is the logged one as it stands after completion.
+            assert.equal(reviewReason, null);
+            assert.equal(processingSummary.stage, "COMPLETED");
+            assert.equal(processingSummary.recordUpdated, true);
+            assert.equal(processingSummary.processingStatus, "VERIFIED");
+            assert.deepEqual(processingSummary.identity, summary.identity);
 
             // Nullable fields with enough confidence may be auto-filled.
             // firstName is required by business rule, so passport givenNames
@@ -527,12 +536,16 @@ describe("processDocument", () => {
                 "worker crashed"
             );
 
+            const { processingSummary, reviewReason, ...status } = recordUpdate.data;
             assert.deepEqual(
-                recordUpdate.data,
+                status,
                 {
                     processingStatus: "FAILED",
                 }
             );
+            assert.equal(reviewReason, "PROCESSING_FAILED");
+            assert.equal(processingSummary.stage, "TEXT_EXTRACTION");
+            assert.equal(processingSummary.error, "worker crashed");
         }
     );
 

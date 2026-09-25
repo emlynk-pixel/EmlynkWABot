@@ -18,6 +18,7 @@ import { decidePlacement, placeDocument } from "./storagePlacementService.js";
 import { safeErrorText } from "../utils/safeLog.js";
 import { evaluatePassportAcceptance, applyPassportAcceptance } from "./passportAcceptanceService.js";
 import { policeWorkflowEvent } from "./policeWorkflowService.js";
+import { deriveReviewReason } from "./reviewReason.js";
 
 // temporary_data.processing_status values after processing, taken from
 // the proposal (§24 state machine, §32 error table). The confidence-band
@@ -296,6 +297,10 @@ export async function processDocument({
             processingStatus: state.processingStatus,
             ...(linkUser ? { passportId: state.identity.passportId, uniqueId: state.identity.uniqueId } : {}),
             ...(state.placement.pendingStoragePath ? { pendingStoragePath: state.placement.pendingStoragePath } : {}),
+            // Review data for the admin dashboard: the same PII-free summary
+            // that is logged, as it stands once processing has completed.
+            processingSummary: summarize({ ...state, stage: "COMPLETED", recordUpdated: true }),
+            reviewReason: deriveReviewReason(state),
         }, { db });
         state.recordUpdated = true;
         state.stage = "COMPLETED";
@@ -308,6 +313,8 @@ export async function processDocument({
             await updateTemporaryDocumentRecord(temporaryId, {
                 processingStatus: PROCESSING_STATUS.FAILED,
                 ...(state.placement?.pendingStoragePath ? { pendingStoragePath: state.placement.pendingStoragePath } : {}),
+                processingSummary: summarize(state),
+                reviewReason: deriveReviewReason(state),
             }, { db });
             state.recordUpdated = true;
         } catch (updateError) {

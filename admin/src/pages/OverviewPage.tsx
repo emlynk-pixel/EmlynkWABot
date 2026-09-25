@@ -100,8 +100,8 @@ function OverviewContent({ data }: { data: Overview }) {
                         title={`Review queue — ${formatNumber(reviewQueue.total)} ${reviewQueue.total === 1 ? "item" : "items"}`}
                         description={`${formatNumber(reviewQueue.pendingFiles)} files waiting in pending storage · ${formatNumber(reviewQueue.reviewRequiredDocuments)} stored files marked Review required`}
                         action={
-                            <Link to="/documents?verificationStatus=REVIEW_REQUIRED" className="text-label-md text-primary hover:underline">
-                                Stored files to review
+                            <Link to="/review" className="text-label-md text-primary hover:underline">
+                                Open Review Queue
                             </Link>
                         }
                     />
@@ -130,7 +130,9 @@ function OverviewContent({ data }: { data: Overview }) {
                             <tbody>
                                 {reviewQueue.items.map((item) => (
                                     <tr key={item.temporaryId} className="hover:bg-canvas">
-                                        <td className="h-11 border-b border-canvas-muted px-4 text-body-sm">{documentTypeLabel(item.documentType)}</td>
+                                        <td className="h-11 border-b border-canvas-muted px-4 text-body-sm">
+                                            <Link to={`/review/pending-${encodeURIComponent(item.temporaryId)}`} className="text-primary hover:underline">{documentTypeLabel(item.documentType)}</Link>
+                                        </td>
                                         <td className="h-11 border-b border-canvas-muted px-4"><StatusBadge status={item.processingStatus} /></td>
                                         <td className="h-11 border-b border-canvas-muted px-4 text-body-sm">
                                             {item.client ? (

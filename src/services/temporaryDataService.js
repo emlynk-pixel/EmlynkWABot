@@ -35,7 +35,8 @@ export async function createTemporaryDocumentRecord({
 
 // Only these columns change after processing. whatsapp_number, the
 // checksum and the temporary storage path stay as received.
-const UPDATABLE_FIELDS = ["documentType", "processingStatus", "passportId", "uniqueId", "pendingStoragePath"];
+// processingSummary / reviewReason: Phase 10 review data (PII-free summary).
+const UPDATABLE_FIELDS = ["documentType", "processingStatus", "passportId", "uniqueId", "pendingStoragePath", "processingSummary", "reviewReason"];
 
 export async function updateTemporaryDocumentRecord(temporaryId, changes, { db } = {}) {
     const data = Object.fromEntries(

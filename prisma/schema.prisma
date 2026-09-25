@@ -72,8 +72,15 @@ model Document {
   user       User    @relation(fields: [passportId], references: [passportId])
   fileSha256 String? @map("file_sha256") @db.Char(64)
 
+  // Submission (temporary_data row) this file was stored from (Phase 10):
+  // its processing summary and review reason explain a REVIEW_REQUIRED
+  // document. Null for documents stored before this column existed.
+  temporaryId   String?        @map("temporary_id")
+  temporaryData TemporaryData? @relation(fields: [temporaryId], references: [temporaryId], onDelete: SetNull)
+
   @@unique([passportId, fileSha256])
   @@index([fileSha256])
+  @@index([temporaryId])
   @@map("documents")
 }
 
@@ -93,6 +100,15 @@ model TemporaryData {
   fileSha256         String? @map("file_sha256") @db.Char(64)
   // Exact object path of the copy placed in pending/ (Phase 7), if any.
   pendingStoragePath String? @map("pending_storage_path")
+
+  // Phase 10 review data, written when processing finishes (or fails).
+  // processing_summary: the PII-free processing summary (confidences, band,
+  // flags, identity status/notes, field names, placement, failing stage).
+  // review_reason: why a person must look at it (see reviewReason.js), or
+  // null when no review is needed. Both null for rows processed earlier.
+  processingSummary Json?      @map("processing_summary")
+  reviewReason      String?    @map("review_reason")
+  documents         Document[]
 
   @@index([whatsappNumber, fileSha256])
   @@map("temporary_data")
