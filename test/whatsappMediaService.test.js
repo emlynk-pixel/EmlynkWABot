@@ -8,6 +8,7 @@ import {
     MediaRejectedError,
     MEDIA_METADATA_TIMEOUT_MS,
     MEDIA_DOWNLOAD_TIMEOUT_MS,
+    isAllowedMetaMediaUrl,
 } from "../src/services/whatsappMediaService.js";
 import { MAX_FILE_SIZE } from "../src/utils/fileValidation.js";
 
@@ -263,5 +264,107 @@ describe("no secrets in error messages", () => {
         mockFetch({ metadata: () => new Response("x".repeat(5000), { status: 500 }), download: () => assert.fail() });
 
         await assert.rejects(fetchLikeRoute(), (error) => error.message.length < 400);
+    });
+});
+
+describe("media host allowlist (SEC-014)", () => {
+    test("Meta's media host and its subdomains are allowed", () => {
+        for (const url of [
+            MEDIA_URL,
+            "https://fbsbx.com/x",
+            "https://scontent.xx.fbsbx.com/v/t/abc",
+            "https://LOOKASIDE.FBSBX.COM/whatsapp_business/attachments/?mid=1",
+        ]) {
+            assert.equal(isAllowedMetaMediaUrl(url), true, url);
+        }
+    });
+
+    test("lookalike, insecure and malformed URLs are refused", () => {
+        for (const url of [
+            "http://lookaside.fbsbx.com/x",               // not HTTPS
+            "https://fbsbx.com.evil.example/x",          // allowed name as a prefix
+            "https://evilfbsbx.com/x",                    // allowed name as a suffix without a dot
+            "https://lookaside.fbsbx.com.evil.example/x",
+            "https://fbsbx.co/x",
+            "https://evil.example/?u=lookaside.fbsbx.com",
+            "https://evil.example/lookaside.fbsbx.com",
+            "https://user:pass@lookaside.fbsbx.com/x",    // credentials
+            "https://lookaside.fbsbx.com@evil.example/x", // userinfo trick
+            "https://lookaside.fbsbx.com:8443/x",         // custom port
+            "https://127.0.0.1/x",
+            "https://[::1]/x",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "not a url",
+            "",
+            null,
+            undefined,
+        ]) {
+            assert.equal(isAllowedMetaMediaUrl(url), false, String(url));
+        }
+    });
+
+    test("an untrusted download URL is refused before fetch is called: the token is never sent", async () => {
+        mockFetch({ metadata: metadataFor(), download: () => new Response(Buffer.from("%PDF-1.4")) });
+
+        for (const url of ["https://fbsbx.com.evil.example/x", "http://lookaside.fbsbx.com/x", "https://evil.example/x"]) {
+            await assert.rejects(downloadWhatsappMedia(url), (error) => error instanceof MediaRejectedError && error.reason === "UNTRUSTED_MEDIA_HOST");
+        }
+        assert.equal(calls.length, 0);
+    });
+
+    test("metadata pointing at an untrusted host is refused; no download happens", async () => {
+        mockFetch({
+            metadata: metadataFor({ url: "https://attacker.example/file.pdf" }),
+            download: () => { throw new Error("download must not be called"); },
+        });
+
+        await assert.rejects(fetchLikeRoute(), (error) => error.reason === "UNTRUSTED_MEDIA_HOST");
+        assert.deepEqual(calls.map((c) => c.kind), ["metadata"]);
+    });
+
+    test("a redirect to another host is not followed and gets no token", async () => {
+        const seen = [];
+        globalThis.fetch = async (url, init) => {
+            seen.push({ url: String(url), auth: init.headers.Authorization, redirect: init.redirect });
+            return new Response(null, { status: 302, headers: { location: "https://attacker.example/steal" } });
+        };
+
+        await assert.rejects(downloadWhatsappMedia(MEDIA_URL), (error) => error.reason === "UNTRUSTED_MEDIA_HOST");
+        assert.equal(seen.length, 1);
+        assert.equal(seen[0].redirect, "manual");
+        assert.ok(!seen.some((call) => call.url.includes("attacker")));
+    });
+
+    test("a redirect within Meta's media host is followed", async () => {
+        const seen = [];
+        globalThis.fetch = async (url) => {
+            seen.push(String(url));
+            return seen.length === 1
+                ? new Response(null, { status: 302, headers: { location: "https://scontent.xx.fbsbx.com/file" } })
+                : new Response(Buffer.from("%PDF-1.4 synthetic"));
+        };
+
+        const buffer = await downloadWhatsappMedia(MEDIA_URL);
+        assert.equal(buffer.toString(), "%PDF-1.4 synthetic");
+        assert.deepEqual(seen, [MEDIA_URL, "https://scontent.xx.fbsbx.com/file"]);
+    });
+
+    test("endless redirects stop", async () => {
+        let count = 0;
+        globalThis.fetch = async () => {
+            count += 1;
+            return new Response(null, { status: 302, headers: { location: `https://lookaside.fbsbx.com/r${count}` } });
+        };
+        await assert.rejects(downloadWhatsappMedia(MEDIA_URL), (error) => error.reason === "UNTRUSTED_MEDIA_HOST");
+        assert.equal(count, 3);
+    });
+
+    test("a media ID with path or query characters is refused before any request", async () => {
+        mockFetch({ metadata: metadataFor(), download: () => new Response("") });
+        for (const mediaId of ["../me", "1?fields=x", "1/2", "", 123]) {
+            await assert.rejects(getWhatsappMediaUrl(mediaId), (error) => error.reason === "INVALID_MEDIA_ID");
+        }
+        assert.equal(calls.length, 0);
     });
 });

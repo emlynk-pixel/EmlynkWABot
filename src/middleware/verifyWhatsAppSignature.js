@@ -42,7 +42,7 @@ export function verifyWhatsappSignature(req, res, next) {
 
         next();
     } catch (error) {
-        console.error("WhatsApp webhook signature verification error:", error.message);
+        console.error("WhatsApp webhook signature verification error:", { errorType: error?.name ?? "Error" });
         return res.sendStatus(401);
     }
 }

@@ -2,6 +2,7 @@ import { createWorker } from "tesseract.js";
 import { PDFParse } from "pdf-parse";
 
 import { readImageDimensions } from "../utils/imageDimensions.js";
+import { safeErrorInfo } from "../utils/safeLog.js";
 import { createConcurrencyLimiter, LimiterBusyError } from "../utils/concurrencyLimiter.js";
 
 // Below this, a PDF is treated as scanned (image-only) rather than text-based.
@@ -232,7 +233,7 @@ export async function extractTextFromPdf(fileBuffer) {
         if (error instanceof OcrResourceError) {
             throw error;
         }
-        console.error("PDF text extraction failed:", error.message);
+        console.error("PDF text extraction failed:", safeErrorInfo(error));
 
         return {
             success: false,

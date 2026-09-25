@@ -15,6 +15,7 @@ import { updateTemporaryDocumentRecord } from "./temporaryDataService.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { checkClientChecksum, CHECKSUM_OUTCOME } from "./documentChecksumService.js";
 import { decidePlacement, placeDocument } from "./storagePlacementService.js";
+import { safeErrorText } from "../utils/safeLog.js";
 
 // temporary_data.processing_status values after processing, taken from
 // the proposal (§24 state machine, §32 error table). The confidence-band
@@ -58,12 +59,6 @@ export function determineProcessingStatus({ confidence, identity, reconciliation
         return confidence.band === PROCESSING_STATUS.UNCLEAR ? PROCESSING_STATUS.UNCLEAR : PROCESSING_STATUS.MANUAL_REVIEW;
     }
     return confidence.band;
-}
-
-// Prisma puts query arguments (e.g. a passport number) on later lines of
-// its messages, so only the first line is kept for logs.
-function safeErrorMessage(error) {
-    return String(error?.message ?? error).split("\n")[0].slice(0, 200);
 }
 
 // Build the parts of the result that are safe to log: statuses, scores,
@@ -264,7 +259,7 @@ export async function processDocument({
         state.recordUpdated = true;
         state.stage = "COMPLETED";
     } catch (error) {
-        state.error = safeErrorMessage(error);
+        state.error = safeErrorText(error);
         state.processingStatus = PROCESSING_STATUS.FAILED;
 
         try {
@@ -275,7 +270,7 @@ export async function processDocument({
             }, { db });
             state.recordUpdated = true;
         } catch (updateError) {
-            state.error = `${safeErrorMessage(error)}; status update failed: ${safeErrorMessage(updateError)}`;
+            state.error = `${safeErrorText(error)}; status update failed: ${safeErrorText(updateError)}`;
         }
     }
 

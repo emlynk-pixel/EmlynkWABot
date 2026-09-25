@@ -11,6 +11,32 @@ import { ALLOWED_MIME_TYPES, MAX_FILE_SIZE } from "../utils/fileValidation.js";
 export const MEDIA_METADATA_TIMEOUT_MS = 10_000;
 export const MEDIA_DOWNLOAD_TIMEOUT_MS = 30_000;
 
+// Meta serves WhatsApp media from lookaside.fbsbx.com. The access token is
+// only ever sent to these hosts or their subdomains (SEC-014), so a forged or
+// unexpected URL can't make the server hand the token to someone else.
+export const ALLOWED_MEDIA_HOSTS = Object.freeze(["fbsbx.com"]);
+const MAX_MEDIA_REDIRECTS = 2;
+
+// Graph API media IDs are numeric; this also keeps "/", "?" and ".." out of
+// the Graph URL.
+const MEDIA_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+// Exact host or a dot-separated subdomain: "lookaside.fbsbx.com" passes,
+// "fbsbx.com.evil.example" and "evilfbsbx.com" don't.
+export function isAllowedMetaMediaUrl(mediaUrl) {
+    let url;
+    try {
+        url = new URL(mediaUrl);
+    } catch {
+        return false;
+    }
+    if (url.protocol !== "https:" || url.username || url.password || url.port) {
+        return false;
+    }
+    const host = url.hostname.toLowerCase();
+    return ALLOWED_MEDIA_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+}
+
 // A file refused for size or type. Same outcome as a failed validation.
 export class MediaRejectedError extends Error {
     constructor(reason) {
@@ -54,6 +80,10 @@ function checkMediaMetadata({ file_size: fileSize, mime_type: mimeType }) {
 // Meta doesn't send the file itself, only a media ID. Exchange it for a
 // short-lived download URL, checking the reported size and type on the way.
 export async function getWhatsappMediaUrl(mediaId, { timeoutMs = MEDIA_METADATA_TIMEOUT_MS } = {}) {
+    if (typeof mediaId !== "string" || !MEDIA_ID_PATTERN.test(mediaId)) {
+        throw new MediaRejectedError("INVALID_MEDIA_ID");
+    }
+
     const headers = getAuthHeaders();
 
     if (!process.env.WHATSAPP_API_VERSION) {
@@ -68,6 +98,7 @@ export async function getWhatsappMediaUrl(mediaId, { timeoutMs = MEDIA_METADATA_
             method: "GET",
             headers,
             signal: AbortSignal.timeout(timeoutMs),
+            redirect: "error",
         });
 
         if (!response.ok) {
@@ -89,6 +120,10 @@ export async function getWhatsappMediaUrl(mediaId, { timeoutMs = MEDIA_METADATA_
     }
 
     checkMediaMetadata(data);
+
+    if (!isAllowedMetaMediaUrl(data.url)) {
+        throw new MediaRejectedError("UNTRUSTED_MEDIA_HOST");
+    }
     return data.url;
 }
 
@@ -126,16 +161,33 @@ async function readBodyWithLimit(response, maxBytes) {
 
 // The download URL also needs the access token. The URL itself is never put
 // in error messages: it's a signed link to the client's file.
+// Redirects are followed by hand so each hop is checked against the
+// allowlist before the token is sent to it.
 export async function downloadWhatsappMedia(mediaUrl, { timeoutMs = MEDIA_DOWNLOAD_TIMEOUT_MS, maxBytes = MAX_FILE_SIZE } = {}) {
+    if (!isAllowedMetaMediaUrl(mediaUrl)) {
+        throw new MediaRejectedError("UNTRUSTED_MEDIA_HOST");
+    }
+
     const headers = getAuthHeaders();
+    // Also covers reading the body, not just the response headers.
+    const signal = AbortSignal.timeout(timeoutMs);
 
     try {
-        const response = await fetch(mediaUrl, {
-            method: "GET",
-            headers,
-            // Also covers reading the body, not just the response headers.
-            signal: AbortSignal.timeout(timeoutMs),
-        });
+        let url = mediaUrl;
+        let response;
+        for (let redirects = 0; ; redirects++) {
+            response = await fetch(url, { method: "GET", headers, signal, redirect: "manual" });
+
+            if (response.status < 300 || response.status >= 400) break;
+
+            await response.body?.cancel().catch(() => {});
+            const location = response.headers.get("location");
+            const nextUrl = location ? new URL(location, url).href : null;
+            if (redirects >= MAX_MEDIA_REDIRECTS || !nextUrl || !isAllowedMetaMediaUrl(nextUrl)) {
+                throw new MediaRejectedError("UNTRUSTED_MEDIA_HOST");
+            }
+            url = nextUrl;
+        }
 
         if (!response.ok) {
             await response.body?.cancel().catch(() => {});

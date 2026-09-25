@@ -30,6 +30,12 @@ export function createFakeBucket(initialPaths = [], options = {}) {
             objects.set(toPath, true);
             return { data: { path: toPath }, error: null };
         },
+        async upload(path, body, uploadOptions = {}) {
+            calls.push({ method: "upload", path, contentType: uploadOptions.contentType, upsert: uploadOptions.upsert });
+            if (objects.has(path) && !uploadOptions.upsert) return { data: null, error: { statusCode: "409", message: "The resource already exists" } };
+            objects.set(path, true);
+            return { data: { path }, error: null };
+        },
         async remove(paths) {
             calls.push({ method: "remove", paths });
             if (failRemove) return { data: null, error: { message: "Remove failed" } };
