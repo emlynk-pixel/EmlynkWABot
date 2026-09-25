@@ -9,6 +9,8 @@ type AuthState =
     | { status: "anonymous"; admin: null };
 
 type AuthContextValue = AuthState & {
+    // The session token for API calls (admin/src/api); null when signed out.
+    token: string | null;
     signIn: (email: string, password: string) => Promise<void>;
     signOut: () => void;
 };
@@ -77,7 +79,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setState({ status: "authenticated", admin });
     }, []);
 
-    const value = useMemo<AuthContextValue>(() => ({ ...state, signIn, signOut }), [state, signIn, signOut]);
+    const value = useMemo<AuthContextValue>(
+        () => ({ ...state, token: state.status === "authenticated" ? token : null, signIn, signOut }),
+        [state, token, signIn, signOut]
+    );
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

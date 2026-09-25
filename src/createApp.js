@@ -2,14 +2,15 @@ import express from "express";
 import helmet from "helmet";
 import authRoutes from "./routes/auth.js";
 import whatsappRoutes from "./routes/whatsapp.js";
+import { createAdminRouter } from "./routes/admin.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { trustProxyHops } from "./config/env.js";
 import { createAdminFrontendRouter, DEFAULT_ADMIN_DIST_DIR } from "./adminFrontend.js";
 
 // Builds the Express app without starting a server, so tests can use it.
 // Environment variables must already be loaded (src/app.js does that first).
-// Options exist for tests: another admin build folder, a fake-DB auth router.
-export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = authRoutes } = {}) {
+// Options exist for tests: another admin build folder, fake-DB routers.
+export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = authRoutes, adminApiRouter = createAdminRouter() } = {}) {
     const app = express();
 
     // Don't advertise the framework (SEC-015).
@@ -36,6 +37,9 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
 
     app.use("/auth", authRouter);
     app.use("/whatsapp", whatsappRoutes);
+
+    // Read-only admin dashboard API (ACTIVE admin token required).
+    app.use("/api/admin", adminApiRouter);
 
     // Admin dashboard (built React app from admin/), same origin as /auth.
     app.use("/admin", createAdminFrontendRouter({ distDir: adminDistDir }));

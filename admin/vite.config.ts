@@ -17,6 +17,7 @@ export default defineConfig({
         // Same-origin API calls in development, like in production.
         proxy: {
             "/auth": { target: apiTarget, changeOrigin: false },
+            "/api": { target: apiTarget, changeOrigin: false },
             "/health": { target: apiTarget, changeOrigin: false },
         },
     },

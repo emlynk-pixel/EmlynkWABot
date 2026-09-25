@@ -6,10 +6,12 @@ import crypto from "crypto";
 import { comparePassword, hashPassword } from "../utils/password.js";
 import { authenticateAdmin, JWT_ALGORITHM } from "../middleware/auth.js";
 import { createLoginRateLimiter } from "../middleware/loginRateLimiter.js";
+import { ACTIVE_ADMIN_STATUS } from "../middleware/requireActiveAdmin.js";
 
 // The only status that may sign in or use admin endpoints. admins.status is a
 // plain string (default "ACTIVE"); any other value counts as not active.
-export const ACTIVE_ADMIN_STATUS = "ACTIVE";
+// Defined with the shared admin middleware; re-exported for existing imports.
+export { ACTIVE_ADMIN_STATUS };
 
 const INVALID_LOGIN = { message: "Invalid email or password" };
 const INVALID_TOKEN = { message: "Invalid or Expired Token" };

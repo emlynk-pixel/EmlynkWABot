@@ -1,9 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
-import { ADMIN, fakeJwt, renderApp, stubBackend } from "./helpers";
-
-const TOKEN_KEY = "emlynk.admin.token";
+import { ADMIN, OVERVIEW, TOKEN_KEY, fakeJwt, renderApp, signedInBackend, stubBackend } from "./helpers";
 
 async function fillAndSubmit(email = ADMIN.email, password = "Correct-Horse-7") {
     const user = userEvent.setup();
@@ -38,6 +36,7 @@ describe("login", () => {
         const { calls } = stubBackend({
             "POST /auth/login": { status: 200, body: { message: "Login successful", token } },
             "GET /auth/me": { status: 200, body: { message: "ok", admin: ADMIN } },
+            "GET /api/admin/overview": { status: 200, body: OVERVIEW },
         });
         renderApp("/");
         await screen.findByRole("heading", { name: "Sign in" });
@@ -45,7 +44,7 @@ describe("login", () => {
 
         expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
         expect(screen.getByTestId("admin-name")).toHaveTextContent("Test Admin");
-        expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /auth/login", "GET /auth/me"]);
+        expect(calls.slice(0, 2).map((c) => `${c.method} ${c.path}`)).toEqual(["POST /auth/login", "GET /auth/me"]);
         expect(calls[0].body).toEqual({ email: ADMIN.email, password: "Correct-Horse-7" });
         expect(calls[1].headers.Authorization).toBe(`Bearer ${token}`);
         expect(window.sessionStorage.getItem(TOKEN_KEY)).toBe(token);
@@ -145,8 +144,7 @@ describe("session restore", () => {
 
 describe("dashboard shell", () => {
     async function signedIn(path = "/") {
-        window.sessionStorage.setItem(TOKEN_KEY, fakeJwt());
-        stubBackend({ "GET /auth/me": { status: 200, body: { admin: ADMIN } } });
+        signedInBackend();
         renderApp(path);
         await screen.findByTestId("admin-name");
     }
@@ -162,10 +160,11 @@ describe("dashboard shell", () => {
         expect(within(nav).getByRole("link", { name: "Police Workflow" })).toHaveAttribute("aria-current", "page");
     });
 
-    test("no dashboard data is requested in this checkpoint", async () => {
+    test("the session is checked before any dashboard data is requested", async () => {
         await signedIn();
+        await screen.findByText("Total clients");
         const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
-        expect(calls).toEqual(["/auth/me"]);
+        expect(calls).toEqual(["/auth/me", "/api/admin/overview"]);
     });
 
     test("the sidebar collapses to an icon rail and remembers it", async () => {

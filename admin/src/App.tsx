@@ -1,6 +1,8 @@
 import { Route, Routes } from "react-router";
 import { RequireAuth } from "./auth/RequireAuth";
 import { AdminLayout } from "./layout/AdminLayout";
+import { ClientDetailsPage } from "./pages/ClientDetailsPage";
+import { DocumentsPage } from "./pages/DocumentsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { OverviewPage } from "./pages/OverviewPage";
@@ -20,9 +22,10 @@ export function AppRoutes() {
                 }
             >
                 <Route index element={<OverviewPage />} />
-                <Route path="documents" element={<SectionPlaceholder title="Documents" description="All stored client documents, their status and verification." />} />
+                <Route path="documents" element={<DocumentsPage />} />
                 <Route path="review" element={<SectionPlaceholder title="Review Queue" description="Documents waiting for an administrator's decision." />} />
-                <Route path="clients" element={<SectionPlaceholder title="Clients" description="Client profiles and their submitted documents." />} />
+                <Route path="clients" element={<SectionPlaceholder title="Clients" description="Client profiles and their submitted documents. Open a client from the Documents or Overview page." />} />
+                <Route path="clients/:passportId" element={<ClientDetailsPage />} />
                 <Route path="police" element={<SectionPlaceholder title="Police Workflow" description="Police slips, final reports and the 21-day follow-up." />} />
                 <Route path="*" element={<NotFoundPage />} />
             </Route>

@@ -1,5 +1,5 @@
 // Minimal JSON client for the EmlynkWABot backend. Requests are same-origin:
-// in production Express serves this app, in development Vite proxies /auth.
+// in production Express serves this app, in development Vite proxies /auth and /api.
 
 export class ApiError extends Error {
     readonly status: number;

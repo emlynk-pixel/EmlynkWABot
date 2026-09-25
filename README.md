@@ -264,14 +264,16 @@ erDiagram
 
 | Layer | Technology | Purpose / Details |
 |---|---|---|
-| **Runtime** | Node.js (v18+) | ES Modules (`"type": "module"`) |
+| **Runtime** | Node.js (v22; the admin build needs ≥ 20.19 or ≥ 22.12) | ES Modules (`"type": "module"`) |
 | **Web Framework** | Express.js (v5.2+) | HTTP routing & REST API backend |
 | **Database** | PostgreSQL 16 | Relational data store running in Docker container |
-| **ORM** | Prisma ORM (v6.19 / v7.10) | Type-safe query engine & migration tool |
+| **ORM** | Prisma ORM (v6.19.3, `@prisma/client` and CLI) | Type-safe query engine & migration tool |
 | **Driver Adapter** | `@prisma/adapter-pg` / `pg` | PostgreSQL native client adapter |
 | **Containerization** | Docker & Docker Compose | Containerized local PostgreSQL service |
 | **Security & Auth** | `bcrypt` (v6.0), `jsonwebtoken` (v9.0) | Password hashing & JWT access token middleware |
 | **Configuration** | `dotenv` (v18.0) | Environment variable management |
+| **OCR & PDF text** | `tesseract.js` (v7), `pdf-parse` (v2.4) | Passport/police/medical text extraction and scanned-PDF OCR (Phase 5) |
+| **Object Storage** | Supabase Storage (`@supabase/supabase-js` v2), private bucket | `temporary/`, `clients/{passport_id}/…` and `pending/` folders (Phase 7) |
 | **Admin Dashboard** | React 19, TypeScript, Vite, Tailwind CSS v4, React Router | `admin/` frontend, served by Express under `/admin` (Phase 10) |
 
 ### Planned Stack & Integrations
@@ -279,9 +281,7 @@ erDiagram
 | Layer | Technology | Purpose |
 |---|---|---|
 | **Messaging Channel** | Meta WhatsApp Business API | Official cloud API webhook integration |
-| **Document Intelligence** | Document AI / Google Vision OCR | Automated passport text & slip date extraction |
 | **Background Processing** | Redis + BullMQ / Async Queue | Asynchronous long-running OCR and storage tasks |
-| **Object Storage** | AWS S3 / MinIO Private Storage | Secure, private client document bucket |
 
 ---
 
@@ -294,7 +294,7 @@ EmlynkWABot/
 ├── docker-compose.yml            # PostgreSQL 16 container definition
 ├── package.json                  # Node.js dependencies & scripts
 ├── package-lock.json             # Dependency lockfile
-├── prisma7.config.ts             # Prisma seed configuration
+├── prisma7.config.ts             # Prisma CLI config (schema, migrations, datasource)
 ├── README.md                     # Project documentation
 │
 ├── admin/                        # Admin dashboard (React + TypeScript + Vite), served at /admin
@@ -364,12 +364,12 @@ EmlynkWABot/
 | **WhatsApp Media Download Service** | ✅ Completed | Fetches Graph API media URLs & downloads file buffers into backend |
 | **Document File & MIME Validation** | ✅ Completed | `validateDocumentFile` checks MIME type constraints and size limits |
 | **Temporary File & DB Storage** | ✅ Completed | Saves files in temp storage & creates `temporary_data` records via `createTemporaryDocumentRecord` |
-| **Document Classification Engine** | 🚧 In Progress | Initial filename & MIME classifier (`classifyDocument`) complete; OCR engine in progress |
-| **Passport OCR & Full Extraction** | ⏳ Planned | Tesseract.js / Document AI integration for passport & slip processing |
-| **Identity Conflict Engine** | ⏳ Planned | Reconciliation matrix matching WhatsApp number & Passport ID |
+| **Document Classification Engine** | ✅ Completed | Content-based classifier (passport, police slip, police report, medical) with filename hints — `Docs/06` |
+| **Passport OCR & Full Extraction** | ✅ Completed | Tesseract.js OCR, scanned-PDF OCR, MRZ + printed-field extraction with check digits — `Docs/06` |
+| **Identity Conflict Engine** | ✅ Completed | Passport/WhatsApp identity matrix, conflict detection, field reconciliation — `Docs/07` |
 | **21-Day Police Report Countdown** | ⏳ Planned | Submission date extraction & background reminder scheduler |
-| **Private Object Storage** | ⏳ Planned | Secure document renaming & upload to object storage |
-| **Admin Dashboard UI** | 🚧 In Progress | Phase 10 Checkpoint 1: `admin/` app, login, route guard, dashboard shell (no data yet) |
+| **Private Object Storage** | ✅ Completed | Private Supabase bucket, client folders, versioning, checksum duplicates, pending storage — `Docs/11`, `Docs/12` |
+| **Admin Dashboard UI** | 🚧 In Progress | Phase 10 Checkpoints 1–2: login, route guard, shell; read-only Overview, Documents and Client Details with `/api/admin` |
 
 ---
 
@@ -381,12 +381,12 @@ EmlynkWABot/
 | **Phase 2** | Database Preparation | ✅ Completed | Prisma ORM setup, core 4 models, migrations, DB seed script |
 | **Phase 3** | WhatsApp Integration | ✅ Completed | Meta Webhook verification, HMAC SHA-256 signature verification & webhook route |
 | **Phase 4** | Document Ingestion | ✅ Completed | WhatsApp Graph API media download, MIME validation & duplicate idempotency tracking |
-| **Phase 5** | Classification & OCR | 🚧 In Progress | Filename & MIME classification service active; OCR / Document AI extraction in progress |
-| **Phase 6** | Passport Verification | ⏳ Planned | Identity matching rules, conflict detection & anti-overwrite checks |
-| **Phase 7** | Permanent Storage | ⏳ Planned | Structured folder naming convention & private cloud storage upload |
+| **Phase 5** | Classification & OCR | ✅ Completed | Content classification, OCR, confidence bands, passport fields, police slip date — `Docs/06` |
+| **Phase 6** | Passport Verification | ✅ Completed | Identity matching rules, conflict detection & anti-overwrite checks — `Docs/07` |
+| **Phase 7** | Permanent Storage | ✅ Completed | Structured folder naming, private cloud storage, checksums, pending storage — `Docs/11`, `Docs/12` |
 | **Phase 8** | Temporary Workflow | ✅ Completed | Disk storage & `temporary_data` table integration for incoming unverified files |
 | **Phase 9** | Police Report Countdown | ⏳ Planned | 21-day countdown service & Admin completion suppression handler |
-| **Phase 10** | Admin Dashboard | 🚧 In Progress | Checkpoint 1 done: admin frontend, login & dashboard shell. Next: read-only admin API |
+| **Phase 10** | Admin Dashboard | 🚧 In Progress | Checkpoints 1–2 done: admin frontend, read-only admin API, Overview/Documents/Client Details. Next: Review Queue |
 | **Phase 11** | Reporting and Alerts | ⏳ Planned | System alert metrics, overdue reports & missing document summaries |
 | **Phase 12** | Security, QA & Deployment | ⏳ Planned | Role-based authorization, load testing, production Docker container |
 
@@ -397,7 +397,7 @@ EmlynkWABot/
 ### Prerequisites
 
 Ensure you have the following installed on your machine:
-- [Node.js](https://nodejs.org/) (v18.0.0 or higher)
+- [Node.js](https://nodejs.org/) (v22 recommended; the admin dashboard build needs 20.19+ or 22.12+)
 - [npm](https://www.npmjs.com/) (v9.0.0 or higher)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (with Docker Compose)
 - [Git](https://git-scm.com/)
@@ -485,7 +485,7 @@ Verify backend health by visiting or requesting `http://localhost:3000/health`:
 
 ```bash
 npm run admin:install   # once
-npm run admin:dev       # development: http://localhost:5173/admin/ (proxies /auth to :3000)
+npm run admin:dev       # development: http://localhost:5173/admin/ (proxies /auth and /api to :3000)
 npm run admin:build     # production build into admin/dist, then `npm start`
                         # and open http://localhost:3000/admin/
 npm run admin:test      # frontend tests
@@ -512,6 +512,18 @@ Sign in with an admin account created by `npm run admin:create`. Details: [`Docs
 |---|---|:---:|---|---|
 | `POST` | `/auth/login` | Public | `{ "email": "...", "password": "..." }` | Authenticates admin using bcrypt and returns JWT token |
 | `GET` | `/auth/me` | Protected (JWT) | `Header: Authorization: Bearer <token>` | Returns current authenticated administrator profile |
+
+---
+
+### Admin Dashboard API (`/api/admin`, read-only)
+
+All routes need `Authorization: Bearer <token>` of an **ACTIVE** admin (checked against the database on every request). Details: [`Docs/14-phase-10-admin-dashboard.md`](Docs/14-phase-10-admin-dashboard.md).
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/admin/overview` | KPIs, submission status/type summaries, recent documents, review-queue summary |
+| `GET` | `/api/admin/documents` | Paginated, filterable, sortable list of stored documents |
+| `GET` | `/api/admin/clients/:passportId` | Client profile, documents, required-document status, police documents |
 
 ---
 
