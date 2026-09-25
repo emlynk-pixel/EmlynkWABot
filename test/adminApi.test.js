@@ -75,6 +75,9 @@ function createFakeDashboardDb({ admins, documents = [docRow()], user = null, pe
                         : [{ processingStatus: "VERIFIED", _count: { _all: 6 } }, { processingStatus: "MANUAL_REVIEW", _count: { _all: 3 } }]),
             findMany: async (args) => record("temporaryData.findMany", args, pending),
         },
+        auditLog: {
+            findMany: async (args) => record("auditLog.findMany", args, []), // police slip date changes
+        },
     };
 }
 
@@ -225,7 +228,7 @@ describe("GET /api/admin/overview", () => {
         const before = db.calls.length;
         await http.get("/api/admin/overview");
         const dashboardCalls = db.calls.slice(before).filter((c) => !c.method.startsWith("admin."));
-        assert.equal(dashboardCalls.length, 13); // 10 + 3 for the police due counts (Checkpoint 5)
+        assert.equal(dashboardCalls.length, 16); // 10 + 3 for the police due counts + 3 for client completeness
         const recent = dashboardCalls.find((c) => c.method === "document.findMany");
         assert.ok(recent.args.select.user, "client joined in the same query");
         assert.equal(recent.args.take, 8);
@@ -361,11 +364,12 @@ describe("GET /api/admin/clients/:passportId", () => {
         assert.equal(body.police.countdown.report.documentId, "doc-r");
     });
 
-    test("passport ID is matched case-insensitively; documents and pending items in two queries", async () => {
+    test("passport ID is matched case-insensitively; documents, pending items and police date changes in three queries", async () => {
         const before = db.calls.length;
         assert.equal((await http.get("/api/admin/clients/n1234567")).status, 200);
         const calls = db.calls.slice(before).filter((c) => !c.method.startsWith("admin."));
-        assert.deepEqual(calls.map((c) => c.method), ["user.findUnique", "temporaryData.findMany"]);
+        assert.deepEqual(calls.map((c) => c.method), ["user.findUnique", "temporaryData.findMany", "auditLog.findMany"]);
+        assert.deepEqual(calls[2].args.where, { passportId: "N1234567", action: "SET_POLICE_DATE" });
         assert.deepEqual(calls[0].args.where, { passportId: "N1234567" });
         assert.ok(calls[0].args.select.documents, "documents loaded with the client");
     });

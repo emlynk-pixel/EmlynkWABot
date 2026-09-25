@@ -1,3 +1,4 @@
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { getPoliceWorkflow, type PoliceListParams, type PoliceStatus } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
@@ -17,6 +18,7 @@ function paramsFrom(search: URLSearchParams): PoliceListParams {
         page: Number.isInteger(page) && page > 0 ? page : 1,
         pageSize: PAGE_SIZE,
         status: status && STATUS_VALUES.includes(status) ? status : undefined,
+        search: search.get("search") || undefined,
     };
 }
 
@@ -40,7 +42,8 @@ function StatCard({ label, value, icon, status, active, onSelect }: { label: str
 }
 
 // Police Workflow (Stitch "Police Workflow"): the 21-day follow-up for the
-// final police report of every client, calculated by the backend. Read-only.
+// final police report of every client, calculated by the backend. Read-only;
+// the search only narrows the list (passport ID, unique ID or name).
 export function PoliceWorkflowPage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const params = paramsFrom(searchParams);
@@ -57,6 +60,12 @@ export function PoliceWorkflowPage() {
         setSearchParams(next);
     };
     const toggleStatus = (status: PoliceStatus) => update({ status: params.status === status ? undefined : status });
+    const [searchText, setSearchText] = useState(params.search ?? "");
+    useEffect(() => setSearchText(params.search ?? ""), [params.search]);
+    const submitSearch = (event: FormEvent) => {
+        event.preventDefault();
+        update({ search: searchText.trim() || undefined });
+    };
     const data = list.data;
     const byStatus = data?.summary.byStatus;
     const control = "h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
@@ -80,6 +89,19 @@ export function PoliceWorkflowPage() {
             </div>
 
             <Card className="flex flex-wrap items-center gap-3 p-4">
+                <form role="search" onSubmit={submitSearch} className="flex w-full gap-2 md:w-auto md:min-w-[22rem]">
+                    <label htmlFor="police-search" className="sr-only">Search clients</label>
+                    <input
+                        id="police-search"
+                        type="search"
+                        value={searchText}
+                        maxLength={100}
+                        onChange={(event) => setSearchText(event.target.value)}
+                        placeholder="Search by passport ID, unique ID or name…"
+                        className={control}
+                    />
+                    <button type="submit" className="h-9 rounded bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
+                </form>
                 <label htmlFor="police-status" className="text-label-md text-ink">Status</label>
                 <select id="police-status" value={params.status ?? ""} onChange={(e) => update({ status: e.target.value || undefined })} className={`${control} max-w-xs`}>
                     <option value="">All clients{data ? ` (${formatNumber(data.summary.total)})` : ""}</option>
@@ -104,8 +126,8 @@ export function PoliceWorkflowPage() {
                 {list.status === "loading" && <LoadingState label="Loading police workflow…" />}
                 {list.status === "success" && data && data.items.length === 0 && (
                     <EmptyState
-                        title={params.status ? `No clients with status "${policeStatusLabel(params.status)}"` : "No clients yet"}
-                        action={params.status ? <button type="button" onClick={() => setSearchParams(new URLSearchParams())} className="text-label-md text-primary hover:underline">Show all clients</button> : undefined}
+                        title={params.search ? `No clients match "${params.search}"${params.status ? ` with status "${policeStatusLabel(params.status)}"` : ""}` : params.status ? `No clients with status "${policeStatusLabel(params.status)}"` : "No clients yet"}
+                        action={params.status || params.search ? <button type="button" onClick={() => setSearchParams(new URLSearchParams())} className="text-label-md text-primary hover:underline">Show all clients</button> : undefined}
                     />
                 )}
                 {list.status === "success" && data && data.items.length > 0 && (

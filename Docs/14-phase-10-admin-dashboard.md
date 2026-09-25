@@ -1,6 +1,6 @@
 # Phase 10 — Admin Dashboard
 
-Status: **Checkpoint 5 done (`5615aaa`); Remove from Review implemented (not yet committed). None of the four Phase 10 migrations is applied to the live database.**
+Status: **Final Phase 10 scope implemented and verified (not yet committed). None of the five Phase 10 migrations is applied to the live database.** The standalone reference for the finished dashboard is [`15-admin-dashboard-reference.md`](15-admin-dashboard-reference.md); it also lists every decision and deviation from the proposal.
 
 | Checkpoint | Scope | Status |
 |---|---|---|
@@ -8,9 +8,11 @@ Status: **Checkpoint 5 done (`5615aaa`); Remove from Review implemented (not yet
 | 2 | Read-only admin API (`/api/admin`), Overview, Documents, Client Details | Done (`90a0d6e`) |
 | 3 | Review data migration, Review Queue, read-only Review Detail with secure file preview | Done (`4572bc0`) |
 | 4 | Review actions (Approve, Keep Pending) with an append-only audit log | Done (`10bf997`) |
-| 5 | Police Workflow: slip submitted date stored, calculated 21-day status, Police Workflow page, client countdown, Overview counts | Implemented |
+| 5 | Police Workflow: slip submitted date stored, calculated 21-day status, Police Workflow page, client countdown, Overview counts | Done (`5615aaa`) |
+| — | Remove from Review | Done (`7f927a6`) |
+| Final | Clients directory, Missing Documents, configurable required documents, corrections (set document type, assign client, set police slip date), status mapping, Police search, Sync, Dark Mode, Daily Report, Overview completeness | Implemented (§4e–§4j) |
 
-Not built: a reject action (by business rule there is none, see §4c), assigning a client to an unlinked file, uploads (including the admin upload of the actual police report), exports, WhatsApp messaging, reminders or warnings for police reports (Phase 11), scheduled jobs, Settings, global search, client editing, batch actions, the Clients list page and the Missing-documents view.
+Not built (by decision): a reject action (business rule: there is none, §4c), uploads (including an admin upload of the actual police report), exports, WhatsApp messaging, reminders or warnings for police reports (Phase 11), scheduled jobs, a Settings page, global search, client editing, batch actions, roles (Phase 12).
 
 Visual source of truth: Stitch project **EmlynkWABot Admin Dashboard UI** (`13688778730186190970`), design system **Precision Enterprise Console**. The Stitch project is read-only for development; nothing is generated or changed there from the code.
 
@@ -40,10 +42,13 @@ admin/
     ├── layout/
     │   ├── AdminLayout.tsx   # shell: sidebar + header + content
     │   ├── Sidebar.tsx       # dark sidebar, 240px, collapsible to 64px rail, mobile drawer
-    │   ├── Header.tsx        # 56px utility bar: breadcrumb, admin, sign out
+    │   ├── Header.tsx        # 56px utility bar: breadcrumb, Sync, dark mode, admin, sign out
     │   └── navigation.ts     # sidebar entries
-    ├── components/           # Icon, StatusBadge, Confidence, DocumentsTable, States (loading/error/empty), format
-    ├── pages/                # Login, Overview, Documents, ClientDetails, placeholders, not found
+    ├── components/           # Icon, StatusBadge, Confidence, DocumentsTable, ClientTable, Dialog, States, format
+    ├── pages/                # Login, Overview, Documents, Review Queue/Detail, Clients, Client Details,
+    │                         # Missing Documents, Police Workflow, Daily Report, not found
+    ├── sync/SyncProvider.tsx # Sync: reload the data on screen
+    ├── theme/theme.ts        # light / dark mode, stored per browser
     └── test/                 # Vitest + Testing Library tests
 ```
 
@@ -53,11 +58,18 @@ Backend files for the dashboard:
 |---|---|
 | `src/adminFrontend.js` | Serves `admin/dist` under `/admin` (Checkpoint 1) |
 | `src/middleware/requireActiveAdmin.js` | Shared check for `/api/admin`: valid JWT + admin exists and is ACTIVE |
-| `src/routes/admin.js` | Read-only `/api/admin` routes, parameter validation, JSON errors |
+| `src/routes/admin.js` | `/api/admin` routes, parameter validation, JSON errors |
 | `src/services/adminDashboardService.js` | Prisma queries and response shaping |
 | `src/utils/businessDay.js` | Sri Lanka business-day boundaries (`Asia/Colombo`) |
 | `src/services/reviewReason.js` | Review reason codes (Checkpoint 3) |
 | `src/services/adminReviewService.js` | Review Queue / Review Detail queries and the file lookup (Checkpoint 3) |
+| `src/services/adminReviewActionService.js` | Approve, Keep Pending, Remove from Review; locks and audit helpers |
+| `src/services/adminCorrectionService.js` | Set document type, assign client, set police slip date |
+| `src/services/adminClientService.js` | Required-document rule, client completeness, Clients directory, Missing Documents |
+| `src/services/adminReportService.js` | Daily report |
+| `src/services/adminPoliceService.js` / `policeCountdownService.js` | Police Workflow list and the calculated 21-day status |
+| `src/services/statusMapping.js` | Proposal status words → implementation states (used by the daily report) |
+| `src/config/requiredDocuments.js` | `REQUIRED_DOCUMENT_TYPES` configuration and validation |
 | `src/utils/clientName.js` | Client display name (shared) |
 | `src/createApp.js` | Mounts `/admin` and `/api/admin` (injectable routers for tests) |
 
@@ -65,18 +77,20 @@ Backend files for the dashboard:
 
 ## 2. Routes
 
-| Route | Page | Stitch screen | Checkpoint 1 |
-|---|---|---|---|
-| `/admin/login` | Sign in | — (built from the design system) | Working |
-| `/admin/` | Overview | Overview Dashboard | Real data (Checkpoint 2) |
-| `/admin/documents` | Documents | Documents Directory | Real data (Checkpoint 2) |
-| `/admin/clients/:passportId` | Client details | Client Details | Real data (Checkpoint 2) |
-| `/admin/review` | Review Queue | Review Queue | Real data (Checkpoint 3) |
-| `/admin/review/:id` | Review detail | Document Review Detail | Real data (Checkpoint 3); Approve / Keep Pending (Checkpoint 4); police slip date (Checkpoint 5) |
-| `/admin/clients` | Clients list | — | Placeholder; clients are opened from Documents/Overview |
-| `/admin/police` | Police Workflow | Police Workflow | Real data (Checkpoint 5) |
+| Route | Page | Stitch screen |
+|---|---|---|
+| `/admin/login` | Sign in | — (built from the design system) |
+| `/admin/` | Overview | Overview Dashboard |
+| `/admin/documents` | Documents | Documents Directory |
+| `/admin/review` | Review Queue | Review Queue |
+| `/admin/review/:id` | Review detail (actions and corrections) | Document Review Detail |
+| `/admin/clients` | Clients directory | — (same design language) |
+| `/admin/clients/:passportId` | Client details | Client Details |
+| `/admin/missing-documents` | Missing Documents | — (same design language) |
+| `/admin/police` | Police Workflow | Police Workflow |
+| `/admin/reports/daily` | Daily Report | — (same design language) |
 
-Every route except `/admin/login` is behind the route guard. Settings, global search, Sync and Export from the design are not built yet.
+Every route except `/admin/login` is behind the route guard. No page is a placeholder. Settings, global search and Export from the design are not built (not in the Phase 10 scope); Sync is (§4j).
 
 ## 3. Authentication flow
 
@@ -91,7 +105,7 @@ Uses the existing backend endpoints unchanged (`src/routes/auth.js`).
 
 Error messages: the backend's own short messages are shown for 4xx responses ("Invalid email or password", the rate-limit message); 5xx and network errors show a fixed generic text, never backend details.
 
-**Token storage (this checkpoint):** `sessionStorage` — survives reloads of the tab, is removed when the tab closes, is not shared between tabs and is never sent automatically. If storage is blocked, an in-memory copy keeps the current tab working. Because JavaScript can read it, it relies on the Content Security Policy (scripts from the same origin only) against XSS. Moving to an httpOnly cookie is planned for **Phase 12**.
+**Token storage:** `sessionStorage` — survives reloads of the tab, is removed when the tab closes, is not shared between tabs and is never sent automatically. If storage is blocked, an in-memory copy keeps the current tab working. Because JavaScript can read it, it relies on the Content Security Policy (scripts from the same origin only) against XSS. Moving to an httpOnly cookie is planned for **Phase 12**.
 
 The first admin account is created with `npm run admin:create` (see `Docs/13-security-overview.md`).
 
@@ -108,7 +122,7 @@ This is the same rule `GET /auth/me` applies; `/auth/me` itself is unchanged (a 
 
 Errors are JSON: `{ "message": "…" }`, with `errors: [{ field, message }]` for invalid parameters (400). Review-action conflicts also carry a `code` (§4c). Unknown paths under `/api/admin` return 404 `{ "message": "Not found" }` (after authentication).
 
-Every route is read-only except the two review actions in §4c. There is no 403: an inactive or deleted admin gets the same 401 as a bad token (existing rule above), and there are no roles yet.
+Every route is read-only except the review actions (§4c) and the corrections (§4f); each of them writes an audit entry. There is no 403: an inactive or deleted admin gets the same 401 as a bad token (existing rule above), and there are no roles yet.
 
 ### Data sources
 
@@ -132,8 +146,10 @@ Responses never contain storage paths, checksums or the sender numbers of submis
 | `recentDocuments` | latest 8 stored documents with client name and passport ID |
 | `reviewQueue` | `total`, `pendingFiles`, `reviewRequiredDocuments`, `pendingByStatus`, latest 5 waiting files |
 | `police` | `dueSoon`, `dueToday`, `overdue`: clients by Police Workflow status (§4d) |
+| `clients` | `total`, `complete`, `incomplete`, `withMissing`, `missingDocuments`, `missingByType`: required-document completeness of every client, now (§4e) |
+| `requiredDocumentTypes` | the configured required types |
 
-Thirteen queries run in parallel (three of them for the police counts); the client is joined in the same query (no per-row lookups).
+Sixteen queries run in parallel (three for the police counts, three for client completeness); the client is joined in the same query (no per-row lookups). Every Overview figure is current / all-time except `receivedToday`; one day's figures are in the Daily Report (§4i).
 
 ### `GET /api/admin/documents`
 
@@ -162,9 +178,10 @@ A malformed or repeated parameter gives 400 with field messages; unknown paramet
 | `pendingItems` | the client's files waiting in `pending/` (up to 50) |
 | `requiredDocuments` | per required type: `VERIFIED` > `REVIEW_REQUIRED` > `PENDING_REVIEW` > `MISSING` |
 | `missingDocumentTypes` | required types with nothing received |
-| `police` | latest stored police slip (with its `policeSubmittedDate`) and final police report, and `countdown`: the client's Police Workflow status (§4d) |
+| `complete` | every required type is `VERIFIED` |
+| `police` | latest stored police slip (with its `policeSubmittedDate`) and final police report, `countdown`: the client's Police Workflow status (§4d), and `dateChanges`: slip dates set or corrected by an admin (audit log) |
 
-Required documents are **Passport, Police report, Medical** (proposal §22 client view and AC-22). A police slip is shown but never counts as the police report. No other requirement is assumed.
+Required documents are `REQUIRED_DOCUMENT_TYPES` (§4e), by default **Passport, Police report, Medical** (proposal §19, §22 client view and AC-22). A police slip is shown but never counts as the police report unless it is configured as required.
 
 ## 4a. Review data (Checkpoint 3)
 
@@ -244,7 +261,7 @@ The page fetches it with the admin's token and shows it from a local `blob:` URL
 
 ## 4c. Review actions and audit log (Checkpoint 4)
 
-Review workflow: `Pending → Approve | Keep Pending | Resolve/Correct (planned) | Remove from Review`. There is **no reject workflow** (business rule): no reject endpoint, button, status or reason. Pending documents are **never removed automatically** — not because of age, expiry, inactivity or processing time; nothing in the code removes them except the manual **Remove from Review** action below.
+Review workflow: `Pending → Approve | Keep Pending | Resolve/Correct (§4f) | Remove from Review`. There is **no reject workflow** (business rule): no reject endpoint, button, status or reason. Pending documents are **never removed automatically** — not because of age, expiry, inactivity or processing time; nothing in the code removes them except the manual **Remove from Review** action below.
 
 ### `POST /api/admin/review/:reviewId/approve`
 
@@ -316,7 +333,7 @@ Purpose: a permanent record of every review decision — who decided what, about
 |---|---|
 | `audit_id` | Primary key (UUID) |
 | `admin_id` | The admin who acted (from the token, never from the request body). Foreign key to `admins`, `ON DELETE RESTRICT`: an admin with entries can't be deleted (deactivate instead). |
-| `action` | `APPROVE`, `KEEP_PENDING` or `REMOVE_FROM_REVIEW` |
+| `action` | `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT` or `SET_POLICE_DATE` |
 | `temporary_id` | The submission, when there is one |
 | `document_id` | The document created (approve of a waiting file) or reviewed (stored document) |
 | `passport_id` | The client, when known |
@@ -332,9 +349,10 @@ Rules:
 - Review Detail shows the entries for the item, newest first (a stored document also shows those made while it was pending): action, admin, reason, time.
 
 | `police_submitted_date` | Approval of a police slip: the submitted date the admin entered or confirmed (added in Checkpoint 5, §4d) |
-| `document_type` / `file_sha256` | Remove from Review: the removed submission's type and checksum, kept because its row is deleted (migration `20260926090000_phase10_audit_removal_details`). Never returned by the API except the type. |
+| `document_type` / `file_sha256` | Remove from Review: the removed submission's type and checksum, kept because its row is deleted (migration `20260926090000_phase10_audit_removal_details`). Never returned by the API except the type. The corrections also record the document type. |
+| `previous_value` / `new_value` | Corrections (§4f): the value before and after — document type, passport ID or slip date (`YYYY-MM-DD`). Migration `20260926120000_phase10_audit_correction_values`. |
 
-**Deployment dependency:** the backend code of Checkpoints 3–5 and Remove from Review uses the columns and the table from all four Phase 10 migrations (`20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`, `20260925170000_phase10_police_submitted_date`, `20260926090000_phase10_audit_removal_details`). Apply them, in order, before deploying this code; deploying the code first breaks the review pages, the dashboard and document processing. None is applied to the live database yet. The last one is additive: two nullable columns on `audit_logs`, nothing else.
+**Deployment dependency:** the Phase 10 backend code uses the columns and the table from all five Phase 10 migrations (`20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`, `20260925170000_phase10_police_submitted_date`, `20260926090000_phase10_audit_removal_details`, `20260926120000_phase10_audit_correction_values`). Apply them, in order, before deploying this code; deploying the code first breaks the review pages, the dashboard and document processing. None is applied to the live database yet. The last two are additive: nullable columns on `audit_logs`, nothing else.
 
 ## 4d. Police Workflow (Checkpoint 5)
 
@@ -375,28 +393,123 @@ The countdown uses the stored slip (`VERIFIED` or `REVIEW_REQUIRED`) with the la
 |---|---|---|
 | `status` | one status above | all |
 | `passportId` | letters and digits | all |
+| `search` | ≤ 100 chars; every word must appear in the passport ID, unique ID or name (case-insensitive) | — |
 | `page` / `pageSize` | 1–10000 / 1–100 | 1 / 25 |
 
-Response: `businessDate`, `items` (per client: `client`, `status`, `submittedDate`, `dueDate`, `daysRemaining` — negative when overdue, `null` when completed or without a date — `slip`, `report`, `slipAwaitingReview`), `pagination`, `summary` (`total`, `byStatus` for every client, before the status filter) and `filters`. Order: most urgent first (`OVERDUE`, `DUE_TODAY`, `DUE_SOON`, `PENDING`, `DATE_MISSING`, `NOT_UPLOADED`, `COMPLETED`), then fewest days left, then passport ID. Read-only; three queries whatever the number of clients (clients, their police documents, slips waiting per client); no storage paths.
+Response: `businessDate`, `items` (per client: `client`, `status`, `submittedDate`, `dueDate`, `daysRemaining` — negative when overdue, `null` when completed or without a date — `slip`, `report`, `slipAwaitingReview`), `pagination`, `summary` (`total`, `byStatus` for every client, before the status filter) and `filters`. Order: most urgent first (`OVERDUE`, `DUE_TODAY`, `DUE_SOON`, `PENDING`, `DATE_MISSING`, `NOT_UPLOADED`, `COMPLETED`), then fewest days left, then passport ID. Read-only; three queries whatever the number of clients (clients, their police documents, slips waiting per client); no storage paths. The search only narrows the list; the summary then counts the clients found.
+
+## 4e. Clients directory, Missing Documents, required documents
+
+### Required documents — `REQUIRED_DOCUMENT_TYPES`
+
+The third required document is configurable (proposal §19), without a Settings page: environment variable `REQUIRED_DOCUMENT_TYPES`, a comma-separated list (`src/config/requiredDocuments.js`).
+
+- Unset or blank: `PASSPORT,POLICE_REPORT,MEDICAL`.
+- Allowed names: `PASSPORT`, `POLICE_SLIP`, `POLICE_REPORT`, `MEDICAL` (case and spaces don't matter). `PASSPORT` must be included (it identifies the client).
+- An unknown name, `UNKNOWN`, a duplicate, an empty entry or a list without `PASSPORT` is refused: the server doesn't start (`src/config/env.js` startup check; the configured text is not echoed). Nothing falls back silently.
+- Read once at startup; changing it needs a restart.
+
+One rule (`src/services/adminClientService.js`) decides the status per required type — `VERIFIED` > `REVIEW_REQUIRED` > `PENDING_REVIEW` > `MISSING` — for the client page, the Clients directory, the Missing Documents view, the Overview and the daily report. A client is **complete** when every required type is `VERIFIED`. A `FAILED` submission is not "received".
+
+### `GET /api/admin/clients`
+
+| Parameter | Values | Default |
+|---|---|---|
+| `search` | ≤ 100 chars; every word must match the passport ID, unique ID, first or other name, or WhatsApp number (case-insensitive). A phone number also matches in the other Sri Lankan format (`07…` / `947…`). | — |
+| `completion` | `COMPLETE`, `INCOMPLETE` | all |
+| `missingType` | a required type: clients that have not sent it at all | — |
+| `page` / `pageSize` | 1–10000 / 1–100 | 1 / 25 |
+
+Response: `items` (per client: `client` {passport ID, unique ID, name, WhatsApp}, `completion`, `requirements` [type, status, stored and pending counts], `missingDocumentTypes`), `pagination`, `summary` (`total`, `complete`, `incomplete`, `withMissing`, `missingDocuments`, `missingByType` — for the clients matching the search, before the completion/type filters), `requiredDocumentTypes`, `filters`. Order: unique ID. Three queries whatever the number of clients (clients; stored documents grouped by client, type and status; waiting files grouped by client and type), then in memory.
+
+### `GET /api/admin/documents/missing`
+
+The proposal's `GET /documents/missing`. Same loading and summary; `items` are the **incomplete** clients, most missing documents first. `documentType` (a required type) keeps only the clients that have not sent that type; `search`, `page`, `pageSize` as above. A client whose documents are all received but not all verified is incomplete with no missing type (its requirements show `REVIEW_REQUIRED` / `PENDING_REVIEW`).
+
+## 4f. Corrections (resolve stuck review items)
+
+`src/services/adminCorrectionService.js`. They resolve items that would otherwise stay stuck, without approving, removing or rejecting them. Same rules as the review actions: one transaction that locks the row (`SELECT … FOR UPDATE`), re-reads and then changes it; the admin from the token; a **required reason** (1–500 characters); an append-only audit entry in the same transaction with `previous_value` / `new_value`. Nothing here creates a client or a document, changes a WhatsApp number, or moves or deletes a file.
+
+| Endpoint | Body | Applies to | Effect | Refused |
+|---|---|---|---|---|
+| `POST /review/:reviewId/document-type` | `{ documentType, reason }` — `PASSPORT`, `POLICE_SLIP`, `POLICE_REPORT` or `MEDICAL` | waiting files (`pending-…`) | `temporary_data.document_type` changes; the file stays in `pending/` and in the queue (its review reason stays as history). Approve then files it under the new type (a slip then needs its date). | 409 `SAME_DOCUMENT_TYPE`, 409 `NOT_CORRECTABLE` (stored document), 404, 400 |
+| `POST /review/:reviewId/assign-client` | `{ passportId, reason }` | waiting files | links the file to an **existing** client: `passport_id` and that client's `unique_id`. The sender's WhatsApp number, the client record and the processing summary (the original identity result) are unchanged; the previous link is in the audit entry. Approve then works with all its checks. | 409 `CLIENT_NOT_FOUND` (nothing created), 409 `SAME_CLIENT`, 409 `NOT_CORRECTABLE`, 404, 400 |
+| `POST /documents/:documentId/police-date` | `{ policeSubmittedDate, reason }` — a real date, 2000-01-01 to today in Sri Lanka (never the future) | a stored police slip (`VERIFIED` or `REVIEW_REQUIRED`) | sets or corrects `documents.police_submitted_date` — e.g. older verified slips stored without a date. No document is created, so the one-verified-slip rule is untouched. The countdown is calculated from the stored date, so the client page and the Police Workflow show the new status on their next load. | 409 `SAME_POLICE_DATE`, 409 `NOT_A_POLICE_SLIP`, 404, 400 |
+
+A stored `REVIEW_REQUIRED` document is not corrected here: it is already in the client folder of its type (changing its type or client would mean moving the file).
+
+The Review Detail page offers **Set Document Type** and **Assign Client** (or **Change Client**) for waiting files, when the detail's `actions.setDocumentType` / `actions.assignClient` say so. Assign Client searches existing clients (`GET /clients?search=…`), requires choosing one, a reason and the confirmation "I have checked that this file belongs to …". Client Details has **Set date** / **Correct date** on the latest police slip (date field limited to today, required reason) and lists the date changes from the audit log.
+
+## 4g. Document status mapping (proposal → implementation)
+
+The proposal's status words (§22, §24) and what the implementation records. `src/services/statusMapping.js` holds the submission part; the daily report counts with it (tested).
+
+| Proposal status | Implementation |
+|---|---|
+| Missing | Requirement status `MISSING`: nothing of a required type received (computed, no row) |
+| Received | A `temporary_data` row exists (every file that passed intake validation) |
+| Processing | `temporary_data.processing_status = TEMPORARY_STORED` (set on arrival, replaced when processing ends). There is no separate `PROCESSING` value. |
+| Verified | `documents.verification_status = VERIFIED` (bands VERIFIED / HIGH_CONFIDENCE / SLIGHTLY_UNCLEAR, or an admin's Approve); submission statuses `VERIFIED`, `HIGH_CONFIDENCE`, `SLIGHTLY_UNCLEAR` |
+| Temporary | Every received file's original stays in `temporary/` with its row. "Temporary documents" in the dashboard = files still waiting in `pending/` (not yet in a client folder). |
+| Unclear | `UNCLEAR` (40–59 %, stored as `REVIEW_REQUIRED`) and `UNDEFINED` (< 40 %, held in `pending/`) |
+| Invalid | Refused at intake (unsupported type, too large, bad content): logged, **no record** is created (so not countable) |
+| Rejected | **Removed from the workflow.** No reject status, action or endpoint exists. Remove from Review is a queue decision, not a rejection, and creates no status. |
+| Completed | Client: every required document `VERIFIED`. Police Workflow: `COMPLETED` when a verified police report exists. |
+| (not in the list) | `MANUAL_REVIEW`, `CONFLICT` (held for review), `DUPLICATE` (same file already on record), `FAILED` (processing error) |
+
+Outcome groups (`submissionOutcome`): `PROCESSING` (`TEMPORARY_STORED`), `STORED` (`VERIFIED`, `HIGH_CONFIDENCE`, `SLIGHTLY_UNCLEAR`, `UNCLEAR`), `NEEDS_REVIEW` (`UNDEFINED`, `MANUAL_REVIEW`, `CONFLICT`), `DUPLICATE`, `FAILED`. "Successfully processed" = finished without an error (everything except `FAILED` and `PROCESSING`); an unknown code never counts as success. `FAILED` stays distinct from review: a `FAILED` submission without a pending copy is not in the Review Queue.
+
+## 4h. No automatic removal of pending items
+
+Pending items leave the Review Queue only through an explicit admin action (Approve, or Remove from Review). Nothing removes them because of age, inactivity, processing time, expiry, a server restart, a scheduled clean-up, duplicate detection or an OCR timeout: there is no timer, schedule or clean-up job, and only `removeFromReview` deletes a `temporary_data` row. Tested by source checks (`test/adminReports.test.js`, `test/adminReviewRemove.test.js`).
+
+## 4i. Daily report — `GET /api/admin/reports/daily`
+
+The proposal's `GET /reports/daily` (§22 Daily Summary, §27, §35), now part of the Phase 10 scope. `date=YYYY-MM-DD` selects the business day (00:00–24:00 `Asia/Colombo`); default today in Sri Lanka. 400 for a malformed or unreal date, a date before 2000-01-01 or in the future.
+
+**Daily figures** (`daily`) — only that business day:
+
+| Field | Source |
+|---|---|
+| `totalReceived` | submissions received that day (`temporary_data.created_date`) |
+| `successfullyProcessed` / `failed` / `stillProcessing` | status mapping (§4g) |
+| `storedInClientFolder`, `heldForReview`, `duplicates` | outcome groups |
+| `unclear` | `UNCLEAR` + `UNDEFINED` |
+| `temporary` | received that day and still waiting in `pending/` |
+| `byType` | passport, police slip, police report, medical, unknown |
+| `adminActions` | review actions and corrections taken that day (audit log) |
+
+**Current figures** (`current`, with `asOf`) — the state now: completed / incomplete clients, missing documents, police reports due soon / today / overdue. There is no history of these, so for a past date they are still today's state; the page says so and never presents them as that day's.
+
+Limitations (not invented): a past day's completeness or police status would need a daily snapshot or a history of verification changes; refused (invalid) files have no record; a submission removed from review is deleted, so it no longer counts as received on its day (the removal itself counts in `adminActions`).
+
+## 4j. Sync and Dark Mode
+
+**Sync** (header button) means only: reload the data shown on screen from the backend. Not WhatsApp, not an external system, no background job. Every `useAdminResource` on the page reloads with its current key, so filters, search and page are kept. While it runs the button shows "Syncing…" and is disabled (a second click does nothing); afterwards the header shows "Synced HH:MM:SS" or "Sync failed — some data could not be loaded" (`admin/src/sync/SyncProvider.tsx`).
+
+**Dark Mode** (header toggle): the Stitch design language on dark slate surfaces. Only CSS token values change (`:root[data-theme="dark"]` in `index.css`), never the components, so every page, table, badge, dialog, form control, empty/error/loading state and the preview frame follow. Fixed colours were replaced by tokens (`on-primary`, `on-critical`, `overlay`); a test forbids fixed colours in components. Light mode is unchanged (same tokens). The choice is stored per browser in `localStorage` (`emlynk.admin.theme`) and applied before the first render; without storage the dashboard opens in light mode. Contrast: every dark text token is ≥ 4.5:1 on every surface (unit test), and the headless-Chrome check measured every visible text element on every page in dark mode (all ≥ 4.5:1, or 3:1 for large text).
 
 ## 5. Pages and data
 
 | Page | API | Shows |
 |---|---|---|
-| Overview | `GET /overview` | 4 KPI cards, police reports overdue / due today / due soon (each links to the filtered Police Workflow), processing-status and type breakdowns (count + share), recent documents table, review-queue summary with the latest waiting files; Refresh |
+| Overview | `GET /overview` | 4 KPI cards, client documents (completed / incomplete clients and missing documents, linked to the Clients and Missing Documents views), police reports overdue / due today / due soon (each links to the filtered Police Workflow), processing-status and type breakdowns (count + share), recent documents table, review-queue summary with the latest waiting files; Refresh |
 | Documents | `GET /documents` | search, type, date range, sort, verification chips with counts, table (ID, client, type, status, confidence, received, "View client"), pagination; filters are kept in the URL |
-| Client details | `GET /clients/:passportId` | profile card, required-document checklist with missing summary, police slip/report panel with the 21-day follow-up (status, slip submitted, report due, days left or overdue, or why no countdown runs), stored documents table, files waiting for review |
-| Police Workflow | `GET /police` | status cards (overdue, due today, due soon, pending; click to filter), status select with counts for all seven statuses, table (client, status, slip submitted, report due, days, police slip, final report, "View client"), pagination; filter and page in the URL |
+| Client details | `GET /clients/:passportId`, `POST /documents/:id/police-date` | profile card with Complete / Incomplete badge, required-document checklist with missing summary, police slip/report panel with the 21-day follow-up (status, slip submitted, report due, days left or overdue, or why no countdown runs), stored documents table, files waiting for review; **Set date** / **Correct date** for the latest police slip and the list of date changes |
+| Clients | `GET /clients` | summary cards (clients, complete, incomplete — click to filter; missing documents → Missing Documents), search (passport ID, unique ID, name, WhatsApp), completion and missing-type selects, table (client, WhatsApp, status, required documents with badges, missing, "View client"), pagination; all in the URL |
+| Missing Documents | `GET /documents/missing` | incomplete clients count, one card per required type with the number missing (click to filter), search, type select, table of incomplete clients, pagination |
+| Daily Report | `GET /reports/daily` | date field (max today), Previous day / Next day / Today; "Received on …" figures and by type and admin actions, or an empty state; "Current status" section labelled with its time |
+| Police Workflow | `GET /police` | search (passport ID, unique ID, name), status cards (overdue, due today, due soon, pending; click to filter), status select with counts for all seven statuses, table (client, status, slip submitted, report due, days, police slip, final report, "View client"), pagination; filter and page in the URL |
 | Review Queue | `GET /review` | summary cards (pending reviews, identity issues, quality / OCR issues, conflicts), filters (source, reason, type, order), table (item, client, type, review reason, confidence, received, status, "Review"), pagination; filters in the URL |
-| Review detail | `GET /review/:id`, `GET /review/:id/file`, `POST /review/:id/approve`, `POST /review/:id/keep-pending`, `POST /review/:id/remove` | file preview (image or PDF) on the left; review-reason banner, document information (client, sender, received, statuses, confidence), identity, processing details, audit log and the **Approve** / **Keep Pending** buttons on the right. Approve asks for confirmation ("This will move the document to permanent client storage and mark it as verified."); Keep Pending asks for a required reason. While a request runs both buttons and the dialog are disabled. Success shows a message: after Approve the page shows the item as verified with the new audit entry and a link back to the queue (which reloads without it); after Keep Pending the item is reloaded with the new entry. Errors (e.g. a 409 conflict) are shown in the dialog with the server's message and nothing is marked done. If Approve isn't possible, the button is disabled with the reason. For a police slip the Approve dialog shows the submitted date read from the slip, or asks for it (required date field, 2000-01-01 to today); the audit log shows the date. A waiting file also has **Remove from Review**: a dialog that says the file and its record are permanently deleted, with a required reason and a required confirmation checkbox; after removal the page shows a message and the audit entry (no preview, no actions) and a link back to the queue. |
+| Review detail | `GET /review/:id`, `GET /review/:id/file`, `POST /review/:id/approve`, `POST /review/:id/keep-pending`, `POST /review/:id/remove` | file preview (image or PDF) on the left; review-reason banner, document information (client, sender, received, statuses, confidence), identity, processing details, audit log and the **Approve** / **Keep Pending** buttons on the right. Approve asks for confirmation ("This will move the document to permanent client storage and mark it as verified."); Keep Pending asks for a required reason. While a request runs both buttons and the dialog are disabled. Success shows a message: after Approve the page shows the item as verified with the new audit entry and a link back to the queue (which reloads without it); after Keep Pending the item is reloaded with the new entry. Errors (e.g. a 409 conflict) are shown in the dialog with the server's message and nothing is marked done. If Approve isn't possible, the button is disabled with the reason. For a police slip the Approve dialog shows the submitted date read from the slip, or asks for it (required date field, 2000-01-01 to today); the audit log shows the date. A waiting file also has **Remove from Review**: a dialog that says the file and its record are permanently deleted, with a required reason and a required confirmation checkbox; after removal the page shows a message and the audit entry (no preview, no actions) and a link back to the queue. **Set Document Type** and **Assign Client** for waiting files (§4f). |
 
-Every page has loading, error (with "Try again") and empty states. A 401 from the API signs the admin out (session expired or admin deactivated). API calls live only in `admin/src/api/`; pages use the typed functions through `useAdminResource`.
+The header has **Sync** and the dark-mode toggle on every page (§4j). Every page has loading, error (with "Try again") and empty states. A 401 from the API signs the admin out (session expired or admin deactivated). API calls live only in `admin/src/api/`; pages use the typed functions through `useAdminResource`.
 
 ## 6. Design system
 
 `admin/src/index.css` defines the Stitch tokens as a Tailwind v4 `@theme`:
 
-- **Colours:** primary `#2563eb` (hover `#1d4ed8`, active `#1e40af`); canvas `#f8fafc`; surfaces `#ffffff` with `#e2e8f0` borders; dark sidebar `#0f172a` / `#1e293b`; status sets for verified, review, pending, critical and duplicate (text / background / border).
+- **Colours:** primary `#2563eb` (hover `#1d4ed8`, active `#1e40af`); canvas `#f8fafc`; surfaces `#ffffff` with `#e2e8f0` borders; dark sidebar `#0f172a` / `#1e293b`; status sets for verified, review, pending, critical and duplicate (text / background / border). Dark mode redefines the same tokens (§4j).
 - **Typography:** Inter (self-hosted via `@fontsource-variable/inter`) with tabular figures; scale `headline-xl` … `label-sm` as in Stitch.
 - **Shapes and depth:** radius 2 / 4 / 6 / 8 / 12 px; hairline borders with very light shadows; focus ring `0 0 0 3px rgba(37,99,235,.15)`.
 - **Layout:** sidebar 240px (rail 64px), header 56px, content max 1600px.
@@ -428,6 +541,8 @@ Serving rules (`src/adminFrontend.js`): hashed files under `/admin/assets/` are 
 
 | Suite | Command | Covers |
 |---|---|---|
+| Backend, final scope (`node:test`) | `npm test` (`test/adminClients.test.js`, `test/adminCorrections.test.js`, `test/adminReports.test.js`) | `REQUIRED_DOCUMENT_TYPES` default, accepted sets, 6 refused values, startup check; completeness in three queries, summary, same result as the client page and the Overview; search by passport/unique ID/name/number in both formats; `/clients` filters, summary, paging, 7 invalid-parameter cases, 401; `/documents/missing` order, filter, search, paging; set type (stays pending, audit before/after, validation, 409/404, rollback); assign client (link, sender and summary unchanged, then Approve works; reassignment keeps the old link; unknown client creates nothing; same client; stored document; admin from the token; 401); police date (countdown and Police Workflow updated, correction keeps the old date in the audit log, future/unreal/pre-2000 refused, Colombo midnight, only slips, 404/400); corrections never delete, move or create; status mapping complete, no `REJECTED`, `FAILED` not in the queue; daily report date rules (Colombo midnight), daily counts only that day, current figures labelled, empty day; `/reports/daily` 200/400/401; police search; no timers or clean-up jobs, only Remove from Review deletes a submission |
+| Frontend, final scope (Vitest) | `npm run admin:test` (`phase10.test.tsx`, additions in `review.test.tsx`) | Clients (rows, badges, summary, search/filters/paging sent, empty, error), Missing Documents (rows, type filter, empty), Daily Report (default today, daily vs current, date selection, empty day, loading/error/retry), Police search, Client Details police date (validation, future date refused, request, reload with history, badge), Overview completeness links, Sync (one reload, filters kept, disabled while running, result, failure), dark mode (toggle, stored, restored, blocked storage, contrast of all text tokens in both themes, light tokens unchanged, no fixed colours in components); Set Document Type and Assign Client dialogs, availability, audit values |
 | Frontend (Vitest, jsdom) | `npm run admin:test` | Checkpoint 1 auth/shell tests; Overview data, loading, error + retry, empty states, 401 → sign out; Documents rows, badges, chip counts, filters/sort/search sent to the API, pagination, empty/error states, link to client; Client details data, not-found, error; protected routes never call the API without a session |
 | Backend, Checkpoint 3 (`node:test`) | `npm test` (`test/adminReview.test.js`) | migration is additive and matches the schema; every review reason and its precedence; processing writes the reason, the summary and the document link (identity conflict, low confidence, stored summary = logged summary, no PII); queue auth (no token, inactive admin) incl. detail and file routes; merged queue, shared waiting definition, filters/paging/kind, 9 invalid-parameter cases, window limit, legacy `LOW_CONFIDENCE`; detail for waiting file and stored document, unknown and malformed IDs; file streaming, headers, unknown item never touches storage, storage error → 502; CSP `blob:` only for images/frames |
 | Frontend, Checkpoint 3 (Vitest) | `npm run admin:test` (`review.test.tsx`) | queue rendering, loading, error + retry, empty, filters and pagination, link to detail; detail rendering (reason, identity notes, sender, processing, client link, preview via token + blob URL), item without saved data, preview error, not found; protected routes |
@@ -444,6 +559,8 @@ Checked manually for Checkpoint 3 (not in the automated suite): the migration on
 
 | Backend, Remove from Review (`node:test`) | `npm test` (`test/adminReviewRemove.test.js`) | row and both files deleted, audit entry with admin, previous status, reason, type and checksum, checksum never returned, other items untouched, gone from queue and overview, detail 404, no undo; re-sent file no longer a pending duplicate; reason required (6 cases); stored document 409, unknown/FAILED 404, malformed 400; two removals at once; rollback when the audit write or the row delete fails; file deletion failure after commit; 401 for no/bad token and inactive admin; admin from the token; `actions.remove`; only this action deletes `temporary_data` rows (source check, no timers); migration additive |
 | Frontend, Remove from Review (Vitest) | `npm run admin:test` (`review.test.tsx`, "Remove from Review") | button only when offered, no Reject; reason and confirmation required before anything is sent; request body; removed view (message, audit entry, no actions or preview, link back); dialog locked while running, one request, 409 shown |
+
+Checked manually for the final scope (not in the automated suite): the new migration `20260926120000_phase10_audit_correction_values` on a throwaway PostgreSQL 16 (Docker) on top of the other eight — both columns nullable, `migrate status` up to date, no drift. With the real Prisma client against that database (13 checks): set type, assign to an unknown client refused and nothing created, the same assignment twice at once (one succeeds, one `SAME_CLIENT`), sender and summary kept, client record untouched, police date stored as `DATE`, Police Workflow `DUE_SOON` with 3 days left and search, audit before/after values, audit entries can't be changed, clients search by name and by number in the other format, missing view statuses, daily report counts. The production build in headless Chrome (fake database, 30 synthetic clients; 65 checks): login, Overview figures, Documents, Clients paging/search/filter, error state and retry, Missing Documents filter and empty state, Review Queue without the `FAILED` submission, Approve, Keep Pending, Set Document Type, Assign Client (sender unchanged, Approve then available), Remove from Review, no "reject" text, police slip date → due soon, Police Workflow filter and search, Daily Report and previous-day empty state, Sync (one reload, filter kept, result shown), dark mode on every page after reload, contrast of every visible text element in both themes, no unexpected failed requests, no CSP violations or console errors. In light mode the only text under 4.5:1 is the unchanged Stitch status colours (verified `#059669` 3.6–3.8:1, review `#d97706` 3.1–3.2:1, critical `#dc2626` on its tint 4.4:1). The live database was not used.
 
 Checked manually for Remove from Review (not in the automated suite): the new migration on a throwaway PostgreSQL 16 (Docker) on top of the other six: existing audit row unchanged, both columns nullable and empty, no drift. With the real Prisma client against that database: the same item removed twice at once (one succeeds, one refused), the row deleted, a linked document kept with its link set to `NULL`, one audit entry with type, checksum, previous status and reason, both files deleted and the other item's files untouched, the entry can't be deleted. The production build in headless Chrome (fake database, synthetic data): the button, reason and confirmation required, removal, record and files gone with the entry kept, queue reloaded without the item, no failed requests, no CSP violations or console errors. The live database was not used.
 
@@ -475,21 +592,30 @@ Checked manually for Checkpoint 4 (not in the automated suite): both Phase 10 mi
 | Remove from Review applies only to files waiting in `pending/` | Approved (2026-09-26) |
 | A removed item is gone permanently: pending file, temporary original and database row are deleted; only the audit entry stays (with type and checksum) | Approved (2026-09-26) |
 | No undo / return to review for removed items | Approved (2026-09-26) |
+| Final Phase 10 scope adds Clients, Missing Documents, configurable required documents, corrections, status mapping, Police search, Sync, Dark Mode, Daily Report (proposal Phase 11 item moved into Phase 10) | Approved (2026-09-26) |
+| Required documents configured with `REQUIRED_DOCUMENT_TYPES` (environment), validated at startup; no Settings page | Approved (2026-09-26) |
+| Corrections apply to waiting files (type, client) and stored police slips (date); each needs a reason and is audited with before/after values; assigning never creates a client | Approved (2026-09-26) |
+| Sync = explicit reload of the data on screen; nothing else | Approved (2026-09-26) |
+| Dark mode through the design tokens; light mode unchanged; choice stored per browser | Approved (2026-09-26) |
+| Daily report separates daily and current figures; metrics without a data source are documented, not estimated | Approved (2026-09-26) |
+| Roles stay deferred to Phase 12; any ACTIVE admin can use every action | Approved (2026-09-26) |
 
 ## 10. Known limitations and dependencies
 
-- **Migrations not applied to the live database** — `20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`, `20260925170000_phase10_police_submitted_date` and `20260926090000_phase10_audit_removal_details` are on hold; do not deploy the backend code before all four are applied (§4c).
+- **Migrations not applied to the live database** — `20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`, `20260925170000_phase10_police_submitted_date`, `20260926090000_phase10_audit_removal_details` and `20260926120000_phase10_audit_correction_values` are on hold; do not deploy the backend code before all five are applied (§4c).
+- **Light-mode status colours:** the Stitch status text colours on white or their tint are 3.1–4.4:1 (below WCAG AA 4.5:1 for small text). Light mode was kept unchanged as required; darkening them would be a Stitch design change to decide there.
+- **Daily report history:** completeness and police figures are current only (§4i).
 - **Removed items have no screen:** their history exists only as audit entries (the detail page is gone with the item). There is no audit-log page.
-- **Who may remove:** every dashboard account is an admin; any ACTIVE admin can remove until roles exist (Phase 12).
-- **Verified police slips stored before Checkpoint 5 have no date:** they show `DATE_MISSING`, no action can set their date (they are not review items), and a newer slip for the same client can't be approved (one verified slip per type). No backfill.
+- **Who may act:** every dashboard account is an admin; any ACTIVE admin can approve, remove and correct until roles exist (Phase 12).
+- **Verified police slips stored before Checkpoint 5 have no date:** they show `DATE_MISSING` until an admin sets the date on Client Details (§4f). A newer slip for the same client still can't be approved (one verified slip per type). No automatic backfill.
 - **A waiting slip's OCR date is not kept:** `temporary_data` has no date column and the processing summary holds no dates, so approving a waiting slip always needs the date entered from the preview.
 - **What counts as a resolved date** is the existing reader's rule: a single date labelled submitted, else issued, else an unlabelled one (confidence 60). The reader decides "not in the future" by the UTC date.
-- **Police statuses are calculated over all clients on each `/police` and Overview request** (three queries, then in memory). Fine for thousands of clients; a larger client base would need the calculation in SQL.
+- **Police statuses and client completeness are calculated over all clients on each request** (`/police`, `/clients`, `/documents/missing`, Overview, daily report: three queries each, then in memory). Fine for thousands of clients; a larger client base would need the calculation in SQL.
 - **No reminders:** due-soon, due-today and overdue are only shown on the dashboard. Warnings and notifications belong to Phase 11.
 - **Processing failures are not shown in the dashboard:** a `FAILED` submission without a pending copy is not a review item (decision 2026-09-25). Its reason and summary are saved on the row; a separate view for failures can be decided later.
 - **Older items:** submissions processed before the migration have no saved summary or reason ("Not recorded"); older stored `REVIEW_REQUIRED` documents have no link and are shown as `LOW_CONFIDENCE`. No backfill: the missing data was never saved.
-- **Unlinked files can't be approved:** a waiting file with no client (identity conflict, unknown passport, another client's file) or of type `UNKNOWN` can only be kept pending; choosing a client or type is not built.
-- **One verified document per type:** approval is blocked when the client already has a `VERIFIED` document of that type, for every type (including police slips and medical reports). If a newer document should replace an older one, that needs a separate decision and action.
+- **Stored `REVIEW_REQUIRED` documents can't be re-typed or moved to another client** (they are already in a client folder); only waiting files can be corrected.
+- **Versioning:** the pipeline stores a newer file of a type under the next version name (`passport_v2.pdf`, …; each row keeps its own status, so a client can have two `VERIFIED` rows of a type). An admin's Approve never adds a second verified document of a type (409 `VERIFIED_DOCUMENT_EXISTS`). A rule for replacing a verified document is not part of Phase 10.
 - **Stray storage objects:** if the process stops between the copy and the commit, or removing the pending original fails, an unreferenced object can remain (logged in the second case); records stay correct. No clean-up job exists yet.
 - **Duplicate Keep Pending** is detected as the same admin, item and reason within 60 seconds.
 - **403 is never returned:** inactive admins get 401 (existing authentication rule); there are no roles.
@@ -497,6 +623,6 @@ Checked manually for Checkpoint 4 (not in the automated suite): both Phase 10 mi
 - **Queue paging window:** 1000 items per filtered view (the two sources are merged in memory).
 - **PDF preview:** shown in a frame from a `blob:` URL (plus "Open PDF in a new tab"); verified without CSP violations in headless Chrome, where the PDF viewer itself cannot be inspected.
 
-## 11. Next checkpoints
+## 11. After Phase 10
 
-Not yet planned in detail. Open items for the complete dashboard: Clients list page, Missing-documents view, the Daily Summary figures of proposal §22 not yet shown, assigning a client or type to an unlinked waiting file, a view for failed submissions, a rule for replacing a verified document (including police slips), and Phase 11 reminders.
+Phase 10 is complete in code, tests and documentation; the remaining step is deployment (apply the five migrations, then deploy). Later phases: Phase 11 reminders and warnings for police reports (not built here), Phase 12 roles and the move of the admin token to an httpOnly cookie. Open, undecided items: a view for failed submissions, a rule for replacing a verified document, daily snapshots for historical completeness figures.

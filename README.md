@@ -254,7 +254,7 @@ erDiagram
     AUDIT_LOGS {
         string audit_id PK
         string admin_id FK
-        string action "APPROVE, KEEP_PENDING or REMOVE_FROM_REVIEW"
+        string action "review action or correction"
         string temporary_id
         string document_id
         string passport_id
@@ -264,6 +264,8 @@ erDiagram
         date police_submitted_date
         string document_type
         char file_sha256
+        string previous_value
+        string new_value
         datetime created_date
     }
 
@@ -394,7 +396,7 @@ EmlynkWABot/
 | **Identity Conflict Engine** | ✅ Completed | Passport/WhatsApp identity matrix, conflict detection, field reconciliation — `Docs/07` |
 | **21-Day Police Report Countdown** | ⏳ Planned | Submission date extraction & background reminder scheduler |
 | **Private Object Storage** | ✅ Completed | Private Supabase bucket, client folders, versioning, checksum duplicates, pending storage — `Docs/11`, `Docs/12` |
-| **Admin Dashboard UI** | 🚧 In Progress | Phase 10 Checkpoints 1–5: login, shell; Overview, Documents, Client Details, Review Queue, Review Detail with Approve / Keep Pending and audit log, Police Workflow (21-day status) |
+| **Admin Dashboard UI** | ✅ Completed (not deployed) | Overview, Documents, Review Queue, Review Detail (Approve, Keep Pending, Set Document Type, Assign Client, Remove from Review; audit log), Clients, Client Details (police slip date), Missing Documents, Police Workflow with search, Daily Report, Sync, Dark Mode — `Docs/14`, `Docs/15` |
 
 ---
 
@@ -410,9 +412,9 @@ EmlynkWABot/
 | **Phase 6** | Passport Verification | ✅ Completed | Identity matching rules, conflict detection & anti-overwrite checks — `Docs/07` |
 | **Phase 7** | Permanent Storage | ✅ Completed | Structured folder naming, private cloud storage, checksums, pending storage — `Docs/11`, `Docs/12` |
 | **Phase 8** | Temporary Workflow | ✅ Completed | Disk storage & `temporary_data` table integration for incoming unverified files |
-| **Phase 9** | Police Report Countdown | 🚧 Partly | Done in Phase 10 Checkpoint 5: slip submitted date stored, calculated 21-day status (stops when a verified police report exists), dashboard views. Not done: reminders/warnings (Phase 11) |
-| **Phase 10** | Admin Dashboard | 🚧 In Progress | Checkpoints 1–5: admin frontend, admin API, review queue/detail, review actions (Approve, Keep Pending; no reject) with append-only audit log, Police Workflow. Remaining: Clients list, Missing-documents view, more daily figures |
-| **Phase 11** | Reporting and Alerts | ⏳ Planned | System alert metrics, overdue reports & missing document summaries |
+| **Phase 9** | Police Report Countdown | 🚧 Partly | Done in Phase 10: slip submitted date stored (or set by an admin), calculated 21-day status (stops when a verified police report exists), dashboard views. Not done: reminders/warnings (Phase 11) |
+| **Phase 10** | Admin Dashboard | ✅ Completed (migrations not yet applied to the live database) | Admin frontend and API; review actions (Approve, Keep Pending, Remove from Review; no reject) and corrections with an append-only audit log; Clients, Missing Documents, configurable required documents, Police Workflow, Daily Report (moved from Phase 11), Sync, Dark Mode |
+| **Phase 11** | Reporting and Alerts | ⏳ Planned | Police-report reminders and warnings, alert notifications (the daily report is done in Phase 10) |
 | **Phase 12** | Security, QA & Deployment | ⏳ Planned | Role-based authorization, load testing, production Docker container |
 
 ---
@@ -445,7 +447,13 @@ JWT_SECRET="your-super-secret-jwt-key-change-in-production"
 
 # WhatsApp Business API Webhook Verification Token
 WHATSAPP_VERIFY_TOKEN="Add whatsapp verify token here"
+
+# Optional: documents every client must have (must include PASSPORT;
+# allowed: PASSPORT, POLICE_SLIP, POLICE_REPORT, MEDICAL). Invalid values stop the server.
+# REQUIRED_DOCUMENT_TYPES=PASSPORT,POLICE_REPORT,MEDICAL
 ```
+
+`.env.example` lists every setting the server checks at startup.
 
 > [!CAUTION]
 > Never commit `.env` files or real production credentials to Git repositories.
@@ -540,22 +548,28 @@ Sign in with an admin account created by `npm run admin:create`. Details: [`Docs
 
 ---
 
-### Admin Dashboard API (`/api/admin`, read-only)
+### Admin Dashboard API (`/api/admin`)
 
-All routes need `Authorization: Bearer <token>` of an **ACTIVE** admin (checked against the database on every request). Details: [`Docs/14-phase-10-admin-dashboard.md`](Docs/14-phase-10-admin-dashboard.md).
+All routes need `Authorization: Bearer <token>` of an **ACTIVE** admin (checked against the database on every request). Reads, plus review actions and corrections — each writes an append-only audit entry; the admin always comes from the token. There is no reject endpoint, and nothing removes a pending item automatically. Details: [`Docs/14-phase-10-admin-dashboard.md`](Docs/14-phase-10-admin-dashboard.md), reference: [`Docs/15-admin-dashboard-reference.md`](Docs/15-admin-dashboard-reference.md).
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/admin/overview` | KPIs, submission status/type summaries, recent documents, review-queue summary |
+| `GET` | `/api/admin/overview` | KPIs, client completeness, police counts, submission status/type summaries, recent documents, review-queue summary |
 | `GET` | `/api/admin/documents` | Paginated, filterable, sortable list of stored documents |
-| `GET` | `/api/admin/clients/:passportId` | Client profile, documents, required-document status, police documents |
+| `GET` | `/api/admin/documents/missing` | Incomplete clients and their missing required documents; filter by type, search, paging |
+| `POST` | `/api/admin/documents/:documentId/police-date` | Set or correct a stored police slip's submitted date (reason required; audited) |
+| `GET` | `/api/admin/clients` | Clients directory: search (passport ID, unique ID, name, WhatsApp), complete/incomplete, missing type, paging, counts |
+| `GET` | `/api/admin/clients/:passportId` | Client profile, documents, required-document status, police documents and slip date changes |
+| `GET` | `/api/admin/reports/daily` | Daily report for a Sri Lanka business date (`?date=YYYY-MM-DD`, default today): daily and current figures |
 | `GET` | `/api/admin/review` | Review queue: waiting files and REVIEW_REQUIRED documents, with review reasons |
 | `GET` | `/api/admin/review/:reviewId` | One review item: reason, identity, sender, processing summary, file info |
 | `GET` | `/api/admin/review/:reviewId/file` | The item's file, streamed from private storage for the in-page preview |
 | `POST` | `/api/admin/review/:reviewId/approve` | Approve: waiting file moved to the client folder as VERIFIED (or stored document marked VERIFIED); audit entry |
 | `POST` | `/api/admin/review/:reviewId/keep-pending` | Keep Pending with a required reason: item stays pending and in the queue; audit entry |
 | `POST` | `/api/admin/review/:reviewId/remove` | Remove from Review (waiting files only, reason required): file, temporary original and record permanently deleted; audit entry kept. Never automatic |
-| `GET` | `/api/admin/police` | Police Workflow: every client's 21-day status (overdue, due today, due soon, pending, date missing, not uploaded, completed), filter and paging |
+| `POST` | `/api/admin/review/:reviewId/document-type` | Set the document type of a waiting file (reason required); it stays pending |
+| `POST` | `/api/admin/review/:reviewId/assign-client` | Link a waiting file to an existing client (reason required); no client is created, no number changed |
+| `GET` | `/api/admin/police` | Police Workflow: every client's 21-day status (overdue, due today, due soon, pending, date missing, not uploaded, completed), search, filter and paging |
 
 ---
 
@@ -717,7 +731,8 @@ Comprehensive setup logs, implementation history, and architectural proposals ar
 - 📄 [`Docs/02-seed-data.md`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/02-seed-data.md): Database seeding documentation and sample entity records.
 - 📄 [`Docs/03-admin-authentication.md`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/03-admin-authentication.md): Admin authentication, bcrypt hashing, and JWT middleware specs.
 - 📄 [`Docs/13-security-overview.md`](Docs/13-security-overview.md): Security status, controls and findings.
-- 📄 [`Docs/14-phase-10-admin-dashboard.md`](Docs/14-phase-10-admin-dashboard.md): Admin dashboard structure, authentication flow and how to run it.
+- 📄 [`Docs/14-phase-10-admin-dashboard.md`](Docs/14-phase-10-admin-dashboard.md): Admin dashboard development log: structure, API, migrations, tests and decisions per checkpoint.
+- 📄 [`Docs/15-admin-dashboard-reference.md`](Docs/15-admin-dashboard-reference.md): Admin dashboard reference: every screen, action, rule and setting, and the decisions that differ from the proposal.
 - 📄 [`Docs/WhatsApp_Document_Processing_Project_Proposal_Final.md`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/WhatsApp_Document_Processing_Project_Proposal_Final.md): Complete technical design proposal & specification.
 
 ---

@@ -14,6 +14,8 @@ export const REQUIRED_ENV_VARS = Object.freeze([
     "WHATSAPP_API_VERSION",
 ]);
 
+import { parseRequiredDocumentTypes } from "./requiredDocuments.js";
+
 // HS256 key: shorter secrets can be brute-forced from a single token.
 export const MIN_JWT_SECRET_LENGTH = 32;
 
@@ -71,6 +73,10 @@ export function findEnvProblems(env = process.env) {
         trustProxyHops(env.TRUST_PROXY_HOPS);
     } catch (error) {
         problems.push(error.message);
+    }
+    const required = parseRequiredDocumentTypes(env.REQUIRED_DOCUMENT_TYPES);
+    if (required.error) {
+        problems.push(required.error);
     }
 
     return problems;

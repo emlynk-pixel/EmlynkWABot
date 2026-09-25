@@ -1,4 +1,4 @@
-// Police Workflow countdown (Phase 10, Checkpoint 5; minimal Phase 9 data).
+// Police Workflow countdown (Phase 10; minimal Phase 9 data).
 // Proposal §20-21, §23: the status is calculated from the stored documents
 // every time; nothing about it is saved and there are no reminders here.
 //

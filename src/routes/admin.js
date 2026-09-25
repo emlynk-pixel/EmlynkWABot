@@ -23,6 +23,22 @@ import {
     ReviewActionError,
 } from "../services/adminReviewActionService.js";
 import { listPoliceWorkflow, parsePoliceListQuery } from "../services/adminPoliceService.js";
+import {
+    listClients,
+    listMissingDocuments,
+    parseClientListQuery,
+    parseMissingDocumentsQuery,
+} from "../services/adminClientService.js";
+import {
+    assignClient,
+    isValidDocumentIdParam,
+    parseAssignClientBody,
+    parsePoliceDateBody,
+    parseSetDocumentTypeBody,
+    setDocumentType,
+    setPoliceSubmittedDate,
+} from "../services/adminCorrectionService.js";
+import { getDailyReport, parseDailyReportQuery } from "../services/adminReportService.js";
 
 // Loaded lazily so tests can pass a fake client without touching the DB.
 async function resolveDb(db) {
@@ -43,8 +59,10 @@ function contentDisposition(fileName) {
 }
 
 // Admin dashboard API, mounted at /api/admin (Phase 10). Read-only except
-// the review actions (approve, keep pending, remove from review); there is
-// no reject action and no route that changes or deletes an audit entry.
+// the review actions (approve, keep pending, remove from review) and the
+// corrections (document type, client, police slip date); every change is
+// audited. There is no reject action and no route that changes or deletes
+// an audit entry, and nothing removes a pending item automatically.
 // Every route needs a valid token of an ACTIVE admin. Responses hold client
 // data, so browsers and proxies must not cache them.
 // Errors: { message } or { message, errors: [{ field, message }] }; review
@@ -63,6 +81,17 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
         res.json(await getOverview({ db: client }));
     });
 
+    // Incomplete clients and their missing required documents. Registered
+    // before /documents so "missing" is never read as a parameter.
+    router.get("/documents/missing", async (req, res) => {
+        const parsed = parseMissingDocumentsQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await listMissingDocuments({ db: client, params: parsed.params }));
+    });
+
     router.get("/documents", async (req, res) => {
         const parsed = parseDocumentListQuery(req.query);
         if (parsed.errors) {
@@ -70,6 +99,26 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
         }
         const client = await resolveDb(db);
         return res.json(await listDocuments({ db: client, params: parsed.params }));
+    });
+
+    // Clients directory: search, complete/incomplete, missing type.
+    router.get("/clients", async (req, res) => {
+        const parsed = parseClientListQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await listClients({ db: client, params: parsed.params }));
+    });
+
+    // Daily report for one business day (Sri Lanka), default today.
+    router.get("/reports/daily", async (req, res) => {
+        const parsed = parseDailyReportQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await getDailyReport({ db: client, date: parsed.params.date }));
     });
 
     router.get("/clients/:passportId", async (req, res) => {
@@ -142,25 +191,28 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
     });
 
     // Review actions. The admin comes from the token (req.admin), never the body.
-    const reviewAction = (action, { reasonRequired, needsBucket, acceptsPoliceDate = false }) => async (req, res) => {
-        if (!parseReviewId(req.params.reviewId)) return invalidReviewId(res);
-        const parsed = parseReviewActionBody(req.body, { reasonRequired, acceptsPoliceDate });
+    // `parse` validates the body and returns the action's arguments or { errors }.
+    const runAction = async (res, parsed, needsBucket, run) => {
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const [client, storage] = await Promise.all([resolveDb(db), needsBucket ? resolveBucket(bucket) : null]);
         try {
-            const result = await action({
-                db: client, bucket: storage, admin: req.admin, reviewId: req.params.reviewId,
-                reason: parsed.reason, policeSubmittedDate: parsed.policeSubmittedDate,
-            });
-            return res.json(result);
+            return res.json(await run({ client, storage }));
         } catch (error) {
             if (error instanceof ReviewActionError) {
                 return res.status(error.status).json({ message: error.message, code: error.code });
             }
             throw error;
         }
+    };
+    const reviewAction = (action, { reasonRequired, needsBucket, acceptsPoliceDate = false, parse }) => async (req, res) => {
+        if (!parseReviewId(req.params.reviewId)) return invalidReviewId(res);
+        const parsed = parse ? parse(req.body) : parseReviewActionBody(req.body, { reasonRequired, acceptsPoliceDate });
+        return runAction(res, parsed, needsBucket, ({ client, storage }) => {
+            const { errors, ...values } = parsed;
+            return action({ ...values, db: client, bucket: storage, admin: req.admin, reviewId: req.params.reviewId });
+        });
     };
 
     // PENDING: pending/ -> client folder, VERIFIED. DOCUMENT: REVIEW_REQUIRED -> VERIFIED.
@@ -171,6 +223,21 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
     // Permanently deletes one waiting file and its record after an admin's
     // inspection; the reason is required. Only files in pending/.
     router.post("/review/:reviewId/remove", reviewAction(removeFromReview, { reasonRequired: true, needsBucket: true }));
+
+    // Corrections of a waiting file; it stays pending and in the queue.
+    router.post("/review/:reviewId/document-type", reviewAction(setDocumentType, { needsBucket: false, parse: parseSetDocumentTypeBody }));
+    router.post("/review/:reviewId/assign-client", reviewAction(assignClient, { needsBucket: false, parse: parseAssignClientBody }));
+
+    // Sets or corrects a stored police slip's submitted date (audited).
+    router.post("/documents/:documentId/police-date", async (req, res) => {
+        if (!isValidDocumentIdParam(req.params.documentId)) {
+            return res.status(400).json({ message: "Invalid document ID", errors: [{ field: "documentId", message: "must be a document ID" }] });
+        }
+        const parsed = parsePoliceDateBody(req.body);
+        return runAction(res, parsed, false, ({ client }) => setPoliceSubmittedDate({
+            db: client, admin: req.admin, documentId: req.params.documentId, reason: parsed.reason, policeSubmittedDate: parsed.policeSubmittedDate,
+        }));
+    });
 
     // Anything else under /api/admin (only reached by an authenticated admin).
     router.use((req, res) => res.status(404).json({ message: "Not found" }));

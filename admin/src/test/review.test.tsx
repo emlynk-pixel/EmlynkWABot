@@ -65,6 +65,8 @@ const auditEntry = (overrides: Partial<AuditEntry> = {}): AuditEntry => ({
     newStatus: "MANUAL_REVIEW",
     policeSubmittedDate: null,
     documentType: null,
+    previousValue: null,
+    newValue: null,
     createdDate: "2026-09-25T04:30:00.000Z",
     ...overrides,
 });
@@ -458,4 +460,121 @@ describe("review routes stay protected", () => {
             expect(calls.filter((c) => c.path.startsWith("/api/admin"))).toHaveLength(0);
         });
     }
+});
+
+describe("Corrections: set document type and assign client", () => {
+    const DETAIL = `GET /api/admin/review/pending-${TEMP_ID}`;
+    const CORRECTABLE: ReviewItem = {
+        ...ITEM,
+        client: null,
+        document: { ...ITEM.document, documentType: "UNKNOWN" },
+        actions: {
+            ...ITEM.actions!,
+            approve: { available: false, code: "CLIENT_NOT_IDENTIFIED", message: "This file is not linked to a client, so it can't be stored in a client folder. It stays pending." },
+            remove: { available: true, code: null, message: null },
+            setDocumentType: { available: true, code: null, message: null },
+            assignClient: { available: true, code: null, message: null },
+        },
+    };
+    const CLIENTS = {
+        items: [
+            { client: { passportId: "N7654321", uniqueId: "0002", name: "SAMAN SILVA", whatsappNumber: null }, completion: "INCOMPLETE", requirements: [], missingDocumentTypes: [] },
+        ],
+        pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 },
+        summary: { total: 1, complete: 0, incomplete: 1, withMissing: 0, missingDocuments: 0, missingByType: {} },
+        requiredDocumentTypes: ["PASSPORT", "POLICE_REPORT", "MEDICAL"],
+    };
+
+    async function open(item: ReviewItem, routes: FetchRoutes = {}) {
+        const backend = signedInBackend({ [DETAIL]: { status: 200, body: item }, [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse, "GET /api/admin/clients": { status: 200, body: CLIENTS }, ...routes });
+        renderApp(`/review/pending-${TEMP_ID}`);
+        const group = await screen.findByRole("group", { name: "Review actions" });
+        return { ...backend, group, user: userEvent.setup() };
+    }
+
+    test("offered for a waiting file only; never a Reject", async () => {
+        const { group } = await open(CORRECTABLE);
+        expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Approve", "Keep Pending", "Set Document Type", "Assign Client", "Remove from Review"]);
+        expect(screen.queryByText(/reject/i)).not.toBeInTheDocument();
+    });
+
+    test("not offered when the server says the item can't be corrected (stored document)", async () => {
+        const stored = { ...CORRECTABLE, actions: { ...CORRECTABLE.actions!, setDocumentType: { available: false, code: "NOT_CORRECTABLE", message: "x" }, assignClient: { available: false, code: "NOT_CORRECTABLE", message: "x" }, remove: { available: false, code: "NOT_REMOVABLE", message: "x" } } };
+        const { group } = await open(stored);
+        expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Approve", "Keep Pending"]);
+    });
+
+    test("Set Document Type: type and reason required; sent; item reloaded, still pending", async () => {
+        let type = "UNKNOWN";
+        const { calls, group, user } = await open(CORRECTABLE, {
+            [DETAIL]: () => ({ status: 200, body: { ...CORRECTABLE, document: { ...CORRECTABLE.document, documentType: type } } }),
+            [`POST /api/admin/review/pending-${TEMP_ID}/document-type`]: () => {
+                type = "MEDICAL";
+                return { status: 200, body: { action: "SET_DOCUMENT_TYPE", reviewId: `pending-${TEMP_ID}`, documentType: "MEDICAL", audit: auditEntry({ action: "SET_DOCUMENT_TYPE", previousValue: "UNKNOWN", newValue: "MEDICAL" }) } };
+            },
+        });
+        await user.click(within(group).getByRole("button", { name: "Set Document Type" }));
+        const dialog = screen.getByRole("dialog", { name: "Set the document type" });
+        expect(within(dialog).getAllByRole("option").map((o) => o.textContent)).toEqual(["Choose…", "Passport", "Police slip", "Police report", "Medical"]);
+        await user.click(within(dialog).getByRole("button", { name: "Set type" }));
+        expect(within(dialog).getByText("Choose the document type.")).toBeInTheDocument();
+        await user.selectOptions(within(dialog).getByLabelText(/Document type/), "MEDICAL");
+        await user.click(within(dialog).getByRole("button", { name: "Set type" }));
+        expect(within(dialog).getByText("Enter a reason.")).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+
+        await user.type(within(dialog).getByLabelText(/Reason/), "Content is a medical report");
+        await user.click(within(dialog).getByRole("button", { name: "Set type" }));
+        expect(await screen.findByRole("status")).toHaveTextContent("Document type set to Medical. The file stays pending");
+        expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([{ documentType: "MEDICAL", reason: "Content is a medical report" }]);
+        await screen.findByText("Medical", { selector: "dd" });
+        expect(calls.filter((c) => c.path === `/api/admin/review/pending-${TEMP_ID}`).length).toBe(2); // reloaded
+        expect(screen.getByRole("group", { name: "Review actions" })).toBeInTheDocument();
+    });
+
+    test("Assign Client: only an existing client from the search, reason and confirmation required", async () => {
+        const { calls, group, user } = await open(CORRECTABLE, {
+            [`POST /api/admin/review/pending-${TEMP_ID}/assign-client`]: { status: 200, body: { action: "ASSIGN_CLIENT", reviewId: `pending-${TEMP_ID}`, client: { passportId: "N7654321", uniqueId: "0002" }, audit: auditEntry({ action: "ASSIGN_CLIENT", newValue: "N7654321" }) } },
+        });
+        await user.click(within(group).getByRole("button", { name: "Assign Client" }));
+        const dialog = screen.getByRole("dialog", { name: "Assign this file to a client" });
+        expect(dialog).toHaveTextContent("no client is created");
+        await user.click(within(dialog).getByRole("button", { name: "Assign client" }));
+        expect(within(dialog).getByText("Choose an existing client.")).toBeInTheDocument();
+
+        await user.type(within(dialog).getByLabelText("Find the client"), "silva");
+        await user.click(within(dialog).getByRole("button", { name: "Search" }));
+        const option = await within(dialog).findByRole("radio", { name: /SAMAN SILVA/ });
+        expect(calls.find((c) => c.path.startsWith("/api/admin/clients"))?.path).toBe("/api/admin/clients?search=silva&pageSize=10");
+        await user.click(option);
+        await user.type(within(dialog).getByLabelText(/Reason/), "Client confirmed by phone");
+        await user.click(within(dialog).getByRole("button", { name: "Assign client" }));
+        expect(within(dialog).getByText(/Confirm that this file belongs/)).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+
+        await user.click(within(dialog).getByRole("checkbox", { name: /belongs to SAMAN SILVA \(N7654321\)/ }));
+        await user.click(within(dialog).getByRole("button", { name: "Assign client" }));
+        expect(await screen.findByRole("status")).toHaveTextContent("Assigned to SAMAN SILVA (N7654321)");
+        expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([{ passportId: "N7654321", reason: "Client confirmed by phone" }]);
+    });
+
+    test("Assign Client: no match says only existing clients can be assigned", async () => {
+        const { group, user } = await open(CORRECTABLE, { "GET /api/admin/clients": { status: 200, body: { ...CLIENTS, items: [] } } });
+        await user.click(within(group).getByRole("button", { name: "Assign Client" }));
+        const dialog = screen.getByRole("dialog");
+        await user.type(within(dialog).getByLabelText("Find the client"), "nobody{Enter}");
+        expect(await within(dialog).findByText(/Only existing clients can be assigned/)).toBeInTheDocument();
+    });
+
+    test("audit entries show the corrected values", async () => {
+        const item = { ...CORRECTABLE, auditLog: [
+            auditEntry({ auditId: "a-2", action: "ASSIGN_CLIENT", previousValue: null, newValue: "N7654321" }),
+            auditEntry({ auditId: "a-1", action: "SET_DOCUMENT_TYPE", previousValue: "UNKNOWN", newValue: "MEDICAL" }),
+        ] };
+        await open(item);
+        const history = screen.getByRole("list", { name: "Review history" });
+        expect(within(history).getByText("Client assigned")).toBeInTheDocument();
+        expect(within(history).getByText("Client: not identified → N7654321")).toBeInTheDocument();
+        expect(within(history).getByText("Type: Unknown → Medical")).toBeInTheDocument();
+    });
 });

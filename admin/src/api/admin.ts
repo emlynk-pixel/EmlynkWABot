@@ -1,7 +1,8 @@
 import { apiRequest, apiRequestBlob } from "./client";
 
-// Read-only admin dashboard API (src/routes/admin.js, /api/admin/*).
-// Every call needs the signed-in admin's token.
+// Admin dashboard API (src/routes/admin.js, /api/admin/*). Reads, plus the
+// review actions and corrections (all audited on the server). Every call
+// needs the signed-in admin's token.
 
 export type DocumentType = "PASSPORT" | "POLICE_SLIP" | "POLICE_REPORT" | "MEDICAL" | "UNKNOWN";
 export type VerificationStatus = "VERIFIED" | "REVIEW_REQUIRED";
@@ -45,8 +46,20 @@ export type Overview = {
         pendingByStatus: Record<string, number>;
         items: PendingItem[];
     };
-    // Police Workflow (Checkpoint 5): final police reports by countdown status.
+    // Police Workflow: final police reports by countdown status.
     police: { dueSoon: number; dueToday: number; overdue: number };
+    // Required-document completeness of every client, now.
+    clients: CompletenessSummary;
+    requiredDocumentTypes: string[];
+};
+
+export type CompletenessSummary = {
+    total: number;
+    complete: number;
+    incomplete: number;
+    withMissing: number; // clients with at least one required type not received
+    missingDocuments: number; // required documents not received, over all clients
+    missingByType: Record<string, number>;
 };
 
 export type DocumentListParams = {
@@ -90,14 +103,87 @@ export type ClientDetails = {
     pendingItems: PendingItem[];
     requiredDocuments: { documentType: string; status: RequirementStatus; storedCount: number; pendingCount: number }[];
     missingDocumentTypes: string[];
+    complete: boolean;
     police: {
         latestSlip: { documentId: string; receivedDate: string; verificationStatus: string; policeSubmittedDate: string | null } | null;
         latestReport: { documentId: string; receivedDate: string; verificationStatus: string; policeSubmittedDate: string | null } | null;
         countdown: PoliceCountdown;
+        // Police slip dates set or corrected by an admin (audit log), newest first.
+        dateChanges: { auditId: string; documentId: string | null; adminName: string | null; previousDate: string | null; newDate: string | null; reason: string | null; createdDate: string }[];
     };
 };
 
-// ---------------------------------------------------------------- police workflow (Checkpoint 5)
+// ---------------------------------------------------------------- clients and missing documents
+
+export type Completion = "COMPLETE" | "INCOMPLETE";
+export type Requirement = { documentType: string; status: RequirementStatus; storedCount: number; pendingCount: number };
+
+export type ClientListItem = {
+    client: ClientRef & { whatsappNumber: string | null };
+    completion: Completion;
+    requirements: Requirement[];
+    missingDocumentTypes: string[];
+};
+
+export type ClientList = {
+    items: ClientListItem[];
+    pagination: { page: number; pageSize: number; total: number; totalPages: number };
+    summary: CompletenessSummary;
+    requiredDocumentTypes: string[];
+};
+
+export type ClientListParams = { page?: number; pageSize?: number; search?: string; completion?: Completion; missingType?: string };
+export type MissingDocumentsParams = { page?: number; pageSize?: number; search?: string; documentType?: string };
+
+function queryString(params: object): string {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+    }
+    const suffix = query.toString();
+    return suffix ? `?${suffix}` : "";
+}
+
+export function listClients(token: string, params: ClientListParams, signal?: AbortSignal): Promise<ClientList> {
+    return apiRequest<ClientList>(`/api/admin/clients${queryString(params)}`, { token, signal });
+}
+
+export function listMissingDocuments(token: string, params: MissingDocumentsParams, signal?: AbortSignal): Promise<ClientList> {
+    return apiRequest<ClientList>(`/api/admin/documents/missing${queryString(params)}`, { token, signal });
+}
+
+// ---------------------------------------------------------------- daily report
+
+export type DailyReport = {
+    businessDate: string;
+    today: string;
+    isToday: boolean;
+    timeZone: string;
+    range: { start: string; end: string };
+    // What happened on the selected business day.
+    daily: {
+        totalReceived: number;
+        successfullyProcessed: number;
+        failed: number;
+        stillProcessing: number;
+        storedInClientFolder: number;
+        heldForReview: number;
+        duplicates: number;
+        unclear: number;
+        temporary: number;
+        byType: Record<string, number>;
+        byStatus: Record<string, number>;
+        adminActions: Record<string, number>;
+    };
+    // The state now (not historical).
+    current: { asOf: string; clients: CompletenessSummary; police: { dueSoon: number; dueToday: number; overdue: number } };
+};
+
+export function getDailyReport(token: string, date: string | undefined, signal?: AbortSignal): Promise<DailyReport> {
+    return apiRequest<DailyReport>(`/api/admin/reports/daily${queryString({ date })}`, { token, signal });
+}
+
+// ---------------------------------------------------------------- police workflow
 // Calculated by the backend every time; dates are "YYYY-MM-DD" (Sri Lanka).
 
 export type PoliceStatus = "OVERDUE" | "DUE_TODAY" | "DUE_SOON" | "PENDING" | "DATE_MISSING" | "NOT_UPLOADED" | "COMPLETED";
@@ -121,7 +207,7 @@ export type PoliceList = {
     summary: { total: number; byStatus: Record<PoliceStatus, number> };
 };
 
-export type PoliceListParams = { page?: number; pageSize?: number; status?: PoliceStatus };
+export type PoliceListParams = { page?: number; pageSize?: number; status?: PoliceStatus; search?: string };
 
 export function getPoliceWorkflow(token: string, params: PoliceListParams, signal?: AbortSignal): Promise<PoliceList> {
     const query = new URLSearchParams();
@@ -149,7 +235,7 @@ export function getClientDetails(token: string, passportId: string, signal?: Abo
     return apiRequest<ClientDetails>(`/api/admin/clients/${encodeURIComponent(passportId)}`, { token, signal });
 }
 
-// ---------------------------------------------------------------- review (Checkpoint 3)
+// ---------------------------------------------------------------- review
 
 export type ReviewKind = "PENDING" | "DOCUMENT";
 export type ReviewCategory = "IDENTITY" | "QUALITY" | "CONFLICT" | "OTHER";
@@ -233,12 +319,11 @@ export type ReviewItem = {
     actions: ReviewActions | null;
 };
 
-// ---------------------------------------------------------------- review actions (Checkpoint 4)
-// Only two actions exist: there is no reject.
-
-// Review actions. There is no reject; REMOVE_FROM_REVIEW is a manual admin
-// decision that permanently deletes one waiting file and its record.
-export type ReviewAction = "APPROVE" | "KEEP_PENDING" | "REMOVE_FROM_REVIEW";
+// ---------------------------------------------------------------- review actions and corrections
+// There is no reject. REMOVE_FROM_REVIEW is a manual admin decision that
+// permanently deletes one waiting file and its record. The corrections
+// (type, client, police slip date) keep the item where it is.
+export type ReviewAction = "APPROVE" | "KEEP_PENDING" | "REMOVE_FROM_REVIEW" | "SET_DOCUMENT_TYPE" | "ASSIGN_CLIENT" | "SET_POLICE_DATE";
 
 export type AuditEntry = {
     auditId: string;
@@ -250,12 +335,20 @@ export type AuditEntry = {
     newStatus: string;
     policeSubmittedDate: string | null; // police slip approvals
     documentType: string | null; // kept for removed files
+    previousValue: string | null; // corrections: value before
+    newValue: string | null; // corrections: value after
     createdDate: string;
 };
 
 type ActionAvailability = { available: boolean; code: string | null; message: string | null };
 // needsPoliceDate: a police slip without a stored submitted date is approved with one.
-export type ReviewActions = { approve: ActionAvailability & { needsPoliceDate?: boolean }; keepPending: ActionAvailability; remove?: ActionAvailability };
+export type ReviewActions = {
+    approve: ActionAvailability & { needsPoliceDate?: boolean };
+    keepPending: ActionAvailability;
+    remove?: ActionAvailability;
+    setDocumentType?: ActionAvailability;
+    assignClient?: ActionAvailability;
+};
 
 export type ApproveResult = {
     action: "APPROVE";
@@ -268,6 +361,23 @@ export type ApproveResult = {
 export type KeepPendingResult = { action: "KEEP_PENDING"; reviewId: string; audit: AuditEntry };
 
 export type RemoveResult = { action: "REMOVE_FROM_REVIEW"; reviewId: string; filesDeleted: boolean; audit: AuditEntry };
+export type SetDocumentTypeResult = { action: "SET_DOCUMENT_TYPE"; reviewId: string; documentType: string; audit: AuditEntry };
+export type AssignClientResult = { action: "ASSIGN_CLIENT"; reviewId: string; client: { passportId: string; uniqueId: string }; audit: AuditEntry };
+export type SetPoliceDateResult = { action: "SET_POLICE_DATE"; documentId: string; policeSubmittedDate: string; audit: AuditEntry };
+
+// Corrections of a waiting file; it stays pending and in the Review Queue.
+export function setDocumentType(token: string, reviewId: string, documentType: string, reason: string): Promise<SetDocumentTypeResult> {
+    return apiRequest<SetDocumentTypeResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/document-type`, { method: "POST", token, body: { documentType, reason } });
+}
+
+export function assignClient(token: string, reviewId: string, passportId: string, reason: string): Promise<AssignClientResult> {
+    return apiRequest<AssignClientResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/assign-client`, { method: "POST", token, body: { passportId, reason } });
+}
+
+// Sets or corrects a stored police slip's submitted date.
+export function setPoliceDate(token: string, documentId: string, policeSubmittedDate: string, reason: string): Promise<SetPoliceDateResult> {
+    return apiRequest<SetPoliceDateResult>(`/api/admin/documents/${encodeURIComponent(documentId)}/police-date`, { method: "POST", token, body: { policeSubmittedDate, reason } });
+}
 
 export function getReviewQueue(token: string, params: ReviewQueueParams, signal?: AbortSignal): Promise<ReviewQueue> {
     const query = new URLSearchParams();

@@ -1,4 +1,4 @@
-// Police Workflow data for the admin dashboard (Phase 10, Checkpoint 5).
+// Police Workflow data for the admin dashboard (Phase 10).
 // Read-only: every client's police status is calculated from the stored
 // documents and waiting files (policeCountdownService.js); nothing is saved.
 
@@ -12,6 +12,7 @@ export const POLICE_LIST_DEFAULTS = Object.freeze({ page: 1, pageSize: 25 });
 const MAX_PAGE_SIZE = 100;
 const MAX_PAGE = 10_000;
 const PASSPORT_ID_PATTERN = /^[A-Za-z0-9]{1,20}$/;
+const MAX_SEARCH_LENGTH = 100;
 
 const clientSelect = { passportId: true, uniqueId: true, firstName: true, otherName: true };
 export const POLICE_DOCUMENT_SELECT = Object.freeze({
@@ -109,6 +110,12 @@ export function parsePoliceListQuery(query = {}) {
         if (PASSPORT_ID_PATTERN.test(passportId)) params.passportId = passportId.toUpperCase();
         else errors.push({ field: "passportId", message: "must be letters and digits (at most 20)" });
     }
+    const search = single("search");
+    if (search !== undefined) {
+        const trimmed = search.trim();
+        if (trimmed.length > MAX_SEARCH_LENGTH) errors.push({ field: "search", message: `must be at most ${MAX_SEARCH_LENGTH} characters` });
+        else if (trimmed) params.search = trimmed;
+    }
     return errors.length ? { errors } : { params };
 }
 
@@ -122,12 +129,22 @@ function compareRows(a, b) {
     return a.client.passportId.localeCompare(b.client.passportId);
 }
 
+// Search: every word must appear in the passport ID, unique ID or name
+// (case-insensitive). It only narrows the list; statuses are unchanged.
+export function matchesPoliceSearch(row, search) {
+    const text = `${row.client.passportId} ${row.client.uniqueId} ${row.client.name ?? ""}`.toUpperCase();
+    return search.toUpperCase().split(/\s+/).filter(Boolean).every((word) => text.includes(word));
+}
+
 // GET /api/admin/police: every client's status, filtered, most urgent first.
-// The summary counts all clients (before the status filter).
+// The summary counts the clients in scope (passport ID / search), before
+// the status filter.
 export async function listPoliceWorkflow({ db, params, now = new Date() }) {
     const today = businessDateOf(now);
     const all = await loadPoliceStatuses({ db, today });
-    const scoped = params.passportId ? all.filter((row) => row.client.passportId === params.passportId) : all;
+    const scoped = all
+        .filter((row) => !params.passportId || row.client.passportId === params.passportId)
+        .filter((row) => !params.search || matchesPoliceSearch(row, params.search));
     const filtered = (params.status ? scoped.filter((row) => row.status === params.status) : scoped).sort(compareRows);
     const start = (params.page - 1) * params.pageSize;
 
@@ -141,6 +158,6 @@ export async function listPoliceWorkflow({ db, params, now = new Date() }) {
             totalPages: Math.max(1, Math.ceil(filtered.length / params.pageSize)),
         },
         summary: summarizeStatuses(scoped),
-        filters: { status: params.status ?? null, passportId: params.passportId ?? null },
+        filters: { status: params.status ?? null, passportId: params.passportId ?? null, search: params.search ?? null },
     };
 }

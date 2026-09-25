@@ -149,11 +149,12 @@ describe("dashboard shell", () => {
         await screen.findByTestId("admin-name");
     }
 
-    test("sidebar lists the Stitch sections and navigates between them", async () => {
+    test("sidebar lists the sections and navigates between them", async () => {
         await signedIn();
         const nav = screen.getByRole("navigation", { name: "Main navigation" });
         const links = within(nav).getAllByRole("link").map((link) => link.textContent);
-        expect(links).toEqual(["Overview", "Documents", "Review Queue", "Clients", "Police Workflow"]);
+        // The Stitch sections plus Missing Documents and Daily Report (final Phase 10 scope).
+        expect(links).toEqual(["Overview", "Documents", "Review Queue", "Clients", "Missing Documents", "Police Workflow", "Daily Report"]);
 
         await userEvent.setup().click(within(nav).getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();

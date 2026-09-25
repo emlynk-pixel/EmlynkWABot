@@ -2,8 +2,17 @@
 // design. Imported one SVG at a time so the bundle only carries the icons in
 // use, instead of a 1-1.5 MB icon font. The markup is a build-time constant
 // from the package, never user data.
+import assignmentLate from "@material-symbols/svg-400/outlined/assignment_late.svg?raw";
+import checkCircle from "@material-symbols/svg-400/outlined/check_circle.svg?raw";
+import darkMode from "@material-symbols/svg-400/outlined/dark_mode.svg?raw";
+import edit from "@material-symbols/svg-400/outlined/edit.svg?raw";
+import event from "@material-symbols/svg-400/outlined/event.svg?raw";
+import lightMode from "@material-symbols/svg-400/outlined/light_mode.svg?raw";
+import personSearch from "@material-symbols/svg-400/outlined/person_search.svg?raw";
+import search from "@material-symbols/svg-400/outlined/search.svg?raw";
+import summarize from "@material-symbols/svg-400/outlined/summarize.svg?raw";
+import sync from "@material-symbols/svg-400/outlined/sync.svg?raw";
 import chevronLeft from "@material-symbols/svg-400/outlined/chevron_left.svg?raw";
-import construction from "@material-symbols/svg-400/outlined/construction.svg?raw";
 import dashboard from "@material-symbols/svg-400/outlined/dashboard.svg?raw";
 import description from "@material-symbols/svg-400/outlined/description.svg?raw";
 import error from "@material-symbols/svg-400/outlined/error.svg?raw";
@@ -19,8 +28,17 @@ import visibility from "@material-symbols/svg-400/outlined/visibility.svg?raw";
 import visibilityOff from "@material-symbols/svg-400/outlined/visibility_off.svg?raw";
 
 const ICONS = {
+    assignment_late: assignmentLate,
+    check_circle: checkCircle,
+    dark_mode: darkMode,
+    edit,
+    event,
+    light_mode: lightMode,
+    person_search: personSearch,
+    search,
+    summarize,
+    sync,
     chevron_left: chevronLeft,
-    construction,
     dashboard,
     description,
     error,

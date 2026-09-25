@@ -92,7 +92,7 @@ export function DocumentsPage() {
                             placeholder="Search by document ID, client name, passport or unique ID…"
                             className={`${control} w-full`}
                         />
-                        <button type="submit" className="h-9 rounded bg-primary px-3 text-label-md text-white hover:bg-primary-hover">Search</button>
+                        <button type="submit" className="h-9 rounded bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                     </form>
                     <label className="md:col-span-2">
                         <span className="sr-only">Document type</span>
@@ -133,7 +133,7 @@ export function DocumentsPage() {
                                     type="button"
                                     aria-pressed={active}
                                     onClick={() => update({ verificationStatus: value })}
-                                    className={`rounded-full px-3 py-1 text-label-sm ${active ? "bg-primary text-white" : "bg-canvas-muted text-ink-muted hover:text-ink"}`}
+                                    className={`rounded-full px-3 py-1 text-label-sm ${active ? "bg-primary text-on-primary" : "bg-canvas-muted text-ink-muted hover:text-ink"}`}
                                 >
                                     {label}{count !== undefined ? ` (${formatNumber(count)})` : ""}
                                 </button>

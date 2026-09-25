@@ -34,7 +34,8 @@ function StatCard({ label, value, icon }: { label: string; value: number | undef
     );
 }
 
-// Review Queue (Stitch "Review Queue"). Read-only in this checkpoint.
+// Review Queue (Stitch "Review Queue"): the list of items waiting for a
+// person. The actions are on the Review Detail page.
 export function ReviewQueuePage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const params = paramsFrom(searchParams);

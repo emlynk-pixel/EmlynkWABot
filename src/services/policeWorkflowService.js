@@ -2,7 +2,7 @@ import { DOCUMENT_TYPES } from "./documentClassificationService.js";
 import { POLICE_DATE_STATUS } from "./policeReportDateService.js";
 
 // What a stored police document means for the police workflow (proposal
-// §20-21). Pure: the event itself is not saved. Since Phase 10 Checkpoint 5
+// §20-21). Pure: the event itself is not saved. Since Phase 10
 // a slip's submitted date is stored on the document and the status is
 // calculated from the documents (policeCountdownService.js):
 //   POLICE_SLIP_RECEIVED   -> the countdown runs from submittedDate

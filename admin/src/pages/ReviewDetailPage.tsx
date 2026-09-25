@@ -1,11 +1,15 @@
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import {
     approveReviewItem,
+    assignClient,
     getReviewFile,
     getReviewItem,
     keepReviewItemPending,
+    listClients,
     removeFromReview,
+    setDocumentType,
+    type ClientListItem,
     type ApproveResult,
     type RemoveResult,
     type AuditEntry,
@@ -17,6 +21,7 @@ import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
 import { Confidence } from "../components/Confidence";
 import { documentTypeLabel, formatDateTime, formatDay, formatFileSize, humanize, shortId, todayInSriLanka } from "../components/format";
+import { ActionDialog, DialogError, dangerButton, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
 import { Icon } from "../components/Icon";
 import { AUDIT_ACTIONS, IDENTITY_NOTES, REVIEW_REASONS, reviewReasonLabel, reviewReasonTone } from "../components/reviewLabels";
 import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
@@ -121,7 +126,7 @@ const MAX_REASON_LENGTH = 500;
 // Review history (append-only on the server), newest first.
 function AuditLog({ entries }: { entries: AuditEntry[] }) {
     if (!entries.length) {
-        return <EmptyState title="No review actions yet" description="Approve and Keep Pending decisions are recorded here." />;
+        return <EmptyState title="No review actions yet" description="Every decision and correction is recorded here." />;
     }
     return (
         <ol aria-label="Review history" className="mt-2 divide-y divide-border">
@@ -135,6 +140,12 @@ function AuditLog({ entries }: { entries: AuditEntry[] }) {
                         </div>
                         <p className="text-body-sm text-ink">{entry.adminName ?? "Unknown admin"}</p>
                         <p className="text-body-sm text-ink-soft">{entry.reason ?? <span className="text-ink-subtle">No reason given</span>}</p>
+                        {entry.action === "SET_DOCUMENT_TYPE" && (
+                            <p className="text-label-sm text-ink-muted">Type: {entry.previousValue ? documentTypeLabel(entry.previousValue) : "—"} → {entry.newValue ? documentTypeLabel(entry.newValue) : "—"}</p>
+                        )}
+                        {entry.action === "ASSIGN_CLIENT" && (
+                            <p className="text-label-sm text-ink-muted">Client: {entry.previousValue ?? "not identified"} → {entry.newValue}</p>
+                        )}
                         {entry.policeSubmittedDate && <p className="text-label-sm text-ink-muted">Police slip submitted date: {formatDay(entry.policeSubmittedDate)}</p>}
                     </li>
                 );
@@ -143,38 +154,75 @@ function AuditLog({ entries }: { entries: AuditEntry[] }) {
     );
 }
 
-// A small modal in the page's card style. Escape or Cancel closes it,
-// except while the request is running.
-function ActionDialog({ title, busy, onClose, children }: { title: string; busy: boolean; onClose: () => void; children: ReactNode }) {
-    const titleId = useId();
-    useEffect(() => {
-        const onKey = (event: KeyboardEvent) => {
-            if (event.key === "Escape" && !busy) onClose();
-        };
-        window.addEventListener("keydown", onKey);
-        return () => window.removeEventListener("keydown", onKey);
-    }, [busy, onClose]);
+type Notice = { tone: "success" | "info"; text: string };
+
+// Types an admin can give a waiting file (backend SETTABLE_DOCUMENT_TYPES).
+const SETTABLE_TYPES = ["PASSPORT", "POLICE_SLIP", "POLICE_REPORT", "MEDICAL"];
+
+// Finds existing clients for "Assign client" (the Clients directory search).
+// Nothing is created here; only a client from the list can be chosen.
+function ClientPicker({ selected, onSelect, disabled }: { selected: ClientListItem["client"] | null; onSelect: (client: ClientListItem["client"]) => void; disabled: boolean }) {
+    const { token, signOut } = useAuth();
+    const [text, setText] = useState("");
+    const [state, setState] = useState<{ status: "idle" | "loading" | "done" | "error"; items: ClientListItem[]; message?: string }>({ status: "idle", items: [] });
+
+    const search = async () => {
+        const query = text.trim();
+        if (!token || !query) return;
+        setState({ status: "loading", items: [] });
+        try {
+            const result = await listClients(token, { search: query, pageSize: 10 });
+            setState({ status: "done", items: result.items });
+        } catch (caught) {
+            if (caught instanceof ApiError && caught.status === 401) return signOut();
+            setState({ status: "error", items: [], message: caught instanceof ApiError ? caught.message : "The search failed." });
+        }
+    };
+
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
-            <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-surface">
-                <h2 id={titleId} className="text-headline-sm text-ink">{title}</h2>
-                <div className="mt-3">{children}</div>
+        <div className="mt-3">
+            <label htmlFor="client-search-input" className="block text-label-md text-ink">Find the client</label>
+            <div className="mt-1 flex gap-2">
+                <input
+                    id="client-search-input"
+                    type="search"
+                    value={text}
+                    maxLength={100}
+                    disabled={disabled}
+                    onChange={(event) => setText(event.target.value)}
+                    onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                            event.preventDefault();
+                            void search();
+                        }
+                    }}
+                    placeholder="Passport ID, unique ID, name or WhatsApp number"
+                    className="h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                />
+                <button type="button" className={secondaryButton} disabled={disabled || !text.trim() || state.status === "loading"} onClick={() => void search()}>
+                    {state.status === "loading" ? "Searching…" : "Search"}
+                </button>
             </div>
+            {state.status === "error" && <p role="alert" className="mt-2 text-label-sm text-critical">{state.message}</p>}
+            {state.status === "done" && state.items.length === 0 && <p className="mt-2 text-label-sm text-ink-muted">No existing client matches. Only existing clients can be assigned.</p>}
+            {state.items.length > 0 && (
+                <ul aria-label="Matching clients" className="mt-2 max-h-48 divide-y divide-border overflow-y-auto rounded border border-border">
+                    {state.items.map(({ client }) => (
+                        <li key={client.passportId}>
+                            <label className="flex cursor-pointer items-center gap-2 px-3 py-2 text-body-sm text-ink hover:bg-canvas">
+                                <input type="radio" name="assign-client" disabled={disabled} checked={selected?.passportId === client.passportId} onChange={() => onSelect(client)} />
+                                <span>
+                                    <span className="font-medium">{client.name ?? "—"}</span>
+                                    <span className="block text-label-sm text-ink-muted">{client.passportId} · {client.uniqueId}{client.whatsappNumber ? ` · ${client.whatsappNumber}` : ""}</span>
+                                </span>
+                            </label>
+                        </li>
+                    ))}
+                </ul>
+            )}
         </div>
     );
 }
-
-const buttonBase = "h-9 rounded px-4 text-label-md disabled:cursor-not-allowed disabled:opacity-60";
-const primaryButton = `${buttonBase} bg-primary text-white hover:opacity-90`;
-const secondaryButton = `${buttonBase} border border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas`;
-const dangerButton = `${buttonBase} border border-critical-border bg-surface text-critical hover:bg-critical-bg`;
-const dangerSolidButton = `${buttonBase} bg-critical text-white hover:opacity-90`;
-
-function DialogError({ message }: { message: string | null }) {
-    return message ? <p role="alert" className="mt-3 rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">{message}</p> : null;
-}
-
-type Notice = { tone: "success" | "info"; text: string };
 
 function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () => void }) {
     const { token, signOut } = useAuth();
@@ -182,7 +230,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const identity = item.processing?.identity;
     const idLabel = shortId((item.document.documentId ?? item.document.temporaryId ?? item.reviewId.replace(/^(pending|document)-/, "")));
 
-    const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | null>(null);
+    const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | "type" | "client" | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<Notice | null>(null);
@@ -193,6 +241,11 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const [removeConfirmed, setRemoveConfirmed] = useState(false);
     const [removeError, setRemoveError] = useState<string | null>(null);
     const [removed, setRemoved] = useState<RemoveResult | null>(null);
+    const [newType, setNewType] = useState("");
+    const [correctionReason, setCorrectionReason] = useState("");
+    const [correctionError, setCorrectionError] = useState<string | null>(null);
+    const [chosenClient, setChosenClient] = useState<ClientListItem["client"] | null>(null);
+    const [clientConfirmed, setClientConfirmed] = useState(false);
     const [policeDate, setPoliceDate] = useState("");
     const [policeDateError, setPoliceDateError] = useState<string | null>(null);
 
@@ -206,8 +259,10 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const verificationStatus = approved ? approved.document.verificationStatus : item.document.verificationStatus;
 
     const canRemove = item.actions?.remove?.available === true;
+    const canSetType = item.actions?.setDocumentType?.available === true;
+    const canAssignClient = item.actions?.assignClient?.available === true;
 
-    const open = (which: "approve" | "keep" | "remove") => {
+    const open = (which: "approve" | "keep" | "remove" | "type" | "client") => {
         setError(null);
         setReasonError(null);
         setPoliceDateError(null);
@@ -218,6 +273,13 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
             setRemoveReason("");
             setRemoveConfirmed(false);
             setRemoveError(null);
+        }
+        if (which === "type" || which === "client") {
+            setNewType("");
+            setCorrectionReason("");
+            setCorrectionError(null);
+            setChosenClient(null);
+            setClientConfirmed(false);
         }
         setDialog(which);
     };
@@ -280,6 +342,48 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
         } finally {
             setBusy(false);
         }
+    };
+
+    // Corrections: the item stays pending; the page reloads to show the
+    // new type or client and what Approve now allows.
+    const runCorrection = async (request: () => Promise<unknown>, text: string) => {
+        setBusy(true);
+        setError(null);
+        try {
+            await request();
+            setDialog(null);
+            setNotice({ tone: "info", text });
+            onChanged();
+        } catch (caught) {
+            fail(caught);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const confirmSetType = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!token || busy) return;
+        const trimmed = correctionReason.trim();
+        if (!newType) return setCorrectionError("Choose the document type.");
+        if (!trimmed) return setCorrectionError("Enter a reason.");
+        await runCorrection(
+            () => setDocumentType(token, item.reviewId, newType, trimmed),
+            `Document type set to ${documentTypeLabel(newType)}. The file stays pending; approve it when it is ready.`
+        );
+    };
+
+    const confirmAssignClient = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!token || busy) return;
+        const trimmed = correctionReason.trim();
+        if (!chosenClient) return setCorrectionError("Choose an existing client.");
+        if (!trimmed) return setCorrectionError("Enter a reason.");
+        if (!clientConfirmed) return setCorrectionError("Confirm that this file belongs to the chosen client.");
+        await runCorrection(
+            () => assignClient(token, item.reviewId, chosenClient.passportId, trimmed),
+            `Assigned to ${chosenClient.name ?? chosenClient.passportId} (${chosenClient.passportId}). The file stays pending; approve it when it is ready.`
+        );
     };
 
     const confirmKeep = async (event: FormEvent) => {
@@ -422,6 +526,16 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                     <button type="button" className={secondaryButton} disabled={busy} onClick={() => open("keep")}>
                                         Keep Pending
                                     </button>
+                                    {canSetType && (
+                                        <button type="button" className={secondaryButton} disabled={busy} onClick={() => open("type")}>
+                                            Set Document Type
+                                        </button>
+                                    )}
+                                    {canAssignClient && (
+                                        <button type="button" className={secondaryButton} disabled={busy} onClick={() => open("client")}>
+                                            {item.client ? "Change Client" : "Assign Client"}
+                                        </button>
+                                    )}
                                     {canRemove && (
                                         <button type="button" className={dangerButton} disabled={busy} onClick={() => open("remove")}>
                                             Remove from Review
@@ -522,6 +636,102 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                         <div className="mt-4 flex justify-end gap-2">
                             <button type="button" className={secondaryButton} disabled={busy} onClick={close}>Cancel</button>
                             <button type="submit" className={dangerSolidButton} disabled={busy}>{busy ? "Removing…" : "Remove permanently"}</button>
+                        </div>
+                    </form>
+                </ActionDialog>
+            )}
+
+            {dialog === "type" && (
+                <ActionDialog title="Set the document type" busy={busy} onClose={close}>
+                    <form onSubmit={confirmSetType} noValidate>
+                        <p className="text-body-sm text-ink-soft">
+                            Currently <strong>{documentTypeLabel(item.document.documentType)}</strong>. The file stays in pending storage and in the Review Queue; approve it afterwards. The change is recorded in the audit log.
+                        </p>
+                        <label htmlFor="new-type" className="mt-3 block text-label-md text-ink">
+                            Document type <span aria-hidden="true" className="text-critical">*</span>
+                        </label>
+                        <select
+                            id="new-type"
+                            value={newType}
+                            disabled={busy}
+                            onChange={(event) => {
+                                setNewType(event.target.value);
+                                setCorrectionError(null);
+                            }}
+                            className="mt-1 h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                        >
+                            <option value="">Choose…</option>
+                            {SETTABLE_TYPES.filter((type) => type !== item.document.documentType).map((type) => <option key={type} value={type}>{documentTypeLabel(type)}</option>)}
+                        </select>
+                        <label htmlFor="type-reason" className="mt-3 block text-label-md text-ink">
+                            Reason <span aria-hidden="true" className="text-critical">*</span>
+                        </label>
+                        <textarea
+                            id="type-reason"
+                            maxLength={MAX_REASON_LENGTH}
+                            rows={2}
+                            value={correctionReason}
+                            disabled={busy}
+                            onChange={(event) => {
+                                setCorrectionReason(event.target.value);
+                                setCorrectionError(null);
+                            }}
+                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                        />
+                        {correctionError && <p className="mt-2 text-label-sm text-critical">{correctionError}</p>}
+                        <DialogError message={error} />
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button type="button" className={secondaryButton} disabled={busy} onClick={close}>Cancel</button>
+                            <button type="submit" className={primaryButton} disabled={busy}>{busy ? "Saving…" : "Set type"}</button>
+                        </div>
+                    </form>
+                </ActionDialog>
+            )}
+
+            {dialog === "client" && (
+                <ActionDialog title={item.client ? "Change the client of this file" : "Assign this file to a client"} busy={busy} onClose={close}>
+                    <form onSubmit={confirmAssignClient} noValidate>
+                        <p className="text-body-sm text-ink-soft">
+                            Only an existing client can be chosen; no client is created and no client record or WhatsApp number is changed. The sender ({item.submission?.whatsappNumber ?? "unknown"}) and the original identity check stay on record. The file stays pending; approve it afterwards.
+                        </p>
+                        {item.client && <p className="mt-2 text-body-sm text-ink">Currently linked to {item.client.name ?? item.client.passportId} ({item.client.passportId}).</p>}
+                        <ClientPicker selected={chosenClient} disabled={busy} onSelect={(client) => {
+                            setChosenClient(client);
+                            setCorrectionError(null);
+                        }} />
+                        <label htmlFor="client-reason" className="mt-3 block text-label-md text-ink">
+                            Reason <span aria-hidden="true" className="text-critical">*</span>
+                        </label>
+                        <textarea
+                            id="client-reason"
+                            maxLength={MAX_REASON_LENGTH}
+                            rows={2}
+                            value={correctionReason}
+                            disabled={busy}
+                            onChange={(event) => {
+                                setCorrectionReason(event.target.value);
+                                setCorrectionError(null);
+                            }}
+                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                        />
+                        <label className="mt-3 flex items-start gap-2 text-body-sm text-ink">
+                            <input
+                                type="checkbox"
+                                checked={clientConfirmed}
+                                disabled={busy}
+                                onChange={(event) => {
+                                    setClientConfirmed(event.target.checked);
+                                    setCorrectionError(null);
+                                }}
+                                className="mt-0.5"
+                            />
+                            {chosenClient ? `I have checked that this file belongs to ${chosenClient.name ?? chosenClient.passportId} (${chosenClient.passportId}).` : "I have checked that this file belongs to the chosen client."}
+                        </label>
+                        {correctionError && <p className="mt-2 text-label-sm text-critical">{correctionError}</p>}
+                        <DialogError message={error} />
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button type="button" className={secondaryButton} disabled={busy} onClick={close}>Cancel</button>
+                            <button type="submit" className={primaryButton} disabled={busy}>{busy ? "Saving…" : "Assign client"}</button>
                         </div>
                     </form>
                 </ActionDialog>

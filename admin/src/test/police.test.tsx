@@ -168,7 +168,7 @@ describe("approving a police slip", () => {
         reviewId: `pending-${TEMP_ID}`,
         document: { documentId: DOC_ID, storedFilename: "police_slip.pdf", verificationStatus: "VERIFIED", location: "CLIENT", policeSubmittedDate: date },
         pendingCopyRemoved: true,
-        audit: { auditId: "a1", action: "APPROVE", adminId: "admin-1", adminName: "Test Admin", reason: null, previousStatus: "MANUAL_REVIEW", newStatus: "VERIFIED", policeSubmittedDate: date, documentType: null, createdDate: "2026-09-25T05:00:00.000Z" },
+        audit: { auditId: "a1", action: "APPROVE", adminId: "admin-1", adminName: "Test Admin", reason: null, previousStatus: "MANUAL_REVIEW", newStatus: "VERIFIED", policeSubmittedDate: date, documentType: null, previousValue: null, newValue: null, createdDate: "2026-09-25T05:00:00.000Z" },
     });
     beforeEach(() => {
         vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:x"), revokeObjectURL: vi.fn() }));

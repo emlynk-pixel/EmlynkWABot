@@ -60,7 +60,7 @@ export function LoginPage() {
         <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
             <div className="w-full max-w-sm">
                 <div className="mb-6 flex items-center gap-3">
-                    <span className="flex size-10 items-center justify-center rounded-lg bg-sidebar text-headline-sm text-white">E</span>
+                    <span className="flex size-10 items-center justify-center rounded-lg bg-sidebar text-headline-sm text-sidebar-text-active">E</span>
                     <div>
                         <p className="text-headline-sm text-ink">EmlynkWABot</p>
                         <p className="text-label-caps uppercase text-ink-subtle">Admin Console</p>
@@ -126,7 +126,7 @@ export function LoginPage() {
                         <button
                             type="submit"
                             disabled={submitting}
-                            className="flex h-9 w-full items-center justify-center gap-2 rounded bg-primary px-4 text-label-md text-white hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
+                            className="flex h-9 w-full items-center justify-center gap-2 rounded bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
                         >
                             {submitting && <Icon name="progress_activity" className="size-4 animate-spin" />}
                             {submitting ? "Signing in…" : "Sign in"}

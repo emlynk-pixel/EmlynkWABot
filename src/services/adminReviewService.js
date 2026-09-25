@@ -1,11 +1,12 @@
-// Read-only Review Queue and Review Detail data (Phase 10, Checkpoint 3).
+// Read-only Review Queue and Review Detail data (Phase 10).
 //
 // A review item is one of:
 // - PENDING: a submission (temporary_data) whose file waits in pending/;
 // - DOCUMENT: a file stored in a client folder with verification_status
 //   REVIEW_REQUIRED (UNCLEAR band, including accepted low-quality passports).
-// Nothing here writes; the review actions (approve, keep pending) are in
-// adminReviewActionService.js.
+// Nothing here writes; the review actions (approve, keep pending, remove
+// from review) are in adminReviewActionService.js and the corrections in
+// adminCorrectionService.js.
 
 import path from "node:path";
 import { VERIFICATION_STATUS } from "./clientDocumentService.js";

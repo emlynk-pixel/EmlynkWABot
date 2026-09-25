@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { getOverview, type Overview } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
+import { useSync } from "../sync/SyncProvider";
 import { DocumentsTable } from "../components/DocumentsTable";
 import { documentTypeLabel, formatDate, formatDateTime, formatNumber } from "../components/format";
 import { Icon, type IconName } from "../components/Icon";
@@ -85,6 +86,40 @@ function PoliceDue({ police }: { police: Overview["police"] }) {
     );
 }
 
+// Required-document completeness of every client, now (same rule as the
+// Clients page and the Missing Documents view).
+function ClientCompleteness({ clients, requiredTypes }: { clients: Overview["clients"]; requiredTypes: string[] }) {
+    const items = [
+        { label: "Completed clients", value: clients.complete, to: "/clients?completion=COMPLETE", critical: false },
+        { label: "Incomplete clients", value: clients.incomplete, to: "/clients?completion=INCOMPLETE", critical: false },
+        { label: "Missing documents", value: clients.missingDocuments, to: "/missing-documents", critical: true },
+    ];
+    return (
+        <Card className="space-y-3 p-4">
+            <SectionHeading
+                title="Client documents"
+                description={`A client is complete when every required document (${requiredTypes.map(documentTypeLabel).join(", ")}) is verified`}
+                action={<Link to="/missing-documents" className="text-label-md text-primary hover:underline">Open Missing Documents</Link>}
+            />
+            <ul className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Clients by completeness">
+                {items.map((item) => (
+                    <li key={item.label}>
+                        <Link to={item.to} className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2 hover:bg-canvas-muted">
+                            <span className="text-body-sm text-ink">{item.label}</span>
+                            <span className={`text-headline-md tabular-nums ${item.critical && item.value > 0 ? "text-critical" : "text-ink"}`}>{formatNumber(item.value)}</span>
+                        </Link>
+                    </li>
+                ))}
+            </ul>
+            {clients.missingDocuments > 0 && (
+                <p className="text-label-sm text-ink-muted">
+                    Missing: {requiredTypes.filter((type) => clients.missingByType[type]).map((type) => `${documentTypeLabel(type)} ${formatNumber(clients.missingByType[type])}`).join(" · ")}
+                </p>
+            )}
+        </Card>
+    );
+}
+
 function OverviewContent({ data }: { data: Overview }) {
     const { kpis, reviewQueue } = data;
     return (
@@ -96,7 +131,10 @@ function OverviewContent({ data }: { data: Overview }) {
                 <KpiCard label="Received today" value={kpis.receivedToday} hint={`WhatsApp submissions on ${formatDate(`${data.businessDate}T12:00:00+05:30`)}`} icon="mail" />
             </div>
 
-            <PoliceDue police={data.police} />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <ClientCompleteness clients={data.clients} requiredTypes={data.requiredDocumentTypes} />
+                <PoliceDue police={data.police} />
+            </div>
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
                 <Card className="space-y-4 p-4 lg:col-span-7">
@@ -190,18 +228,19 @@ function OverviewContent({ data }: { data: Overview }) {
 export function OverviewPage() {
     const { admin } = useAuth();
     const overview = useAdminResource("overview", (token, signal) => getOverview(token, signal));
+    const { syncing } = useSync();
 
     return (
         <section aria-labelledby="page-title" className="space-y-6">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Overview</h1>
-                    <p className="mt-1 text-body-sm text-ink-muted">Welcome{admin ? `, ${admin.name}` : ""}. Figures use Sri Lanka time.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Welcome{admin ? `, ${admin.name}` : ""}. Current figures; Sri Lanka time. For one day's figures see the <Link to="/reports/daily" className="text-primary hover:underline">Daily Report</Link>.</p>
                 </div>
                 <button
                     type="button"
                     onClick={overview.reload}
-                    disabled={overview.status === "loading"}
+                    disabled={overview.status === "loading" || syncing}
                     className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft shadow-surface hover:border-border-focus hover:bg-canvas disabled:opacity-60"
                 >
                     Refresh

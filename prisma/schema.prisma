@@ -38,6 +38,7 @@ model AuditLog {
   auditId             String    @id @map("audit_id")
   adminId             String    @map("admin_id")
   // APPROVE | KEEP_PENDING | REMOVE_FROM_REVIEW
+  // | SET_DOCUMENT_TYPE | ASSIGN_CLIENT | SET_POLICE_DATE
   action              String
   temporaryId         String?   @map("temporary_id")
   documentId          String?   @map("document_id")
@@ -51,6 +52,10 @@ model AuditLog {
   // what was removed: its document type and file checksum.
   documentType        String?   @map("document_type")
   fileSha256          String?   @map("file_sha256") @db.Char(64)
+  // Corrections: the value before and after (document type, passport ID
+  // or police slip date as YYYY-MM-DD). Null for the other actions.
+  previousValue       String?   @map("previous_value")
+  newValue            String?   @map("new_value")
   createdDate         DateTime  @default(now()) @map("created_date")
 
   admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Restrict)

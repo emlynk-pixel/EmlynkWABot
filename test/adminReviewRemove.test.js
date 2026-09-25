@@ -209,7 +209,8 @@ describe("no automatic removal", () => {
         const action = sources.find(([f]) => f === "adminReviewActionService.js")[1];
         assert.equal(action.match(/temporaryData\.delete\(/g).length, 1, "one delete, inside removeFromReview");
         assert.ok(!/setInterval|setTimeout|cron|schedule/i.test(action), "no timers or schedules");
-        assert.deepEqual(Object.values(REVIEW_ACTION).sort(), ["APPROVE", "KEEP_PENDING", "REMOVE_FROM_REVIEW"]);
+        // No other action (the corrections included) removes anything.
+        assert.deepEqual(Object.values(REVIEW_ACTION).sort(), ["APPROVE", "ASSIGN_CLIENT", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "SET_DOCUMENT_TYPE", "SET_POLICE_DATE"]);
     });
 });
 

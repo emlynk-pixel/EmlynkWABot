@@ -1,6 +1,6 @@
 // In-memory stand-in for the Prisma calls the review queue, review detail
 // and review actions make. Mirrors what those rely on in PostgreSQL:
-//   - where clauses (AND / OR / not / in / relation `is`) are evaluated;
+//   - where clauses (AND / OR / not / in / contains / relation `is`) are evaluated;
 //   - $transaction runs one callback at a time (standing in for the row
 //     locks) and restores every table if the callback throws;
 //   - documents are unique per (passportId, fileSha256) (P2002);
@@ -51,6 +51,11 @@ export function createFakeReviewDb({ admins = [], users = [], temporaryData = []
                 if (op === "in") return arg.includes(value);
                 if (op === "gte") return value !== null && value >= arg;
                 if (op === "lt") return value !== null && value < arg;
+                if (op === "contains") {
+                    if (value === null) return false;
+                    return cond.mode === "insensitive" ? String(value).toLowerCase().includes(String(arg).toLowerCase()) : String(value).includes(arg);
+                }
+                if (op === "mode") return true;
                 throw new Error(`fakeReviewDb: unsupported operator ${key}.${op}`);
             });
         });

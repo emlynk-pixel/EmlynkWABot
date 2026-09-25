@@ -1,4 +1,4 @@
-// Read-only data for the admin dashboard (Phase 10, Checkpoint 2).
+// Read-only data for the admin dashboard (Phase 10).
 //
 // Two tables hold what the dashboard shows:
 // - documents: files stored in a client folder (processing_status STORED,
@@ -17,24 +17,20 @@ import { clientName } from "../utils/clientName.js";
 import { REVIEW_PENDING_WHERE } from "./adminReviewService.js";
 import { countdownFromDocuments, policeDueCounts } from "./adminPoliceService.js";
 import { toYmd } from "./policeCountdownService.js";
+import {
+    REQUIRED_DOCUMENT_TYPES,
+    REQUIREMENT_STATUS,
+    clientCompletenessCounts,
+    missingTypesOf,
+    requiredDocumentStatus,
+} from "./adminClientService.js";
 
-export { clientName };
+export { clientName, REQUIRED_DOCUMENT_TYPES, REQUIREMENT_STATUS, requiredDocumentStatus };
 
-// Proposal §22 (client view) and AC-22: a client needs a passport, a final
-// police report and a medical. The police slip is an intermediate document
-// (it starts the 21-day wait, Phase 9) and is not itself required.
-export const REQUIRED_DOCUMENT_TYPES = Object.freeze([
-    DOCUMENT_TYPES.PASSPORT,
-    DOCUMENT_TYPES.POLICE_REPORT,
-    DOCUMENT_TYPES.MEDICAL,
-]);
-
-export const REQUIREMENT_STATUS = Object.freeze({
-    VERIFIED: "VERIFIED",               // a stored document of this type is VERIFIED
-    REVIEW_REQUIRED: "REVIEW_REQUIRED", // stored, but only as REVIEW_REQUIRED
-    PENDING_REVIEW: "PENDING_REVIEW",   // not stored; a file is waiting in pending/
-    MISSING: "MISSING",                 // nothing received
-});
+// Proposal §19, §22 and AC-22: by default a client needs a passport, a final
+// police report and a medical (REQUIRED_DOCUMENT_TYPES, configurable). The
+// police slip is an intermediate document (it starts the 21-day wait) and is
+// not itself required.
 
 export const RECENT_DOCUMENTS_LIMIT = 8;
 export const REVIEW_QUEUE_PREVIEW_LIMIT = 5;
@@ -107,6 +103,7 @@ export async function getOverview({ db, now = new Date() }) {
         recentDocuments,
         pendingPreview,
         policeDue,
+        clients,
     ] = await Promise.all([
         db.user.count(),
         db.document.count(),
@@ -123,8 +120,10 @@ export async function getOverview({ db, now = new Date() }) {
             orderBy: [{ createdDate: "desc" }, { temporaryId: "asc" }],
             take: REVIEW_QUEUE_PREVIEW_LIMIT,
         }),
-        // Police Workflow (Checkpoint 5): reports due soon, due today, overdue.
+        // Police Workflow: reports due soon, due today, overdue.
         policeDueCounts({ db, today }),
+        // Complete / incomplete clients and missing required documents.
+        clientCompletenessCounts({ db }),
     ]);
 
     return {
@@ -147,6 +146,8 @@ export async function getOverview({ db, now = new Date() }) {
             items: pendingPreview.map(toPendingItem),
         },
         police: policeDue,
+        clients,
+        requiredDocumentTypes: [...REQUIRED_DOCUMENT_TYPES],
     };
 }
 
@@ -320,19 +321,6 @@ export function isValidPassportIdParam(value) {
     return typeof value === "string" && PASSPORT_ID_PATTERN.test(value);
 }
 
-// Per required type: VERIFIED > REVIEW_REQUIRED > PENDING_REVIEW > MISSING.
-export function requiredDocumentStatus({ documents, pendingItems }) {
-    return REQUIRED_DOCUMENT_TYPES.map((documentType) => {
-        const stored = documents.filter((d) => d.documentType === documentType);
-        const pending = pendingItems.filter((p) => p.documentType === documentType);
-        let status = REQUIREMENT_STATUS.MISSING;
-        if (stored.some((d) => d.verificationStatus === VERIFICATION_STATUS.VERIFIED)) status = REQUIREMENT_STATUS.VERIFIED;
-        else if (stored.length) status = REQUIREMENT_STATUS.REVIEW_REQUIRED;
-        else if (pending.length) status = REQUIREMENT_STATUS.PENDING_REVIEW;
-        return { documentType, status, storedCount: stored.length, pendingCount: pending.length };
-    });
-}
-
 // Latest stored police slip and final police report, as they are.
 function latestOfType(documents, documentType) {
     const doc = documents.find((d) => d.documentType === documentType);
@@ -343,7 +331,7 @@ function latestOfType(documents, documentType) {
 
 export async function getClientDetails({ db, passportId, now = new Date() }) {
     const id = passportId.toUpperCase();
-    const [user, pendingRows] = await Promise.all([
+    const [user, pendingRows, policeDateChanges] = await Promise.all([
         db.user.findUnique({
             where: { passportId: id },
             select: {
@@ -371,6 +359,13 @@ export async function getClientDetails({ db, passportId, now = new Date() }) {
             select: { temporaryId: true, documentType: true, processingStatus: true, createdDate: true },
             orderBy: [{ createdDate: "desc" }, { temporaryId: "asc" }],
             take: CLIENT_PENDING_ITEMS_LIMIT,
+        }),
+        // Police slip dates set or corrected by an admin (audit log).
+        db.auditLog.findMany({
+            where: { passportId: id, action: "SET_POLICE_DATE" },
+            include: { admin: { select: { name: true } } },
+            orderBy: [{ createdDate: "desc" }, { auditId: "asc" }],
+            take: 20,
         }),
     ]);
 
@@ -400,16 +395,26 @@ export async function getClientDetails({ db, passportId, now = new Date() }) {
         documents,
         pendingItems,
         requiredDocuments,
-        missingDocumentTypes: requiredDocuments.filter((r) => r.status === REQUIREMENT_STATUS.MISSING).map((r) => r.documentType),
+        missingDocumentTypes: missingTypesOf(requiredDocuments),
+        complete: requiredDocuments.every((r) => r.status === REQUIREMENT_STATUS.VERIFIED),
         police: {
             latestSlip: latestOfType(user.documents, DOCUMENT_TYPES.POLICE_SLIP),
             latestReport: latestOfType(user.documents, DOCUMENT_TYPES.POLICE_REPORT),
-            // 21-day follow-up (Checkpoint 5), calculated, never stored.
+            // 21-day follow-up, calculated, never stored.
             countdown: countdownFromDocuments(
                 user.documents,
                 pendingRows.filter((row) => row.documentType === DOCUMENT_TYPES.POLICE_SLIP).length,
                 businessDateOf(now)
             ),
+            dateChanges: policeDateChanges.map((row) => ({
+                auditId: row.auditId,
+                documentId: row.documentId,
+                adminName: row.admin?.name ?? null,
+                previousDate: row.previousValue ?? null,
+                newDate: row.newValue ?? null,
+                reason: row.reason ?? null,
+                createdDate: toIso(row.createdDate),
+            })),
         },
     };
 }

@@ -1,4 +1,4 @@
-// Where the admin JWT lives in this checkpoint (Phase 10, Checkpoint 1).
+// Where the admin JWT lives (Phase 10).
 //
 // sessionStorage: kept across reloads of this tab, gone when the tab or
 // browser closes, never shared with other tabs, never sent automatically.

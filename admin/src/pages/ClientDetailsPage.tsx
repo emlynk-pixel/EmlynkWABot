@@ -1,9 +1,12 @@
-import type { ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
-import { getClientDetails, type ClientDetails } from "../api/admin";
+import { getClientDetails, setPoliceDate, type ClientDetails } from "../api/admin";
+import { ApiError } from "../api/client";
 import { useAdminResource } from "../api/useAdminResource";
+import { useAuth } from "../auth/AuthProvider";
+import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../components/Dialog";
 import { DocumentsTable } from "../components/DocumentsTable";
-import { documentTypeLabel, formatDate, formatDateTime, formatDay } from "../components/format";
+import { documentTypeLabel, formatDate, formatDateTime, formatDay, todayInSriLanka } from "../components/format";
 import { Icon } from "../components/Icon";
 import { daysLeftLabel, policeStatusLabel } from "../components/policeLabels";
 import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
@@ -61,9 +64,95 @@ function PoliceCountdownPanel({ countdown }: { countdown: ClientDetails["police"
     );
 }
 
-function ClientContent({ data }: { data: ClientDetails }) {
+// Set or correct the submitted date of the client's latest stored police
+// slip (e.g. an older verified slip stored without one). Audited; the
+// 21-day countdown is recalculated from the new date.
+function PoliceDateDialog({ slip, onClose, onSaved }: { slip: NonNullable<ClientDetails["police"]["latestSlip"]>; onClose: () => void; onSaved: (date: string) => void }) {
+    const { token, signOut } = useAuth();
+    const [date, setDate] = useState(slip.policeSubmittedDate ?? "");
+    const [reason, setReason] = useState("");
+    const [fieldError, setFieldError] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+    const today = todayInSriLanka();
+
+    const submit = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!token || busy) return;
+        if (!date) return setFieldError("Enter the submitted date shown on the police slip.");
+        if (date > today) return setFieldError("The date can't be in the future.");
+        if (date < "2000-01-01") return setFieldError("The date must be on or after 1 January 2000.");
+        if (!reason.trim()) return setFieldError("Enter a reason.");
+        setBusy(true);
+        setError(null);
+        try {
+            await setPoliceDate(token, slip.documentId, date, reason.trim());
+            onSaved(date);
+        } catch (caught) {
+            if (caught instanceof ApiError && caught.status === 401) return signOut();
+            setError(caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <ActionDialog title={slip.policeSubmittedDate ? "Correct the police slip date" : "Set the police slip date"} busy={busy} onClose={onClose}>
+            <form onSubmit={submit} noValidate>
+                <p className="text-body-sm text-ink-soft">
+                    {slip.policeSubmittedDate
+                        ? `The slip's submitted date is ${formatDay(slip.policeSubmittedDate)}. `
+                        : "This slip has no submitted date, so no countdown is running. "}
+                    The final police report is due 21 days after this date (Sri Lanka calendar). The change is recorded in the audit log.
+                </p>
+                <label htmlFor="slip-date" className="mt-3 block text-label-md text-ink">
+                    Submitted date on the police slip <span aria-hidden="true" className="text-critical">*</span>
+                </label>
+                <input
+                    id="slip-date"
+                    type="date"
+                    min="2000-01-01"
+                    max={today}
+                    value={date}
+                    disabled={busy}
+                    onChange={(event) => {
+                        setDate(event.target.value);
+                        setFieldError(null);
+                    }}
+                    className="mt-1 h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                />
+                <label htmlFor="slip-date-reason" className="mt-3 block text-label-md text-ink">
+                    Reason <span aria-hidden="true" className="text-critical">*</span>
+                </label>
+                <textarea
+                    id="slip-date-reason"
+                    maxLength={500}
+                    rows={2}
+                    value={reason}
+                    disabled={busy}
+                    onChange={(event) => {
+                        setReason(event.target.value);
+                        setFieldError(null);
+                    }}
+                    className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                />
+                {fieldError && <p className="mt-2 text-label-sm text-critical">{fieldError}</p>}
+                <DialogError message={error} />
+                <div className="mt-4 flex justify-end gap-2">
+                    <button type="button" className={secondaryButton} disabled={busy} onClick={onClose}>Cancel</button>
+                    <button type="submit" className={primaryButton} disabled={busy}>{busy ? "Saving…" : "Save date"}</button>
+                </div>
+            </form>
+        </ActionDialog>
+    );
+}
+
+function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: () => void }) {
     const { client } = data;
     const missing = data.missingDocumentTypes;
+    const [dateDialog, setDateDialog] = useState(false);
+    const [notice, setNotice] = useState<string | null>(null);
+    const slip = data.police.latestSlip;
 
     return (
         <div className="space-y-6">
@@ -76,8 +165,11 @@ function ClientContent({ data }: { data: ClientDetails }) {
                 <div className="flex flex-wrap items-center gap-3">
                     <h1 id="page-title" className="text-headline-xl text-ink">{client.name ?? client.passportId}</h1>
                     <span className="rounded bg-canvas-muted px-2 py-0.5 text-label-caps uppercase text-ink-muted">Unique ID {client.uniqueId}</span>
+                    <ToneBadge tone={data.complete ? "verified" : "review"}>{data.complete ? "Complete" : "Incomplete"}</ToneBadge>
                 </div>
             </div>
+
+            {notice && <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
 
             <Card className="p-4">
                 <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -120,6 +212,29 @@ function ClientContent({ data }: { data: ClientDetails }) {
                         <PoliceDocument label="Police report" doc={data.police.latestReport} />
                     </div>
                     <PoliceCountdownPanel countdown={data.police.countdown} />
+                    {slip && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-canvas p-3">
+                            <span className="text-body-sm text-ink">
+                                Latest slip submitted date: <span className="font-medium">{slip.policeSubmittedDate ? formatDay(slip.policeSubmittedDate) : "not set"}</span>
+                            </span>
+                            <button type="button" className={secondaryButton} onClick={() => { setNotice(null); setDateDialog(true); }}>
+                                {slip.policeSubmittedDate ? "Correct date" : "Set date"}
+                            </button>
+                        </div>
+                    )}
+                    {data.police.dateChanges.length > 0 && (
+                        <div>
+                            <p className="text-label-caps uppercase text-ink-subtle">Date changes</p>
+                            <ol aria-label="Police slip date changes" className="mt-1 divide-y divide-border">
+                                {data.police.dateChanges.map((change) => (
+                                    <li key={change.auditId} className="py-1.5 text-body-sm">
+                                        <span className="text-ink">{change.previousDate ? formatDay(change.previousDate) : "No date"} → {formatDay(change.newDate)}</span>
+                                        <span className="block text-label-sm text-ink-muted">{change.adminName ?? "Unknown admin"} · {formatDateTime(change.createdDate)}{change.reason ? ` · ${change.reason}` : ""}</span>
+                                    </li>
+                                ))}
+                            </ol>
+                        </div>
+                    )}
                     <Link to="/police" className="inline-block text-label-md text-primary hover:underline">Open Police Workflow</Link>
                 </Card>
             </div>
@@ -153,6 +268,18 @@ function ClientContent({ data }: { data: ClientDetails }) {
                     </ul>
                 </Card>
             )}
+
+            {dateDialog && slip && (
+                <PoliceDateDialog
+                    slip={slip}
+                    onClose={() => setDateDialog(false)}
+                    onSaved={(date) => {
+                        setDateDialog(false);
+                        setNotice(`Police slip submitted date set to ${formatDay(date)}. The 21-day follow-up has been recalculated.`);
+                        onChanged();
+                    }}
+                />
+            )}
         </div>
     );
 }
@@ -163,7 +290,7 @@ export function ClientDetailsPage() {
 
     return (
         <section aria-labelledby="page-title">
-            {details.status === "loading" && <Card><LoadingState label="Loading client…" /></Card>}
+            {details.status === "loading" && !details.data && <Card><LoadingState label="Loading client…" /></Card>}
             {details.status === "error" && (
                 details.error.status === 404 || details.error.status === 400 ? (
                     <Card>
@@ -171,14 +298,14 @@ export function ClientDetailsPage() {
                         <EmptyState
                             title="Client not found"
                             description={`No client has the passport ID ${passportId}.`}
-                            action={<Link to="/documents" className="text-label-md text-primary hover:underline">Back to Documents</Link>}
+                            action={<Link to="/clients" className="text-label-md text-primary hover:underline">Back to Clients</Link>}
                         />
                     </Card>
                 ) : (
                     <Card><ErrorState message={details.error.message} onRetry={details.reload} /></Card>
                 )
             )}
-            {details.status === "success" && <ClientContent data={details.data} />}
+            {details.status !== "error" && details.data?.client.passportId.toUpperCase() === passportId.toUpperCase() && <ClientContent data={details.data} onChanged={details.reload} />}
         </section>
     );
 }

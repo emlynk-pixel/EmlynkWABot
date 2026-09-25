@@ -32,9 +32,12 @@ export const IDENTITY_NOTES: Record<string, string> = {
 
 export const CATEGORY_LABELS = { IDENTITY: "Identity issues", QUALITY: "Quality / OCR issues", CONFLICT: "Conflicts", OTHER: "Other" } as const;
 
-// Review actions in the audit log (there is no reject).
+// Review actions and corrections in the audit log (there is no reject).
 export const AUDIT_ACTIONS: Record<string, { label: string; tone: Tone }> = {
     APPROVE: { label: "Approved", tone: "verified" },
     KEEP_PENDING: { label: "Kept pending", tone: "review" },
     REMOVE_FROM_REVIEW: { label: "Removed from review", tone: "critical" },
+    SET_DOCUMENT_TYPE: { label: "Document type set", tone: "pending" },
+    ASSIGN_CLIENT: { label: "Client assigned", tone: "pending" },
+    SET_POLICE_DATE: { label: "Police slip date set", tone: "pending" },
 };

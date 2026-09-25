@@ -28,7 +28,7 @@ const STATUS_TONES: Record<string, Tone> = {
     CONFLICT: "critical",
     FAILED: "critical",
     DUPLICATE: "duplicate",
-    // Police Workflow countdown (Checkpoint 5)
+    // Police Workflow countdown
     COMPLETED: "verified",
     DUE_SOON: "review",
     DATE_MISSING: "review",

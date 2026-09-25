@@ -1,8 +1,10 @@
 // Admin review actions (Phase 10): APPROVE, KEEP_PENDING and
-// REMOVE_FROM_REVIEW. There is no reject action: an unclear document stays
-// pending until a person decides. Nothing is ever removed automatically;
-// REMOVE_FROM_REVIEW is a manual admin decision that permanently deletes one
-// waiting file and its submission record (the audit entry is kept).
+// REMOVE_FROM_REVIEW; the corrections (set document type, assign client,
+// set police slip date) are in adminCorrectionService.js. There is no reject
+// action: an unclear document stays pending until a person decides. Nothing
+// is ever removed automatically; REMOVE_FROM_REVIEW is a manual admin
+// decision that permanently deletes one waiting file and its submission
+// record (the audit entry is kept).
 //
 // Every action runs in one database transaction that first locks the
 // reviewed row (SELECT … FOR UPDATE), re-reads its state and only then
@@ -28,6 +30,10 @@ export const REVIEW_ACTION = Object.freeze({
     APPROVE: "APPROVE",
     KEEP_PENDING: "KEEP_PENDING",
     REMOVE_FROM_REVIEW: "REMOVE_FROM_REVIEW",
+    // Corrections (adminCorrectionService.js)
+    SET_DOCUMENT_TYPE: "SET_DOCUMENT_TYPE",
+    ASSIGN_CLIENT: "ASSIGN_CLIENT",
+    SET_POLICE_DATE: "SET_POLICE_DATE",
 });
 
 // new_status of a REMOVE_FROM_REVIEW entry (the record itself no longer exists).
@@ -40,7 +46,7 @@ export const MAX_REASON_LENGTH = 500;
 export const DUPLICATE_ACTION_WINDOW_MS = 60_000;
 
 // Interactive transaction limits. Approve copies one file inside it.
-const TRANSACTION_OPTIONS = Object.freeze({ maxWait: 10_000, timeout: 30_000 });
+export const TRANSACTION_OPTIONS = Object.freeze({ maxWait: 10_000, timeout: 30_000 });
 
 export class ReviewActionError extends Error {
     constructor(status, code, message) {
@@ -51,14 +57,14 @@ export class ReviewActionError extends Error {
     }
 }
 
-const notFound = () => new ReviewActionError(404, "NOT_FOUND", "Review item not found");
-const alreadyResolved = () => new ReviewActionError(409, "ALREADY_RESOLVED", "This item is no longer waiting for review. Reload the page to see its current state.");
+export const notFound = () => new ReviewActionError(404, "NOT_FOUND", "Review item not found");
+export const alreadyResolved = () => new ReviewActionError(409, "ALREADY_RESOLVED", "This item is no longer waiting for review. Reload the page to see its current state.");
 const typeName = (documentType) => documentType.toLowerCase().replace(/_/g, " ");
 
 // ---------------------------------------------------------------- request
 
 // Same bounds as the OCR date reader (policeReportDateService.js).
-const EARLIEST_POLICE_DATE = "2000-01-01";
+export const EARLIEST_POLICE_DATE = "2000-01-01";
 
 // Body of POST …/approve and …/keep-pending: { reason }. Required (1-500
 // characters after trimming) for Keep Pending, optional for Approve.
@@ -123,17 +129,17 @@ function policeDateForApproval({ documentType, storedDate, givenDate }) {
 
 // Row locks, held until the transaction ends. Lock order is always
 // reviewed row first, then the client's users row.
-async function lockTemporaryRow(tx, temporaryId) {
+export async function lockTemporaryRow(tx, temporaryId) {
     await tx.$queryRaw`SELECT "temporary_id" FROM "temporary_data" WHERE "temporary_id" = ${temporaryId} FOR UPDATE`;
 }
 
-async function lockDocumentRow(tx, documentId) {
+export async function lockDocumentRow(tx, documentId) {
     await tx.$queryRaw`SELECT "document_id" FROM "documents" WHERE "document_id" = ${documentId} FOR UPDATE`;
 }
 
 // Serializes approvals for one client, so two items of the same type can't
 // both become the client's verified document.
-async function lockClientRow(tx, passportId) {
+export async function lockClientRow(tx, passportId) {
     const rows = await tx.$queryRaw`SELECT "passport_id" FROM "users" WHERE "passport_id" = ${passportId} FOR UPDATE`;
     return rows.length > 0;
 }
@@ -146,10 +152,10 @@ const pendingSelect = {
 };
 const documentSelect = { documentId: true, passportId: true, documentType: true, verificationStatus: true, temporaryId: true, policeSubmittedDate: true };
 
-const findPending = (db, temporaryId) =>
+export const findPending = (db, temporaryId) =>
     db.temporaryData.findFirst({ where: { AND: [{ temporaryId }, REVIEW_PENDING_WHERE] }, select: pendingSelect });
 
-const findReviewDocument = (db, documentId) =>
+export const findReviewDocument = (db, documentId) =>
     db.document.findFirst({ where: { documentId, verificationStatus: VERIFICATION_STATUS.REVIEW_REQUIRED }, select: documentSelect });
 
 // The client's existing verified document of this type, other than `exceptDocumentId`.
@@ -179,6 +185,10 @@ async function approvalBlocker(db, { passportId, documentType, exceptDocumentId 
     return null;
 }
 
+const correctable = (kind) => (kind === REVIEW_KIND.PENDING
+    ? { available: true, code: null, message: null }
+    : { available: false, code: "NOT_CORRECTABLE", message: "Only files waiting in pending storage can be corrected here. A stored document is already in its client folder." });
+
 // For GET /review/:reviewId: which actions the page may offer.
 export async function reviewActionAvailability({ db, reviewId }) {
     const parsed = parseReviewId(reviewId);
@@ -201,6 +211,10 @@ export async function reviewActionAvailability({ db, reviewId }) {
         remove: parsed.kind === REVIEW_KIND.PENDING
             ? { available: true, code: null, message: null }
             : { available: false, code: "NOT_REMOVABLE", message: "Only files waiting in pending storage can be removed from review." },
+        // Corrections of a waiting file (a stored document is already in a
+        // client folder for its type).
+        setDocumentType: correctable(parsed.kind),
+        assignClient: correctable(parsed.kind),
     };
 }
 
@@ -218,16 +232,22 @@ export function toAuditEntry(row, adminName = row.admin?.name ?? null) {
         policeSubmittedDate: toYmd(row.policeSubmittedDate),
         // Kept for removed files (checksums are never returned).
         documentType: row.documentType ?? null,
+        // Corrections: the value before and after (type, passport ID or date).
+        previousValue: row.previousValue ?? null,
+        newValue: row.newValue ?? null,
         createdDate: row.createdDate instanceof Date ? row.createdDate.toISOString() : row.createdDate,
     };
 }
 
-function createAudit(tx, { admin, action, temporaryId = null, documentId = null, passportId = null, previousStatus, newStatus, reason, policeSubmittedDate = null, documentType = null, fileSha256 = null }) {
+export function createAudit(tx, {
+    admin, action, temporaryId = null, documentId = null, passportId = null, previousStatus, newStatus, reason,
+    policeSubmittedDate = null, documentType = null, fileSha256 = null, previousValue = null, newValue = null,
+}) {
     return tx.auditLog.create({
         data: {
             auditId: crypto.randomUUID(), adminId: admin.adminId, action, temporaryId, documentId, passportId, previousStatus, newStatus, reason,
             policeSubmittedDate: policeSubmittedDate ? ymdToDate(policeSubmittedDate) : null,
-            documentType, fileSha256,
+            documentType, fileSha256, previousValue, newValue,
         },
     });
 }

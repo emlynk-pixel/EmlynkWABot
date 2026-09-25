@@ -15,6 +15,9 @@
     --color-primary-active: #1e40af;
     --color-primary-soft: #eff6ff;
     --color-primary-soft-border: #bfdbfe;
+    /* Text and icons on a solid primary / critical background */
+    --color-on-primary: #ffffff;
+    --color-on-critical: #ffffff;
 
     /* Canvas, surfaces, borders */
     --color-canvas: #f8fafc;
@@ -33,6 +36,9 @@
     --color-sidebar-hover: #1e293b;
     --color-sidebar-text: #94a3b8;
     --color-sidebar-text-active: #ffffff;
+
+    /* Backdrop behind dialogs and the mobile navigation drawer */
+    --color-overlay: rgba(15, 23, 42, 0.4);
 
     /* Status semantic system: text / background / border */
     --color-verified: #059669;
@@ -107,6 +113,66 @@
     --spacing-sidebar-rail: 64px;
     --spacing-header: 56px;
     --container-content: 1600px;
+}
+
+/*
+ * Dark mode: the same Stitch design language on dark slate surfaces. Only
+ * the token values change (never the components), so every screen follows.
+ * Text tokens keep at least 4.5:1 contrast on the surfaces they are used on
+ * (checked by src/test/theme.test.tsx). Light mode is the block above,
+ * unchanged. The choice is stored per browser (src/theme/theme.ts).
+ */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --color-primary: #60a5fa;
+    --color-primary-hover: #93c5fd;
+    --color-primary-active: #bfdbfe;
+    --color-primary-soft: #172554;
+    --color-primary-soft-border: #1e40af;
+    --color-on-primary: #0b1220;
+    --color-on-critical: #0b1220;
+
+    --color-canvas: #0b1220;
+    --color-canvas-muted: #1a2436;
+    --color-surface: #111a2b;
+    --color-border: #243044;
+    --color-border-strong: #3a4a61;
+    --color-border-focus: #64748b;
+    --color-ink: #f1f5f9;
+    --color-ink-soft: #e2e8f0;
+    --color-ink-muted: #b6c2d3;
+    --color-ink-subtle: #97a6ba;
+
+    --color-sidebar: #060b16;
+    --color-sidebar-hover: #1a2436;
+    --color-sidebar-text: #a3b1c4;
+    --color-sidebar-text-active: #ffffff;
+
+    --color-verified: #34d399;
+    --color-verified-bg: #062a1f;
+    --color-verified-border: #0f5c43;
+    --color-review: #fbbf24;
+    --color-review-bg: #2b1d05;
+    --color-review-border: #6b4a0c;
+    --color-pending: #cbd5e1;
+    --color-pending-bg: #1a2436;
+    --color-pending-border: #3a4a61;
+    --color-critical: #f87171;
+    --color-critical-hover: #fca5a5;
+    --color-critical-bg: #2e0f12;
+    --color-critical-border: #7f1d1d;
+    --color-duplicate: #c4b5fd;
+    --color-duplicate-bg: #1f1640;
+    --color-duplicate-border: #4c3a8f;
+
+    --color-overlay: rgba(2, 6, 16, 0.7);
+
+    --shadow-surface: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+    --shadow-popover: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+    --shadow-modal: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+    --shadow-focus: 0 0 0 3px rgba(96, 165, 250, 0.3);
+    --shadow-invalid: 0 0 0 3px rgba(248, 113, 113, 0.3);
 }
 
 @layer base {

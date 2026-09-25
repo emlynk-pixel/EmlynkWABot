@@ -414,7 +414,7 @@ describe("POST /review/:reviewId/keep-pending", () => {
         assert.equal(detail.body.auditLog.length, 1);
         assert.deepEqual(
             { ...detail.body.auditLog[0], auditId: undefined, createdDate: undefined },
-            { auditId: undefined, action: "KEEP_PENDING", adminId: "admin-active", adminName: "Active Admin", reason: "Waiting for a clearer photo", previousStatus: "MANUAL_REVIEW", newStatus: "MANUAL_REVIEW", policeSubmittedDate: null, documentType: null, createdDate: undefined }
+            { auditId: undefined, action: "KEEP_PENDING", adminId: "admin-active", adminName: "Active Admin", reason: "Waiting for a clearer photo", previousStatus: "MANUAL_REVIEW", newStatus: "MANUAL_REVIEW", policeSubmittedDate: null, documentType: null, previousValue: null, newValue: null, createdDate: undefined }
         );
     });
 
@@ -487,6 +487,8 @@ describe("review detail: audit log and available actions", () => {
             approve: { available: true, code: null, message: null, needsPoliceDate: false },
             keepPending: { available: true, code: null, message: null },
             remove: { available: true, code: null, message: null },
+            setDocumentType: { available: true, code: null, message: null },
+            assignClient: { available: true, code: null, message: null },
         });
         assert.equal("reject" in detail.body.actions, false);
 
@@ -532,7 +534,7 @@ describe("security and error handling", () => {
     });
 
     test("there is no reject action", async () => {
-        assert.deepEqual(Object.keys(REVIEW_ACTION).sort(), ["APPROVE", "KEEP_PENDING", "REMOVE_FROM_REVIEW"]);
+        assert.deepEqual(Object.keys(REVIEW_ACTION).sort(), ["APPROVE", "ASSIGN_CLIENT", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "SET_DOCUMENT_TYPE", "SET_POLICE_DATE"]);
         for (const path of [`/review/pending-${TEMP}/reject`, `/review/document-${DOC_REVIEW}/reject`, "/review/reject"]) {
             const response = await call("POST", path, { body: { reason: "x" } });
             assert.equal(response.status, 404, path);
@@ -559,12 +561,19 @@ describe("security and error handling", () => {
         assert.deepEqual(current.db.tables.auditLog, [snapshot]);
     });
 
-    test("the router only writes through the review actions", () => {
+    test("the router only writes through the review actions and corrections", () => {
         const router = createAdminRouter({ db: current.db.client, bucket: current.bucket, requireAdmin: (req, res, next) => next() });
         const writes = router.stack
             .filter((layer) => layer.route)
             .flatMap((layer) => Object.keys(layer.route.methods).filter((m) => m !== "get").map((m) => `${m.toUpperCase()} ${layer.route.path}`));
-        assert.deepEqual(writes.sort(), ["POST /review/:reviewId/approve", "POST /review/:reviewId/keep-pending", "POST /review/:reviewId/remove"]);
+        assert.deepEqual(writes.sort(), [
+            "POST /documents/:documentId/police-date",
+            "POST /review/:reviewId/approve",
+            "POST /review/:reviewId/assign-client",
+            "POST /review/:reviewId/document-type",
+            "POST /review/:reviewId/keep-pending",
+            "POST /review/:reviewId/remove",
+        ]);
     });
 
     test("the fake database mirrors the append-only trigger", async () => {

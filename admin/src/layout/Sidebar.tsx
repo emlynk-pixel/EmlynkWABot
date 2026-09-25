@@ -24,10 +24,10 @@ export function Sidebar({ collapsed, mobileOpen, onToggleCollapsed, onNavigate }
             ].join(" ")}
         >
             <div className="flex h-header shrink-0 items-center gap-3 border-b border-sidebar-hover px-4">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded bg-primary font-semibold text-white">E</span>
+                <span className="flex size-8 shrink-0 items-center justify-center rounded bg-primary font-semibold text-on-primary">E</span>
                 {!railOnly && (
                     <div className="min-w-0">
-                        <p className="truncate text-label-md text-white">EmlynkWABot</p>
+                        <p className="truncate text-label-md text-sidebar-text-active">EmlynkWABot</p>
                         <p className="text-label-caps uppercase text-sidebar-text">Admin Console</p>
                     </div>
                 )}
@@ -47,7 +47,7 @@ export function Sidebar({ collapsed, mobileOpen, onToggleCollapsed, onNavigate }
                                         "relative flex h-9 items-center gap-3 rounded px-3 text-label-md transition-colors",
                                         isActive
                                             ? "bg-sidebar-hover text-sidebar-text-active before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded before:bg-primary"
-                                            : "hover:bg-sidebar-hover hover:text-canvas",
+                                            : "hover:bg-sidebar-hover hover:text-sidebar-text-active",
                                         railOnly ? "justify-center px-0" : "",
                                     ].join(" ")
                                 }
@@ -67,7 +67,7 @@ export function Sidebar({ collapsed, mobileOpen, onToggleCollapsed, onNavigate }
                     aria-controls="admin-sidebar"
                     aria-expanded={!collapsed}
                     className={[
-                        "flex h-9 w-full items-center gap-3 rounded px-3 text-label-md hover:bg-sidebar-hover hover:text-canvas",
+                        "flex h-9 w-full items-center gap-3 rounded px-3 text-label-md hover:bg-sidebar-hover hover:text-sidebar-text-active",
                         railOnly ? "justify-center px-0" : "",
                     ].join(" ")}
                 >
