@@ -241,7 +241,7 @@ Return a distinct result (for example an `error` flag or a `PDF_PARSE_FAILED` me
 | SEC-004 | Low | MIME type is taken from the sender (`message.document.mime_type`); file content (magic bytes) is not checked. | Deferred |
 | SEC-005 | Low | Stored extension comes from the sender's filename, not the validated MIME type (`temporaryStorageService.js` line 13). `x.exe` sent as `application/pdf` is stored as `<uuid>.exe`. Changing this changes stored names. | Deferred |
 | SEC-006 | Low | File size is checked after the full download; the whole file is buffered in memory first. | Deferred |
-| SEC-007 | Info | `src/utils/password-test.js` contains the literal password `Admin#123`. Confirm this is not a real admin password. | Open |
+| SEC-007 | Info | `src/utils/password-test.js` contains the literal password `Admin#123`. Confirm this is not a real admin password. | Resolved: file removed (security audit SEC-016); the password matched no admin |
 | SEC-008 | Info | `docker-compose.yml` contains local development database credentials. Acceptable for local use only. | Open |
 | SEC-009 | Info | Verify-token comparison is not timing-safe. Low impact (one-time handshake only). | Deferred |
 | SEC-010 | Info | No rate limiting on `/auth/login` (proposal §33). | Deferred |
