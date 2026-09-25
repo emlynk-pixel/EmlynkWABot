@@ -128,8 +128,11 @@ describe("processDocument: permanent client storage", () => {
         assert.equal(db.documentRows.at(-1).storedFilename, "passport_v2.pdf");
     });
 
-    test("police report and medical go to their own folders", async () => {
-        const police = await run({ extractText: pdfText(loadDocumentText("police-slip")), mimeType: "image/jpeg" });
+    test("police slip, police report and medical go to their own folders", async () => {
+        const slip = await run({ extractText: pdfText(loadDocumentText("police-slip")), mimeType: "image/jpeg" });
+        assert.ok(slip.objects.includes("clients/N1234567/police-slip/police_slip.jpeg"));
+
+        const police = await run({ extractText: pdfText(loadDocumentText("police-clearance")), mimeType: "image/jpeg" });
         assert.ok(police.objects.includes("clients/N1234567/police-report/police_report.jpeg"));
 
         const medical = await run({ extractText: pdfText(loadDocumentText("medical-gamca")), mimeType: "image/png" });
@@ -220,8 +223,8 @@ describe("processDocument: pending storage", () => {
         assert.equal(recordUpdate.data.pendingStoragePath, `${PENDING_0001}/document_20260924_070503.pdf`);
     });
 
-    test("MANUAL_REVIEW (police report without a date) -> pending/{unique_id}", async () => {
-        const text = "SRI LANKA POLICE\nPolice Clearance Certificate\nNo criminal records found.";
+    test("MANUAL_REVIEW (police slip without a date) -> pending/{unique_id}", async () => {
+        const text = "SRI LANKA POLICE\nReceipt of application for Police Clearance\nApplication No: PCC/2026/12345";
         const { summary, recordUpdate, db } = await run({ extractText: pdfText(text) });
 
         assert.equal(summary.processingStatus, "MANUAL_REVIEW");

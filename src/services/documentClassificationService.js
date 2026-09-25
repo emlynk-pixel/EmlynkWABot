@@ -1,12 +1,21 @@
 import { normalizeForMatching } from "../utils/documentText.js";
 import { findPassportMrz } from "../utils/mrz.js";
 
+// POLICE_SLIP: the receipt given when a police clearance is applied for; its
+// submitted date starts the 21-day wait for the final report (Phase 9).
+// POLICE_REPORT: the final police clearance report/certificate. It needs no
+// date; receiving it completes the police workflow (Phase 9).
 export const DOCUMENT_TYPES = Object.freeze({
     PASSPORT: "PASSPORT",
+    POLICE_SLIP: "POLICE_SLIP",
     POLICE_REPORT: "POLICE_REPORT",
     MEDICAL: "MEDICAL",
     UNKNOWN: "UNKNOWN",
 });
+
+export const POLICE_DOCUMENT_TYPES = Object.freeze([DOCUMENT_TYPES.POLICE_SLIP, DOCUMENT_TYPES.POLICE_REPORT]);
+
+export const isPoliceDocumentType = (documentType) => POLICE_DOCUMENT_TYPES.includes(documentType);
 
 // Filename classification
 
@@ -17,6 +26,7 @@ export const DOCUMENT_TYPES = Object.freeze({
 const FILENAME_RULES = [
     { documentType: DOCUMENT_TYPES.PASSPORT, keywords: ["passport", "travel document"] },
     { documentType: DOCUMENT_TYPES.MEDICAL, keywords: ["medical", "health"] },
+    { documentType: DOCUMENT_TYPES.POLICE_SLIP, keywords: ["slip", "receipt"] },
     { documentType: DOCUMENT_TYPES.POLICE_REPORT, keywords: ["police", "clearance"] },
 ];
 
@@ -48,6 +58,10 @@ export function classifyDocument({ fileName }) {
 
 // Content classification
 
+// Police documents are first recognised as one family, with the same
+// indicators as before, then split into slip or final report (below).
+const POLICE_FAMILY = "POLICE";
+
 // Each indicator counts once, however often it appears. Weight 2 is for
 // phrases that almost only appear on that document type; weight 1 is for
 // words that also show up elsewhere (e.g. police certificates often print
@@ -62,7 +76,7 @@ const CONTENT_INDICATORS = {
         { id: "place_of_birth", weight: 1, pattern: /\bplace\s*of\s*birth\b/ },
         { id: "date_of_expiry", weight: 1, pattern: /\b(date\s*of\s*expiry|expiry\s*date)\b/ },
     ],
-    [DOCUMENT_TYPES.POLICE_REPORT]: [
+    [POLICE_FAMILY]: [
         { id: "police", weight: 1, pattern: /\bpolice\b/ },
         { id: "police_clearance", weight: 2, pattern: /\bpolice\s*clearance\b/ },
         { id: "clearance_certificate", weight: 2, pattern: /\bclearance\s*certificate\b/ },
@@ -102,7 +116,65 @@ export const CONTENT_CLASSIFICATION_REASONS = Object.freeze({
     NO_TEXT: "NO_TEXT",
     INSUFFICIENT_EVIDENCE: "INSUFFICIENT_EVIDENCE",
     AMBIGUOUS_CONTENT: "AMBIGUOUS_CONTENT",
+    // Clearly a police document, but not clearly a slip or a final report.
+    POLICE_TYPE_UNCLEAR: "POLICE_TYPE_UNCLEAR",
 });
+
+// Slip vs final report. Scored like the main classifier: each indicator
+// once, and the winner needs POLICE_SUBTYPE_MIN_SCORE from at least two
+// indicators and a lead of POLICE_SUBTYPE_MIN_LEAD. One weak word never
+// decides; mixed or thin evidence is left unresolved (-> review).
+const POLICE_SUBTYPE_INDICATORS = {
+    [DOCUMENT_TYPES.POLICE_SLIP]: [
+        { id: "slip_receipt", weight: 2, pattern: /\b(receipt|acknowledge?ments?)\b/ },
+        { id: "slip_submitted", weight: 2, pattern: /\b(submitted|submission|lodged)\b/ },
+        { id: "slip_application_number", weight: 2, pattern: /\bapplication\s*(no|number|#|ref(erence)?)\b/ },
+        { id: "slip_clearance_application", weight: 2, pattern: /\b(clearance\s*application|application\s*for\s*(a\s*)?(police\s*)?clearance)\b/ },
+        { id: "slip_application", weight: 1, pattern: /\b(application|applied)\b/ },
+        { id: "slip_received", weight: 1, pattern: /\b(received|registered)\b/ },
+        { id: "slip_reference_number", weight: 1, pattern: /\b(reference|ref)\.?\s*(no|number|#)\b/ },
+    ],
+    [DOCUMENT_TYPES.POLICE_REPORT]: [
+        { id: "report_clearance_certificate", weight: 2, pattern: /\bclearance\s*certificate\b/ },
+        { id: "report_no_criminal_record", weight: 2, pattern: /\bno\s*criminal\s*records?\b/ },
+        { id: "report_certify", weight: 2, pattern: /\b(this\s*is\s*to\s*certify|hereby\s*certif(y|ied)|certified\s*that)\b/ },
+        { id: "report_criminal_record", weight: 1, pattern: /\bcriminal\s*records?\b/ },
+        { id: "report_inspector_general", weight: 1, pattern: /\binspector\s*general\b/ },
+        { id: "report_police_headquarters", weight: 1, pattern: /\bpolice\s*headquarters\b/ },
+        { id: "report_date_of_issue", weight: 1, pattern: /\b(date\s*of\s*issue|issued\s*(on|by))\b/ },
+    ],
+};
+const POLICE_SUBTYPE_MIN_SCORE = 3;
+const POLICE_SUBTYPE_MIN_INDICATORS = 2;
+const POLICE_SUBTYPE_MIN_LEAD = 2;
+
+// Returns { documentType (POLICE_SLIP / POLICE_REPORT, or null when unclear),
+// indicators, scores }.
+export function classifyPoliceSubtype(text) {
+    const normalizedText = normalizeForMatching(text);
+    const results = Object.entries(POLICE_SUBTYPE_INDICATORS)
+        .map(([documentType, indicators]) => {
+            const matched = indicators.filter(({ pattern }) => pattern.test(normalizedText));
+            return {
+                documentType,
+                score: matched.reduce((total, { weight }) => total + weight, 0),
+                indicators: matched.map(({ id }) => id),
+            };
+        })
+        .sort((a, b) => b.score - a.score);
+
+    const [best, runnerUp] = results;
+    const scores = Object.fromEntries(results.map((r) => [r.documentType, r.score]));
+    const clear = best.score >= POLICE_SUBTYPE_MIN_SCORE
+        && best.indicators.length >= POLICE_SUBTYPE_MIN_INDICATORS
+        && best.score - runnerUp.score >= POLICE_SUBTYPE_MIN_LEAD;
+
+    return {
+        documentType: clear ? best.documentType : null,
+        indicators: clear ? best.indicators : [],
+        scores,
+    };
+}
 
 function scoreDocumentType(documentType, normalizedText, rawText) {
     const matched = CONTENT_INDICATORS[documentType].filter(({ pattern }) =>
@@ -155,6 +227,25 @@ export function classifyDocumentContent(text) {
         return unknown(CONTENT_CLASSIFICATION_REASONS.AMBIGUOUS_CONTENT, results);
     }
 
+    // A police document must also be clearly a slip or a final report: they
+    // follow different rules, so an unclear one is left for a person.
+    if (best.documentType === POLICE_FAMILY) {
+        const subtype = classifyPoliceSubtype(rawText);
+        if (!subtype.documentType) {
+            return { ...unknown(CONTENT_CLASSIFICATION_REASONS.POLICE_TYPE_UNCLEAR, results), policeScores: subtype.scores };
+        }
+        return {
+            documentType: subtype.documentType,
+            source: "CONTENT",
+            // The family score, so classification confidence works as before.
+            score: best.score,
+            indicators: [...best.indicators, ...subtype.indicators],
+            scores: Object.fromEntries(results.map((r) => [r.documentType, r.score])),
+            policeScores: subtype.scores,
+            reason: null,
+        };
+    }
+
     return {
         documentType: best.documentType,
         source: "CONTENT",
@@ -175,11 +266,14 @@ export function resolveDocumentType({ filenameClassification, contentClassificat
     const contentType = contentClassification?.documentType ?? DOCUMENT_TYPES.UNKNOWN;
 
     if (contentType !== DOCUMENT_TYPES.UNKNOWN) {
+        // A police-named file is not a "wrong document" for either police
+        // type: people name slips and reports alike ("police.jpg").
+        const family = (type) => (isPoliceDocumentType(type) ? POLICE_FAMILY : type);
         return {
             documentType: contentType,
             source: "CONTENT",
             filenameMismatch:
-                filenameType !== DOCUMENT_TYPES.UNKNOWN && filenameType !== contentType,
+                filenameType !== DOCUMENT_TYPES.UNKNOWN && family(filenameType) !== family(contentType),
         };
     }
 

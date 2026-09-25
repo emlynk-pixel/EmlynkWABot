@@ -4,10 +4,10 @@
 
 Phase 5 turns a stored WhatsApp document into structured, scored information:
 
-- what kind of document it is (passport, police report, medical, unknown)
+- what kind of document it is (passport, police slip, final police report, medical, unknown)
 - how reliably its text was read
 - for passports: the passport fields
-- for police reports: the submitted/issue date
+- for police slips only: the submitted/application date (a final police report needs no date)
 
 Proposal reference: §12 (Passport Processing), §17 (confidence bands), §20 (Police Report Slip Processing), §32 (error handling), §44 Phase 5.
 
@@ -34,7 +34,7 @@ Confidence ──────────────────── confiden
    extraction + classification → document confidence → band + flags
         │
         ├── PASSPORT      → passportExtractionService (fields + field confidence)
-        └── POLICE_REPORT → policeReportDateService (date)
+        └── POLICE_SLIP → policeReportDateService (date); POLICE_REPORT needs no date
         │
         ▼
 Phase 6 (identity, reconciliation) → temporary_data updated
@@ -103,7 +103,7 @@ Each type has weighted indicators. Each indicator counts once.
 | Type | Strong indicators (weight 2) | Supporting indicators (weight 1) |
 |---|---|---|
 | PASSPORT | MRZ line 1, MRZ line 2 | passport, passport no, nationality, surname, given names, place of birth, date of expiry |
-| POLICE_REPORT | police clearance, clearance certificate, criminal record(s) | police, police station/headquarters, inspector general, conviction, character certificate |
+| Police (family, then split below) | police clearance, clearance certificate, criminal record(s) | police, police station/headquarters, inspector general, conviction, character certificate |
 | MEDICAL | medical examination/report/certificate, GAMCA/Wafid | medical, fit/unfit for, health, hospital/clinic/laboratory, doctor, lab tests |
 
 Decision rules:
@@ -114,6 +114,17 @@ Decision rules:
 - A filename that disagrees with the content sets `filenameMismatch` (wrong document, §17).
 
 Police certificates often print "Passport No" and "Nationality". The weights keep those from being classified as passports (see tests).
+
+### Police slip vs final police report
+
+A police document is then split into two types with separate indicators (`classifyPoliceSubtype()`):
+
+| Type | Strong indicators (weight 2) | Supporting indicators (weight 1) |
+|---|---|---|
+| `POLICE_SLIP` (receipt given on application) | receipt/acknowledgement, submitted/submission/lodged, application no/number/reference, clearance application | application/applied, received/registered, reference no |
+| `POLICE_REPORT` (final clearance certificate) | clearance certificate, no criminal record(s), "this is to certify" / "hereby certify" | criminal record(s), inspector general, police headquarters, date of issue / issued on |
+
+The winner needs a score ≥ 3 from ≥ 2 indicators and a lead of ≥ 2; one keyword never decides. Otherwise the result is `UNKNOWN` with reason `POLICE_TYPE_UNCLEAR` and flag `POLICE_TYPE_UNCLEAR` (UNDEFINED band, pending storage, a person decides). Classification confidence still comes from the police family score. A police-named file (`police.jpg`) is not treated as a wrong document for either police type.
 
 ## Passport Field Extraction
 
@@ -182,7 +193,9 @@ Document flags:
 | `NO_READABLE_TEXT` | Extraction produced no text. |
 | `CORRUPT_FILE` | PDF could not be parsed. |
 
-## Police Report Date Extraction
+## Police Slip Date Extraction
+
+Runs for `POLICE_SLIP` only. A final `POLICE_REPORT` has `policeDate: null` and no date requirement. A slip whose date is `AMBIGUOUS`, `INVALID` or `NOT_FOUND` goes to `MANUAL_REVIEW` (pending); no date is guessed.
 
 `extractPoliceReportDate(text)` returns `{ status, date, kind, confidence, candidates }`.
 
@@ -203,7 +216,7 @@ After Phase 5 and 6, the existing `temporary_data` row is updated:
 
 | Column | Value |
 |---|---|
-| `document_type` | `PASSPORT`, `POLICE_REPORT`, `MEDICAL` or `UNKNOWN` |
+| `document_type` | `PASSPORT`, `POLICE_SLIP`, `POLICE_REPORT`, `MEDICAL` or `UNKNOWN` |
 | `processing_status` | See table below |
 | `passport_id`, `unique_id` | Only when identity resolves to one existing user (Phase 6) |
 
@@ -215,7 +228,7 @@ After Phase 5 and 6, the existing `temporary_data` row is updated:
 | `CONFLICT` | Identity conflict, or a passport value contradicts the user record |
 | `UNDEFINED` | Document confidence < 40 |
 | `UNCLEAR` | Confidence 40–59 |
-| `MANUAL_REVIEW` | Identity needs review, wrong document suspected, or police date not resolved |
+| `MANUAL_REVIEW` | Identity needs review, wrong document suspected, or a police slip's date not resolved |
 | `VERIFIED` / `HIGH_CONFIDENCE` / `SLIGHTLY_UNCLEAR` | Otherwise, the confidence band |
 
 ## Failure Handling

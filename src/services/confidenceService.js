@@ -75,6 +75,8 @@ export const DOCUMENT_FLAGS = Object.freeze({
     // Low-quality passport stored for review on MRZ + identity proof
     // (passportAcceptanceService.js). The measured confidence is unchanged.
     PASSPORT_ACCEPTED_BY_MRZ_AND_IDENTITY: "PASSPORT_ACCEPTED_BY_MRZ_AND_IDENTITY",
+    // A police document that is neither clearly a slip nor a final report.
+    POLICE_TYPE_UNCLEAR: "POLICE_TYPE_UNCLEAR",
 });
 
 // Overall confidence for one received document. It's the weaker of the two
@@ -90,6 +92,7 @@ export function assessDocumentConfidence({ textExtraction, contentClassification
     else if (!textExtraction?.success) flags.push(DOCUMENT_FLAGS.NO_READABLE_TEXT);
     if (resolvedType?.source === "FILENAME") flags.push(DOCUMENT_FLAGS.CLASSIFIED_FROM_FILENAME_ONLY);
     if (resolvedType?.filenameMismatch) flags.push(DOCUMENT_FLAGS.WRONG_DOCUMENT_SUSPECTED);
+    if (contentClassification?.reason === "POLICE_TYPE_UNCLEAR") flags.push(DOCUMENT_FLAGS.POLICE_TYPE_UNCLEAR);
 
     return {
         extractionConfidence,

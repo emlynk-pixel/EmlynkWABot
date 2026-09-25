@@ -4,6 +4,7 @@
 // Folder and standard base name per document type (proposal §15).
 export const DOCUMENT_STORAGE_TYPES = Object.freeze({
     PASSPORT: { folder: "passport", baseName: "passport" },
+    POLICE_SLIP: { folder: "police-slip", baseName: "police_slip" },
     POLICE_REPORT: { folder: "police-report", baseName: "police_report" },
     MEDICAL: { folder: "medical", baseName: "medical" },
 });

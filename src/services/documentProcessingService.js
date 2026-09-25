@@ -17,6 +17,7 @@ import { checkClientChecksum, CHECKSUM_OUTCOME } from "./documentChecksumService
 import { decidePlacement, placeDocument } from "./storagePlacementService.js";
 import { safeErrorText } from "../utils/safeLog.js";
 import { evaluatePassportAcceptance, applyPassportAcceptance } from "./passportAcceptanceService.js";
+import { policeWorkflowEvent } from "./policeWorkflowService.js";
 
 // temporary_data.processing_status values after processing, taken from
 // the proposal (§24 state machine, §32 error table). The confidence-band
@@ -67,7 +68,7 @@ export function determineProcessingStatus({ confidence, identity, reconciliation
 function summarize(state) {
     const { stage, error, textExtraction, resolvedType, confidence, passport, fieldConfidence,
         policeDate, identity, reconciliation, applied, processingStatus, recordUpdated,
-        checksum, placement, passportAcceptance } = state;
+        checksum, placement, passportAcceptance, policeWorkflow } = state;
 
     return {
         stage,
@@ -103,6 +104,8 @@ function summarize(state) {
         policeDate: policeDate ? { status: policeDate.status, kind: policeDate.kind } : null,
         // Condition names only, e.g. ["DATE_OF_BIRTH_VERIFIED"].
         passportAcceptance: passportAcceptance ?? null,
+        // Event name only; the dates stay in details.
+        policeWorkflowEvent: policeWorkflow?.event ?? null,
         identity: identity
             ? {
                 status: identity.status,
@@ -179,7 +182,9 @@ export async function processDocument({
             state.passport = extractPassportFields(state.textExtraction.text);
             state.fieldConfidence = assessPassportFieldConfidence(state.passport, state.confidence.extractionConfidence);
         }
-        if (documentType === DOCUMENT_TYPES.POLICE_REPORT) {
+        // Only a slip needs its submitted date (the 21-day wait starts from
+        // it). A final police report is stored without any date.
+        if (documentType === DOCUMENT_TYPES.POLICE_SLIP) {
             state.policeDate = extractPoliceReportDate(state.textExtraction.text);
         }
 
@@ -259,6 +264,12 @@ export async function processDocument({
             receivedAt,
         }, { db, bucket, now });
         state.processingStatus = state.placement.processingStatus;
+        // Phase 9 input only; nothing is stored for it yet.
+        state.policeWorkflow = policeWorkflowEvent({
+            documentType,
+            policeDate: state.policeDate,
+            placement: state.placement.placement,
+        });
 
         state.stage = "RECORD_UPDATE";
         // A file that belongs to another client is never linked to this one.
@@ -295,6 +306,7 @@ export async function processDocument({
             policeDate: state.policeDate
                 ? { status: state.policeDate.status, date: state.policeDate.date, kind: state.policeDate.kind, confidence: state.policeDate.confidence }
                 : null,
+            policeWorkflow: state.policeWorkflow ?? null,
         },
     };
 }

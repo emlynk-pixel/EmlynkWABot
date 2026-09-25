@@ -10,6 +10,10 @@ export const DIAGNOSTIC_VOCABULARY = Object.freeze({
         "convicted", "conviction", "offence", "headquarters", "inspector", "general",
         "division", "department", "station", "character", "certify", "issued", "lanka",
     ],
+    POLICE_SLIP: [
+        "receipt", "acknowledgement", "acknowledgment", "application", "applied",
+        "submitted", "submission", "lodged", "received", "registered", "reference",
+    ],
     PASSPORT: [
         "passport", "surname", "given", "names", "nationality", "birth", "expiry",
         "issue", "authority", "republic",

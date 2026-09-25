@@ -10,7 +10,7 @@ import {
 } from "../src/services/documentClassificationService.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
 
-const { PASSPORT, POLICE_REPORT, MEDICAL, UNKNOWN } = DOCUMENT_TYPES;
+const { PASSPORT, POLICE_SLIP, POLICE_REPORT, MEDICAL, UNKNOWN } = DOCUMENT_TYPES;
 const { NO_TEXT, INSUFFICIENT_EVIDENCE, AMBIGUOUS_CONTENT } = CONTENT_CLASSIFICATION_REASONS;
 
 describe("classifyDocumentContent", () => {
@@ -46,16 +46,16 @@ describe("classifyDocumentContent", () => {
         });
     });
 
-    describe("police report", () => {
-        test("clearance certificate that also mentions passport number and nationality", () => {
+    describe("police documents", () => {
+        test("clearance certificate that also mentions passport number and nationality -> POLICE_REPORT", () => {
             const result = classifyDocumentContent(loadDocumentText("police-clearance"));
             assert.equal(result.documentType, POLICE_REPORT);
-            assert.ok(result.scores[POLICE_REPORT] > result.scores[PASSPORT]);
+            assert.ok(result.scores.POLICE > result.scores[PASSPORT]);
         });
 
-        test("police clearance application slip", () => {
+        test("police clearance application slip -> POLICE_SLIP", () => {
             const result = classifyDocumentContent(loadDocumentText("police-slip"));
-            assert.equal(result.documentType, POLICE_REPORT);
+            assert.equal(result.documentType, POLICE_SLIP);
         });
     });
 

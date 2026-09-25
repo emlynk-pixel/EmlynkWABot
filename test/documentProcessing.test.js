@@ -329,7 +329,7 @@ describe("processDocument", () => {
 
             assert.equal(
                 summary.documentType,
-                "POLICE_REPORT"
+                "POLICE_SLIP"
             );
 
             assert.deepEqual(
@@ -363,17 +363,41 @@ describe("processDocument", () => {
     );
 
     test(
-        "police report without a readable date needs manual review",
+        "final police report needs no date: policeDate null, normal status",
         async () => {
             const text =
                 "SRI LANKA POLICE\n" +
                 "Police Clearance Certificate\n" +
                 "No criminal records found.";
 
+            const { summary, details } = await run({
+                extractText: textExtractor(text),
+            });
+
+            assert.equal(summary.documentType, "POLICE_REPORT");
+            assert.equal(summary.policeDate, null);
+            assert.equal(details.policeDate, null);
+            // Clean text layer + strong police wording: the confidence band decides.
+            assert.equal(
+                summary.processingStatus,
+                PROCESSING_STATUS.VERIFIED
+            );
+        }
+    );
+
+    test(
+        "police slip without a readable date needs manual review",
+        async () => {
+            const text =
+                "SRI LANKA POLICE\n" +
+                "Receipt of application for Police Clearance\n" +
+                "Application No: PCC/2026/12345";
+
             const { summary } = await run({
                 extractText: textExtractor(text),
             });
 
+            assert.equal(summary.documentType, "POLICE_SLIP");
             assert.equal(
                 summary.policeDate.status,
                 "NOT_FOUND"

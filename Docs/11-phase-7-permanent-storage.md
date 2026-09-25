@@ -38,6 +38,7 @@ The bucket stays private (§26). No public or signed URLs are created.
 ```text
 temporary/<uuid>.<ext>                                                   (Phase 4, unchanged)
 clients/{passport_id}/passport/passport.<ext>, passport_v2.<ext>, …
+clients/{passport_id}/police-slip/police_slip.<ext>, …
 clients/{passport_id}/police-report/police_report.<ext>, …
 clients/{passport_id}/medical/medical.<ext>, …
 pending/{unique_id}/undefined/uncleared-docs/document_YYYYMMDD_HHMMSS.<ext>
@@ -59,7 +60,7 @@ Checked in order (`decidePlacement()` in `src/services/storagePlacementService.j
 | 1 | Same client already has this checksum | none | — | no | `DUPLICATE` |
 | 2 | Another client has this checksum | `pending/unidentified/{temporary_id}/…` | timestamp | no | `CONFLICT` |
 | 3 | Status `CONFLICT`, `UNDEFINED` or `MANUAL_REVIEW` | `pending/{unique_id or unidentified}/…` | timestamp | no | unchanged |
-| 4 | Band `VERIFIED` / `HIGH_CONFIDENCE` / `SLIGHTLY_UNCLEAR` / `UNCLEAR`, client identified, type is PASSPORT / POLICE_REPORT / MEDICAL | `clients/{passport_id}/{folder}/` | standard (`UNCLEAR`: sanitized original) | yes | band name |
+| 4 | Band `VERIFIED` / `HIGH_CONFIDENCE` / `SLIGHTLY_UNCLEAR` / `UNCLEAR`, client identified, type is PASSPORT / POLICE_SLIP / POLICE_REPORT / MEDICAL | `clients/{passport_id}/{folder}/` | standard (`UNCLEAR`: sanitized original) | yes | band name |
 | 5 | Anything else (e.g. clear document, no identified client) | `pending/{unique_id or unidentified}/…` | timestamp | no | unchanged |
 
 Before any pending copy: if the same sender's same checksum is **already stored in `pending/`** (an earlier `temporary_data` row with a `pending_storage_path`), the status is `DUPLICATE` and nothing is copied. An earlier attempt that never reached `pending/` does not count, so a failed upload can be sent again.
@@ -68,7 +69,7 @@ Before any pending copy: if the same sender's same checksum is **already stored 
 
 ## Naming
 
-- **Standard names:** `passport`, `police_report`, `medical` + extension. Version = number of the client's existing `documents` rows of that type + 1 (`passport_v2.pdf`, `passport_v3.pdf`). If a name is already taken in storage, the next version is used.
+- **Standard names:** `passport`, `police_slip`, `police_report`, `medical` + extension. Version = number of the client's existing `documents` rows of that type + 1 (`passport_v2.pdf`, `passport_v3.pdf`). If a name is already taken in storage, the next version is used.
 - **`UNCLEAR`:** sanitized original file name: last path segment only, accents simplified, control characters removed, anything outside `[A-Za-z0-9._-]` replaced with `_`, no `..`, no leading dots, sender extension replaced by the MIME extension, at most 100 characters. If nothing usable remains (or the photo had no name): `document_YYYYMMDD_HHMMSS.<ext>`. Collisions get `_2`, `_3`, ….
 - **Pending:** `document_YYYYMMDD_HHMMSS.<ext>`, with `_2`, `_3` on collision.
 - **Never overwrite:** each name is checked with `exists()` before `copy()`, and a copy that reports "already exists" moves on to the next name. At most 20 names are tried.
@@ -90,7 +91,7 @@ One row per file placed under `clients/`:
 |---|---|
 | `document_id` | new UUID |
 | `passport_id` | identified client |
-| `document_type` | `PASSPORT`, `POLICE_REPORT` or `MEDICAL` |
+| `document_type` | `PASSPORT`, `POLICE_SLIP`, `POLICE_REPORT` or `MEDICAL` |
 | `original_filename` | WhatsApp file name, or `document_YYYYMMDD_HHMMSS.<ext>` for photos |
 | `stored_filename` / `storage_path` | final name and full `clients/…` path |
 | `mime_type`, `file_size` | validated MIME type, byte count |
