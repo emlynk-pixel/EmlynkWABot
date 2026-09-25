@@ -72,6 +72,9 @@ export const DOCUMENT_FLAGS = Object.freeze({
     CLASSIFIED_FROM_FILENAME_ONLY: "CLASSIFIED_FROM_FILENAME_ONLY",
     NO_READABLE_TEXT: "NO_READABLE_TEXT",
     CORRUPT_FILE: "CORRUPT_FILE",
+    // Low-quality passport stored for review on MRZ + identity proof
+    // (passportAcceptanceService.js). The measured confidence is unchanged.
+    PASSPORT_ACCEPTED_BY_MRZ_AND_IDENTITY: "PASSPORT_ACCEPTED_BY_MRZ_AND_IDENTITY",
 });
 
 // Overall confidence for one received document. It's the weaker of the two

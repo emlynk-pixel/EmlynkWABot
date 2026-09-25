@@ -16,6 +16,7 @@ import { sha256Hex } from "../utils/fileChecksum.js";
 import { checkClientChecksum, CHECKSUM_OUTCOME } from "./documentChecksumService.js";
 import { decidePlacement, placeDocument } from "./storagePlacementService.js";
 import { safeErrorText } from "../utils/safeLog.js";
+import { evaluatePassportAcceptance, applyPassportAcceptance } from "./passportAcceptanceService.js";
 
 // temporary_data.processing_status values after processing, taken from
 // the proposal (§24 state machine, §32 error table). The confidence-band
@@ -66,7 +67,7 @@ export function determineProcessingStatus({ confidence, identity, reconciliation
 function summarize(state) {
     const { stage, error, textExtraction, resolvedType, confidence, passport, fieldConfidence,
         policeDate, identity, reconciliation, applied, processingStatus, recordUpdated,
-        checksum, placement } = state;
+        checksum, placement, passportAcceptance } = state;
 
     return {
         stage,
@@ -84,6 +85,7 @@ function summarize(state) {
                 classification: confidence.classificationConfidence,
                 document: confidence.documentConfidence,
                 band: confidence.band,
+                measuredBand: confidence.measuredBand ?? confidence.band,
                 flags: confidence.flags,
             }
             : null,
@@ -92,10 +94,14 @@ function summarize(state) {
                 status: passport.status,
                 missingFields: passport.missingFields,
                 mrzLinesFound: passport.mrz.linesFound,
+                // Not used in any decision yet; logged to evaluate on real scans.
+                mrzCompositeCheckValid: passport.mrz.compositeCheckValid,
                 passportIdBand: fieldConfidence?.passportId?.band ?? null,
             }
             : null,
         policeDate: policeDate ? { status: policeDate.status, kind: policeDate.kind } : null,
+        // Condition names only, e.g. ["DATE_OF_BIRTH_VERIFIED"].
+        passportAcceptance: passportAcceptance ?? null,
         identity: identity
             ? {
                 status: identity.status,
@@ -221,6 +227,12 @@ export async function processDocument({
                 }));
             }
         }
+
+        // Low-quality passport with MRZ + identity proof: stored for review
+        // under the client instead of pending. Band only; the measured
+        // confidence stays as it is.
+        state.passportAcceptance = isPassportDocument ? evaluatePassportAcceptance(state) : null;
+        state.confidence = applyPassportAcceptance(state.confidence, state.passportAcceptance);
 
         state.stage = "STORAGE";
         const decision = decidePlacement({
