@@ -2,6 +2,7 @@ import { createWorker } from "tesseract.js";
 import { PDFParse } from "pdf-parse";
 
 import { readImageDimensions } from "../utils/imageDimensions.js";
+import { findPassportMrz, parsePassportMrz } from "../utils/mrz.js";
 import { safeErrorInfo } from "../utils/safeLog.js";
 import { createConcurrencyLimiter, LimiterBusyError } from "../utils/concurrencyLimiter.js";
 
@@ -121,6 +122,15 @@ export const OCR_THRESHOLDING = Object.freeze({
 // Below this, the default read is retried with the alternative settings.
 export const OCR_RETRY_BELOW_CONFIDENCE = 70;
 
+// A read with fewer non-space characters than this is treated as having read
+// nothing, whatever confidence Tesseract reports for it (an empty page can
+// come back as 95%).
+export const MIN_OCR_TEXT_CHARS = 10;
+
+// Reads this close in confidence count as equally good; a valid passport MRZ
+// then decides (see isBetterRead).
+export const SIMILAR_CONFIDENCE_MARGIN = 5;
+
 // Tried in order after a weak default read. rotateAuto straightens small
 // tilts, but on some real photos it detects a false angle and makes the
 // read worse, so it's an alternative rather than always on.
@@ -143,18 +153,53 @@ async function readPage(worker, image, thresholding, rotateAuto) {
     };
 }
 
+// Confidence used to compare reads; 0 for a (nearly) empty read.
+function selectionConfidence(read) {
+    return read.text.replace(/\s/g, "").length >= MIN_OCR_TEXT_CHARS ? read.confidence : 0;
+}
+
+// Passport MRZ evidence in a read, 0-4: MRZ line 1 found, plus each valid
+// check digit for the passport number, date of birth and expiry on line 2.
+// Text without an MRZ (police, medical, anything else) always scores 0, so
+// it is never affected.
+export const FULL_MRZ_EVIDENCE = 4;
+
+export function mrzEvidence(text) {
+    const mrz = findPassportMrz(text);
+    if (!mrz) return 0;
+    const parsed = parsePassportMrz(mrz);
+    return [Boolean(mrz.line1), parsed.passportNumberCheckValid, parsed.dateOfBirthCheckValid, parsed.expiryDateCheckValid]
+        .filter((valid) => valid === true).length;
+}
+
+// Clearly higher confidence wins. When two reads are within the margin, the
+// one with more valid MRZ check digits wins; if that's equal too (always the
+// case for non-passports), plain confidence decides as before.
+function isBetterRead(candidate, best) {
+    const candidateConfidence = selectionConfidence(candidate);
+    const bestConfidence = selectionConfidence(best);
+
+    if (Math.abs(candidateConfidence - bestConfidence) <= SIMILAR_CONFIDENCE_MARGIN) {
+        const candidateMrz = mrzEvidence(candidate.text);
+        const bestMrz = mrzEvidence(best.text);
+        if (candidateMrz !== bestMrz) return candidateMrz > bestMrz;
+    }
+    return candidateConfidence > bestConfidence;
+}
+
 // Read one image with the default settings (Otsu, no rotation). If that's
-// weak, try the alternatives and keep the most confident read of all of
+// weak (or empty), try the alternatives and keep the best read of all of
 // them, including the default, so the result is never worse than before.
+// The returned confidence is always the one Tesseract reported.
 export async function recognizeImage(worker, image) {
     let best = await readPage(worker, image, OCR_THRESHOLDING.OTSU, false);
-    if (best.confidence >= OCR_RETRY_BELOW_CONFIDENCE) {
+    if (selectionConfidence(best) >= OCR_RETRY_BELOW_CONFIDENCE) {
         return best;
     }
 
     for (const { thresholding, rotateAuto } of OCR_ALTERNATIVES) {
         const attempt = await readPage(worker, image, thresholding, rotateAuto);
-        if (attempt.confidence > best.confidence) {
+        if (isBetterRead(attempt, best)) {
             best = attempt;
         }
     }
@@ -167,14 +212,15 @@ const createEnglishWorker = () => createWorker("eng");
 // OCR several images with one worker. Starting a worker is the slow part.
 // The whole job is bounded by timeoutMs; on timeout the worker is
 // terminated, which stops the OCR still running inside it.
-async function recognizeImages(images, { createOcrWorker = createEnglishWorker, timeoutMs = OCR_JOB_TIMEOUT_MS } = {}) {
+// `recognize` reads one image with the worker (recognizeImage by default).
+async function recognizeImages(images, { createOcrWorker = createEnglishWorker, timeoutMs = OCR_JOB_TIMEOUT_MS, recognize = recognizeImage } = {}) {
     const worker = await createOcrWorker();
     let timer;
 
     const work = (async () => {
         const pages = [];
         for (const image of images) {
-            pages.push(await recognizeImage(worker, image));
+            pages.push(await recognize(worker, image));
         }
         return pages;
     })();
@@ -282,11 +328,142 @@ export async function extractTextFromScannedPdf(fileBuffer, options = {}) {
     });
 }
 
+// Small images get a second read at 2x. WhatsApp passport photos are often
+// only 400-900 px for the whole page, so the MRZ letters are a few pixels
+// high (Tesseract estimates ~110 DPI) and can't be read reliably; 2x brings
+// them to ~200 DPI, like the 2x render of scanned PDFs. It is only a second
+// candidate: on images that already read well, 2x can read worse (tested),
+// so the native read is always tried first and kept unless 2x is better.
+// 3x was tested and read worse. Photos >= 1200 px are never enlarged.
+export const UPSCALE_BELOW_LONG_SIDE = 1200;
+export const SMALL_IMAGE_SCALE = 2;
+
+// Size of the 2x read, or null when the image is not enlarged. Never beyond
+// the image limits.
+export function ocrImageSize({ width, height }) {
+    if (Math.max(width, height) >= UPSCALE_BELOW_LONG_SIDE) {
+        return null;
+    }
+    const scaled = { width: width * SMALL_IMAGE_SCALE, height: height * SMALL_IMAGE_SCALE };
+    return exceedsImageLimits(scaled.width, scaled.height) ? null : scaled;
+}
+
+// Decode an upload into RGBA pixels with pure-JavaScript decoders. A bad
+// file makes them throw, nothing worse. The native canvas decoder is never
+// given the upload: it crashes the whole process (segfault) on some
+// malformed files, e.g. a truncated PNG, which any sender could send.
+// jpeg-js also enforces its own resolution and memory caps.
+async function decodeImagePixels(fileBuffer, format) {
+    if (format === "jpeg") {
+        const { default: jpeg } = await import("jpeg-js");
+        return jpeg.decode(fileBuffer, {
+            useTArray: true,
+            formatAsRGBA: true,
+            maxResolutionInMP: MAX_IMAGE_PIXELS / 1_000_000,
+            maxMemoryUsageInMB: 512,
+        });
+    }
+    if (format === "png") {
+        const { PNG } = await import("pngjs");
+        return PNG.sync.read(fileBuffer); // always 8-bit RGBA
+    }
+    return null;
+}
+
+// Decode and enlarge a small image. Only called after the header size check.
+// The decoded size must match the header, so a file can't claim one size and
+// decode to another. Returns null if the image can't be decoded (the native
+// read is then used). Canvas only resamples the already-decoded pixels.
+export async function upscaleImage(fileBuffer, dimensions) {
+    const target = ocrImageSize(dimensions);
+    if (!target) {
+        return null;
+    }
+
+    let pixels;
+    try {
+        pixels = await decodeImagePixels(fileBuffer, dimensions.format);
+    } catch {
+        return null;
+    }
+    if (!pixels) {
+        return null;
+    }
+    if (pixels.width !== dimensions.width || pixels.height !== dimensions.height) {
+        throw new OcrResourceError("IMAGE_UNREADABLE");
+    }
+
+    const { createCanvas } = await import("@napi-rs/canvas");
+    const source = createCanvas(pixels.width, pixels.height);
+    const sourceContext = source.getContext("2d");
+    const imageData = sourceContext.createImageData(pixels.width, pixels.height);
+    imageData.data.set(pixels.data);
+    // Grayscale (BT.601 luma) before resampling, so colour noise from the
+    // background print and JPEG chroma isn't enlarged into the letters.
+    const rgba = imageData.data;
+    for (let i = 0; i < rgba.length; i += 4) {
+        const luma = 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
+        rgba[i] = rgba[i + 1] = rgba[i + 2] = luma;
+    }
+    sourceContext.putImageData(imageData, 0, 0);
+
+    const canvas = createCanvas(target.width, target.height);
+    const context = canvas.getContext("2d");
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(source, 0, 0, target.width, target.height);
+
+    // PNG: lossless, so no new compression artefacts on top of WhatsApp's.
+    return canvas.toBuffer("image/png");
+}
+
+// A native read that is weak (or empty), or that shows a passport MRZ it
+// couldn't fully validate, is worth a second read at 2x. A good read of a
+// police or medical photo has no MRZ, so it never gets one.
+function needsUpscaledRead(read) {
+    if (selectionConfidence(read) < OCR_RETRY_BELOW_CONFIDENCE) return true;
+    return findPassportMrz(read.text) !== null && mrzEvidence(read.text) < FULL_MRZ_EVIDENCE;
+}
+
+// Native vs 2x: MRZ evidence first (check digits are objective proof of a
+// correct read, Tesseract's confidence is not), then confidence. Text
+// without an MRZ scores 0 on both, so confidence alone decides.
+function isBetterUpscaledRead(upscaled, native) {
+    const upscaledMrz = mrzEvidence(upscaled.text);
+    const nativeMrz = mrzEvidence(native.text);
+    if (upscaledMrz !== nativeMrz) return upscaledMrz > nativeMrz;
+    return selectionConfidence(upscaled) > selectionConfidence(native);
+}
+
+// Native read (with its usual retries), then, for a small image with a weak
+// or incomplete result, a 2x read. The better of the two is returned with
+// its own reported confidence.
+export async function recognizeImageWithUpscale(worker, image, dimensions, { upscale = upscaleImage } = {}) {
+    const native = await recognizeImage(worker, image);
+    if (!ocrImageSize(dimensions) || !needsUpscaledRead(native)) {
+        return { ...native, upscaled: false };
+    }
+
+    const enlarged = await upscale(image, dimensions);
+    if (!enlarged) {
+        return { ...native, upscaled: false };
+    }
+
+    const upscaled = await recognizeImage(worker, enlarged);
+    return isBetterUpscaledRead(upscaled, native)
+        ? { ...upscaled, upscaled: true }
+        : { ...native, upscaled: false };
+}
+
 // Run Tesseract OCR on a JPEG/PNG image. The size is checked from the header
-// before the job even queues, so an oversized image never reaches Tesseract.
+// before the job even queues, so an oversized image is never decoded or
+// OCR'd. The 2x read, if any, runs in the same job slot and time limit.
 export async function extractTextFromImage(fileBuffer, options = {}) {
-    assertImageWithinLimits(fileBuffer);
-    const [page] = await runOcrJob(() => recognizeImages([fileBuffer], options));
+    const dimensions = assertImageWithinLimits(fileBuffer);
+    const [page] = await runOcrJob(() => recognizeImages([fileBuffer], {
+        ...options,
+        recognize: (worker, image) => recognizeImageWithUpscale(worker, image, dimensions, options),
+    }));
 
     return {
         success: page.text.length > 0,
@@ -295,6 +472,7 @@ export async function extractTextFromImage(fileBuffer, options = {}) {
         confidence: page.confidence,
         thresholding: page.thresholding,
         rotateAuto: page.rotateAuto,
+        upscaled: page.upscaled,
     };
 }
 

@@ -23,6 +23,7 @@
   },
   "homepage": "https://github.com/emlynk-pixel/EmlynkWABot#readme",
   "dependencies": {
+    "@napi-rs/canvas": "0.1.80",
     "@prisma/adapter-pg": "6.19.3",
     "@prisma/client": "6.19.3",
     "@supabase/supabase-js": "^2.117.1",
@@ -31,9 +32,11 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
+    "jpeg-js": "0.4.4",
     "jsonwebtoken": "^9.0.3",
     "pdf-parse": "^2.4.5",
     "pg": "^8.23.0",
+    "pngjs": "7.0.0",
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {

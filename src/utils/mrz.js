@@ -9,7 +9,13 @@ import { toIsoDate } from "./dateParsing.js";
 // They're corrected in parsePassportMrz, and check digits catch bad reads.
 const D = "[0-9OQDILZSGB]";
 const MRZ_LINE_1 = /^P[A-Z<][A-Z<]{3}[A-Z<]*<<[A-Z<]*$/;
-const MRZ_LINE_2 = new RegExp(`^[A-Z0-9<]{9}[0-9<OQDILZSGB][A-Z<]{3}${D}{6}[0-9<OQDILZSGB][MFX<]${D}{6}[0-9<OQDILZSGB]`);
+// The sex position (index 20) accepts any MRZ character: on low-resolution
+// photos OCR often misreads M/F as another letter or a digit, and one bad
+// character shouldn't hide the whole line. Sex is not extracted and no check
+// digit used here covers it; the passport number, dates and their check
+// digits keep their strict positions and still decide verification.
+const MRZ_SEX = "[A-Z0-9<]";
+const MRZ_LINE_2 = new RegExp(`^[A-Z0-9<]{9}[0-9<OQDILZSGB][A-Z<]{3}${D}{6}[0-9<OQDILZSGB]${MRZ_SEX}${D}{6}[0-9<OQDILZSGB]`);
 
 // OCR tends to add spaces inside MRZ lines and misread "<" as similar glyphs.
 export function cleanMrzLine(line) {
@@ -27,7 +33,8 @@ export function findPassportMrz(text) {
         .filter((line) => line.length >= 30 && line.length <= 50);
 
     const line1 = lines.find((line) => MRZ_LINE_1.test(line)) || null;
-    const line2 = lines.find((line) => MRZ_LINE_2.test(line)) || null;
+    // Never the same line twice.
+    const line2 = lines.find((line) => line !== line1 && MRZ_LINE_2.test(line)) || null;
 
     if (!line1 && !line2) {
         return null;

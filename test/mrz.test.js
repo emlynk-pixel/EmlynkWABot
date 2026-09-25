@@ -75,3 +75,58 @@ describe("parsePassportMrz", () => {
         assert.equal(result.dateOfBirth.slice(0, 4), "1974");
     });
 });
+
+describe("MRZ line 2: OCR-misread sex position", () => {
+    // Specimen line 2 has "F" at index 20 (sex).
+    const withSex = (char) => SPECIMEN_LINE_2.slice(0, 20) + char + SPECIMEN_LINE_2.slice(21);
+    const withChar = (index, char) => SPECIMEN_LINE_2.slice(0, index) + char + SPECIMEN_LINE_2.slice(index + 1);
+    const find = (line2) => findPassportMrz(`${SPECIMEN_LINE_1}\n${line2}`)?.line2 ?? null;
+
+    test("valid sex values M, F, X and < are found", () => {
+        for (const char of ["M", "F", "X", "<"]) {
+            assert.equal(find(withSex(char)), withSex(char), char);
+        }
+    });
+
+    test("an OCR misread at the sex position (H, N, 1) no longer hides the line", () => {
+        for (const char of ["H", "N", "1"]) {
+            assert.equal(find(withSex(char)), withSex(char), char);
+        }
+    });
+
+    test("the check digits still decide: a misread sex character doesn't change them", () => {
+        const result = parsePassportMrz({ line1: SPECIMEN_LINE_1, line2: withSex("N") });
+        assert.equal(result.passportNumberCheckValid, true);
+        assert.equal(result.dateOfBirthCheckValid, true);
+        assert.equal(result.expiryDateCheckValid, true);
+    });
+
+    test("malformed lines elsewhere are still rejected", () => {
+        const malformed = [
+            withChar(9, "A"),   // passport-number check digit must be a digit (or lookalike)
+            withChar(10, "1"),  // country code must be letters
+            withChar(13, "A"),  // birth date must be digits (or lookalikes)
+            withChar(19, "A"),  // birth-date check digit
+            withChar(21, "A"),  // expiry date
+            withChar(27, "A"),  // expiry check digit
+            withChar(3, "#"),   // not an MRZ character
+        ];
+        for (const line2 of malformed) {
+            assert.equal(find(line2), null, line2);
+        }
+    });
+
+    test("failed check digits stay failed (never verified by the relaxed detection)", () => {
+        const badNumber = parsePassportMrz({ line2: withChar(9, "7") });
+        const badBirth = parsePassportMrz({ line2: withChar(19, "3") });
+        const badExpiry = parsePassportMrz({ line2: withChar(27, "8") });
+
+        assert.equal(badNumber.passportNumberCheckValid, false);
+        assert.equal(badBirth.dateOfBirthCheckValid, false);
+        assert.equal(badExpiry.expiryDateCheckValid, false);
+    });
+
+    test("line 1 is never also taken as line 2", () => {
+        assert.equal(findPassportMrz(SPECIMEN_LINE_1).line2, null);
+    });
+});
