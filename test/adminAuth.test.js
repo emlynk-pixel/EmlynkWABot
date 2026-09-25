@@ -6,32 +6,13 @@ import jwt from "jsonwebtoken";
 import { createAuthRouter, ACTIVE_ADMIN_STATUS } from "../src/routes/auth.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { hashPassword } from "../src/utils/password.js";
+import { createFakeAdminDb, noRateLimit } from "./helpers/fakeAdminDb.js";
 
 // Synthetic accounts and secrets only.
 process.env.JWT_SECRET = "test-jwt-secret-placeholder";
 const PASSWORD = "Correct-Horse-7";
 const WRONG_PASSWORD = "wrong-password";
 const GENERIC_LOGIN_FAILURE = { message: "Invalid email or password" };
-
-// In-memory stand-in for prisma.admin, with the two query shapes the routes use.
-function createFakeAdminDb(admins) {
-    const rows = admins.map((admin) => ({ ...admin }));
-    const pick = (row, select) =>
-        select ? Object.fromEntries(Object.keys(select).map((key) => [key, row[key]])) : { ...row };
-
-    return {
-        rows,
-        admin: {
-            async findUnique({ where, select }) {
-                const row = rows.find((r) =>
-                    ("email" in where ? r.email === where.email : true) &&
-                    ("adminId" in where ? r.adminId === where.adminId : true)
-                );
-                return row ? pick(row, select) : null;
-            },
-        },
-    };
-}
 
 let server;
 let baseUrl;
@@ -47,7 +28,9 @@ before(async () => {
 
     const app = express();
     app.use(express.json());
-    app.use("/auth", createAuthRouter({ db }));
+    // Rate limiting has its own tests (loginRateLimit.test.js); here it would
+    // block the many deliberate failures these login-logic tests make.
+    app.use("/auth", createAuthRouter({ db, loginLimiter: noRateLimit }));
     app.use(errorHandler);
 
     await new Promise((resolve) => {

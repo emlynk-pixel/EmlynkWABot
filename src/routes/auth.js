@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 
 import { comparePassword } from "../utils/password.js";
 import { authenticateAdmin } from "../middleware/auth.js";
+import { createLoginRateLimiter } from "../middleware/loginRateLimiter.js";
 
 // The only status that may sign in or use admin endpoints. admins.status is a
 // plain string (default "ACTIVE"); any other value counts as not active.
@@ -16,11 +17,12 @@ async function resolveDb(db) {
   return db ?? (await import("../config/prisma.js")).default;
 }
 
-export function createAuthRouter({ db } = {}) {
+// loginLimiter can be replaced in tests; each router gets its own counts.
+export function createAuthRouter({ db, loginLimiter = createLoginRateLimiter() } = {}) {
   const router = express.Router();
 
-  // Admin login
-  router.post("/login", async (req, res) => {
+  // Admin login. Rate limited here only, not on /me or other routes.
+  router.post("/login", loginLimiter, async (req, res) => {
     try {
       const { email, password } = req.body;
 
