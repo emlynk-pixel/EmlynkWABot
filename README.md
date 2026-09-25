@@ -305,6 +305,11 @@ EmlynkWABot/
 │   ├── WhatsApp-Document-Submission-Proposal.pdf
 │   └── WhatsApp_Document_Processing_Project_Proposal_Final.md
 │
+├── scripts/                      # Operator tools (not part of the server)
+│   ├── createAdmin.js            # npm run admin:create -- --name "…" --email …
+│   ├── checkDatabaseConnection.js # npm run db:check
+│   └── diagnoseDocument.js       # npm run diagnose:document
+│
 ├── prisma/                       # Database schema & migrations
 │   ├── schema.prisma             # Core models: Admin, User, Document, TemporaryData
 │   ├── seed.js                   # Idempotent database seed script
@@ -313,8 +318,8 @@ EmlynkWABot/
 └── src/                          # Application source code
     ├── app.js                    # Express application entry point & routes
     ├── config/                   # Configuration adapters
-    │   ├── prisma.js             # Shared Prisma Client instance
-    │   └── prisma-test.js        # Prisma connection tester
+    │   ├── env.js                # Startup check of required environment variables
+    │   └── prisma.js             # Shared Prisma Client instance
     ├── middleware/               # HTTP middleware
     │   ├── auth.js               # JWT Bearer token authentication middleware
     │   └── verifyWhatsAppSignature.js # Meta webhook HMAC SHA-256 signature verification
@@ -330,7 +335,6 @@ EmlynkWABot/
         ├── fileValidation.js     # Document MIME type and size validator
         ├── messageIdempotency.js # WhatsApp message deduplication tracker
         ├── password.js           # Bcrypt hash generation and comparison
-        ├── password-test.js      # Password utility tester
         └── whatsappMedia.js      # Document payload metadata extractor
 ```
 
