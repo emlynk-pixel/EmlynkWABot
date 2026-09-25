@@ -33,7 +33,7 @@ All 23 audit findings (SEC-001 … SEC-023) are fixed, verified live, or accepte
 |---|---|
 | `X-Hub-Signature-256` **HMAC SHA-256** over the raw body on every POST, timing-safe; missing/invalid → 401, nothing processed | `src/middleware/verifyWhatsAppSignature.js` |
 | Verification handshake: token compared in constant time, 403 if `WHATSAPP_VERIFY_TOKEN` is unset, challenge returned as `text/plain` | `src/routes/whatsapp.js` |
-| **Replay / idempotency protection:** message ID claimed right after the signature check, before download or OCR; parallel duplicates stopped; refused files count as handled; claim released if handling crashes; 24 h TTL, at most 10,000 IDs (in memory) | `src/utils/messageIdempotency.js` |
+| **Replay / idempotency protection:** message ID claimed right after the signature check, before download or OCR; parallel duplicates stopped; every message of a batched delivery handled on its own; refused files count as handled; a failure before the submission is recorded (media lookup, download, upload, insert) releases the claim, removes an uploaded object and answers 500 so Meta retries (only the unhandled messages run again); 24 h TTL, at most 10,000 IDs (in memory) | `src/utils/messageIdempotency.js` |
 | Only `document` and `image` messages processed | `src/utils/whatsappMedia.js` |
 | Access token only sent to `https://` `fbsbx.com` or its subdomains (no credentials, no custom port); redirects re-checked; media ID format checked | `src/services/whatsappMediaService.js` |
 

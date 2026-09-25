@@ -11,6 +11,7 @@ import { sha256Hex } from "../utils/fileChecksum.js";
 // Services
 import { getWhatsappMediaUrl, downloadWhatsappMedia, MediaRejectedError } from "../services/whatsappMediaService.js";
 import { saveTemporaryFile } from "../services/temporaryStorageService.js";
+import { removeObject } from "../services/permanentStorageService.js";
 import { createTemporaryDocumentRecord } from "../services/temporaryDataService.js";
 import { classifyDocument } from "../services/documentClassificationService.js";
 import { processDocument } from "../services/documentProcessingService.js";
@@ -20,6 +21,14 @@ import { processDocument } from "../services/documentProcessingService.js";
 // message ID, enough to connect the log lines of one message.
 function messageRef(messageId) {
   return sha256Hex(Buffer.from(String(messageId))).slice(0, 12);
+}
+
+// Every message of a webhook delivery: entry[] -> changes[] -> value.messages[].
+// Anything that isn't an array is treated as empty.
+export function listMessages(body) {
+  const list = (value) => (Array.isArray(value) ? value : []);
+  return list(body?.entry).flatMap((entry) =>
+    list(entry?.changes).flatMap((change) => list(change?.value?.messages)));
 }
 
 // WhatsApp sends the message time as Unix seconds (a string).
@@ -37,9 +46,27 @@ function tokensMatch(received, expected) {
   return crypto.timingSafeEqual(receivedHash, expectedHash);
 }
 
+// A failure that happened before anything was recorded for the message
+// (media lookup, download, temporary upload, record insert). The message
+// must be retried: the route releases its claim and answers 500, so Meta
+// sends it again.
+export class RetryableMessageError extends Error {
+  constructor(stage, cause) {
+    super(`WhatsApp message not recorded (${stage})`);
+    this.name = "RetryableMessageError";
+    this.stage = stage;
+    this.causeType = cause?.name ?? "Error";
+  }
+}
+
 // Download, validate, store and process one document/photo message.
-// Errors that concern this file are logged and swallowed: the message is
-// handled (Meta gets 200) even if the file was refused or processing failed.
+// - A file refused on purpose (type, size, content) is logged and counts as
+//   handled: Meta gets 200 and doesn't send it again.
+// - A failure before the temporary_data record exists throws
+//   RetryableMessageError; an uploaded temporary object is removed first,
+//   so nothing is left behind and the retry starts clean.
+// - Once the record exists the message is handled: processing records its
+//   own outcome (FAILED included) on that record.
 async function handleMediaMessage({ message, ref, deps }) {
   const documentMetadata = extractDocumentMetadata(message);
 
@@ -49,6 +76,9 @@ async function handleMediaMessage({ message, ref, deps }) {
   }
 
   const { mediaId, fileName, mimeType } = documentMetadata;
+  let stage = "MEDIA_DOWNLOAD";
+  let temporaryFile = null;
+  let temporaryRecord = null;
 
   try {
     const mediaUrl = await deps.getMediaUrl(mediaId);
@@ -71,7 +101,8 @@ async function handleMediaMessage({ message, ref, deps }) {
     // Calculated once here and passed along; never logged.
     const fileSha256 = sha256Hex(fileBuffer);
 
-    const temporaryFile = await deps.saveTemporary({ fileBuffer, mimeType });
+    stage = "TEMPORARY_UPLOAD";
+    temporaryFile = await deps.saveTemporary({ fileBuffer, mimeType });
 
     // Filename is only a hint. Content-based classification comes later.
     const classification = classifyDocument({ fileName, mimeType });
@@ -83,7 +114,8 @@ async function handleMediaMessage({ message, ref, deps }) {
       source: classification.source,
     });
 
-    const temporaryRecord = await deps.createTemporaryRecord({
+    stage = "RECORD_INSERT";
+    temporaryRecord = await deps.createTemporaryRecord({
       whatsappNumber: message.from,
       temporaryStoragePath: temporaryFile.storagePath,
       fileSha256,
@@ -119,9 +151,24 @@ async function handleMediaMessage({ message, ref, deps }) {
       return;
     }
 
-    // Covers download, upload and the DB insert. Only the error type is
-    // logged: messages from the database can contain query values.
-    console.error("WhatsApp document processing failed:", { messageRef: ref, errorType: error?.name ?? "Error" });
+    // Only the error type is logged: messages from the database can contain
+    // query values.
+    if (temporaryRecord) {
+      // Recorded: processing (which records FAILED itself) is not repeated.
+      console.error("WhatsApp document processing failed:", { messageRef: ref, stage: "PROCESSING", errorType: error?.name ?? "Error" });
+      return;
+    }
+
+    // Nothing recorded yet: remove an uploaded object so no unreferenced
+    // file stays in temporary/, then let Meta retry the message.
+    if (temporaryFile) {
+      const cleanup = await deps.removeTemporary(temporaryFile.storagePath);
+      if (!cleanup?.removed) {
+        console.error("WhatsApp temporary file NOT removed after a failed record insert", { messageRef: ref, error: cleanup?.error ?? "unknown" });
+      }
+    }
+    console.error("WhatsApp document not recorded; the message will be retried:", { messageRef: ref, stage, errorType: error?.name ?? "Error" });
+    throw new RetryableMessageError(stage, error);
   }
 }
 
@@ -133,9 +180,10 @@ export function createWhatsappRouter({
   saveTemporary = saveTemporaryFile,
   createTemporaryRecord = createTemporaryDocumentRecord,
   processDocument: processDocumentFn = processDocument,
+  removeTemporary = (storagePath) => removeObject(storagePath),
 } = {}) {
   const router = express.Router();
-  const deps = { getMediaUrl, downloadMedia, saveTemporary, createTemporaryRecord, processDocument: processDocumentFn };
+  const deps = { getMediaUrl, downloadMedia, saveTemporary, createTemporaryRecord, processDocument: processDocumentFn, removeTemporary };
 
   /*
     GET /webhook
@@ -161,18 +209,13 @@ export function createWhatsappRouter({
     POST /webhook
     Incoming WhatsApp events (messages, status updates, etc.).
   */
-  router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
-    const message = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-
-    // Status updates and other events have no messages. Acknowledge and ignore them.
-    if (!message) {
-      return res.sendStatus(200);
-    }
-
-    const messageId = message.id;
+  // One message: claim its ID, handle it, and complete or release the claim.
+  // Returns false when the message must be retried.
+  async function handleMessage(message) {
+    const messageId = message?.id;
     if (typeof messageId !== "string" || messageId.length === 0) {
       console.warn("WhatsApp message without an ID ignored");
-      return res.sendStatus(200);
+      return true;
     }
 
     const ref = messageRef(messageId);
@@ -181,11 +224,10 @@ export function createWhatsappRouter({
     // message, even one arriving while this one is still running, stops here.
     if (!messageCache.claim(messageId)) {
       console.log("Duplicate WhatsApp message ignored:", { messageRef: ref });
-      return res.sendStatus(200);
+      return true;
     }
 
     try {
-      // Only the first message in the event is handled for now.
       if (SUPPORTED_MEDIA_MESSAGE_TYPES.includes(message.type)) {
         await handleMediaMessage({ message, ref, deps });
       }
@@ -193,13 +235,29 @@ export function createWhatsappRouter({
       console.log("WhatsApp Message Parsed:", { messageRef: ref, messageType: message.type });
 
       messageCache.complete(messageId);
-      return res.sendStatus(200);
+      return true;
     } catch (error) {
       // Nothing was recorded for this message: let Meta's retry try again.
       messageCache.release(messageId);
       console.error("WhatsApp webhook parsing error:", { messageRef: ref, errorType: error?.name ?? "Error" });
-      return res.sendStatus(500);
+      return false;
     }
+  }
+
+  router.post("/webhook", verifyWhatsappSignature, async (req, res) => {
+    // Meta can batch several entries, changes and messages in one delivery.
+    // Each message is handled on its own, one after the other. Status
+    // updates and other events have no messages: acknowledged and ignored.
+    const messages = listMessages(req.body);
+
+    let allHandled = true;
+    for (const message of messages) {
+      if (!(await handleMessage(message))) allHandled = false;
+    }
+
+    // 500 makes Meta resend the whole delivery; messages already handled are
+    // skipped then by their claimed IDs, so only the failed ones run again.
+    return res.sendStatus(allHandled ? 200 : 500);
   });
 
   return router;

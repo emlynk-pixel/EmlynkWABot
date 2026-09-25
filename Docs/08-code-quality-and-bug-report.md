@@ -207,11 +207,11 @@ Return a distinct result (for example an `error` flag or a `PDF_PARSE_FAILED` me
 |---|---|---|---|
 | RISK-001 | **Idempotency race.** `isMessageProcessed` is checked at `whatsapp.js` line 70, but `markMessageAsProcessed` is called only at line 194, after download, upload, database insert and OCR. If Meta retries during that window, the retry passes the duplicate check and the document is uploaded and recorded twice. | `src/routes/whatsapp.js` | Deferred |
 | RISK-002 | **In-memory idempotency.** `processedMessageIds` is a module-level `Set`. It is cleared on restart, not shared between instances, and never shrinks. | `src/utils/messageIdempotency.js` | Deferred |
-| RISK-003 | **Orphaned storage objects.** If the upload succeeds but the database insert fails, the file stays in the bucket without a record. | `src/routes/whatsapp.js` | Deferred |
+| RISK-003 | **Orphaned storage objects.** If the upload succeeds but the database insert fails, the file stays in the bucket without a record. | `src/routes/whatsapp.js` | Fixed (2026-09-26): the uploaded object is removed and the message is retried (`test/whatsappWebhookDelivery.test.js`) |
 | RISK-004 | **Prisma major-version mismatch.** `prisma` 6.19.3 and `@prisma/client` 6.19.3 (generated `clientVersion: 6.19.3`), but `@prisma/adapter-pg` 7.10.0 (depends on `@prisma/driver-adapter-utils` 7.10.0). | `package.json` | Open (needs approval) |
 | RISK-005 | **Unused Prisma 7 config.** Prisma 6 loads `prisma.config.ts`, not `prisma7.config.ts`, so this file has no effect. | project root | Open |
-| RISK-006 | **Node version dependency.** `src/config/prisma.js` imports `generated/prisma/client.ts`, which only works on Node ≥ 22.18 (native type stripping). | `src/config/prisma.js` | Open |
-| RISK-007 | **Only the first message is processed.** `entry[0].changes[0].messages[0]`; further messages in a batched event are ignored. | `src/routes/whatsapp.js` | Deferred |
+| RISK-006 | **Node version dependency.** `src/config/prisma.js` imports `generated/prisma/client.ts`, which only works on Node ≥ 22.18 (native type stripping). | `src/config/prisma.js` | Fixed (2026-09-26): `engines` `^22.18.0 \|\| >=23.6.0`, startup check `src/config/runtime.js`, client generated on install (`postinstall`) |
+| RISK-007 | **Only the first message is processed.** `entry[0].changes[0].messages[0]`; further messages in a batched event are ignored. | `src/routes/whatsapp.js` | Fixed (2026-09-26): every message of every entry and change is handled |
 | RISK-008 | **No fetch timeout** on Graph API and media download calls. | `src/services/whatsappMediaService.js` | Open |
 | RISK-009 | **No check that `SUPABASE_BUCKET` is set.** An unset bucket name produces an unclear Supabase error. | `src/services/temporaryStorageService.js` | Open |
 

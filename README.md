@@ -1,6 +1,6 @@
 # Emlynk WhatsApp Document Processing Automation
 
-[![Node.js](https://img.shields.io/badge/Node.js-v18%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-22.18%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express.js-v5.2-000000?style=for-the-badge&logo=express&logoColor=white)](https://expressjs.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-v16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Prisma](https://img.shields.io/badge/Prisma_ORM-v6%2Fv7-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io/)
@@ -291,7 +291,7 @@ erDiagram
 
 | Layer | Technology | Purpose / Details |
 |---|---|---|
-| **Runtime** | Node.js (v22; the admin build needs ≥ 20.19 or ≥ 22.12) | ES Modules (`"type": "module"`) |
+| **Runtime** | Node.js `^22.18.0 || >=23.6.0` (`engines`; loads the generated TypeScript Prisma client directly) | ES Modules (`"type": "module"`) |
 | **Web Framework** | Express.js (v5.2+) | HTTP routing & REST API backend |
 | **Database** | PostgreSQL 16 | Relational data store running in Docker container |
 | **ORM** | Prisma ORM (v6.19.3, `@prisma/client` and CLI) | Type-safe query engine & migration tool |
@@ -424,7 +424,7 @@ EmlynkWABot/
 ### Prerequisites
 
 Ensure you have the following installed on your machine:
-- [Node.js](https://nodejs.org/) (v22 recommended; the admin dashboard build needs 20.19+ or 22.12+)
+- [Node.js](https://nodejs.org/) 22.18+ (or 23.6+). The server checks this at startup: the generated Prisma client is TypeScript that Node loads directly.
 - [npm](https://www.npmjs.com/) (v9.0.0 or higher)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (with Docker Compose)
 - [Git](https://git-scm.com/)
@@ -471,10 +471,11 @@ WHATSAPP_VERIFY_TOKEN="Add whatsapp verify token here"
    docker ps
    ```
 
-2. **Generate Prisma Client**:
+2. **Generate Prisma Client**: `npm install` (and `npm ci --omit=dev` in production) runs it automatically (`postinstall`). Run it by hand after changing `schema.prisma`, or if dependencies were installed with `--ignore-scripts`:
    ```bash
    npx prisma generate
    ```
+   The client goes to `generated/prisma` (not in git). Without it the server stops at startup with "The Prisma client is not generated".
 
 3. **Run Database Migrations**:
    ```bash

@@ -1,10 +1,13 @@
 // Must load before the app: supabase.js reads env vars at import time.
 import "dotenv/config";
 import { assertValidEnv } from "./config/env.js";
+import { assertValidRuntime } from "./config/runtime.js";
 
-// Fail fast on a missing or malformed setting. The message names the
+// Fail fast on an unsupported Node version, a missing generated Prisma
+// client, or a missing or malformed setting. The message names the
 // variables only, never their values.
 try {
+    assertValidRuntime();
     assertValidEnv();
 } catch (error) {
     console.error(error.message);
