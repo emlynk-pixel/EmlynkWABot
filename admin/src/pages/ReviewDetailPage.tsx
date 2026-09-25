@@ -5,7 +5,9 @@ import {
     getReviewFile,
     getReviewItem,
     keepReviewItemPending,
+    removeFromReview,
     type ApproveResult,
+    type RemoveResult,
     type AuditEntry,
     type ProcessingSummary,
     type ReviewItem,
@@ -165,6 +167,8 @@ function ActionDialog({ title, busy, onClose, children }: { title: string; busy:
 const buttonBase = "h-9 rounded px-4 text-label-md disabled:cursor-not-allowed disabled:opacity-60";
 const primaryButton = `${buttonBase} bg-primary text-white hover:opacity-90`;
 const secondaryButton = `${buttonBase} border border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas`;
+const dangerButton = `${buttonBase} border border-critical-border bg-surface text-critical hover:bg-critical-bg`;
+const dangerSolidButton = `${buttonBase} bg-critical text-white hover:opacity-90`;
 
 function DialogError({ message }: { message: string | null }) {
     return message ? <p role="alert" className="mt-3 rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">{message}</p> : null;
@@ -178,13 +182,17 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const identity = item.processing?.identity;
     const idLabel = shortId((item.document.documentId ?? item.document.temporaryId ?? item.reviewId.replace(/^(pending|document)-/, "")));
 
-    const [dialog, setDialog] = useState<"approve" | "keep" | null>(null);
+    const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<Notice | null>(null);
     const [approved, setApproved] = useState<ApproveResult | null>(null);
     const [keepReason, setKeepReason] = useState("");
     const [reasonError, setReasonError] = useState<string | null>(null);
+    const [removeReason, setRemoveReason] = useState("");
+    const [removeConfirmed, setRemoveConfirmed] = useState(false);
+    const [removeError, setRemoveError] = useState<string | null>(null);
+    const [removed, setRemoved] = useState<RemoveResult | null>(null);
     const [policeDate, setPoliceDate] = useState("");
     const [policeDateError, setPoliceDateError] = useState<string | null>(null);
 
@@ -197,13 +205,20 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const auditLog = approved ? [approved.audit, ...item.auditLog] : item.auditLog;
     const verificationStatus = approved ? approved.document.verificationStatus : item.document.verificationStatus;
 
-    const open = (which: "approve" | "keep") => {
+    const canRemove = item.actions?.remove?.available === true;
+
+    const open = (which: "approve" | "keep" | "remove") => {
         setError(null);
         setReasonError(null);
         setPoliceDateError(null);
         if (which === "approve") setPoliceDate("");
         setNotice(null);
         if (which === "keep") setKeepReason("");
+        if (which === "remove") {
+            setRemoveReason("");
+            setRemoveConfirmed(false);
+            setRemoveError(null);
+        }
         setDialog(which);
     };
     const close = () => {
@@ -241,6 +256,32 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
         }
     };
 
+    // Remove from Review: explicit confirmation and a reason, then the file and
+    // its record are deleted permanently (only the audit entry remains).
+    const confirmRemove = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!token || busy) return;
+        const trimmed = removeReason.trim();
+        if (!trimmed) {
+            setRemoveError("Enter the reason for removing this file.");
+            return;
+        }
+        if (!removeConfirmed) {
+            setRemoveError("Confirm that you inspected the file and that it will be permanently deleted.");
+            return;
+        }
+        setBusy(true);
+        setError(null);
+        try {
+            setRemoved(await removeFromReview(token, item.reviewId, trimmed));
+            setDialog(null);
+        } catch (caught) {
+            fail(caught);
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const confirmKeep = async (event: FormEvent) => {
         event.preventDefault();
         if (!token || busy) return;
@@ -262,6 +303,29 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
             setBusy(false);
         }
     };
+
+    if (removed) {
+        return (
+            <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2 text-label-md">
+                    <Link to="/review" className="inline-flex items-center gap-1 text-primary hover:underline">
+                        <Icon name="chevron_left" className="size-4" />Review Queue
+                    </Link>
+                    <span aria-hidden="true" className="text-ink-subtle">/</span>
+                    <h1 id="page-title" className="font-semibold text-ink">{idLabel}</h1>
+                </div>
+                <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">
+                    Removed from review. The file and its record were permanently deleted; the audit log entry is kept.
+                    {!removed.filesDeleted && " (A stored copy could not be deleted and has been logged for clean-up.)"}
+                </div>
+                <Card className="p-4">
+                    <SectionHeading title="Audit log" />
+                    <AuditLog entries={[removed.audit, ...item.auditLog]} />
+                </Card>
+                <Link to="/review" className="inline-block text-label-md text-primary hover:underline">Back to Review Queue</Link>
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-4">
@@ -358,6 +422,11 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                     <button type="button" className={secondaryButton} disabled={busy} onClick={() => open("keep")}>
                                         Keep Pending
                                     </button>
+                                    {canRemove && (
+                                        <button type="button" className={dangerButton} disabled={busy} onClick={() => open("remove")}>
+                                            Remove from Review
+                                        </button>
+                                    )}
                                 </div>
                                 {approveBlocked && <p className="text-label-sm text-ink-muted">Approve is not available: {approveBlocked}</p>}
                             </>
@@ -409,6 +478,52 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                         <button type="button" className={secondaryButton} disabled={busy} onClick={close} autoFocus>Cancel</button>
                         <button type="button" className={primaryButton} disabled={busy} onClick={confirmApprove}>{busy ? "Approving…" : "Approve"}</button>
                     </div>
+                </ActionDialog>
+            )}
+
+            {dialog === "remove" && (
+                <ActionDialog title="Remove this file from review?" busy={busy} onClose={close}>
+                    <form onSubmit={confirmRemove} noValidate>
+                        <p className="text-body-sm text-ink-soft">
+                            The file, its original copy and its submission record are <strong>permanently deleted</strong>. This can't be undone. Only the audit log entry is kept. Nothing else is affected.
+                        </p>
+                        <label htmlFor="remove-reason" className="mt-3 block text-label-md text-ink">
+                            Reason <span aria-hidden="true" className="text-critical">*</span>
+                        </label>
+                        <textarea
+                            id="remove-reason"
+                            required
+                            maxLength={MAX_REASON_LENGTH}
+                            rows={3}
+                            value={removeReason}
+                            disabled={busy}
+                            onChange={(event) => {
+                                setRemoveReason(event.target.value);
+                                setRemoveError(null);
+                            }}
+                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            autoFocus
+                        />
+                        <label className="mt-3 flex items-start gap-2 text-body-sm text-ink">
+                            <input
+                                type="checkbox"
+                                checked={removeConfirmed}
+                                disabled={busy}
+                                onChange={(event) => {
+                                    setRemoveConfirmed(event.target.checked);
+                                    setRemoveError(null);
+                                }}
+                                className="mt-0.5"
+                            />
+                            I have inspected this file and understand it will be permanently deleted.
+                        </label>
+                        {removeError && <p className="mt-2 text-label-sm text-critical">{removeError}</p>}
+                        <DialogError message={error} />
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button type="button" className={secondaryButton} disabled={busy} onClick={close}>Cancel</button>
+                            <button type="submit" className={dangerSolidButton} disabled={busy}>{busy ? "Removing…" : "Remove permanently"}</button>
+                        </div>
+                    </form>
                 </ActionDialog>
             )}
 

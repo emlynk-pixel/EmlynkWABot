@@ -32,11 +32,12 @@ model Admin {
 // Review actions taken by admins (Phase 10). Append-only: rows are never
 // updated or deleted (a database trigger rejects both). The reviewed item is
 // kept as plain IDs, without foreign keys, so the history outlives the
-// temporary_data / documents rows it describes.
+// temporary_data / documents rows it describes (Remove from Review deletes
+// the submission's row; its entry stays).
 model AuditLog {
   auditId             String    @id @map("audit_id")
   adminId             String    @map("admin_id")
-  // APPROVE | KEEP_PENDING
+  // APPROVE | KEEP_PENDING | REMOVE_FROM_REVIEW
   action              String
   temporaryId         String?   @map("temporary_id")
   documentId          String?   @map("document_id")
@@ -46,6 +47,10 @@ model AuditLog {
   reason              String?
   // Approval of a police slip: the submitted date the admin entered or confirmed.
   policeSubmittedDate DateTime? @map("police_submitted_date") @db.Date
+  // Remove from Review deletes the submission's row, so the entry keeps
+  // what was removed: its document type and file checksum.
+  documentType        String?   @map("document_type")
+  fileSha256          String?   @map("file_sha256") @db.Char(64)
   createdDate         DateTime  @default(now()) @map("created_date")
 
   admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Restrict)

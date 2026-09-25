@@ -236,7 +236,9 @@ export type ReviewItem = {
 // ---------------------------------------------------------------- review actions (Checkpoint 4)
 // Only two actions exist: there is no reject.
 
-export type ReviewAction = "APPROVE" | "KEEP_PENDING";
+// Review actions. There is no reject; REMOVE_FROM_REVIEW is a manual admin
+// decision that permanently deletes one waiting file and its record.
+export type ReviewAction = "APPROVE" | "KEEP_PENDING" | "REMOVE_FROM_REVIEW";
 
 export type AuditEntry = {
     auditId: string;
@@ -247,12 +249,13 @@ export type AuditEntry = {
     previousStatus: string;
     newStatus: string;
     policeSubmittedDate: string | null; // police slip approvals
+    documentType: string | null; // kept for removed files
     createdDate: string;
 };
 
 type ActionAvailability = { available: boolean; code: string | null; message: string | null };
 // needsPoliceDate: a police slip without a stored submitted date is approved with one.
-export type ReviewActions = { approve: ActionAvailability & { needsPoliceDate?: boolean }; keepPending: ActionAvailability };
+export type ReviewActions = { approve: ActionAvailability & { needsPoliceDate?: boolean }; keepPending: ActionAvailability; remove?: ActionAvailability };
 
 export type ApproveResult = {
     action: "APPROVE";
@@ -263,6 +266,8 @@ export type ApproveResult = {
 };
 
 export type KeepPendingResult = { action: "KEEP_PENDING"; reviewId: string; audit: AuditEntry };
+
+export type RemoveResult = { action: "REMOVE_FROM_REVIEW"; reviewId: string; filesDeleted: boolean; audit: AuditEntry };
 
 export function getReviewQueue(token: string, params: ReviewQueueParams, signal?: AbortSignal): Promise<ReviewQueue> {
     const query = new URLSearchParams();
@@ -282,6 +287,11 @@ export function approveReviewItem(token: string, reviewId: string, options: { re
     if (options.reason) body.reason = options.reason;
     if (options.policeSubmittedDate) body.policeSubmittedDate = options.policeSubmittedDate;
     return apiRequest<ApproveResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/approve`, { method: "POST", token, body });
+}
+
+// Permanently deletes the waiting file and its record; the reason is required.
+export function removeFromReview(token: string, reviewId: string, reason: string): Promise<RemoveResult> {
+    return apiRequest<RemoveResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/remove`, { method: "POST", token, body: { reason } });
 }
 
 export function keepReviewItemPending(token: string, reviewId: string, reason: string): Promise<KeepPendingResult> {

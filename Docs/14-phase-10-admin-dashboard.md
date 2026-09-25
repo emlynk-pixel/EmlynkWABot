@@ -1,6 +1,6 @@
 # Phase 10 — Admin Dashboard
 
-Status: **Checkpoint 5 implemented (not yet committed). None of the three Phase 10 migrations is applied to the live database.**
+Status: **Checkpoint 5 done (`5615aaa`); Remove from Review implemented (not yet committed). None of the four Phase 10 migrations is applied to the live database.**
 
 | Checkpoint | Scope | Status |
 |---|---|---|
@@ -244,7 +244,7 @@ The page fetches it with the admin's token and shows it from a local `blob:` URL
 
 ## 4c. Review actions and audit log (Checkpoint 4)
 
-Only two review actions exist: **Approve** and **Keep Pending**. There is **no reject workflow** (business rule): no reject endpoint, button, status or reason, and nothing deletes a document because it is unclear. An unclear document stays pending until a person approves it.
+Review workflow: `Pending → Approve | Keep Pending | Resolve/Correct (planned) | Remove from Review`. There is **no reject workflow** (business rule): no reject endpoint, button, status or reason. Pending documents are **never removed automatically** — not because of age, expiry, inactivity or processing time; nothing in the code removes them except the manual **Remove from Review** action below.
 
 ### `POST /api/admin/review/:reviewId/approve`
 
@@ -275,13 +275,27 @@ The Review Detail response includes `actions.approve` (`available`, `code`, `mes
 
 Body: `{ "reason": "…" }` — **required**, 1–500 characters after trimming (400 otherwise). The item stays exactly as it is: the file stays in `pending/` (or the stored document stays `REVIEW_REQUIRED`), it stays in the Review Queue, and nothing is moved or deleted. Only the audit entry is written; the admin's reason is kept there (the `review_reason` code on the submission is not overwritten).
 
+### `POST /api/admin/review/:reviewId/remove` — Remove from Review
+
+A manual admin decision after inspecting a waiting file. Distinct from rejection: nothing is classified as rejected.
+
+- **Only files waiting in `pending/`** (`pending-<temporary_id>`). A stored document can't be removed (409 `NOT_REMOVABLE`); unknown items, and `FAILED` submissions without a pending copy, answer 404.
+- Body: `{ "reason": "…" }` — **required**, 1–500 characters (400 otherwise). The page also asks for an explicit confirmation ("I have inspected this file and understand it will be permanently deleted") before it sends anything.
+- **Permanent:** the file in `pending/`, its original in `temporary/` and its `temporary_data` row are deleted. There is no undo and no "return to review". A document stored from the same submission (rare) keeps its file; its link becomes `NULL` (`ON DELETE SET NULL`).
+- **Audit:** in the same transaction as the row deletion, an entry records the admin (from the token), the submission ID, the client (if known), the previous status, `new_status = REMOVED`, the reason, and — because the row is gone — the document type and file checksum. The entry is append-only like every other.
+- **Order:** lock the row, write the entry, delete the row, commit; only then delete the two files. A database failure changes nothing. If deleting a file fails after the commit, the item is still gone (the response says `filesDeleted: false` and the stray object is logged).
+- Nothing else is touched: other waiting files, their records and files stay exactly as they are.
+- Afterwards the same file sent again by the client is processed as new (the pending-duplicate check only sees rows that still exist).
+- The detail response's `actions.remove` says whether the item can be removed.
+
 ### Consistency and duplicate protection
 
 - Each action runs in one database transaction that first locks the reviewed row (`SELECT … FOR UPDATE`), re-reads its state and only then changes it. Approve also locks the client's `users` row, so two items of the same type for one client can't both become verified. Lock order is always reviewed row, then client.
 - Storage can't join the transaction. Approve copies the file inside the transaction; if anything fails before the commit, the database rolls back and the copy is removed again. The pending original is removed only after the commit. The possible leftovers are a stray object (a copy in the client folder if the process dies before the commit, or the pending original if its removal fails, which is logged); the database is never left saying something the files don't match.
 - A second Approve of the same item gets 409 `ALREADY_RESOLVED` (or 404 once the item is no longer a review item). An identical Keep Pending (same admin, item and reason) within 60 seconds gets 409 `DUPLICATE_ACTION`; a different reason or another admin is a new decision.
 - The page disables both buttons and the dialog while a request runs; the server does not rely on that.
-- A `FAILED` submission without a pending copy is not a review item: both actions answer 404 and change nothing.
+- A `FAILED` submission without a pending copy is not a review item: every action answers 404 and changes nothing.
+- Two removals of the same item at once: one succeeds, the other gets 409 `ALREADY_RESOLVED` (or 404 once the item is gone).
 
 ### Error responses
 
@@ -290,7 +304,7 @@ Body: `{ "reason": "…" }` — **required**, 1–500 characters after trimming 
 | 400 | Malformed review ID, body that is not a JSON object, missing/invalid reason |
 | 401 | No/invalid token, inactive or deleted admin |
 | 404 | Unknown item, or no longer a review item |
-| 409 | Conflict or invalid state (`code` as above, `DUPLICATE_ACTION`) |
+| 409 | Conflict or invalid state (`code` as above, `DUPLICATE_ACTION`, `NOT_REMOVABLE`) |
 | 502 | Storage failure (`STORAGE_UNAVAILABLE`) |
 | 500 | Unexpected error (generic message only) |
 
@@ -302,7 +316,7 @@ Purpose: a permanent record of every review decision — who decided what, about
 |---|---|
 | `audit_id` | Primary key (UUID) |
 | `admin_id` | The admin who acted (from the token, never from the request body). Foreign key to `admins`, `ON DELETE RESTRICT`: an admin with entries can't be deleted (deactivate instead). |
-| `action` | `APPROVE` or `KEEP_PENDING` |
+| `action` | `APPROVE`, `KEEP_PENDING` or `REMOVE_FROM_REVIEW` |
 | `temporary_id` | The submission, when there is one |
 | `document_id` | The document created (approve of a waiting file) or reviewed (stored document) |
 | `passport_id` | The client, when known |
@@ -318,8 +332,9 @@ Rules:
 - Review Detail shows the entries for the item, newest first (a stored document also shows those made while it was pending): action, admin, reason, time.
 
 | `police_submitted_date` | Approval of a police slip: the submitted date the admin entered or confirmed (added in Checkpoint 5, §4d) |
+| `document_type` / `file_sha256` | Remove from Review: the removed submission's type and checksum, kept because its row is deleted (migration `20260926090000_phase10_audit_removal_details`). Never returned by the API except the type. |
 
-**Deployment dependency:** the backend code of Checkpoints 3–5 uses the columns and the table from all three Phase 10 migrations (`20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`, `20260925170000_phase10_police_submitted_date`). Apply them, in order, before deploying this code; deploying the code first breaks the review pages, the dashboard and document processing. None is applied to the live database yet.
+**Deployment dependency:** the backend code of Checkpoints 3–5 and Remove from Review uses the columns and the table from all four Phase 10 migrations (`20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`, `20260925170000_phase10_police_submitted_date`, `20260926090000_phase10_audit_removal_details`). Apply them, in order, before deploying this code; deploying the code first breaks the review pages, the dashboard and document processing. None is applied to the live database yet. The last one is additive: two nullable columns on `audit_logs`, nothing else.
 
 ## 4d. Police Workflow (Checkpoint 5)
 
@@ -373,7 +388,7 @@ Response: `businessDate`, `items` (per client: `client`, `status`, `submittedDat
 | Client details | `GET /clients/:passportId` | profile card, required-document checklist with missing summary, police slip/report panel with the 21-day follow-up (status, slip submitted, report due, days left or overdue, or why no countdown runs), stored documents table, files waiting for review |
 | Police Workflow | `GET /police` | status cards (overdue, due today, due soon, pending; click to filter), status select with counts for all seven statuses, table (client, status, slip submitted, report due, days, police slip, final report, "View client"), pagination; filter and page in the URL |
 | Review Queue | `GET /review` | summary cards (pending reviews, identity issues, quality / OCR issues, conflicts), filters (source, reason, type, order), table (item, client, type, review reason, confidence, received, status, "Review"), pagination; filters in the URL |
-| Review detail | `GET /review/:id`, `GET /review/:id/file`, `POST /review/:id/approve`, `POST /review/:id/keep-pending` | file preview (image or PDF) on the left; review-reason banner, document information (client, sender, received, statuses, confidence), identity, processing details, audit log and the **Approve** / **Keep Pending** buttons on the right. Approve asks for confirmation ("This will move the document to permanent client storage and mark it as verified."); Keep Pending asks for a required reason. While a request runs both buttons and the dialog are disabled. Success shows a message: after Approve the page shows the item as verified with the new audit entry and a link back to the queue (which reloads without it); after Keep Pending the item is reloaded with the new entry. Errors (e.g. a 409 conflict) are shown in the dialog with the server's message and nothing is marked done. If Approve isn't possible, the button is disabled with the reason. For a police slip the Approve dialog shows the submitted date read from the slip, or asks for it (required date field, 2000-01-01 to today); the audit log shows the date. |
+| Review detail | `GET /review/:id`, `GET /review/:id/file`, `POST /review/:id/approve`, `POST /review/:id/keep-pending`, `POST /review/:id/remove` | file preview (image or PDF) on the left; review-reason banner, document information (client, sender, received, statuses, confidence), identity, processing details, audit log and the **Approve** / **Keep Pending** buttons on the right. Approve asks for confirmation ("This will move the document to permanent client storage and mark it as verified."); Keep Pending asks for a required reason. While a request runs both buttons and the dialog are disabled. Success shows a message: after Approve the page shows the item as verified with the new audit entry and a link back to the queue (which reloads without it); after Keep Pending the item is reloaded with the new entry. Errors (e.g. a 409 conflict) are shown in the dialog with the server's message and nothing is marked done. If Approve isn't possible, the button is disabled with the reason. For a police slip the Approve dialog shows the submitted date read from the slip, or asks for it (required date field, 2000-01-01 to today); the audit log shows the date. A waiting file also has **Remove from Review**: a dialog that says the file and its record are permanently deleted, with a required reason and a required confirmation checkbox; after removal the page shows a message and the audit entry (no preview, no actions) and a link back to the queue. |
 
 Every page has loading, error (with "Try again") and empty states. A 401 from the API signs the admin out (session expired or admin deactivated). API calls live only in `admin/src/api/`; pages use the typed functions through `useAdminResource`.
 
@@ -427,6 +442,11 @@ Checked manually for Checkpoint 3 (not in the automated suite): the migration on
 | Backend, Checkpoint 5 (`node:test`) | `npm test` (`test/adminPolice.test.js`; additions in `test/policeDocuments.test.js`, `test/adminApi.test.js`) | thresholds 30/8/7/3/1/0/−1/−40 days, month/year/leap-year boundaries, `NOT_UPLOADED`, `DATE_MISSING` (undated slip, slip waiting in pending/), `COMPLETED` by a verified report (also before the slip, also without a slip), `REVIEW_REQUIRED` report doesn't complete, `REVIEW_REQUIRED` slip starts the countdown, latest date wins; `/police` order, counts, filter, paging, 5 invalid-parameter cases, 401, three queries only; Overview counts; client countdown; the Colombo midnight (18:29 vs 18:31 UTC); approve body date rules; waiting slip needs the date and records it on document and audit entry; OCR date confirmed, different date refused; undated stored slip gets the entered date; no date for other types; one-verified-slip rule unchanged; migration additive, no stored status; pipeline stores the resolved slip date and never a date for reports or medicals |
 | Frontend, Checkpoint 5 (Vitest) | `npm run admin:test` (`police.test.tsx`, updated `dashboard.test.tsx`) | Police Workflow rows (status, dates, days text, slip/report, link), status cards and counts; filter by select and by card, paging; loading, error + retry, empty filtered view; protected route; Overview counts and links; client countdown (overdue, waiting slip, no slip); Approve of a slip: required date field, no request without it, date sent and shown in the message and audit log; OCR date shown for confirmation without a field; server refusal shown; no date field for other types |
 
+| Backend, Remove from Review (`node:test`) | `npm test` (`test/adminReviewRemove.test.js`) | row and both files deleted, audit entry with admin, previous status, reason, type and checksum, checksum never returned, other items untouched, gone from queue and overview, detail 404, no undo; re-sent file no longer a pending duplicate; reason required (6 cases); stored document 409, unknown/FAILED 404, malformed 400; two removals at once; rollback when the audit write or the row delete fails; file deletion failure after commit; 401 for no/bad token and inactive admin; admin from the token; `actions.remove`; only this action deletes `temporary_data` rows (source check, no timers); migration additive |
+| Frontend, Remove from Review (Vitest) | `npm run admin:test` (`review.test.tsx`, "Remove from Review") | button only when offered, no Reject; reason and confirmation required before anything is sent; request body; removed view (message, audit entry, no actions or preview, link back); dialog locked while running, one request, 409 shown |
+
+Checked manually for Remove from Review (not in the automated suite): the new migration on a throwaway PostgreSQL 16 (Docker) on top of the other six: existing audit row unchanged, both columns nullable and empty, no drift. With the real Prisma client against that database: the same item removed twice at once (one succeeds, one refused), the row deleted, a linked document kept with its link set to `NULL`, one audit entry with type, checksum, previous status and reason, both files deleted and the other item's files untouched, the entry can't be deleted. The production build in headless Chrome (fake database, synthetic data): the button, reason and confirmation required, removal, record and files gone with the entry kept, queue reloaded without the item, no failed requests, no CSP violations or console errors. The live database was not used.
+
 Checked manually for Checkpoint 5 (not in the automated suite): all three migrations on a throwaway PostgreSQL 16 (Docker): the new migration applied on top of rows in every table (including an audit entry), the original columns of every existing row unchanged, both new columns `DATE NULL` and empty, no drift, the append-only trigger still active. The new code with the real Prisma client against that database: `DATE` round trip through the pipeline's write, the `/police` queries (including the per-client group of waiting slips), a legacy verified slip without a date shown as `DATE_MISSING`, a second slip blocked by the one-verified-slip rule, approval without the date refused and with it stored on the document and the audit entry, order, Overview counts and completion by a verified report. The production build in headless Chrome (fake database, synthetic data): Police Workflow rows and card filter, Overview counts, client countdown, Approve of a waiting slip (date required, then accepted and shown), no failed requests, no CSP violations or console errors. The live database was not used.
 
 Checked manually for Checkpoint 4 (not in the automated suite): both Phase 10 migrations on a throwaway PostgreSQL 16 (Docker): existing rows byte-identical after the new migration; RLS on and no `anon`/`authenticated` rights on `audit_logs`; `UPDATE`, `DELETE` and `TRUNCATE` rejected by the trigger; deleting an admin with entries refused; no drift between the database and `schema.prisma`. Then the action services with the real Prisma client against that database (real transactions and row locks): same item approved twice at once, two items of one type at once, existing verified passport, a failure after the copy (real rollback, copy removed), concurrent identical Keep Pending, history with admin names, stored document approved in place, FAILED without pending copy, Prisma update/delete of an entry rejected. Finally the production build in headless Chrome (fake database, synthetic data): approve with confirmation, file moved, queue without the item, Keep Pending with required reason, audit entries, Approve disabled for an unlinked file, no failed requests, no CSP violations or console errors. The live database was not used.
@@ -451,10 +471,16 @@ Checked manually for Checkpoint 4 (not in the automated suite): both Phase 10 mi
 | One verified document per type also for police slips; no replacement or versioning | Approved (Checkpoint 5) |
 | Thresholds in Sri Lanka calendar days: >7 `PENDING`, 1–7 `DUE_SOON`, 0 `DUE_TODAY`, <0 `OVERDUE` | Approved (Checkpoint 5) |
 | Admin upload of the actual police report; reminders, WhatsApp warnings, scheduled jobs, notifications | Out of scope (Checkpoint 5) |
+| Pending documents are never removed automatically; an admin can **Remove from Review** after inspection, with confirmation and a required reason; not a rejection | Business rule (2026-09-26) |
+| Remove from Review applies only to files waiting in `pending/` | Approved (2026-09-26) |
+| A removed item is gone permanently: pending file, temporary original and database row are deleted; only the audit entry stays (with type and checksum) | Approved (2026-09-26) |
+| No undo / return to review for removed items | Approved (2026-09-26) |
 
 ## 10. Known limitations and dependencies
 
-- **Migrations not applied to the live database** — `20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log` and `20260925170000_phase10_police_submitted_date` are on hold; do not deploy the backend code before all three are applied (§4c).
+- **Migrations not applied to the live database** — `20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`, `20260925170000_phase10_police_submitted_date` and `20260926090000_phase10_audit_removal_details` are on hold; do not deploy the backend code before all four are applied (§4c).
+- **Removed items have no screen:** their history exists only as audit entries (the detail page is gone with the item). There is no audit-log page.
+- **Who may remove:** every dashboard account is an admin; any ACTIVE admin can remove until roles exist (Phase 12).
 - **Verified police slips stored before Checkpoint 5 have no date:** they show `DATE_MISSING`, no action can set their date (they are not review items), and a newer slip for the same client can't be approved (one verified slip per type). No backfill.
 - **A waiting slip's OCR date is not kept:** `temporary_data` has no date column and the processing summary holds no dates, so approving a waiting slip always needs the date entered from the preview.
 - **What counts as a resolved date** is the existing reader's rule: a single date labelled submitted, else issued, else an unlabelled one (confidence 60). The reader decides "not in the future" by the UTC date.

@@ -254,7 +254,7 @@ erDiagram
     AUDIT_LOGS {
         string audit_id PK
         string admin_id FK
-        string action "APPROVE or KEEP_PENDING"
+        string action "APPROVE, KEEP_PENDING or REMOVE_FROM_REVIEW"
         string temporary_id
         string document_id
         string passport_id
@@ -262,6 +262,8 @@ erDiagram
         string new_status
         string reason
         date police_submitted_date
+        string document_type
+        char file_sha256
         datetime created_date
     }
 
@@ -552,6 +554,7 @@ All routes need `Authorization: Bearer <token>` of an **ACTIVE** admin (checked 
 | `GET` | `/api/admin/review/:reviewId/file` | The item's file, streamed from private storage for the in-page preview |
 | `POST` | `/api/admin/review/:reviewId/approve` | Approve: waiting file moved to the client folder as VERIFIED (or stored document marked VERIFIED); audit entry |
 | `POST` | `/api/admin/review/:reviewId/keep-pending` | Keep Pending with a required reason: item stays pending and in the queue; audit entry |
+| `POST` | `/api/admin/review/:reviewId/remove` | Remove from Review (waiting files only, reason required): file, temporary original and record permanently deleted; audit entry kept. Never automatic |
 | `GET` | `/api/admin/police` | Police Workflow: every client's 21-day status (overdue, due today, due soon, pending, date missing, not uploaded, completed), filter and paging |
 
 ---

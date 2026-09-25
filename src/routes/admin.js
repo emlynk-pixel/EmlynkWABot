@@ -18,6 +18,7 @@ import {
     approveReviewItem,
     getReviewItemWithActions,
     keepReviewItemPending,
+    removeFromReview,
     parseReviewActionBody,
     ReviewActionError,
 } from "../services/adminReviewActionService.js";
@@ -42,8 +43,8 @@ function contentDisposition(fileName) {
 }
 
 // Admin dashboard API, mounted at /api/admin (Phase 10). Read-only except
-// the two review actions (approve, keep pending); there is no reject action
-// and no route that changes or deletes an audit entry.
+// the review actions (approve, keep pending, remove from review); there is
+// no reject action and no route that changes or deletes an audit entry.
 // Every route needs a valid token of an ACTIVE admin. Responses hold client
 // data, so browsers and proxies must not cache them.
 // Errors: { message } or { message, errors: [{ field, message }] }; review
@@ -167,6 +168,9 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
     router.post("/review/:reviewId/approve", reviewAction(approveReviewItem, { reasonRequired: false, needsBucket: true, acceptsPoliceDate: true }));
     // Stays pending and in the queue; the reason is required.
     router.post("/review/:reviewId/keep-pending", reviewAction(keepReviewItemPending, { reasonRequired: true, needsBucket: false }));
+    // Permanently deletes one waiting file and its record after an admin's
+    // inspection; the reason is required. Only files in pending/.
+    router.post("/review/:reviewId/remove", reviewAction(removeFromReview, { reasonRequired: true, needsBucket: true }));
 
     // Anything else under /api/admin (only reached by an authenticated admin).
     router.use((req, res) => res.status(404).json({ message: "Not found" }));

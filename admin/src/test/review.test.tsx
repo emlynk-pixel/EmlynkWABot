@@ -64,6 +64,7 @@ const auditEntry = (overrides: Partial<AuditEntry> = {}): AuditEntry => ({
     previousStatus: "MANUAL_REVIEW",
     newStatus: "MANUAL_REVIEW",
     policeSubmittedDate: null,
+    documentType: null,
     createdDate: "2026-09-25T04:30:00.000Z",
     ...overrides,
 });
@@ -383,6 +384,68 @@ describe("Review actions", () => {
         expect(within(group).getByRole("button", { name: "Approve" })).toBeDisabled();
         expect(within(group).getByRole("button", { name: "Keep Pending" })).toBeEnabled();
         expect(screen.getByText(/Approve is not available: This file is not linked to a client/)).toBeInTheDocument();
+    });
+});
+
+describe("Remove from Review", () => {
+    const DETAIL = `GET /api/admin/review/pending-${TEMP_ID}`;
+    const REMOVE = `POST /api/admin/review/pending-${TEMP_ID}/remove`;
+    const REMOVABLE: ReviewItem = { ...ITEM, actions: { ...ITEM.actions!, remove: { available: true, code: null, message: null } } };
+    const removedResult = { action: "REMOVE_FROM_REVIEW", reviewId: `pending-${TEMP_ID}`, filesDeleted: true, audit: auditEntry({ auditId: "a-rm", action: "REMOVE_FROM_REVIEW", reason: "Blank page sent by mistake", newStatus: "REMOVED", documentType: "PASSPORT" }) };
+
+    async function openRemovable(routes: FetchRoutes = {}) {
+        const backend = signedInBackend({ [DETAIL]: { status: 200, body: REMOVABLE }, [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse, ...routes });
+        renderApp(`/review/pending-${TEMP_ID}`);
+        const group = await screen.findByRole("group", { name: "Review actions" });
+        return { ...backend, group, user: userEvent.setup() };
+    }
+
+    test("offered for a waiting file; not for items the server marks as not removable; never called Reject", async () => {
+        const { group } = await openRemovable();
+        expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Approve", "Keep Pending", "Remove from Review"]);
+        expect(screen.queryByText(/reject/i)).not.toBeInTheDocument();
+    });
+
+    test("needs a reason and an explicit confirmation before anything is sent", async () => {
+        const { calls, group, user } = await openRemovable({ [REMOVE]: { status: 200, body: removedResult } });
+        await user.click(within(group).getByRole("button", { name: "Remove from Review" }));
+        const dialog = screen.getByRole("dialog", { name: "Remove this file from review?" });
+        expect(dialog).toHaveTextContent("permanently deleted");
+        expect(dialog).toHaveTextContent("can't be undone");
+
+        await user.click(within(dialog).getByRole("button", { name: "Remove permanently" }));
+        expect(within(dialog).getByText("Enter the reason for removing this file.")).toBeInTheDocument();
+        await user.type(within(dialog).getByLabelText(/Reason/), "Blank page sent by mistake");
+        await user.click(within(dialog).getByRole("button", { name: "Remove permanently" }));
+        expect(within(dialog).getByText(/Confirm that you inspected the file/)).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+
+        await user.click(within(dialog).getByRole("checkbox", { name: /I have inspected this file/ }));
+        await user.click(within(dialog).getByRole("button", { name: "Remove permanently" }));
+        expect(await screen.findByRole("status")).toHaveTextContent("Removed from review. The file and its record were permanently deleted; the audit log entry is kept.");
+        expect(calls.filter((c) => c.method === "POST").map((c) => [c.path, c.body])).toEqual([[`/api/admin/review/pending-${TEMP_ID}/remove`, { reason: "Blank page sent by mistake" }]]);
+        expect(screen.queryByRole("group", { name: "Review actions" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("img", { name: /Preview of/ })).not.toBeInTheDocument();
+        expect(within(screen.getByRole("list", { name: "Review history" })).getByText("Removed from review")).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: "Back to Review Queue" })).toHaveAttribute("href", "/review");
+    });
+
+    test("while removing, the dialog is locked and only one request is sent; errors are shown", async () => {
+        let release: (value: { status: number; body: unknown }) => void = () => {};
+        const { calls, group, user } = await openRemovable({ [REMOVE]: () => new Promise((resolve) => { release = resolve; }) });
+        await user.click(within(group).getByRole("button", { name: "Remove from Review" }));
+        const dialog = screen.getByRole("dialog");
+        await user.type(within(dialog).getByLabelText(/Reason/), "Duplicate");
+        await user.click(within(dialog).getByRole("checkbox"));
+        await user.click(within(dialog).getByRole("button", { name: "Remove permanently" }));
+        const busyButton = within(dialog).getByRole("button", { name: "Removing…" });
+        expect(busyButton).toBeDisabled();
+        expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+        await user.click(busyButton).catch(() => {});
+        expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+        release({ status: 409, body: { message: "This item is no longer waiting for review. Reload the page to see its current state.", code: "ALREADY_RESOLVED" } });
+        expect(await within(dialog).findByRole("alert")).toHaveTextContent("no longer waiting for review");
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
     });
 });
 
