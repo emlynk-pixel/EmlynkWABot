@@ -15,6 +15,15 @@ export function createFakeAdminDb(admins) {
                 );
                 return row ? pick(row, select) : null;
             },
+            // Mirrors the unique index on email (Prisma error P2002).
+            async create({ data, select }) {
+                if (rows.some((r) => r.email === data.email)) {
+                    throw Object.assign(new Error("Unique constraint failed on the fields: (`email`)"), { code: "P2002" });
+                }
+                const row = { ...data };
+                rows.push(row);
+                return pick(row, select);
+            },
         },
     };
 }
