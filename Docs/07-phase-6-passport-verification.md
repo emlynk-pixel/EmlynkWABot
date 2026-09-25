@@ -88,7 +88,7 @@ A passport number with field confidence below 60 is not trusted for identity, ev
 | A | user X | user X | `VERIFIED_MATCH` | no | yes |
 | B | user X | user Y | `IDENTITY_CONFLICT` | yes | no |
 | C | user X (has another WhatsApp) | none | `PASSPORT_MATCH_ONLY` + `WHATSAPP_DIFFERS` | yes | yes |
-| E | user X (no WhatsApp on record) | none | `PASSPORT_MATCH_ONLY` + `WHATSAPP_NOT_ON_RECORD` | no | yes |
+| E | user X (no WhatsApp on record) | none | `PASSPORT_MATCH_ONLY` + `WHATSAPP_NOT_ON_RECORD` | yes (SEC-008) | yes |
 | D | none | user X | `WHATSAPP_MATCH_ONLY` (provisional) + `PASSPORT_NOT_IN_DATABASE` | yes | no |
 | F | none | none | `NO_MATCH` | yes | no |
 | G | unreadable / invalid / confidence < 60 | any | `PASSPORT_ID_UNRESOLVED` (WhatsApp user kept as provisional candidate) | yes | no |
@@ -110,7 +110,7 @@ These documents carry no passport, so the WhatsApp number is the only signal (§
 
 - `IDENTITY_CONFLICT`: nothing is merged, linked or written. Both candidate IDs are kept in the result for the reviewer. `processing_status = CONFLICT`.
 - `WHATSAPP_DIFFERS`: the user's WhatsApp number is not changed. `processing_status = MANUAL_REVIEW`.
-- `WHATSAPP_NOT_ON_RECORD`: the number is not filled in automatically (§13 E: only after identity is verified by a person).
+- `WHATSAPP_NOT_ON_RECORD`: the number is not filled in automatically (§13 E: only after identity is verified by a person). Since SEC-008 this case also needs review: a passport number alone does not prove the sender is the client. The document stays linked to the passport, `processing_status = MANUAL_REVIEW`, and the file goes to `pending/{unique_id}`, not the client folder.
 - `AMBIGUOUS_MATCH`: no candidate is picked.
 
 ## Reconciliation Rules (§14)

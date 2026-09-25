@@ -229,6 +229,19 @@ describe("processDocument: pending storage", () => {
         assert.equal(db.documentRows.length, 0);
     });
 
+    test("passport of a client with no WhatsApp on record -> MANUAL_REVIEW in pending/{unique_id}, not the client folder (SEC-008)", async () => {
+        const users = makeUsers();
+        users[0].whatsappNumber = null;
+        const { summary, recordUpdate, db, objects } = await run({ sender: "94779999999", users });
+
+        assert.equal(summary.processingStatus, "MANUAL_REVIEW");
+        assert.ok(recordUpdate.data.pendingStoragePath.startsWith(`${PENDING_0001}/`));
+        assert.equal(recordUpdate.data.passportId, "N1234567", "still associated with the passport");
+        assert.equal(db.documentRows.length, 0);
+        assert.ok(!objects.some((path) => path.startsWith("clients/")));
+        assert.ok(!db.calls.some((c) => c.method === "user.updateMany"), "client record (incl. WhatsApp) is not changed");
+    });
+
     test("pending file name uses the WhatsApp message time when given", async () => {
         const { recordUpdate } = await run({ sender: "94772223333", receivedAt: new Date("2026-09-20T14:35:22Z") });
         assert.equal(recordUpdate.data.pendingStoragePath, `${PENDING_UNIDENTIFIED}/document_20260920_143522.pdf`);

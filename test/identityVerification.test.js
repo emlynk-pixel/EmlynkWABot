@@ -60,12 +60,14 @@ describe("decideIdentity: passport documents (proposal §13)", () => {
         assert.deepEqual(result.notes, [IDENTITY_NOTES.WHATSAPP_DIFFERS]);
     });
 
-    test("E: passport matches, no WhatsApp on record -> associated by passport", async () => {
+    test("E: passport matches, no WhatsApp on record -> associated by passport, needs review (SEC-008)", async () => {
         const result = await identify({ passportId: "N3333333", sender: "94770000000" });
 
         assert.equal(result.status, PASSPORT_MATCH_ONLY);
         assert.equal(result.passportId, "N3333333");
-        assert.equal(result.reviewRequired, false);
+        assert.equal(result.uniqueId, "0003");
+        assert.equal(result.provisional, false, "still linked to the passport's client");
+        assert.equal(result.reviewRequired, true);
         assert.deepEqual(result.notes, [IDENTITY_NOTES.WHATSAPP_NOT_ON_RECORD]);
     });
 

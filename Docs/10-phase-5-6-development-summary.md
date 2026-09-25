@@ -266,7 +266,7 @@ All scenarios below are **implemented** and covered by tests.
 |---|---|---|
 | Passport + WhatsApp → same user | `VERIFIED_MATCH` | Links the record to the client; may fill empty fields |
 | Passport match, client has a different WhatsApp | `PASSPORT_MATCH_ONLY` | Links by passport; does **not** change the WhatsApp number; sends to review |
-| Passport match, client has no WhatsApp on record | `PASSPORT_MATCH_ONLY` | Links by passport; does not add the WhatsApp number automatically |
+| Passport match, client has no WhatsApp on record | `PASSPORT_MATCH_ONLY` | Links by passport; does not add the WhatsApp number automatically; sends to review (changed by SEC-008) |
 | WhatsApp match only (passport not in database) | `WHATSAPP_MATCH_ONLY` (provisional) | Does **not** link; sends to review |
 | Passport + WhatsApp → different users | `IDENTITY_CONFLICT` | Links nothing, changes nothing, marks CONFLICT |
 | No match | `NO_MATCH` | Does not link; sends to review |

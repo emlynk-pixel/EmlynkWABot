@@ -102,11 +102,15 @@ export function decideIdentity({ isPassportDocument, passportIdConfidence = 0, p
     if (passportUser) {
         // E: no WhatsApp on record; associate by passport, don't fill WhatsApp.
         // C: the record has a different WhatsApp; don't change it, flag it.
+        // Both need review (SEC-008): a passport number alone doesn't prove
+        // the sender is the client, since anyone holding a copy of the
+        // passport could send it. The document stays linked to the passport
+        // (§13 E) but goes to pending/{unique_id} until a person confirms it.
         const whatsappMissing = !passportUser.whatsappNumber;
         return decision(IDENTITY_STATUS.PASSPORT_MATCH_ONLY, {
             ...context,
             user: passportUser,
-            reviewRequired: !whatsappMissing,
+            reviewRequired: true,
             notes: [whatsappMissing ? IDENTITY_NOTES.WHATSAPP_NOT_ON_RECORD : IDENTITY_NOTES.WHATSAPP_DIFFERS],
         });
     }
