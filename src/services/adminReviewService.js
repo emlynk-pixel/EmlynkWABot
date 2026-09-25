@@ -4,7 +4,8 @@
 // - PENDING: a submission (temporary_data) whose file waits in pending/;
 // - DOCUMENT: a file stored in a client folder with verification_status
 //   REVIEW_REQUIRED (UNCLEAR band, including accepted low-quality passports).
-// Nothing here writes; approve / reject / keep pending come later.
+// Nothing here writes; the review actions (approve, keep pending) are in
+// adminReviewActionService.js.
 
 import path from "node:path";
 import { VERIFICATION_STATUS } from "./clientDocumentService.js";
@@ -252,7 +253,7 @@ export async function listReviewQueue({ db, params }) {
 
 // ---------------------------------------------------------------- detail
 
-function mimeTypeForPath(storagePath) {
+export function mimeTypeForPath(storagePath) {
     const extension = path.extname(storagePath ?? "").toLowerCase();
     return { ".pdf": "application/pdf", ".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png" }[extension] ?? null;
 }

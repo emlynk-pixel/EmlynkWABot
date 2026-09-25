@@ -1,16 +1,16 @@
 # Phase 10 — Admin Dashboard
 
-Status: **Checkpoint 3 implemented (not yet committed; migration not yet applied to the live database).**
+Status: **Checkpoint 4 implemented (not yet committed). Neither Phase 10 migration is applied to the live database.**
 
 | Checkpoint | Scope | Status |
 |---|---|---|
 | 1 | Frontend scaffold, admin login, route guard, dashboard shell | Done (`d0d7323`) |
 | 2 | Read-only admin API (`/api/admin`), Overview, Documents, Client Details | Done (`90a0d6e`) |
-| 3 | Review data migration, Review Queue, read-only Review Detail with secure file preview | Implemented |
-| 4 | Review actions (approve / reject / keep pending) with audit log | Planned |
+| 3 | Review data migration, Review Queue, read-only Review Detail with secure file preview | Done (`4572bc0`) |
+| 4 | Review actions (Approve, Keep Pending) with an append-only audit log | Implemented |
 | 5 | Police Workflow (full version needs Phase 9 data) | Planned |
 
-Not built yet: review actions (approve / reject / keep pending — the buttons are shown disabled), audit log, uploads, exports, WhatsApp messaging, Settings, client editing, batch actions, the Clients list page, and anything from Phase 9 (21-day countdown).
+Not built: a reject action (by business rule there is none, see §4c), assigning a client to an unlinked file, uploads, exports, WhatsApp messaging, Settings, client editing, batch actions, the Clients list page, and anything from Phase 9 (21-day countdown).
 
 Visual source of truth: Stitch project **EmlynkWABot Admin Dashboard UI** (`13688778730186190970`), design system **Precision Enterprise Console**. The Stitch project is read-only for development; nothing is generated or changed there from the code.
 
@@ -95,7 +95,7 @@ Error messages: the backend's own short messages are shown for 4xx responses ("I
 
 The first admin account is created with `npm run admin:create` (see `Docs/13-security-overview.md`).
 
-## 4. Admin API (`/api/admin`, read-only)
+## 4. Admin API (`/api/admin`)
 
 ### Authentication middleware
 
@@ -106,7 +106,9 @@ The first admin account is created with `npm run admin:create` (see `Docs/13-sec
 
 This is the same rule `GET /auth/me` applies; `/auth/me` itself is unchanged (a deleted admin still gets its existing 404 there). A database error is passed to the error handler (generic 500). Every `/api/admin` response has `Cache-Control: no-store`.
 
-Errors are JSON: `{ "message": "…" }`, with `errors: [{ field, message }]` for invalid parameters (400). Unknown paths under `/api/admin` return 404 `{ "message": "Not found" }` (after authentication).
+Errors are JSON: `{ "message": "…" }`, with `errors: [{ field, message }]` for invalid parameters (400). Review-action conflicts also carry a `code` (§4c). Unknown paths under `/api/admin` return 404 `{ "message": "Not found" }` (after authentication).
+
+Every route is read-only except the two review actions in §4c. There is no 403: an inactive or deleted admin gets the same 401 as a bad token (existing rule above), and there are no roles yet.
 
 ### Data sources
 
@@ -239,6 +241,83 @@ Streams the item's file from the private bucket through the backend. The object 
 
 The page fetches it with the admin's token and shows it from a local `blob:` URL. For that, the site CSP allows `blob:` in `img-src` and `frame-src` only; scripts remain same-origin only and `object-src` stays `'none'`.
 
+## 4c. Review actions and audit log (Checkpoint 4)
+
+Only two review actions exist: **Approve** and **Keep Pending**. There is **no reject workflow** (business rule): no reject endpoint, button, status or reason, and nothing deletes a document because it is unclear. An unclear document stays pending until a person approves it.
+
+### `POST /api/admin/review/:reviewId/approve`
+
+Body: `{ "reason": "…" }` (optional, at most 500 characters).
+
+| Item | What happens |
+|---|---|
+| Waiting file (`pending-<temporary_id>`) | The file in `pending/` is copied to `clients/{passport_id}/{type}/` under the standard name (`passport.pdf`, `passport_v2.pdf`, … — the same `copyToFreeName` / `standardFileName` rules the pipeline uses). A `documents` row is created with `verification_status = VERIFIED`, `processing_status = STORED`, size and SHA-256 of the file, `temporary_id` link and the saved confidence. The submission gets `pending_storage_path = NULL` and `processing_status = VERIFIED` (its `review_reason` stays as the record of why it was reviewed). After the commit the pending original is removed, completing the move. |
+| Stored document (`document-<document_id>`, `REVIEW_REQUIRED`) | The file is already in the client folder; `verification_status` becomes `VERIFIED`. No storage change. |
+
+Approve is refused (409, nothing changed, no audit entry) when:
+
+| `code` | When |
+|---|---|
+| `VERIFIED_DOCUMENT_EXISTS` | The client already has a `VERIFIED` document of the same type. Approval never replaces or changes it. |
+| `CLIENT_NOT_IDENTIFIED` | The file is not linked to a client (unlinked files can't be assigned to a client yet). |
+| `NO_CLIENT_FOLDER` | The type has no client folder (`UNKNOWN`). |
+| `DUPLICATE_FILE` | The client already has this exact file (same SHA-256). |
+| `FILE_CHANGED` | The pending file no longer matches the checksum recorded when it was received. |
+| `UNSUPPORTED_FILE` | The pending file's type can't be stored. |
+| `ALREADY_RESOLVED` | Another request resolved the item first. |
+
+A storage failure (pending file unreadable, copy failed) returns 502 with `STORAGE_UNAVAILABLE`; nothing is changed.
+
+The Review Detail response includes `actions.approve` (`available`, `code`, `message`) so the page can disable Approve and say why; the server checks again when the action runs.
+
+### `POST /api/admin/review/:reviewId/keep-pending`
+
+Body: `{ "reason": "…" }` — **required**, 1–500 characters after trimming (400 otherwise). The item stays exactly as it is: the file stays in `pending/` (or the stored document stays `REVIEW_REQUIRED`), it stays in the Review Queue, and nothing is moved or deleted. Only the audit entry is written; the admin's reason is kept there (the `review_reason` code on the submission is not overwritten).
+
+### Consistency and duplicate protection
+
+- Each action runs in one database transaction that first locks the reviewed row (`SELECT … FOR UPDATE`), re-reads its state and only then changes it. Approve also locks the client's `users` row, so two items of the same type for one client can't both become verified. Lock order is always reviewed row, then client.
+- Storage can't join the transaction. Approve copies the file inside the transaction; if anything fails before the commit, the database rolls back and the copy is removed again. The pending original is removed only after the commit. The possible leftovers are a stray object (a copy in the client folder if the process dies before the commit, or the pending original if its removal fails, which is logged); the database is never left saying something the files don't match.
+- A second Approve of the same item gets 409 `ALREADY_RESOLVED` (or 404 once the item is no longer a review item). An identical Keep Pending (same admin, item and reason) within 60 seconds gets 409 `DUPLICATE_ACTION`; a different reason or another admin is a new decision.
+- The page disables both buttons and the dialog while a request runs; the server does not rely on that.
+- A `FAILED` submission without a pending copy is not a review item: both actions answer 404 and change nothing.
+
+### Error responses
+
+| Status | When |
+|---|---|
+| 400 | Malformed review ID, body that is not a JSON object, missing/invalid reason |
+| 401 | No/invalid token, inactive or deleted admin |
+| 404 | Unknown item, or no longer a review item |
+| 409 | Conflict or invalid state (`code` as above, `DUPLICATE_ACTION`) |
+| 502 | Storage failure (`STORAGE_UNAVAILABLE`) |
+| 500 | Unexpected error (generic message only) |
+
+### Audit log — table `audit_logs`, migration `20260925160000_phase10_review_audit_log`
+
+Purpose: a permanent record of every review decision — who decided what, about which item and client, from which state to which, why, and when.
+
+| Column | Meaning |
+|---|---|
+| `audit_id` | Primary key (UUID) |
+| `admin_id` | The admin who acted (from the token, never from the request body). Foreign key to `admins`, `ON DELETE RESTRICT`: an admin with entries can't be deleted (deactivate instead). |
+| `action` | `APPROVE` or `KEEP_PENDING` |
+| `temporary_id` | The submission, when there is one |
+| `document_id` | The document created (approve of a waiting file) or reviewed (stored document) |
+| `passport_id` | The client, when known |
+| `previous_status` / `new_status` | Waiting file: the submission's `processing_status` → `VERIFIED` (approve) or unchanged (keep pending). Stored document: `REVIEW_REQUIRED` → `VERIFIED` or unchanged. |
+| `reason` | The admin's reason (required for Keep Pending, optional for Approve) |
+| `created_date` | When (database time) |
+
+Rules:
+- **Append-only.** An entry is written in the same transaction as the action, so it exists exactly when the action took effect (a refused or failed action leaves none). The API has no route that edits or deletes an entry, and a database trigger rejects any `UPDATE`, `DELETE` or `TRUNCATE` on the table, whoever runs it.
+- The reviewed item is stored as plain IDs without foreign keys, so the history outlives the `temporary_data` / `documents` rows (e.g. a later clean-up).
+- Same access protection as the other tables: RLS on, no rights for Supabase's `anon` / `authenticated` roles.
+- The migration is additive: one new table, three indexes (`temporary_id`, `document_id`, `admin_id`, each with `created_date`), the foreign key, RLS/revoke and the trigger. No existing table, column or row is changed.
+- Review Detail shows the entries for the item, newest first (a stored document also shows those made while it was pending): action, admin, reason, time.
+
+**Deployment dependency:** the backend code of Checkpoints 3 and 4 uses the columns and the table from both Phase 10 migrations (`20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`). Apply both migrations before deploying this code; deploying the code first breaks the review pages and document processing. Neither is applied to the live database yet.
+
 ## 5. Pages and data
 
 | Page | API | Shows |
@@ -247,7 +326,7 @@ The page fetches it with the admin's token and shows it from a local `blob:` URL
 | Documents | `GET /documents` | search, type, date range, sort, verification chips with counts, table (ID, client, type, status, confidence, received, "View client"), pagination; filters are kept in the URL |
 | Client details | `GET /clients/:passportId` | profile card, required-document checklist with missing summary, police slip/report panel, stored documents table, files waiting for review |
 | Review Queue | `GET /review` | summary cards (pending reviews, identity issues, quality / OCR issues, conflicts), filters (source, reason, type, order), table (item, client, type, review reason, confidence, received, status, "Review"), pagination; filters in the URL |
-| Review detail | `GET /review/:id`, `GET /review/:id/file` | file preview (image or PDF) on the left; review-reason banner, document information (client, sender, received, statuses, confidence), identity, processing details, audit-log placeholder and the **disabled** Approve / Reject / Keep pending buttons on the right |
+| Review detail | `GET /review/:id`, `GET /review/:id/file`, `POST /review/:id/approve`, `POST /review/:id/keep-pending` | file preview (image or PDF) on the left; review-reason banner, document information (client, sender, received, statuses, confidence), identity, processing details, audit log and the **Approve** / **Keep Pending** buttons on the right. Approve asks for confirmation ("This will move the document to permanent client storage and mark it as verified."); Keep Pending asks for a required reason. While a request runs both buttons and the dialog are disabled. Success shows a message: after Approve the page shows the item as verified with the new audit entry and a link back to the queue (which reloads without it); after Keep Pending the item is reloaded with the new entry. Errors (e.g. a 409 conflict) are shown in the dialog with the server's message and nothing is marked done. If Approve isn't possible, the button is disabled with the reason. |
 
 Every page has loading, error (with "Try again") and empty states. A 401 from the API signs the admin out (session expired or admin deactivated). API calls live only in `admin/src/api/`; pages use the typed functions through `useAdminResource`.
 
@@ -289,12 +368,16 @@ Serving rules (`src/adminFrontend.js`): hashed files under `/admin/assets/` are 
 |---|---|---|
 | Frontend (Vitest, jsdom) | `npm run admin:test` | Checkpoint 1 auth/shell tests; Overview data, loading, error + retry, empty states, 401 → sign out; Documents rows, badges, chip counts, filters/sort/search sent to the API, pagination, empty/error states, link to client; Client details data, not-found, error; protected routes never call the API without a session |
 | Backend, Checkpoint 3 (`node:test`) | `npm test` (`test/adminReview.test.js`) | migration is additive and matches the schema; every review reason and its precedence; processing writes the reason, the summary and the document link (identity conflict, low confidence, stored summary = logged summary, no PII); queue auth (no token, inactive admin) incl. detail and file routes; merged queue, shared waiting definition, filters/paging/kind, 9 invalid-parameter cases, window limit, legacy `LOW_CONFIDENCE`; detail for waiting file and stored document, unknown and malformed IDs; file streaming, headers, unknown item never touches storage, storage error → 502; CSP `blob:` only for images/frames |
-| Frontend, Checkpoint 3 (Vitest) | `npm run admin:test` (`review.test.tsx`) | queue rendering, loading, error + retry, empty, filters and pagination, link to detail; detail rendering (reason, identity notes, sender, processing, client link, preview via token + blob URL), disabled actions that never call the API, item without saved data, preview error, not found; protected routes |
+| Frontend, Checkpoint 3 (Vitest) | `npm run admin:test` (`review.test.tsx`) | queue rendering, loading, error + retry, empty, filters and pagination, link to detail; detail rendering (reason, identity notes, sender, processing, client link, preview via token + blob URL), item without saved data, preview error, not found; protected routes |
+| Backend, Checkpoint 4 (`node:test`) | `npm test` (`test/adminReviewActions.test.js`, fake database in `test/helpers/fakeReviewDb.js`) | migration additive, RLS/revoke, trigger, schema match; request-body rules; approve of a waiting file (storage move, VERIFIED document, submission resolved, audit fields), next version name, existing verified document blocks it, rollback + copy removal when any of the three writes fails, storage copy failure, unreadable file, checksum mismatch, duplicate file, unlinked file and `UNKNOWN` type, FAILED without pending copy → 404, approved twice, two approvals at once, two items of one type at once; approve of a stored `REVIEW_REQUIRED` document and its conflict; keep pending (file stays, still in queue, audit), stored document, reason required (6 cases), repeated and concurrent identical submits, keep pending then approve; detail history order and admin names, `actions`; 401 (no/bad token, inactive, deleted admin), 400/404, invalid JSON, 500 without details, admin taken from the token, no reject route, audit entries can't be changed through the API, the router's only write routes |
+| Frontend, Checkpoint 4 (Vitest) | `npm run admin:test` (`review.test.tsx`, "Review actions") | only Approve and Keep Pending, no Reject; Approve confirmation and Cancel; successful approval (message, verified status, audit entry, queue reloads without the item); buttons disabled during the request, one request only; 409 and 502 messages shown; Keep Pending requires a reason; successful Keep Pending (trimmed reason sent, item reloaded with the entry); Keep Pending error; audit entries (action, admin, reason, time); Approve disabled with its reason |
 | Backend (`node:test`) | `npm test` (`test/adminFrontend.test.js`, `test/adminApi.test.js`) | `/admin` serving (Checkpoint 1); `/api/admin` auth: no/invalid/expired token, deleted and inactive admin, ACTIVE admin, no-store, DB failure → 500; overview structure, safe serialization, Sri Lanka "today", fixed query count; documents pagination, filters, search, date range, sorting, 14 invalid-parameter cases, unknown parameters; client details, required-document rules, 404, invalid ID; business-day helpers |
 
 Checked manually for Checkpoint 2 (not in the automated suite): the service queries against the live database (read-only, shapes and counts only), and the production build in headless Chrome with the admin API reading the live database read-only and a fake admin for sign-in: login redirect, Documents total and review-required filter match the database, "View client", required-document list, Overview totals, unknown client, no CSP violations or console errors.
 
 Checked manually for Checkpoint 3 (not in the automated suite): the migration on a throwaway PostgreSQL 16 (Docker) as described in §4a; the real pipeline and the new queries against that database (six synthetic submissions: verified, SEC-008, low-confidence medical, identity conflict, police slip without date, failed — reasons, summaries without PII, document link, queue/filters/paging, detail, file lookup, overview total = queue total, `SET NULL`); and the production build in headless Chrome against that database (login redirect, queue rows = database, image and PDF previews from `blob:` URLs, disabled actions, stored document item, unknown item, no CSP violations or console errors). The live database was not changed (checked before and after).
+
+Checked manually for Checkpoint 4 (not in the automated suite): both Phase 10 migrations on a throwaway PostgreSQL 16 (Docker): existing rows byte-identical after the new migration; RLS on and no `anon`/`authenticated` rights on `audit_logs`; `UPDATE`, `DELETE` and `TRUNCATE` rejected by the trigger; deleting an admin with entries refused; no drift between the database and `schema.prisma`. Then the action services with the real Prisma client against that database (real transactions and row locks): same item approved twice at once, two items of one type at once, existing verified passport, a failure after the copy (real rollback, copy removed), concurrent identical Keep Pending, history with admin names, stored document approved in place, FAILED without pending copy, Prisma update/delete of an entry rejected. Finally the production build in headless Chrome (fake database, synthetic data): approve with confirmation, file moved, queue without the item, Keep Pending with required reason, audit entries, Approve disabled for an unlinked file, no failed requests, no CSP violations or console errors. The live database was not used.
 
 ## 9. Decisions (2026-09-25)
 
@@ -303,21 +386,26 @@ Checked manually for Checkpoint 3 (not in the automated suite): the migration on
 | CSP `blob:` for images and frames only (in-page preview) | Approved |
 | Items processed before the migration shown as "Not recorded" (no backfill) | Approved |
 | Review Queue paging window of 1000 items | Approved for now |
-| Audit log and approve/reject rules designed before review actions | Approved |
+| Audit log and approve/reject rules designed before review actions | Approved (done in Checkpoint 4; the rules then settled on no reject action) |
 | `FAILED` submissions counted as pending review | Rejected — only files in `pending/` count |
 | Apply the migration to the live database | On hold |
+| Review actions: Approve and Keep Pending only; no reject workflow, unclear documents stay pending and are never deleted | Business rule (Checkpoint 4) |
+| Approval never replaces an existing verified document of the same type (blocked with 409) | Business rule (Checkpoint 4) |
 
 ## 10. Known limitations and dependencies
 
-- **Migration not applied to the live database** — on hold by decision (2026-09-25); do not deploy yet.
+- **Migrations not applied to the live database** — `20260925150000_phase10_review_data` and `20260925160000_phase10_review_audit_log` are on hold; do not deploy the backend code before both are applied (§4c).
 - **Processing failures are not shown in the dashboard:** a `FAILED` submission without a pending copy is not a review item (decision 2026-09-25). Its reason and summary are saved on the row; a separate view for failures can be decided later.
 - **Older items:** submissions processed before the migration have no saved summary or reason ("Not recorded"); older stored `REVIEW_REQUIRED` documents have no link and are shown as `LOW_CONFIDENCE`. No backfill: the missing data was never saved.
-- **Audit log:** no persistent audit model exists. The Review Detail shows a placeholder. The review-action checkpoint needs an audit design (who decided what, when, from which state) before approve / reject / keep pending can be enabled.
-- **Review actions are deferred:** the buttons are rendered disabled and call nothing. OCR boxes, zoom, rotation and the manual field confirmation from the Stitch design depend on actions or stored OCR geometry and are not built.
+- **Unlinked files can't be approved:** a waiting file with no client (identity conflict, unknown passport, another client's file) or of type `UNKNOWN` can only be kept pending; choosing a client or type is not built.
+- **One verified document per type:** approval is blocked when the client already has a `VERIFIED` document of that type, for every type (including police slips and medical reports). If a newer document should replace an older one, that needs a separate decision and action.
+- **Stray storage objects:** if the process stops between the copy and the commit, or removing the pending original fails, an unreferenced object can remain (logged in the second case); records stay correct. No clean-up job exists yet.
+- **Duplicate Keep Pending** is detected as the same admin, item and reason within 60 seconds.
+- **403 is never returned:** inactive admins get 401 (existing authentication rule); there are no roles.
+- OCR boxes, zoom, rotation and the manual field confirmation from the Stitch design depend on stored OCR geometry and are not built.
 - **Queue paging window:** 1000 items per filtered view (the two sources are merged in memory).
 - **PDF preview:** shown in a frame from a `blob:` URL (plus "Open PDF in a new tab"); verified without CSP violations in headless Chrome, where the PDF viewer itself cannot be inspected.
 
 ## 11. Next checkpoints
 
-4. Review actions (approve / reject / keep pending) with an audit log.
 5. Police Workflow (full version depends on Phase 9 data).

@@ -250,9 +250,23 @@ erDiagram
         string review_reason
     }
 
+    AUDIT_LOGS {
+        string audit_id PK
+        string admin_id FK
+        string action "APPROVE or KEEP_PENDING"
+        string temporary_id
+        string document_id
+        string passport_id
+        string previous_status
+        string new_status
+        string reason
+        datetime created_date
+    }
+
     USERS ||--o{ DOCUMENTS : "owns"
     USERS ||--o{ TEMPORARY_DATA : "has pending"
     TEMPORARY_DATA |o--o{ DOCUMENTS : "stored from"
+    ADMINS ||--o{ AUDIT_LOGS : "records (append-only)"
 ```
 
 ### Critical Identifier Distinction
@@ -376,7 +390,7 @@ EmlynkWABot/
 | **Identity Conflict Engine** | ✅ Completed | Passport/WhatsApp identity matrix, conflict detection, field reconciliation — `Docs/07` |
 | **21-Day Police Report Countdown** | ⏳ Planned | Submission date extraction & background reminder scheduler |
 | **Private Object Storage** | ✅ Completed | Private Supabase bucket, client folders, versioning, checksum duplicates, pending storage — `Docs/11`, `Docs/12` |
-| **Admin Dashboard UI** | 🚧 In Progress | Phase 10 Checkpoints 1–3: login, shell; read-only Overview, Documents, Client Details, Review Queue and Review Detail (actions not yet) |
+| **Admin Dashboard UI** | 🚧 In Progress | Phase 10 Checkpoints 1–4: login, shell; Overview, Documents, Client Details, Review Queue, Review Detail with Approve / Keep Pending and audit log |
 
 ---
 
@@ -393,7 +407,7 @@ EmlynkWABot/
 | **Phase 7** | Permanent Storage | ✅ Completed | Structured folder naming, private cloud storage, checksums, pending storage — `Docs/11`, `Docs/12` |
 | **Phase 8** | Temporary Workflow | ✅ Completed | Disk storage & `temporary_data` table integration for incoming unverified files |
 | **Phase 9** | Police Report Countdown | ⏳ Planned | 21-day countdown service & Admin completion suppression handler |
-| **Phase 10** | Admin Dashboard | 🚧 In Progress | Checkpoints 1–3 done: admin frontend, read-only admin API, review queue/detail. Next: review actions |
+| **Phase 10** | Admin Dashboard | 🚧 In Progress | Checkpoints 1–4: admin frontend, admin API, review queue/detail, review actions (Approve, Keep Pending; no reject) with append-only audit log. Next: Police Workflow |
 | **Phase 11** | Reporting and Alerts | ⏳ Planned | System alert metrics, overdue reports & missing document summaries |
 | **Phase 12** | Security, QA & Deployment | ⏳ Planned | Role-based authorization, load testing, production Docker container |
 
@@ -534,6 +548,8 @@ All routes need `Authorization: Bearer <token>` of an **ACTIVE** admin (checked 
 | `GET` | `/api/admin/review` | Review queue: waiting files and REVIEW_REQUIRED documents, with review reasons |
 | `GET` | `/api/admin/review/:reviewId` | One review item: reason, identity, sender, processing summary, file info |
 | `GET` | `/api/admin/review/:reviewId/file` | The item's file, streamed from private storage for the in-page preview |
+| `POST` | `/api/admin/review/:reviewId/approve` | Approve: waiting file moved to the client folder as VERIFIED (or stored document marked VERIFIED); audit entry |
+| `POST` | `/api/admin/review/:reviewId/keep-pending` | Keep Pending with a required reason: item stays pending and in the queue; audit entry |
 
 ---
 

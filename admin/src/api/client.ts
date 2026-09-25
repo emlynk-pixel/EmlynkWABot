@@ -20,6 +20,8 @@ type RequestOptions = {
 
 // Only the backend's own short, generic messages are shown to the user
 // (e.g. "Invalid email or password"). Anything unexpected gets a fixed text.
+// A 502 is the backend saying storage failed; its JSON message is shown
+// (a proxy's own 502 page isn't JSON, so it still gets the fixed text).
 const FALLBACK_MESSAGE = "Something went wrong. Please try again.";
 
 async function readMessage(response: Response): Promise<string | null> {
@@ -52,7 +54,7 @@ export async function apiRequest<T>(path: string, { method = "GET", body, token,
     }
 
     if (!response.ok) {
-        const message = response.status >= 500 ? FALLBACK_MESSAGE : (await readMessage(response)) ?? FALLBACK_MESSAGE;
+        const message = response.status >= 500 && response.status !== 502 ? FALLBACK_MESSAGE : (await readMessage(response)) ?? FALLBACK_MESSAGE;
         throw new ApiError(response.status, message);
     }
 

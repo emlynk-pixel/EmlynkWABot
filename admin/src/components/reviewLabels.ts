@@ -31,3 +31,9 @@ export const IDENTITY_NOTES: Record<string, string> = {
 };
 
 export const CATEGORY_LABELS = { IDENTITY: "Identity issues", QUALITY: "Quality / OCR issues", CONFLICT: "Conflicts", OTHER: "Other" } as const;
+
+// Review actions in the audit log. Only these two exist (no reject).
+export const AUDIT_ACTIONS: Record<string, { label: string; tone: Tone }> = {
+    APPROVE: { label: "Approved", tone: "verified" },
+    KEEP_PENDING: { label: "Kept pending", tone: "review" },
+};

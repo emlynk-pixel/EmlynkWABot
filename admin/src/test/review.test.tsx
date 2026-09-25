@@ -1,8 +1,8 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import type { ReviewItem, ReviewQueue, ReviewQueueItem } from "../api/admin";
-import { CLIENT_REF, TOKEN_KEY, renderApp, signedInBackend, stubBackend } from "./helpers";
+import type { ApproveResult, AuditEntry, ReviewItem, ReviewQueue, ReviewQueueItem } from "../api/admin";
+import { CLIENT_REF, TOKEN_KEY, renderApp, signedInBackend, stubBackend, type FetchRoutes } from "./helpers";
 
 // Synthetic review data only.
 const TEMP_ID = "11111111-1111-4111-8111-111111111111";
@@ -51,6 +51,28 @@ const ITEM: ReviewItem = {
         storage: { checksum: "NEW", placement: "PENDING", verificationStatus: null, documentStored: false, pendingCopy: true },
     },
     file: { name: "document_20260924_063000.png", mimeType: "image/png", size: null, location: "PENDING", previewUrl: `/api/admin/review/pending-${TEMP_ID}/file` },
+    auditLog: [],
+    actions: { approve: { available: true, code: null, message: null }, keepPending: { available: true, code: null, message: null } },
+};
+
+const auditEntry = (overrides: Partial<AuditEntry> = {}): AuditEntry => ({
+    auditId: "a0000000-0000-4000-8000-000000000001",
+    action: "KEEP_PENDING",
+    adminId: "admin-1",
+    adminName: "Test Admin",
+    reason: "Waiting for a clearer photo",
+    previousStatus: "MANUAL_REVIEW",
+    newStatus: "MANUAL_REVIEW",
+    createdDate: "2026-09-25T04:30:00.000Z",
+    ...overrides,
+});
+
+const APPROVE_RESULT: ApproveResult = {
+    action: "APPROVE",
+    reviewId: `pending-${TEMP_ID}`,
+    document: { documentId: DOC_ID, storedFilename: "passport.pdf", verificationStatus: "VERIFIED", location: "CLIENT" },
+    pendingCopyRemoved: true,
+    audit: auditEntry({ auditId: "a0000000-0000-4000-8000-000000000002", action: "APPROVE", reason: null, newStatus: "VERIFIED" }),
 };
 
 // jsdom has no object URLs; the preview only needs them to exist.
@@ -159,20 +181,18 @@ describe("Review Detail", () => {
         expect(fileRequest.headers.Authorization).toBe(`Bearer ${window.sessionStorage.getItem(TOKEN_KEY)}`);
     });
 
-    test("review action buttons are shown but disabled and never call the API", async () => {
-        const { calls } = signedInBackend({
+    test("offers exactly Approve and Keep Pending; there is no Reject", async () => {
+        signedInBackend({
             [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: ITEM },
             [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse,
         });
         renderApp(`/review/pending-${TEMP_ID}`);
         const group = await screen.findByRole("group", { name: "Review actions" });
         const buttons = within(group).getAllByRole("button");
-        expect(buttons.map((b) => b.textContent)).toEqual(["Approve / Verify", "Reject", "Keep pending"]);
-        for (const button of buttons) {
-            expect(button).toBeDisabled();
-            await userEvent.setup().click(button).catch(() => {});
-        }
-        expect(calls.every((c) => c.method === "GET")).toBe(true);
+        expect(buttons.map((b) => b.textContent)).toEqual(["Approve", "Keep Pending"]);
+        buttons.forEach((button) => expect(button).toBeEnabled());
+        expect(screen.queryByRole("button", { name: /reject/i })).not.toBeInTheDocument();
+        expect(screen.queryByText(/reject/i)).not.toBeInTheDocument();
     });
 
     test("an item without saved processing data says so", async () => {
@@ -199,6 +219,169 @@ describe("Review Detail", () => {
         signedInBackend({ "GET /api/admin/review/pending-99999999-9999-4999-8999-999999999999": { status: 404, body: { message: "Review item not found" } } });
         renderApp("/review/pending-99999999-9999-4999-8999-999999999999");
         expect(await screen.findByRole("heading", { name: "Review item not found" })).toBeInTheDocument();
+    });
+});
+
+describe("Review actions", () => {
+    const DETAIL = `GET /api/admin/review/pending-${TEMP_ID}`;
+    const APPROVE = `POST /api/admin/review/pending-${TEMP_ID}/approve`;
+    const KEEP = `POST /api/admin/review/pending-${TEMP_ID}/keep-pending`;
+    const posts = <T extends { method: string }>(calls: T[]) => calls.filter((c) => c.method === "POST");
+
+    async function openDetail(routes: FetchRoutes = {}) {
+        const backend = signedInBackend({ [DETAIL]: { status: 200, body: ITEM }, [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse, ...routes });
+        renderApp(`/review/pending-${TEMP_ID}`);
+        const group = await screen.findByRole("group", { name: "Review actions" });
+        return { ...backend, group, user: userEvent.setup() };
+    }
+
+    test("Approve asks for confirmation; Cancel sends nothing", async () => {
+        const { calls, group, user } = await openDetail();
+        await user.click(within(group).getByRole("button", { name: "Approve" }));
+        const dialog = screen.getByRole("dialog", { name: "Approve this document?" });
+        expect(dialog).toHaveTextContent("This will move the document to permanent client storage and mark it as verified.");
+        await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(posts(calls)).toHaveLength(0);
+    });
+
+    test("successful approval: success message, verified status, audit entry, item leaves the queue", async () => {
+        let approved = false;
+        const { calls, group, user } = await openDetail({
+            [APPROVE]: () => { approved = true; return { status: 200, body: APPROVE_RESULT }; },
+            "GET /api/admin/review": () => ({ status: 200, body: queue(approved ? [] : [queueItem()]) }),
+        });
+        await user.click(within(group).getByRole("button", { name: "Approve" }));
+        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" }));
+
+        expect(await screen.findByRole("status")).toHaveTextContent("stored in the client folder as passport.pdf and marked as verified");
+        expect(posts(calls).map((c) => c.path)).toEqual([`/api/admin/review/pending-${TEMP_ID}/approve`]);
+        expect(screen.queryByRole("group", { name: "Review actions" })).not.toBeInTheDocument();
+        expect(screen.getByText("This item is no longer in the Review Queue.", { exact: false })).toBeInTheDocument();
+        expect(screen.getByText("Verification status").nextElementSibling).toHaveTextContent("Verified");
+        const history = screen.getByRole("list", { name: "Review history" });
+        expect(within(history).getByText("Approved")).toBeInTheDocument();
+
+        // Back in the queue, the list is fetched again and the item is gone.
+        await user.click(screen.getByRole("link", { name: "Back to Review Queue" }));
+        expect(await screen.findByText("Nothing waiting for review")).toBeInTheDocument();
+        expect(calls.filter((c) => c.path.startsWith("/api/admin/review?") || c.path === "/api/admin/review").length).toBeGreaterThan(0);
+    });
+
+    test("while approving, both the confirm button and the page actions are disabled: one request only", async () => {
+        let release: (value: { status: number; body: unknown }) => void = () => {};
+        const { calls, group, user } = await openDetail({ [APPROVE]: () => new Promise((resolve) => { release = resolve; }) });
+        await user.click(within(group).getByRole("button", { name: "Approve" }));
+        const dialog = screen.getByRole("dialog");
+        await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+
+        const busy = within(dialog).getByRole("button", { name: "Approving…" });
+        expect(busy).toBeDisabled();
+        expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+        within(group).getAllByRole("button").forEach((button) => expect(button).toBeDisabled());
+        await user.click(busy).catch(() => {});
+        await user.keyboard("{Escape}");
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(posts(calls)).toHaveLength(1);
+
+        release({ status: 200, body: APPROVE_RESULT });
+        expect(await screen.findByRole("status")).toHaveTextContent("Approved.");
+    });
+
+    test("a conflict is shown as the server's message and nothing is marked approved", async () => {
+        const message = "This client already has a verified passport. It was not changed, and this item stays pending.";
+        const { group, user } = await openDetail({ [APPROVE]: { status: 409, body: { message, code: "VERIFIED_DOCUMENT_EXISTS" } } });
+        await user.click(within(group).getByRole("button", { name: "Approve" }));
+        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" }));
+
+        expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent(message);
+        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+        expect(within(screen.getByRole("group", { name: "Review actions" })).getByRole("button", { name: "Approve" })).toBeEnabled();
+        expect(screen.getByText("Pending storage")).toBeInTheDocument();
+    });
+
+    test("a storage failure (502) shows the server's message; other server errors a generic one", async () => {
+        const { group, user } = await openDetail({ [APPROVE]: { status: 502, body: { message: "The file could not be stored in the client folder. Nothing was changed; the item stays pending." } } });
+        await user.click(within(group).getByRole("button", { name: "Approve" }));
+        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" }));
+        expect(await screen.findByRole("alert")).toHaveTextContent("could not be stored in the client folder");
+    });
+
+    test("Keep Pending requires a reason before anything is sent", async () => {
+        const { calls, group, user } = await openDetail({ [KEEP]: { status: 200, body: { action: "KEEP_PENDING", reviewId: `pending-${TEMP_ID}`, audit: auditEntry() } } });
+        await user.click(within(group).getByRole("button", { name: "Keep Pending" }));
+        const dialog = screen.getByRole("dialog", { name: "Keep this document pending?" });
+        const reason = within(dialog).getByLabelText(/Reason/);
+        expect(reason).toBeRequired();
+
+        await user.click(within(dialog).getByRole("button", { name: "Keep Pending" }));
+        expect(within(dialog).getByText("Enter a reason.")).toBeInTheDocument();
+        await user.type(reason, "   ");
+        await user.click(within(dialog).getByRole("button", { name: "Keep Pending" }));
+        expect(within(dialog).getByText("Enter a reason.")).toBeInTheDocument();
+        expect(posts(calls)).toHaveLength(0);
+    });
+
+    test("successful Keep Pending: reason sent, item reloaded with the new audit entry, still reviewable", async () => {
+        let kept = false;
+        const { calls, group, user } = await openDetail({
+            [DETAIL]: () => ({ status: 200, body: kept ? { ...ITEM, auditLog: [auditEntry()] } : ITEM }),
+            [KEEP]: () => { kept = true; return { status: 200, body: { action: "KEEP_PENDING", reviewId: `pending-${TEMP_ID}`, audit: auditEntry() } }; },
+        });
+        expect(screen.getByText("No review actions yet")).toBeInTheDocument();
+        await user.click(within(group).getByRole("button", { name: "Keep Pending" }));
+        const dialog = screen.getByRole("dialog");
+        await user.type(within(dialog).getByLabelText(/Reason/), "  Waiting for a clearer photo ");
+        await user.click(within(dialog).getByRole("button", { name: "Keep Pending" }));
+
+        expect(await screen.findByRole("status")).toHaveTextContent("Kept pending. The item stays in the Review Queue.");
+        expect(posts(calls)[0].body).toEqual({ reason: "Waiting for a clearer photo" });
+        const history = await screen.findByRole("list", { name: "Review history" });
+        expect(within(history).getByText("Kept pending")).toBeInTheDocument();
+        expect(within(history).getByText("Waiting for a clearer photo")).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "GET" && c.path === `/api/admin/review/pending-${TEMP_ID}`)).toHaveLength(2);
+        within(screen.getByRole("group", { name: "Review actions" })).getAllByRole("button").forEach((button) => expect(button).toBeEnabled());
+    });
+
+    test("Keep Pending errors are shown in the dialog", async () => {
+        const { group, user } = await openDetail({ [KEEP]: { status: 409, body: { message: "You already kept this item pending with the same reason a moment ago.", code: "DUPLICATE_ACTION" } } });
+        await user.click(within(group).getByRole("button", { name: "Keep Pending" }));
+        const dialog = screen.getByRole("dialog");
+        await user.type(within(dialog).getByLabelText(/Reason/), "same reason");
+        await user.click(within(dialog).getByRole("button", { name: "Keep Pending" }));
+        expect(await within(dialog).findByRole("alert")).toHaveTextContent("already kept this item pending");
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+
+    test("audit entries render action, admin, reason and time; no Reject action is ever shown", async () => {
+        const entries = [
+            auditEntry({ auditId: "a2", action: "APPROVE", adminName: "Second Admin", reason: null, createdDate: "2026-09-25T06:00:00.000Z" }),
+            auditEntry({ auditId: "a1", adminName: "First Admin", reason: "Asked the client for a new scan", createdDate: "2026-09-25T05:00:00.000Z" }),
+        ];
+        signedInBackend({ [DETAIL]: { status: 200, body: { ...ITEM, auditLog: entries } }, [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse });
+        renderApp(`/review/pending-${TEMP_ID}`);
+        const history = await screen.findByRole("list", { name: "Review history" });
+        const items = within(history).getAllByRole("listitem");
+        expect(items).toHaveLength(2);
+        expect(items[0]).toHaveTextContent("Approved");
+        expect(items[0]).toHaveTextContent("Second Admin");
+        expect(items[0]).toHaveTextContent("No reason given");
+        expect(items[1]).toHaveTextContent("Kept pending");
+        expect(items[1]).toHaveTextContent("First Admin");
+        expect(items[1]).toHaveTextContent("Asked the client for a new scan");
+        expect(within(items[1]).getByText(/2026/).tagName).toBe("TIME");
+        expect(within(history).queryByText(/reject/i)).not.toBeInTheDocument();
+    });
+
+    test("when Approve isn't possible the button is disabled with the reason", async () => {
+        const blocked = { ...ITEM, actions: { ...ITEM.actions!, approve: { available: false, code: "CLIENT_NOT_IDENTIFIED", message: "This file is not linked to a client, so it can't be stored in a client folder. It stays pending." } } };
+        signedInBackend({ [DETAIL]: { status: 200, body: blocked }, [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse });
+        renderApp(`/review/pending-${TEMP_ID}`);
+        const group = await screen.findByRole("group", { name: "Review actions" });
+        expect(within(group).getByRole("button", { name: "Approve" })).toBeDisabled();
+        expect(within(group).getByRole("button", { name: "Keep Pending" })).toBeEnabled();
+        expect(screen.getByText(/Approve is not available: This file is not linked to a client/)).toBeInTheDocument();
     });
 });
 

@@ -190,7 +190,38 @@ export type ReviewItem = {
     submission: { whatsappNumber: string; receivedDate: string } | null;
     processing: ProcessingSummary | null;
     file: { name: string; mimeType: string | null; size: number | null; location: "PENDING" | "CLIENT"; previewUrl: string | null };
+    auditLog: AuditEntry[]; // newest first
+    actions: ReviewActions | null;
 };
+
+// ---------------------------------------------------------------- review actions (Checkpoint 4)
+// Only two actions exist: there is no reject.
+
+export type ReviewAction = "APPROVE" | "KEEP_PENDING";
+
+export type AuditEntry = {
+    auditId: string;
+    action: ReviewAction;
+    adminId: string;
+    adminName: string | null;
+    reason: string | null;
+    previousStatus: string;
+    newStatus: string;
+    createdDate: string;
+};
+
+type ActionAvailability = { available: boolean; code: string | null; message: string | null };
+export type ReviewActions = { approve: ActionAvailability; keepPending: ActionAvailability };
+
+export type ApproveResult = {
+    action: "APPROVE";
+    reviewId: string;
+    document: { documentId: string; storedFilename: string | null; verificationStatus: "VERIFIED"; location: "CLIENT" };
+    pendingCopyRemoved: boolean | null;
+    audit: AuditEntry;
+};
+
+export type KeepPendingResult = { action: "KEEP_PENDING"; reviewId: string; audit: AuditEntry };
 
 export function getReviewQueue(token: string, params: ReviewQueueParams, signal?: AbortSignal): Promise<ReviewQueue> {
     const query = new URLSearchParams();
@@ -203,6 +234,14 @@ export function getReviewQueue(token: string, params: ReviewQueueParams, signal?
 
 export function getReviewItem(token: string, reviewId: string, signal?: AbortSignal): Promise<ReviewItem> {
     return apiRequest<ReviewItem>(`/api/admin/review/${encodeURIComponent(reviewId)}`, { token, signal });
+}
+
+export function approveReviewItem(token: string, reviewId: string, reason?: string): Promise<ApproveResult> {
+    return apiRequest<ApproveResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/approve`, { method: "POST", token, body: reason ? { reason } : {} });
+}
+
+export function keepReviewItemPending(token: string, reviewId: string, reason: string): Promise<KeepPendingResult> {
+    return apiRequest<KeepPendingResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/keep-pending`, { method: "POST", token, body: { reason } });
 }
 
 // The file comes through the backend with the admin's token; the page shows

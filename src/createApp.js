@@ -48,7 +48,7 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
     app.use("/auth", authRouter);
     app.use("/whatsapp", whatsappRoutes);
 
-    // Read-only admin dashboard API (ACTIVE admin token required).
+    // Admin dashboard API: read-only plus the review actions (ACTIVE admin token required).
     app.use("/api/admin", adminApiRouter);
 
     // Admin dashboard (built React app from admin/), same origin as /auth.

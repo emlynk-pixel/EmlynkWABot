@@ -75,6 +75,8 @@ function fakeReviewDb({ pending = [pendingRow()], documents = [documentRow()] } 
             findMany: async (args) => record("document.findMany", args, args.take ? documents.slice(0, args.take) : documents),
             findFirst: async (args) => record("document.findFirst", args, documents.find((d) => d.documentId === idIn(args.where, "documentId")) ?? null),
         },
+        // Review history (Checkpoint 4; covered in adminReviewActions.test.js).
+        auditLog: { findMany: async (args) => record("auditLog.findMany", args, []) },
     };
 }
 

@@ -10,11 +10,17 @@ import {
 } from "../services/adminDashboardService.js";
 import {
     listReviewQueue,
-    getReviewItem,
     getReviewFile,
     parseReviewQueueQuery,
     parseReviewId,
 } from "../services/adminReviewService.js";
+import {
+    approveReviewItem,
+    getReviewItemWithActions,
+    keepReviewItemPending,
+    parseReviewActionBody,
+    ReviewActionError,
+} from "../services/adminReviewActionService.js";
 
 // Loaded lazily so tests can pass a fake client without touching the DB.
 async function resolveDb(db) {
@@ -34,10 +40,13 @@ function contentDisposition(fileName) {
     return `inline; filename="${safe}"`;
 }
 
-// Read-only admin dashboard API, mounted at /api/admin (Phase 10).
+// Admin dashboard API, mounted at /api/admin (Phase 10). Read-only except
+// the two review actions (approve, keep pending); there is no reject action
+// and no route that changes or deletes an audit entry.
 // Every route needs a valid token of an ACTIVE admin. Responses hold client
 // data, so browsers and proxies must not cache them.
-// Errors: { message } or { message, errors: [{ field, message }] }.
+// Errors: { message } or { message, errors: [{ field, message }] }; review
+// action conflicts also carry a machine-readable { code }.
 export function createAdminRouter({ db, bucket, requireAdmin = createRequireActiveAdmin({ db }) } = {}) {
     const router = express.Router();
 
@@ -94,7 +103,7 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
     router.get("/review/:reviewId", async (req, res) => {
         if (!parseReviewId(req.params.reviewId)) return invalidReviewId(res);
         const client = await resolveDb(db);
-        const item = await getReviewItem({ db: client, reviewId: req.params.reviewId });
+        const item = await getReviewItemWithActions({ db: client, reviewId: req.params.reviewId });
         if (!item) return res.status(404).json({ message: "Review item not found" });
         return res.json(item);
     });
@@ -119,6 +128,30 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
         });
         return res.send(file.buffer);
     });
+
+    // Review actions. The admin comes from the token (req.admin), never the body.
+    const reviewAction = (action, { reasonRequired, needsBucket }) => async (req, res) => {
+        if (!parseReviewId(req.params.reviewId)) return invalidReviewId(res);
+        const parsed = parseReviewActionBody(req.body, { reasonRequired });
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const [client, storage] = await Promise.all([resolveDb(db), needsBucket ? resolveBucket(bucket) : null]);
+        try {
+            const result = await action({ db: client, bucket: storage, admin: req.admin, reviewId: req.params.reviewId, reason: parsed.reason });
+            return res.json(result);
+        } catch (error) {
+            if (error instanceof ReviewActionError) {
+                return res.status(error.status).json({ message: error.message, code: error.code });
+            }
+            throw error;
+        }
+    };
+
+    // PENDING: pending/ -> client folder, VERIFIED. DOCUMENT: REVIEW_REQUIRED -> VERIFIED.
+    router.post("/review/:reviewId/approve", reviewAction(approveReviewItem, { reasonRequired: false, needsBucket: true }));
+    // Stays pending and in the queue; the reason is required.
+    router.post("/review/:reviewId/keep-pending", reviewAction(keepReviewItemPending, { reasonRequired: true, needsBucket: false }));
 
     // Anything else under /api/admin (only reached by an authenticated admin).
     router.use((req, res) => res.status(404).json({ message: "Not found" }));
