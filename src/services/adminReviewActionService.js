@@ -16,7 +16,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 
-import { REVIEW_PENDING_WHERE, REVIEW_KIND, getReviewItem, mimeTypeForPath, parseReviewId, toReviewId } from "./adminReviewService.js";
+import { REVIEW_PENDING_WHERE, REVIEW_KIND, findDuplicateMatch, getReviewItem, mimeTypeForPath, parseReviewId, toReviewId } from "./adminReviewService.js";
 import { DOCUMENT_PROCESSING_STATUS_STORED, VERIFICATION_STATUS } from "./clientDocumentService.js";
 import { PROCESSING_STATUS } from "./documentProcessingService.js";
 import { copyToFreeName, removeObject } from "./permanentStorageService.js";
@@ -173,9 +173,14 @@ const findVerifiedOfType = (db, { passportId, documentType, exceptDocumentId }) 
 
 // Why Approve is not possible for this item right now, or null. Checked
 // again under the locks when the action runs; this read is for the page.
-async function approvalBlocker(db, { passportId, documentType, exceptDocumentId }) {
+async function approvalBlocker(db, { passportId, documentType, exceptDocumentId, duplicateOf = null }) {
     if (!passportId) {
         return new ReviewActionError(409, "CLIENT_NOT_IDENTIFIED", "This file is not linked to a client, so it can't be stored in a client folder. It stays pending.");
+    }
+    // M4: the client already has this exact file. Nothing to store; keep it
+    // pending or remove it from review. The existing document is not changed.
+    if (duplicateOf) {
+        return new ReviewActionError(409, "DUPLICATE_FILE", `This document is an exact duplicate of the client's existing ${duplicateOf.verificationStatus === VERIFICATION_STATUS.VERIFIED ? "verified " : ""}${typeName(duplicateOf.documentType)}. The existing document was not changed; keep this item pending or remove it from review.`);
     }
     if (!DOCUMENT_STORAGE_TYPES[documentType]) {
         return new ReviewActionError(409, "NO_CLIENT_FOLDER", `A document of type "${typeName(documentType)}" has no client folder. It stays pending.`);
@@ -200,6 +205,7 @@ export async function reviewActionAvailability({ db, reviewId }) {
         passportId: row.passportId,
         documentType: row.documentType,
         exceptDocumentId: parsed.kind === REVIEW_KIND.DOCUMENT ? row.documentId : null,
+        duplicateOf: await duplicateMatchOf(db, row),
     });
     // A police slip without a stored date can only be approved with one.
     const needsPoliceDate = row.documentType === DOCUMENT_TYPES.POLICE_SLIP && !toYmd(row.policeSubmittedDate);
@@ -217,6 +223,11 @@ export async function reviewActionAvailability({ db, reviewId }) {
         assignClient: correctable(parsed.kind),
     };
 }
+
+// M4: for a waiting DUPLICATE, the existing document it is an exact copy of.
+const duplicateMatchOf = (db, row) => (row.processingStatus === PROCESSING_STATUS.DUPLICATE && row.temporaryId
+    ? findDuplicateMatch(db, { passportId: row.passportId, fileSha256: row.fileSha256 })
+    : null);
 
 // ---------------------------------------------------------------- audit
 
@@ -291,7 +302,7 @@ export async function getReviewItemWithActions({ db, reviewId }) {
 async function approvePending({ db, bucket, admin, temporaryId, reason, policeSubmittedDate: givenDate }) {
     const before = await findPending(db, temporaryId);
     if (!before) throw notFound();
-    const blocker = await approvalBlocker(db, { passportId: before.passportId, documentType: before.documentType });
+    const blocker = await approvalBlocker(db, { passportId: before.passportId, documentType: before.documentType, duplicateOf: await duplicateMatchOf(db, before) });
     if (blocker) throw blocker;
     // A waiting slip has no stored date (only slips filed under a client keep theirs).
     const policeSubmittedDate = policeDateForApproval({ documentType: before.documentType, storedDate: null, givenDate });
@@ -507,11 +518,14 @@ export async function keepReviewItemPending({ db, admin, reviewId, reason, now =
         }
 
         const status = isPending ? row.processingStatus : row.verificationStatus;
+        // M4: a kept duplicate records the existing document it copies.
+        const match = isPending ? await duplicateMatchOf(tx, row) : null;
         return createAudit(tx, {
             admin,
             action: REVIEW_ACTION.KEEP_PENDING,
             temporaryId: isPending ? row.temporaryId : row.temporaryId ?? null,
-            documentId: isPending ? null : row.documentId,
+            documentId: isPending ? match?.documentId ?? null : row.documentId,
+            ...(match ? { documentType: row.documentType, fileSha256: row.fileSha256 ?? null } : {}),
             passportId: row.passportId ?? null,
             previousStatus: status,
             newStatus: status,
@@ -550,11 +564,15 @@ export async function removeFromReview({ db, bucket, admin, reviewId, reason }) 
         await lockTemporaryRow(tx, parsed.id);
         const row = await findPending(tx, parsed.id);
         if (!row) throw alreadyResolved();
+        // M4: a removed duplicate records the existing document it copied
+        // (which is not touched: only this submission's files and row go).
+        const match = await duplicateMatchOf(tx, row);
 
         const audit = await createAudit(tx, {
             admin,
             action: REVIEW_ACTION.REMOVE_FROM_REVIEW,
             temporaryId: row.temporaryId,
+            documentId: match?.documentId ?? null,
             passportId: row.passportId ?? null,
             previousStatus: row.processingStatus,
             newStatus: REMOVED_STATUS,

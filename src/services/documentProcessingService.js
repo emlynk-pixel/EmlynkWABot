@@ -273,6 +273,7 @@ export async function processDocument({
             checksumOutcome: state.checksum?.outcome,
             reviewBlocked: hasReviewBlocker(state),
             verifiedOfTypeExists,
+            duplicateOfVerified: state.checksum?.existingVerified === true,
         });
         state.placement = await placeDocument(decision, {
             temporaryId,

@@ -23,7 +23,15 @@ describe("checkClientChecksum", () => {
         const db = createFakePrisma([], { documents });
         const result = await checkClientChecksum({ passportId: "N1234567", fileSha256: PASSPORT_FILE }, { db });
 
-        assert.deepEqual(result, { outcome: DUPLICATE, existingDocumentId: "doc-1" });
+        assert.deepEqual(result, { outcome: DUPLICATE, existingDocumentId: "doc-1", existingVerified: false });
+    });
+
+    test("M4: says whether the same-client match is VERIFIED", async () => {
+        const db = createFakePrisma([], { documents: [{ ...documents[0], verificationStatus: "VERIFIED" }] });
+        const result = await checkClientChecksum({ passportId: "N1234567", fileSha256: PASSPORT_FILE }, { db });
+        assert.deepEqual(result, { outcome: DUPLICATE, existingDocumentId: "doc-1", existingVerified: true });
+        const pending = createFakePrisma([], { documents: [{ ...documents[0], verificationStatus: "REVIEW_REQUIRED" }] });
+        assert.equal((await checkClientChecksum({ passportId: "N1234567", fileSha256: PASSPORT_FILE }, { db: pending })).existingVerified, false);
     });
 
     test("B: same checksum stored for a different client -> CROSS_CLIENT_CONFLICT", async () => {
@@ -62,7 +70,7 @@ describe("checkClientChecksum", () => {
         });
         const result = await checkClientChecksum({ passportId: "N7654321", fileSha256: PASSPORT_FILE }, { db });
 
-        assert.deepEqual(result, { outcome: DUPLICATE, existingDocumentId: "doc-2" });
+        assert.deepEqual(result, { outcome: DUPLICATE, existingDocumentId: "doc-2", existingVerified: false });
     });
 
     test("lookups are scoped: exact passport + checksum, then checksum excluding this client", async () => {

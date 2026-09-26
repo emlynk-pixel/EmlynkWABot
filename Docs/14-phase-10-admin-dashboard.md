@@ -220,6 +220,7 @@ Row-level security and the revoked public-role grants apply to the new columns a
 | `IDENTITY_NOT_CONFIRMED` | identity needs review (no match, ambiguous, passport-only incl. SEC-008, provisional, unreadable passport ID) | Identity |
 | `POLICE_DATE_UNRESOLVED` | police slip date `AMBIGUOUS` / `INVALID` / `NOT_FOUND` | Other |
 | `LOW_CONFIDENCE` | band `UNDEFINED` or `UNCLEAR` (incl. accepted low-quality passports) | Quality / OCR |
+| `DUPLICATE_OF_VERIFIED` | exact copy (same checksum) of the same client's `VERIFIED` document (M4, §4k) | Other |
 
 `DUPLICATE` (same client already has the file) and clear documents get no reason. A stored `REVIEW_REQUIRED` document without a link (stored before the migration) is shown as `LOW_CONFIDENCE`, the only rule that produces that status. Submissions processed before the migration show "Not recorded".
 
@@ -336,7 +337,7 @@ Purpose: a permanent record of every review decision — who decided what, about
 | `admin_id` | The admin who acted (from the token, never from the request body). Foreign key to `admins`, `ON DELETE RESTRICT`: an admin with entries can't be deleted (deactivate instead). |
 | `action` | `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT` or `SET_POLICE_DATE` |
 | `temporary_id` | The submission, when there is one |
-| `document_id` | The document created (approve of a waiting file) or reviewed (stored document) |
+| `document_id` | The document created (approve of a waiting file) or reviewed (stored document); for actions on an M4 duplicate, the existing document it copies (never changed, §4k) |
 | `passport_id` | The client, when known |
 | `previous_status` / `new_status` | Waiting file: the submission's `processing_status` → `VERIFIED` (approve) or unchanged (keep pending). Stored document: `REVIEW_REQUIRED` → `VERIFIED` or unchanged. |
 | `reason` | The admin's reason (required for Keep Pending, optional for Approve) |
@@ -456,7 +457,7 @@ The proposal's status words (§22, §24) and what the implementation records. `s
 | Invalid | Refused at intake (unsupported type, too large, bad content): logged, **no record** is created (so not countable) |
 | Rejected | **Removed from the workflow.** No reject status, action or endpoint exists. Remove from Review is a queue decision, not a rejection, and creates no status. |
 | Completed | Client: every required document `VERIFIED`. Police Workflow: `COMPLETED` when a verified police report exists. |
-| (not in the list) | `MANUAL_REVIEW`, `CONFLICT` (held for review), `DUPLICATE` (same file already on record), `FAILED` (processing error) |
+| (not in the list) | `MANUAL_REVIEW`, `CONFLICT` (held for review), `DUPLICATE` (same file already on record; an exact copy of a *verified* document waits in `pending/` for review, §4k), `FAILED` (processing error) |
 
 Outcome groups (`submissionOutcome`): `PROCESSING` (`TEMPORARY_STORED`), `STORED` (`VERIFIED`, `HIGH_CONFIDENCE`, `SLIGHTLY_UNCLEAR`, `UNCLEAR`), `NEEDS_REVIEW` (`UNDEFINED`, `MANUAL_REVIEW`, `CONFLICT`), `DUPLICATE`, `FAILED`. "Successfully processed" = finished without an error (everything except `FAILED` and `PROCESSING`); an unknown code never counts as success. `FAILED` stays distinct from review: a `FAILED` submission without a pending copy is not in the Review Queue.
 
@@ -489,6 +490,29 @@ Limitations (not invented): a past day's completeness or police status would nee
 **Sync** (header button) means only: reload the data shown on screen from the backend. Not WhatsApp, not an external system, no background job. Every `useAdminResource` on the page reloads with its current key, so filters, search and page are kept. While it runs the button shows "Syncing…" and is disabled (a second click does nothing); afterwards the header shows "Synced HH:MM:SS" or "Sync failed — some data could not be loaded" (`admin/src/sync/SyncProvider.tsx`).
 
 **Dark Mode** (header toggle): the Stitch design language on dark slate surfaces. Only CSS token values change (`:root[data-theme="dark"]` in `index.css`), never the components, so every page, table, badge, dialog, form control, empty/error/loading state and the preview frame follow. Fixed colours were replaced by tokens (`on-primary`, `on-critical`, `overlay`); a test forbids fixed colours in components. Light mode is unchanged (same tokens). The choice is stored per browser in `localStorage` (`emlynk.admin.theme`) and applied before the first render; without storage the dashboard opens in light mode. Contrast: every dark text token is ≥ 4.5:1 on every surface (unit test), and the headless-Chrome check measured every visible text element on every page in dark mode (all ≥ 4.5:1, or 3:1 for large text).
+
+## 4k. M4 — Duplicate Verified-Document Policy
+
+A WhatsApp file that is an **exact copy** (same SHA-256) of a document the **same client** already has **VERIFIED** is no longer discarded silently. It goes to admin review; the verified document is never changed.
+
+| Case | Result |
+|---|---|
+| Same client, same checksum, existing document `VERIFIED` | `processing_status = DUPLICATE`, copy in `pending/{unique_id}/undefined/uncleared-docs/`, linked to the client, review reason `DUPLICATE_OF_VERIFIED`. Nothing new in the client folder (`documentStored: false`, `pendingCopy: true` in the summary). |
+| Same client, same checksum, existing document not verified (`REVIEW_REQUIRED`) | Unchanged: `DUPLICATE`, nothing stored, no review (that document is already in the queue). |
+| Same sender resends while the duplicate already waits in `pending/` | Unchanged: `DUPLICATE`, no second pending copy. |
+| Same client, same type, **different** checksum | Not a duplicate: the existing version workflow (`passport_v2.pdf`, …; H4 B for low confidence). |
+| **Another** client has the same checksum | Unchanged cross-client protection: `CONFLICT`, `pending/unidentified/…`, not linked to either client, reason `CROSS_CLIENT_DUPLICATE`. |
+
+Representation: the spec's "verification status REVIEW_REQUIRED / document stored" is expressed with the existing pending-review model, because a second `documents` row for the same client and checksum is forbidden by the unique index (the core duplicate protection). A waiting file in `pending/` is a review item by definition; no schema change.
+
+Admin review (existing actions only; no new action):
+- **Review Queue** lists it (status *Duplicate*, reason *Duplicate of a verified document*, filterable); it counts in *Pending review*.
+- **Review Detail** shows the reason ("This document is an exact duplicate of an existing verified document for this client") and a *Duplicate of* row: the existing document's type, short ID, status and received date (looked up live by client + checksum; `duplicateOf` in `GET /review/:id`). No checksums or paths are returned.
+- **Approve** is refused (409 `DUPLICATE_FILE`, "exact duplicate of the client's existing verified …"): the identical file is already on record.
+- **Keep Pending** keeps it (the "keep" decision); **Remove from Review** deletes only the incoming copy (pending file, temporary original, submission row). The verified document is never touched.
+- **Audit:** both actions record the admin, the duplicate (`temporary_id`), the existing document that matched (`document_id`), the client, the status (`DUPLICATE` → `DUPLICATE` or `REMOVED`), the reason, the time, and the checksum.
+
+Code: `documentChecksumService.checkClientChecksum` (`existingVerified`), `storagePlacementService.decidePlacement` (`duplicateOfVerified`), `reviewReason.js` (`DUPLICATE_OF_VERIFIED`), `adminReviewService.findDuplicateMatch`, `adminReviewActionService` (Approve blocker, audit link). Tests: `test/duplicateVerifiedPolicy.test.js`, `admin/src/test/review.test.tsx` ("M4").
 
 ## 5. Pages and data
 

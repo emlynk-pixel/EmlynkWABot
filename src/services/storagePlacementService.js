@@ -22,12 +22,19 @@ const CLIENT_BANDS = new Set(["VERIFIED", "HIGH_CONFIDENCE", "SLIGHTLY_UNCLEAR",
 // exactly one existing client (not provisional). `reviewBlocked` means a
 // specific reason needs a person (identity, wrong document, police slip
 // date), not just low confidence. `verifiedOfTypeExists` means the client
-// already has a VERIFIED document of this type. Rules are checked in order;
-// anything that must not be attached to a client automatically goes to pending/.
-export function decidePlacement({ processingStatus, band, documentType, clientIdentified, uniqueId, checksumOutcome, reviewBlocked = false, verifiedOfTypeExists = false }) {
-    // Same client already has this exact file (D8): nothing new is stored.
+// already has a VERIFIED document of this type. `duplicateOfVerified` means
+// the same client's matching file (checksumOutcome DUPLICATE) is VERIFIED.
+// Rules are checked in order; anything that must not be attached to a
+// client automatically goes to pending/.
+export function decidePlacement({ processingStatus, band, documentType, clientIdentified, uniqueId, checksumOutcome, reviewBlocked = false, verifiedOfTypeExists = false, duplicateOfVerified = false }) {
+    // Same client already has this exact file (D8): nothing new is stored in
+    // the client folder. M4: when that file is VERIFIED, the incoming copy is
+    // not discarded but waits in pending/ for an admin (keep or remove); the
+    // verified document is never changed. Other duplicates: nothing stored.
     if (checksumOutcome === CHECKSUM_OUTCOME.DUPLICATE) {
-        return { placement: PLACEMENT.NONE, processingStatus: "DUPLICATE", pendingOwner: null };
+        return duplicateOfVerified && clientIdentified
+            ? { placement: PLACEMENT.PENDING, processingStatus: "DUPLICATE", pendingOwner: uniqueId }
+            : { placement: PLACEMENT.NONE, processingStatus: "DUPLICATE", pendingOwner: null };
     }
 
     // Exact file already belongs to another client (D9). Neither client's

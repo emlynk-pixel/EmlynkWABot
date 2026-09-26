@@ -157,6 +157,10 @@ For each required type the status is *Verified* > *Review required* (stored, not
 - An admin can assign a waiting file only to an **existing** client. The dashboard never creates clients, never edits client records and never changes a WhatsApp number.
 - The sender's number and the original identity check stay on the submission. The previous link, if any, is kept in the audit log.
 
+### M4 — Duplicate Verified-Document Policy
+
+A file sent on WhatsApp that is an exact copy of a document the same client already has **verified** is not silently discarded: it waits in the Review Queue with the reason *Duplicate of a verified document*, and Review Detail shows which verified document it copies. Approve is not possible (the identical file is already on record); choose **Keep Pending** or **Remove from Review**. Removing deletes only the incoming copy; the verified document is never changed. Both actions are audited, including which existing document matched. A different file of the same type follows the normal version rules; the same file from another client stays a cross-client conflict.
+
 ### One verified document per type
 
 A new low-confidence (*Review required*) document of a type the client already has verified is not filed in the client folder: it waits in pending storage, where it can be approved (blocked while the verified one exists) or removed. Before this rule such documents could get stuck in the queue; those can now be removed.

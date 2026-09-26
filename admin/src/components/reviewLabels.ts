@@ -12,6 +12,7 @@ export const REVIEW_REASONS: Record<string, { label: string; description: string
     IDENTITY_NOT_CONFIRMED: { label: "Identity not confirmed", description: "The sender could not be confirmed as the client (see identity details).", tone: "review" },
     POLICE_DATE_UNRESOLVED: { label: "Police slip date unclear", description: "The submitted date on the police slip could not be read reliably.", tone: "review" },
     LOW_CONFIDENCE: { label: "Low confidence", description: "The document was read with low confidence and needs checking.", tone: "review" },
+    DUPLICATE_OF_VERIFIED: { label: "Duplicate of a verified document", description: "This document is an exact duplicate of an existing verified document for this client. The existing document was not changed. Keep this item pending or remove it from review.", tone: "duplicate" },
 };
 
 export function reviewReasonLabel(reason: string | null): string {

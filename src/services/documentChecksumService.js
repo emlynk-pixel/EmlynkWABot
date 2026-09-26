@@ -25,10 +25,16 @@ export async function checkClientChecksum({ passportId, fileSha256 }, { db } = {
 
     const sameClient = await client.document.findFirst({
         where: { passportId, fileSha256 },
-        select: { documentId: true },
+        select: { documentId: true, verificationStatus: true },
     });
     if (sameClient) {
-        return { outcome: CHECKSUM_OUTCOME.DUPLICATE, existingDocumentId: sameClient.documentId };
+        // M4: an exact copy of a VERIFIED document goes to admin review
+        // (storagePlacementService.decidePlacement); other duplicates don't.
+        return {
+            outcome: CHECKSUM_OUTCOME.DUPLICATE,
+            existingDocumentId: sameClient.documentId,
+            existingVerified: sameClient.verificationStatus === "VERIFIED",
+        };
     }
 
     const otherClient = await client.document.findFirst({

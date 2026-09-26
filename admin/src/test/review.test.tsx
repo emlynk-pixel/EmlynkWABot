@@ -634,3 +634,49 @@ describe("Remove from Review for a stored REVIEW_REQUIRED document (H4)", () => 
         expect(screen.getByRole("dialog")).toHaveTextContent("The file, its original copy and its submission record are permanently deleted");
     });
 });
+
+describe("M4: duplicate of a verified document", () => {
+    const DUPLICATE: ReviewItem = {
+        ...ITEM,
+        reviewReason: "DUPLICATE_OF_VERIFIED",
+        reviewCategory: "OTHER",
+        document: { ...ITEM.document, processingStatus: "DUPLICATE" },
+        duplicateOf: { documentId: "3f2b8c1e-0000-4000-8000-000000000009", documentType: "PASSPORT", verificationStatus: "VERIFIED", receivedDate: "2026-09-20T03:00:00.000Z" },
+        actions: {
+            approve: { available: false, code: "DUPLICATE_FILE", message: "This document is an exact duplicate of the client's existing verified passport. The existing document was not changed; keep this item pending or remove it from review." },
+            keepPending: { available: true, code: null, message: null },
+            remove: { available: true, code: null, message: null },
+            setDocumentType: { available: true, code: null, message: null },
+            assignClient: { available: true, code: null, message: null },
+        },
+    };
+
+    test("Review Detail explains the duplicate and shows the existing verified document; Keep Pending and Remove are offered", async () => {
+        signedInBackend({ [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: DUPLICATE }, [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse });
+        renderApp(`/review/pending-${TEMP_ID}`);
+        const group = await screen.findByRole("group", { name: "Review actions" });
+
+        const note = screen.getByRole("note");
+        expect(note).toHaveTextContent("Duplicate of a verified document");
+        expect(note).toHaveTextContent("This document is an exact duplicate of an existing verified document for this client.");
+        expect(screen.getByText("Duplicate of")).toBeInTheDocument();
+        expect(screen.getByText("Passport 3F2B8C1E")).toBeInTheDocument();
+        expect(screen.getByText(/identical file \(same checksum\) · not changed/)).toBeInTheDocument();
+
+        expect(within(group).getByRole("button", { name: "Approve" })).toBeDisabled();
+        expect(within(group).getByRole("button", { name: "Keep Pending" })).toBeEnabled();
+        expect(within(group).getByRole("button", { name: "Remove from Review" })).toBeEnabled();
+        expect(screen.getByText(/Approve is not available: This document is an exact duplicate/)).toBeInTheDocument();
+    });
+
+    test("the queue lists it with its reason; the reason can be filtered", async () => {
+        const { calls } = signedInBackend({ "GET /api/admin/review": { status: 200, body: queue([queueItem({ processingStatus: "DUPLICATE", reviewReason: "DUPLICATE_OF_VERIFIED", reviewCategory: "OTHER" })]) } });
+        renderApp("/review");
+        const table = await screen.findByRole("table");
+        expect(within(table).getByText("Duplicate of a verified document")).toBeInTheDocument();
+        expect(within(table).getByText("Duplicate")).toBeInTheDocument();
+        const reasonSelect = screen.getAllByRole("combobox").find((select) => within(select).queryByRole("option", { name: "Duplicate of a verified document" }))!;
+        await userEvent.setup().selectOptions(reasonSelect, "DUPLICATE_OF_VERIFIED");
+        expect([...calls].reverse().find((c) => c.path.startsWith("/api/admin/review"))!.path).toContain("reviewReason=DUPLICATE_OF_VERIFIED");
+    });
+});

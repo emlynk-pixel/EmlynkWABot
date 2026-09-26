@@ -271,7 +271,7 @@ async function loadReviewRecord(db, reviewId) {
             where: { AND: [{ temporaryId: parsed.id }, REVIEW_PENDING_WHERE] },
             select: {
                 temporaryId: true, documentType: true, processingStatus: true, reviewReason: true, processingSummary: true,
-                whatsappNumber: true, createdDate: true, pendingStoragePath: true,
+                whatsappNumber: true, createdDate: true, pendingStoragePath: true, passportId: true, fileSha256: true,
                 user: { select: clientSelect },
             },
         });
@@ -313,6 +313,20 @@ async function loadReviewRecord(db, reviewId) {
     };
 }
 
+// M4: the client's stored document that a waiting DUPLICATE is an exact copy
+// of (same client, same checksum; unique), or null. IDs, type and status
+// only; never paths or checksums.
+export async function findDuplicateMatch(db, { passportId, fileSha256 }) {
+    if (!passportId || !fileSha256) return null;
+    const match = await db.document.findFirst({
+        where: { passportId, fileSha256 },
+        select: { documentId: true, documentType: true, verificationStatus: true, receivedDate: true },
+    });
+    return match
+        ? { documentId: match.documentId, documentType: match.documentType, verificationStatus: match.verificationStatus, receivedDate: toIso(match.receivedDate) }
+        : null;
+}
+
 export async function getReviewItem({ db, reviewId }) {
     const record = await loadReviewRecord(db, reviewId);
     if (!record) return null;
@@ -344,6 +358,10 @@ export async function getReviewItem({ db, reviewId }) {
         // The PII-free processing summary saved by the pipeline; null for
         // items processed before review data was recorded.
         processing: summary,
+        // M4: for a waiting DUPLICATE, the existing document it copies.
+        duplicateOf: kind === REVIEW_KIND.PENDING && row.processingStatus === "DUPLICATE"
+            ? await findDuplicateMatch(db, { passportId: row.passportId, fileSha256: row.fileSha256 })
+            : null,
         file: { ...file, previewUrl: file.mimeType ? `/api/admin/review/${reviewIdString}/file` : null },
     };
 }

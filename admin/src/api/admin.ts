@@ -314,6 +314,8 @@ export type ReviewItem = {
     client: ClientRef | null;
     submission: { whatsappNumber: string; receivedDate: string } | null;
     processing: ProcessingSummary | null;
+    // M4: for a waiting duplicate, the client's existing document it is an exact copy of.
+    duplicateOf?: { documentId: string; documentType: string; verificationStatus: string; receivedDate: string | null } | null;
     file: { name: string; mimeType: string | null; size: number | null; location: "PENDING" | "CLIENT"; previewUrl: string | null };
     auditLog: AuditEntry[]; // newest first
     actions: ReviewActions | null;

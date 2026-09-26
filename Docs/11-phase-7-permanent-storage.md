@@ -24,7 +24,7 @@ Proposal reference: §15, §16, §17, §18, §24, §25, §26, §31, §32, §44 P
 | D5 | Conflict and review documents | Go to **`pending/`**, never to `clients/`. |
 | D6 | `documents.verification_status` | Only **`VERIFIED`** or **`REVIEW_REQUIRED`**. |
 | D7 | Duplicate detection | **SHA-256**, stored on `documents` and `temporary_data`. |
-| D8 | Same client, same file | **`DUPLICATE`**: no copy, no `documents` row, no new version. |
+| D8 | Same client, same file | **`DUPLICATE`**: no `documents` row, no new version. Since Phase 10 (M4): if the existing file is `VERIFIED`, a copy waits in `pending/` for admin review instead of being discarded (`Docs/14` §4k). |
 | D9 | Same file stored for another client | **`CONFLICT`**: copied to `pending/unidentified/…`, never attached to either client. |
 | D10 | `DUPLICATE` storage | Nothing copied; the temporary copy is cleaned up in Phase 8. |
 | D11 | Pending copy location | Stored exactly in **`temporary_data.pending_storage_path`**. |

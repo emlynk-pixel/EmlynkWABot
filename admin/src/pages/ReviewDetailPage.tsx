@@ -482,6 +482,15 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             </Row>
                             <Row label="Sender (WhatsApp)">{item.submission?.whatsappNumber}</Row>
                             <Row label="Received">{formatDateTime(item.document.receivedDate)}</Row>
+                            {item.duplicateOf && (
+                                <Row label="Duplicate of">
+                                    <span className="inline-flex flex-wrap items-center justify-end gap-2">
+                                        <span>{documentTypeLabel(item.duplicateOf.documentType)} {shortId(item.duplicateOf.documentId)}</span>
+                                        <StatusBadge status={item.duplicateOf.verificationStatus} />
+                                    </span>
+                                    <span className="block text-label-sm text-ink-muted">Received {formatDateTime(item.duplicateOf.receivedDate)} · identical file (same checksum) · not changed</span>
+                                </Row>
+                            )}
                             <Row label="Processing status"><StatusBadge status={item.document.processingStatus} /></Row>
                             {verificationStatus && <Row label="Verification status"><StatusBadge status={verificationStatus} /></Row>}
                             {isPoliceSlip && <Row label="Slip submitted date">{formatDay(approved?.document.policeSubmittedDate ?? storedPoliceDate)}</Row>}

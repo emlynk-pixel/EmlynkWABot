@@ -19,6 +19,7 @@ export const REVIEW_REASON = Object.freeze({
     IDENTITY_NOT_CONFIRMED: "IDENTITY_NOT_CONFIRMED",   // no match, ambiguous, passport-only (SEC-008), provisional, unreadable ID
     POLICE_DATE_UNRESOLVED: "POLICE_DATE_UNRESOLVED",   // police slip date ambiguous / invalid / not found
     LOW_CONFIDENCE: "LOW_CONFIDENCE",                   // UNDEFINED or UNCLEAR confidence band
+    DUPLICATE_OF_VERIFIED: "DUPLICATE_OF_VERIFIED",     // M4: exact copy of the same client's VERIFIED document
 });
 
 // Groups for the Review Queue summary cards.
@@ -32,6 +33,7 @@ export const REVIEW_REASON_CATEGORY = Object.freeze({
     [REVIEW_REASON.IDENTITY_NOT_CONFIRMED]: "IDENTITY",
     [REVIEW_REASON.POLICE_DATE_UNRESOLVED]: "OTHER",
     [REVIEW_REASON.LOW_CONFIDENCE]: "QUALITY",
+    [REVIEW_REASON.DUPLICATE_OF_VERIFIED]: "OTHER",
 });
 
 const POLICE_DATE_NEEDS_REVIEW = new Set([POLICE_DATE_STATUS.AMBIGUOUS, POLICE_DATE_STATUS.INVALID, POLICE_DATE_STATUS.NOT_FOUND]);
@@ -44,7 +46,11 @@ export function deriveReviewReason({ processingStatus, resolvedType, confidence,
     const flags = confidence?.flags ?? [];
 
     if (processingStatus === "FAILED") return REVIEW_REASON.PROCESSING_FAILED;
-    if (processingStatus === "DUPLICATE") return null; // same client already has it: nothing to review
+    if (processingStatus === "DUPLICATE") {
+        // M4: a copy of a VERIFIED document waits for an admin; any other
+        // same-client duplicate needs nothing (the client already has it).
+        return checksum?.existingVerified ? REVIEW_REASON.DUPLICATE_OF_VERIFIED : null;
+    }
     if (checksum?.outcome === CHECKSUM_OUTCOME.CROSS_CLIENT_CONFLICT) return REVIEW_REASON.CROSS_CLIENT_DUPLICATE;
     if (identity?.status === IDENTITY_STATUS.IDENTITY_CONFLICT) return REVIEW_REASON.IDENTITY_CONFLICT;
     if ((reconciliation?.conflicts?.length ?? 0) > 0) return REVIEW_REASON.RECORD_CONFLICT;
