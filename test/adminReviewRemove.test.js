@@ -131,12 +131,13 @@ describe("POST /review/:reviewId/remove", () => {
         assert.equal(bucket.calls.length, 0);
     });
 
-    test("a stored document can't be removed (409); unknown or FAILED-without-pending-copy -> 404", async () => {
+    test("a VERIFIED document can't be removed (not a review item, 404); unknown or FAILED-without-pending-copy -> 404", async () => {
+        // Stored REVIEW_REQUIRED documents can be removed: test/adminReviewRemoveStored.test.js.
         const failed = pendingRow({ temporaryId: FAILED, processingStatus: "FAILED", pendingStoragePath: null, temporaryStoragePath: "temporary/f.pdf" });
-        const { db, bucket } = use(setup({ temporaryData: [pendingRow(), failed] }));
-        const stored = await remove(`document-${DOC}`);
-        assert.equal(stored.status, 409);
-        assert.equal(stored.body.code, "NOT_REMOVABLE");
+        const { db, bucket } = use(setup({ temporaryData: [pendingRow(), failed], documents: [{ ...storedReviewDoc, verificationStatus: "VERIFIED" }] }));
+        const verified = await remove(`document-${DOC}`);
+        assert.equal(verified.status, 404);
+        assert.equal(db.tables.document[0].verificationStatus, "VERIFIED");
         assert.equal((await remove("pending-99999999-9999-4999-8999-999999999999")).status, 404);
         assert.equal((await remove("document-99999999-9999-4999-8999-999999999999")).status, 404);
         assert.equal((await remove(`pending-${FAILED}`)).status, 404);
@@ -197,7 +198,8 @@ describe("POST /review/:reviewId/remove", () => {
     test("the detail says which items can be removed", async () => {
         use(setup());
         assert.deepEqual((await call("GET", `/review/pending-${TEMP}`)).body.actions.remove, { available: true, code: null, message: null });
-        assert.equal((await call("GET", `/review/document-${DOC}`)).body.actions.remove.available, false);
+        // A stored REVIEW_REQUIRED document too (H4: otherwise it could be stuck for good).
+        assert.deepEqual((await call("GET", `/review/document-${DOC}`)).body.actions.remove, { available: true, code: null, message: null });
     });
 });
 

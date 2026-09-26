@@ -68,7 +68,7 @@ A preview of the file (image or PDF, loaded privately through the server) with t
 | **Keep Pending** | every item | Records your decision and reason; the item stays in the queue unchanged. |
 | **Set Document Type** | waiting files | Changes the type (Passport, Police slip, Police report or Medical). The file stays pending; approve it afterwards. |
 | **Assign Client** / **Change Client** | waiting files | Links the file to an **existing** client found by search. You must tick "I have checked that this file belongs to …". The file stays pending; approve it afterwards. |
-| **Remove from Review** | waiting files | Permanently deletes the waiting file, its original copy and its submission record after you have inspected it. Needs a reason and the tick "I have inspected this file and understand it will be permanently deleted". There is no undo. The audit entry is kept. |
+| **Remove from Review** | waiting files and stored *Review required* documents | After you have inspected it: a waiting file is permanently deleted with its original copy and submission record; a stored *Review required* document is permanently deleted with its file in the client folder (the client's verified document and other documents are never touched). Needs a reason and the tick "I have inspected this file and understand it will be permanently deleted". There is no undo. The audit entry is kept. A *Verified* document can't be removed. |
 
 Every action asks for confirmation. Keep Pending, Remove from Review and every correction need a reason (up to 500 characters). While a request runs the buttons are disabled, so a double click does nothing. If the server refuses an action, its message is shown and nothing changes.
 
@@ -158,6 +158,8 @@ For each required type the status is *Verified* > *Review required* (stored, not
 - The sender's number and the original identity check stay on the submission. The previous link, if any, is kept in the audit log.
 
 ### One verified document per type
+
+A new low-confidence (*Review required*) document of a type the client already has verified is not filed in the client folder: it waits in pending storage, where it can be approved (blocked while the verified one exists) or removed. Before this rule such documents could get stuck in the queue; those can now be removed.
 
 An admin's approval never adds a second verified document of the same type for a client, and never replaces one; it is refused instead. The automatic processing names a newer file of a type with the next version (`passport_v2.pdf`, …) and keeps each file's own status. A rule for replacing a verified document is not part of Phase 10.
 
@@ -252,7 +254,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 | # | Topic | Decision |
 |---|---|---|
 | 1 | Reject | Removed from the workflow. No reject status, action or endpoint. |
-| 2 | Remove from Review | Manual, after inspection, with a required reason and confirmation; permanently deletes the waiting file, its original and its record; the audit entry stays; no undo. Waiting files only. |
+| 2 | Remove from Review | Manual, after inspection, with a required reason and confirmation; permanently deletes the waiting file (with its original and record) or the stored *Review required* document (with its file); the audit entry stays; no undo; never a verified document. |
 | 3 | Automatic removal | Pending documents are never removed automatically. |
 | 4 | Audit log | Every admin action is recorded in an append-only table (`audit_logs`, protected by a database trigger). |
 | 5 | Roles | Deferred to Phase 12; every ACTIVE admin can use every action; no 403 responses. |

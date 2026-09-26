@@ -15,6 +15,7 @@ import { updateTemporaryDocumentRecord } from "./temporaryDataService.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { checkClientChecksum, CHECKSUM_OUTCOME } from "./documentChecksumService.js";
 import { decidePlacement, placeDocument } from "./storagePlacementService.js";
+import { hasVerifiedDocument } from "./clientDocumentService.js";
 import { safeErrorText } from "../utils/safeLog.js";
 import { evaluatePassportAcceptance, applyPassportAcceptance } from "./passportAcceptanceService.js";
 import { policeWorkflowEvent } from "./policeWorkflowService.js";
@@ -258,6 +259,11 @@ export async function processDocument({
         state.confidence = applyPassportAcceptance(state.confidence, state.passportAcceptance);
 
         state.stage = "STORAGE";
+        // Only asked when the document would be filed under the client as
+        // REVIEW_REQUIRED (UNCLEAR band): is there already a verified one of this type?
+        const verifiedOfTypeExists = clientIdentified && checksumAllowsWrites && state.confidence.band === PROCESSING_STATUS.UNCLEAR
+            ? await hasVerifiedDocument({ passportId: state.identity.passportId, documentType }, { db })
+            : false;
         const decision = decidePlacement({
             processingStatus: determineProcessingStatus(state),
             band: state.confidence.band,
@@ -266,6 +272,7 @@ export async function processDocument({
             uniqueId: state.identity.uniqueId,
             checksumOutcome: state.checksum?.outcome,
             reviewBlocked: hasReviewBlocker(state),
+            verifiedOfTypeExists,
         });
         state.placement = await placeDocument(decision, {
             temporaryId,

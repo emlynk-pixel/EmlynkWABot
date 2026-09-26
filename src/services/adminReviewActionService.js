@@ -3,8 +3,9 @@
 // set police slip date) are in adminCorrectionService.js. There is no reject
 // action: an unclear document stays pending until a person decides. Nothing
 // is ever removed automatically; REMOVE_FROM_REVIEW is a manual admin
-// decision that permanently deletes one waiting file and its submission
-// record (the audit entry is kept).
+// decision that permanently deletes one review item — a waiting file with
+// its submission record, or a stored REVIEW_REQUIRED document with its file
+// (the audit entry is kept).
 //
 // Every action runs in one database transaction that first locks the
 // reviewed row (SELECT … FOR UPDATE), re-reads its state and only then
@@ -150,7 +151,7 @@ const pendingSelect = {
     temporaryId: true, passportId: true, documentType: true, processingStatus: true, pendingStoragePath: true,
     temporaryStoragePath: true, fileSha256: true, processingSummary: true, createdDate: true,
 };
-const documentSelect = { documentId: true, passportId: true, documentType: true, verificationStatus: true, temporaryId: true, policeSubmittedDate: true };
+const documentSelect = { documentId: true, passportId: true, documentType: true, verificationStatus: true, temporaryId: true, policeSubmittedDate: true, storagePath: true, fileSha256: true };
 
 export const findPending = (db, temporaryId) =>
     db.temporaryData.findFirst({ where: { AND: [{ temporaryId }, REVIEW_PENDING_WHERE] }, select: pendingSelect });
@@ -207,10 +208,9 @@ export async function reviewActionAvailability({ db, reviewId }) {
             ? { available: false, code: blocker.code, message: blocker.message, needsPoliceDate }
             : { available: true, code: null, message: null, needsPoliceDate },
         keepPending: { available: true, code: null, message: null },
-        // Only a file waiting in pending/ can be removed; a stored document can't.
-        remove: parsed.kind === REVIEW_KIND.PENDING
-            ? { available: true, code: null, message: null }
-            : { available: false, code: "NOT_REMOVABLE", message: "Only files waiting in pending storage can be removed from review." },
+        // Every review item can be removed: a waiting file, or a stored
+        // REVIEW_REQUIRED document (never a VERIFIED one: it is not a review item).
+        remove: { available: true, code: null, message: null },
         // Corrections of a waiting file (a stored document is already in a
         // client folder for its type).
         setDocumentType: correctable(parsed.kind),
@@ -524,10 +524,15 @@ export async function keepReviewItemPending({ db, admin, reviewId, reason, now =
 
 // ---------------------------------------------------------------- remove from review
 
-// A manual admin decision after inspecting a waiting file: the file in
-// pending/, its original in temporary/ and its temporary_data row are
-// deleted permanently. Only files waiting in pending/ qualify (a stored
-// document can't be removed). There is no undo and nothing else is touched.
+// A manual admin decision after inspecting a review item. There is no undo.
+// - Waiting file (pending-<id>): the file in pending/, its original in
+//   temporary/ and its temporary_data row are deleted permanently.
+// - Stored document (document-<id>, REVIEW_REQUIRED only): its documents row
+//   and its file in the client folder are deleted permanently. A VERIFIED
+//   document is never a review item and can't be removed: the delete itself
+//   only matches REVIEW_REQUIRED. The submission it came from (temporary_data
+//   and the temporary/ original) stays as the record of what was received.
+// Nothing else is touched, in particular not the client's other documents.
 //
 // The audit entry (admin, reason, previous status, document type, checksum)
 // is written and the row deleted in one transaction; the files are deleted
@@ -537,9 +542,7 @@ export async function removeFromReview({ db, bucket, admin, reviewId, reason }) 
     const parsed = parseReviewId(reviewId);
     if (!parsed) throw notFound();
     if (parsed.kind !== REVIEW_KIND.PENDING) {
-        const exists = await findReviewDocument(db, parsed.id);
-        if (!exists) throw notFound();
-        throw new ReviewActionError(409, "NOT_REMOVABLE", "Only files waiting in pending storage can be removed from review. A stored document stays in the client folder.");
+        return removeStoredDocument({ db, bucket, admin, documentId: parsed.id, reason });
     }
     if (!(await findPending(db, parsed.id))) throw notFound();
 
@@ -574,6 +577,52 @@ export async function removeFromReview({ db, bucket, admin, reviewId, reason }) 
         action: REVIEW_ACTION.REMOVE_FROM_REVIEW,
         reviewId: toReviewId(parsed.kind, parsed.id),
         filesDeleted: failed.length === 0,
+        audit: toAuditEntry(outcome.audit, admin.name ?? null),
+    };
+}
+
+async function removeStoredDocument({ db, bucket, admin, documentId, reason }) {
+    if (!(await findReviewDocument(db, documentId))) throw notFound();
+
+    const outcome = await db.$transaction(async (tx) => {
+        await lockDocumentRow(tx, documentId);
+        const row = await findReviewDocument(tx, documentId);
+        if (!row) throw alreadyResolved();
+
+        const audit = await createAudit(tx, {
+            admin,
+            action: REVIEW_ACTION.REMOVE_FROM_REVIEW,
+            temporaryId: row.temporaryId ?? null,
+            documentId: row.documentId,
+            passportId: row.passportId,
+            previousStatus: VERIFICATION_STATUS.REVIEW_REQUIRED,
+            newStatus: REMOVED_STATUS,
+            reason,
+            documentType: row.documentType,
+            fileSha256: row.fileSha256 ?? null,
+        });
+        // Only this REVIEW_REQUIRED row: a VERIFIED document can never match.
+        const { count } = await tx.document.deleteMany({
+            where: { documentId: row.documentId, verificationStatus: VERIFICATION_STATUS.REVIEW_REQUIRED },
+        });
+        if (count !== 1) throw alreadyResolved();
+        // The file is deleted only if no other document points at it.
+        const shared = row.storagePath
+            ? await tx.document.count({ where: { storagePath: row.storagePath, documentId: { not: row.documentId } } })
+            : 0;
+        return { audit, path: shared === 0 ? row.storagePath : null };
+    }, TRANSACTION_OPTIONS);
+
+    // Committed: the record is gone. Now its file in the client folder.
+    const removal = outcome.path ? await removeObject(outcome.path, { bucket }) : { removed: true };
+    if (!removal.removed) {
+        console.warn("Review remove: stored file not deleted after the record was removed", { documentId, error: removal.error });
+    }
+
+    return {
+        action: REVIEW_ACTION.REMOVE_FROM_REVIEW,
+        reviewId: toReviewId(REVIEW_KIND.DOCUMENT, documentId),
+        filesDeleted: removal.removed,
         audit: toAuditEntry(outcome.audit, admin.name ?? null),
     };
 }

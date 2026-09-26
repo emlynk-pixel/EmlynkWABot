@@ -46,6 +46,19 @@ async function resolveDb(db) {
 
 const isUniqueViolation = (error) => error?.code === "P2002";
 
+// Does the client already have a VERIFIED document of this type? A new
+// document that would be stored as REVIEW_REQUIRED next to it could never be
+// approved (one verified document per type), so it goes to pending/ instead
+// (storagePlacementService.decidePlacement). Nothing is changed here.
+export async function hasVerifiedDocument({ passportId, documentType }, { db } = {}) {
+    const client = await resolveDb(db);
+    const existing = await client.document.findFirst({
+        where: { passportId, documentType, verificationStatus: VERIFICATION_STATUS.VERIFIED },
+        select: { documentId: true },
+    });
+    return Boolean(existing);
+}
+
 // Copy a document into clients/{passport_id}/… and record it in documents.
 //   UNCLEAR  -> keeps the sanitized original file name (_2, _3 on collision)
 //   others   -> standard name, next version (passport.pdf, passport_v2.pdf, …)

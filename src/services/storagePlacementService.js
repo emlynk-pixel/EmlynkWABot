@@ -1,5 +1,5 @@
 import { CHECKSUM_OUTCOME, findPendingDuplicate } from "./documentChecksumService.js";
-import { storeClientDocument, CLIENT_STORE_OUTCOME } from "./clientDocumentService.js";
+import { storeClientDocument, CLIENT_STORE_OUTCOME, VERIFICATION_STATUS, verificationStatusForBand } from "./clientDocumentService.js";
 import { copyToFreeName } from "./permanentStorageService.js";
 import {
     DOCUMENT_STORAGE_TYPES,
@@ -21,9 +21,10 @@ const CLIENT_BANDS = new Set(["VERIFIED", "HIGH_CONFIDENCE", "SLIGHTLY_UNCLEAR",
 // Pure decision. `clientIdentified` means Phase 6 linked the document to
 // exactly one existing client (not provisional). `reviewBlocked` means a
 // specific reason needs a person (identity, wrong document, police slip
-// date), not just low confidence. Rules are checked in order; anything that
-// must not be attached to a client automatically goes to pending/.
-export function decidePlacement({ processingStatus, band, documentType, clientIdentified, uniqueId, checksumOutcome, reviewBlocked = false }) {
+// date), not just low confidence. `verifiedOfTypeExists` means the client
+// already has a VERIFIED document of this type. Rules are checked in order;
+// anything that must not be attached to a client automatically goes to pending/.
+export function decidePlacement({ processingStatus, band, documentType, clientIdentified, uniqueId, checksumOutcome, reviewBlocked = false, verifiedOfTypeExists = false }) {
     // Same client already has this exact file (D8): nothing new is stored.
     if (checksumOutcome === CHECKSUM_OUTCOME.DUPLICATE) {
         return { placement: PLACEMENT.NONE, processingStatus: "DUPLICATE", pendingOwner: null };
@@ -52,6 +53,13 @@ export function decidePlacement({ processingStatus, band, documentType, clientId
 
     const hasClientFolder = Boolean(DOCUMENT_STORAGE_TYPES[documentType]);
     if (clientIdentified && hasClientFolder && CLIENT_BANDS.has(band)) {
+        // A REVIEW_REQUIRED copy next to an existing VERIFIED document of the
+        // same type could never be approved, so it would stay in the Review
+        // Queue for good. It waits in pending/ instead, where it can be
+        // approved or removed; the verified document is left as it is.
+        if (verifiedOfTypeExists && verificationStatusForBand(band) === VERIFICATION_STATUS.REVIEW_REQUIRED) {
+            return pending(processingStatus);
+        }
         return { placement: PLACEMENT.CLIENT, processingStatus, pendingOwner: null };
     }
 

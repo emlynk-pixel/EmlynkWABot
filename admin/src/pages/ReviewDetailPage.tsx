@@ -599,7 +599,9 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                 <ActionDialog title="Remove this file from review?" busy={busy} onClose={close}>
                     <form onSubmit={confirmRemove} noValidate>
                         <p className="text-body-sm text-ink-soft">
-                            The file, its original copy and its submission record are <strong>permanently deleted</strong>. This can't be undone. Only the audit log entry is kept. Nothing else is affected.
+                            {item.kind === "DOCUMENT"
+                                ? <>This stored document and its file in the client folder are <strong>permanently deleted</strong>. This can't be undone. Only the audit log entry is kept. The client's other documents, including any verified one, are not changed.</>
+                                : <>The file, its original copy and its submission record are <strong>permanently deleted</strong>. This can't be undone. Only the audit log entry is kept. Nothing else is affected.</>}
                         </p>
                         <label htmlFor="remove-reason" className="mt-3 block text-label-md text-ink">
                             Reason <span aria-hidden="true" className="text-critical">*</span>

@@ -567,7 +567,7 @@ All routes need `Authorization: Bearer <token>` of an **ACTIVE** admin (checked 
 | `GET` | `/api/admin/review/:reviewId/file` | The item's file, streamed from private storage for the in-page preview |
 | `POST` | `/api/admin/review/:reviewId/approve` | Approve: waiting file moved to the client folder as VERIFIED (or stored document marked VERIFIED); audit entry |
 | `POST` | `/api/admin/review/:reviewId/keep-pending` | Keep Pending with a required reason: item stays pending and in the queue; audit entry |
-| `POST` | `/api/admin/review/:reviewId/remove` | Remove from Review (waiting files only, reason required): file, temporary original and record permanently deleted; audit entry kept. Never automatic |
+| `POST` | `/api/admin/review/:reviewId/remove` | Remove from Review (reason required): a waiting file with its temporary original and record, or a stored REVIEW_REQUIRED document with its file, permanently deleted; never a verified document; audit entry kept. Never automatic |
 | `POST` | `/api/admin/review/:reviewId/document-type` | Set the document type of a waiting file (reason required); it stays pending |
 | `POST` | `/api/admin/review/:reviewId/assign-client` | Link a waiting file to an existing client (reason required); no client is created, no number changed |
 | `GET` | `/api/admin/police` | Police Workflow: every client's 21-day status (overdue, due today, due soon, pending, date missing, not uploaded, completed), search, filter and paging |

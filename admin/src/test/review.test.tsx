@@ -578,3 +578,59 @@ describe("Corrections: set document type and assign client", () => {
         expect(within(history).getByText("Type: Unknown → Medical")).toBeInTheDocument();
     });
 });
+
+describe("Remove from Review for a stored REVIEW_REQUIRED document (H4)", () => {
+    const DETAIL = `GET /api/admin/review/document-${DOC_ID}`;
+    const STUCK: ReviewItem = {
+        ...ITEM,
+        reviewId: `document-${DOC_ID}`,
+        kind: "DOCUMENT",
+        reviewReason: "LOW_CONFIDENCE",
+        document: { ...ITEM.document, documentId: DOC_ID, verificationStatus: "REVIEW_REQUIRED", processingStatus: "STORED" },
+        file: { ...ITEM.file, location: "CLIENT", previewUrl: `/api/admin/review/document-${DOC_ID}/file` },
+        actions: {
+            approve: { available: false, code: "VERIFIED_DOCUMENT_EXISTS", message: "This client already has a verified passport. It was not changed, and this item stays pending." },
+            keepPending: { available: true, code: null, message: null },
+            remove: { available: true, code: null, message: null },
+            setDocumentType: { available: false, code: "NOT_CORRECTABLE", message: "x" },
+            assignClient: { available: false, code: "NOT_CORRECTABLE", message: "x" },
+        },
+    };
+
+    test("the stuck item offers Remove from Review; the dialog says only this document is deleted; the request goes to the document", async () => {
+        const removed = { action: "REMOVE_FROM_REVIEW", reviewId: `document-${DOC_ID}`, filesDeleted: true, audit: auditEntry({ auditId: "a-rm-doc", action: "REMOVE_FROM_REVIEW", reason: "Blurry duplicate", newStatus: "REMOVED", documentType: "PASSPORT" }) };
+        const { calls } = signedInBackend({
+            [DETAIL]: { status: 200, body: STUCK },
+            [`GET /api/admin/review/document-${DOC_ID}/file`]: fileResponse,
+            [`POST /api/admin/review/document-${DOC_ID}/remove`]: { status: 200, body: removed },
+        });
+        renderApp(`/review/document-${DOC_ID}`);
+        const user = userEvent.setup();
+        const group = await screen.findByRole("group", { name: "Review actions" });
+        expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Approve", "Keep Pending", "Remove from Review"]);
+        expect(within(group).getByRole("button", { name: "Approve" })).toBeDisabled();
+
+        await user.click(within(group).getByRole("button", { name: "Remove from Review" }));
+        const dialog = screen.getByRole("dialog", { name: "Remove this file from review?" });
+        expect(dialog).toHaveTextContent("This stored document and its file in the client folder are permanently deleted");
+        expect(dialog).toHaveTextContent("including any verified one, are not changed");
+        await user.type(within(dialog).getByLabelText(/Reason/), "Blurry duplicate");
+        await user.click(within(dialog).getByRole("checkbox", { name: /I have inspected this file/ }));
+        await user.click(within(dialog).getByRole("button", { name: "Remove permanently" }));
+
+        expect(await screen.findByRole("status")).toHaveTextContent("Removed from review.");
+        expect(calls.filter((c) => c.method === "POST").map((c) => [c.path, c.body])).toEqual([[`/api/admin/review/document-${DOC_ID}/remove`, { reason: "Blurry duplicate" }]]);
+        expect(screen.queryByRole("group", { name: "Review actions" })).not.toBeInTheDocument();
+    });
+
+    test("a waiting file keeps its own wording", async () => {
+        signedInBackend({
+            [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: { ...ITEM, actions: { ...ITEM.actions!, remove: { available: true, code: null, message: null } } } },
+            [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse,
+        });
+        renderApp(`/review/pending-${TEMP_ID}`);
+        const group = await screen.findByRole("group", { name: "Review actions" });
+        await userEvent.setup().click(within(group).getByRole("button", { name: "Remove from Review" }));
+        expect(screen.getByRole("dialog")).toHaveTextContent("The file, its original copy and its submission record are permanently deleted");
+    });
+});
