@@ -3,7 +3,7 @@ import crypto from "crypto";
 
 // Middleware & Validation
 import { verifyWhatsappSignature } from "../middleware/verifyWhatsAppSignature.js";
-import { messageIdCache } from "../utils/messageIdempotency.js";
+import { messageIdCache, MESSAGE_STATE } from "../utils/messageIdempotency.js";
 import { validateDocumentFile } from "../utils/fileValidation.js";
 import { extractDocumentMetadata, SUPPORTED_MEDIA_MESSAGE_TYPES } from "../utils/whatsappMedia.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
@@ -21,6 +21,12 @@ import { notifySubmissionQueued } from "../services/submissionQueue.js";
 function messageRef(messageId) {
   return sha256Hex(Buffer.from(String(messageId))).slice(0, 12);
 }
+
+// How long a second delivery of a message waits for the first one, still
+// running in this process, to record it (M1). Well below Meta's webhook
+// timeout; if the first isn't done by then, the second answers 500 and Meta
+// sends it again later.
+export const DUPLICATE_WAIT_MS = 10_000;
 
 // Every message of a webhook delivery: entry[] -> changes[] -> value.messages[].
 // Anything that isn't an array is treated as empty.
@@ -182,9 +188,12 @@ export function createWhatsappRouter({
   createTemporaryRecord = createTemporaryDocumentRecord,
   removeTemporary = (storagePath) => removeObject(storagePath),
   onRecorded = () => notifySubmissionQueued(),
+  duplicateWaitMs = DUPLICATE_WAIT_MS,
 } = {}) {
   const router = express.Router();
   const deps = { getMediaUrl, downloadMedia, saveTemporary, createTemporaryRecord, removeTemporary, onRecorded };
+  // Message ID -> the promise of its handling while it runs in this process.
+  const inFlight = new Map();
 
   /*
     GET /webhook
@@ -211,23 +220,8 @@ export function createWhatsappRouter({
     Incoming WhatsApp events (messages, status updates, etc.).
   */
   // One message: claim its ID, handle it, and complete or release the claim.
-  // Returns false when the message must be retried.
-  async function handleMessage(message) {
-    const messageId = message?.id;
-    if (typeof messageId !== "string" || messageId.length === 0) {
-      console.warn("WhatsApp message without an ID ignored");
-      return true;
-    }
-
-    const ref = messageRef(messageId);
-
-    // Claimed before any download or OCR: a retry or replay of the same
-    // message, even one arriving while this one is still running, stops here.
-    if (!messageCache.claim(messageId)) {
-      console.log("Duplicate WhatsApp message ignored:", { messageRef: ref });
-      return true;
-    }
-
+  // Returns false when the message must be retried (the delivery gets 500).
+  async function handleClaimedMessage(message, messageId, ref) {
     try {
       if (SUPPORTED_MEDIA_MESSAGE_TYPES.includes(message.type)) {
         await handleMediaMessage({ message, ref, deps });
@@ -242,6 +236,52 @@ export function createWhatsappRouter({
       messageCache.release(messageId);
       console.error("WhatsApp webhook parsing error:", { messageRef: ref, errorType: error?.name ?? "Error" });
       return false;
+    }
+  }
+
+  // Claimed before any download: a replay or retry of the same message is
+  // never handled twice at once in this process. It is only acknowledged
+  // (true) once the message has been handled: recorded durably, refused on
+  // purpose, or found already recorded (unique message ID). While the first
+  // delivery is still running, a second one waits for it (duplicateWaitMs):
+  // if the first fails, the second takes over; if it is still running, the
+  // second answers 500 so Meta retries. Across processes and restarts the
+  // unique message_id decides (createTemporaryDocumentRecord).
+  async function handleMessage(message) {
+    const messageId = message?.id;
+    if (typeof messageId !== "string" || messageId.length === 0) {
+      console.warn("WhatsApp message without an ID ignored");
+      return true;
+    }
+
+    const ref = messageRef(messageId);
+    const deadline = Date.now() + duplicateWaitMs;
+
+    for (;;) {
+      if (messageCache.claim(messageId)) {
+        const handling = handleClaimedMessage(message, messageId, ref);
+        inFlight.set(messageId, handling);
+        try {
+          return await handling;
+        } finally {
+          inFlight.delete(messageId);
+        }
+      }
+
+      if (messageCache.stateOf(messageId) === MESSAGE_STATE.PROCESSED) {
+        console.log("Duplicate WhatsApp message ignored (already handled):", { messageRef: ref });
+        return true;
+      }
+
+      const running = inFlight.get(messageId);
+      const remaining = deadline - Date.now();
+      if (!running || remaining <= 0) {
+        console.warn("Duplicate WhatsApp message arrived while the first delivery is still being recorded; Meta will retry it:", { messageRef: ref });
+        return false;
+      }
+      let timer;
+      await Promise.race([running, new Promise((resolve) => { timer = setTimeout(resolve, remaining); })]);
+      clearTimeout(timer);
     }
   }
 

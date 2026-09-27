@@ -2,14 +2,15 @@
 //
 // A message ID is claimed as IN_PROGRESS as soon as the webhook accepts it,
 // before any download or OCR, so a Meta retry or a replayed request that
-// arrives meanwhile is ignored. When handling finishes it becomes PROCESSED.
-// If handling crashes before it could record anything, the claim is released
-// so Meta's retry can try again.
+// arrives meanwhile is not handled a second time at once (the route makes it
+// wait for the first and only acknowledges it once the message is recorded).
+// When handling finishes it becomes PROCESSED. If handling crashes before it
+// could record anything, the claim is released so a retry can try again.
 //
 // Bounded: entries expire after ttlMs, and at most maxEntries are kept (the
 // oldest are dropped first). In memory only: cleared on restart and not
-// shared between app instances; after a restart the checksum checks still
-// stop a resent file from being stored twice.
+// shared between app instances; there the unique temporary_data.message_id
+// stops a resent message from being recorded twice (M1).
 
 export const MESSAGE_ID_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 export const MESSAGE_ID_MAX_ENTRIES = 10_000;

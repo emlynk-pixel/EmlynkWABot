@@ -29,25 +29,40 @@ export class StorageCopyError extends Error {
 // Copy fromPath into folder under the first name that isn't taken.
 // nameForAttempt(1), nameForAttempt(2), … supplies the candidate names
 // (e.g. passport.pdf, passport_v2.pdf or scan.pdf, scan_2.pdf).
-export async function copyToFreeName({ fromPath, folder, nameForAttempt, firstAttempt = 1 }, { bucket } = {}) {
+// M1 (background worker only; see placementRecovery.js):
+//   beforeCopy(path)     runs right before the copy (renews the worker's
+//                        claim and records the name it is about to use)
+//   reuseExisting(path)  true when a taken name holds this submission's own
+//                        copy from an interrupted earlier attempt: it is
+//                        used as it is ({ reused: true }), no second copy.
+export async function copyToFreeName({ fromPath, folder, nameForAttempt, firstAttempt = 1, beforeCopy, reuseExisting }, { bucket } = {}) {
     const storage = await resolveBucket(bucket);
 
     for (let attempt = firstAttempt; attempt < firstAttempt + MAX_NAME_ATTEMPTS; attempt++) {
         const fileName = nameForAttempt(attempt);
         const storagePath = `${folder}/${fileName}`;
+        const reuse = async () => Boolean(reuseExisting) && (await reuseExisting(storagePath));
 
         const { data: taken, error: existsError } = await storage.exists(storagePath);
         if (existsError && !/not found|404|400/i.test(`${existsError.statusCode ?? ""} ${existsError.message ?? ""}`)) {
             throw new StorageCopyError(`Storage check failed: ${existsError.message}`);
         }
-        if (taken) continue;
+        if (taken) {
+            if (await reuse()) return { storagePath, fileName, attempt, reused: true };
+            continue;
+        }
 
+        if (beforeCopy) await beforeCopy(storagePath);
         const { error } = await storage.copy(fromPath, storagePath);
         if (!error) {
             return { storagePath, fileName, attempt };
         }
-        // Someone else took this name between the check and the copy.
-        if (isCollision(error)) continue;
+        // Someone else took this name between the check and the copy (or an
+        // earlier attempt's copy of this submission landed late).
+        if (isCollision(error)) {
+            if (await reuse()) return { storagePath, fileName, attempt, reused: true };
+            continue;
+        }
 
         throw new StorageCopyError(`Storage copy failed: ${error.message}`);
     }

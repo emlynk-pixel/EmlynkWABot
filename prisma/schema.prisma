@@ -166,6 +166,10 @@ model TemporaryData {
   // Worker lease: claimed attempts and when the current attempt started.
   processingAttempts  Int       @default(0) @map("processing_attempts")
   processingStartedAt DateTime? @map("processing_started_at")
+  // The clients/ or pending/ object path an attempt was about to create,
+  // recorded before the copy: a retry after a crash reuses that object
+  // instead of making a second copy (placementRecovery.js).
+  placementPath       String?   @map("placement_path")
 
   @@index([whatsappNumber, fileSha256])
   @@index([processingStatus, createdDate])

@@ -18,6 +18,8 @@ try {
 const { createApp } = await import("./createApp.js");
 
 const { startSubmissionWorker } = await import("./services/submissionQueue.js");
+const { createShutdown } = await import("./shutdown.js");
+const { default: prisma } = await import("./config/prisma.js");
 
 const app = createApp();
 
@@ -31,12 +33,9 @@ const server = app.listen(PORT, () => {
 // submissions left unfinished by a previous run.
 const worker = startSubmissionWorker();
 
-// Stop taking new work, let running jobs finish; an interrupted job's
-// lease runs out and it is resumed by the next run.
+// Stop taking new work, let running work finish within a deadline below
+// Docker's grace period, disconnect Prisma, exit (see shutdown.js).
+const shutdown = createShutdown({ server, worker, db: prisma });
 for (const signal of ["SIGTERM", "SIGINT"]) {
-    process.once(signal, async () => {
-        server.close();
-        await worker.stop();
-        process.exit(0);
-    });
+    process.once(signal, () => shutdown(signal));
 }

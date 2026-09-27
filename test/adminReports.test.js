@@ -218,12 +218,19 @@ describe("no automatic removal of pending items", () => {
         for (const [file, code] of sources) {
             assert.ok(!/setInterval\(|node-cron|cron\.schedule|agenda|bull(mq)?\b/i.test(code), file);
         }
-        // The only timeouts: bounded waits (OCR, concurrency limiter), which touch no data or
-        // files, and the M1 background worker's poll, which processes waiting submissions
-        // but never deletes a submission, a document or a file, and never clears a pending copy.
+        // The only timeouts: bounded waits (OCR, concurrency limiter, storage call limit,
+        // shutdown deadline), which touch no data or files; the webhook's bounded wait for a
+        // duplicate delivery (M1); and the M1 background worker's poll, which processes waiting
+        // submissions but never deletes a submission, a document or a file, and never clears a
+        // pending copy.
         const timeouts = sources.filter(([, code]) => /setTimeout\(/.test(code));
-        assert.deepEqual(timeouts.map(([f]) => f).sort(), ["concurrencyLimiter.js", "ocrService.js", "submissionQueue.js"]);
-        for (const [file, code] of timeouts.filter(([f]) => f !== "submissionQueue.js")) assert.ok(!/temporaryData\.|removeObject|\.remove\(/.test(code), file);
+        assert.deepEqual(timeouts.map(([f]) => f).sort(), ["concurrencyLimiter.js", "ocrService.js", "shutdown.js", "storageTimeout.js", "submissionQueue.js", "whatsapp.js"]);
+        for (const [file, code] of timeouts.filter(([f]) => !["submissionQueue.js", "whatsapp.js"].includes(f))) assert.ok(!/temporaryData\.|removeObject|\.remove\(|\.delete\(/.test(code), file);
+        // The webhook removes only its own just-uploaded object (record insert failed, or the
+        // message was already recorded: H2 / M1), never a pending copy or a stored document.
+        const webhook = sources.find(([f]) => f === "whatsapp.js")[1];
+        assert.equal(webhook.match(/removeTemporary\(temporaryFile\.storagePath\)/g)?.length, 2);
+        assert.ok(!/pendingStoragePath|temporaryData\.|document\./.test(webhook), "the webhook touches no pending copy or document");
         const worker = sources.find(([f]) => f === "submissionQueue.js")[1];
         assert.ok(!/(temporaryData|document|auditLog|user)\.(delete|deleteMany)\(|removeObject|\.remove\(|pendingStoragePath/.test(worker), "the worker never removes anything");
     });

@@ -1,6 +1,6 @@
 # Phase 10 — Admin Dashboard
 
-Status: **Final Phase 10 scope implemented and verified. The five Phase 10 migrations are applied to the live database (read-only check 2026-09-26); the M1 migration `20260927120000_m1_async_processing` (§4m) is not.** The standalone reference for the finished dashboard is [`15-admin-dashboard-reference.md`](15-admin-dashboard-reference.md); it also lists every decision and deviation from the proposal.
+Status: **Final Phase 10 scope implemented and verified. The five Phase 10 migrations are applied to the live database (read-only check 2026-09-26); the M1 migrations `20260927120000_m1_async_processing` and `20260927130000_m1_placement_path` (§4m) are not.** The standalone reference for the finished dashboard is [`15-admin-dashboard-reference.md`](15-admin-dashboard-reference.md); it also lists every decision and deviation from the proposal.
 
 | Checkpoint | Scope | Status |
 |---|---|---|
@@ -543,15 +543,38 @@ Tests: `test/failedSubmissions.test.js` (real pipeline failures — page limit, 
 | Processing fails (OCR, storage, any stage) | Recorded `FAILED` by the pipeline as before (H3: reason, detected type and client kept, visible under *Failed processing*); not retried automatically |
 | Worker can't load the received file | Tried again about a minute later; after 3 attempts `FAILED` (`FILE_UNAVAILABLE`) |
 | Worker or server dies mid-processing | The claim is a 10-minute lease: afterwards the job is claimed again (also by the next run after a restart). After 3 attempts `FAILED` (`ATTEMPTS_EXHAUSTED`) |
-| Same message delivered twice | In-memory claim (as before) and, durably, the unique `message_id`: a second row is refused, its upload removed, 200 |
-| Same job run twice (crash after storing) | The checksum check recognises the submission's own document (`ALREADY_STORED`): no second document, no second client-folder file, no M4 duplicate of itself |
+| Same message delivered twice | In-memory claim and, durably, the unique `message_id`: a second row is refused, its upload removed, 200. A duplicate arriving while the first is still running is only acknowledged once the message is recorded (below) |
+| Same job run twice (crash after storing) | The checksum check recognises the submission's own document (`ALREADY_STORED`): no second document, no second client-folder file, no M4 duplicate of itself. A crash between the copy and the insert: the copy is reused (below) |
 | Two workers at once | Compare-and-swap claim: each job is taken by one worker |
+| An attempt outlives its lease | It can no longer write anything (below) |
+| Shutdown (SIGTERM) | No new job; the running one finishes or is released within 6 s; exit within 8 s (below) |
 
 Status: no new status. `TEMPORARY_STORED` = waiting (lease empty) or being processed (lease set); it was already "received, processing not finished" (§4g) and is not counted as pending review. Failure codes added for the worker: `FILE_UNAVAILABLE`, `ATTEMPTS_EXHAUSTED` (stages `FILE_LOAD`, `WORKER`).
 
 Migration `20260927120000_m1_async_processing` (additive): `temporary_data.message_id` (unique), `original_filename`, `received_at` (what the worker needs that was only in the request: file-name hint, stored original name, received time), `processing_attempts`, `processing_started_at` (the lease), index `(processing_status, created_date)`. **Not applied to the live database.** Deploying the code before it breaks the webhook's insert.
 
 On deployment, rows that are still `TEMPORARY_STORED` from earlier runs (processing that never finished) are picked up and processed by the worker.
+
+### M1 safety fixes (after the M1 code review)
+
+**Duplicate delivery while the first is still running.** Before, a second delivery of a message that was still being handled was answered 200 at once; if the first then failed before recording anything, the message was lost. Now a duplicate is acknowledged only once the message is handled: it waits (at most `DUPLICATE_WAIT_MS`, 10 s) for the first delivery in the same process. If the first recorded it (or refused the file on purpose) → 200; if the first failed → the duplicate handles the message itself; if the first is still running after the wait → 500, so Meta sends it again later. Across app instances and restarts the unique `message_id` decides: every 200 follows a committed insert or an insert refused because the row already exists (`src/routes/whatsapp.js`).
+
+**Stale worker attempts.** An attempt that outlives its lease can no longer write. Its claim is (temporary ID, status `TEMPORARY_STORED`, attempt number, lease start):
+- the final `temporary_data` update (success and `FAILED`) and the worker's own give-up/retry updates match only that claim; otherwise nothing is written;
+- the client record update (passport reconciliation) and the documents insert commit in one transaction with a renewal of the claim; in PostgreSQL the renewal's row lock makes a competing claim wait until that transaction ends, so a stale insert can never commit (transaction timeout 30 s);
+- right before each storage copy (clients/ or pending/) the claim is renewed, and the path about to be created is recorded (`placement_path`).
+
+An attempt that lost its claim stops, never removes its copy (the new owner may be using it) and is logged as *Stale background attempt discarded* (IDs only). `FAILED` can no longer become `VERIFIED`.
+
+**Storage time limit.** Every Supabase request is aborted after `STORAGE_TIMEOUT_MS` = 60 s (the client's fetch), and the worker wraps its bucket so each storage call settles within the same limit. 60 s is a tenth of the 10-minute lease (checked when the module loads): after a claim renewal, at most one storage call runs before the next check. A timeout is an ordinary storage error under the existing rules: loading the received file → tried again in about a minute (3 attempts); a copy → `FAILED` (storage stage, H3). Admin downloads and copies use the same client and get the same limit.
+
+**Graceful shutdown** (`src/shutdown.js`). On SIGTERM/SIGINT: the HTTP server stops accepting connections and running requests may finish; the worker starts no new job (the backlog is left for the next run); a running job may finish for up to 6 s, else it is released — claimable again in about a minute, the attempt not counted, and whatever it does afterwards discarded; then Prisma disconnects and the process exits. Hard deadline 8 s, below Docker's 10 s grace period: if anything is still waiting then, the process exits with code 1 (an unanswered webhook is resent by Meta and kept single by the unique message ID).
+
+**Repeatable storage copies.** Retrying a job after a crash reuses the copy an interrupted attempt already made instead of creating `passport_v2.pdf` / `document_…_2.pdf`. The name rules are unchanged; the retry computes the same name, and an object already there is used only if it is this submission's own: the path is the one its row recorded (`placement_path`), no documents row or other submission refers to it, and its SHA-256 is the submission's file. Anything else at that name is left alone and the next name is used as before (`src/services/placementRecovery.js`). Nothing is deleted automatically. Copies that were made but never used (for example a copy whose attempt then failed) stay; they can be found read-only by comparing `temporary_data.placement_path` with `documents.storage_path` and `temporary_data.pending_storage_path`.
+
+Migration `20260927130000_m1_placement_path` (additive): `temporary_data.placement_path` (nullable text). **Not applied to the live database**; apply it together with `20260927120000_m1_async_processing` before deploying.
+
+Tests: `test/m1CriticalFixes.test.js` (31): concurrent and cross-instance duplicates, first delivery failing while a duplicate waits, stale attempts (pending copy, slow client-folder copy, stall before the insert, after a give-up, after a pipeline `FAILED`, client record), storage time limits (download, copy, name check, Supabase fetch), shutdown (idle, backlog, OCR and storage running, full sequence, deadline, repeated signal), crash after a client-folder or pending copy, reuse rules. Real PostgreSQL (throwaway): an insert stalled inside its transaction makes the competing claim wait; a process killed right after its copy is retried with that copy (no `_v2`); a stale attempt after a give-up leaves `FAILED`; shutdown of a real process with real Prisma exits 0 in about 1 s and releases the running job; 10 concurrent inserts of one message ID → 1 row.
 
 Measured (throwaway PostgreSQL, synthetic files): webhook acknowledgement 65 ms with a deliberately 5 s processing step (worker 5.1 s); in the E2E run 2–58 ms for every delivery while background processing took 0.1–6.6 s (before M1 the answer took as long as processing, up to 6.5 s for the same photo). Tests: `test/asyncProcessing.test.js` (18), real PostgreSQL (killed worker resumed after the lease; 3 workers × 6 jobs, each processed once; unique message ID), E2E 34/34, API 77/77, browser 41/41 + H3 12/12. Real Meta delivery not tested.
 
@@ -685,7 +708,7 @@ Bugs found in the product: none. Observed limitations (not changed): a photo rot
 
 ## 10. Known limitations and dependencies
 
-- **Migration not applied to the live database** — `20260927120000_m1_async_processing` (§4m); apply it before deploying the M1 code. The five Phase 10 migrations are applied (checked 2026-09-26).
+- **Migrations not applied to the live database** — `20260927120000_m1_async_processing` and `20260927130000_m1_placement_path` (§4m); apply both before deploying the M1 code. Stop the old version completely before starting the new one (no overlap: old code processes in the request, the new worker would process the same rows). The five Phase 10 migrations are applied (checked 2026-09-26).
 - **Background worker runs in the web process** (M1): one process is enough; several instances are safe (compare-and-swap claims), but the in-memory message claim and login rate limit stay per instance.
 - **Light-mode status colours:** the Stitch status text colours on white or their tint are 3.1–4.4:1 (below WCAG AA 4.5:1 for small text). Light mode was kept unchanged as required; darkening them would be a Stitch design change to decide there.
 - **Daily report history:** completeness and police figures are current only (§4i).

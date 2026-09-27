@@ -125,7 +125,7 @@ export function createFakeReviewDb({ admins = [], users = [], temporaryData = []
                     throw Object.assign(new Error("Unique constraint failed on the fields: (`passport_id`,`file_sha256`)"), { code: "P2002" });
                 }
                 const row = name === "temporaryData"
-                    ? { createdDate: new Date(), processingAttempts: 0, processingStartedAt: null, pendingStoragePath: null, passportId: null, uniqueId: null, ...data }
+                    ? { createdDate: new Date(), processingAttempts: 0, processingStartedAt: null, pendingStoragePath: null, placementPath: null, passportId: null, uniqueId: null, ...data }
                     : { createdDate: new Date(), ...data };
                 rows().push(row);
                 return { ...row };

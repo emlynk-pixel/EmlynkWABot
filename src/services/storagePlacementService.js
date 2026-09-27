@@ -1,6 +1,7 @@
 import { CHECKSUM_OUTCOME, findPendingDuplicate } from "./documentChecksumService.js";
 import { storeClientDocument, CLIENT_STORE_OUTCOME, VERIFICATION_STATUS, verificationStatusForBand } from "./clientDocumentService.js";
 import { copyToFreeName } from "./permanentStorageService.js";
+import { placementCopyHooks } from "./placementRecovery.js";
 import {
     DOCUMENT_STORAGE_TYPES,
     extensionForMimeType,
@@ -80,7 +81,7 @@ export function decidePlacement({ processingStatus, band, documentType, clientId
 }
 
 // Copy into pending/ unless the same sender's same file is already there.
-async function placeInPending({ decision, temporaryId, temporaryStoragePath, whatsappNumber, fileSha256, mimeType, receivedAt }, { db, bucket, now }) {
+async function placeInPending({ decision, temporaryId, temporaryStoragePath, whatsappNumber, fileSha256, mimeType, receivedAt }, { db, bucket, now, claim }) {
     const earlier = await findPendingDuplicate({ whatsappNumber, fileSha256, temporaryId }, { db });
     if (earlier) {
         return { placement: PLACEMENT.NONE, processingStatus: "DUPLICATE", pendingStoragePath: null, stored: null };
@@ -92,6 +93,7 @@ async function placeInPending({ decision, temporaryId, temporaryStoragePath, wha
             fromPath: temporaryStoragePath,
             folder: pendingFolderPath({ uniqueId: decision.pendingOwner, temporaryId }),
             nameForAttempt: (n) => withNumericSuffix(baseName, n),
+            ...placementCopyHooks({ claim, fileSha256 }, { db, bucket }),
         },
         { bucket }
     );
@@ -101,7 +103,9 @@ async function placeInPending({ decision, temporaryId, temporaryStoragePath, wha
 
 // Carry out a placement decision. The temporary object is never deleted
 // here (Phase 8). Throws on storage/database failure; the caller records FAILED.
-export async function placeDocument(decision, context, { db, bucket, now = new Date() } = {}) {
+// `claim`: the background worker's attempt (M1): no copy or insert once it
+// no longer owns the submission (ClaimLostError), and copies are repeatable.
+export async function placeDocument(decision, context, { db, bucket, now = new Date(), claim = null } = {}) {
     if (decision.placement === PLACEMENT.NONE) {
         return { placement: PLACEMENT.NONE, processingStatus: decision.processingStatus, pendingStoragePath: null, stored: null };
     }
@@ -121,7 +125,7 @@ export async function placeDocument(decision, context, { db, bucket, now = new D
     }
 
     if (decision.placement === PLACEMENT.PENDING) {
-        return placeInPending({ decision, ...context }, { db, bucket, now });
+        return placeInPending({ decision, ...context }, { db, bucket, now, claim });
     }
 
     const stored = await storeClientDocument(
@@ -139,7 +143,7 @@ export async function placeDocument(decision, context, { db, bucket, now = new D
             temporaryId: context.temporaryId,
             policeSubmittedDate: context.policeSubmittedDate ?? null,
         },
-        { db, bucket, now }
+        { db, bucket, now, claim }
     );
 
     // A parallel request stored the same file first.

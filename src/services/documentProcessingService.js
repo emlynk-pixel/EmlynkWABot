@@ -11,11 +11,11 @@ import { extractPoliceReportDate, POLICE_DATE_STATUS } from "./policeReportDateS
 import { findUsersByPassportId, findUsersByWhatsappNumber } from "./userLookupService.js";
 import { decideIdentity, IDENTITY_STATUS } from "./identityVerificationService.js";
 import { reconcilePassportFields, applyReconciliationUpdates } from "./fieldReconciliationService.js";
-import { updateTemporaryDocumentRecord } from "./temporaryDataService.js";
+import { updateTemporaryDocumentRecord, ClaimLostError } from "./temporaryDataService.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { checkClientChecksum, CHECKSUM_OUTCOME } from "./documentChecksumService.js";
 import { decidePlacement, placeDocument } from "./storagePlacementService.js";
-import { hasVerifiedDocument } from "./clientDocumentService.js";
+import { hasVerifiedDocument, CLAIMED_WRITE_OPTIONS } from "./clientDocumentService.js";
 import { safeErrorText } from "../utils/safeLog.js";
 import { evaluatePassportAcceptance, applyPassportAcceptance } from "./passportAcceptanceService.js";
 import { policeWorkflowEvent } from "./policeWorkflowService.js";
@@ -160,12 +160,28 @@ function clientLink(state) {
     return link ? { passportId: state.identity.passportId, uniqueId: state.identity.uniqueId } : {};
 }
 
+// A worker attempt that lost its claim: nothing was written by it after
+// that point; what it worked out is not used.
+function staleResult(state) {
+    return {
+        summary: summarize({ ...state, processingStatus: null, recordUpdated: false, error: "STALE_ATTEMPT_DISCARDED" }),
+        stale: true,
+        details: { policeDate: null, policeWorkflow: null },
+    };
+}
+
 // Run Phase 5 (classification, OCR, confidence, passport fields, police
 // date), Phase 6 (identity, reconciliation) and Phase 7 (checksum checks,
 // permanent or pending copy) for one stored document, then update its
 // temporary_data row. The temporary object is never deleted (Phase 8).
 // Never throws: a failure is recorded as FAILED with the stage it happened
 // in, so the webhook keeps working.
+// deps.claim (M1 background worker): this attempt's claim on the submission.
+// Every write (client record, storage copy, documents row, the final
+// temporary_data update) happens only while the attempt still owns it; once
+// it doesn't (lease ran out and another attempt took over, or the submission
+// was finished or given up), nothing more is written and the result is
+// discarded ({ stale: true }).
 // Returns { summary } (safe to log) and { details } (extracted values, not logged).
 export async function processDocument({
     temporaryId,
@@ -179,7 +195,7 @@ export async function processDocument({
     filenameClassification,
     deps = {},
 }) {
-    const { db, bucket, now = new Date(), extractText = extractDocumentText } = deps;
+    const { db, bucket, now = new Date(), extractText = extractDocumentText, claim = null } = deps;
     const state = { stage: "TEXT_EXTRACTION", recordUpdated: false };
     // The route passes the checksum it already calculated; fall back for other callers.
     state.fileSha256 = fileSha256 ?? sha256Hex(fileBuffer);
@@ -252,11 +268,19 @@ export async function processDocument({
                 fieldConfidence: state.fieldConfidence,
             });
             if (checksumAllowsWrites) {
-                ({ applied: state.applied } = await applyReconciliationUpdates({
+                const reconcile = (client) => applyReconciliationUpdates({
                     identity: state.identity,
                     reconciliation: state.reconciliation,
-                    db,
-                }));
+                    db: client,
+                });
+                // M1: the client record is only written together with a
+                // renewal of the worker's claim (one transaction).
+                ({ applied: state.applied } = claim
+                    ? await db.$transaction(async (tx) => {
+                        await claim.renew({ tx });
+                        return reconcile(tx);
+                    }, CLAIMED_WRITE_OPTIONS)
+                    : await reconcile(db));
             }
         }
 
@@ -302,7 +326,7 @@ export async function processDocument({
                 : null,
             // M1: set when an interrupted attempt already stored this submission's document.
             existingDocument: state.checksum?.existingDocument ?? null,
-        }, { db, bucket, now });
+        }, { db, bucket, now, claim });
         state.processingStatus = state.placement.processingStatus;
         // Phase 9 event (not stored itself; the slip's date is, see placeDocument above).
         state.policeWorkflow = policeWorkflowEvent({
@@ -321,10 +345,11 @@ export async function processDocument({
             // that is logged, as it stands once processing has completed.
             processingSummary: summarize({ ...state, stage: "COMPLETED", recordUpdated: true }),
             reviewReason: deriveReviewReason(state),
-        }, { db });
+        }, { db, claim });
         state.recordUpdated = true;
         state.stage = "COMPLETED";
     } catch (error) {
+        if (error instanceof ClaimLostError) return staleResult(state);
         state.error = safeErrorText(error);
         state.processingStatus = PROCESSING_STATUS.FAILED;
 
@@ -340,15 +365,17 @@ export async function processDocument({
                 ...(state.placement?.pendingStoragePath ? { pendingStoragePath: state.placement.pendingStoragePath } : {}),
                 processingSummary: summarize(state),
                 reviewReason: deriveReviewReason(state),
-            }, { db });
+            }, { db, claim });
             state.recordUpdated = true;
         } catch (updateError) {
+            if (updateError instanceof ClaimLostError) return staleResult(state);
             state.error = `${safeErrorText(error)}; status update failed: ${safeErrorText(updateError)}`;
         }
     }
 
     return {
         summary: summarize(state),
+        stale: false,
         // Not for logging. A police slip's resolved date is also stored on
         // its documents row (police_submitted_date) when filed under the client.
         details: {

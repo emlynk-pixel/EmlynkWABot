@@ -1,6 +1,8 @@
 import crypto from "crypto";
 
 import { copyToFreeName, removeObject } from "./permanentStorageService.js";
+import { placementCopyHooks } from "./placementRecovery.js";
+import { ClaimLostError } from "./temporaryDataService.js";
 import {
     clientFolderPath,
     extensionForMimeType,
@@ -46,6 +48,11 @@ async function resolveDb(db) {
 
 const isUniqueViolation = (error) => error?.code === "P2002";
 
+// M1: a worker write that commits together with a renewal of its claim
+// (documents insert, client record). A slow write can't outlive the
+// transaction (timeout well below the worker lease).
+export const CLAIMED_WRITE_OPTIONS = Object.freeze({ maxWait: 10_000, timeout: 30_000 });
+
 // Does the client already have a VERIFIED document of this type? A new
 // document that would be stored as REVIEW_REQUIRED next to it could never be
 // approved (one verified document per type), so it goes to pending/ instead
@@ -64,6 +71,12 @@ export async function hasVerifiedDocument({ passportId, documentType }, { db } =
 //   others   -> standard name, next version (passport.pdf, passport_v2.pdf, …)
 // If the database write fails, the copy is removed again; the temporary
 // object is never touched. Nothing returned here contains document text.
+// M1: with the worker's `claim`, the claim is renewed before the copy, the
+// insert commits only together with a renewal (one transaction: a stale
+// attempt can never add a document), and an interrupted earlier attempt's
+// copy of this submission is reused (placementRecovery.js). An attempt that
+// lost its claim never removes its copy: the attempt that owns the
+// submission now may be using it.
 export async function storeClientDocument({
     temporaryStoragePath,
     passportId,
@@ -77,11 +90,12 @@ export async function storeClientDocument({
     receivedAt,
     temporaryId,
     policeSubmittedDate,
-}, { db, bucket, now = new Date() } = {}) {
+}, { db, bucket, now = new Date(), claim = null } = {}) {
     const verificationStatus = verificationStatusForBand(band);
     const extension = extensionForMimeType(mimeType);
     const folder = clientFolderPath(passportId, documentType);
     const client = await resolveDb(db);
+    const hooks = placementCopyHooks({ claim, fileSha256 }, { db: client, bucket });
 
     // Photos arrive without a file name; documents.original_filename is required.
     const fallbackName = timestampFileName(receivedAt ?? now, extension);
@@ -92,7 +106,7 @@ export async function storeClientDocument({
         // UNCLEAR: keep the sender's name (proposal §17), made safe.
         const keptName = sanitizeFileName(originalFileName, extension) ?? fallbackName;
         copy = await copyToFreeName(
-            { fromPath: temporaryStoragePath, folder, nameForAttempt: (n) => withNumericSuffix(keptName, n) },
+            { fromPath: temporaryStoragePath, folder, nameForAttempt: (n) => withNumericSuffix(keptName, n), ...hooks },
             { bucket }
         );
     } else {
@@ -103,6 +117,7 @@ export async function storeClientDocument({
                 folder,
                 nameForAttempt: (version) => standardFileName(documentType, version, extension),
                 firstAttempt: existing + 1,
+                ...hooks,
             },
             { bucket }
         );
@@ -111,7 +126,7 @@ export async function storeClientDocument({
     const documentId = crypto.randomUUID();
 
     try {
-        await client.document.create({
+        const insert = (tx) => tx.document.create({
             data: {
                 documentId,
                 passportId,
@@ -133,7 +148,23 @@ export async function storeClientDocument({
                 policeSubmittedDate: policeSubmittedDate ? new Date(`${policeSubmittedDate}T00:00:00.000Z`) : null,
             },
         });
+        if (claim) {
+            await client.$transaction(async (tx) => {
+                await claim.renew({ tx });
+                await insert(tx);
+            }, CLAIMED_WRITE_OPTIONS);
+        } else {
+            await insert(client);
+        }
     } catch (error) {
+        if (claim) {
+            // Lost the claim (now or while inserting): leave the copy alone.
+            if (error instanceof ClaimLostError) throw error;
+            await claim.renew();
+            // Never remove a copy a document refers to.
+            const inUse = await client.document.findFirst({ where: { storagePath: copy.storagePath }, select: { documentId: true } });
+            if (inUse) throw new Error(`documents insert failed (${isUniqueViolation(error) ? "duplicate" : error.message}); copy kept (in use)`);
+        }
         const cleanup = await removeObject(copy.storagePath, { bucket });
 
         if (isUniqueViolation(error) && cleanup.removed) {

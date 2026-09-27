@@ -208,12 +208,13 @@ describe("M1 worker", () => {
     test("Test 4: the same job run twice (crash after storing, before finishing) -> one document, one client-folder file", async () => {
         const w = await recorded([["m1", PASSPORT_PDF, "passport.pdf"]]);
         // Attempt 1 stores the document, then the database fails on both final updates (as if the process died).
+        // The final updates are conditional on the worker's claim (updateMany with a status); lease renewals are not affected.
         const first = await claimNextSubmission({ db: w.db.client });
-        const failUpdates = w.db.client.temporaryData.update;
+        const updateMany = w.db.client.temporaryData.updateMany;
         let failures = 2;
-        w.db.client.temporaryData.update = async (args) => { if (failures-- > 0) throw new Error("connection lost"); return failUpdates(args); };
+        w.db.client.temporaryData.updateMany = async (args) => { if (args.data.processingStatus && failures-- > 0) throw new Error("connection lost"); return updateMany(args); };
         await processClaimedSubmission(first, { db: w.db.client, bucket: w.bucket });
-        w.db.client.temporaryData.update = failUpdates;
+        w.db.client.temporaryData.updateMany = updateMany;
         assert.equal(w.db.tables.temporaryData[0].processingStatus, "TEMPORARY_STORED", "not finished");
         assert.equal(w.db.tables.document.length, 1, "attempt 1 stored the document");
         // Attempt 2 (after the lease) recognises its own document instead of storing it again or calling it a duplicate.
