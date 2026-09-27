@@ -670,7 +670,7 @@ Scope: the whole flow from a signed WhatsApp webhook to the dashboard, on commit
 | Browser (10 pages × desktop/tablet/mobile × light/dark; filters, back/forward, reload, loading/error/empty/not-found, Sync, dark mode, sign-out) | 41/41; no overflow, no console/CSP errors, one API request per page |
 | Performance (5,000 clients, 15,000 documents, 60,000 submissions) | every dashboard call under 200 ms |
 
-Bugs found in the product: none. Observed limitations (not changed): a photo rotated by 90° is not read (it goes to review as `UNKNOWN`); a PDF over the page limit is recorded `FAILED` and was not shown in the dashboard (audit H3, fixed in Phase 25, §4l); a different, well-read file of a type the client already has verified is stored as a further verified version (version workflow, M4 test 3).
+Bugs found in the product: none. Observed limitations (not changed): a photo rotated by 90° is not read (it goes to review as `UNKNOWN`; fixed afterwards: photos at 90°, 180° and 270° are now turned for OCR, see Docs/06 *Photos taken sideways or upside down*. The same E2E photo now reads as `PASSPORT`, confidence 90, filed VERIFIED under the client); a PDF over the page limit is recorded `FAILED` and was not shown in the dashboard (audit H3, fixed in Phase 25, §4l); a different, well-read file of a type the client already has verified is stored as a further verified version (version workflow, M4 test 3).
 
 ## 9. Decisions (2026-09-25)
 

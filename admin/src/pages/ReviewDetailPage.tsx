@@ -92,6 +92,7 @@ function ProcessingDetails({ processing }: { processing: ProcessingSummary | nul
             <Row label="Classification source">{processing.typeSource ? humanize(processing.typeSource) : null}</Row>
             {processing.ocrThresholding && <Row label="OCR thresholding">{[processing.ocrThresholding].flat().join(", ")}</Row>}
             {processing.ocrUpscaled !== undefined && processing.ocrUpscaled !== null && <Row label="OCR upscaling">{processing.ocrUpscaled ? "2× read used" : "No"}</Row>}
+            {!!processing.ocrRotation && <Row label="OCR orientation">{`Photo turned ${processing.ocrRotation}° for reading (file unchanged)`}</Row>}
             {confidence && (
                 <>
                     <Row label="Confidence band"><StatusBadge status={confidence.band} /></Row>

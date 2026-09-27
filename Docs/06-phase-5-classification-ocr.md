@@ -88,6 +88,21 @@ The OCR result records the winning settings (`thresholding: "OTSU" | "SAUVOLA"`,
 
 Measured on synthetic phone-photo fixtures: a harsh police certificate photo went from confidence 63 (default) to about 86 (best alternative); good photos, including a passport photo whose MRZ reads with valid check digits, are read once with the default settings, as before.
 
+### Photos taken sideways or upside down (0°, 90°, 180°, 270°)
+
+`rotateAuto` only straightens small tilts: Tesseract measures the slope of the text lines. It does not turn a page that is sideways or upside down, and Tesseract's own orientation detection needs the legacy engine and the `osd` model, which are not installed. Such a photo used to be read as garbage (confidence 27–52, type `UNKNOWN`, pending review).
+
+For images (JPEG/PNG), after the usual read of the image as received (steps above, plus the 2× read for small images):
+
+1. If that read is **weak** (confidence below 70) **and** has no complete passport MRZ, the image is turned 90°, 180° and 270°. Each is read once with the default settings; a small image (long side under 1200 px) is read at 2×, since it is too small to read at its own size.
+2. The best of those three is used only if it is **clearly better** than the read as received: more valid passport MRZ check digits, or more than 5 points higher confidence. It then gets the full read (retries, 2×), and must still be clearly better.
+3. Otherwise the read as received is kept, as before. An image that can't be decoded, or a turn that fails, also keeps it.
+
+Only the OCR input is turned: a PNG copy made in memory from the decoded pixels, using the same pure-JavaScript decoders and header size check as the 2× read, and `@napi-rs/canvas`. The received file is never changed: the copies in `temporary/`, `pending/` and `clients/` are the file exactly as received. The result records the turn (`rotation`: 0, 90, 180 or 270, clockwise). The log summary shows it as `ocrRotation`, and the review page as *OCR orientation*.
+
+Measured with real Tesseract on the synthetic fixtures (passport photo, medical PNG, police photos, small low-quality passport), each turned 90°, 180° and 270°: every one reads like the upright image (same type, same confidence, all 4 MRZ checks for the passports). Upright images are unchanged, with no extra reads when they read well, and a blank image is never turned. A turned photo takes longer: about 4–8 s for a normal photo, about 20 s for the small passport, instead of under 1 s upright. That stays within the 120 s OCR job limit.
+
+
 ### Diagnosing a document that isn't classified
 
 `npm run diagnose:document -- <file>` or `npm run diagnose:document -- --storage-path temporary/<uuid>.jpeg`
@@ -266,6 +281,8 @@ All fixtures are synthetic. `test/fixtures/files/` holds generated PDFs and imag
 - Police slip wording on real slips may differ; the synthetic slip scores exactly the minimum.
 - MRZ names truncated by the 39-character limit are not rebuilt; filler misread as `K` is not corrected.
 - Only the first 3 pages of a scanned PDF are OCR'd.
+- Pages of a scanned PDF are not turned: the 90°/180°/270° check covers JPEG/PNG images only. Tilts other than those four orientations are left to `rotateAuto` (small tilts only).
+- A photo that is turned *and* barely readable upright stays unreadable; the turn only helps when the upright read is clearly better.
 - Processing runs inside the webhook request. Scanned PDFs add about 1–2 seconds per page.
 - Police date persistence is deferred to Phase 7/9 (needs a schema change). It is kept in `details.policeDate` for now.
 

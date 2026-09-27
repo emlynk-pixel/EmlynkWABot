@@ -191,8 +191,9 @@ function isBetterRead(candidate, best) {
 // weak (or empty), try the alternatives and keep the best read of all of
 // them, including the default, so the result is never worse than before.
 // The returned confidence is always the one Tesseract reported.
-export async function recognizeImage(worker, image) {
-    let best = await readPage(worker, image, OCR_THRESHOLDING.OTSU, false);
+// `firstRead`: the default read of this image, if already done.
+export async function recognizeImage(worker, image, { firstRead = null } = {}) {
+    let best = firstRead ?? await readPage(worker, image, OCR_THRESHOLDING.OTSU, false);
     if (selectionConfidence(best) >= OCR_RETRY_BELOW_CONFIDENCE) {
         return best;
     }
@@ -417,6 +418,51 @@ export async function upscaleImage(fileBuffer, dimensions) {
     return canvas.toBuffer("image/png");
 }
 
+// Page orientation. Tesseract's rotateAuto only straightens small tilts
+// (it measures the text-line gradient), and its orientation detection needs
+// the legacy engine and model, which aren't installed. So a photo taken
+// sideways or upside down (90°, 180°, 270°) was read as garbage. When the
+// read of the image as received is weak, the three other orientations are
+// read too, and one is used only if it is clearly better. Only the OCR input
+// is rotated: the received file itself is never changed.
+export const ORIENTATION_CANDIDATES = [90, 180, 270]; // clockwise
+
+// A rotated copy of the image for OCR (PNG, lossless), or null if the image
+// can't be decoded. Decoded with the same pure-JavaScript decoders and the
+// same header check as upscaleImage; canvas only turns decoded pixels.
+export async function rotateImage(fileBuffer, dimensions, degrees) {
+    let pixels;
+    try {
+        pixels = await decodeImagePixels(fileBuffer, dimensions.format);
+    } catch {
+        return null;
+    }
+    if (!pixels) {
+        return null;
+    }
+    if (pixels.width !== dimensions.width || pixels.height !== dimensions.height) {
+        throw new OcrResourceError("IMAGE_UNREADABLE");
+    }
+
+    const { createCanvas } = await import("@napi-rs/canvas");
+    const source = createCanvas(pixels.width, pixels.height);
+    const sourceContext = source.getContext("2d");
+    const imageData = sourceContext.createImageData(pixels.width, pixels.height);
+    imageData.data.set(pixels.data);
+    sourceContext.putImageData(imageData, 0, 0);
+
+    const sideways = degrees % 180 !== 0;
+    const width = sideways ? pixels.height : pixels.width;
+    const height = sideways ? pixels.width : pixels.height;
+    const canvas = createCanvas(width, height);
+    const context = canvas.getContext("2d");
+    context.translate(width / 2, height / 2);
+    context.rotate((degrees * Math.PI) / 180);
+    context.drawImage(source, -pixels.width / 2, -pixels.height / 2);
+
+    return { image: canvas.toBuffer("image/png"), dimensions: { format: "png", width, height } };
+}
+
 // A native read that is weak (or empty), or that shows a passport MRZ it
 // couldn't fully validate, is worth a second read at 2x. A good read of a
 // police or medical photo has no MRZ, so it never gets one.
@@ -438,8 +484,8 @@ function isBetterUpscaledRead(upscaled, native) {
 // Native read (with its usual retries), then, for a small image with a weak
 // or incomplete result, a 2x read. The better of the two is returned with
 // its own reported confidence.
-export async function recognizeImageWithUpscale(worker, image, dimensions, { upscale = upscaleImage } = {}) {
-    const native = await recognizeImage(worker, image);
+async function readAsOriented(worker, image, dimensions, upscale, firstRead = null) {
+    const native = await recognizeImage(worker, image, { firstRead });
     if (!ocrImageSize(dimensions) || !needsUpscaledRead(native)) {
         return { ...native, upscaled: false };
     }
@@ -453,6 +499,62 @@ export async function recognizeImageWithUpscale(worker, image, dimensions, { ups
     return isBetterUpscaledRead(upscaled, native)
         ? { ...upscaled, upscaled: true }
         : { ...native, upscaled: false };
+}
+
+// Only a weak read without a complete passport MRZ is worth checking other
+// orientations: a readable document (or a fully valid MRZ) is upright enough.
+function needsOrientationCheck(read) {
+    return selectionConfidence(read) < OCR_RETRY_BELOW_CONFIDENCE && mrzEvidence(read.text) < FULL_MRZ_EVIDENCE;
+}
+
+// Better by more than the similar-confidence margin, or with more valid
+// passport MRZ evidence: only then is a turned image used.
+function isClearlyBetterOrientation(candidate, current) {
+    const candidateMrz = mrzEvidence(candidate.text);
+    const currentMrz = mrzEvidence(current.text);
+    if (candidateMrz !== currentMrz) return candidateMrz > currentMrz;
+    return selectionConfidence(candidate) > selectionConfidence(current) + SIMILAR_CONFIDENCE_MARGIN;
+}
+
+// For a weak read of the image as received: one default read ("scout") of
+// each other orientation — of the 2x image for a small one, which is too
+// small to read at its own size. The best scout, if clearly better, gets the
+// full read (retries, 2x) and is used if that is still clearly better.
+// Returns the read with its rotation, or null (keep the image as received).
+async function readInBestOrientation(worker, image, dimensions, received, { upscale, rotate }) {
+    let best = null;
+    for (const degrees of ORIENTATION_CANDIDATES) {
+        let turned;
+        try {
+            turned = await rotate(image, dimensions, degrees);
+        } catch (error) {
+            if (error instanceof OcrResourceError) throw error;
+            return null; // can't turn it: use the image as received
+        }
+        if (!turned) return null;
+
+        const enlarged = ocrImageSize(turned.dimensions) ? await upscale(turned.image, turned.dimensions) : null;
+        const scout = await readPage(worker, enlarged ?? turned.image, OCR_THRESHOLDING.OTSU, false);
+        if (!best || isBetterRead(scout, best.scout)) {
+            best = { ...turned, scout, scoutIsNative: !enlarged, rotation: degrees };
+        }
+    }
+    if (!isClearlyBetterOrientation(best.scout, received)) return null;
+
+    const read = await readAsOriented(worker, best.image, best.dimensions, upscale, best.scoutIsNative ? best.scout : null);
+    return isClearlyBetterOrientation(read, received) ? { ...read, rotation: best.rotation } : null;
+}
+
+// The image as received (native read, 2x if small); if that is weak, the
+// other orientations. Returns the read with `rotation`, the clockwise turn
+// applied for OCR (0 = as received).
+export async function recognizeImageWithUpscale(worker, image, dimensions, { upscale = upscaleImage, rotate = rotateImage } = {}) {
+    const received = await readAsOriented(worker, image, dimensions, upscale);
+    if (!needsOrientationCheck(received)) {
+        return { ...received, rotation: 0 };
+    }
+    const turned = await readInBestOrientation(worker, image, dimensions, received, { upscale, rotate });
+    return turned ?? { ...received, rotation: 0 };
 }
 
 // Run Tesseract OCR on a JPEG/PNG image. The size is checked from the header
@@ -473,6 +575,7 @@ export async function extractTextFromImage(fileBuffer, options = {}) {
         thresholding: page.thresholding,
         rotateAuto: page.rotateAuto,
         upscaled: page.upscaled,
+        rotation: page.rotation,
     };
 }
 

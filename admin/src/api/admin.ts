@@ -293,6 +293,7 @@ export type ProcessingSummary = {
     ocrThresholding?: string | string[] | null;
     ocrRotateAuto?: boolean | boolean[] | null;
     ocrUpscaled?: boolean | null;
+    ocrRotation?: number | null; // clockwise turn applied to the OCR input (the file itself is unchanged)
     confidence?: { extraction: number; classification: number; document: number; band: string; measuredBand?: string; flags: string[] } | null;
     passport?: { status: string; missingFields: string[]; mrzLinesFound: number; mrzCompositeCheckValid?: boolean | null; passportIdBand: string | null } | null;
     policeDate?: { status: string; kind: string | null } | null;

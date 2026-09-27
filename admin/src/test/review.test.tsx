@@ -44,7 +44,7 @@ const ITEM: ReviewItem = {
     client: CLIENT_REF,
     submission: { whatsappNumber: "94770000000", receivedDate: "2026-09-24T01:00:00.000Z" },
     processing: {
-        stage: "COMPLETED", error: null, extractionMethod: "OCR", typeSource: "CONTENT", ocrUpscaled: true,
+        stage: "COMPLETED", error: null, extractionMethod: "OCR", typeSource: "CONTENT", ocrUpscaled: true, ocrRotation: 270,
         confidence: { extraction: 71, classification: 100, document: 71, band: "SLIGHTLY_UNCLEAR", measuredBand: "SLIGHTLY_UNCLEAR", flags: [] },
         passport: { status: "COMPLETE", missingFields: [], mrzLinesFound: 2, passportIdBand: "VERIFIED" },
         identity: { status: "PASSPORT_MATCH_ONLY", reviewRequired: true, provisional: false, notes: ["WHATSAPP_NOT_ON_RECORD"] },
@@ -177,6 +177,7 @@ describe("Review Detail", () => {
         expect(screen.getByText("94770000000")).toBeInTheDocument();
         expect(screen.getByText("The client has no WhatsApp number on record")).toBeInTheDocument();
         expect(screen.getByText("2× read used")).toBeInTheDocument();
+        expect(screen.getByText("Photo turned 270° for reading (file unchanged)")).toBeInTheDocument();
         expect(screen.getByRole("link", { name: /KAMAL NIMAL PERERA/ })).toHaveAttribute("href", "/clients/N1234567");
 
         const preview = await screen.findByRole("img", { name: "Preview of document_20260924_063000.png" });

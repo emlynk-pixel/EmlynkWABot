@@ -99,6 +99,7 @@ function summarize(state) {
         ocrThresholding: textExtraction?.thresholding ?? null,
         ocrRotateAuto: textExtraction?.rotateAuto ?? null,
         ocrUpscaled: textExtraction?.upscaled ?? null,
+        ocrRotation: textExtraction?.rotation ?? null,
         confidence: confidence
             ? {
                 extraction: confidence.extractionConfidence,
