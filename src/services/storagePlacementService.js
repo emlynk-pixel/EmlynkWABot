@@ -27,6 +27,11 @@ const CLIENT_BANDS = new Set(["VERIFIED", "HIGH_CONFIDENCE", "SLIGHTLY_UNCLEAR",
 // Rules are checked in order; anything that must not be attached to a
 // client automatically goes to pending/.
 export function decidePlacement({ processingStatus, band, documentType, clientIdentified, uniqueId, checksumOutcome, reviewBlocked = false, verifiedOfTypeExists = false, duplicateOfVerified = false }) {
+    // M1: an interrupted earlier attempt already stored this submission's own
+    // document; the attempt that resumes it uses that document (no new copy).
+    if (checksumOutcome === CHECKSUM_OUTCOME.ALREADY_STORED) {
+        return { placement: PLACEMENT.CLIENT, processingStatus, pendingOwner: null, alreadyStored: true };
+    }
     // Same client already has this exact file (D8): nothing new is stored in
     // the client folder. M4: when that file is VERIFIED, the incoming copy is
     // not discarded but waits in pending/ for an admin (keep or remove); the
@@ -99,6 +104,16 @@ async function placeInPending({ decision, temporaryId, temporaryStoragePath, wha
 export async function placeDocument(decision, context, { db, bucket, now = new Date() } = {}) {
     if (decision.placement === PLACEMENT.NONE) {
         return { placement: PLACEMENT.NONE, processingStatus: decision.processingStatus, pendingStoragePath: null, stored: null };
+    }
+
+    if (decision.alreadyStored) {
+        const existing = context.existingDocument;
+        return {
+            placement: PLACEMENT.CLIENT,
+            processingStatus: decision.processingStatus,
+            pendingStoragePath: null,
+            stored: { outcome: CLIENT_STORE_OUTCOME.STORED, documentId: existing.documentId, storagePath: existing.storagePath, storedFilename: existing.storedFilename, verificationStatus: existing.verificationStatus },
+        };
     }
 
     if (!context.temporaryStoragePath) {

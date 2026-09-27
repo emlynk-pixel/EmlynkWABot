@@ -222,8 +222,13 @@ npm run admin:dev       # development server with live reload (backend must run 
 3. `20260925170000_phase10_police_submitted_date`
 4. `20260926090000_phase10_audit_removal_details`
 5. `20260926120000_phase10_audit_correction_values`
+6. `20260927120000_m1_async_processing` (background processing, below)
 
-All five are additive (new table and columns, nothing dropped), and all were tested on a throwaway database. None has been applied to the live database yet.
+All six are additive (new table and columns, nothing dropped), and all were tested on a throwaway database. The first five are applied to the live database (checked 2026-09-26); the sixth is not yet.
+
+### Background processing (M1)
+
+WhatsApp documents are processed in the background. When a document arrives, the server saves the file and records the submission, then answers WhatsApp at once (in tens of milliseconds); reading, classifying and filing the document happen right after, in a worker that runs inside the server. A submission shows the status *Temporary stored* until the worker has finished, usually within seconds. If the server stops mid-way, the submission is picked up again after a restart (after at most 10 minutes); after three unfinished attempts it appears under *Failed processing*. The same WhatsApp message is never recorded twice.
 
 ## 6. API
 

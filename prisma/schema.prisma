@@ -153,6 +153,21 @@ model TemporaryData {
   reviewReason      String?    @map("review_reason")
   documents         Document[]
 
+  // M1: asynchronous processing. The row is the durable job: the webhook
+  // commits it (status TEMPORARY_STORED) before answering Meta, and the
+  // background worker (submissionQueue.js) processes it.
+  // message_id: the WhatsApp message ID; unique, so a redelivered message
+  // never creates a second submission (also across restarts).
+  messageId           String?   @unique @map("message_id")
+  // As received on WhatsApp, for processing later (a file name can hold a
+  // client's name, so it is never logged).
+  originalFilename    String?   @map("original_filename")
+  receivedAt          DateTime? @map("received_at")
+  // Worker lease: claimed attempts and when the current attempt started.
+  processingAttempts  Int       @default(0) @map("processing_attempts")
+  processingStartedAt DateTime? @map("processing_started_at")
+
   @@index([whatsappNumber, fileSha256])
+  @@index([processingStatus, createdDate])
   @@map("temporary_data")
 }

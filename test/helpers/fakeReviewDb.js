@@ -47,7 +47,8 @@ export function createFakeReviewDb({ admins = [], users = [], temporaryData = []
             }
             return Object.entries(cond).every(([op, arg]) => {
                 if (op === "not") return arg === null ? value !== null : value !== arg;
-                if (op === "equals") return value === arg;
+                if (op === "equals") return cond.mode === "insensitive" ? String(value ?? "").toLowerCase() === String(arg).toLowerCase() : value === arg;
+                if (op === "endsWith") return value !== null && String(value).endsWith(arg);
                 if (op === "in") return arg.includes(value);
                 if (op === "gte") return value !== null && value >= arg;
                 if (op === "lt") return value !== null && value < arg;
@@ -117,10 +118,15 @@ export function createFakeReviewDb({ admins = [], users = [], temporaryData = []
             },
             async create({ data }) {
                 record("create", { data });
+                if (name === "temporaryData" && data.messageId && rows().some((t) => t.messageId === data.messageId)) {
+                    throw Object.assign(new Error("Unique constraint failed on the fields: (`message_id`)"), { code: "P2002", meta: { target: ["message_id"] } });
+                }
                 if (name === "document" && data.fileSha256 && rows().some((d) => d.passportId === data.passportId && d.fileSha256 === data.fileSha256)) {
                     throw Object.assign(new Error("Unique constraint failed on the fields: (`passport_id`,`file_sha256`)"), { code: "P2002" });
                 }
-                const row = { createdDate: new Date(), ...data };
+                const row = name === "temporaryData"
+                    ? { createdDate: new Date(), processingAttempts: 0, processingStartedAt: null, pendingStoragePath: null, passportId: null, uniqueId: null, ...data }
+                    : { createdDate: new Date(), ...data };
                 rows().push(row);
                 return { ...row };
             },

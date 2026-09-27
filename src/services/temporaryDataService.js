@@ -5,11 +5,18 @@ async function resolveDb(db) {
     return db ?? (await import("../config/prisma.js")).default;
 }
 
-// Create the temporary_data row for a newly stored document.
+// Create the temporary_data row for a newly stored document. It is the
+// durable job of the background worker (M1): committed before the webhook
+// answers Meta, with what processing needs later (message ID, the file name
+// and time as received). A second row for the same WhatsApp message is
+// refused by the unique message_id: then { duplicate: true } is returned.
 export async function createTemporaryDocumentRecord({
     whatsappNumber,
     temporaryStoragePath,
     fileSha256,
+    messageId = null,
+    originalFilename = null,
+    receivedAt = null,
 }, { db } = {}){
     const temporaryId = crypto.randomUUID();
 
@@ -19,18 +26,27 @@ export async function createTemporaryDocumentRecord({
     const processingStatus = "TEMPORARY_STORED";
 
     const client = await resolveDb(db);
-    const temporaryRecord = await client.temporaryData.create({
-        data:{
-            temporaryId,
-            whatsappNumber,
-            documentType,
-            temporaryStoragePath,
-            processingStatus,
-            fileSha256,
-        },
-    });
-
-    return temporaryRecord;
+    try {
+        return await client.temporaryData.create({
+            data:{
+                temporaryId,
+                whatsappNumber,
+                documentType,
+                temporaryStoragePath,
+                processingStatus,
+                fileSha256,
+                messageId,
+                originalFilename,
+                receivedAt,
+            },
+        });
+    } catch (error) {
+        const target = [error?.meta?.target].flat().join(",");
+        if (error?.code === "P2002" && /message_id|messageId/.test(target)) {
+            return { duplicate: true, temporaryId: null };
+        }
+        throw error;
+    }
 }
 
 // Only these columns change after processing. whatsapp_number, the

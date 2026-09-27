@@ -17,10 +17,26 @@ try {
 // Imported after the check: some modules read env vars when loaded.
 const { createApp } = await import("./createApp.js");
 
+const { startSubmissionWorker } = await import("./services/submissionQueue.js");
+
 const app = createApp();
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
 });
+
+// Background processing of WhatsApp submissions (M1). It also resumes
+// submissions left unfinished by a previous run.
+const worker = startSubmissionWorker();
+
+// Stop taking new work, let running jobs finish; an interrupted job's
+// lease runs out and it is resumed by the next run.
+for (const signal of ["SIGTERM", "SIGINT"]) {
+    process.once(signal, async () => {
+        server.close();
+        await worker.stop();
+        process.exit(0);
+    });
+}

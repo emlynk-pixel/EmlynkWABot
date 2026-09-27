@@ -13,8 +13,7 @@ import { getWhatsappMediaUrl, downloadWhatsappMedia, MediaRejectedError } from "
 import { saveTemporaryFile } from "../services/temporaryStorageService.js";
 import { removeObject } from "../services/permanentStorageService.js";
 import { createTemporaryDocumentRecord } from "../services/temporaryDataService.js";
-import { classifyDocument } from "../services/documentClassificationService.js";
-import { processDocument } from "../services/documentProcessingService.js";
+import { notifySubmissionQueued } from "../services/submissionQueue.js";
 
 // Logs never contain the sender's number, file names, storage paths, the
 // media ID or the raw message ID. messageRef is a short one-way hash of the
@@ -59,14 +58,20 @@ export class RetryableMessageError extends Error {
   }
 }
 
-// Download, validate, store and process one document/photo message.
+// Download, validate and store one document/photo message, then hand it to
+// background processing (M1). The webhook does not wait for OCR, identity
+// checks or storage placement: the committed temporary_data row (status
+// TEMPORARY_STORED) plus the file in temporary/ is the durable job, and the
+// worker (src/services/submissionQueue.js) processes it.
 // - A file refused on purpose (type, size, content) is logged and counts as
 //   handled: Meta gets 200 and doesn't send it again.
 // - A failure before the temporary_data record exists throws
 //   RetryableMessageError; an uploaded temporary object is removed first,
 //   so nothing is left behind and the retry starts clean.
-// - Once the record exists the message is handled: processing records its
-//   own outcome (FAILED included) on that record.
+// - The same WhatsApp message recorded twice (e.g. redelivered after a
+//   restart) is refused by the unique message ID: the second upload is
+//   removed and the message counts as handled.
+// - Once the record exists the message is handled.
 async function handleMediaMessage({ message, ref, deps }) {
   const documentMetadata = extractDocumentMetadata(message);
 
@@ -104,45 +109,41 @@ async function handleMediaMessage({ message, ref, deps }) {
     stage = "TEMPORARY_UPLOAD";
     temporaryFile = await deps.saveTemporary({ fileBuffer, mimeType });
 
-    // Filename is only a hint. Content-based classification comes later.
-    const classification = classifyDocument({ fileName, mimeType });
-
-    console.log("Initial document classification", {
-      messageRef: ref,
-      documentType: classification.documentType,
-      confidence: classification.confidence,
-      source: classification.source,
-    });
-
     stage = "RECORD_INSERT";
-    temporaryRecord = await deps.createTemporaryRecord({
+    const created = await deps.createTemporaryRecord({
       whatsappNumber: message.from,
       temporaryStoragePath: temporaryFile.storagePath,
       fileSha256,
+      messageId: message.id,
+      originalFilename: fileName ?? null,
+      receivedAt: messageReceivedAt(message) ?? null,
     });
 
-    console.log("Temporary document record created:", {
+    if (created?.duplicate) {
+      // Already recorded (redelivery): keep the first, drop this upload.
+      const cleanup = await deps.removeTemporary(temporaryFile.storagePath);
+      if (!cleanup?.removed) {
+        console.error("WhatsApp duplicate upload NOT removed", { messageRef: ref, error: cleanup?.error ?? "unknown" });
+      }
+      console.log("Duplicate WhatsApp message already recorded:", { messageRef: ref });
+      return;
+    }
+    temporaryRecord = created;
+
+    console.log("Submission recorded for background processing:", {
       messageRef: ref,
       temporaryId: temporaryRecord.temporaryId,
       processingStatus: temporaryRecord.processingStatus,
     });
 
-    // OCR, classification, confidence, field extraction, identity checks,
-    // storage. Never throws; failures are recorded on the temporary record.
-    // The summary holds statuses and field names only, no document data.
-    const { summary } = await deps.processDocument({
-      temporaryId: temporaryRecord.temporaryId,
-      whatsappNumber: message.from,
-      fileName,
-      mimeType,
-      fileBuffer,
-      fileSha256,
-      temporaryStoragePath: temporaryFile.storagePath,
-      receivedAt: messageReceivedAt(message),
-      filenameClassification: classification,
-    });
-
-    console.log("Document processing result:", { messageRef: ref, temporaryId: temporaryRecord.temporaryId, ...summary });
+    // Durable now: wake the worker. Processing (OCR, identity, storage)
+    // happens there; the webhook does not wait for it.
+    try {
+      deps.onRecorded(temporaryRecord);
+    } catch (notifyError) {
+      // The row is committed; the worker's poll picks it up anyway.
+      console.error("Background worker not notified (it will poll):", { messageRef: ref, errorType: notifyError?.name ?? "Error" });
+    }
   } catch (error) {
     // Too large or wrong type according to Meta's metadata or the download
     // itself: handled like any other failed validation.
@@ -154,8 +155,8 @@ async function handleMediaMessage({ message, ref, deps }) {
     // Only the error type is logged: messages from the database can contain
     // query values.
     if (temporaryRecord) {
-      // Recorded: processing (which records FAILED itself) is not repeated.
-      console.error("WhatsApp document processing failed:", { messageRef: ref, stage: "PROCESSING", errorType: error?.name ?? "Error" });
+      // Recorded: the worker processes it; nothing is repeated here.
+      console.error("WhatsApp message handling failed after the submission was recorded:", { messageRef: ref, errorType: error?.name ?? "Error" });
       return;
     }
 
@@ -179,11 +180,11 @@ export function createWhatsappRouter({
   downloadMedia = downloadWhatsappMedia,
   saveTemporary = saveTemporaryFile,
   createTemporaryRecord = createTemporaryDocumentRecord,
-  processDocument: processDocumentFn = processDocument,
   removeTemporary = (storagePath) => removeObject(storagePath),
+  onRecorded = () => notifySubmissionQueued(),
 } = {}) {
   const router = express.Router();
-  const deps = { getMediaUrl, downloadMedia, saveTemporary, createTemporaryRecord, processDocument: processDocumentFn, removeTemporary };
+  const deps = { getMediaUrl, downloadMedia, saveTemporary, createTemporaryRecord, removeTemporary, onRecorded };
 
   /*
     GET /webhook

@@ -44,6 +44,8 @@ export const FAILURE_REASONS: Record<string, { label: string; description: strin
     TEXT_EXTRACTION_FAILED: { label: "Text could not be read", description: "Reading the document's text failed." },
     STORAGE_FAILED: { label: "Storing the file failed", description: "Copying the file or recording the document failed. Nothing was stored for the client." },
     PROCESSING_FAILED: { label: "Processing error", description: "Processing stopped with an error." },
+    FILE_UNAVAILABLE: { label: "Received file unavailable", description: "The received file could not be loaded for processing, even after retrying. Ask the client to send it again." },
+    ATTEMPTS_EXHAUSTED: { label: "Processing did not finish", description: "Background processing was interrupted repeatedly and was stopped after three attempts. Ask the client to send the file again." },
     NOT_RECORDED: { label: "Not recorded", description: "This submission was processed before failure details were saved." },
 };
 

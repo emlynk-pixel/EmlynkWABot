@@ -218,10 +218,14 @@ describe("no automatic removal of pending items", () => {
         for (const [file, code] of sources) {
             assert.ok(!/setInterval\(|node-cron|cron\.schedule|agenda|bull(mq)?\b/i.test(code), file);
         }
-        // The only timeouts are bounded waits (OCR, concurrency limiter); none touches data or files.
+        // The only timeouts: bounded waits (OCR, concurrency limiter), which touch no data or
+        // files, and the M1 background worker's poll, which processes waiting submissions
+        // but never deletes a submission, a document or a file, and never clears a pending copy.
         const timeouts = sources.filter(([, code]) => /setTimeout\(/.test(code));
-        assert.deepEqual(timeouts.map(([f]) => f).sort(), ["concurrencyLimiter.js", "ocrService.js"]);
-        for (const [file, code] of timeouts) assert.ok(!/temporaryData\.|removeObject|\.remove\(/.test(code), file);
+        assert.deepEqual(timeouts.map(([f]) => f).sort(), ["concurrencyLimiter.js", "ocrService.js", "submissionQueue.js"]);
+        for (const [file, code] of timeouts.filter(([f]) => f !== "submissionQueue.js")) assert.ok(!/temporaryData\.|removeObject|\.remove\(/.test(code), file);
+        const worker = sources.find(([f]) => f === "submissionQueue.js")[1];
+        assert.ok(!/(temporaryData|document|auditLog|user)\.(delete|deleteMany)\(|removeObject|\.remove\(|pendingStoragePath/.test(worker), "the worker never removes anything");
     });
 
     test("only Remove from Review deletes a submission row; only admin actions and the pipeline remove pending files", () => {

@@ -237,7 +237,7 @@ export async function processDocument({
         state.stage = "DUPLICATE_CHECK";
         if (clientIdentified) {
             state.checksum = await checkClientChecksum(
-                { passportId: state.identity.passportId, fileSha256: state.fileSha256 },
+                { passportId: state.identity.passportId, fileSha256: state.fileSha256, temporaryId },
                 { db }
             );
         }
@@ -300,6 +300,8 @@ export async function processDocument({
             policeSubmittedDate: documentType === DOCUMENT_TYPES.POLICE_SLIP && state.policeDate?.status === POLICE_DATE_STATUS.RESOLVED
                 ? state.policeDate.date
                 : null,
+            // M1: set when an interrupted attempt already stored this submission's document.
+            existingDocument: state.checksum?.existingDocument ?? null,
         }, { db, bucket, now });
         state.processingStatus = state.placement.processingStatus;
         // Phase 9 event (not stored itself; the slip's date is, see placeDocument above).

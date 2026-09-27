@@ -43,9 +43,11 @@ function documentEvent(messageId, { fileName = "Kamal Perera passport.pdf" } = {
 
 const sign = (raw) => "sha256=" + crypto.createHmac("sha256", process.env.META_APP_SECRET).update(raw).digest("hex");
 
-// Fake external services; processDocument counts calls and can be slowed down.
-function fakeServices({ processDelayMs = 0, downloadError = null, fileBytes = PDF_BYTES } = {}) {
-    const calls = { processDocument: 0, download: 0, saveTemporary: 0 };
+// Fake external services. M1: the webhook hands a recorded submission to the
+// background worker (onRecorded) instead of processing it, so `queued` counts
+// the hand-offs; the download can be slowed down (the slow part left in the request).
+function fakeServices({ downloadDelayMs = 0, downloadError = null, fileBytes = PDF_BYTES } = {}) {
+    const calls = { queued: 0, download: 0, saveTemporary: 0 };
     return {
         calls,
         deps: {
@@ -53,6 +55,7 @@ function fakeServices({ processDelayMs = 0, downloadError = null, fileBytes = PD
             getMediaUrl: async () => "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=synthetic",
             downloadMedia: async () => {
                 calls.download += 1;
+                await sleep(downloadDelayMs);
                 if (downloadError) throw downloadError;
                 return fileBytes;
             },
@@ -61,10 +64,8 @@ function fakeServices({ processDelayMs = 0, downloadError = null, fileBytes = PD
                 return { storagePath: "temporary/3f2b8c1e.pdf", storedFileName: "3f2b8c1e.pdf" };
             },
             createTemporaryRecord: async () => ({ temporaryId: "tmp-synthetic", processingStatus: "TEMPORARY_STORED" }),
-            processDocument: async () => {
-                calls.processDocument += 1;
-                await sleep(processDelayMs);
-                return { summary: { stage: "COMPLETED", processingStatus: "VERIFIED" } };
+            onRecorded: () => {
+                calls.queued += 1;
             },
         },
     };
@@ -124,10 +125,10 @@ describe("POST /whatsapp/webhook: signature", () => {
         assert.equal(result.status, 401);
     });
 
-    test("valid signature -> 200 and processed", async () => {
+    test("valid signature -> 200 and handed to processing", async () => {
         const result = await postEvent(app.baseUrl, documentEvent("wamid.valid"));
         assert.equal(result.status, 200);
-        assert.equal(services.calls.processDocument, 1);
+        assert.equal(services.calls.queued, 1);
     });
 
     test("malformed JSON -> safe 400 JSON", async () => {
@@ -164,14 +165,14 @@ describe("POST /whatsapp/webhook: replay and duplicates (SEC-006)", () => {
             assert.equal((await postEvent(app.baseUrl, event)).status, 200);
 
             assert.equal(services.calls.download, 1);
-            assert.equal(services.calls.processDocument, 1);
+            assert.equal(services.calls.queued, 1);
         } finally {
             app.server.close();
         }
     });
 
-    test("same message twice at the same time (retry during slow OCR) -> processed once", async () => {
-        const services = fakeServices({ processDelayMs: 150 });
+    test("same message twice at the same time (retry during a slow download) -> handed to processing once", async () => {
+        const services = fakeServices({ downloadDelayMs: 150 });
         const app = await startApp(services.deps);
         try {
             const event = documentEvent("wamid.parallel");
@@ -179,7 +180,7 @@ describe("POST /whatsapp/webhook: replay and duplicates (SEC-006)", () => {
 
             assert.deepEqual(results.map((r) => r.status), [200, 200, 200]);
             assert.equal(services.calls.download, 1);
-            assert.equal(services.calls.processDocument, 1);
+            assert.equal(services.calls.queued, 1);
         } finally {
             app.server.close();
         }
@@ -191,7 +192,7 @@ describe("POST /whatsapp/webhook: replay and duplicates (SEC-006)", () => {
         try {
             await postEvent(app.baseUrl, documentEvent("wamid.one"));
             await postEvent(app.baseUrl, documentEvent("wamid.two"));
-            assert.equal(services.calls.processDocument, 2);
+            assert.equal(services.calls.queued, 2);
         } finally {
             app.server.close();
         }
@@ -206,7 +207,7 @@ describe("POST /whatsapp/webhook: replay and duplicates (SEC-006)", () => {
             await postEvent(app.baseUrl, event);
 
             assert.equal(services.calls.download, 1);
-            assert.equal(services.calls.processDocument, 0);
+            assert.equal(services.calls.queued, 0);
         } finally {
             app.server.close();
         }
@@ -221,7 +222,7 @@ describe("POST /whatsapp/webhook: file content (SEC-009)", () => {
             const result = await postEvent(app.baseUrl, documentEvent("wamid.disguised"));
             assert.equal(result.status, 200);
             assert.equal(services.calls.saveTemporary, 0);
-            assert.equal(services.calls.processDocument, 0);
+            assert.equal(services.calls.queued, 0);
             assert.match(JSON.stringify(logs), /FILE_SIGNATURE_MISMATCH/);
         } finally {
             app.server.close();

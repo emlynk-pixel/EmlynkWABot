@@ -1,6 +1,6 @@
 # Phase 10 — Admin Dashboard
 
-Status: **Final Phase 10 scope implemented and verified (not yet committed). None of the five Phase 10 migrations is applied to the live database.** The standalone reference for the finished dashboard is [`15-admin-dashboard-reference.md`](15-admin-dashboard-reference.md); it also lists every decision and deviation from the proposal.
+Status: **Final Phase 10 scope implemented and verified. The five Phase 10 migrations are applied to the live database (read-only check 2026-09-26); the M1 migration `20260927120000_m1_async_processing` (§4m) is not.** The standalone reference for the finished dashboard is [`15-admin-dashboard-reference.md`](15-admin-dashboard-reference.md); it also lists every decision and deviation from the proposal.
 
 | Checkpoint | Scope | Status |
 |---|---|---|
@@ -354,7 +354,7 @@ Rules:
 | `document_type` / `file_sha256` | Remove from Review: the removed submission's type and checksum, kept because its row is deleted (migration `20260926090000_phase10_audit_removal_details`). Never returned by the API except the type. The corrections also record the document type. |
 | `previous_value` / `new_value` | Corrections (§4f): the value before and after — document type, passport ID or slip date (`YYYY-MM-DD`). Migration `20260926120000_phase10_audit_correction_values`. |
 
-**Deployment dependency:** the Phase 10 backend code uses the columns and the table from all five Phase 10 migrations (`20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`, `20260925170000_phase10_police_submitted_date`, `20260926090000_phase10_audit_removal_details`, `20260926120000_phase10_audit_correction_values`). Apply them, in order, before deploying this code; deploying the code first breaks the review pages, the dashboard and document processing. None is applied to the live database yet. The last two are additive: nullable columns on `audit_logs`, nothing else.
+**Deployment dependency:** the Phase 10 backend code uses the columns and the table from all five Phase 10 migrations (`20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`, `20260925170000_phase10_police_submitted_date`, `20260926090000_phase10_audit_removal_details`, `20260926120000_phase10_audit_correction_values`). Apply them, in order, before deploying this code; deploying the code first breaks the review pages, the dashboard and document processing. All five are applied to the live database (checked 2026-09-26). The last two are additive: nullable columns on `audit_logs`, nothing else. M1 adds a sixth, `20260927120000_m1_async_processing` (§4m), not applied yet.
 
 ## 4d. Police Workflow (Checkpoint 5)
 
@@ -529,6 +529,32 @@ Not FAILED submissions (unchanged): files refused at intake (type, size, content
 
 Tests: `test/failedSubmissions.test.js` (real pipeline failures — page limit, storage outage after identification, OCR busy; API list/detail/file/actions/security/counts), `admin/src/test/review.test.tsx` ("H3"), E2E harness and headless Chrome (Phase 25).
 
+## 4m. M1 — Asynchronous WhatsApp processing
+
+**Before.** `POST /whatsapp/webhook` did everything inside the request: download, validation, temporary upload, record insert, then it awaited `processDocument` (OCR, classification, identity, checksum, placement, database) before answering Meta. OCR alone can wait 60 s for a slot plus 120 s per job, so the acknowledgement waited for all of it.
+
+**Now.** The webhook downloads and validates the file, uploads it to `temporary/`, **commits** the `temporary_data` row (status `TEMPORARY_STORED`), wakes the worker and answers 200 — without waiting for processing. The row plus the file is the durable job: the answer is only sent after it is committed (if the insert fails the upload is removed and the answer is 500, so Meta retries; H2). The download stays in the request on purpose: Meta's media URL is short-lived, and the file must be safe in our storage before we acknowledge.
+
+**Worker** (`src/services/submissionQueue.js`, started by `src/app.js`; no new infrastructure — PostgreSQL rows only): claims the oldest waiting row with a compare-and-swap update (status, attempts, lease start), loads the file from `temporary/` (checksum verified), and runs the **existing** `processDocument` — the single pipeline. A new submission wakes it at once; otherwise it polls every 5 s. Concurrency = the OCR limit (2). It never deletes rows or files.
+
+| Situation | Behaviour |
+|---|---|
+| Record insert fails (database down) | 500, upload removed, nothing acknowledged — Meta retries (unchanged H2) |
+| Processing fails (OCR, storage, any stage) | Recorded `FAILED` by the pipeline as before (H3: reason, detected type and client kept, visible under *Failed processing*); not retried automatically |
+| Worker can't load the received file | Tried again about a minute later; after 3 attempts `FAILED` (`FILE_UNAVAILABLE`) |
+| Worker or server dies mid-processing | The claim is a 10-minute lease: afterwards the job is claimed again (also by the next run after a restart). After 3 attempts `FAILED` (`ATTEMPTS_EXHAUSTED`) |
+| Same message delivered twice | In-memory claim (as before) and, durably, the unique `message_id`: a second row is refused, its upload removed, 200 |
+| Same job run twice (crash after storing) | The checksum check recognises the submission's own document (`ALREADY_STORED`): no second document, no second client-folder file, no M4 duplicate of itself |
+| Two workers at once | Compare-and-swap claim: each job is taken by one worker |
+
+Status: no new status. `TEMPORARY_STORED` = waiting (lease empty) or being processed (lease set); it was already "received, processing not finished" (§4g) and is not counted as pending review. Failure codes added for the worker: `FILE_UNAVAILABLE`, `ATTEMPTS_EXHAUSTED` (stages `FILE_LOAD`, `WORKER`).
+
+Migration `20260927120000_m1_async_processing` (additive): `temporary_data.message_id` (unique), `original_filename`, `received_at` (what the worker needs that was only in the request: file-name hint, stored original name, received time), `processing_attempts`, `processing_started_at` (the lease), index `(processing_status, created_date)`. **Not applied to the live database.** Deploying the code before it breaks the webhook's insert.
+
+On deployment, rows that are still `TEMPORARY_STORED` from earlier runs (processing that never finished) are picked up and processed by the worker.
+
+Measured (throwaway PostgreSQL, synthetic files): webhook acknowledgement 65 ms with a deliberately 5 s processing step (worker 5.1 s); in the E2E run 2–58 ms for every delivery while background processing took 0.1–6.6 s (before M1 the answer took as long as processing, up to 6.5 s for the same photo). Tests: `test/asyncProcessing.test.js` (18), real PostgreSQL (killed worker resumed after the lease; 3 workers × 6 jobs, each processed once; unique message ID), E2E 34/34, API 77/77, browser 41/41 + H3 12/12. Real Meta delivery not tested.
+
 ## 5. Pages and data
 
 | Page | API | Shows |
@@ -659,7 +685,8 @@ Bugs found in the product: none. Observed limitations (not changed): a photo rot
 
 ## 10. Known limitations and dependencies
 
-- **Migrations not applied to the live database** — `20260925150000_phase10_review_data`, `20260925160000_phase10_review_audit_log`, `20260925170000_phase10_police_submitted_date`, `20260926090000_phase10_audit_removal_details` and `20260926120000_phase10_audit_correction_values` are on hold; do not deploy the backend code before all five are applied (§4c).
+- **Migration not applied to the live database** — `20260927120000_m1_async_processing` (§4m); apply it before deploying the M1 code. The five Phase 10 migrations are applied (checked 2026-09-26).
+- **Background worker runs in the web process** (M1): one process is enough; several instances are safe (compare-and-swap claims), but the in-memory message claim and login rate limit stay per instance.
 - **Light-mode status colours:** the Stitch status text colours on white or their tint are 3.1–4.4:1 (below WCAG AA 4.5:1 for small text). Light mode was kept unchanged as required; darkening them would be a Stitch design change to decide there.
 - **Daily report history:** completeness and police figures are current only (§4i).
 - **Removed items have no screen:** their history exists only as audit entries (the detail page is gone with the item). There is no audit-log page.

@@ -4,6 +4,9 @@
 
 export const CHECKSUM_OUTCOME = Object.freeze({
     NEW: "NEW",
+    // M1: this submission's own document, stored by an earlier attempt that
+    // was interrupted before it could finish (the worker resumes it).
+    ALREADY_STORED: "ALREADY_STORED",
     DUPLICATE: "DUPLICATE",                          // same client already has this exact file
     CROSS_CLIENT_CONFLICT: "CROSS_CLIENT_CONFLICT",  // another client has this exact file
 });
@@ -16,7 +19,7 @@ async function resolveDb(db) {
 // For a document about to be stored under a client. Same-client first, so a
 // file the client already has is never reported as a conflict. The other
 // client's identity is never returned: only whether a match exists.
-export async function checkClientChecksum({ passportId, fileSha256 }, { db } = {}) {
+export async function checkClientChecksum({ passportId, fileSha256, temporaryId = null }, { db } = {}) {
     if (!passportId || !fileSha256) {
         throw new Error("checkClientChecksum needs a passport ID and a checksum");
     }
@@ -25,8 +28,19 @@ export async function checkClientChecksum({ passportId, fileSha256 }, { db } = {
 
     const sameClient = await client.document.findFirst({
         where: { passportId, fileSha256 },
-        select: { documentId: true, verificationStatus: true },
+        select: { documentId: true, verificationStatus: true, temporaryId: true, storagePath: true, storedFilename: true },
     });
+    if (sameClient && temporaryId && sameClient.temporaryId === temporaryId) {
+        return {
+            outcome: CHECKSUM_OUTCOME.ALREADY_STORED,
+            existingDocumentId: sameClient.documentId,
+            existingVerified: sameClient.verificationStatus === "VERIFIED",
+            existingDocument: {
+                documentId: sameClient.documentId, verificationStatus: sameClient.verificationStatus,
+                storagePath: sameClient.storagePath, storedFilename: sameClient.storedFilename,
+            },
+        };
+    }
     if (sameClient) {
         // M4: an exact copy of a VERIFIED document goes to admin review
         // (storagePlacementService.decidePlacement); other duplicates don't.

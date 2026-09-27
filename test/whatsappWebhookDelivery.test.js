@@ -63,11 +63,12 @@ function fakeWorld(failures = {}) {
                 records.push(row);
                 return row;
             },
-            processDocument: async ({ temporaryId }) => {
+            // M1: the webhook hands the recorded submission to the background
+            // worker; `process` counts the hand-offs.
+            onRecorded: ({ temporaryId }) => {
                 calls.process += 1;
                 fail("process");
-                records.find((r) => r.temporaryId === temporaryId).processingStatus = "VERIFIED";
-                return { summary: { stage: "COMPLETED", processingStatus: "VERIFIED" } };
+                records.find((r) => r.temporaryId === temporaryId).queued = true;
             },
             removeTemporary: async (storagePath) => {
                 calls.remove.push(storagePath);
@@ -234,7 +235,7 @@ describe("H2: failures before the record exists are retried, never marked proces
         assertNoOrphans(world);
     });
 
-    test("once the record exists the message is handled: an unexpected processing error is not retried (no second record)", async () => {
+    test("once the record exists the message is handled: an error while handing it off is not retried (no second record)", async () => {
         const world = fakeWorld({ process: [new Error("unexpected")] });
         const body = delivery([[documentMessage("wamid.recorded")]]);
         await withApp(world, async (post) => {
