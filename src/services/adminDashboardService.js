@@ -377,6 +377,7 @@ export async function getClientDetails({ db, passportId, now = new Date() }) {
     if (!user) return null;
 
     const documents = user.documents.map(toDocumentItem);
+    const policeDocuments = user.documents.filter((d) => d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
     const pendingItems = pendingRows.map((row) => toPendingItem({ ...row, user: null }));
     const requiredDocuments = requiredDocumentStatus({ documents, pendingItems });
 
@@ -403,11 +404,14 @@ export async function getClientDetails({ db, passportId, now = new Date() }) {
         missingDocumentTypes: missingTypesOf(requiredDocuments),
         complete: requiredDocuments.every((r) => r.status === REQUIREMENT_STATUS.VERIFIED),
         police: {
-            latestSlip: latestOfType(user.documents, DOCUMENT_TYPES.POLICE_SLIP),
-            latestReport: latestOfType(user.documents, DOCUMENT_TYPES.POLICE_REPORT),
+            // M4: a replaced (SUPERSEDED) slip or report never drives the
+            // countdown or is shown as "the" slip/report; the general
+            // documents list above still shows it, for the audit trail.
+            latestSlip: latestOfType(policeDocuments, DOCUMENT_TYPES.POLICE_SLIP),
+            latestReport: latestOfType(policeDocuments, DOCUMENT_TYPES.POLICE_REPORT),
             // 21-day follow-up, calculated, never stored.
             countdown: countdownFromDocuments(
-                user.documents,
+                policeDocuments,
                 pendingRows.filter((row) => row.documentType === DOCUMENT_TYPES.POLICE_SLIP).length,
                 businessDateOf(now)
             ),

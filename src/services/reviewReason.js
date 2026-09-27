@@ -20,6 +20,7 @@ export const REVIEW_REASON = Object.freeze({
     POLICE_DATE_UNRESOLVED: "POLICE_DATE_UNRESOLVED",   // police slip date ambiguous / invalid / not found
     LOW_CONFIDENCE: "LOW_CONFIDENCE",                   // UNDEFINED or UNCLEAR confidence band
     DUPLICATE_OF_VERIFIED: "DUPLICATE_OF_VERIFIED",     // M4: exact copy of the same client's VERIFIED document
+    EXISTING_VERIFIED_DOCUMENT: "EXISTING_VERIFIED_DOCUMENT", // M4: different file, but the client already has a VERIFIED document of this type
 });
 
 // Groups for the Review Queue summary cards.
@@ -34,6 +35,7 @@ export const REVIEW_REASON_CATEGORY = Object.freeze({
     [REVIEW_REASON.POLICE_DATE_UNRESOLVED]: "OTHER",
     [REVIEW_REASON.LOW_CONFIDENCE]: "QUALITY",
     [REVIEW_REASON.DUPLICATE_OF_VERIFIED]: "OTHER",
+    [REVIEW_REASON.EXISTING_VERIFIED_DOCUMENT]: "OTHER",
 });
 
 const POLICE_DATE_NEEDS_REVIEW = new Set([POLICE_DATE_STATUS.AMBIGUOUS, POLICE_DATE_STATUS.INVALID, POLICE_DATE_STATUS.NOT_FOUND]);
@@ -42,7 +44,7 @@ const LOW_BANDS = new Set(["UNDEFINED", "UNCLEAR"]);
 
 // `state` is the processing state of documentProcessingService (or the same
 // fields from a stored summary). Returns a REVIEW_REASON or null.
-export function deriveReviewReason({ processingStatus, resolvedType, confidence, identity, reconciliation, policeDate, checksum }) {
+export function deriveReviewReason({ processingStatus, resolvedType, confidence, identity, reconciliation, policeDate, checksum, verifiedOfTypeExists }) {
     const flags = confidence?.flags ?? [];
 
     if (processingStatus === "FAILED") return REVIEW_REASON.PROCESSING_FAILED;
@@ -61,5 +63,11 @@ export function deriveReviewReason({ processingStatus, resolvedType, confidence,
     if (identity?.reviewRequired) return REVIEW_REASON.IDENTITY_NOT_CONFIRMED;
     if (POLICE_DATE_NEEDS_REVIEW.has(policeDate?.status)) return REVIEW_REASON.POLICE_DATE_UNRESOLVED;
     if (LOW_BANDS.has(confidence?.band)) return REVIEW_REASON.LOW_CONFIDENCE;
+    // M4: a different, otherwise clean file (VERIFIED / HIGH_CONFIDENCE /
+    // SLIGHTLY_UNCLEAR — an UNCLEAR one already returned LOW_CONFIDENCE
+    // above, H4, unchanged), but the client already has a VERIFIED document
+    // of this type. Checked last: every other reason above takes priority
+    // over this one when both would otherwise apply.
+    if (verifiedOfTypeExists) return REVIEW_REASON.EXISTING_VERIFIED_DOCUMENT;
     return null;
 }

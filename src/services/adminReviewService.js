@@ -400,6 +400,26 @@ export async function findDuplicateMatch(db, { passportId, fileSha256 }) {
         : null;
 }
 
+// M4 (Policy B): the client's current VERIFIED document of a type, other
+// than `exceptDocumentId` — the one a waiting EXISTING_VERIFIED_DOCUMENT
+// item would replace, or an admin explicitly names for adminCorrectionService
+// to check under lock. Reused by adminReviewActionService.js so both the
+// review-blocker check and the review display agree on the same document.
+// IDs, type, name and status only; never a storage path or checksum.
+export async function findVerifiedOfType(db, { passportId, documentType, exceptDocumentId = null }) {
+    if (!passportId || !documentType) return null;
+    const match = await db.document.findFirst({
+        where: {
+            passportId, documentType, verificationStatus: VERIFICATION_STATUS.VERIFIED,
+            ...(exceptDocumentId ? { documentId: { not: exceptDocumentId } } : {}),
+        },
+        select: { documentId: true, documentType: true, storedFilename: true, verificationStatus: true, receivedDate: true },
+    });
+    return match
+        ? { documentId: match.documentId, documentType: match.documentType, storedFilename: match.storedFilename, verificationStatus: match.verificationStatus, receivedDate: toIso(match.receivedDate) }
+        : null;
+}
+
 export async function getReviewItem({ db, reviewId }) {
     const record = await loadReviewRecord(db, reviewId);
     if (!record) return null;
@@ -439,6 +459,11 @@ export async function getReviewItem({ db, reviewId }) {
         // M4: for a waiting DUPLICATE, the existing document it copies.
         duplicateOf: kind === REVIEW_KIND.PENDING && row.processingStatus === "DUPLICATE"
             ? await findDuplicateMatch(db, { passportId: row.passportId, fileSha256: row.fileSha256 })
+            : null,
+        // M4 Policy B: for a waiting file of a type already VERIFIED for this
+        // client, the existing document a Replace action would supersede.
+        existingVerified: kind === REVIEW_KIND.PENDING && reason === REVIEW_REASON.EXISTING_VERIFIED_DOCUMENT
+            ? await findVerifiedOfType(db, { passportId: row.passportId, documentType: row.documentType })
             : null,
         file: { ...file, previewUrl: file.mimeType ? `/api/admin/review/${reviewIdString}/file` : null },
     };

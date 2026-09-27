@@ -20,7 +20,10 @@ import {
     keepReviewItemPending,
     removeFromReview,
     retryFailedSubmission,
+    replaceVerifiedDocument,
+    keepDocumentAsVersion,
     parseReviewActionBody,
+    parseReplaceVerifiedBody,
     ReviewActionError,
 } from "../services/adminReviewActionService.js";
 import { listPoliceWorkflow, parsePoliceListQuery } from "../services/adminPoliceService.js";
@@ -227,6 +230,14 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
     // H3: a failed submission (failed-<id>) is processed again by the
     // background worker; the reason is optional. Audited.
     router.post("/review/:reviewId/retry", reviewAction(retryFailedSubmission, { reasonRequired: false, needsBucket: true }));
+
+    // M4 Policy B: a waiting file of a type the client already has VERIFIED
+    // (pending-<id> only). Replace names the existing document explicitly
+    // (documentId in the body) and supersedes it; Keep as Version stores the
+    // new file as a second, REVIEW_REQUIRED document. Both are audited and
+    // never remove or overwrite the existing VERIFIED document.
+    router.post("/review/:reviewId/replace-verified", reviewAction(replaceVerifiedDocument, { needsBucket: true, parse: parseReplaceVerifiedBody }));
+    router.post("/review/:reviewId/keep-as-version", reviewAction(keepDocumentAsVersion, { reasonRequired: false, needsBucket: true }));
 
     // Corrections of a waiting file; it stays pending and in the queue.
     router.post("/review/:reviewId/document-type", reviewAction(setDocumentType, { needsBucket: false, parse: parseSetDocumentTypeBody }));

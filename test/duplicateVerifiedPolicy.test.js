@@ -81,14 +81,20 @@ describe("M4 pipeline", () => {
         }
     });
 
-    test("TEST 3: same client + same type + DIFFERENT file -> not a duplicate: existing version workflow", async () => {
-        const { summary, db, update } = await run({ documents: [existing({ fileSha256: sha256Hex(Buffer.from("an older scan")) })] });
+    test("TEST 3: same client + same type + DIFFERENT file -> not an exact duplicate, but M4 Policy B: pending review, not a second VERIFIED document", async () => {
+        const olderScan = existing({ fileSha256: sha256Hex(Buffer.from("an older scan")) });
+        const { summary, db, update, objects } = await run({ documents: [olderScan] });
+        // Not the exact-checksum DUPLICATE path (that stays as TEST 1/2 above).
         assert.notEqual(summary.processingStatus, "DUPLICATE");
         assert.equal(summary.storage.checksum, "NEW");
-        assert.equal(summary.storage.placement, "CLIENT");
-        assert.equal(db.documentRows.at(-1).storedFilename, "passport_v2.pdf");
-        assert.deepEqual(db.documentRows[0], existing({ fileSha256: sha256Hex(Buffer.from("an older scan")) }));
-        assert.notEqual(update.reviewReason, REVIEW_REASON.DUPLICATE_OF_VERIFIED);
+        // M4 Policy B (test/multipleVerifiedDocuments.test.js has the full coverage):
+        // a different, well-read file of a type already VERIFIED for this client
+        // waits in pending/ instead of becoming a second VERIFIED document.
+        assert.equal(summary.storage.placement, "PENDING");
+        assert.equal(db.documentRows.length, 1, "no second document row created");
+        assert.deepEqual(db.documentRows[0], olderScan, "the existing verified document is unchanged");
+        assert.equal(objects.filter((p) => p.startsWith("clients/")).length, 1, "no passport_v2.pdf in the client folder");
+        assert.equal(update.reviewReason, REVIEW_REASON.EXISTING_VERIFIED_DOCUMENT);
     });
 
     test("TEST 4: another client has the same file (even VERIFIED) -> cross-client CONFLICT workflow unchanged", async () => {

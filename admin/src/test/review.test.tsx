@@ -682,6 +682,131 @@ describe("M4: duplicate of a verified document", () => {
     });
 });
 
+describe("M4 Policy B: multiple verified documents of the same type", () => {
+    const EXISTING_VERIFIED_ID = "44444444-4444-4444-8444-444444444444";
+    const NEW_DOC_ID = "55555555-5555-4555-8555-555555555555";
+    const EXISTING_ITEM: ReviewItem = {
+        ...ITEM,
+        reviewReason: "EXISTING_VERIFIED_DOCUMENT",
+        reviewCategory: "OTHER",
+        document: { ...ITEM.document, documentType: "MEDICAL", processingStatus: "VERIFIED", confidence: 95 },
+        processing: { ...ITEM.processing, confidence: { ...ITEM.processing!.confidence!, band: "VERIFIED", measuredBand: "VERIFIED" } },
+        existingVerified: { documentId: EXISTING_VERIFIED_ID, documentType: "MEDICAL", storedFilename: "medical.pdf", verificationStatus: "VERIFIED", receivedDate: "2026-09-20T03:00:00.000Z" },
+        actions: {
+            approve: { available: false, code: "VERIFIED_DOCUMENT_EXISTS", message: "This client already has a verified medical. It was not changed, and this item stays pending." },
+            keepPending: { available: true, code: null, message: null },
+            remove: { available: true, code: null, message: null },
+            setDocumentType: { available: true, code: null, message: null },
+            assignClient: { available: true, code: null, message: null },
+            replaceVerified: { available: true, code: null, message: null },
+            keepAsVersion: { available: true, code: null, message: null },
+        },
+    };
+    const REPLACE_AUDIT = { auditId: "a-replace", action: "REPLACE_VERIFIED" as const, adminId: "admin-1", adminName: "Test Admin", reason: "Clearer scan", previousStatus: "VERIFIED", newStatus: "VERIFIED", policeSubmittedDate: null, documentType: "MEDICAL", previousValue: EXISTING_VERIFIED_ID, newValue: NEW_DOC_ID, createdDate: "2026-09-27T09:00:00.000Z" };
+    const VERSION_AUDIT = { auditId: "a-version", action: "KEEP_AS_VERSION" as const, adminId: "admin-1", adminName: "Test Admin", reason: "Keep both for now", previousStatus: "VERIFIED", newStatus: "REVIEW_REQUIRED", policeSubmittedDate: null, documentType: "MEDICAL", previousValue: null, newValue: null, createdDate: "2026-09-27T09:00:00.000Z" };
+
+    async function openExisting(routes: FetchRoutes = {}) {
+        const backend = signedInBackend({ [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: EXISTING_ITEM }, [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse, ...routes });
+        renderApp(`/review/pending-${TEMP_ID}`);
+        const group = await screen.findByRole("group", { name: "Review actions" });
+        return { ...backend, group, user: userEvent.setup() };
+    }
+
+    test("shows the existing verified document, Approve blocked, and the Replace / Keep as Version buttons", async () => {
+        const { group } = await openExisting();
+        expect(screen.getByRole("note")).toHaveTextContent("Client already has a verified document of this type");
+        expect(screen.getByText("Existing verified document")).toBeInTheDocument();
+        expect(screen.getByText("medical.pdf")).toBeInTheDocument();
+        expect(within(group).getByRole("button", { name: "Approve" })).toBeDisabled();
+        expect(within(group).getByRole("button", { name: "Replace Verified Document" })).toBeEnabled();
+        expect(within(group).getByRole("button", { name: "Keep as Separate Version" })).toBeEnabled();
+        expect(within(group).getByRole("button", { name: "Remove from Review" })).toBeEnabled();
+    });
+
+    describe("Replace", () => {
+        const REPLACE = `POST /api/admin/review/pending-${TEMP_ID}/replace-verified`;
+
+        test("asks for confirmation, names the exact document, and requires the checkbox", async () => {
+            const { group, user } = await openExisting({
+                [REPLACE]: { status: 200, body: { action: "REPLACE_VERIFIED", reviewId: `pending-${TEMP_ID}`, document: { documentId: NEW_DOC_ID, storedFilename: "medical_v2.pdf", verificationStatus: "VERIFIED", location: "CLIENT", policeSubmittedDate: null }, replaced: { documentId: EXISTING_VERIFIED_ID, verificationStatus: "SUPERSEDED" }, audit: REPLACE_AUDIT } },
+            });
+            await user.click(within(group).getByRole("button", { name: "Replace Verified Document" }));
+            const dialog = screen.getByRole("dialog", { name: "Replace the existing verified document?" });
+            expect(dialog).toHaveTextContent("medical.pdf");
+            expect(dialog).toHaveTextContent("superseded");
+            await user.click(within(dialog).getByRole("button", { name: "Replace" }));
+            expect(screen.queryByText("This item is no longer in the Review Queue.")).not.toBeInTheDocument();
+            await user.click(within(dialog).getByLabelText(/I have checked that medical\.pdf should be replaced/));
+            await user.click(within(dialog).getByRole("button", { name: "Replace" }));
+            expect(await screen.findByText("This item is no longer in the Review Queue.")).toBeInTheDocument();
+        });
+
+        test("confirm -> POST with the confirmed document ID; shows the new document and the superseded one; audit entry recorded", async () => {
+            const { calls, group, user } = await openExisting({
+                [REPLACE]: { status: 200, body: { action: "REPLACE_VERIFIED", reviewId: `pending-${TEMP_ID}`, document: { documentId: NEW_DOC_ID, storedFilename: "medical_v2.pdf", verificationStatus: "VERIFIED", location: "CLIENT", policeSubmittedDate: null }, replaced: { documentId: EXISTING_VERIFIED_ID, verificationStatus: "SUPERSEDED" }, audit: REPLACE_AUDIT } },
+            });
+            await user.click(within(group).getByRole("button", { name: "Replace Verified Document" }));
+            const dialog = screen.getByRole("dialog", { name: "Replace the existing verified document?" });
+            await user.type(within(dialog).getByLabelText("Reason (optional)"), "Clearer scan");
+            await user.click(within(dialog).getByLabelText(/I have checked that medical\.pdf should be replaced/));
+            await user.click(within(dialog).getByRole("button", { name: "Replace" }));
+            expect(await screen.findByText("This item is no longer in the Review Queue.")).toBeInTheDocument();
+            expect(calls.filter((c) => c.method === "POST").map((c) => [c.path, c.body])).toEqual([[`/api/admin/review/pending-${TEMP_ID}/replace-verified`, { documentId: EXISTING_VERIFIED_ID, reason: "Clearer scan" }]]);
+            const history = screen.getByRole("list", { name: "Review history" });
+            expect(history).toHaveTextContent("Replaced verified document");
+            expect(history).toHaveTextContent("the previous document is kept, marked superseded");
+        });
+
+        test("already changed (409) -> the server's message is shown, nothing else changes", async () => {
+            const { group, user } = await openExisting({ [REPLACE]: { status: 409, body: { message: "The document you chose to replace has changed (it may already have been replaced). Reload this item and try again.", code: "VERIFIED_DOCUMENT_CHANGED" } } });
+            await user.click(within(group).getByRole("button", { name: "Replace Verified Document" }));
+            const dialog = screen.getByRole("dialog", { name: "Replace the existing verified document?" });
+            await user.click(within(dialog).getByLabelText(/I have checked that medical\.pdf should be replaced/));
+            await user.click(within(dialog).getByRole("button", { name: "Replace" }));
+            expect(await within(dialog).findByText(/has changed \(it may already have been replaced\)/)).toBeInTheDocument();
+            expect(screen.queryByText("This item is no longer in the Review Queue.")).not.toBeInTheDocument();
+        });
+    });
+
+    describe("Keep as Version", () => {
+        const KEEP_VERSION = `POST /api/admin/review/pending-${TEMP_ID}/keep-as-version`;
+
+        test("asks for confirmation and explains the existing document stays current", async () => {
+            const { group, user } = await openExisting();
+            await user.click(within(group).getByRole("button", { name: "Keep as Separate Version" }));
+            const dialog = screen.getByRole("dialog", { name: "Keep as a separate version?" });
+            expect(dialog).toHaveTextContent("Review required");
+            expect(dialog).toHaveTextContent("the existing verified document stays the client's current one");
+            await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+            expect(screen.queryByText("This item is no longer in the Review Queue.")).not.toBeInTheDocument();
+        });
+
+        test("confirm -> POST and shows the item is resolved; audit entry recorded", async () => {
+            const { calls, group, user } = await openExisting({
+                [KEEP_VERSION]: { status: 200, body: { action: "KEEP_AS_VERSION", reviewId: `pending-${TEMP_ID}`, document: { documentId: NEW_DOC_ID, storedFilename: "IMG-medical.pdf", verificationStatus: "REVIEW_REQUIRED", location: "CLIENT" }, audit: VERSION_AUDIT } },
+            });
+            await user.click(within(group).getByRole("button", { name: "Keep as Separate Version" }));
+            const dialog = screen.getByRole("dialog", { name: "Keep as a separate version?" });
+            await user.type(within(dialog).getByLabelText("Reason (optional)"), "Keep both for now");
+            await user.click(within(dialog).getByRole("button", { name: "Keep as version" }));
+            expect(await screen.findByText("This item is no longer in the Review Queue.")).toBeInTheDocument();
+            expect(calls.filter((c) => c.method === "POST").map((c) => [c.path, c.body])).toEqual([[`/api/admin/review/pending-${TEMP_ID}/keep-as-version`, { reason: "Keep both for now" }]]);
+            const history = screen.getByRole("list", { name: "Review history" });
+            expect(history).toHaveTextContent("Kept as a separate version");
+        });
+    });
+
+    test("the reason filter lists the new review reason; the queue shows it", async () => {
+        const { calls } = signedInBackend({ "GET /api/admin/review": { status: 200, body: queue([queueItem({ processingStatus: "VERIFIED", reviewReason: "EXISTING_VERIFIED_DOCUMENT", reviewCategory: "OTHER" })]) } });
+        renderApp("/review");
+        const table = await screen.findByRole("table");
+        expect(within(table).getByText("Client already has a verified document of this type")).toBeInTheDocument();
+        const reasonSelect = screen.getAllByRole("combobox").find((select) => within(select).queryByRole("option", { name: "Client already has a verified document of this type" }))!;
+        await userEvent.setup().selectOptions(reasonSelect, "EXISTING_VERIFIED_DOCUMENT");
+        expect([...calls].reverse().find((c) => c.path.startsWith("/api/admin/review"))!.path).toContain("reviewReason=EXISTING_VERIFIED_DOCUMENT");
+    });
+});
+
 describe("H3: failed submissions", () => {
     const FAILED_ID = "aaaaaaaa-0000-4000-8000-000000000001";
     const failedItem = (overrides: Partial<ReviewQueueItem> = {}): ReviewQueueItem => queueItem({

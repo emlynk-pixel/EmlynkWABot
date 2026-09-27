@@ -12,10 +12,22 @@ import {
     withNumericSuffix,
 } from "../utils/storageNaming.js";
 
-// documents.verification_status only ever holds these two values (decision D6).
+// documents.verification_status is a plain text column (decision D6: VERIFIED
+// or REVIEW_REQUIRED). M4 (multiple verified documents of the same type)
+// adds a third value, SUPERSEDED: the previous VERIFIED document of a type,
+// kept exactly as it was (file, checksum, audit history) after an admin
+// explicitly replaces it with a different file (adminReviewActionService.js
+// replaceVerifiedDocument). No migration: the column already accepts any
+// text. Every place that means "the client's current document of this type"
+// (hasVerifiedDocument, findVerifiedOfType, completeness counts, the police
+// countdown) filters for VERIFIED specifically, so a SUPERSEDED document is
+// never counted as verified, never blocks a later replacement, and is never
+// treated as still needing review. It stays visible (Documents list, client
+// page) for the audit trail; nothing here ever deletes it.
 export const VERIFICATION_STATUS = Object.freeze({
     VERIFIED: "VERIFIED",
     REVIEW_REQUIRED: "REVIEW_REQUIRED",
+    SUPERSEDED: "SUPERSEDED",
 });
 
 // Proposal §24: VERIFIED -> STORED.

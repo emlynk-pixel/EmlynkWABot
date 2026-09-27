@@ -161,13 +161,18 @@ For each required type the status is *Verified* > *Review required* (stored, not
 
 ### M4 — Duplicate Verified-Document Policy
 
-A file sent on WhatsApp that is an exact copy of a document the same client already has **verified** is not silently discarded: it waits in the Review Queue with the reason *Duplicate of a verified document*, and Review Detail shows which verified document it copies. Approve is not possible (the identical file is already on record); choose **Keep Pending** or **Remove from Review**. Removing deletes only the incoming copy; the verified document is never changed. Both actions are audited, including which existing document matched. A different file of the same type follows the normal version rules; the same file from another client stays a cross-client conflict.
+A file sent on WhatsApp that is an exact copy of a document the same client already has **verified** is not silently discarded: it waits in the Review Queue with the reason *Duplicate of a verified document*, and Review Detail shows which verified document it copies. Approve is not possible (the identical file is already on record); choose **Keep Pending** or **Remove from Review**. Removing deletes only the incoming copy; the verified document is never changed. Both actions are audited, including which existing document matched. The same file from another client stays a cross-client conflict.
 
-### One verified document per type
+### One verified document per type (M4 Policy B)
 
-A new low-confidence (*Review required*) document of a type the client already has verified is not filed in the client folder: it waits in pending storage, where it can be approved (blocked while the verified one exists) or removed. Before this rule such documents could get stuck in the queue; those can now be removed.
+A client never automatically ends up with two verified documents of the same type. **Different checksum + existing VERIFIED document of the same type → pending review; no automatic second VERIFIED document** — whatever the read quality, a different file of a type the client already has verified waits in pending storage instead of being filed automatically. (Before this rule, a well-read file became a further verified version automatically, `passport_v2.pdf`, …; a low-confidence one already waited, which is unchanged.)
 
-An admin's approval never adds a second verified document of the same type for a client, and never replaces one; it is refused instead. The automatic processing names a newer file of a type with the next version (`passport_v2.pdf`, …) and keeps each file's own status. A rule for replacing a verified document is not part of Phase 10.
+Approve stays refused while the client's verified document exists. Two explicit actions are offered instead:
+- **Replace Verified Document** — names exactly which existing verified document is being replaced, and asks for confirmation. The new file becomes the client's verified document; the old one is kept (file and history untouched) but marked *Superseded*, so it no longer counts as the client's current document of this type. Audited, with a link between the two documents.
+- **Keep as Separate Version** — stores the new file in the client folder as *Review required*, alongside the existing verified one, which stays the client's current document. It can never become verified itself while the other one is verified.
+- **Remove from Review** is also available, exactly as for any other waiting file.
+
+A *Superseded* document is never deleted: its file and audit history stay, and it still appears in the Documents list, marked accordingly; it is simply no longer counted as the client's verified document of that type.
 
 ### Audit log
 

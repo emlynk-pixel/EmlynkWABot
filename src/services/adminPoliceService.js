@@ -4,6 +4,7 @@
 
 import { REVIEW_PENDING_WHERE } from "./adminReviewService.js";
 import { DOCUMENT_TYPES } from "./documentClassificationService.js";
+import { VERIFICATION_STATUS } from "./clientDocumentService.js";
 import { POLICE_STATUS, POLICE_STATUS_ORDER, policeCountdown } from "./policeCountdownService.js";
 import { businessDateOf } from "../utils/businessDay.js";
 import { clientName } from "../utils/clientName.js";
@@ -40,7 +41,12 @@ export async function loadPoliceStatuses({ db, today }) {
     const [users, documents, pending] = await Promise.all([
         db.user.findMany({ select: clientSelect, orderBy: [{ passportId: "asc" }] }),
         db.document.findMany({
-            where: { documentType: { in: [DOCUMENT_TYPES.POLICE_SLIP, DOCUMENT_TYPES.POLICE_REPORT] } },
+            // VERIFIED and REVIEW_REQUIRED slips/reports both count towards the
+            // countdown (a REVIEW_REQUIRED slip's date counts too, see below);
+            // a SUPERSEDED one (M4: replaced by a newer verified document) never
+            // does, so a replaced slip or report can't drive the countdown or be
+            // shown as "the" slip/report once it no longer is one.
+            where: { documentType: { in: [DOCUMENT_TYPES.POLICE_SLIP, DOCUMENT_TYPES.POLICE_REPORT] }, verificationStatus: { not: VERIFICATION_STATUS.SUPERSEDED } },
             select: POLICE_DOCUMENT_SELECT,
         }),
         db.temporaryData.groupBy({ by: ["passportId"], where: pendingSlipWhere(null), _count: { _all: true } }),

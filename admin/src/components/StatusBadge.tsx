@@ -18,6 +18,7 @@ const STATUS_TONES: Record<string, Tone> = {
     HIGH_CONFIDENCE: "verified",
     SLIGHTLY_UNCLEAR: "verified",
     REVIEW_REQUIRED: "review",
+    SUPERSEDED: "pending", // M4: kept for the audit trail; no longer the client's current document of this type
     UNCLEAR: "review",
     MANUAL_REVIEW: "review",
     PENDING_REVIEW: "pending",
@@ -46,6 +47,7 @@ const LABELS: Record<string, string> = {
     PENDING_REVIEW: "Pending review",
     HIGH_CONFIDENCE: "High confidence",
     SLIGHTLY_UNCLEAR: "Slightly unclear",
+    SUPERSEDED: "Superseded",
 };
 
 export function statusLabel(status: string): string {

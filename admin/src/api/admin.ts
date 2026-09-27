@@ -323,6 +323,9 @@ export type ReviewItem = {
     processing: ProcessingSummary | null;
     // M4: for a waiting duplicate, the client's existing document it is an exact copy of.
     duplicateOf?: { documentId: string; documentType: string; verificationStatus: string; receivedDate: string | null } | null;
+    // M4 Policy B: for a waiting file of a type already verified for this
+    // client, the existing document a Replace action would supersede.
+    existingVerified?: { documentId: string; documentType: string; storedFilename: string; verificationStatus: string; receivedDate: string | null } | null;
     file: { name: string; mimeType: string | null; size: number | null; location: "PENDING" | "CLIENT" | "TEMPORARY"; previewUrl: string | null };
     failure?: Failure | null; // H3: FAILED items only
     auditLog: AuditEntry[]; // newest first
@@ -333,7 +336,7 @@ export type ReviewItem = {
 // There is no reject. REMOVE_FROM_REVIEW is a manual admin decision that
 // permanently deletes one waiting file and its record. The corrections
 // (type, client, police slip date) keep the item where it is.
-export type ReviewAction = "APPROVE" | "KEEP_PENDING" | "REMOVE_FROM_REVIEW" | "SET_DOCUMENT_TYPE" | "ASSIGN_CLIENT" | "SET_POLICE_DATE" | "RETRY_PROCESSING";
+export type ReviewAction = "APPROVE" | "KEEP_PENDING" | "REMOVE_FROM_REVIEW" | "SET_DOCUMENT_TYPE" | "ASSIGN_CLIENT" | "SET_POLICE_DATE" | "RETRY_PROCESSING" | "REPLACE_VERIFIED" | "KEEP_AS_VERSION";
 
 export type AuditEntry = {
     auditId: string;
@@ -345,8 +348,8 @@ export type AuditEntry = {
     newStatus: string;
     policeSubmittedDate: string | null; // police slip approvals
     documentType: string | null; // kept for removed files
-    previousValue: string | null; // corrections: value before; retry: the failure code
-    newValue: string | null; // corrections: value after
+    previousValue: string | null; // corrections: value before; retry: the failure code; replace: the superseded document's ID
+    newValue: string | null; // corrections: value after; replace: the new document's ID
     createdDate: string;
 };
 
@@ -359,6 +362,8 @@ export type ReviewActions = {
     setDocumentType?: ActionAvailability;
     assignClient?: ActionAvailability;
     retry?: ActionAvailability; // H3: failed submissions only
+    replaceVerified?: ActionAvailability; // M4 Policy B: only when the client already has a verified document of this type
+    keepAsVersion?: ActionAvailability; // M4 Policy B: same condition as replaceVerified
 };
 
 export type ApproveResult = {
@@ -373,6 +378,19 @@ export type KeepPendingResult = { action: "KEEP_PENDING"; reviewId: string; audi
 
 export type RemoveResult = { action: "REMOVE_FROM_REVIEW"; reviewId: string; filesDeleted: boolean; audit: AuditEntry };
 export type RetryResult = { action: "RETRY_PROCESSING"; reviewId: string; processingStatus: "TEMPORARY_STORED"; audit: AuditEntry };
+export type ReplaceVerifiedResult = {
+    action: "REPLACE_VERIFIED";
+    reviewId: string;
+    document: { documentId: string; storedFilename: string | null; verificationStatus: "VERIFIED"; location: "CLIENT"; policeSubmittedDate: string | null };
+    replaced: { documentId: string; verificationStatus: "SUPERSEDED" };
+    audit: AuditEntry;
+};
+export type KeepAsVersionResult = {
+    action: "KEEP_AS_VERSION";
+    reviewId: string;
+    document: { documentId: string; storedFilename: string | null; verificationStatus: "REVIEW_REQUIRED"; location: "CLIENT" };
+    audit: AuditEntry;
+};
 export type SetDocumentTypeResult = { action: "SET_DOCUMENT_TYPE"; reviewId: string; documentType: string; audit: AuditEntry };
 export type AssignClientResult = { action: "ASSIGN_CLIENT"; reviewId: string; client: { passportId: string; uniqueId: string }; audit: AuditEntry };
 export type SetPoliceDateResult = { action: "SET_POLICE_DATE"; documentId: string; policeSubmittedDate: string; audit: AuditEntry };
@@ -419,6 +437,20 @@ export function removeFromReview(token: string, reviewId: string, reason: string
 // H3: a failed submission is processed again by the background worker.
 export function retryProcessing(token: string, reviewId: string, reason: string | null): Promise<RetryResult> {
     return apiRequest<RetryResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/retry`, { method: "POST", token, body: reason ? { reason } : {} });
+}
+
+// M4 Policy B: replaces the named existing verified document with this
+// waiting file; the existing document is kept, marked superseded.
+export function replaceVerifiedDocument(token: string, reviewId: string, documentId: string, reason: string | null, policeSubmittedDate?: string): Promise<ReplaceVerifiedResult> {
+    return apiRequest<ReplaceVerifiedResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/replace-verified`, {
+        method: "POST", token, body: { documentId, ...(reason ? { reason } : {}), ...(policeSubmittedDate ? { policeSubmittedDate } : {}) },
+    });
+}
+
+// M4 Policy B: stores this waiting file as a second, review-required
+// document; the existing verified document of this type is untouched.
+export function keepDocumentAsVersion(token: string, reviewId: string, reason: string | null): Promise<KeepAsVersionResult> {
+    return apiRequest<KeepAsVersionResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/keep-as-version`, { method: "POST", token, body: reason ? { reason } : {} });
 }
 
 export function keepReviewItemPending(token: string, reviewId: string, reason: string): Promise<KeepPendingResult> {

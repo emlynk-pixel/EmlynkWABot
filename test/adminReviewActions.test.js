@@ -491,6 +491,9 @@ describe("review detail: audit log and available actions", () => {
             assignClient: { available: true, code: null, message: null },
             // H3: only a failed submission can be retried.
             retry: { available: false, code: "NOT_FAILED", message: "Only a submission whose processing failed can be retried." },
+            // M4 Policy B: only a waiting file blocked by an existing verified document of the same type.
+            replaceVerified: { available: false, code: "NOT_APPLICABLE", message: "Only a waiting file of a type the client already has verified can be replaced or kept as a version." },
+            keepAsVersion: { available: false, code: "NOT_APPLICABLE", message: "Only a waiting file of a type the client already has verified can be replaced or kept as a version." },
         });
         assert.equal("reject" in detail.body.actions, false);
 
@@ -536,7 +539,7 @@ describe("security and error handling", () => {
     });
 
     test("there is no reject action", async () => {
-        assert.deepEqual(Object.keys(REVIEW_ACTION).sort(), ["APPROVE", "ASSIGN_CLIENT", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "RETRY_PROCESSING", "SET_DOCUMENT_TYPE", "SET_POLICE_DATE"]);
+        assert.deepEqual(Object.keys(REVIEW_ACTION).sort(), ["APPROVE", "ASSIGN_CLIENT", "KEEP_AS_VERSION", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "REPLACE_VERIFIED", "RETRY_PROCESSING", "SET_DOCUMENT_TYPE", "SET_POLICE_DATE"]);
         for (const path of [`/review/pending-${TEMP}/reject`, `/review/document-${DOC_REVIEW}/reject`, "/review/reject"]) {
             const response = await call("POST", path, { body: { reason: "x" } });
             assert.equal(response.status, 404, path);
@@ -573,8 +576,10 @@ describe("security and error handling", () => {
             "POST /review/:reviewId/approve",
             "POST /review/:reviewId/assign-client",
             "POST /review/:reviewId/document-type",
+            "POST /review/:reviewId/keep-as-version", // M4 Policy B: existing verified document of the same type only
             "POST /review/:reviewId/keep-pending",
             "POST /review/:reviewId/remove",
+            "POST /review/:reviewId/replace-verified", // M4 Policy B: existing verified document of the same type only
             "POST /review/:reviewId/retry", // H3: failed submissions only
         ]);
     });

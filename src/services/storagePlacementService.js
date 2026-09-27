@@ -1,5 +1,5 @@
 import { CHECKSUM_OUTCOME, findPendingDuplicate } from "./documentChecksumService.js";
-import { storeClientDocument, CLIENT_STORE_OUTCOME, VERIFICATION_STATUS, verificationStatusForBand } from "./clientDocumentService.js";
+import { storeClientDocument, CLIENT_STORE_OUTCOME } from "./clientDocumentService.js";
 import { copyToFreeName } from "./permanentStorageService.js";
 import { placementCopyHooks } from "./placementRecovery.js";
 import {
@@ -17,14 +17,21 @@ export const PLACEMENT = Object.freeze({
     NONE: "NONE",       // stays in temporary/ only (duplicates)
 });
 
-const CLIENT_BANDS = new Set(["VERIFIED", "HIGH_CONFIDENCE", "SLIGHTLY_UNCLEAR", "UNCLEAR"]);
+export const CLIENT_BANDS = new Set(["VERIFIED", "HIGH_CONFIDENCE", "SLIGHTLY_UNCLEAR", "UNCLEAR"]);
 
 // Pure decision. `clientIdentified` means Phase 6 linked the document to
 // exactly one existing client (not provisional). `reviewBlocked` means a
 // specific reason needs a person (identity, wrong document, police slip
 // date), not just low confidence. `verifiedOfTypeExists` means the client
-// already has a VERIFIED document of this type. `duplicateOfVerified` means
-// the same client's matching file (checksumOutcome DUPLICATE) is VERIFIED.
+// already has a VERIFIED document of this type — a *different* file (an
+// exact-checksum match is handled separately, above, as DUPLICATE). M4:
+// whatever band this file would otherwise be stored at (even a clean
+// VERIFIED read), it never automatically becomes a second VERIFIED document
+// of the same type: it waits in pending/ for an admin (replace the existing
+// one, keep this as a separate REVIEW_REQUIRED version, or remove it); the
+// existing VERIFIED document is never touched automatically.
+// `duplicateOfVerified` means the same client's matching file
+// (checksumOutcome DUPLICATE) is VERIFIED.
 // Rules are checked in order; anything that must not be attached to a
 // client automatically goes to pending/.
 export function decidePlacement({ processingStatus, band, documentType, clientIdentified, uniqueId, checksumOutcome, reviewBlocked = false, verifiedOfTypeExists = false, duplicateOfVerified = false }) {
@@ -66,11 +73,15 @@ export function decidePlacement({ processingStatus, band, documentType, clientId
 
     const hasClientFolder = Boolean(DOCUMENT_STORAGE_TYPES[documentType]);
     if (clientIdentified && hasClientFolder && CLIENT_BANDS.has(band)) {
-        // A REVIEW_REQUIRED copy next to an existing VERIFIED document of the
-        // same type could never be approved, so it would stay in the Review
-        // Queue for good. It waits in pending/ instead, where it can be
-        // approved or removed; the verified document is left as it is.
-        if (verifiedOfTypeExists && verificationStatusForBand(band) === VERIFICATION_STATUS.REVIEW_REQUIRED) {
+        // M4: the client already has a VERIFIED document of this type, and
+        // this is a different file. Storing it now — whether as a second
+        // VERIFIED document or as a REVIEW_REQUIRED copy that could never be
+        // approved while the other stays VERIFIED — would either create the
+        // ambiguity this rule exists to prevent, or sit in the Review Queue
+        // forever. It waits in pending/ instead, where an admin decides
+        // (replace, keep as a separate version, or remove); the existing
+        // VERIFIED document is left exactly as it is.
+        if (verifiedOfTypeExists) {
             return pending(processingStatus);
         }
         return { placement: PLACEMENT.CLIENT, processingStatus, pendingOwner: null };

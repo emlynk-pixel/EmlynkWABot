@@ -13,6 +13,7 @@ export const REVIEW_REASONS: Record<string, { label: string; description: string
     POLICE_DATE_UNRESOLVED: { label: "Police slip date unclear", description: "The submitted date on the police slip could not be read reliably.", tone: "review" },
     LOW_CONFIDENCE: { label: "Low confidence", description: "The document was read with low confidence and needs checking.", tone: "review" },
     DUPLICATE_OF_VERIFIED: { label: "Duplicate of a verified document", description: "This document is an exact duplicate of an existing verified document for this client. The existing document was not changed. Keep this item pending or remove it from review.", tone: "duplicate" },
+    EXISTING_VERIFIED_DOCUMENT: { label: "Client already has a verified document of this type", description: "This is a different file, well read, but the client already has a verified document of this type. Replace it, keep this as a separate version, or remove it. The existing document was not changed.", tone: "review" },
 };
 
 export function reviewReasonLabel(reason: string | null): string {
@@ -62,4 +63,6 @@ export const AUDIT_ACTIONS: Record<string, { label: string; tone: Tone }> = {
     ASSIGN_CLIENT: { label: "Client assigned", tone: "pending" },
     SET_POLICE_DATE: { label: "Police slip date set", tone: "pending" },
     RETRY_PROCESSING: { label: "Processing retried", tone: "pending" },
+    REPLACE_VERIFIED: { label: "Replaced verified document", tone: "verified" },
+    KEEP_AS_VERSION: { label: "Kept as a separate version", tone: "pending" },
 };

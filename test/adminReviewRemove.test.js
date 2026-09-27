@@ -212,10 +212,18 @@ describe("no automatic removal", () => {
         assert.equal(action.match(/temporaryData\.delete\(/g).length, 1, "one delete, inside removeFromReview");
         assert.ok(!/setInterval|setTimeout|cron|schedule/i.test(action), "no timers or schedules");
         // No other action (the corrections included) removes anything.
-        assert.deepEqual(Object.values(REVIEW_ACTION).sort(), ["APPROVE", "ASSIGN_CLIENT", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "RETRY_PROCESSING", "SET_DOCUMENT_TYPE", "SET_POLICE_DATE"]);
+        assert.deepEqual(Object.values(REVIEW_ACTION).sort(), ["APPROVE", "ASSIGN_CLIENT", "KEEP_AS_VERSION", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "REPLACE_VERIFIED", "RETRY_PROCESSING", "SET_DOCUMENT_TYPE", "SET_POLICE_DATE"]);
         // H3: Retry processing only resets the submission for the worker; it removes nothing.
         const retry = action.slice(action.indexOf("export async function retryFailedSubmission"), action.indexOf("export async function removeFromReview"));
         assert.ok(retry.length > 0 && !/\.delete\(|deleteMany|removeObject|\.remove\(|pendingStoragePath:\s*null/.test(retry), "retry removes nothing");
+        // M4 Policy B: Replace and Keep-as-Version never delete a row. Like
+        // Approve, they remove the pending original once its copy is safely
+        // stored elsewhere (or the copy itself, if the action failed) — never
+        // an existing client document or file.
+        const replace = action.slice(action.indexOf("export async function replaceVerifiedDocument"), action.indexOf("export async function keepDocumentAsVersion"));
+        assert.ok(replace.length > 0 && !/\.delete\(|deleteMany/.test(replace), "replace deletes no row");
+        const keepAsVersion = action.slice(action.indexOf("export async function keepDocumentAsVersion"), action.indexOf("async function approveDocument"));
+        assert.ok(keepAsVersion.length > 0 && !/\.delete\(|deleteMany/.test(keepAsVersion), "keep-as-version deletes no row");
     });
 });
 

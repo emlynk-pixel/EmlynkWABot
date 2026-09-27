@@ -219,9 +219,12 @@ describe("B: a new low-confidence document of a type the client already has veri
         assert.deepEqual(decidePlacement({ ...base, verifiedOfTypeExists: true }), { placement: PLACEMENT.PENDING, processingStatus: "UNCLEAR", pendingOwner: "0001" });
         assert.equal(decidePlacement({ ...base, verifiedOfTypeExists: false }).placement, PLACEMENT.CLIENT);
         assert.equal(decidePlacement(base).placement, PLACEMENT.CLIENT, "default: no verified document");
-        // Bands stored as VERIFIED keep today's versioning (M4, not changed here).
+        // M4 Policy B (test/multipleVerifiedDocuments.test.js): a band that would
+        // otherwise be stored as VERIFIED now also waits in pending/ rather than
+        // becoming a second VERIFIED document — the same rule as this UNCLEAR case.
         for (const band of ["VERIFIED", "HIGH_CONFIDENCE", "SLIGHTLY_UNCLEAR"]) {
-            assert.equal(decidePlacement({ ...base, band, processingStatus: band, verifiedOfTypeExists: true }).placement, PLACEMENT.CLIENT, band);
+            assert.equal(decidePlacement({ ...base, band, processingStatus: band, verifiedOfTypeExists: true }).placement, PLACEMENT.PENDING, band);
+            assert.equal(decidePlacement({ ...base, band, processingStatus: band, verifiedOfTypeExists: false }).placement, PLACEMENT.CLIENT, `${band}, no verified document`);
         }
     });
 

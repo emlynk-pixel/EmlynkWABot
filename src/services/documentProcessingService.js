@@ -14,7 +14,7 @@ import { reconcilePassportFields, applyReconciliationUpdates } from "./fieldReco
 import { updateTemporaryDocumentRecord, ClaimLostError } from "./temporaryDataService.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { checkClientChecksum, CHECKSUM_OUTCOME } from "./documentChecksumService.js";
-import { decidePlacement, placeDocument } from "./storagePlacementService.js";
+import { decidePlacement, placeDocument, CLIENT_BANDS } from "./storagePlacementService.js";
 import { hasVerifiedDocument, CLAIMED_WRITE_OPTIONS } from "./clientDocumentService.js";
 import { safeErrorText } from "../utils/safeLog.js";
 import { evaluatePassportAcceptance, applyPassportAcceptance } from "./passportAcceptanceService.js";
@@ -292,9 +292,14 @@ export async function processDocument({
         state.confidence = applyPassportAcceptance(state.confidence, state.passportAcceptance);
 
         state.stage = "STORAGE";
-        // Only asked when the document would be filed under the client as
-        // REVIEW_REQUIRED (UNCLEAR band): is there already a verified one of this type?
-        const verifiedOfTypeExists = clientIdentified && checksumAllowsWrites && state.confidence.band === PROCESSING_STATUS.UNCLEAR
+        // Only asked for a band that would otherwise be filed under the
+        // client (D6/M4: VERIFIED, HIGH_CONFIDENCE, SLIGHTLY_UNCLEAR or
+        // UNCLEAR): is there already a VERIFIED document of this type? If so,
+        // decidePlacement routes this different file to pending/ instead of
+        // creating a second VERIFIED document automatically (reviewReason
+        // below names it EXISTING_VERIFIED_DOCUMENT, except in the UNCLEAR
+        // band, which keeps its existing LOW_CONFIDENCE reason, H4).
+        state.verifiedOfTypeExists = clientIdentified && checksumAllowsWrites && CLIENT_BANDS.has(state.confidence.band)
             ? await hasVerifiedDocument({ passportId: state.identity.passportId, documentType }, { db })
             : false;
         const decision = decidePlacement({
@@ -305,7 +310,7 @@ export async function processDocument({
             uniqueId: state.identity.uniqueId,
             checksumOutcome: state.checksum?.outcome,
             reviewBlocked: hasReviewBlocker(state),
-            verifiedOfTypeExists,
+            verifiedOfTypeExists: state.verifiedOfTypeExists,
             duplicateOfVerified: state.checksum?.existingVerified === true,
         });
         state.placement = await placeDocument(decision, {

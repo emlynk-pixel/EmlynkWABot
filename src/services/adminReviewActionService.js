@@ -17,11 +17,11 @@
 import crypto from "node:crypto";
 import path from "node:path";
 
-import { REVIEW_PENDING_WHERE, FAILED_SUBMISSION_WHERE, REVIEW_KIND, findDuplicateMatch, getReviewItem, mimeTypeForPath, parseReviewId, toReviewId } from "./adminReviewService.js";
+import { REVIEW_PENDING_WHERE, FAILED_SUBMISSION_WHERE, REVIEW_KIND, findDuplicateMatch, findVerifiedOfType, getReviewItem, mimeTypeForPath, parseReviewId, toReviewId } from "./adminReviewService.js";
 import { DOCUMENT_PROCESSING_STATUS_STORED, VERIFICATION_STATUS } from "./clientDocumentService.js";
 import { PROCESSING_STATUS } from "./documentProcessingService.js";
 import { copyToFreeName, removeObject } from "./permanentStorageService.js";
-import { clientFolderPath, DOCUMENT_STORAGE_TYPES, standardFileName, extensionForMimeType } from "../utils/storageNaming.js";
+import { clientFolderPath, DOCUMENT_STORAGE_TYPES, standardFileName, extensionForMimeType, sanitizeFileName, timestampFileName, withNumericSuffix } from "../utils/storageNaming.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { safeErrorText } from "../utils/safeLog.js";
 import { businessDateOf, isValidBusinessDate } from "../utils/businessDay.js";
@@ -30,6 +30,7 @@ import { toYmd, ymdToDate } from "./policeCountdownService.js";
 import { describeFailure } from "./failureReason.js";
 import { RECEIVED_STATUS } from "./statusMapping.js";
 import { notifySubmissionQueued } from "./submissionQueue.js";
+import { isValidDocumentIdParam } from "./adminCorrectionService.js";
 
 export const REVIEW_ACTION = Object.freeze({
     APPROVE: "APPROVE",
@@ -41,6 +42,9 @@ export const REVIEW_ACTION = Object.freeze({
     SET_POLICE_DATE: "SET_POLICE_DATE",
     // H3: a FAILED submission handed back to the background worker.
     RETRY_PROCESSING: "RETRY_PROCESSING",
+    // M4 Policy B: a waiting file of a type the client already has VERIFIED.
+    REPLACE_VERIFIED: "REPLACE_VERIFIED",     // the new file becomes VERIFIED; the old one is kept as SUPERSEDED
+    KEEP_AS_VERSION: "KEEP_AS_VERSION",       // the new file is stored as a second, REVIEW_REQUIRED document; the VERIFIED one is untouched
 });
 
 // new_status of a REMOVE_FROM_REVIEW entry (the record itself no longer exists).
@@ -109,6 +113,22 @@ export function parseReviewActionBody(body, { reasonRequired, acceptsPoliceDate 
     return errors.length ? { errors } : { reason, policeSubmittedDate };
 }
 
+// Body of POST …/replace-verified: { documentId, reason, policeSubmittedDate }.
+// documentId (the existing VERIFIED document the admin confirmed replacing,
+// as shown on the review page) is required; reason is optional; the police
+// date follows the same rule as Approve. Re-checked again under lock when
+// the action runs (lockAndVerifyReplacementTarget): this only says the value
+// is well-formed.
+export function parseReplaceVerifiedBody(body, options = {}) {
+    const parsed = parseReviewActionBody(body, { reasonRequired: false, acceptsPoliceDate: true, ...options });
+    if (parsed.errors) return parsed;
+    const documentId = body?.documentId;
+    if (!isValidDocumentIdParam(documentId)) {
+        return { errors: [{ field: "documentId", message: "must be the ID of the document to replace" }] };
+    }
+    return { ...parsed, documentId };
+}
+
 // The submitted date an approval stores for a police slip, or an error.
 //   storedDate: the slip's date already on record (read by OCR), if any.
 //   givenDate:  the date the admin entered, if any.
@@ -165,18 +185,6 @@ export const findPending = (db, temporaryId) =>
 export const findReviewDocument = (db, documentId) =>
     db.document.findFirst({ where: { documentId, verificationStatus: VERIFICATION_STATUS.REVIEW_REQUIRED }, select: documentSelect });
 
-// The client's existing verified document of this type, other than `exceptDocumentId`.
-const findVerifiedOfType = (db, { passportId, documentType, exceptDocumentId }) =>
-    db.document.findFirst({
-        where: {
-            passportId,
-            documentType,
-            verificationStatus: VERIFICATION_STATUS.VERIFIED,
-            ...(exceptDocumentId ? { documentId: { not: exceptDocumentId } } : {}),
-        },
-        select: { documentId: true },
-    });
-
 // Why Approve is not possible for this item right now, or null. Checked
 // again under the locks when the action runs; this read is for the page.
 async function approvalBlocker(db, { passportId, documentType, exceptDocumentId, duplicateOf = null }) {
@@ -208,9 +216,11 @@ export async function reviewActionAvailability({ db, reviewId }) {
     // H3: a FAILED submission can be processed again (retry); nothing else.
     if (parsed.kind === REVIEW_KIND.FAILED) {
         const none = { available: false, code: "PROCESSING_FAILED", message: "Processing failed, so nothing was stored. Retry processing, or ask the client to send the file again." };
+        const notApplicable = { available: false, code: "NOT_APPLICABLE", message: "Only a waiting file of a type the client already has verified can be replaced or kept as a version." };
         return {
             approve: { ...none, needsPoliceDate: false }, keepPending: none, remove: none, setDocumentType: none, assignClient: none,
             retry: { available: true, code: null, message: null },
+            replaceVerified: notApplicable, keepAsVersion: notApplicable,
         };
     }
     const row = parsed.kind === REVIEW_KIND.PENDING ? await findPending(db, parsed.id) : await findReviewDocument(db, parsed.id);
@@ -223,6 +233,11 @@ export async function reviewActionAvailability({ db, reviewId }) {
     });
     // A police slip without a stored date can only be approved with one.
     const needsPoliceDate = row.documentType === DOCUMENT_TYPES.POLICE_SLIP && !toYmd(row.policeSubmittedDate);
+    // M4 Policy B: only a waiting file (never an already-stored REVIEW_REQUIRED
+    // document, out of scope here) blocked from Approve specifically because
+    // the client already has a VERIFIED document of this type.
+    const isExistingVerifiedCase = parsed.kind === REVIEW_KIND.PENDING && blocker?.code === "VERIFIED_DOCUMENT_EXISTS";
+    const notApplicable = { available: false, code: "NOT_APPLICABLE", message: "Only a waiting file of a type the client already has verified can be replaced or kept as a version." };
     return {
         approve: blocker
             ? { available: false, code: blocker.code, message: blocker.message, needsPoliceDate }
@@ -236,6 +251,10 @@ export async function reviewActionAvailability({ db, reviewId }) {
         setDocumentType: correctable(parsed.kind),
         assignClient: correctable(parsed.kind),
         retry: { available: false, code: "NOT_FAILED", message: "Only a submission whose processing failed can be retried." },
+        // M4 Policy B: the client already has a VERIFIED document of this
+        // type and this is a different file (adminReviewActionService.js).
+        replaceVerified: isExistingVerifiedCase ? { available: true, code: null, message: null } : notApplicable,
+        keepAsVersion: isExistingVerifiedCase ? { available: true, code: null, message: null } : notApplicable,
     };
 }
 
@@ -432,6 +451,326 @@ async function approvePending({ db, bucket, admin, temporaryId, reason, policeSu
         }
         if (error?.name === "StorageCopyError") {
             console.error("Review approve: storage copy failed", { temporaryId, error: safeErrorText(error) });
+            throw new ReviewActionError(502, "STORAGE_UNAVAILABLE", "The file could not be stored in the client folder. Nothing was changed; the item stays pending.");
+        }
+        throw error;
+    }
+}
+
+// ---------------------------------------------------------------- M4 Policy B
+
+// The target document, re-read and locked for a Replace action. `documentId`
+// is the one the admin confirmed on the review page (findVerifiedOfType, via
+// GET /review/:reviewId); re-checked here so a stale confirmation, a second
+// admin's concurrent action, or a document that no longer matches never
+// silently replaces the wrong row.
+async function lockAndVerifyReplacementTarget(tx, { documentId, passportId, documentType }) {
+    if (!documentId) {
+        throw new ReviewActionError(400, "DOCUMENT_ID_REQUIRED", "Choose which existing verified document to replace.");
+    }
+    await lockDocumentRow(tx, documentId);
+    const target = await tx.document.findFirst({ where: { documentId }, select: { documentId: true, passportId: true, documentType: true, verificationStatus: true } });
+    if (!target || target.passportId !== passportId || target.documentType !== documentType || target.verificationStatus !== VERIFICATION_STATUS.VERIFIED) {
+        // Already replaced by someone else, removed, or never matched this
+        // client/type: nothing here is touched.
+        throw new ReviewActionError(409, "VERIFIED_DOCUMENT_CHANGED", "The document you chose to replace has changed (it may already have been replaced). Reload this item and try again.");
+    }
+    return target;
+}
+
+// PENDING item, M4 Policy B: the client already has a VERIFIED document of
+// this type (a *different* file — an exact checksum match stays the M4
+// DUPLICATE flow above, unchanged). The admin explicitly replaces it:
+//   - the incoming file is copied into the client folder under the next
+//     free standard name (passport_v2.pdf, …, same rule as Approve) and
+//     recorded VERIFIED — never overwriting the old file;
+//   - the document it replaces is kept, file and all, with
+//     verification_status set to SUPERSEDED (no schema change: the column
+//     is free text; VERIFICATION_STATUS.SUPERSEDED is excluded from every
+//     "is this client's verified document of this type" check, so it can
+//     never block or satisfy a future match, and from completeness counts
+//     and the police countdown);
+//   - one audit entry links both documents (documentId: the new one,
+//     previousValue: the superseded one's ID) and keeps the submission's
+//     own history.
+// Locks (temporary row, then the target document row, then the client row)
+// and the re-checks under them make two admins, or a double click, resolve
+// to exactly one winner; the other gets 409 and changes nothing.
+export async function replaceVerifiedDocument({ db, bucket, admin, reviewId, documentId, reason = null, policeSubmittedDate: givenDate = null }) {
+    const parsed = parseReviewId(reviewId);
+    if (!parsed || parsed.kind !== REVIEW_KIND.PENDING) throw notFound();
+    const temporaryId = parsed.id;
+    const before = await findPending(db, temporaryId);
+    if (!before) throw notFound();
+    if (await duplicateMatchOf(db, before)) {
+        throw new ReviewActionError(409, "DUPLICATE_FILE", "This is an exact duplicate of an existing document, not a different version. Use Keep Pending or Remove instead.");
+    }
+    if (!DOCUMENT_STORAGE_TYPES[before.documentType]) {
+        throw new ReviewActionError(409, "NO_CLIENT_FOLDER", `A document of type "${typeName(before.documentType)}" has no client folder.`);
+    }
+    const policeSubmittedDate = policeDateForApproval({ documentType: before.documentType, storedDate: null, givenDate });
+
+    const mimeType = mimeTypeForPath(before.pendingStoragePath);
+    if (!mimeType) {
+        throw new ReviewActionError(409, "UNSUPPORTED_FILE", "The pending file has an unsupported type and can't be stored in a client folder. It stays pending.");
+    }
+
+    // Read the file once, exactly as Approve does: its size is needed for
+    // the documents row, and its checksum must still match what was received.
+    const { data, error } = await bucket.download(before.pendingStoragePath);
+    if (error || !data) {
+        throw new ReviewActionError(502, "STORAGE_UNAVAILABLE", "The pending file could not be read from storage. Nothing was changed.");
+    }
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(await data.arrayBuffer());
+    const fileSha256 = sha256Hex(buffer);
+    if (before.fileSha256 && before.fileSha256 !== fileSha256) {
+        throw new ReviewActionError(409, "FILE_CHANGED", "The pending file no longer matches the file that was received. Nothing was changed.");
+    }
+
+    let copiedPath = null;
+    try {
+        const outcome = await db.$transaction(async (tx) => {
+            await lockTemporaryRow(tx, temporaryId);
+            const row = await findPending(tx, temporaryId);
+            if (!row || row.pendingStoragePath !== before.pendingStoragePath) throw alreadyResolved();
+            if (!(await lockClientRow(tx, row.passportId))) {
+                throw new ReviewActionError(409, "CLIENT_NOT_IDENTIFIED", "The linked client no longer exists. The item stays pending.");
+            }
+            const target = await lockAndVerifyReplacementTarget(tx, { documentId, passportId: row.passportId, documentType: row.documentType });
+            if (await tx.document.findFirst({ where: { passportId: row.passportId, fileSha256 }, select: { documentId: true } })) {
+                throw new ReviewActionError(409, "DUPLICATE_FILE", "This client already has this exact file. The item stays pending.");
+            }
+
+            // The old file is never touched or renamed: the new one always
+            // takes the next free standard name (never collides with it).
+            const existing = await tx.document.count({ where: { passportId: row.passportId, documentType: row.documentType } });
+            const copy = await copyToFreeName(
+                {
+                    fromPath: row.pendingStoragePath,
+                    folder: clientFolderPath(row.passportId, row.documentType),
+                    nameForAttempt: (version) => standardFileName(row.documentType, version, extensionForMimeType(mimeType)),
+                    firstAttempt: existing + 1,
+                },
+                { bucket }
+            );
+            copiedPath = copy.storagePath;
+
+            const confidence = row.processingSummary?.confidence?.document;
+            const newDocumentId = crypto.randomUUID();
+            await tx.document.create({
+                data: {
+                    documentId: newDocumentId,
+                    passportId: row.passportId,
+                    documentType: row.documentType,
+                    originalFilename: path.basename(row.pendingStoragePath),
+                    storedFilename: copy.fileName,
+                    storagePath: copy.storagePath,
+                    mimeType,
+                    fileSize: BigInt(buffer.length),
+                    receivedDate: row.createdDate,
+                    processingStatus: DOCUMENT_PROCESSING_STATUS_STORED,
+                    verificationStatus: VERIFICATION_STATUS.VERIFIED,
+                    ocrConfidence: typeof confidence === "number" ? Math.round(confidence * 100) / 100 : null,
+                    fileSha256,
+                    temporaryId: row.temporaryId,
+                    policeSubmittedDate: policeSubmittedDate ? ymdToDate(policeSubmittedDate) : null,
+                },
+            });
+            // The document being replaced: kept exactly as it is, only its
+            // verification status changes. Its file is never touched.
+            await tx.document.update({ where: { documentId: target.documentId }, data: { verificationStatus: VERIFICATION_STATUS.SUPERSEDED } });
+            await tx.temporaryData.update({
+                where: { temporaryId: row.temporaryId },
+                data: { pendingStoragePath: null, processingStatus: PROCESSING_STATUS.VERIFIED },
+            });
+            const audit = await createAudit(tx, {
+                admin,
+                action: REVIEW_ACTION.REPLACE_VERIFIED,
+                temporaryId: row.temporaryId,
+                documentId: newDocumentId,
+                passportId: row.passportId,
+                previousStatus: row.processingStatus,
+                newStatus: VERIFICATION_STATUS.VERIFIED,
+                reason,
+                policeSubmittedDate,
+                documentType: row.documentType,
+                fileSha256,
+                // The document this replaced (its own audit history is
+                // untouched; this just links the two events together).
+                previousValue: target.documentId,
+                newValue: newDocumentId,
+            });
+            return { documentId: newDocumentId, replacedDocumentId: target.documentId, storedFilename: copy.fileName, audit, pendingPath: row.pendingStoragePath };
+        }, TRANSACTION_OPTIONS);
+
+        const removal = await removeObject(outcome.pendingPath, { bucket });
+        if (!removal.removed) {
+            console.warn("Review replace: pending copy not removed", { temporaryId, error: removal.error });
+        }
+        return {
+            action: REVIEW_ACTION.REPLACE_VERIFIED,
+            reviewId: toReviewId(REVIEW_KIND.PENDING, temporaryId),
+            document: { documentId: outcome.documentId, storedFilename: outcome.storedFilename, verificationStatus: VERIFICATION_STATUS.VERIFIED, location: "CLIENT", policeSubmittedDate },
+            replaced: { documentId: outcome.replacedDocumentId, verificationStatus: VERIFICATION_STATUS.SUPERSEDED },
+            pendingCopyRemoved: removal.removed,
+            audit: toAuditEntry(outcome.audit, admin.name ?? null),
+        };
+    } catch (error) {
+        if (copiedPath) {
+            const cleanup = await removeObject(copiedPath, { bucket });
+            if (!cleanup.removed) {
+                console.error("Review replace: copy in client folder NOT removed after a failed replacement", { temporaryId, error: cleanup.error });
+            }
+        }
+        if (error instanceof ReviewActionError) throw error;
+        if (error?.code === "P2002") {
+            throw new ReviewActionError(409, "DUPLICATE_FILE", "This client already has this exact file. The item stays pending.");
+        }
+        if (error?.name === "StorageCopyError") {
+            console.error("Review replace: storage copy failed", { temporaryId, error: safeErrorText(error) });
+            throw new ReviewActionError(502, "STORAGE_UNAVAILABLE", "The file could not be stored in the client folder. Nothing was changed; the item stays pending.");
+        }
+        throw error;
+    }
+}
+
+// PENDING item, M4 Policy B: keep the incoming file as a second, explicitly
+// non-authoritative document of a type already VERIFIED for this client. It
+// is copied into the client folder (so it is not lost, and appears in the
+// client's Documents like any stored file) but recorded REVIEW_REQUIRED, not
+// VERIFIED — never a second VERIFIED document of the same type. Because
+// Approve's existing VERIFIED_DOCUMENT_EXISTS check is generic (any
+// REVIEW_REQUIRED document, this one included), it can never itself become
+// VERIFIED while the other document stays VERIFIED; only Replace (or first
+// removing/superseding the other one) can change that.
+//
+// Design note (reported, not solved here): this is the safe interpretation
+// of "keep as a separate version" the current schema supports. A true
+// second, simultaneously *VERIFIED* row with a marked "current" one would
+// need a new field (no existing column distinguishes two VERIFIED documents
+// of the same type) — see Docs/14 §4k, "Design gap: a true parallel version".
+export async function keepDocumentAsVersion({ db, bucket, admin, reviewId, reason = null }) {
+    const parsed = parseReviewId(reviewId);
+    if (!parsed || parsed.kind !== REVIEW_KIND.PENDING) throw notFound();
+    const temporaryId = parsed.id;
+    const before = await findPending(db, temporaryId);
+    if (!before) throw notFound();
+    if (await duplicateMatchOf(db, before)) {
+        throw new ReviewActionError(409, "DUPLICATE_FILE", "This is an exact duplicate of an existing document. Use Keep Pending or Remove instead.");
+    }
+    if (!DOCUMENT_STORAGE_TYPES[before.documentType]) {
+        throw new ReviewActionError(409, "NO_CLIENT_FOLDER", `A document of type "${typeName(before.documentType)}" has no client folder.`);
+    }
+    if (!(await findVerifiedOfType(db, { passportId: before.passportId, documentType: before.documentType }))) {
+        throw new ReviewActionError(409, "NOT_APPLICABLE", "This action is only for a file of a type the client already has verified. Approve it instead.");
+    }
+
+    const mimeType = mimeTypeForPath(before.pendingStoragePath);
+    if (!mimeType) {
+        throw new ReviewActionError(409, "UNSUPPORTED_FILE", "The pending file has an unsupported type and can't be stored in a client folder. It stays pending.");
+    }
+    const { data, error } = await bucket.download(before.pendingStoragePath);
+    if (error || !data) {
+        throw new ReviewActionError(502, "STORAGE_UNAVAILABLE", "The pending file could not be read from storage. Nothing was changed.");
+    }
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(await data.arrayBuffer());
+    const fileSha256 = sha256Hex(buffer);
+    if (before.fileSha256 && before.fileSha256 !== fileSha256) {
+        throw new ReviewActionError(409, "FILE_CHANGED", "The pending file no longer matches the file that was received. Nothing was changed.");
+    }
+
+    let copiedPath = null;
+    try {
+        const outcome = await db.$transaction(async (tx) => {
+            await lockTemporaryRow(tx, temporaryId);
+            const row = await findPending(tx, temporaryId);
+            if (!row || row.pendingStoragePath !== before.pendingStoragePath) throw alreadyResolved();
+            if (!(await lockClientRow(tx, row.passportId))) {
+                throw new ReviewActionError(409, "CLIENT_NOT_IDENTIFIED", "The linked client no longer exists. The item stays pending.");
+            }
+            if (!(await findVerifiedOfType(tx, { passportId: row.passportId, documentType: row.documentType }))) {
+                throw new ReviewActionError(409, "NOT_APPLICABLE", "This action is only for a file of a type the client already has verified. Approve it instead.");
+            }
+            if (await tx.document.findFirst({ where: { passportId: row.passportId, fileSha256 }, select: { documentId: true } })) {
+                throw new ReviewActionError(409, "DUPLICATE_FILE", "This client already has this exact file. The item stays pending.");
+            }
+
+            // Kept with the sender's own name (sanitized), like any other
+            // REVIEW_REQUIRED document (Docs/11 §17), never the old file's name.
+            const keptName = sanitizeFileName(path.basename(before.pendingStoragePath), extensionForMimeType(mimeType))
+                ?? timestampFileName(row.createdDate, extensionForMimeType(mimeType));
+            const copy = await copyToFreeName(
+                {
+                    fromPath: row.pendingStoragePath,
+                    folder: clientFolderPath(row.passportId, row.documentType),
+                    nameForAttempt: (n) => withNumericSuffix(keptName, n),
+                },
+                { bucket }
+            );
+            copiedPath = copy.storagePath;
+
+            const confidence = row.processingSummary?.confidence?.document;
+            const documentId = crypto.randomUUID();
+            await tx.document.create({
+                data: {
+                    documentId,
+                    passportId: row.passportId,
+                    documentType: row.documentType,
+                    originalFilename: path.basename(row.pendingStoragePath),
+                    storedFilename: copy.fileName,
+                    storagePath: copy.storagePath,
+                    mimeType,
+                    fileSize: BigInt(buffer.length),
+                    receivedDate: row.createdDate,
+                    processingStatus: DOCUMENT_PROCESSING_STATUS_STORED,
+                    verificationStatus: VERIFICATION_STATUS.REVIEW_REQUIRED,
+                    ocrConfidence: typeof confidence === "number" ? Math.round(confidence * 100) / 100 : null,
+                    fileSha256,
+                    temporaryId: row.temporaryId,
+                },
+            });
+            // Only the pending copy is resolved; the read confidence stays
+            // on record exactly as it was (never forced to "UNCLEAR").
+            await tx.temporaryData.update({ where: { temporaryId: row.temporaryId }, data: { pendingStoragePath: null } });
+            const audit = await createAudit(tx, {
+                admin,
+                action: REVIEW_ACTION.KEEP_AS_VERSION,
+                temporaryId: row.temporaryId,
+                documentId,
+                passportId: row.passportId,
+                previousStatus: row.processingStatus,
+                newStatus: VERIFICATION_STATUS.REVIEW_REQUIRED,
+                reason,
+                documentType: row.documentType,
+                fileSha256,
+            });
+            return { documentId, storedFilename: copy.fileName, audit, pendingPath: row.pendingStoragePath };
+        }, TRANSACTION_OPTIONS);
+
+        const removal = await removeObject(outcome.pendingPath, { bucket });
+        if (!removal.removed) {
+            console.warn("Review keep-as-version: pending copy not removed", { temporaryId, error: removal.error });
+        }
+        return {
+            action: REVIEW_ACTION.KEEP_AS_VERSION,
+            reviewId: toReviewId(REVIEW_KIND.PENDING, temporaryId),
+            document: { documentId: outcome.documentId, storedFilename: outcome.storedFilename, verificationStatus: VERIFICATION_STATUS.REVIEW_REQUIRED, location: "CLIENT" },
+            pendingCopyRemoved: removal.removed,
+            audit: toAuditEntry(outcome.audit, admin.name ?? null),
+        };
+    } catch (error) {
+        if (copiedPath) {
+            const cleanup = await removeObject(copiedPath, { bucket });
+            if (!cleanup.removed) {
+                console.error("Review keep-as-version: copy in client folder NOT removed after a failed action", { temporaryId, error: cleanup.error });
+            }
+        }
+        if (error instanceof ReviewActionError) throw error;
+        if (error?.code === "P2002") {
+            throw new ReviewActionError(409, "DUPLICATE_FILE", "This client already has this exact file. The item stays pending.");
+        }
+        if (error?.name === "StorageCopyError") {
+            console.error("Review keep-as-version: storage copy failed", { temporaryId, error: safeErrorText(error) });
             throw new ReviewActionError(502, "STORAGE_UNAVAILABLE", "The file could not be stored in the client folder. Nothing was changed; the item stays pending.");
         }
         throw error;

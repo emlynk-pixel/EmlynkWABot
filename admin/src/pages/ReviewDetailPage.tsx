@@ -5,14 +5,18 @@ import {
     assignClient,
     getReviewFile,
     getReviewItem,
+    keepDocumentAsVersion,
     keepReviewItemPending,
     listClients,
     removeFromReview,
+    replaceVerifiedDocument,
     retryProcessing,
     setDocumentType,
     type ClientListItem,
     type ApproveResult,
+    type KeepAsVersionResult,
     type RemoveResult,
+    type ReplaceVerifiedResult,
     type RetryResult,
     type AuditEntry,
     type ProcessingSummary,
@@ -148,6 +152,9 @@ function AuditLog({ entries }: { entries: AuditEntry[] }) {
                         {entry.action === "RETRY_PROCESSING" && (
                             <p className="text-label-sm text-ink-muted">Failed with: {failureLabel(entry.previousValue)} · processed again</p>
                         )}
+                        {entry.action === "REPLACE_VERIFIED" && (
+                            <p className="text-label-sm text-ink-muted">Replaced {entry.previousValue ? shortId(entry.previousValue) : "—"} with {entry.newValue ? shortId(entry.newValue) : "—"}; the previous document is kept, marked superseded</p>
+                        )}
                         {entry.action === "ASSIGN_CLIENT" && (
                             <p className="text-label-sm text-ink-muted">Client: {entry.previousValue ?? "not identified"} → {entry.newValue}</p>
                         )}
@@ -237,7 +244,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const isFailed = item.kind === "FAILED";
     const failure = isFailed ? FAILURE_REASONS[item.failure?.code ?? ""] : undefined;
 
-    const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | "type" | "client" | "retry" | null>(null);
+    const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | "type" | "client" | "retry" | "replace" | "version" | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<Notice | null>(null);
@@ -257,6 +264,13 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const [policeDateError, setPoliceDateError] = useState<string | null>(null);
     const [retryReason, setRetryReason] = useState("");
     const [retried, setRetried] = useState<RetryResult | null>(null);
+    const [replaceReason, setReplaceReason] = useState("");
+    const [replaceConfirmed, setReplaceConfirmed] = useState(false);
+    const [replacePoliceDate, setReplacePoliceDate] = useState("");
+    const [replacePoliceDateError, setReplacePoliceDateError] = useState<string | null>(null);
+    const [replaced, setReplaced] = useState<ReplaceVerifiedResult | null>(null);
+    const [versionReason, setVersionReason] = useState("");
+    const [keptAsVersion, setKeptAsVersion] = useState<KeepAsVersionResult | null>(null);
 
     const approveBlocked = item.actions?.approve.available === false ? item.actions.approve.message : null;
     // A police slip is approved with its submitted date: confirmed when OCR
@@ -264,15 +278,27 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const isPoliceSlip = item.document.documentType === "POLICE_SLIP";
     const storedPoliceDate = item.document.policeSubmittedDate;
     const needsPoliceDate = isPoliceSlip && !storedPoliceDate;
-    const auditLog = approved ? [approved.audit, ...item.auditLog] : retried ? [retried.audit, ...item.auditLog] : item.auditLog;
+    const auditLog = approved
+        ? [approved.audit, ...item.auditLog]
+        : retried
+            ? [retried.audit, ...item.auditLog]
+            : replaced
+                ? [replaced.audit, ...item.auditLog]
+                : keptAsVersion
+                    ? [keptAsVersion.audit, ...item.auditLog]
+                    : item.auditLog;
     const verificationStatus = approved ? approved.document.verificationStatus : item.document.verificationStatus;
 
     const canRemove = item.actions?.remove?.available === true;
     const canSetType = item.actions?.setDocumentType?.available === true;
     const canAssignClient = item.actions?.assignClient?.available === true;
     const canRetry = isFailed && item.actions?.retry?.available === true;
+    // M4 Policy B: only offered for the waiting-file case the backend flags
+    // (a different, already-well-read file of a type the client has verified).
+    const canReplaceVerified = item.actions?.replaceVerified?.available === true && !!item.existingVerified;
+    const canKeepAsVersion = item.actions?.keepAsVersion?.available === true;
 
-    const open = (which: "approve" | "keep" | "remove" | "type" | "client" | "retry") => {
+    const open = (which: "approve" | "keep" | "remove" | "type" | "client" | "retry" | "replace" | "version") => {
         setError(null);
         setReasonError(null);
         setPoliceDateError(null);
@@ -292,6 +318,13 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
             setChosenClient(null);
             setClientConfirmed(false);
         }
+        if (which === "replace") {
+            setReplaceReason("");
+            setReplaceConfirmed(false);
+            setReplacePoliceDate("");
+            setReplacePoliceDateError(null);
+        }
+        if (which === "version") setVersionReason("");
         setDialog(which);
     };
     const close = () => {
@@ -406,6 +439,52 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
         setError(null);
         try {
             setRetried(await retryProcessing(token, item.reviewId, retryReason.trim() || null));
+            setDialog(null);
+        } catch (caught) {
+            fail(caught);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    // M4 Policy B — Replace: names exactly which existing verified document
+    // is superseded (item.existingVerified, shown in the dialog); the admin
+    // confirms explicitly before anything changes. The existing document is
+    // kept, only its status changes; the audit entry is added to its history.
+    const confirmReplace = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!token || busy || !item.existingVerified) return;
+        if (needsPoliceDate && !replacePoliceDate) {
+            setReplacePoliceDateError("Enter the submitted date shown on the police slip.");
+            return;
+        }
+        if (!replaceConfirmed) {
+            setError("Confirm that you want to replace this specific document.");
+            return;
+        }
+        setBusy(true);
+        setError(null);
+        try {
+            setReplaced(await replaceVerifiedDocument(token, item.reviewId, item.existingVerified.documentId, replaceReason.trim() || null, needsPoliceDate ? replacePoliceDate : undefined));
+            setDialog(null);
+        } catch (caught) {
+            fail(caught);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    // M4 Policy B — Keep as Version: stores the file as a second,
+    // review-required document; the existing verified document is untouched
+    // and stays the client's current one (it can never itself become
+    // verified while the other stays verified — the existing Approve rule).
+    const confirmKeepAsVersion = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!token || busy) return;
+        setBusy(true);
+        setError(null);
+        try {
+            setKeptAsVersion(await keepDocumentAsVersion(token, item.reviewId, versionReason.trim() || null));
             setDialog(null);
         } catch (caught) {
             fail(caught);
@@ -529,6 +608,23 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                     <span className="block text-label-sm text-ink-muted">Received {formatDateTime(item.duplicateOf.receivedDate)} · identical file (same checksum) · not changed</span>
                                 </Row>
                             )}
+                            {item.existingVerified && !replaced && (
+                                <Row label="Existing verified document">
+                                    <span className="inline-flex flex-wrap items-center justify-end gap-2">
+                                        <span>{item.existingVerified.storedFilename}</span>
+                                        <StatusBadge status={item.existingVerified.verificationStatus} />
+                                    </span>
+                                    <span className="block text-label-sm text-ink-muted">Received {formatDateTime(item.existingVerified.receivedDate)} · a different file · not changed unless you replace it</span>
+                                </Row>
+                            )}
+                            {replaced && (
+                                <Row label="Replaced document">
+                                    <span className="inline-flex flex-wrap items-center justify-end gap-2">
+                                        <span>{shortId(replaced.replaced.documentId)}</span>
+                                        <StatusBadge status={replaced.replaced.verificationStatus} />
+                                    </span>
+                                </Row>
+                            )}
                             <Row label="Processing status"><StatusBadge status={item.document.processingStatus} /></Row>
                             {verificationStatus && <Row label="Verification status"><StatusBadge status={verificationStatus} /></Row>}
                             {isPoliceSlip && <Row label="Slip submitted date">{formatDay(approved?.document.policeSubmittedDate ?? storedPoliceDate)}</Row>}
@@ -588,7 +684,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                     <Link to="/review?kind=FAILED" className="text-primary hover:underline">Back to failed submissions</Link>
                                 </p>
                             </>
-                        ) : approved ? (
+                        ) : approved || replaced || keptAsVersion ? (
                             <p className="text-body-sm text-ink-muted">
                                 This item is no longer in the Review Queue.{" "}
                                 <Link to="/review" className="text-primary hover:underline">Back to Review Queue</Link>
@@ -599,6 +695,16 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                     <button type="button" className={primaryButton} disabled={busy || Boolean(approveBlocked)} onClick={() => open("approve")}>
                                         Approve
                                     </button>
+                                    {canReplaceVerified && (
+                                        <button type="button" className={secondaryButton} disabled={busy} onClick={() => open("replace")}>
+                                            Replace Verified Document
+                                        </button>
+                                    )}
+                                    {canKeepAsVersion && (
+                                        <button type="button" className={secondaryButton} disabled={busy} onClick={() => open("version")}>
+                                            Keep as Separate Version
+                                        </button>
+                                    )}
                                     <button type="button" className={secondaryButton} disabled={busy} onClick={() => open("keep")}>
                                         Keep Pending
                                     </button>
@@ -836,6 +942,94 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                         <div className="mt-4 flex justify-end gap-2">
                             <button type="button" className={secondaryButton} disabled={busy} onClick={close}>Cancel</button>
                             <button type="submit" className={primaryButton} disabled={busy}>{busy ? "Queuing…" : "Retry processing"}</button>
+                        </div>
+                    </form>
+                </ActionDialog>
+            )}
+
+            {dialog === "replace" && item.existingVerified && (
+                <ActionDialog title="Replace the existing verified document?" busy={busy} onClose={close}>
+                    <form onSubmit={confirmReplace} noValidate>
+                        <p className="text-body-sm text-ink-soft">
+                            This client's current verified {documentTypeLabel(item.existingVerified.documentType).toLowerCase()}, <strong>{item.existingVerified.storedFilename}</strong>, is kept — its file and history are not deleted — but it is marked <strong>superseded</strong> and no longer counts as the client's verified document of this type. This file is stored as the new verified document instead.
+                        </p>
+                        {isPoliceSlip && storedPoliceDate && (
+                            <p className="mt-3 text-body-sm text-ink">
+                                Submitted date read from the slip: <span className="font-medium">{formatDay(storedPoliceDate)}</span>. The 21-day follow-up runs from this date.
+                            </p>
+                        )}
+                        {needsPoliceDate && (
+                            <div className="mt-3">
+                                <label htmlFor="replace-police-date" className="block text-label-md text-ink">
+                                    Submitted date on the police slip <span aria-hidden="true" className="text-critical">*</span>
+                                </label>
+                                <input
+                                    id="replace-police-date"
+                                    type="date"
+                                    required
+                                    min="2000-01-01"
+                                    max={todayInSriLanka()}
+                                    value={replacePoliceDate}
+                                    disabled={busy}
+                                    onChange={(event) => {
+                                        setReplacePoliceDate(event.target.value);
+                                        setReplacePoliceDateError(null);
+                                    }}
+                                    className="mt-1 h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                                />
+                                {replacePoliceDateError && <p className="mt-1 text-label-sm text-critical">{replacePoliceDateError}</p>}
+                            </div>
+                        )}
+                        <label htmlFor="replace-reason" className="mt-3 block text-label-md text-ink">Reason (optional)</label>
+                        <textarea
+                            id="replace-reason"
+                            maxLength={MAX_REASON_LENGTH}
+                            rows={2}
+                            value={replaceReason}
+                            disabled={busy}
+                            onChange={(event) => setReplaceReason(event.target.value)}
+                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                        />
+                        <label className="mt-3 flex items-start gap-2 text-body-sm text-ink">
+                            <input
+                                type="checkbox"
+                                checked={replaceConfirmed}
+                                disabled={busy}
+                                onChange={(event) => setReplaceConfirmed(event.target.checked)}
+                                className="mt-0.5"
+                            />
+                            I have checked that {item.existingVerified.storedFilename} should be replaced by this file.
+                        </label>
+                        <DialogError message={error} />
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button type="button" className={secondaryButton} disabled={busy} onClick={close}>Cancel</button>
+                            <button type="submit" className={primaryButton} disabled={busy || !replaceConfirmed}>{busy ? "Replacing…" : "Replace"}</button>
+                        </div>
+                    </form>
+                </ActionDialog>
+            )}
+
+            {dialog === "version" && (
+                <ActionDialog title="Keep as a separate version?" busy={busy} onClose={close}>
+                    <form onSubmit={confirmKeepAsVersion} noValidate>
+                        <p className="text-body-sm text-ink-soft">
+                            This file is stored in the client folder alongside the existing verified document, but marked <strong>Review required</strong>, not verified — the existing verified document stays the client's current one and is not changed. This item can be approved to verified only after the other document is replaced or removed.
+                        </p>
+                        <label htmlFor="version-reason" className="mt-3 block text-label-md text-ink">Reason (optional)</label>
+                        <textarea
+                            id="version-reason"
+                            maxLength={MAX_REASON_LENGTH}
+                            rows={2}
+                            value={versionReason}
+                            disabled={busy}
+                            onChange={(event) => setVersionReason(event.target.value)}
+                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            autoFocus
+                        />
+                        <DialogError message={error} />
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button type="button" className={secondaryButton} disabled={busy} onClick={close}>Cancel</button>
+                            <button type="submit" className={primaryButton} disabled={busy}>{busy ? "Saving…" : "Keep as version"}</button>
                         </div>
                     </form>
                 </ActionDialog>
