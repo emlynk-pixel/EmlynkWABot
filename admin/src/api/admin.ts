@@ -49,7 +49,7 @@ export type Overview = {
         failedSubmissions?: number;
     };
     // Police Workflow: final police reports by countdown status.
-    police: { dueSoon: number; dueToday: number; overdue: number };
+    police: { dueSoon: number; dueToday: number; overdue: number; missingSlipDate: number; notUploaded: number };
     // Required-document completeness of every client, now.
     clients: CompletenessSummary;
     requiredDocumentTypes: string[];
@@ -178,7 +178,7 @@ export type DailyReport = {
         adminActions: Record<string, number>;
     };
     // The state now (not historical).
-    current: { asOf: string; clients: CompletenessSummary; police: { dueSoon: number; dueToday: number; overdue: number } };
+    current: { asOf: string; clients: CompletenessSummary; police: { dueSoon: number; dueToday: number; overdue: number; missingSlipDate: number; notUploaded: number } };
 };
 
 export function getDailyReport(token: string, date: string | undefined, signal?: AbortSignal): Promise<DailyReport> {

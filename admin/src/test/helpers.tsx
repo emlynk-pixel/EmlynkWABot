@@ -84,7 +84,7 @@ export const OVERVIEW: Overview = {
         pendingByStatus: { MANUAL_REVIEW: 9, CONFLICT: 5 },
         items: [{ temporaryId: "tmp-1", documentType: "POLICE_SLIP", processingStatus: "MANUAL_REVIEW", receivedDate: "2026-09-25T03:00:00.000Z", client: CLIENT_REF }],
     },
-    police: { dueSoon: 2, dueToday: 1, overdue: 3 },
+    police: { dueSoon: 2, dueToday: 1, overdue: 3, missingSlipDate: 4, notUploaded: 5 },
     clients: { total: 1428, complete: 1200, incomplete: 228, withMissing: 150, missingDocuments: 190, missingByType: { PASSPORT: 10, POLICE_REPORT: 80, MEDICAL: 100 } },
     requiredDocumentTypes: ["PASSPORT", "POLICE_REPORT", "MEDICAL"],
 };

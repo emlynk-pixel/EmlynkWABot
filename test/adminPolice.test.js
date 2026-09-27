@@ -228,7 +228,7 @@ describe("GET /api/admin/police", () => {
     test("overview counts police reports due soon, due today and overdue", async () => {
         const { status, body } = await http.call("GET", "/overview");
         assert.equal(status, 200);
-        assert.deepEqual(body.police, { dueSoon: 1, dueToday: 1, overdue: 1 });
+        assert.deepEqual(body.police, { dueSoon: 1, dueToday: 1, overdue: 1, missingSlipDate: 1, notUploaded: 1 });
     });
 
     test("client details carry the countdown", async () => {

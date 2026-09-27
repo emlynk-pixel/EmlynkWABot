@@ -114,6 +114,8 @@ describe("Overview police counts", () => {
             ["Overdue3", "/police?status=OVERDUE"],
             ["Due today1", "/police?status=DUE_TODAY"],
             ["Due soon (1–7 days)2", "/police?status=DUE_SOON"],
+            ["Missing slip date4", "/police?status=DATE_MISSING"],
+            ["Not uploaded5", "/police?status=NOT_UPLOADED"],
         ]);
     });
 });

@@ -64,6 +64,8 @@ function PoliceDue({ police }: { police: Overview["police"] }) {
         { label: "Overdue", value: police.overdue, status: "OVERDUE", critical: true },
         { label: "Due today", value: police.dueToday, status: "DUE_TODAY", critical: true },
         { label: "Due soon (1–7 days)", value: police.dueSoon, status: "DUE_SOON", critical: false },
+        { label: "Missing slip date", value: police.missingSlipDate, status: "DATE_MISSING", critical: true },
+        { label: "Not uploaded", value: police.notUploaded, status: "NOT_UPLOADED", critical: true },
     ];
     return (
         <Card className="space-y-3 p-4">

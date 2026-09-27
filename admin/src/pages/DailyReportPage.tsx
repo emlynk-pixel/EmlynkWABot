@@ -89,6 +89,8 @@ function CurrentSection({ report }: { report: DailyReport }) {
                 <Figure label="Police reports due soon" value={police.dueSoon} hint="1–7 days left" />
                 <Figure label="Police reports due today" value={police.dueToday} tone="critical" />
                 <Figure label="Overdue police reports" value={police.overdue} tone="critical" />
+                <Figure label="Missing slip date" value={police.missingSlipDate} tone="critical" />
+                <Figure label="Police slip not uploaded" value={police.notUploaded} tone="critical" />
             </div>
             <p className="text-body-sm">
                 <Link to="/missing-documents" className="text-primary hover:underline">Missing Documents</Link>

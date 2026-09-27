@@ -138,7 +138,7 @@ describe("daily report: figures", () => {
         const report = await getDailyReport({ db: reportDb().client, date: "2026-09-24", now });
         assert.equal(report.current.asOf, now.toISOString());
         assert.deepEqual(report.current.clients, { total: 1, complete: 0, incomplete: 1, withMissing: 1, missingDocuments: 3, missingByType: { PASSPORT: 1, POLICE_REPORT: 1, MEDICAL: 1 } });
-        assert.deepEqual(report.current.police, { dueSoon: 0, dueToday: 0, overdue: 0 });
+        assert.deepEqual(report.current.police, { dueSoon: 0, dueToday: 0, overdue: 0, missingSlipDate: 0, notUploaded: 0 });
     });
 
     test("a day without submissions: zeros, not all-time values", async () => {

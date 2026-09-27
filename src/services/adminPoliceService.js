@@ -71,13 +71,14 @@ export function summarizeStatuses(rows) {
     return { total: rows.length, byStatus };
 }
 
-// For the Overview: how many police reports are due soon, due today, overdue.
 export async function policeDueCounts({ db, today }) {
     const { byStatus } = summarizeStatuses(await loadPoliceStatuses({ db, today }));
     return {
-        dueSoon: byStatus[POLICE_STATUS.DUE_SOON],
-        dueToday: byStatus[POLICE_STATUS.DUE_TODAY],
-        overdue: byStatus[POLICE_STATUS.OVERDUE],
+        dueSoon: byStatus[POLICE_STATUS.DUE_SOON] || 0,
+        dueToday: byStatus[POLICE_STATUS.DUE_TODAY] || 0,
+        overdue: byStatus[POLICE_STATUS.OVERDUE] || 0,
+        missingSlipDate: byStatus[POLICE_STATUS.DATE_MISSING] || 0,
+        notUploaded: byStatus[POLICE_STATUS.NOT_UPLOADED] || 0,
     };
 }
 
