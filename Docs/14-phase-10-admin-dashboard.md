@@ -600,6 +600,15 @@ Tests: `test/m1CriticalFixes.test.js` (31): concurrent and cross-instance duplic
 
 Measured (throwaway PostgreSQL, synthetic files): webhook acknowledgement 65 ms with a deliberately 5 s processing step (worker 5.1 s); in the E2E run 2–58 ms for every delivery while background processing took 0.1–6.6 s (before M1 the answer took as long as processing, up to 6.5 s for the same photo). Tests: `test/asyncProcessing.test.js` (18), real PostgreSQL (killed worker resumed after the lease; 3 workers × 6 jobs, each processed once; unique message ID), E2E 34/34, API 77/77, browser 41/41 + H3 12/12. Real Meta delivery not tested.
 
+**Webhook response timing (pinned down explicitly).** The architecture above already decouples the HTTP answer from processing; `test/webhookResponseTiming.test.js` (7 tests) makes that explicit and hard to regress:
+- OCR alone artificially slowed to 3 s, storage placement (client-folder copy) alone slowed to 2 s, and both together — in each case the webhook still answers in well under 1 s (typically single-digit milliseconds), independently measured from the worker's run time.
+- The real `startSubmissionWorker` running continuously (not just `drainSubmissionQueue` in a test): a second, unrelated message is acknowledged quickly while the first is still mid-OCR in the worker.
+- A duplicate delivery arriving while the worker is deep in slow OCR for the first still resolves in the same way as any duplicate (§4m table) — the webhook's dedup logic has no dependency on worker/OCR timing.
+- A structural guard: `src/routes/whatsapp.js` is asserted to import nothing from `documentProcessingService.js`, `ocrService.js` or `documentClassificationService.js`, and to import only `notifySubmissionQueued` from `submissionQueue.js` — so a second processing pipeline can't be added to the webhook route without failing this test.
+- A recording failure (e.g. database down) still answers 500 promptly, with the upload cleaned up (unchanged H2 behaviour), confirmed to not depend on any downstream timing either.
+
+Full-stack confirmation (throwaway PostgreSQL, real Express server, real headless Chrome): E2E 34/34 (per-message acknowledgement 4–55 ms even for deliveries whose full processing took 0.1–8.2 s, including a photo requiring an OCR rotation retry), API regression 77/77, browser 41/41, H3 browser 14/14. No code changes were needed for this task: `src/routes/whatsapp.js` and `src/services/submissionQueue.js` already implement the required behaviour (introduced in M1, 23404f1, hardened in the M1 critical fixes, f59cffe); this work adds the explicit regression coverage and full-stack verification.
+
 ## 5. Pages and data
 
 | Page | API | Shows |
