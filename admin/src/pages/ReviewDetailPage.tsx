@@ -8,10 +8,12 @@ import {
     keepReviewItemPending,
     listClients,
     removeFromReview,
+    retryProcessing,
     setDocumentType,
     type ClientListItem,
     type ApproveResult,
     type RemoveResult,
+    type RetryResult,
     type AuditEntry,
     type ProcessingSummary,
     type ReviewItem,
@@ -87,7 +89,6 @@ function ProcessingDetails({ processing }: { processing: ProcessingSummary | nul
     return (
         <dl className="divide-y divide-border">
             <Row label="Stage">{processing.stage ? humanize(processing.stage) : null}</Row>
-            {processing.error && <Row label="Error"><span className="text-critical">{processing.error}</span></Row>}
             <Row label="Extraction method">{processing.extractionMethod ? humanize(processing.extractionMethod) : null}</Row>
             <Row label="Classification source">{processing.typeSource ? humanize(processing.typeSource) : null}</Row>
             {processing.ocrThresholding && <Row label="OCR thresholding">{[processing.ocrThresholding].flat().join(", ")}</Row>}
@@ -143,6 +144,9 @@ function AuditLog({ entries }: { entries: AuditEntry[] }) {
                         <p className="text-body-sm text-ink-soft">{entry.reason ?? <span className="text-ink-subtle">No reason given</span>}</p>
                         {entry.action === "SET_DOCUMENT_TYPE" && (
                             <p className="text-label-sm text-ink-muted">Type: {entry.previousValue ? documentTypeLabel(entry.previousValue) : "—"} → {entry.newValue ? documentTypeLabel(entry.newValue) : "—"}</p>
+                        )}
+                        {entry.action === "RETRY_PROCESSING" && (
+                            <p className="text-label-sm text-ink-muted">Failed with: {failureLabel(entry.previousValue)} · processed again</p>
                         )}
                         {entry.action === "ASSIGN_CLIENT" && (
                             <p className="text-label-sm text-ink-muted">Client: {entry.previousValue ?? "not identified"} → {entry.newValue}</p>
@@ -233,7 +237,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const isFailed = item.kind === "FAILED";
     const failure = isFailed ? FAILURE_REASONS[item.failure?.code ?? ""] : undefined;
 
-    const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | "type" | "client" | null>(null);
+    const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | "type" | "client" | "retry" | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<Notice | null>(null);
@@ -251,6 +255,8 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const [clientConfirmed, setClientConfirmed] = useState(false);
     const [policeDate, setPoliceDate] = useState("");
     const [policeDateError, setPoliceDateError] = useState<string | null>(null);
+    const [retryReason, setRetryReason] = useState("");
+    const [retried, setRetried] = useState<RetryResult | null>(null);
 
     const approveBlocked = item.actions?.approve.available === false ? item.actions.approve.message : null;
     // A police slip is approved with its submitted date: confirmed when OCR
@@ -258,20 +264,22 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const isPoliceSlip = item.document.documentType === "POLICE_SLIP";
     const storedPoliceDate = item.document.policeSubmittedDate;
     const needsPoliceDate = isPoliceSlip && !storedPoliceDate;
-    const auditLog = approved ? [approved.audit, ...item.auditLog] : item.auditLog;
+    const auditLog = approved ? [approved.audit, ...item.auditLog] : retried ? [retried.audit, ...item.auditLog] : item.auditLog;
     const verificationStatus = approved ? approved.document.verificationStatus : item.document.verificationStatus;
 
     const canRemove = item.actions?.remove?.available === true;
     const canSetType = item.actions?.setDocumentType?.available === true;
     const canAssignClient = item.actions?.assignClient?.available === true;
+    const canRetry = isFailed && item.actions?.retry?.available === true;
 
-    const open = (which: "approve" | "keep" | "remove" | "type" | "client") => {
+    const open = (which: "approve" | "keep" | "remove" | "type" | "client" | "retry") => {
         setError(null);
         setReasonError(null);
         setPoliceDateError(null);
         if (which === "approve") setPoliceDate("");
         setNotice(null);
         if (which === "keep") setKeepReason("");
+        if (which === "retry") setRetryReason("");
         if (which === "remove") {
             setRemoveReason("");
             setRemoveConfirmed(false);
@@ -387,6 +395,23 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
             () => assignClient(token, item.reviewId, chosenClient.passportId, trimmed),
             `Assigned to ${chosenClient.name ?? chosenClient.passportId} (${chosenClient.passportId}). The file stays pending; approve it when it is ready.`
         );
+    };
+
+    // H3: the failed submission goes back to the background worker; the page
+    // then only reports that (the item is no longer a failed one).
+    const confirmRetry = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!token || busy) return;
+        setBusy(true);
+        setError(null);
+        try {
+            setRetried(await retryProcessing(token, item.reviewId, retryReason.trim() || null));
+            setDialog(null);
+        } catch (caught) {
+            fail(caught);
+        } finally {
+            setBusy(false);
+        }
     };
 
     const confirmKeep = async (event: FormEvent) => {
@@ -541,11 +566,28 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                     </Card>
 
                     <Card className="space-y-2 p-4">
-                        {isFailed ? (
-                            <p className="text-body-sm text-ink-muted">
-                                A failed submission can only be inspected: there is no retry. Ask the client to send the file again; the new submission is processed as usual.{" "}
-                                <Link to="/review?kind=FAILED" className="text-primary hover:underline">Back to failed submissions</Link>
-                            </p>
+                        {isFailed && retried ? (
+                            <div role="status" className="space-y-1 text-body-sm">
+                                <p className="text-ink">Queued for processing again.</p>
+                                <p className="text-ink-muted">
+                                    The original file is being processed like a new submission, usually within seconds. Afterwards it appears in the Review Queue or the client's documents, or again under Failed processing if it fails again.{" "}
+                                    <Link to="/review?kind=FAILED" className="text-primary hover:underline">Back to failed submissions</Link>
+                                </p>
+                            </div>
+                        ) : isFailed ? (
+                            <>
+                                {canRetry && (
+                                    <div className="flex flex-wrap gap-2" role="group" aria-label="Failed submission actions">
+                                        <button type="button" className={primaryButton} disabled={busy} onClick={() => open("retry")}>
+                                            Retry processing
+                                        </button>
+                                    </div>
+                                )}
+                                <p className="text-body-sm text-ink-muted">
+                                    {canRetry ? "Retry processes the original file again. " : ""}You can also ask the client to send the file again; the new submission is processed as usual.{" "}
+                                    <Link to="/review?kind=FAILED" className="text-primary hover:underline">Back to failed submissions</Link>
+                                </p>
+                            </>
                         ) : approved ? (
                             <p className="text-body-sm text-ink-muted">
                                 This item is no longer in the Review Queue.{" "}
@@ -768,6 +810,32 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                         <div className="mt-4 flex justify-end gap-2">
                             <button type="button" className={secondaryButton} disabled={busy} onClick={close}>Cancel</button>
                             <button type="submit" className={primaryButton} disabled={busy}>{busy ? "Saving…" : "Assign client"}</button>
+                        </div>
+                    </form>
+                </ActionDialog>
+            )}
+
+            {dialog === "retry" && (
+                <ActionDialog title="Retry processing?" busy={busy} onClose={close}>
+                    <form onSubmit={confirmRetry} noValidate>
+                        <p className="text-body-sm text-ink-soft">
+                            The original file, as received, is processed again in the background, like a new submission. Nothing is stored or changed until processing finishes. The earlier failure stays in the audit log.
+                        </p>
+                        <label htmlFor="retry-reason" className="mt-3 block text-label-md text-ink">Reason (optional)</label>
+                        <textarea
+                            id="retry-reason"
+                            maxLength={MAX_REASON_LENGTH}
+                            rows={2}
+                            value={retryReason}
+                            disabled={busy}
+                            onChange={(event) => setRetryReason(event.target.value)}
+                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            autoFocus
+                        />
+                        <DialogError message={error} />
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button type="button" className={secondaryButton} disabled={busy} onClick={close}>Cancel</button>
+                            <button type="submit" className={primaryButton} disabled={busy}>{busy ? "Queuing…" : "Retry processing"}</button>
                         </div>
                     </form>
                 </ActionDialog>

@@ -56,7 +56,7 @@ Everything that needs a person:
 - **Waiting files** in pending storage, which the automatic processing could not place (unclear, unknown type, identity not confirmed, conflicts).
 - **Stored documents** marked *Review required* (read with low confidence).
 
-**Failed processing** (Source filter, or the red "submissions failed processing" link on this page and the Overview): submissions whose processing stopped with an error, for example a PDF with too many pages or a storage outage. Nothing was stored for the client, and they are not counted as pending review. Opening one shows why it failed, the client (or *Not identified*), the sender, when it arrived and the file as received. It can only be inspected — there is no retry; ask the client to send the file again.
+**Failed processing** (Source filter, or the red "submissions failed processing" link on this page and the Overview): submissions whose processing stopped with an error, for example a PDF with too many pages or a storage outage. Nothing was stored for the client, and they are not counted as pending review. Opening one shows why it failed, the client (or *Not identified*), the sender, when it arrived and the file as received. **Retry processing** processes the original file again, like a new submission. You confirm it first, you can give a reason, and it is recorded in the audit log. It usually finishes within seconds. Afterwards the item appears where its result belongs, or again under *Failed processing* with the retry in its history. Nothing is stored twice. A file that fails for a fixed reason (for example too many pages) fails again; ask the client to send a new file instead.
 
 Each row shows the reason, the confidence and when it was received. Filter by source, reason and type; the oldest items come first by default. **Review** opens the item. A submission whose processing *failed* is not listed unless a copy of its file is waiting in pending storage.
 
@@ -180,6 +180,7 @@ Every action is recorded in the same database transaction as the change itself, 
 - the reason and the time
 - for corrections, the value before and after (type, passport ID or slip date)
 - for removals, the removed file's type and checksum
+- for a retry of a failed submission, the failure it replaced (reason code), with the type and client as they were
 
 The log is **append-only**: the API has no way to edit or delete an entry, and a database trigger rejects any change or deletion. Review Detail shows an item's history; Client Details shows police slip date changes.
 

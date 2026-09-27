@@ -489,6 +489,8 @@ describe("review detail: audit log and available actions", () => {
             remove: { available: true, code: null, message: null },
             setDocumentType: { available: true, code: null, message: null },
             assignClient: { available: true, code: null, message: null },
+            // H3: only a failed submission can be retried.
+            retry: { available: false, code: "NOT_FAILED", message: "Only a submission whose processing failed can be retried." },
         });
         assert.equal("reject" in detail.body.actions, false);
 
@@ -534,7 +536,7 @@ describe("security and error handling", () => {
     });
 
     test("there is no reject action", async () => {
-        assert.deepEqual(Object.keys(REVIEW_ACTION).sort(), ["APPROVE", "ASSIGN_CLIENT", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "SET_DOCUMENT_TYPE", "SET_POLICE_DATE"]);
+        assert.deepEqual(Object.keys(REVIEW_ACTION).sort(), ["APPROVE", "ASSIGN_CLIENT", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "RETRY_PROCESSING", "SET_DOCUMENT_TYPE", "SET_POLICE_DATE"]);
         for (const path of [`/review/pending-${TEMP}/reject`, `/review/document-${DOC_REVIEW}/reject`, "/review/reject"]) {
             const response = await call("POST", path, { body: { reason: "x" } });
             assert.equal(response.status, 404, path);
@@ -573,6 +575,7 @@ describe("security and error handling", () => {
             "POST /review/:reviewId/document-type",
             "POST /review/:reviewId/keep-pending",
             "POST /review/:reviewId/remove",
+            "POST /review/:reviewId/retry", // H3: failed submissions only
         ]);
     });
 

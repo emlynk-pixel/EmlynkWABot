@@ -430,8 +430,10 @@ export async function getReviewItem({ db, reviewId }) {
         // Who sent it (admins compare this with the client record).
         submission: submission ? { whatsappNumber: submission.whatsappNumber, receivedDate: toIso(submission.createdDate) } : null,
         // The PII-free processing summary saved by the pipeline; null for
-        // items processed before review data was recorded.
-        processing: summary,
+        // items processed before review data was recorded. Its error text is
+        // withheld (H3): even redacted it can name infrastructure (e.g. a
+        // database host); the safe failure code below says what went wrong.
+        processing: summary ? { ...summary, error: null } : null,
         // H3: why processing failed (safe code and stage), FAILED items only.
         failure: kind === REVIEW_KIND.FAILED ? describeFailure(summary) : null,
         // M4: for a waiting DUPLICATE, the existing document it copies.

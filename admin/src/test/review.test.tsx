@@ -723,7 +723,7 @@ describe("H3: failed submissions", () => {
         expect(await screen.findByText("No failed submissions")).toBeInTheDocument();
     });
 
-    test("detail: read-only, failure reason and stage, sender, original file; no action buttons", async () => {
+    test("detail: failure reason and stage, sender, original file; no review actions (retry not offered here)", async () => {
         const FAILED: ReviewItem = {
             ...ITEM, reviewId: `failed-${FAILED_ID}`, kind: "FAILED", reviewReason: "PROCESSING_FAILED", reviewCategory: "OTHER", client: null,
             document: { ...ITEM.document, temporaryId: FAILED_ID, documentType: "UNCLASSIFIED", processingStatus: "FAILED", confidence: null },
@@ -743,8 +743,64 @@ describe("H3: failed submissions", () => {
         expect(screen.getByText("Original as received (temporary storage)")).toBeInTheDocument();
         expect(screen.queryByRole("group", { name: "Review actions" })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: /Approve|Keep Pending|Remove from Review|Retry/ })).not.toBeInTheDocument();
-        expect(screen.getByText(/can only be inspected: there is no retry/)).toBeInTheDocument();
+        expect(screen.getByText(/ask the client to send the file again/)).toBeInTheDocument();
         expect(screen.getByRole("link", { name: "Back to failed submissions" })).toHaveAttribute("href", "/review?kind=FAILED");
+    });
+
+    describe("Retry processing", () => {
+        const RETRY = `POST /api/admin/review/failed-${FAILED_ID}/retry`;
+        const FAILED_RETRYABLE: ReviewItem = {
+            ...ITEM, reviewId: `failed-${FAILED_ID}`, kind: "FAILED", reviewReason: "PROCESSING_FAILED", reviewCategory: "OTHER", client: null,
+            document: { ...ITEM.document, temporaryId: FAILED_ID, documentType: "UNCLASSIFIED", processingStatus: "FAILED", confidence: null },
+            processing: { stage: "TEXT_EXTRACTION", processingStatus: "FAILED" },
+            file: { name: `${FAILED_ID}.pdf`, mimeType: "application/pdf", size: null, location: "TEMPORARY", previewUrl: `/api/admin/review/failed-${FAILED_ID}/file` },
+            failure: { code: "OCR_TIMEOUT", stage: "TEXT_EXTRACTION" },
+            actions: {
+                ...Object.fromEntries(["approve", "keepPending", "remove", "setDocumentType", "assignClient"].map((a) => [a, { available: false, code: "PROCESSING_FAILED", message: "x" }])),
+                retry: { available: true, code: null, message: null },
+            } as unknown as ReviewItem["actions"],
+        };
+        const AUDIT = { auditId: "a-retry", action: "RETRY_PROCESSING" as const, adminId: "admin-1", adminName: "Test Admin", reason: "OCR was busy", previousStatus: "FAILED", newStatus: "TEMPORARY_STORED", policeSubmittedDate: null, documentType: "UNCLASSIFIED", previousValue: "OCR_TIMEOUT", newValue: null, createdDate: "2026-09-27T09:00:00.000Z" };
+
+        async function openFailed(routes: FetchRoutes = {}) {
+            const backend = signedInBackend({ [`GET /api/admin/review/failed-${FAILED_ID}`]: { status: 200, body: FAILED_RETRYABLE }, [`GET /api/admin/review/failed-${FAILED_ID}/file`]: fileResponse, ...routes });
+            renderApp(`/review/failed-${FAILED_ID}`);
+            const group = await screen.findByRole("group", { name: "Failed submission actions" });
+            return { ...backend, group, user: userEvent.setup() };
+        }
+
+        test("asks for confirmation; Cancel sends nothing", async () => {
+            const { calls, group, user } = await openFailed();
+            await user.click(within(group).getByRole("button", { name: "Retry processing" }));
+            const dialog = screen.getByRole("dialog", { name: "Retry processing?" });
+            expect(dialog).toHaveTextContent("processed again in the background, like a new submission");
+            expect(dialog).toHaveTextContent("The earlier failure stays in the audit log.");
+            await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+            expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+        });
+
+        test("confirm -> POST with the optional reason; the page says it is queued and shows the audit entry", async () => {
+            const { calls, group, user } = await openFailed({ [RETRY]: { status: 200, body: { action: "RETRY_PROCESSING", reviewId: `failed-${FAILED_ID}`, processingStatus: "TEMPORARY_STORED", audit: AUDIT } } });
+            await user.click(within(group).getByRole("button", { name: "Retry processing" }));
+            const dialog = screen.getByRole("dialog", { name: "Retry processing?" });
+            await user.type(within(dialog).getByLabelText("Reason (optional)"), "OCR was busy");
+            await user.click(within(dialog).getByRole("button", { name: "Retry processing" }));
+            expect(await screen.findByText("Queued for processing again.")).toBeInTheDocument();
+            expect(calls.filter((c) => c.method === "POST").map((c) => [c.path, c.body])).toEqual([[`/api/admin/review/failed-${FAILED_ID}/retry`, { reason: "OCR was busy" }]]);
+            expect(screen.queryByRole("button", { name: "Retry processing" })).not.toBeInTheDocument();
+            const history = screen.getByRole("list", { name: "Review history" });
+            expect(history).toHaveTextContent("Processing retried");
+            expect(history).toHaveTextContent("Failed with: Text reading took too long");
+        });
+
+        test("already queued (409) -> the server's message is shown, nothing else changes", async () => {
+            const { group, user } = await openFailed({ [RETRY]: { status: 409, body: { message: "This submission is no longer failed: it is already queued for processing again, or processing has finished. Reload the page to see its current state.", code: "NOT_FAILED" } } });
+            await user.click(within(group).getByRole("button", { name: "Retry processing" }));
+            const dialog = screen.getByRole("dialog", { name: "Retry processing?" });
+            await user.click(within(dialog).getByRole("button", { name: "Retry processing" }));
+            expect(await within(dialog).findByText(/already queued for processing again/)).toBeInTheDocument();
+            expect(screen.queryByText("Queued for processing again.")).not.toBeInTheDocument();
+        });
     });
 
     test("Overview links to the failed submissions; Pending review is unchanged", async () => {

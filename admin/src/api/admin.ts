@@ -333,7 +333,7 @@ export type ReviewItem = {
 // There is no reject. REMOVE_FROM_REVIEW is a manual admin decision that
 // permanently deletes one waiting file and its record. The corrections
 // (type, client, police slip date) keep the item where it is.
-export type ReviewAction = "APPROVE" | "KEEP_PENDING" | "REMOVE_FROM_REVIEW" | "SET_DOCUMENT_TYPE" | "ASSIGN_CLIENT" | "SET_POLICE_DATE";
+export type ReviewAction = "APPROVE" | "KEEP_PENDING" | "REMOVE_FROM_REVIEW" | "SET_DOCUMENT_TYPE" | "ASSIGN_CLIENT" | "SET_POLICE_DATE" | "RETRY_PROCESSING";
 
 export type AuditEntry = {
     auditId: string;
@@ -345,7 +345,7 @@ export type AuditEntry = {
     newStatus: string;
     policeSubmittedDate: string | null; // police slip approvals
     documentType: string | null; // kept for removed files
-    previousValue: string | null; // corrections: value before
+    previousValue: string | null; // corrections: value before; retry: the failure code
     newValue: string | null; // corrections: value after
     createdDate: string;
 };
@@ -358,6 +358,7 @@ export type ReviewActions = {
     remove?: ActionAvailability;
     setDocumentType?: ActionAvailability;
     assignClient?: ActionAvailability;
+    retry?: ActionAvailability; // H3: failed submissions only
 };
 
 export type ApproveResult = {
@@ -371,6 +372,7 @@ export type ApproveResult = {
 export type KeepPendingResult = { action: "KEEP_PENDING"; reviewId: string; audit: AuditEntry };
 
 export type RemoveResult = { action: "REMOVE_FROM_REVIEW"; reviewId: string; filesDeleted: boolean; audit: AuditEntry };
+export type RetryResult = { action: "RETRY_PROCESSING"; reviewId: string; processingStatus: "TEMPORARY_STORED"; audit: AuditEntry };
 export type SetDocumentTypeResult = { action: "SET_DOCUMENT_TYPE"; reviewId: string; documentType: string; audit: AuditEntry };
 export type AssignClientResult = { action: "ASSIGN_CLIENT"; reviewId: string; client: { passportId: string; uniqueId: string }; audit: AuditEntry };
 export type SetPoliceDateResult = { action: "SET_POLICE_DATE"; documentId: string; policeSubmittedDate: string; audit: AuditEntry };
@@ -412,6 +414,11 @@ export function approveReviewItem(token: string, reviewId: string, options: { re
 // Permanently deletes the waiting file and its record; the reason is required.
 export function removeFromReview(token: string, reviewId: string, reason: string): Promise<RemoveResult> {
     return apiRequest<RemoveResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/remove`, { method: "POST", token, body: { reason } });
+}
+
+// H3: a failed submission is processed again by the background worker.
+export function retryProcessing(token: string, reviewId: string, reason: string | null): Promise<RetryResult> {
+    return apiRequest<RetryResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/retry`, { method: "POST", token, body: reason ? { reason } : {} });
 }
 
 export function keepReviewItemPending(token: string, reviewId: string, reason: string): Promise<KeepPendingResult> {

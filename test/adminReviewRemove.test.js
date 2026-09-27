@@ -212,7 +212,10 @@ describe("no automatic removal", () => {
         assert.equal(action.match(/temporaryData\.delete\(/g).length, 1, "one delete, inside removeFromReview");
         assert.ok(!/setInterval|setTimeout|cron|schedule/i.test(action), "no timers or schedules");
         // No other action (the corrections included) removes anything.
-        assert.deepEqual(Object.values(REVIEW_ACTION).sort(), ["APPROVE", "ASSIGN_CLIENT", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "SET_DOCUMENT_TYPE", "SET_POLICE_DATE"]);
+        assert.deepEqual(Object.values(REVIEW_ACTION).sort(), ["APPROVE", "ASSIGN_CLIENT", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "RETRY_PROCESSING", "SET_DOCUMENT_TYPE", "SET_POLICE_DATE"]);
+        // H3: Retry processing only resets the submission for the worker; it removes nothing.
+        const retry = action.slice(action.indexOf("export async function retryFailedSubmission"), action.indexOf("export async function removeFromReview"));
+        assert.ok(retry.length > 0 && !/\.delete\(|deleteMany|removeObject|\.remove\(|pendingStoragePath:\s*null/.test(retry), "retry removes nothing");
     });
 });
 

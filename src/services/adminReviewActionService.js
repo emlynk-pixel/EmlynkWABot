@@ -1,5 +1,6 @@
 // Admin review actions (Phase 10): APPROVE, KEEP_PENDING and
-// REMOVE_FROM_REVIEW; the corrections (set document type, assign client,
+// REMOVE_FROM_REVIEW, and RETRY_PROCESSING for a failed submission (H3);
+// the corrections (set document type, assign client,
 // set police slip date) are in adminCorrectionService.js. There is no reject
 // action: an unclear document stays pending until a person decides. Nothing
 // is ever removed automatically; REMOVE_FROM_REVIEW is a manual admin
@@ -16,7 +17,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 
-import { REVIEW_PENDING_WHERE, REVIEW_KIND, findDuplicateMatch, getReviewItem, mimeTypeForPath, parseReviewId, toReviewId } from "./adminReviewService.js";
+import { REVIEW_PENDING_WHERE, FAILED_SUBMISSION_WHERE, REVIEW_KIND, findDuplicateMatch, getReviewItem, mimeTypeForPath, parseReviewId, toReviewId } from "./adminReviewService.js";
 import { DOCUMENT_PROCESSING_STATUS_STORED, VERIFICATION_STATUS } from "./clientDocumentService.js";
 import { PROCESSING_STATUS } from "./documentProcessingService.js";
 import { copyToFreeName, removeObject } from "./permanentStorageService.js";
@@ -26,6 +27,9 @@ import { safeErrorText } from "../utils/safeLog.js";
 import { businessDateOf, isValidBusinessDate } from "../utils/businessDay.js";
 import { DOCUMENT_TYPES } from "./documentClassificationService.js";
 import { toYmd, ymdToDate } from "./policeCountdownService.js";
+import { describeFailure } from "./failureReason.js";
+import { RECEIVED_STATUS } from "./statusMapping.js";
+import { notifySubmissionQueued } from "./submissionQueue.js";
 
 export const REVIEW_ACTION = Object.freeze({
     APPROVE: "APPROVE",
@@ -35,6 +39,8 @@ export const REVIEW_ACTION = Object.freeze({
     SET_DOCUMENT_TYPE: "SET_DOCUMENT_TYPE",
     ASSIGN_CLIENT: "ASSIGN_CLIENT",
     SET_POLICE_DATE: "SET_POLICE_DATE",
+    // H3: a FAILED submission handed back to the background worker.
+    RETRY_PROCESSING: "RETRY_PROCESSING",
 });
 
 // new_status of a REMOVE_FROM_REVIEW entry (the record itself no longer exists).
@@ -199,10 +205,13 @@ const correctable = (kind) => (kind === REVIEW_KIND.PENDING
 export async function reviewActionAvailability({ db, reviewId }) {
     const parsed = parseReviewId(reviewId);
     if (!parsed) return null;
-    // H3: a FAILED submission can only be inspected (there is no retry).
+    // H3: a FAILED submission can be processed again (retry); nothing else.
     if (parsed.kind === REVIEW_KIND.FAILED) {
-        const none = { available: false, code: "PROCESSING_FAILED", message: "Processing failed, so nothing was stored. This submission can only be inspected; ask the client to send the file again." };
-        return { approve: { ...none, needsPoliceDate: false }, keepPending: none, remove: none, setDocumentType: none, assignClient: none };
+        const none = { available: false, code: "PROCESSING_FAILED", message: "Processing failed, so nothing was stored. Retry processing, or ask the client to send the file again." };
+        return {
+            approve: { ...none, needsPoliceDate: false }, keepPending: none, remove: none, setDocumentType: none, assignClient: none,
+            retry: { available: true, code: null, message: null },
+        };
     }
     const row = parsed.kind === REVIEW_KIND.PENDING ? await findPending(db, parsed.id) : await findReviewDocument(db, parsed.id);
     if (!row) return null;
@@ -226,6 +235,7 @@ export async function reviewActionAvailability({ db, reviewId }) {
         // client folder for its type).
         setDocumentType: correctable(parsed.kind),
         assignClient: correctable(parsed.kind),
+        retry: { available: false, code: "NOT_FAILED", message: "Only a submission whose processing failed can be retried." },
     };
 }
 
@@ -557,6 +567,91 @@ export async function keepReviewItemPending({ db, admin, reviewId, reason, now =
 // is written and the row deleted in one transaction; the files are deleted
 // only after it has committed. If deleting a file fails, the item is still
 // gone and only a stray object is left (logged).
+// ---------------------------------------------------------------- retry (H3)
+
+// A storage "not found" answer (Supabase: 400/404), as opposed to an outage.
+const isNotFound = (error) => /not found|404|400/i.test(`${error?.statusCode ?? ""} ${error?.message ?? ""}`);
+
+const queuedAlready = () => new ReviewActionError(409, "NOT_FAILED", "This submission is no longer failed: it is already queued for processing again, or processing has finished. Reload the page to see its current state.");
+
+// FAILED -> TEMPORARY_STORED: the submission waits for the background worker
+// again (M1), exactly like a newly received one, and is processed by the
+// same pipeline with all its safeguards (claim/lease, conditional writes,
+// ALREADY_STORED, reuse of an interrupted attempt's copy). Nothing is copied,
+// stored or deleted here.
+// - Only a FAILED submission without a pending copy (a failed one with a
+//   pending copy is a normal review item), whose original is still in temporary/.
+// - The row lock and the re-check make a double click or two admins at once
+//   queue it once; the second request gets 409.
+// - The row goes back to its state as received: attempts 0 (a full attempt
+//   budget), no lease, type UNCLASSIFIED, no client link, no review reason.
+//   placement_path and the file fields are kept. The audit entry keeps the
+//   failure: previous status FAILED, the failure code (previous_value), the
+//   detected type and client as they were.
+export async function retryFailedSubmission({ db, bucket, admin, reviewId, reason, onQueued = notifySubmissionQueued }) {
+    const parsed = parseReviewId(reviewId);
+    if (!parsed || parsed.kind !== REVIEW_KIND.FAILED) throw notFound();
+    const current = await db.temporaryData.findUnique({ where: { temporaryId: parsed.id }, select: { temporaryId: true, processingStatus: true, pendingStoragePath: true, temporaryStoragePath: true } });
+    if (!current) throw notFound();
+    if (current.processingStatus !== FAILED_SUBMISSION_WHERE.processingStatus || current.pendingStoragePath !== null) throw queuedAlready();
+
+    // The worker needs the original as received.
+    const { data: present, error: existsError } = await bucket.exists(current.temporaryStoragePath);
+    if (existsError && !isNotFound(existsError)) {
+        throw new ReviewActionError(503, "STORAGE_UNAVAILABLE", "The file storage could not be reached. Nothing was changed; try again in a moment.");
+    }
+    if (!present) {
+        throw new ReviewActionError(409, "FILE_MISSING", "The original file is no longer in storage, so it can't be processed again. Ask the client to send it again.");
+    }
+
+    const audit = await db.$transaction(async (tx) => {
+        await lockTemporaryRow(tx, parsed.id);
+        const row = await tx.temporaryData.findFirst({ where: { AND: [{ temporaryId: parsed.id }, FAILED_SUBMISSION_WHERE] } });
+        if (!row) throw queuedAlready();
+
+        const entry = await createAudit(tx, {
+            admin,
+            action: REVIEW_ACTION.RETRY_PROCESSING,
+            temporaryId: row.temporaryId,
+            passportId: row.passportId ?? null,
+            previousStatus: row.processingStatus,
+            newStatus: RECEIVED_STATUS,
+            reason,
+            documentType: row.documentType,
+            fileSha256: row.fileSha256 ?? null,
+            previousValue: describeFailure(row.processingSummary).code,
+        });
+        const { count } = await tx.temporaryData.updateMany({
+            where: { temporaryId: row.temporaryId, ...FAILED_SUBMISSION_WHERE },
+            data: {
+                processingStatus: RECEIVED_STATUS,
+                processingAttempts: 0,
+                processingStartedAt: null,
+                reviewReason: null,
+                documentType: "UNCLASSIFIED",
+                passportId: null,
+                uniqueId: null,
+            },
+        });
+        if (count !== 1) throw queuedAlready();
+        return entry;
+    }, TRANSACTION_OPTIONS);
+
+    // Committed: wake the worker (it would also find it on its next poll).
+    try {
+        onQueued();
+    } catch (error) {
+        console.warn("Retry queued; background worker not notified (it will poll):", { temporaryId: parsed.id, errorType: error?.name ?? "Error" });
+    }
+
+    return {
+        action: REVIEW_ACTION.RETRY_PROCESSING,
+        reviewId: toReviewId(parsed.kind, parsed.id),
+        processingStatus: RECEIVED_STATUS,
+        audit: toAuditEntry(audit, admin.name ?? null),
+    };
+}
+
 export async function removeFromReview({ db, bucket, admin, reviewId, reason }) {
     const parsed = parseReviewId(reviewId);
     if (!parsed) throw notFound();

@@ -19,6 +19,7 @@ import {
     getReviewItemWithActions,
     keepReviewItemPending,
     removeFromReview,
+    retryFailedSubmission,
     parseReviewActionBody,
     ReviewActionError,
 } from "../services/adminReviewActionService.js";
@@ -223,6 +224,9 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
     // Permanently deletes one waiting file and its record after an admin's
     // inspection; the reason is required. Only files in pending/.
     router.post("/review/:reviewId/remove", reviewAction(removeFromReview, { reasonRequired: true, needsBucket: true }));
+    // H3: a failed submission (failed-<id>) is processed again by the
+    // background worker; the reason is optional. Audited.
+    router.post("/review/:reviewId/retry", reviewAction(retryFailedSubmission, { reasonRequired: false, needsBucket: true }));
 
     // Corrections of a waiting file; it stays pending and in the queue.
     router.post("/review/:reviewId/document-type", reviewAction(setDocumentType, { needsBucket: false, parse: parseSetDocumentTypeBody }));

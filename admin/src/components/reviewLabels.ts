@@ -61,4 +61,5 @@ export const AUDIT_ACTIONS: Record<string, { label: string; tone: Tone }> = {
     SET_DOCUMENT_TYPE: { label: "Document type set", tone: "pending" },
     ASSIGN_CLIENT: { label: "Client assigned", tone: "pending" },
     SET_POLICE_DATE: { label: "Police slip date set", tone: "pending" },
+    RETRY_PROCESSING: { label: "Processing retried", tone: "pending" },
 };

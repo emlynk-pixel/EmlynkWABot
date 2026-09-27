@@ -520,7 +520,7 @@ Code: `documentChecksumService.checkClientChecksum` (`existingVerified`), `stora
 
 **Behaviour now** (no migration; the existing `FAILED` status and fields):
 - **Review Queue → Source: *Failed processing*** (`GET /review?kind=FAILED`, same filters and paging) lists FAILED submissions without a pending copy (a FAILED row that has a pending copy stays a normal waiting item). The normal queue shows "*N* submissions failed processing … View failed submissions"; the Overview shows the same link. Failed submissions are counted on their own (`summary.failed`, `reviewQueue.failedSubmissions`) — **not** added to Pending review or the queue total.
-- **Review Detail** `failed-<temporary_id>` (read-only): failure reason and stage, client or *Not identified* (no client is created), the sender, received time, processing details and a preview of the original file as received (streamed from `temporary/` through the backend). **No actions**: every action is unavailable (`PROCESSING_FAILED`) and the action endpoints answer 404 for a failed ID; there is no retry — the client sends the file again. No audit entries (nothing is changed).
+- **Review Detail** `failed-<temporary_id>`: failure reason and stage, client or *Not identified* (no client is created), the sender, received time, processing details and a preview of the original file as received (streamed from `temporary/` through the backend). No review actions: approve, keep, remove and the corrections are unavailable (`PROCESSING_FAILED`) and answer 404 for a failed ID. The one action is **Retry processing** (below).
 - **Failure reason** (`src/services/failureReason.js`), derived from the stored summary; the error text itself is never returned: `PDF_TOO_MANY_PAGES`, `PDF_PAGE_TOO_LARGE`, `IMAGE_TOO_LARGE`, `IMAGE_UNREADABLE`, `OCR_BUSY`, `OCR_TIMEOUT` (the OCR resource limits), `TEXT_EXTRACTION_FAILED`, `STORAGE_FAILED`, `PROCESSING_FAILED` (other stages), `NOT_RECORDED` (older rows).
 - **Failure record keeps what was already known** (`documentProcessingService.js`, catch path): the detected document type, and the identified client by the same rule as success (one non-provisional client; never for a cross-client checksum). Before, a failure after identification left the row unlinked and `UNCLASSIFIED`.
 - Status semantics unchanged: FAILED is not merged into DUPLICATE, CONFLICT, MANUAL_REVIEW, UNCLEAR, VERIFIED, pending or REMOVED; a FAILED submission never creates a document, a client-folder file or a pending copy, and never counts towards a client's required documents.
@@ -528,6 +528,28 @@ Code: `documentChecksumService.checkClientChecksum` (`existingVerified`), `stora
 Not FAILED submissions (unchanged): files refused at intake (type, size, content) and media that could not be downloaded leave no record (H2: a download failure is retried by Meta).
 
 Tests: `test/failedSubmissions.test.js` (real pipeline failures — page limit, storage outage after identification, OCR busy; API list/detail/file/actions/security/counts), `admin/src/test/review.test.tsx` ("H3"), E2E harness and headless Chrome (Phase 25).
+
+**Retry processing** (H3 recovery, after M1). Before, a failed submission could only be inspected: the client had to send the file again. Its original file and everything needed to process it are kept, and since M1 processing is a durable, safely repeatable job, so an admin can now process it again:
+- **Action:** `POST /api/admin/review/failed-<temporary_id>/retry` (reason optional, at most 500 characters). Button *Retry processing* on the failed submission's page, with a confirmation dialog. It is offered only for a FAILED submission without a pending copy (`actions.retry`); any other ID answers 404.
+- **Checks:** the original must still be in `temporary/`, otherwise 409 `FILE_MISSING`. If storage can't be reached the answer is 503 `STORAGE_UNAVAILABLE` (no infrastructure details), and nothing is changed.
+- **What it does**, in one transaction that locks the row and re-checks it:
+  - the row goes back to its state as received: `TEMPORARY_STORED`, `processing_attempts` 0 (a full attempt budget), no lease, type `UNCLASSIFIED`, no client link, no review reason. The message ID, file, checksum and `placement_path` are kept;
+  - one `RETRY_PROCESSING` audit entry is written.
+  After the commit the background worker is woken; it would also find the row on its next poll. Nothing is copied, stored or deleted by the action itself.
+- **Processing** is the normal M1 worker and pipeline, with all their safeguards: compare-and-swap claim and lease, claim-fenced writes (an older attempt that outlived its lease can't overwrite the new result), `ALREADY_STORED` (a document stored before the failure is reused, not duplicated), and reuse of a copy that an earlier attempt made (no `_v2` / `_2`). Success → the usual result (stored, pending review, duplicate…). Another failure → `FAILED` again, back in the list, and it can be retried again.
+- **Double click or two admins at once:** the row lock plus the re-check let one request through; the other gets 409 `NOT_FAILED`. A submission currently being processed can't be retried (409).
+- **Audit and history:** previous status `FAILED`, new status `TEMPORARY_STORED`, the failure code (`previous_value`, e.g. `OCR_TIMEOUT`), and the detected type, client, checksum and reason as they were. The entry is append-only like all others and is shown in the item's history (*Processing retried · Failed with: …*), also on the document it becomes.
+- **Error text:** the detail's processing summary no longer includes the redacted error text. Even redacted it can name infrastructure, for example a database host that Prisma quotes in backticks. The safe failure code and stage say what went wrong.
+- **Failure points** (unchanged, for reference):
+  - download or intake validation fails → no row, Meta retries (H2);
+  - OCR, classification, identity, passport extraction, duplicate check, storage copy (including a 60 s storage timeout), documents insert or record update fail → `FAILED` with stage and code, retryable;
+  - the received file can't be loaded → retried automatically, then `FAILED` `FILE_UNAVAILABLE`, retryable if the file is back;
+  - repeated crashes → `FAILED` `ATTEMPTS_EXHAUSTED`, retryable;
+  - a storage failure never counts as stored: no document row without a successful copy.
+
+Tests: `test/failedSubmissionRetry.test.js` (16: failure state and traceability, visibility, storage failure, retry, retry success, retry failure, no duplicate after a stored document or a late-landing copy, stale attempt, retry while processing, concurrent retry, missing file / storage down, IDs and body, authorization, worker wake-up, append-only audit), `admin/src/test/review.test.tsx` (retry dialog, request, queued state, 409). Real PostgreSQL (throwaway): two concurrent retries → one queued, one 409, one audit entry; retry → VERIFIED; a late-landing copy reused on retry. Headless Chrome: Retry offered on both failed details, dialog → *Queued for processing again*, the page-limit PDF fails again and is back in the list with the retry in its history.
+
+Limitations: the retry reprocesses the same file, so a deterministic failure (e.g. a PDF over the page limit) fails the same way again. There is no automatic retry of `FAILED` submissions; an admin decides. A FAILED submission *with* a pending copy remains a normal review item (Approve / Keep / Remove), not retried.
 
 ## 4m. M1 — Asynchronous WhatsApp processing
 
@@ -540,7 +562,7 @@ Tests: `test/failedSubmissions.test.js` (real pipeline failures — page limit, 
 | Situation | Behaviour |
 |---|---|
 | Record insert fails (database down) | 500, upload removed, nothing acknowledged — Meta retries (unchanged H2) |
-| Processing fails (OCR, storage, any stage) | Recorded `FAILED` by the pipeline as before (H3: reason, detected type and client kept, visible under *Failed processing*); not retried automatically |
+| Processing fails (OCR, storage, any stage) | Recorded `FAILED` by the pipeline as before (H3: reason, detected type and client kept, visible under *Failed processing*); not retried automatically — an admin can *Retry processing* (§4l) |
 | Worker can't load the received file | Tried again about a minute later; after 3 attempts `FAILED` (`FILE_UNAVAILABLE`) |
 | Worker or server dies mid-processing | The claim is a 10-minute lease: afterwards the job is claimed again (also by the next run after a restart). After 3 attempts `FAILED` (`ATTEMPTS_EXHAUSTED`) |
 | Same message delivered twice | In-memory claim and, durably, the unique `message_id`: a second row is refused, its upload removed, 200. A duplicate arriving while the first is still running is only acknowledged once the message is recorded (below) |
