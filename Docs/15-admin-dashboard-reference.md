@@ -287,6 +287,8 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 
 ## 10. Testing
 
+Last full regression: 2026-09-27 (Phase 24) — WhatsApp-to-dashboard flow, security, admin actions, storage consistency, browser on three screen sizes in both themes; no product bugs found. Results and limitations: [`14-phase-10-admin-dashboard.md`](14-phase-10-admin-dashboard.md) §8.
+
 | Command | What it runs |
 |---|---|
 | `npm test` | Backend tests (API, actions, corrections, audit, reports, rules) |

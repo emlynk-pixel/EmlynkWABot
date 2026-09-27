@@ -593,6 +593,21 @@ Checked manually for Checkpoint 5 (not in the automated suite): all three migrat
 
 Checked manually for Checkpoint 4 (not in the automated suite): both Phase 10 migrations on a throwaway PostgreSQL 16 (Docker): existing rows byte-identical after the new migration; RLS on and no `anon`/`authenticated` rights on `audit_logs`; `UPDATE`, `DELETE` and `TRUNCATE` rejected by the trigger; deleting an admin with entries refused; no drift between the database and `schema.prisma`. Then the action services with the real Prisma client against that database (real transactions and row locks): same item approved twice at once, two items of one type at once, existing verified passport, a failure after the copy (real rollback, copy removed), concurrent identical Keep Pending, history with admin names, stored document approved in place, FAILED without pending copy, Prisma update/delete of an entry rejected. Finally the production build in headless Chrome (fake database, synthetic data): approve with confirmation, file moved, queue without the item, Keep Pending with required reason, audit entries, Approve disabled for an unlinked file, no failed requests, no CSP violations or console errors. The live database was not used.
 
+### Full system regression (Phase 24, 2026-09-27)
+
+Scope: the whole flow from a signed WhatsApp webhook to the dashboard, on commit `c73fef3`. Throwaway PostgreSQL 16 (Docker, two databases, all 9 migrations); real server code throughout — webhook signature check, parsing, validation, OCR (Tesseract), classification, identity, reconciliation, checksum/M4, placement, admin API, production admin build in headless Chrome. Replaced: the Meta media download (fixture bytes) and Supabase (in-memory bucket keeping the bytes). Synthetic files only (repo fixtures plus generated police slips/reports as PDF/JPEG/PNG, medical PDF, invoice, rotated/low-resolution/compressed passport photos, disguised executable, 11 MB file). The live database and storage were not used.
+
+| Area | Result |
+|---|---|
+| Automated suites | `npm test` 895 (884 pass, 11 OCR skipped), OCR on 895/895, admin 111/111, typecheck and build OK |
+| WhatsApp → processing → storage → database | 33/33 scenarios + 3 on the second database (document and image messages, batch, replay, text, invalid files, download/storage/database failures and retries) |
+| API: security, admin actions, audit, clients, police, daily report, storage consistency | 77/77 |
+| Error handling (database down) | 8/8 |
+| Browser (10 pages × desktop/tablet/mobile × light/dark; filters, back/forward, reload, loading/error/empty/not-found, Sync, dark mode, sign-out) | 41/41; no overflow, no console/CSP errors, one API request per page |
+| Performance (5,000 clients, 15,000 documents, 60,000 submissions) | every dashboard call under 200 ms |
+
+Bugs found in the product: none. Observed limitations (not changed): a photo rotated by 90° is not read (it goes to review as `UNKNOWN`); a PDF over the page limit is recorded `FAILED` and is not shown in the dashboard (audit H3); a different, well-read file of a type the client already has verified is stored as a further verified version (version workflow, M4 test 3).
+
 ## 9. Decisions (2026-09-25)
 
 | Decision | Outcome |
