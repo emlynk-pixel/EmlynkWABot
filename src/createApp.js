@@ -1,5 +1,6 @@
 import express from "express";
 import helmet from "helmet";
+import cookieParser from "cookie-parser";
 import authRoutes from "./routes/auth.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 import { createAdminRouter } from "./routes/admin.js";
@@ -35,6 +36,11 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
             },
         },
     }));
+
+    // Phase 12: parse cookies so authenticateAdmin can read the httpOnly JWT
+    // cookie set by POST /auth/login. No secret is needed (the JWT has its
+    // own signature); unsigned cookies are fine.
+    app.use(cookieParser());
 
     app.use(
         express.json({

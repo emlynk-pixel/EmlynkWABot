@@ -786,3 +786,59 @@ Bugs found in the product: none. Observed limitations (not changed): a photo rot
 ## 11. After Phase 10
 
 Phase 10 is complete in code, tests and documentation; the remaining step is deployment (apply the five migrations, then deploy). Later phases: Phase 11 reminders and warnings for police reports (not built here), Phase 12 roles and the move of the admin token to an httpOnly cookie. Open, undecided items: a view for failed submissions, a rule for replacing a verified document, daily snapshots for historical completeness figures.
+
+## 12. Phase 12 — Checkpoint 1: Authentication & Role-Based Access Control (RBAC)
+
+Implemented on 2026-09-27 per Proposal §33 and Phase 12 Checkpoint 1 requirements.
+
+### 12.1 Role Model Architecture
+The three-tier role model recommended in Proposal §33 is implemented directly using the existing `Admin.role` column (no new migrations):
+- **`ADMIN`** (Administrator): Full access. Can perform all reads, all review actions, and stored document modifications (e.g., correcting stored police slip submission dates).
+- **`REVIEWER`** (Reviewer): Read access across all sections + review execution actions (`approve`, `keep-pending`, `remove`, `retry`, `replace-verified`, `keep-as-version`, `document-type`, `assign-client`). Refused on stored document modifications.
+- **`VIEWER`** (Read-only / reporting user): Read access across all sections (`/overview`, `/documents`, `/clients`, `/police`, `/reports/daily`, `/review`, `/me`). Refused on all state-changing actions.
+
+### 12.2 Authorization & Security Middleware
+- **`requireRole(allowedRoles)`** middleware (`src/middleware/requireRole.js`):
+  - Applied to every admin endpoint after `createRequireActiveAdmin` (which enforces `status === "ACTIVE"`).
+  - Validates `req.admin.role` against permitted roles.
+  - Rejection response: HTTP 403 `{ "message": "Insufficient permissions" }` (constant safe error message; never leaks role or user details).
+- **Endpoint Permissions Map**:
+  - `ALL_ACTIVE` (`ADMIN`, `REVIEWER`, `VIEWER`):
+    - `GET /api/admin/overview`
+    - `GET /api/admin/documents`
+    - `GET /api/admin/documents/:id`
+    - `GET /api/admin/documents/missing`
+    - `GET /api/admin/clients`
+    - `GET /api/admin/clients/:passportId`
+    - `GET /api/admin/police`
+    - `GET /api/admin/reports/daily`
+    - `GET /api/admin/review`
+    - `GET /api/admin/review/:id`
+    - `GET /api/admin/review/:id/file`
+    - `GET /auth/me`
+  - `REVIEWERS_UP` (`ADMIN`, `REVIEWER`):
+    - `POST /api/admin/review/:id/approve`
+    - `POST /api/admin/review/:id/keep-pending`
+    - `POST /api/admin/review/:id/remove`
+    - `POST /api/admin/review/:id/retry`
+    - `POST /api/admin/review/:id/replace-verified`
+    - `POST /api/admin/review/:id/keep-as-version`
+    - `POST /api/admin/review/:id/document-type`
+    - `POST /api/admin/review/:id/assign-client`
+  - `ADMINS_ONLY` (`ADMIN`):
+    - `POST /api/admin/documents/:id/police-date`
+
+### 12.3 Cookie Authentication & Session Architecture
+- Replaced frontend-only token storage with secure cookie-based session transport:
+  - Cookie name: `emlynk_admin_token`
+  - Flags: `HttpOnly: true`, `SameSite: strict`, `Secure: isSecureContext()` (true in production, skipped in dev/test).
+  - Set automatically on successful `POST /auth/login`.
+  - Cleared on `POST /auth/logout` via `res.clearCookie`.
+- Frontend JavaScript (`admin/src`):
+  - Requests include `credentials: "include"`.
+  - Frontend never reads or exposes the raw JWT.
+  - Sign-out is an authenticated server-side action via `POST /auth/logout`.
+- Dual compatibility:
+  - `authenticateAdmin` accepts either `emlynk_admin_token` cookie or `Authorization: Bearer <token>` header, preserving backward compatibility for CLI scripts, testing, and legacy automation.
+  - CSRF defense in depth: `SameSite=Strict` cookie policy prevents cross-site request forgery by default.
+

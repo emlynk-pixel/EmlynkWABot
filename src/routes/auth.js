@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 
 import { comparePassword, hashPassword } from "../utils/password.js";
-import { authenticateAdmin, JWT_ALGORITHM } from "../middleware/auth.js";
+import { authenticateAdmin, JWT_ALGORITHM, AUTH_COOKIE_NAME, authCookieOptions } from "../middleware/auth.js";
 import { createLoginRateLimiter } from "../middleware/loginRateLimiter.js";
 import { ACTIVE_ADMIN_STATUS } from "../middleware/requireActiveAdmin.js";
 
@@ -101,8 +101,16 @@ export function createAuthRouter({ db, loginLimiter = createLoginRateLimiter() }
         }
       );
 
+      // Phase 12: set the JWT as an httpOnly cookie instead of returning it
+      // in the response body. The frontend never sees the raw token; it
+      // relies on GET /auth/me to learn who is signed in.
+      res.cookie(AUTH_COOKIE_NAME, token, authCookieOptions());
+
       return res.status(200).json({
         message: "Login successful",
+        // token is still returned for backward-compatible tests and CLI tooling
+        // that use the Authorization: Bearer header. The frontend no longer
+        // reads this field (it relies on the cookie + GET /auth/me).
         token,
       });
     } catch (error) {
@@ -157,6 +165,16 @@ export function createAuthRouter({ db, loginLimiter = createLoginRateLimiter() }
         message: "Internal Server Error",
       });
     }
+  });
+
+  // Phase 12: explicit sign-out clears the cookie server-side. A CSRF attack
+  // cannot forge this because the cookie is SameSite=Strict; cross-site
+  // requests never carry it. Requires a valid session to prevent logout-CSRF
+  // amplification (an attacker cannot force a sign-out of a victim's session
+  // they cannot observe).
+  router.post("/logout", authenticateAdmin, (req, res) => {
+    res.clearCookie(AUTH_COOKIE_NAME, authCookieOptions());
+    return res.status(200).json({ message: "Signed out" });
   });
 
   return router;

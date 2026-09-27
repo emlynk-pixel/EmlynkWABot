@@ -100,7 +100,7 @@ const report = (overrides: Partial<DailyReport["daily"]> = {}, date = "2026-09-2
         unclear: 2, temporary: 3, byType: { PASSPORT: 3, POLICE_SLIP: 1, POLICE_REPORT: 1, MEDICAL: 1, UNKNOWN: 3 }, byStatus: {}, adminActions: { APPROVE: 4, REMOVE_FROM_REVIEW: 1 },
         ...overrides,
     },
-    current: { asOf: "2026-09-25T06:00:00.000Z", clients: { total: 10, complete: 6, incomplete: 4, withMissing: 3, missingDocuments: 5, missingByType: {} }, police: { dueSoon: 2, dueToday: 1, overdue: 0 } },
+    current: { asOf: "2026-09-25T06:00:00.000Z", clients: { total: 10, complete: 6, incomplete: 4, withMissing: 3, missingDocuments: 5, missingByType: {} }, police: { dueSoon: 2, dueToday: 1, overdue: 0, missingSlipDate: 0, notUploaded: 0 } },
 });
 
 describe("Daily Report", () => {

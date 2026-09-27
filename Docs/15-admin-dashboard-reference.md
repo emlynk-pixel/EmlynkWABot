@@ -239,31 +239,35 @@ WhatsApp documents are processed in the background. When a document arrives, the
 
 ## 6. API
 
-All endpoints are under `/api/admin` and need `Authorization: Bearer <token>` of an ACTIVE admin. Responses are never cached.
+All endpoints are under `/api/admin` and require an ACTIVE admin session via `emlynk_admin_token` httpOnly cookie (preferred) or `Authorization: Bearer <token>`. Role-based access control (RBAC) enforces endpoint permissions based on `admin.role` (`ADMIN`, `REVIEWER`, `VIEWER`). Responses are never cached.
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/overview` | Overview figures |
-| GET | `/documents` | Stored documents (search, filters, sort, paging) |
-| GET | `/documents/missing` | Incomplete clients and missing types (`documentType`, `search`, paging) |
-| POST | `/documents/:documentId/police-date` | Set or correct a police slip date `{ policeSubmittedDate, reason }` |
-| GET | `/clients` | Clients directory (`search`, `completion`, `missingType`, paging) |
-| GET | `/clients/:passportId` | Client details |
-| GET | `/review`, `/review/:reviewId`, `/review/:reviewId/file` | Review Queue, one item, its file |
-| POST | `/review/:reviewId/approve` | Approve `{ reason?, policeSubmittedDate? }` |
-| POST | `/review/:reviewId/keep-pending` | Keep Pending `{ reason }` |
-| POST | `/review/:reviewId/remove` | Remove from Review `{ reason }` |
-| POST | `/review/:reviewId/document-type` | Set Document Type `{ documentType, reason }` |
-| POST | `/review/:reviewId/assign-client` | Assign Client `{ passportId, reason }` |
-| GET | `/police` | Police Workflow (`status`, `search`, `passportId`, paging) |
-| GET | `/reports/daily` | Daily Report (`date=YYYY-MM-DD`, default today) |
+| Method | Path | Allowed Roles | Purpose |
+|---|---|---|---|
+| GET | `/overview` | ADMIN, REVIEWER, VIEWER | Overview figures |
+| GET | `/documents` | ADMIN, REVIEWER, VIEWER | Stored documents (search, filters, sort, paging) |
+| GET | `/documents/missing` | ADMIN, REVIEWER, VIEWER | Incomplete clients and missing types (`documentType`, `search`, paging) |
+| POST | `/documents/:documentId/police-date` | ADMIN | Set or correct a police slip date `{ policeSubmittedDate, reason }` |
+| GET | `/clients` | ADMIN, REVIEWER, VIEWER | Clients directory (`search`, `completion`, `missingType`, paging) |
+| GET | `/clients/:passportId` | ADMIN, REVIEWER, VIEWER | Client details |
+| GET | `/review`, `/review/:reviewId`, `/review/:reviewId/file` | ADMIN, REVIEWER, VIEWER | Review Queue, one item, its file |
+| POST | `/review/:reviewId/approve` | ADMIN, REVIEWER | Approve `{ reason?, policeSubmittedDate? }` |
+| POST | `/review/:reviewId/keep-pending` | ADMIN, REVIEWER | Keep Pending `{ reason }` |
+| POST | `/review/:reviewId/remove` | ADMIN, REVIEWER | Remove from Review `{ reason }` |
+| POST | `/review/:reviewId/document-type` | ADMIN, REVIEWER | Set Document Type `{ documentType, reason }` |
+| POST | `/review/:reviewId/assign-client` | ADMIN, REVIEWER | Assign Client `{ passportId, reason }` |
+| POST | `/review/:reviewId/retry` | ADMIN, REVIEWER | Retry processing `{ reason? }` |
+| POST | `/review/:reviewId/replace-verified` | ADMIN, REVIEWER | Replace verified document `{ existingDocumentId, reason?, policeSubmittedDate? }` |
+| POST | `/review/:reviewId/keep-as-version` | ADMIN, REVIEWER | Keep document as version `{ reason? }` |
+| GET | `/police` | ADMIN, REVIEWER, VIEWER | Police Workflow (`status`, `search`, `passportId`, paging) |
+| GET | `/reports/daily` | ADMIN, REVIEWER, VIEWER | Daily Report (`date=YYYY-MM-DD`, default today) |
 
-Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, message }]`, and refused actions (409) add a `code` such as `ALREADY_RESOLVED`, `VERIFIED_DOCUMENT_EXISTS`, `CLIENT_NOT_FOUND` or `NOT_CORRECTABLE`. 401 means no or an invalid session, 404 an unknown item, 502 a storage failure, and 500 an unexpected error (no details are shown).
+Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, message }]`, refused actions (409) add a `code` such as `ALREADY_RESOLVED`, `VERIFIED_DOCUMENT_EXISTS`, `CLIENT_NOT_FOUND` or `NOT_CORRECTABLE`, and insufficient permissions (403) return `{ "message": "Insufficient permissions" }`. 401 means no or an invalid session, 404 an unknown item, 502 a storage failure, and 500 an unexpected error (no details are shown).
 
 ## 7. Security
 
 - Documents are in a **private** storage bucket. The dashboard never receives a storage link or credential: files are streamed through the server to signed-in admins only and shown from a local browser copy.
-- The session token lives in the browser tab's session storage and expires after 1 hour; the server checks on every request that the admin still exists and is ACTIVE. Moving it to an httpOnly cookie is planned for Phase 12.
+- The session authentication token is transported via a secure `httpOnly; SameSite=Strict; Secure (in production)` cookie (`emlynk_admin_token`) set on login and cleared on logout. The frontend never accesses raw JWT secrets. The server verifies on every request that the admin exists and is ACTIVE.
+- Role-based authorization (`requireRole` middleware) enforces the principle of least privilege across all endpoints.
 - The server's Content Security Policy allows scripts only from the dashboard itself; the dashboard loads no external fonts or scripts.
 - Responses contain no storage paths or checksums.
 
@@ -275,7 +279,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 | 2 | Remove from Review | Manual, after inspection, with a required reason and confirmation; permanently deletes the waiting file (with its original and record) or the stored *Review required* document (with its file); the audit entry stays; no undo; never a verified document. |
 | 3 | Automatic removal | Pending documents are never removed automatically. |
 | 4 | Audit log | Every admin action is recorded in an append-only table (`audit_logs`, protected by a database trigger). |
-| 5 | Roles | Deferred to Phase 12; every ACTIVE admin can use every action; no 403 responses. |
+| 5 | Roles | Implemented in Phase 12 Checkpoint 1 per Proposal §33: three roles (`ADMIN`, `REVIEWER`, `VIEWER`) using the existing `Admin.role` column, enforced via `requireRole` middleware with safe 403 responses. |
 | 6 | Identity assignment | Admins may link a waiting file to an existing client only; no client is created; the sender's number and the original identity result are kept. |
 | 7 | Police report completion | A verified police report completes the workflow, whenever it arrived. Admins enter or confirm the slip's submitted date when approving, and can set or correct it later. There is no admin upload of the police report. |
 | 8 | Required documents | Configured with `REQUIRED_DOCUMENT_TYPES` (environment, validated at startup); no document-type table and no Settings page. |

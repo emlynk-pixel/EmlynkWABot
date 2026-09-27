@@ -1,5 +1,12 @@
 // Minimal JSON client for the EmlynkWABot backend. Requests are same-origin:
 // in production Express serves this app, in development Vite proxies /auth and /api.
+//
+// Phase 12: authentication is via an httpOnly cookie set by the server.
+// All requests send credentials: "include" so the browser attaches the cookie.
+// When an explicit token or stored test token is present, Authorization: Bearer
+// is also included for backward compatibility with existing tests and CLI tools.
+
+import { readToken } from "../auth/tokenStorage";
 
 export class ApiError extends Error {
     readonly status: number;
@@ -14,14 +21,10 @@ export class ApiError extends Error {
 type RequestOptions = {
     method?: "GET" | "POST";
     body?: unknown;
-    token?: string | null;
     signal?: AbortSignal;
+    token?: string;
 };
 
-// Only the backend's own short, generic messages are shown to the user
-// (e.g. "Invalid email or password"). Anything unexpected gets a fixed text.
-// A 502 is the backend saying storage failed; its JSON message is shown
-// (a proxy's own 502 page isn't JSON, so it still gets the fixed text).
 const FALLBACK_MESSAGE = "Something went wrong. Please try again.";
 
 async function readMessage(response: Response): Promise<string | null> {
@@ -33,10 +36,15 @@ async function readMessage(response: Response): Promise<string | null> {
     }
 }
 
-export async function apiRequest<T>(path: string, { method = "GET", body, token, signal }: RequestOptions = {}): Promise<T> {
+export async function apiRequest<T>(path: string, { method = "GET", body, signal, token }: RequestOptions = {}): Promise<T> {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const explicitToken = token && token !== "session" && token !== "cookie" ? token : null;
+    const effectiveToken = explicitToken ?? readToken();
+    if (effectiveToken) {
+        headers["Authorization"] = `Bearer ${effectiveToken}`;
+    }
 
     let response: Response;
     try {
@@ -44,7 +52,7 @@ export async function apiRequest<T>(path: string, { method = "GET", body, token,
             method,
             headers,
             body: body === undefined ? undefined : JSON.stringify(body),
-            credentials: "same-origin",
+            credentials: "include",
             cache: "no-store",
             signal,
         });
@@ -62,12 +70,19 @@ export async function apiRequest<T>(path: string, { method = "GET", body, token,
 }
 
 // Same rules as apiRequest, for a binary response (the review file preview).
-export async function apiRequestBlob(path: string, { token, signal }: Pick<RequestOptions, "token" | "signal"> = {}): Promise<Blob> {
+export async function apiRequestBlob(path: string, { signal, token }: Pick<RequestOptions, "signal" | "token"> = {}): Promise<Blob> {
+    const headers: Record<string, string> = {};
+    const explicitToken = token && token !== "session" && token !== "cookie" ? token : null;
+    const effectiveToken = explicitToken ?? readToken();
+    if (effectiveToken) {
+        headers["Authorization"] = `Bearer ${effectiveToken}`;
+    }
+
     let response: Response;
     try {
         response = await fetch(path, {
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-            credentials: "same-origin",
+            headers,
+            credentials: "include",
             cache: "no-store",
             signal,
         });

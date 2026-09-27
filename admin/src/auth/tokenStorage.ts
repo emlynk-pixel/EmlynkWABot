@@ -1,14 +1,16 @@
-// Where the admin JWT lives (Phase 10).
+// Token storage utility.
+// In Phase 12, production admin authentication uses httpOnly cookies set by
+// the server. This utility is retained for tests, tools, or contexts where
+// client-side token caching/inspection is needed.
 //
 // sessionStorage: kept across reloads of this tab, gone when the tab or
 // browser closes, never shared with other tabs, never sent automatically.
-// The backend token itself expires after 1 hour. Moving to an httpOnly
-// cookie is planned for Phase 12 (security hardening).
+// The backend token itself expires after 1 hour.
 //
 // Storage can be unavailable (private mode, blocked site data), so every
 // access is guarded and a memory copy keeps the current tab working.
 
-const KEY = "emlynk.admin.token";
+export const KEY = "emlynk.admin.token";
 let memoryToken: string | null = null;
 
 // The memory copy is only used when sessionStorage itself is unavailable.

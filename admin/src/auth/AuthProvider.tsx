@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { fetchCurrentAdmin, login as loginRequest, type Admin } from "../api/auth";
+import { fetchCurrentAdmin, login as loginRequest, logout as logoutRequest, type Admin } from "../api/auth";
 import { clearToken, readToken, saveToken, tokenExpiresAt } from "./tokenStorage";
 
 // "checking": a stored token is being validated with GET /auth/me.
@@ -12,7 +12,7 @@ type AuthContextValue = AuthState & {
     // The session token for API calls (admin/src/api); null when signed out.
     token: string | null;
     signIn: (email: string, password: string) => Promise<void>;
-    signOut: () => void;
+    signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -37,7 +37,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
     const expiryTimer = useRef<number | undefined>(undefined);
 
-    const signOut = useCallback(() => {
+    const signOut = useCallback(async () => {
+        try {
+            await logoutRequest();
+        } catch {
+            // best-effort
+        }
         clearToken();
         setToken(null);
         setState({ status: "anonymous", admin: null });
