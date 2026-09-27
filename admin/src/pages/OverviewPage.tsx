@@ -173,6 +173,14 @@ function OverviewContent({ data }: { data: Overview }) {
                             </Link>
                         }
                     />
+                    {Boolean(reviewQueue.failedSubmissions) && (
+                        <p className="text-body-sm">
+                            <Link to="/review?kind=FAILED" className="font-medium text-critical hover:underline">
+                                {formatNumber(reviewQueue.failedSubmissions!)} {reviewQueue.failedSubmissions === 1 ? "submission" : "submissions"} failed processing
+                            </Link>
+                            <span className="text-ink-muted"> — not counted as pending review; nothing was stored for the client.</span>
+                        </p>
+                    )}
                     {Object.keys(reviewQueue.pendingByStatus).length > 0 && (
                         <ul className="flex flex-wrap gap-2" aria-label="Waiting files by reason">
                             {Object.entries(reviewQueue.pendingByStatus).map(([status, count]) => (

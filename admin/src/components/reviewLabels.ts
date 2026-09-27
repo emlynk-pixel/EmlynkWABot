@@ -33,6 +33,24 @@ export const IDENTITY_NOTES: Record<string, string> = {
 
 export const CATEGORY_LABELS = { IDENTITY: "Identity issues", QUALITY: "Quality / OCR issues", CONFLICT: "Conflicts", OTHER: "Other" } as const;
 
+// H3: why processing failed (backend src/services/failureReason.js).
+export const FAILURE_REASONS: Record<string, { label: string; description: string }> = {
+    PDF_TOO_MANY_PAGES: { label: "PDF has too many pages", description: "The PDF has more pages than the system reads. Ask the client to send only the needed pages." },
+    PDF_PAGE_TOO_LARGE: { label: "PDF page too large", description: "A page of the PDF is too large to read. Ask the client for a smaller scan or a photo." },
+    IMAGE_TOO_LARGE: { label: "Image too large", description: "The image is too large to read. Ask the client for a smaller photo." },
+    IMAGE_UNREADABLE: { label: "Image could not be opened", description: "The image file could not be decoded. Ask the client to send it again." },
+    OCR_BUSY: { label: "Text reading was busy", description: "Too many documents were being read at the same time. Ask the client to send the file again." },
+    OCR_TIMEOUT: { label: "Text reading took too long", description: "Reading the text did not finish in time. Ask the client to send a clearer or smaller file." },
+    TEXT_EXTRACTION_FAILED: { label: "Text could not be read", description: "Reading the document's text failed." },
+    STORAGE_FAILED: { label: "Storing the file failed", description: "Copying the file or recording the document failed. Nothing was stored for the client." },
+    PROCESSING_FAILED: { label: "Processing error", description: "Processing stopped with an error." },
+    NOT_RECORDED: { label: "Not recorded", description: "This submission was processed before failure details were saved." },
+};
+
+export function failureLabel(code: string | undefined | null): string {
+    return code ? FAILURE_REASONS[code]?.label ?? humanize(code) : "Processing failed";
+}
+
 // Review actions and corrections in the audit log (there is no reject).
 export const AUDIT_ACTIONS: Record<string, { label: string; tone: Tone }> = {
     APPROVE: { label: "Approved", tone: "verified" },

@@ -199,6 +199,11 @@ const correctable = (kind) => (kind === REVIEW_KIND.PENDING
 export async function reviewActionAvailability({ db, reviewId }) {
     const parsed = parseReviewId(reviewId);
     if (!parsed) return null;
+    // H3: a FAILED submission can only be inspected (there is no retry).
+    if (parsed.kind === REVIEW_KIND.FAILED) {
+        const none = { available: false, code: "PROCESSING_FAILED", message: "Processing failed, so nothing was stored. This submission can only be inspected; ask the client to send the file again." };
+        return { approve: { ...none, needsPoliceDate: false }, keepPending: none, remove: none, setDocumentType: none, assignClient: none };
+    }
     const row = parsed.kind === REVIEW_KIND.PENDING ? await findPending(db, parsed.id) : await findReviewDocument(db, parsed.id);
     if (!row) return null;
     const blocker = await approvalBlocker(db, {

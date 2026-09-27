@@ -158,7 +158,7 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
 
     const invalidReviewId = (res) => res.status(400).json({
         message: "Invalid review ID",
-        errors: [{ field: "reviewId", message: "must be pending-<id> or document-<id>" }],
+        errors: [{ field: "reviewId", message: "must be pending-<id>, document-<id> or failed-<id>" }],
     });
 
     router.get("/review/:reviewId", async (req, res) => {

@@ -45,6 +45,8 @@ export type Overview = {
         reviewRequiredDocuments: number;
         pendingByStatus: Record<string, number>;
         items: PendingItem[];
+        // H3: submissions whose processing failed (not part of `total`).
+        failedSubmissions?: number;
     };
     // Police Workflow: final police reports by countdown status.
     police: { dueSoon: number; dueToday: number; overdue: number };
@@ -237,7 +239,9 @@ export function getClientDetails(token: string, passportId: string, signal?: Abo
 
 // ---------------------------------------------------------------- review
 
-export type ReviewKind = "PENDING" | "DOCUMENT";
+// FAILED (H3): a submission whose processing failed; read-only.
+export type ReviewKind = "PENDING" | "DOCUMENT" | "FAILED";
+export type Failure = { code: string; stage: string | null };
 export type ReviewCategory = "IDENTITY" | "QUALITY" | "CONFLICT" | "OTHER";
 
 export type ReviewQueueItem = {
@@ -251,6 +255,7 @@ export type ReviewQueueItem = {
     confidence: number | null;
     receivedDate: string;
     client: ClientRef | null;
+    failure?: Failure; // FAILED items only
 };
 
 export type ReviewQueueParams = {
@@ -272,6 +277,7 @@ export type ReviewQueue = {
         documents: number;
         byReason: Record<string, number>;
         byCategory: Record<ReviewCategory, number>;
+        failed?: number; // H3: failed submissions, not part of `total`
     };
 };
 
@@ -316,7 +322,8 @@ export type ReviewItem = {
     processing: ProcessingSummary | null;
     // M4: for a waiting duplicate, the client's existing document it is an exact copy of.
     duplicateOf?: { documentId: string; documentType: string; verificationStatus: string; receivedDate: string | null } | null;
-    file: { name: string; mimeType: string | null; size: number | null; location: "PENDING" | "CLIENT"; previewUrl: string | null };
+    file: { name: string; mimeType: string | null; size: number | null; location: "PENDING" | "CLIENT" | "TEMPORARY"; previewUrl: string | null };
+    failure?: Failure | null; // H3: FAILED items only
     auditLog: AuditEntry[]; // newest first
     actions: ReviewActions | null;
 };

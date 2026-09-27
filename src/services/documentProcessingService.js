@@ -153,6 +153,13 @@ function summarize(state) {
     };
 }
 
+// The client a submission may be linked to: one identified, non-provisional
+// client, never when the exact file belongs to another client.
+function clientLink(state) {
+    const link = state.clientIdentified && state.checksum?.outcome !== CHECKSUM_OUTCOME.CROSS_CLIENT_CONFLICT;
+    return link ? { passportId: state.identity.passportId, uniqueId: state.identity.uniqueId } : {};
+}
+
 // Run Phase 5 (classification, OCR, confidence, passport fields, police
 // date), Phase 6 (identity, reconciliation) and Phase 7 (checksum checks,
 // permanent or pending copy) for one stored document, then update its
@@ -223,6 +230,7 @@ export async function processDocument({
         const clientIdentified = LINKABLE_IDENTITIES.has(state.identity.status)
             && !state.identity.provisional
             && Boolean(state.identity.passportId);
+        state.clientIdentified = clientIdentified;
 
         // Before reconciliation, so a file that is a duplicate or belongs to
         // another client never writes to this client's record.
@@ -302,12 +310,10 @@ export async function processDocument({
         });
 
         state.stage = "RECORD_UPDATE";
-        // A file that belongs to another client is never linked to this one.
-        const linkUser = clientIdentified && state.checksum?.outcome !== CHECKSUM_OUTCOME.CROSS_CLIENT_CONFLICT;
         await updateTemporaryDocumentRecord(temporaryId, {
             documentType,
             processingStatus: state.processingStatus,
-            ...(linkUser ? { passportId: state.identity.passportId, uniqueId: state.identity.uniqueId } : {}),
+            ...clientLink(state),
             ...(state.placement.pendingStoragePath ? { pendingStoragePath: state.placement.pendingStoragePath } : {}),
             // Review data for the admin dashboard: the same PII-free summary
             // that is logged, as it stands once processing has completed.
@@ -324,6 +330,11 @@ export async function processDocument({
             // Keep a pending copy traceable even if a later step failed.
             await updateTemporaryDocumentRecord(temporaryId, {
                 processingStatus: PROCESSING_STATUS.FAILED,
+                // H3: what was already determined before the failure is kept
+                // (the detected type; the client, by the same rule as
+                // success), so admins can see what and whose it was.
+                ...(state.resolvedType ? { documentType: state.resolvedType.documentType } : {}),
+                ...clientLink(state),
                 ...(state.placement?.pendingStoragePath ? { pendingStoragePath: state.placement.pendingStoragePath } : {}),
                 processingSummary: summarize(state),
                 reviewReason: deriveReviewReason(state),

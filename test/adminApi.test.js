@@ -228,7 +228,7 @@ describe("GET /api/admin/overview", () => {
         const before = db.calls.length;
         await http.get("/api/admin/overview");
         const dashboardCalls = db.calls.slice(before).filter((c) => !c.method.startsWith("admin."));
-        assert.equal(dashboardCalls.length, 16); // 10 + 3 for the police due counts + 3 for client completeness
+        assert.equal(dashboardCalls.length, 17); // 10 + 3 police due counts + 3 client completeness + 1 failed submissions (H3)
         const recent = dashboardCalls.find((c) => c.method === "document.findMany");
         assert.ok(recent.args.select.user, "client joined in the same query");
         assert.equal(recent.args.take, 8);

@@ -4,7 +4,7 @@ import { useAdminResource } from "../api/useAdminResource";
 import { Confidence } from "../components/Confidence";
 import { documentTypeLabel, formatDateTime, formatNumber, shortId } from "../components/format";
 import { Icon, type IconName } from "../components/Icon";
-import { CATEGORY_LABELS, REVIEW_REASONS, reviewReasonLabel, reviewReasonTone } from "../components/reviewLabels";
+import { CATEGORY_LABELS, REVIEW_REASONS, failureLabel, reviewReasonLabel, reviewReasonTone } from "../components/reviewLabels";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { StatusBadge, ToneBadge } from "../components/StatusBadge";
 
@@ -52,6 +52,7 @@ export function ReviewQueuePage() {
         setSearchParams(next);
     };
     const hasFilters = ["kind", "documentType", "reviewReason", "order"].some((name) => searchParams.get(name));
+    const showingFailed = params.kind === "FAILED";
     const data = queue.data;
     const summary = data?.summary;
     const control = "h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
@@ -62,8 +63,21 @@ export function ReviewQueuePage() {
         <section aria-labelledby="page-title" className="space-y-4">
             <div>
                 <h1 id="page-title" className="text-headline-lg text-ink">Review Queue</h1>
-                <p className="mt-1 text-body-sm text-ink-muted">Files waiting in pending storage and stored documents marked Review required. Oldest first.</p>
+                <p className="mt-1 text-body-sm text-ink-muted">
+                    {showingFailed
+                        ? "Submissions whose processing failed. Nothing was stored for the client; they can be inspected here (there is no retry)."
+                        : "Files waiting in pending storage and stored documents marked Review required. Oldest first."}
+                </p>
             </div>
+
+            {!showingFailed && Boolean(summary?.failed) && (
+                <div role="note" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-critical-border bg-critical-bg px-3 py-2 text-body-sm">
+                    <span className="text-ink">
+                        <span className="font-medium text-critical">{formatNumber(summary!.failed!)} {summary!.failed === 1 ? "submission" : "submissions"} failed processing</span> and {summary!.failed === 1 ? "is" : "are"} not in this queue.
+                    </span>
+                    <button type="button" onClick={() => update({ kind: "FAILED", reviewReason: undefined })} className="text-label-md text-primary hover:underline">View failed submissions</button>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <StatCard label="Pending reviews" value={summary?.total} icon="fact_check" />
@@ -77,6 +91,7 @@ export function ReviewQueuePage() {
                     <option value="">All items</option>
                     <option value="PENDING">Files waiting in pending storage</option>
                     <option value="DOCUMENT">Stored documents to review</option>
+                    <option value="FAILED">Failed processing{summary?.failed !== undefined ? ` (${formatNumber(summary.failed)})` : ""}</option>
                 </select>
                 <select aria-label="Review reason" value={params.reviewReason ?? ""} onChange={(e) => update({ reviewReason: e.target.value || undefined })} className={control}>
                     <option value="">All reasons</option>
@@ -97,7 +112,7 @@ export function ReviewQueuePage() {
                 {queue.status === "loading" && <LoadingState label="Loading review queue…" />}
                 {queue.status === "success" && data && data.items.length === 0 && (
                     <EmptyState
-                        title={hasFilters ? "No items match the selected filters" : "Nothing waiting for review"}
+                        title={showingFailed && !params.documentType && !params.reviewReason ? "No failed submissions" : hasFilters ? "No items match the selected filters" : "Nothing waiting for review"}
                         action={hasFilters ? <button type="button" onClick={() => setSearchParams(new URLSearchParams())} className="text-label-md text-primary hover:underline">Reset filters</button> : undefined}
                     />
                 )}
@@ -108,7 +123,7 @@ export function ReviewQueuePage() {
                                 <caption className="sr-only">Review queue</caption>
                                 <thead>
                                     <tr>
-                                        {["Item", "Client", "Document type", "Review reason", "Confidence", "Received", "Status", "Action"].map((h) => (
+                                        {["Item", "Client", "Document type", showingFailed ? "Failure reason" : "Review reason", "Confidence", "Received", "Status", "Action"].map((h) => (
                                             <th key={h} scope="col" className={`${th} ${h === "Confidence" || h === "Action" ? "text-right" : ""}`}>{h}</th>
                                         ))}
                                     </tr>
@@ -117,8 +132,8 @@ export function ReviewQueuePage() {
                                     {data.items.map((item) => (
                                         <tr key={item.reviewId} className="hover:bg-canvas">
                                             <td className={td}>
-                                                <span className="font-medium text-primary">{shortId(item.reviewId.replace(/^(pending|document)-/, ""))}</span>
-                                                <span className="ml-2 text-label-sm text-ink-subtle">{item.kind === "PENDING" ? "Waiting file" : "Stored"}</span>
+                                                <span className="font-medium text-primary">{shortId(item.reviewId.replace(/^(pending|document|failed)-/, ""))}</span>
+                                                <span className="ml-2 text-label-sm text-ink-subtle">{item.kind === "PENDING" ? "Waiting file" : item.kind === "FAILED" ? "Failed" : "Stored"}</span>
                                             </td>
                                             <td className={td}>
                                                 {item.client ? (
@@ -130,13 +145,15 @@ export function ReviewQueuePage() {
                                             </td>
                                             <td className={td}>{documentTypeLabel(item.documentType)}</td>
                                             <td className={td}>
-                                                <ToneBadge tone={reviewReasonTone(item.reviewReason)}>{reviewReasonLabel(item.reviewReason)}</ToneBadge>
+                                                {item.kind === "FAILED"
+                                                    ? <ToneBadge tone="critical">{failureLabel(item.failure?.code)}</ToneBadge>
+                                                    : <ToneBadge tone={reviewReasonTone(item.reviewReason)}>{reviewReasonLabel(item.reviewReason)}</ToneBadge>}
                                             </td>
                                             <td className={`${td} text-right`}><Confidence value={item.confidence} /></td>
                                             <td className={`${td} text-label-sm text-ink-muted`}>{formatDateTime(item.receivedDate)}</td>
                                             <td className={td}><StatusBadge status={item.verificationStatus ?? item.processingStatus} /></td>
                                             <td className={`${td} text-right`}>
-                                                <Link to={`/review/${encodeURIComponent(item.reviewId)}`} className="text-label-md text-primary hover:underline">Review</Link>
+                                                <Link to={`/review/${encodeURIComponent(item.reviewId)}`} className="text-label-md text-primary hover:underline">{item.kind === "FAILED" ? "View" : "Review"}</Link>
                                             </td>
                                         </tr>
                                     ))}

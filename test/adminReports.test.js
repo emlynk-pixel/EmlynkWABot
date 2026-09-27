@@ -227,7 +227,10 @@ describe("no automatic removal of pending items", () => {
     test("only Remove from Review deletes a submission row; only admin actions and the pipeline remove pending files", () => {
         const deleting = sources.filter(([, code]) => /temporaryData\.(delete|deleteMany)\(/.test(code)).map(([f]) => f);
         assert.deepEqual(deleting, ["adminReviewActionService.js"]);
-        const clearing = sources.filter(([, code]) => /pendingStoragePath:\s*null/.test(code)).map(([f]) => f);
+        // Writes that clear pending_storage_path. adminReviewService.js only uses it in a
+        // read-only filter (H3: FAILED submissions without a pending copy), so it is excluded.
+        const clearing = sources.filter(([f, code]) => f !== "adminReviewService.js" && /pendingStoragePath:\s*null/.test(code)).map(([f]) => f);
+        assert.ok(!/\.(update|updateMany|delete|deleteMany)\(/.test(sources.find(([f]) => f === "adminReviewService.js")[1]), "adminReviewService.js stays read-only");
         // Approve clears it after filing the file; storage placement only says a *new* file got no pending copy.
         assert.deepEqual(clearing.sort(), ["adminReviewActionService.js", "storagePlacementService.js"]);
         // Age, expiry, restart, duplicate detection or OCR timeouts never lead to a removal.

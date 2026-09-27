@@ -4,6 +4,9 @@
 // - PENDING: a submission (temporary_data) whose file waits in pending/;
 // - DOCUMENT: a file stored in a client folder with verification_status
 //   REVIEW_REQUIRED (UNCLEAR band, including accepted low-quality passports).
+// H3: a FAILED submission without a pending copy is shown separately
+// (kind FAILED, "failed-<temporary_id>"): only when asked for, never in the
+// queue total or Pending review, read-only (there is no retry).
 // Nothing here writes; the review actions (approve, keep pending, remove
 // from review) are in adminReviewActionService.js and the corrections in
 // adminCorrectionService.js.
@@ -15,30 +18,36 @@ import { REVIEW_REASON, REVIEW_REASON_CATEGORY } from "./reviewReason.js";
 import { clientName } from "../utils/clientName.js";
 import { ALLOWED_MIME_TYPES } from "../utils/fileValidation.js";
 import { toYmd } from "./policeCountdownService.js";
+import { describeFailure } from "./failureReason.js";
 
 // Submissions waiting for a person: a file in pending/ (shared with the
 // Overview and client page). A FAILED submission is not a review item by
 // itself (decision 2026-09-25); it is only listed if a pending copy exists.
 export const REVIEW_PENDING_WHERE = Object.freeze({ pendingStoragePath: { not: null } });
 export const REVIEW_DOCUMENT_WHERE = Object.freeze({ verificationStatus: VERIFICATION_STATUS.REVIEW_REQUIRED });
+// H3: processing failed and no copy waits in pending/ (one with a copy is a PENDING item).
+export const FAILED_SUBMISSION_WHERE = Object.freeze({ processingStatus: "FAILED", pendingStoragePath: null });
 
-export const REVIEW_KIND = Object.freeze({ PENDING: "PENDING", DOCUMENT: "DOCUMENT" });
+export const REVIEW_KIND = Object.freeze({ PENDING: "PENDING", DOCUMENT: "DOCUMENT", FAILED: "FAILED" });
 
 // A stored REVIEW_REQUIRED document only ever comes from the UNCLEAR band
 // (clientDocumentService), so its reason is known even without a link.
 const DOCUMENT_DEFAULT_REASON = REVIEW_REASON.LOW_CONFIDENCE;
 
-// Review IDs name the table: "pending-<temporary_id>" / "document-<document_id>".
-const ID_PATTERN = /^(pending|document)-([0-9a-fA-F-]{8,64})$/;
+// Review IDs name the table: "pending-<temporary_id>" / "document-<document_id>"
+// / "failed-<temporary_id>" (H3, read-only).
+const ID_PATTERN = /^(pending|document|failed)-([0-9a-fA-F-]{8,64})$/;
+const ID_PREFIX = { [REVIEW_KIND.PENDING]: "pending", [REVIEW_KIND.DOCUMENT]: "document", [REVIEW_KIND.FAILED]: "failed" };
 
 export function toReviewId(kind, id) {
-    return `${kind === REVIEW_KIND.PENDING ? "pending" : "document"}-${id}`;
+    return `${ID_PREFIX[kind]}-${id}`;
 }
 
 export function parseReviewId(reviewId) {
     const match = typeof reviewId === "string" ? reviewId.match(ID_PATTERN) : null;
     if (!match) return null;
-    return { kind: match[1] === "pending" ? REVIEW_KIND.PENDING : REVIEW_KIND.DOCUMENT, id: match[2] };
+    const kind = Object.keys(ID_PREFIX).find((k) => ID_PREFIX[k] === match[1]);
+    return { kind, id: match[2] };
 }
 
 const clientSelect = { passportId: true, uniqueId: true, firstName: true, otherName: true };
@@ -95,7 +104,7 @@ export function parseReviewQueueQuery(query = {}) {
 
     params.page = integer("page", 1, REVIEW_QUEUE_WINDOW) ?? params.page;
     params.pageSize = integer("pageSize", 1, MAX_PAGE_SIZE) ?? params.pageSize;
-    params.kind = oneOf("kind", ["ALL", REVIEW_KIND.PENDING, REVIEW_KIND.DOCUMENT]) ?? params.kind;
+    params.kind = oneOf("kind", ["ALL", REVIEW_KIND.PENDING, REVIEW_KIND.DOCUMENT, REVIEW_KIND.FAILED]) ?? params.kind;
     params.documentType = oneOf("documentType", QUEUE_DOCUMENT_TYPES);
     params.reviewReason = oneOf("reviewReason", Object.values(REVIEW_REASON));
     params.order = oneOf("order", ["asc", "desc"]) ?? params.order;
@@ -111,25 +120,46 @@ export function parseReviewQueueQuery(query = {}) {
     return errors.length ? { errors } : { params };
 }
 
-// Prisma where clauses for both sources under the given filters.
+// Prisma where clauses for the sources under the given filters.
 export function buildReviewWhere(params) {
     const pending = { AND: [REVIEW_PENDING_WHERE] };
     const document = { AND: [REVIEW_DOCUMENT_WHERE] };
+    const failed = { AND: [FAILED_SUBMISSION_WHERE] };
     if (params.documentType) {
         pending.AND.push({ documentType: params.documentType });
         document.AND.push({ documentType: params.documentType });
+        failed.AND.push({ documentType: params.documentType });
     }
     if (params.passportId) {
         pending.AND.push({ passportId: params.passportId });
         document.AND.push({ passportId: params.passportId });
+        failed.AND.push({ passportId: params.passportId });
     }
     if (params.reviewReason) {
         pending.AND.push({ reviewReason: params.reviewReason });
+        failed.AND.push({ reviewReason: params.reviewReason });
         const linked = { temporaryData: { is: { reviewReason: params.reviewReason } } };
         // Unlinked (older) review documents count as LOW_CONFIDENCE.
         document.AND.push(params.reviewReason === DOCUMENT_DEFAULT_REASON ? { OR: [linked, { temporaryId: null }] } : linked);
     }
-    return { pending, document };
+    return { pending, document, failed };
+}
+
+// H3: a FAILED submission in the list (read-only; its safe failure code, never the error text).
+function toFailedQueueItem(row) {
+    return {
+        reviewId: toReviewId(REVIEW_KIND.FAILED, row.temporaryId),
+        kind: REVIEW_KIND.FAILED,
+        documentType: row.documentType,
+        processingStatus: row.processingStatus,
+        verificationStatus: null,
+        reviewReason: row.reviewReason ?? null,
+        reviewCategory: categoryOf(row.reviewReason),
+        confidence: null,
+        receivedDate: toIso(row.createdDate),
+        client: toClient(row.user),
+        failure: describeFailure(row.processingSummary),
+    };
 }
 
 function toPendingQueueItem(row) {
@@ -173,9 +203,10 @@ function compareItems(order) {
 }
 
 async function queueSummary(db) {
-    const [pendingByReason, reviewDocuments] = await Promise.all([
+    const [pendingByReason, reviewDocuments, failed] = await Promise.all([
         db.temporaryData.groupBy({ by: ["reviewReason"], where: REVIEW_PENDING_WHERE, _count: { _all: true } }),
         db.document.findMany({ where: REVIEW_DOCUMENT_WHERE, select: { temporaryData: { select: { reviewReason: true } } } }),
+        db.temporaryData.count({ where: FAILED_SUBMISSION_WHERE }),
     ]);
 
     const byReason = {};
@@ -193,13 +224,36 @@ async function queueSummary(db) {
     for (const [reason, count] of Object.entries(byReason)) {
         byCategory[REVIEW_REASON_CATEGORY[reason] ?? "OTHER"] += count;
     }
-    return { total: pending + reviewDocuments.length, pending, documents: reviewDocuments.length, byReason, byCategory };
+    // `failed` (H3) is shown on its own: not part of `total` (Pending review).
+    return { total: pending + reviewDocuments.length, pending, documents: reviewDocuments.length, byReason, byCategory, failed };
+}
+
+// H3: kind=FAILED lists the failed submissions (newest first unless asked otherwise).
+async function listFailedSubmissions({ db, params, where }) {
+    const [total, rows, summary] = await Promise.all([
+        db.temporaryData.count({ where: where.failed }),
+        db.temporaryData.findMany({
+            where: where.failed,
+            select: { temporaryId: true, documentType: true, processingStatus: true, reviewReason: true, processingSummary: true, createdDate: true, user: { select: clientSelect } },
+            orderBy: [{ createdDate: params.order }, { temporaryId: "asc" }],
+            skip: (params.page - 1) * params.pageSize,
+            take: params.pageSize,
+        }),
+        queueSummary(db),
+    ]);
+    return {
+        items: rows.map(toFailedQueueItem),
+        pagination: { page: params.page, pageSize: params.pageSize, total, totalPages: Math.max(1, Math.ceil(total / params.pageSize)) },
+        summary,
+        filters: { kind: params.kind, documentType: params.documentType ?? null, reviewReason: params.reviewReason ?? null, passportId: params.passportId ?? null, order: params.order },
+    };
 }
 
 export async function listReviewQueue({ db, params }) {
     const where = buildReviewWhere(params);
-    const includePending = params.kind !== REVIEW_KIND.DOCUMENT;
-    const includeDocuments = params.kind !== REVIEW_KIND.PENDING;
+    if (params.kind === REVIEW_KIND.FAILED) return listFailedSubmissions({ db, params, where });
+    const includePending = params.kind === "ALL" || params.kind === REVIEW_KIND.PENDING;
+    const includeDocuments = params.kind === "ALL" || params.kind === REVIEW_KIND.DOCUMENT;
     const window = params.page * params.pageSize;
 
     const [pendingTotal, documentTotal, pendingRows, documentRows, summary] = await Promise.all([
@@ -266,6 +320,25 @@ async function loadReviewRecord(db, reviewId) {
     const parsed = parseReviewId(reviewId);
     if (!parsed) return null;
 
+    // H3: a FAILED submission; its file is the original kept in temporary/.
+    if (parsed.kind === REVIEW_KIND.FAILED) {
+        const row = await db.temporaryData.findFirst({
+            where: { AND: [{ temporaryId: parsed.id }, FAILED_SUBMISSION_WHERE] },
+            select: {
+                temporaryId: true, documentType: true, processingStatus: true, reviewReason: true, processingSummary: true,
+                whatsappNumber: true, createdDate: true, temporaryStoragePath: true,
+                user: { select: clientSelect },
+            },
+        });
+        if (!row) return null;
+        return {
+            kind: REVIEW_KIND.FAILED,
+            row,
+            storagePath: row.temporaryStoragePath,
+            file: { name: path.basename(row.temporaryStoragePath), mimeType: mimeTypeForPath(row.temporaryStoragePath), size: null, location: "TEMPORARY" },
+        };
+    }
+
     if (parsed.kind === REVIEW_KIND.PENDING) {
         const row = await db.temporaryData.findFirst({
             where: { AND: [{ temporaryId: parsed.id }, REVIEW_PENDING_WHERE] },
@@ -331,10 +404,11 @@ export async function getReviewItem({ db, reviewId }) {
     const record = await loadReviewRecord(db, reviewId);
     if (!record) return null;
     const { kind, row, file } = record;
-    const submission = kind === REVIEW_KIND.PENDING ? row : row.temporaryData;
-    const reason = kind === REVIEW_KIND.PENDING ? row.reviewReason ?? null : row.temporaryData?.reviewReason ?? DOCUMENT_DEFAULT_REASON;
+    const isSubmission = kind === REVIEW_KIND.PENDING || kind === REVIEW_KIND.FAILED;
+    const submission = isSubmission ? row : row.temporaryData;
+    const reason = isSubmission ? row.reviewReason ?? null : row.temporaryData?.reviewReason ?? DOCUMENT_DEFAULT_REASON;
     const summary = submission?.processingSummary ?? null;
-    const reviewIdString = toReviewId(kind, kind === REVIEW_KIND.PENDING ? row.temporaryId : row.documentId);
+    const reviewIdString = toReviewId(kind, isSubmission ? row.temporaryId : row.documentId);
 
     return {
         reviewId: reviewIdString,
@@ -358,6 +432,8 @@ export async function getReviewItem({ db, reviewId }) {
         // The PII-free processing summary saved by the pipeline; null for
         // items processed before review data was recorded.
         processing: summary,
+        // H3: why processing failed (safe code and stage), FAILED items only.
+        failure: kind === REVIEW_KIND.FAILED ? describeFailure(summary) : null,
         // M4: for a waiting DUPLICATE, the existing document it copies.
         duplicateOf: kind === REVIEW_KIND.PENDING && row.processingStatus === "DUPLICATE"
             ? await findDuplicateMatch(db, { passportId: row.passportId, fileSha256: row.fileSha256 })

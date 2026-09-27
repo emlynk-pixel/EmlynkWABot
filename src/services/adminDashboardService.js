@@ -14,7 +14,7 @@ import { DOCUMENT_TYPES } from "./documentClassificationService.js";
 import { VERIFICATION_STATUS } from "./clientDocumentService.js";
 import { businessDateOf, businessDayRange } from "../utils/businessDay.js";
 import { clientName } from "../utils/clientName.js";
-import { REVIEW_PENDING_WHERE } from "./adminReviewService.js";
+import { FAILED_SUBMISSION_WHERE, REVIEW_PENDING_WHERE } from "./adminReviewService.js";
 import { countdownFromDocuments, policeDueCounts } from "./adminPoliceService.js";
 import { toYmd } from "./policeCountdownService.js";
 import {
@@ -104,6 +104,7 @@ export async function getOverview({ db, now = new Date() }) {
         pendingPreview,
         policeDue,
         clients,
+        failedSubmissions,
     ] = await Promise.all([
         db.user.count(),
         db.document.count(),
@@ -124,6 +125,8 @@ export async function getOverview({ db, now = new Date() }) {
         policeDueCounts({ db, today }),
         // Complete / incomplete clients and missing required documents.
         clientCompletenessCounts({ db }),
+        // H3: submissions whose processing failed (shown on their own).
+        db.temporaryData.count({ where: FAILED_SUBMISSION_WHERE }),
     ]);
 
     return {
@@ -144,6 +147,8 @@ export async function getOverview({ db, now = new Date() }) {
             reviewRequiredDocuments,
             pendingByStatus: countsBy(pendingGroups, "processingStatus"),
             items: pendingPreview.map(toPendingItem),
+            // H3: not part of `total` / Pending review; listed with kind=FAILED.
+            failedSubmissions,
         },
         police: policeDue,
         clients,

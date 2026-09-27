@@ -23,7 +23,7 @@ import { Confidence } from "../components/Confidence";
 import { documentTypeLabel, formatDateTime, formatDay, formatFileSize, humanize, shortId, todayInSriLanka } from "../components/format";
 import { ActionDialog, DialogError, dangerButton, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
 import { Icon } from "../components/Icon";
-import { AUDIT_ACTIONS, IDENTITY_NOTES, REVIEW_REASONS, reviewReasonLabel, reviewReasonTone } from "../components/reviewLabels";
+import { AUDIT_ACTIONS, FAILURE_REASONS, IDENTITY_NOTES, REVIEW_REASONS, failureLabel, reviewReasonLabel, reviewReasonTone } from "../components/reviewLabels";
 import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
 import { StatusBadge, ToneBadge } from "../components/StatusBadge";
 
@@ -228,7 +228,9 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const { token, signOut } = useAuth();
     const reason = item.reviewReason ? REVIEW_REASONS[item.reviewReason] : undefined;
     const identity = item.processing?.identity;
-    const idLabel = shortId((item.document.documentId ?? item.document.temporaryId ?? item.reviewId.replace(/^(pending|document)-/, "")));
+    const idLabel = shortId((item.document.documentId ?? item.document.temporaryId ?? item.reviewId.replace(/^(pending|document|failed)-/, "")));
+    const isFailed = item.kind === "FAILED";
+    const failure = isFailed ? FAILURE_REASONS[item.failure?.code ?? ""] : undefined;
 
     const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | "type" | "client" | null>(null);
     const [busy, setBusy] = useState(false);
@@ -439,7 +441,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                 </Link>
                 <span aria-hidden="true" className="text-ink-subtle">/</span>
                 <h1 id="page-title" className="font-semibold text-ink">{idLabel}</h1>
-                <span className="text-label-sm text-ink-muted">{item.kind === "PENDING" ? "Waiting file" : "Stored document"}</span>
+                <span className="text-label-sm text-ink-muted">{item.kind === "PENDING" ? "Waiting file" : isFailed ? "Failed submission" : "Stored document"}</span>
             </div>
 
             {notice && (
@@ -453,7 +455,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <p className="text-label-md text-ink">{item.file.name}</p>
                         <span className="text-label-sm text-ink-muted">
-                            {approved || item.file.location === "CLIENT" ? "Client folder" : "Pending storage"}
+                            {approved || item.file.location === "CLIENT" ? "Client folder" : item.file.location === "TEMPORARY" ? "Original as received (temporary storage)" : "Pending storage"}
                             {item.file.size !== null ? ` · ${formatFileSize(item.file.size)}` : ""}
                         </span>
                     </div>
@@ -461,13 +463,23 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                 </Card>
 
                 <div className="space-y-4 xl:col-span-5">
-                    <div role="note" className={`flex items-start gap-2 rounded-lg border px-3 py-2 ${reviewReasonTone(item.reviewReason) === "critical" ? "border-critical-border bg-critical-bg" : "border-review-border bg-review-bg"}`}>
-                        <Icon name="error" className={`mt-0.5 size-5 ${reviewReasonTone(item.reviewReason) === "critical" ? "text-critical" : "text-review"}`} />
-                        <div>
-                            <p className="text-label-md text-ink">{reviewReasonLabel(item.reviewReason)}</p>
-                            <p className="text-body-sm text-ink-muted">{reason?.description ?? "The review reason was not recorded for this item."}</p>
+                    {isFailed ? (
+                        <div role="note" className="flex items-start gap-2 rounded-lg border border-critical-border bg-critical-bg px-3 py-2">
+                            <Icon name="error" className="mt-0.5 size-5 text-critical" />
+                            <div>
+                                <p className="text-label-md text-ink">Processing failed: {failureLabel(item.failure?.code)}</p>
+                                <p className="text-body-sm text-ink-muted">{failure?.description ?? "Processing stopped with an error."} Nothing was stored for the client.</p>
+                            </div>
                         </div>
-                    </div>
+                    ) : (
+                        <div role="note" className={`flex items-start gap-2 rounded-lg border px-3 py-2 ${reviewReasonTone(item.reviewReason) === "critical" ? "border-critical-border bg-critical-bg" : "border-review-border bg-review-bg"}`}>
+                            <Icon name="error" className={`mt-0.5 size-5 ${reviewReasonTone(item.reviewReason) === "critical" ? "text-critical" : "text-review"}`} />
+                            <div>
+                                <p className="text-label-md text-ink">{reviewReasonLabel(item.reviewReason)}</p>
+                                <p className="text-body-sm text-ink-muted">{reason?.description ?? "The review reason was not recorded for this item."}</p>
+                            </div>
+                        </div>
+                    )}
 
                     <Card className="p-4">
                         <SectionHeading title="Document information" />
@@ -495,7 +507,14 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             {verificationStatus && <Row label="Verification status"><StatusBadge status={verificationStatus} /></Row>}
                             {isPoliceSlip && <Row label="Slip submitted date">{formatDay(approved?.document.policeSubmittedDate ?? storedPoliceDate)}</Row>}
                             <Row label="Confidence"><Confidence value={item.document.confidence} /></Row>
-                            <Row label="Review reason"><ToneBadge tone={reviewReasonTone(item.reviewReason)}>{reviewReasonLabel(item.reviewReason)}</ToneBadge></Row>
+                            {isFailed ? (
+                                <>
+                                    <Row label="Failure reason"><ToneBadge tone="critical">{failureLabel(item.failure?.code)}</ToneBadge></Row>
+                                    <Row label="Failed at">{item.failure?.stage ? humanize(item.failure.stage) : null}</Row>
+                                </>
+                            ) : (
+                                <Row label="Review reason"><ToneBadge tone={reviewReasonTone(item.reviewReason)}>{reviewReasonLabel(item.reviewReason)}</ToneBadge></Row>
+                            )}
                         </dl>
                     </Card>
 
@@ -521,7 +540,12 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                     </Card>
 
                     <Card className="space-y-2 p-4">
-                        {approved ? (
+                        {isFailed ? (
+                            <p className="text-body-sm text-ink-muted">
+                                A failed submission can only be inspected: there is no retry. Ask the client to send the file again; the new submission is processed as usual.{" "}
+                                <Link to="/review?kind=FAILED" className="text-primary hover:underline">Back to failed submissions</Link>
+                            </p>
+                        ) : approved ? (
                             <p className="text-body-sm text-ink-muted">
                                 This item is no longer in the Review Queue.{" "}
                                 <Link to="/review" className="text-primary hover:underline">Back to Review Queue</Link>

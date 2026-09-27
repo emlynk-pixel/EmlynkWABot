@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ApproveResult, AuditEntry, ReviewItem, ReviewQueue, ReviewQueueItem } from "../api/admin";
-import { CLIENT_REF, TOKEN_KEY, renderApp, signedInBackend, stubBackend, type FetchRoutes } from "./helpers";
+import { CLIENT_REF, OVERVIEW as OVERVIEW_FIXTURE, TOKEN_KEY, renderApp, signedInBackend, stubBackend, type FetchRoutes } from "./helpers";
 
 // Synthetic review data only.
 const TEMP_ID = "11111111-1111-4111-8111-111111111111";
@@ -678,5 +678,79 @@ describe("M4: duplicate of a verified document", () => {
         const reasonSelect = screen.getAllByRole("combobox").find((select) => within(select).queryByRole("option", { name: "Duplicate of a verified document" }))!;
         await userEvent.setup().selectOptions(reasonSelect, "DUPLICATE_OF_VERIFIED");
         expect([...calls].reverse().find((c) => c.path.startsWith("/api/admin/review"))!.path).toContain("reviewReason=DUPLICATE_OF_VERIFIED");
+    });
+});
+
+describe("H3: failed submissions", () => {
+    const FAILED_ID = "aaaaaaaa-0000-4000-8000-000000000001";
+    const failedItem = (overrides: Partial<ReviewQueueItem> = {}): ReviewQueueItem => queueItem({
+        reviewId: `failed-${FAILED_ID}`, kind: "FAILED", documentType: "UNCLASSIFIED", processingStatus: "FAILED", verificationStatus: null,
+        reviewReason: "PROCESSING_FAILED", reviewCategory: "OTHER", confidence: null, client: null,
+        failure: { code: "PDF_TOO_MANY_PAGES", stage: "TEXT_EXTRACTION" }, ...overrides,
+    });
+
+    test("the normal queue says how many submissions failed and links to them; they are not in the list", async () => {
+        const { calls } = signedInBackend({ "GET /api/admin/review": (url) => ({ status: 200, body: url.searchParams.get("kind") === "FAILED" ? { ...queue([failedItem()]), summary: { ...queue([]).summary, failed: 1 } } : { ...queue(TWO_ITEMS), summary: { ...queue(TWO_ITEMS).summary, failed: 1 } } }) });
+        renderApp("/review");
+        const note = await screen.findByRole("note");
+        expect(note).toHaveTextContent("1 submission failed processing and is not in this queue.");
+        expect(within(screen.getByRole("table")).queryByText("Failed")).not.toBeInTheDocument();
+        await userEvent.setup().click(within(note).getByRole("button", { name: "View failed submissions" }));
+        const row = (await screen.findAllByRole("row"))[1];
+        expect(row).toHaveTextContent("AAAAAAAA");
+        expect(row).toHaveTextContent("Failed");
+        expect(row).toHaveTextContent("PDF has too many pages");
+        expect(row).toHaveTextContent("Not identified");
+        expect(within(row).getByRole("link", { name: "View" })).toHaveAttribute("href", `/review/failed-${FAILED_ID}`);
+        expect(screen.getByRole("columnheader", { name: "Failure reason" })).toBeInTheDocument();
+        expect(screen.getByText(/Submissions whose processing failed/)).toBeInTheDocument();
+        expect([...calls].reverse().find((c) => c.path.startsWith("/api/admin/review"))!.path).toContain("kind=FAILED");
+        expect(screen.getByRole("option", { name: "Failed processing (1)" })).toBeInTheDocument();
+    });
+
+    test("a failed submission of a known client shows the client", async () => {
+        signedInBackend({ "GET /api/admin/review": { status: 200, body: queue([failedItem({ client: CLIENT_REF, documentType: "PASSPORT", failure: { code: "STORAGE_FAILED", stage: "STORAGE" } })]) } });
+        renderApp("/review?kind=FAILED");
+        const row = (await screen.findAllByRole("row"))[1];
+        expect(row).toHaveTextContent(CLIENT_REF.name);
+        expect(row).toHaveTextContent("Storing the file failed");
+    });
+
+    test("no failed submissions -> its own empty state", async () => {
+        signedInBackend({ "GET /api/admin/review": { status: 200, body: queue([]) } });
+        renderApp("/review?kind=FAILED");
+        expect(await screen.findByText("No failed submissions")).toBeInTheDocument();
+    });
+
+    test("detail: read-only, failure reason and stage, sender, original file; no action buttons", async () => {
+        const FAILED: ReviewItem = {
+            ...ITEM, reviewId: `failed-${FAILED_ID}`, kind: "FAILED", reviewReason: "PROCESSING_FAILED", reviewCategory: "OTHER", client: null,
+            document: { ...ITEM.document, temporaryId: FAILED_ID, documentType: "UNCLASSIFIED", processingStatus: "FAILED", confidence: null },
+            processing: { stage: "TEXT_EXTRACTION", processingStatus: "FAILED" },
+            file: { name: `${FAILED_ID}.pdf`, mimeType: "application/pdf", size: null, location: "TEMPORARY", previewUrl: `/api/admin/review/failed-${FAILED_ID}/file` },
+            failure: { code: "PDF_TOO_MANY_PAGES", stage: "TEXT_EXTRACTION" },
+            actions: Object.fromEntries(["approve", "keepPending", "remove", "setDocumentType", "assignClient"].map((a) => [a, { available: false, code: "PROCESSING_FAILED", message: "x" }])) as unknown as ReviewItem["actions"],
+        };
+        signedInBackend({ [`GET /api/admin/review/failed-${FAILED_ID}`]: { status: 200, body: FAILED }, [`GET /api/admin/review/failed-${FAILED_ID}/file`]: fileResponse });
+        renderApp(`/review/failed-${FAILED_ID}`);
+        expect(await screen.findByText("Failed submission")).toBeInTheDocument();
+        const note = screen.getByRole("note");
+        expect(note).toHaveTextContent("Processing failed: PDF has too many pages");
+        expect(note).toHaveTextContent("Nothing was stored for the client.");
+        expect(screen.getByText("Failed at").nextElementSibling).toHaveTextContent("Text extraction");
+        expect(screen.getByText("Not identified")).toBeInTheDocument();
+        expect(screen.getByText("Original as received (temporary storage)")).toBeInTheDocument();
+        expect(screen.queryByRole("group", { name: "Review actions" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Approve|Keep Pending|Remove from Review|Retry/ })).not.toBeInTheDocument();
+        expect(screen.getByText(/can only be inspected: there is no retry/)).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: "Back to failed submissions" })).toHaveAttribute("href", "/review?kind=FAILED");
+    });
+
+    test("Overview links to the failed submissions; Pending review is unchanged", async () => {
+        signedInBackend({ "GET /api/admin/overview": { status: 200, body: { ...OVERVIEW_FIXTURE, reviewQueue: { ...OVERVIEW_FIXTURE.reviewQueue, failedSubmissions: 3 } } } });
+        renderApp("/");
+        const link = await screen.findByRole("link", { name: "3 submissions failed processing" });
+        expect(link).toHaveAttribute("href", "/review?kind=FAILED");
+        expect(screen.getByText("17")).toBeInTheDocument(); // Pending review KPI as before
     });
 });

@@ -56,6 +56,8 @@ Everything that needs a person:
 - **Waiting files** in pending storage, which the automatic processing could not place (unclear, unknown type, identity not confirmed, conflicts).
 - **Stored documents** marked *Review required* (read with low confidence).
 
+**Failed processing** (Source filter, or the red "submissions failed processing" link on this page and the Overview): submissions whose processing stopped with an error, for example a PDF with too many pages or a storage outage. Nothing was stored for the client, and they are not counted as pending review. Opening one shows why it failed, the client (or *Not identified*), the sender, when it arrived and the file as received. It can only be inspected — there is no retry; ask the client to send the file again.
+
 Each row shows the reason, the confidence and when it was received. Filter by source, reason and type; the oldest items come first by default. **Review** opens the item. A submission whose processing *failed* is not listed unless a copy of its file is waiting in pending storage.
 
 ### Review Detail
@@ -195,7 +197,7 @@ The log is **append-only**: the API has no way to edit or delete an entry, and a
 | Rejected | **Not implemented, by decision.** Use Keep Pending or Remove from Review. |
 | Completed | Client: all required documents verified. Police Workflow: a verified police report exists. |
 
-Other statuses: `MANUAL_REVIEW` and `CONFLICT` (held for review), `DUPLICATE` (the same file is already on record) and `FAILED` (processing error). `FAILED` stays separate from review.
+Other statuses: `MANUAL_REVIEW` and `CONFLICT` (held for review), `DUPLICATE` (the same file is already on record) and `FAILED` (processing error). `FAILED` stays separate from review: it is listed under *Failed processing*, never in Pending review.
 
 ## 5. Settings and running
 
@@ -277,6 +279,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 ## 9. Known limitations
 
 - **Not deployed.** The five migrations above must be applied to the live database first.
+- **Failed submissions can't be retried or closed.** They stay in the *Failed processing* list; the client has to send the file again. Files refused on arrival (wrong type, too large) leave no record at all.
 - **No history for current figures.** A past day's completeness or police status can't be shown; that would need a daily snapshot or a history of verification changes.
 - **Refused files aren't counted.** Invalid files are refused at intake and leave no record.
 - **Removed files leave only an audit entry.** A file removed from review no longer counts as received on its day, and there is no screen listing removed files.

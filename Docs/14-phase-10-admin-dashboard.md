@@ -459,7 +459,7 @@ The proposal's status words (§22, §24) and what the implementation records. `s
 | Completed | Client: every required document `VERIFIED`. Police Workflow: `COMPLETED` when a verified police report exists. |
 | (not in the list) | `MANUAL_REVIEW`, `CONFLICT` (held for review), `DUPLICATE` (same file already on record; an exact copy of a *verified* document waits in `pending/` for review, §4k), `FAILED` (processing error) |
 
-Outcome groups (`submissionOutcome`): `PROCESSING` (`TEMPORARY_STORED`), `STORED` (`VERIFIED`, `HIGH_CONFIDENCE`, `SLIGHTLY_UNCLEAR`, `UNCLEAR`), `NEEDS_REVIEW` (`UNDEFINED`, `MANUAL_REVIEW`, `CONFLICT`), `DUPLICATE`, `FAILED`. "Successfully processed" = finished without an error (everything except `FAILED` and `PROCESSING`); an unknown code never counts as success. `FAILED` stays distinct from review: a `FAILED` submission without a pending copy is not in the Review Queue.
+Outcome groups (`submissionOutcome`): `PROCESSING` (`TEMPORARY_STORED`), `STORED` (`VERIFIED`, `HIGH_CONFIDENCE`, `SLIGHTLY_UNCLEAR`, `UNCLEAR`), `NEEDS_REVIEW` (`UNDEFINED`, `MANUAL_REVIEW`, `CONFLICT`), `DUPLICATE`, `FAILED`. "Successfully processed" = finished without an error (everything except `FAILED` and `PROCESSING`); an unknown code never counts as success. `FAILED` stays distinct from review: a `FAILED` submission without a pending copy is not in the Review Queue's normal list; it is listed under *Failed processing* (§4l).
 
 ## 4h. No automatic removal of pending items
 
@@ -513,6 +513,21 @@ Admin review (existing actions only; no new action):
 - **Audit:** both actions record the admin, the duplicate (`temporary_id`), the existing document that matched (`document_id`), the client, the status (`DUPLICATE` → `DUPLICATE` or `REMOVED`), the reason, the time, and the checksum.
 
 Code: `documentChecksumService.checkClientChecksum` (`existingVerified`), `storagePlacementService.decidePlacement` (`duplicateOfVerified`), `reviewReason.js` (`DUPLICATE_OF_VERIFIED`), `adminReviewService.findDuplicateMatch`, `adminReviewActionService` (Approve blocker, audit link). Tests: `test/duplicateVerifiedPolicy.test.js`, `admin/src/test/review.test.tsx` ("M4").
+
+## 4l. H3 — Failed submission visibility
+
+**Problem.** A submission whose processing fails is recorded (`processing_status = FAILED`, `review_reason = PROCESSING_FAILED`, a PII-free summary with the failing `stage` and a redacted error; the `temporary/` original is kept; no document is created), but no dashboard list showed it: every item list used `REVIEW_PENDING_WHERE` (a file in `pending/`, decision 2026-09-25), and a FAILED row normally has none. It only appeared as a number (Overview status breakdown, Daily Report).
+
+**Behaviour now** (no migration; the existing `FAILED` status and fields):
+- **Review Queue → Source: *Failed processing*** (`GET /review?kind=FAILED`, same filters and paging) lists FAILED submissions without a pending copy (a FAILED row that has a pending copy stays a normal waiting item). The normal queue shows "*N* submissions failed processing … View failed submissions"; the Overview shows the same link. Failed submissions are counted on their own (`summary.failed`, `reviewQueue.failedSubmissions`) — **not** added to Pending review or the queue total.
+- **Review Detail** `failed-<temporary_id>` (read-only): failure reason and stage, client or *Not identified* (no client is created), the sender, received time, processing details and a preview of the original file as received (streamed from `temporary/` through the backend). **No actions**: every action is unavailable (`PROCESSING_FAILED`) and the action endpoints answer 404 for a failed ID; there is no retry — the client sends the file again. No audit entries (nothing is changed).
+- **Failure reason** (`src/services/failureReason.js`), derived from the stored summary; the error text itself is never returned: `PDF_TOO_MANY_PAGES`, `PDF_PAGE_TOO_LARGE`, `IMAGE_TOO_LARGE`, `IMAGE_UNREADABLE`, `OCR_BUSY`, `OCR_TIMEOUT` (the OCR resource limits), `TEXT_EXTRACTION_FAILED`, `STORAGE_FAILED`, `PROCESSING_FAILED` (other stages), `NOT_RECORDED` (older rows).
+- **Failure record keeps what was already known** (`documentProcessingService.js`, catch path): the detected document type, and the identified client by the same rule as success (one non-provisional client; never for a cross-client checksum). Before, a failure after identification left the row unlinked and `UNCLASSIFIED`.
+- Status semantics unchanged: FAILED is not merged into DUPLICATE, CONFLICT, MANUAL_REVIEW, UNCLEAR, VERIFIED, pending or REMOVED; a FAILED submission never creates a document, a client-folder file or a pending copy, and never counts towards a client's required documents.
+
+Not FAILED submissions (unchanged): files refused at intake (type, size, content) and media that could not be downloaded leave no record (H2: a download failure is retried by Meta).
+
+Tests: `test/failedSubmissions.test.js` (real pipeline failures — page limit, storage outage after identification, OCR busy; API list/detail/file/actions/security/counts), `admin/src/test/review.test.tsx` ("H3"), E2E harness and headless Chrome (Phase 25).
 
 ## 5. Pages and data
 
@@ -606,7 +621,7 @@ Scope: the whole flow from a signed WhatsApp webhook to the dashboard, on commit
 | Browser (10 pages × desktop/tablet/mobile × light/dark; filters, back/forward, reload, loading/error/empty/not-found, Sync, dark mode, sign-out) | 41/41; no overflow, no console/CSP errors, one API request per page |
 | Performance (5,000 clients, 15,000 documents, 60,000 submissions) | every dashboard call under 200 ms |
 
-Bugs found in the product: none. Observed limitations (not changed): a photo rotated by 90° is not read (it goes to review as `UNKNOWN`); a PDF over the page limit is recorded `FAILED` and is not shown in the dashboard (audit H3); a different, well-read file of a type the client already has verified is stored as a further verified version (version workflow, M4 test 3).
+Bugs found in the product: none. Observed limitations (not changed): a photo rotated by 90° is not read (it goes to review as `UNKNOWN`); a PDF over the page limit is recorded `FAILED` and was not shown in the dashboard (audit H3, fixed in Phase 25, §4l); a different, well-read file of a type the client already has verified is stored as a further verified version (version workflow, M4 test 3).
 
 ## 9. Decisions (2026-09-25)
 
@@ -617,6 +632,7 @@ Bugs found in the product: none. Observed limitations (not changed): a photo rot
 | Review Queue paging window of 1000 items | Approved for now |
 | Audit log and approve/reject rules designed before review actions | Approved (done in Checkpoint 4; the rules then settled on no reject action) |
 | `FAILED` submissions counted as pending review | Rejected — only files in `pending/` count |
+| H3: FAILED submissions listed separately (Review Queue *Failed processing*, Overview link, read-only detail); not in Pending review; no retry action | Approved (Phase 25, 2026-09-27) |
 | Apply the migration to the live database | On hold |
 | Review actions: Approve and Keep Pending only; no reject workflow, unclear documents stay pending and are never deleted | Business rule (Checkpoint 4) |
 | Approval never replaces an existing verified document of the same type (blocked with 409) | Business rule (Checkpoint 4) |
@@ -653,7 +669,7 @@ Bugs found in the product: none. Observed limitations (not changed): a photo rot
 - **What counts as a resolved date** is the existing reader's rule: a single date labelled submitted, else issued, else an unlabelled one (confidence 60). The reader decides "not in the future" by the UTC date.
 - **Police statuses and client completeness are calculated over all clients on each request** (`/police`, `/clients`, `/documents/missing`, Overview, daily report: three queries each, then in memory). Fine for thousands of clients; a larger client base would need the calculation in SQL.
 - **No reminders:** due-soon, due-today and overdue are only shown on the dashboard. Warnings and notifications belong to Phase 11.
-- **Processing failures are not shown in the dashboard:** a `FAILED` submission without a pending copy is not a review item (decision 2026-09-25). Its reason and summary are saved on the row; a separate view for failures can be decided later.
+- **Failed submissions can only be inspected** (§4l): there is no retry and no way to close them, so the *Failed processing* list keeps growing until a clean-up rule is decided. Files refused at intake leave no record at all.
 - **Older items:** submissions processed before the migration have no saved summary or reason ("Not recorded"); older stored `REVIEW_REQUIRED` documents have no link and are shown as `LOW_CONFIDENCE`. No backfill: the missing data was never saved.
 - **Stored `REVIEW_REQUIRED` documents can't be re-typed or moved to another client** (they are already in a client folder); only waiting files can be corrected.
 - **Versioning:** the pipeline stores a newer file of a type under the next version name (`passport_v2.pdf`, …; each row keeps its own status, so a client can have two `VERIFIED` rows of a type). An admin's Approve never adds a second verified document of a type (409 `VERIFIED_DOCUMENT_EXISTS`). A rule for replacing a verified document is not part of Phase 10.
