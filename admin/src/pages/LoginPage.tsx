@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Navigate, useLocation, useNavigate, type Location } from "react-router";
+import { Link, Navigate, useLocation, useNavigate, type Location } from "react-router";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { Icon } from "../components/Icon";
@@ -98,7 +98,15 @@ export function LoginPage() {
                         </div>
 
                         <div>
-                            <label htmlFor="password" className="mb-1 block text-label-md text-ink-soft">Password</label>
+                            <div className="mb-1 flex items-center justify-between">
+                                <label htmlFor="password" className="block text-label-md text-ink-soft">Password</label>
+                                <Link
+                                    to="/forgot-password"
+                                    className="text-label-sm font-medium text-primary hover:text-primary-hover hover:underline"
+                                >
+                                    Forgot password?
+                                </Link>
+                            </div>
                             <div className="relative">
                                 <Icon name="lock" className="pointer-events-none absolute left-3 top-2.5 size-4 text-ink-subtle" />
                                 <input
@@ -133,10 +141,6 @@ export function LoginPage() {
                         </button>
                     </form>
                 </div>
-
-                <p className="mt-4 text-center text-label-sm text-ink-subtle">
-                    Accounts are created by an operator with <code className="font-medium">npm run admin:create</code>.
-                </p>
             </div>
         </div>
     );

@@ -5,9 +5,15 @@ import crypto from "crypto";
 
 import { comparePassword, hashPassword } from "../utils/password.js";
 import { authenticateAdmin, JWT_ALGORITHM, AUTH_COOKIE_NAME, authCookieOptions } from "../middleware/auth.js";
-import { createLoginRateLimiter } from "../middleware/loginRateLimiter.js";
+import { createLoginRateLimiter, createResetRateLimiter } from "../middleware/loginRateLimiter.js";
 import { ACTIVE_ADMIN_STATUS } from "../middleware/requireActiveAdmin.js";
 import { getInvitationByToken, setupPasswordFromInvitation, InvitationError } from "../services/adminInvitationService.js";
+import {
+  requestPasswordReset,
+  validateResetToken,
+  resetPassword,
+  PasswordResetError,
+} from "../services/passwordResetService.js";
 
 // The only status that may sign in or use admin endpoints. admins.status is a
 // plain string (default "ACTIVE"); any other value counts as not active.
@@ -53,8 +59,12 @@ async function resolveDb(db) {
   return db ?? (await import("../config/prisma.js")).default;
 }
 
-// loginLimiter can be replaced in tests; each router gets its own counts.
-export function createAuthRouter({ db, loginLimiter = createLoginRateLimiter() } = {}) {
+// loginLimiter and resetLimiter can be replaced in tests; each router gets its own counts.
+export function createAuthRouter({
+  db,
+  loginLimiter = createLoginRateLimiter(),
+  resetLimiter = createResetRateLimiter(),
+} = {}) {
   const router = express.Router();
 
   // Admin login. Rate limited here only, not on /me or other routes.
@@ -225,6 +235,77 @@ export function createAuthRouter({ db, loginLimiter = createLoginRateLimiter() }
         });
       }
       console.error("Password setup error:", { errorType: error?.name ?? "Error" });
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Self-Service Password Recovery (Forgot Password)
+  // Generates a 1-hour secure reset token and emails it to active admins.
+  // Rate-limited to prevent abuse. Always returns generic success to prevent email enumeration.
+  router.post("/forgot-password", resetLimiter, async (req, res) => {
+    try {
+      const email = req.body?.email;
+      if (!email || typeof email !== "string" || email.trim() === "" || email.length > MAX_EMAIL_LENGTH) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      const client = await resolveDb(db);
+      const result = await requestPasswordReset({ db: client, email });
+      return res.status(200).json(result);
+    } catch (error) {
+      if (error instanceof PasswordResetError) {
+        return res.status(error.status).json({
+          message: error.message,
+          code: error.code ?? undefined,
+        });
+      }
+      console.error("Forgot password error:", { errorType: error?.name ?? "Error" });
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Validates a password reset token without consuming it.
+  router.get("/reset-password", async (req, res) => {
+    try {
+      const token = typeof req.query?.token === "string" ? req.query.token : null;
+      if (!token) {
+        return res.status(400).json({ message: "Reset token is required" });
+      }
+
+      const client = await resolveDb(db);
+      const result = await validateResetToken({ db: client, token });
+      return res.status(200).json(result);
+    } catch (error) {
+      if (error instanceof PasswordResetError) {
+        return res.status(error.status).json({
+          message: error.message,
+          code: error.code ?? undefined,
+        });
+      }
+      console.error("Reset token check error:", { errorType: error?.name ?? "Error" });
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Consumes a reset token, updates password hash, and logs audit record.
+  router.post("/reset-password", async (req, res) => {
+    try {
+      const { token, password } = req.body ?? {};
+      if (!token || typeof token !== "string" || !password || typeof password !== "string") {
+        return res.status(400).json({ message: "Token and password are required" });
+      }
+
+      const client = await resolveDb(db);
+      const result = await resetPassword({ db: client, token, password });
+      return res.status(200).json(result);
+    } catch (error) {
+      if (error instanceof PasswordResetError) {
+        return res.status(error.status).json({
+          message: error.message,
+          code: error.code ?? undefined,
+        });
+      }
+      console.error("Reset password error:", { errorType: error?.name ?? "Error" });
       return res.status(500).json({ message: "Internal server error" });
     }
   });

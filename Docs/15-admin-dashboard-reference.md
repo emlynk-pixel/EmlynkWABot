@@ -298,6 +298,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 | 15 | Sync | Means an explicit reload of the dashboard data only. |
 | 16 | Dark mode | Added on top of the Stitch design through its colour tokens; light mode unchanged. |
 | 17 | Admin Invitations | Self-service onboarding via one-time 24-hour setup links, hashed token storage, bcrypt password encryption, and immutable audit logging (Phase 12, Checkpoint 2). |
+| 18 | Password Reset | Self-service password recovery via 1-hour single-use reset links, SHA-256 token hashing, zero account enumeration, scoped rate limiting, bcrypt encryption, and audit logging. |
 
 ## 9. Known limitations
 

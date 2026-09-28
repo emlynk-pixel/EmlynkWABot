@@ -5,12 +5,14 @@ import { ClientDetailsPage } from "./pages/ClientDetailsPage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { DailyReportPage } from "./pages/DailyReportPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { InvitationsPage } from "./pages/InvitationsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MissingDocumentsPage } from "./pages/MissingDocumentsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { PoliceWorkflowPage } from "./pages/PoliceWorkflowPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { SetupPasswordPage } from "./pages/SetupPasswordPage";
@@ -23,6 +25,8 @@ export function AppRoutes() {
     return (
         <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/setup-password" element={<SetupPasswordPage />} />
             <Route
                 element={

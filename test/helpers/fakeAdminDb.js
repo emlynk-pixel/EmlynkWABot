@@ -1,8 +1,9 @@
-// In-memory stand-in for prisma.admin, prisma.adminInvitation, and prisma.auditLog.
+// In-memory stand-in for prisma.admin, prisma.adminInvitation, prisma.adminPasswordReset, and prisma.auditLog.
 // Used across auth, RBAC, provisioning, and invitation tests.
-export function createFakeAdminDb(admins = [], { invitations = [], auditLogs = [] } = {}) {
+export function createFakeAdminDb(admins = [], { invitations = [], passwordResets = [], auditLogs = [] } = {}) {
     const rows = admins.map((admin) => ({ ...admin }));
     const invitationRows = invitations.map((inv) => ({ ...inv }));
+    const passwordResetRows = passwordResets.map((r) => ({ ...r }));
     const auditLogRows = auditLogs.map((log) => ({ ...log }));
 
     const pick = (row, select) =>
@@ -11,6 +12,7 @@ export function createFakeAdminDb(admins = [], { invitations = [], auditLogs = [
     const db = {
         rows,
         invitationRows,
+        passwordResetRows,
         auditLogRows,
         admin: {
             async findUnique({ where, select }) {
@@ -111,6 +113,62 @@ export function createFakeAdminDb(admins = [], { invitations = [], auditLogs = [
                     }
                 }
                 return { count };
+            },
+        },
+        adminPasswordReset: {
+            async findUnique({ where, include }) {
+                const found = passwordResetRows.find((r) =>
+                    ("tokenHash" in where ? r.tokenHash === where.tokenHash : false) ||
+                    ("resetId" in where ? r.resetId === where.resetId : false)
+                );
+                if (!found) return null;
+                const result = { ...found };
+                if (include?.admin) {
+                    const admin = rows.find((a) => a.adminId === found.adminId);
+                    result.admin = admin ? { ...admin } : null;
+                }
+                return result;
+            },
+            async create({ data }) {
+                if (passwordResetRows.some((r) => r.tokenHash === data.tokenHash)) {
+                    throw Object.assign(new Error("Unique constraint failed on token_hash"), { code: "P2002" });
+                }
+                const row = {
+                    createdAt: new Date(),
+                    usedAt: null,
+                    ...data,
+                };
+                passwordResetRows.push(row);
+                return { ...row };
+            },
+            async update({ where, data }) {
+                const index = passwordResetRows.findIndex((r) =>
+                    ("resetId" in where ? r.resetId === where.resetId : false) ||
+                    ("tokenHash" in where ? r.tokenHash === where.tokenHash : false)
+                );
+                if (index === -1) {
+                    throw new Error("Record to update not found.");
+                }
+                passwordResetRows[index] = { ...passwordResetRows[index], ...data };
+                return { ...passwordResetRows[index] };
+            },
+            async updateMany({ where, data }) {
+                let count = 0;
+                for (let i = 0; i < passwordResetRows.length; i++) {
+                    const matchesAdmin = !("adminId" in where) || passwordResetRows[i].adminId === where.adminId;
+                    const matchesUsedAt = !("usedAt" in where) || passwordResetRows[i].usedAt === where.usedAt;
+                    if (matchesAdmin && matchesUsedAt) {
+                        passwordResetRows[i] = { ...passwordResetRows[i], ...data };
+                        count++;
+                    }
+                }
+                return { count };
+            },
+            async findMany({ where = {} } = {}) {
+                return passwordResetRows.filter((r) =>
+                    (!("adminId" in where) || r.adminId === where.adminId) &&
+                    (!("tokenHash" in where) || r.tokenHash === where.tokenHash)
+                ).map((r) => ({ ...r }));
             },
         },
         auditLog: {

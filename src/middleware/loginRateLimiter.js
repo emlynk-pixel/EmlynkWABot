@@ -41,3 +41,29 @@ export function createLoginRateLimiter({
         },
     });
 }
+
+// Abuse protection for POST /auth/forgot-password.
+export const RESET_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+export const RESET_RATE_LIMIT_MAX_REQUESTS = 5;
+export const RESET_RATE_LIMIT_MESSAGE = "Too many password reset requests. Please try again later.";
+
+/**
+ * Limits password reset requests per client IP to mitigate email bombing / enumeration.
+ */
+export function createResetRateLimiter({
+    windowMs = RESET_RATE_LIMIT_WINDOW_MS,
+    limit = RESET_RATE_LIMIT_MAX_REQUESTS,
+} = {}) {
+    return rateLimit({
+        windowMs,
+        limit,
+        skipSuccessfulRequests: false,
+        standardHeaders: "draft-8",
+        legacyHeaders: false,
+        identifier: "password-reset",
+        handler: (req, res, next, options) => {
+            res.status(options.statusCode).json({ message: RESET_RATE_LIMIT_MESSAGE });
+        },
+    });
+}
+

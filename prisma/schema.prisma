@@ -26,8 +26,27 @@ model Admin {
   updatedDate     DateTime          @updatedAt @map("updated_date")
   auditLogs       AuditLog[]
   invitationsSent AdminInvitation[] @relation("AdminInvitations")
+  passwordResets  AdminPasswordReset[]
 
   @@map("admins")
+}
+
+// Admin password resets (Self-service password recovery).
+// One-time reset tokens with 1-hour expiration. Only the SHA-256 hash
+// of the token is stored in the database.
+model AdminPasswordReset {
+  resetId   String    @id @map("reset_id")
+  adminId   String    @map("admin_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@index([adminId, expiresAt])
+  @@map("admin_password_resets")
 }
 
 // Admin invitations (Phase 12, Checkpoint 2). One-time self-service invitation

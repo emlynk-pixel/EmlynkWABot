@@ -732,14 +732,14 @@ The repository maintains an extensive automated regression test suite spanning b
 
 | Test Layer | Command | Scope & Tooling | Latest Results |
 |---|---|---|:---:|
-| **Backend Regression** | `npm test` | `node:test`: Unit, integration, pipeline, security, idempotency, RBAC | **189 suites, 1027 passed (0 failed)** |
+| **Backend Regression** | `npm test` | `node:test`: Unit, integration, pipeline, security, idempotency, RBAC, Password Reset | **194 suites, 1054 passed (0 failed)** |
 | **Real File OCR** | `set RUN_OCR_TESTS=1&& npm test` | Tests OCR extraction across real scanned PDF/image fixtures | Verified passing |
-| **Admin Frontend** | `npm run admin:test` | Vitest + JSDOM: Screens, authentication, RBAC guards, dark mode | **6 suites, 126 passed (0 failed)** |
+| **Admin Frontend** | `npm run admin:test` | Vitest + JSDOM: Screens, auth, RBAC guards, dark mode, invitations, reset password | **9 suites, 141 passed (0 failed)** |
 | **Frontend Typecheck** | `npm run admin:typecheck` | `tsc --noEmit -p tsconfig.json` | **0 errors** |
-| **Frontend Production Build** | `npm run admin:build` | Vite compilation and asset optimization | **Clean bundle (492ms)** |
+| **Frontend Production Build** | `npm run admin:build` | Vite compilation and asset optimization | **Clean bundle (399ms)** |
 | **Live Storage E2E** | `node scripts/e2e-supabase-storage.mjs`| Live verification of private bucket upload, placement, recovery | **Verified passing** |
 
-*Total automated tests passing across the repository: **1,153 tests**.*
+*Total automated tests passing across the repository: **1,195 tests**.*
 
 ---
 
@@ -775,7 +775,6 @@ The target production deployment model centers on a containerized Node.js applic
 - **Handwritten Police Slips:** Handwritten dates on informal police receipts frequently fail OCR detection and require manual admin date entry during approval.
 
 ### Planned Future Improvements
-- **Admin Invitation System:** Self-service administrative invitations via email token (Phase 12, Checkpoint 2).
 - **Automated Client Notifications:** Outbound WhatsApp notifications informing clients when documents are verified or need re-submission.
 - **Historical Snapshots:** Scheduled daily snapshot jobs archiving completeness history for long-term reporting trends.
 
@@ -788,6 +787,7 @@ The target production deployment model centers on a containerized Node.js applic
 | **App & Runtime** | `src/app.js`, `src/createApp.js`, `src/shutdown.js` | App bootstrap, middleware setup, graceful shutdown |
 | **Configuration** | `src/config/env.js`, `src/config/prisma.js`, `src/config/supabase.js` | Environment validation, database client, storage client |
 | **Authentication & RBAC** | `src/middleware/auth.js`, `src/middleware/requireRole.js`, `src/routes/auth.js` | JWT verification, cookies, role enforcement, login/logout |
+| **Password Reset** | `src/services/passwordResetService.js`, `src/middleware/loginRateLimiter.js` | Token hashing, 1h expiry, zero enumeration, reset limits |
 | **WhatsApp Ingestion** | `src/routes/whatsapp.js`, `src/middleware/verifyWhatsAppSignature.js` | Webhook verification, HMAC validation, binary intake |
 | **Queue & Worker** | `src/services/submissionQueue.js`, `src/services/placementRecovery.js` | Lease acquisition, background execution, crash recovery |
 | **Document Processing**| `src/services/documentProcessingService.js`, `src/services/statusMapping.js` | Pipeline coordination, outcome computation |
@@ -798,9 +798,9 @@ The target production deployment model centers on a containerized Node.js applic
 | **Police Workflow** | `src/services/policeCountdownService.js`, `src/services/adminPoliceService.js` | 21-day countdown calculation, urgency classification |
 | **Admin API** | `src/routes/admin.js`, `src/services/adminDashboardService.js` | Admin endpoints, overview KPIs, reports |
 | **Admin UI Core** | `admin/src/App.tsx`, `admin/src/auth/AuthProvider.tsx`, `admin/src/api/client.ts` | Frontend routes, auth state, HTTP client |
-| **Admin UI Pages** | `admin/src/pages/OverviewPage.tsx`, `ReviewQueuePage.tsx`, `PoliceWorkflowPage.tsx` | Operational views, tables, forms, metrics |
+| **Admin UI Pages** | `admin/src/pages/OverviewPage.tsx`, `LoginPage.tsx`, `ForgotPasswordPage.tsx`, `ResetPasswordPage.tsx` | Operational views, tables, forms, metrics, auth flows |
 | **Database Schema** | `prisma/schema.prisma`, `prisma/migrations/` | Prisma data models, constraints, SQL triggers |
-| **Tests** | `test/adminRbacAuth.test.js`, `adminReports.test.js`, `admin/src/test/` | Backend test suites, Vitest frontend tests |
+| **Tests** | `test/adminPasswordReset.test.js`, `test/adminRbacAuth.test.js`, `admin/src/test/` | Backend test suites, Vitest frontend tests |
 
 ---
 
@@ -811,4 +811,5 @@ The target production deployment model centers on a containerized Node.js applic
 - **Phase 12 (Security, QA & Deployment):** Currently active final implementation phase.
   - **Checkpoint 1 (Authentication + RBAC):** **COMPLETED**. Secure `httpOnly` cookie transport implemented, `SameSite=Strict` CSRF protection active, three-tier role-based authorization (`ADMIN`, `REVIEWER`, `VIEWER`) enforced across all admin endpoints, and full test suite passing at 100%.
   - **Checkpoint 2 (Admin Invitation System):** **COMPLETED**. 256-bit cryptographic invitation token generation, SHA-256 hashed token storage, 24-hour expiration, single-use token consumption, email dispatch with setup links, bcrypt password hashing, account activation upon password creation, duplicate active account prevention, role validation, and full audit logging (`INVITE_ADMIN`, `COMPLETE_INVITATION`, `REVOKE_INVITATION`).
+  - **Self-Service Password Reset System:** **COMPLETED**. High-entropy 256-bit random reset tokens, SHA-256 hash storage in `admin_password_resets`, 1-hour expiration, single-use invalidation, scoped rate limiting (5 req / 15 min), zero account/email enumeration generic responses, bcrypt password hashing, inactive account preservation, immutable audit logging (`RESET_PASSWORD`), and comprehensive frontend recovery UI.
   - **Checkpoint 3 (Deployment & Container Hardening):** Upcoming. Deployment to production servers is not yet complete.

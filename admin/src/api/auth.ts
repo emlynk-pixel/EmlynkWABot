@@ -57,3 +57,30 @@ export async function setupPassword(token: string, password: string): Promise<st
     });
     return message;
 }
+
+// POST /auth/forgot-password — requests a password reset link
+export async function forgotPassword(email: string): Promise<string> {
+    const { message } = await apiRequest<{ message: string }>("/auth/forgot-password", {
+        method: "POST",
+        body: { email },
+    });
+    return message;
+}
+
+// GET /auth/reset-password?token=... — validates reset token before showing password form
+export async function validateResetToken(token: string, signal?: AbortSignal): Promise<{ valid: boolean; message: string }> {
+    return apiRequest<{ valid: boolean; message: string }>(
+        `/auth/reset-password?token=${encodeURIComponent(token)}`,
+        { signal }
+    );
+}
+
+// POST /auth/reset-password — updates password using reset token
+export async function resetPassword(token: string, password: string): Promise<string> {
+    const { message } = await apiRequest<{ message: string }>("/auth/reset-password", {
+        method: "POST",
+        body: { token, password },
+    });
+    return message;
+}
+

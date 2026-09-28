@@ -909,4 +909,46 @@ A dedicated, minimal table `admin_invitations` was created via migration `202609
   - Success screen with direct navigation to Sign In (`/admin/login`).
   - Friendly error screens for invalid, expired, revoked, or already-used invitation tokens.
 
+## 14. Self-Service Password Reset System
+
+### 14.1 Functional Overview
+Provides secure, self-service password recovery for administrator accounts:
+1. Admin enters their email address on the Login page (`/admin/login`) or navigates to `/admin/forgot-password`.
+2. Backend receives `POST /auth/forgot-password`. If an active admin account exists with `status === "ACTIVE"`, it generates a 256-bit cryptographically secure random token, stores its SHA-256 hash in `admin_password_resets` with a 1-hour expiration, and dispatches a password reset email via `emailService`.
+3. To prevent email or account enumeration, `POST /auth/forgot-password` always returns a generic response (`"If the account exists, a password reset link has been sent."`) regardless of whether the email exists, is active, or is deactivated.
+4. The admin clicks the link in their email (`/admin/reset-password?token=...`). The frontend verifies the token with `GET /auth/reset-password?token=...` without consuming it.
+5. The admin inputs and confirms their new password (satisfying length requirements of 8–128 characters).
+6. Submitting the form calls `POST /auth/reset-password`. The backend verifies the token hash, ensures the token has not expired and has not already been used, encrypts the new password using bcrypt, marks the token as used, creates an append-only `audit_logs` record, and preserves the account's existing status (inactive accounts are never automatically activated).
+
+### 14.2 Database Schema (`admin_password_resets`)
+- `reset_id`: UUID primary key.
+- `admin_id`: foreign key referencing `admins(admin_id)` with `ON DELETE CASCADE`.
+- `token_hash`: SHA-256 hex string of the raw random token (unique index).
+- `expires_at`: timestamp marking 1-hour expiration.
+- `used_at`: timestamp marking single-use consumption (null while unused).
+- `created_at`: creation timestamp.
+
+### 14.3 API Endpoints
+| Method | Endpoint | Access | Rate Limit | Description |
+|---|---|---|---|---|
+| `POST` | `/auth/forgot-password` | Public | 5 req / 15 min per IP | Initiates reset; emails active admins; returns generic 200 response |
+| `GET` | `/auth/reset-password?token=...` | Public | None | Pre-flight token validation without consuming it |
+| `POST` | `/auth/reset-password` | Public | None | Consumes token, updates bcrypt hash, marks used, writes audit log |
+
+### 14.4 Security Controls
+- **Cryptographic Randomness:** 256-bit random tokens (`crypto.randomBytes(32).toString('hex')`).
+- **No Plaintext Tokens:** Only SHA-256 hashes are stored in the database.
+- **Strict Single-Use:** Tokens cannot be reused; subsequent submissions fail with `ALREADY_USED`.
+- **1-Hour Expiration:** Tokens expire after 60 minutes and are rejected with `EXPIRED`.
+- **Zero Account Enumeration:** Response messages and error shapes never reveal whether an email exists or whether an account is active.
+- **Brute-Force & Flood Protection:** Scoped rate limiter (`createResetRateLimiter`) caps `POST /auth/forgot-password` to 5 requests per 15 minutes per IP.
+- **Preserved Inactivity:** Deactivated or disabled accounts cannot be activated via password reset; resetting their password keeps their status `INACTIVE` or `DISABLED`, and login remains blocked.
+- **Audit Logging:** Every password reset produces an immutable entry in `audit_logs` (`action: "RESET_PASSWORD"`).
+
+### 14.5 User Interface
+- **Login Page (`/admin/login`):** Features a "Forgot password?" shortcut directly beside the password field heading.
+- **Forgot Password Page (`/admin/forgot-password`):** Clean single-field email request form with clear loading indicators and a generic confirmation screen instructing users to check their email.
+- **Reset Password Page (`/admin/reset-password`):** Pre-flights the reset token, handles expired/invalid links gracefully with recovery shortcuts, enforces password matching and 8-character minimums, provides password visibility toggling, and displays a confirmation state routing back to `/login`.
+
+
 
