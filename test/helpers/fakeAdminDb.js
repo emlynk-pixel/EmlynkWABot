@@ -114,6 +114,14 @@ export function createFakeAdminDb(admins = [], { invitations = [], passwordReset
                 }
                 return { count };
             },
+            async delete({ where }) {
+                const index = invitationRows.findIndex((r) => r.invitationId === where.invitationId);
+                if (index === -1) {
+                    throw new Error("Record to delete not found.");
+                }
+                const [deleted] = invitationRows.splice(index, 1);
+                return deleted;
+            },
         },
         adminPasswordReset: {
             async findUnique({ where, include }) {

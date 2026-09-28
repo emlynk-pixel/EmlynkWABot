@@ -5,6 +5,7 @@ import {
     inviteAdmin,
     listInvitations,
     revokeInvitation,
+    deleteInvitation,
     type AdminInvitationSummary,
 } from "../api/admin";
 import { ApiError } from "../api/client";
@@ -36,8 +37,9 @@ export function InvitationsPage() {
     const [formSuccess, setFormSuccess] = useState<string | null>(null);
     const [formError, setFormError] = useState<string | null>(null);
 
-    // Revoke action state
+    // Revoke & Delete action state
     const [revokingId, setRevokingId] = useState<string | null>(null);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
 
     async function loadInvitations() {
         if (!isAdmin) return;
@@ -102,6 +104,22 @@ export function InvitationsPage() {
             alert(err instanceof ApiError ? err.message : "Failed to revoke invitation.");
         } finally {
             setRevokingId(null);
+        }
+    }
+
+    async function handleDelete(invitationId: string) {
+        if (!confirm("Are you sure you want to permanently remove this invitation from the list?")) {
+            return;
+        }
+
+        setDeletingId(invitationId);
+        try {
+            await deleteInvitation(invitationId, token ?? undefined);
+            loadInvitations();
+        } catch (err) {
+            alert(err instanceof ApiError ? err.message : "Failed to remove invitation.");
+        } finally {
+            setDeletingId(null);
         }
     }
 
@@ -317,15 +335,27 @@ export function InvitationsPage() {
                                             {dateFormat.format(new Date(inv.createdAt))}
                                         </td>
                                         <td className="py-3 px-4 text-right">
-                                            {inv.status === "PENDING" && (
+                                            {inv.status === "PENDING" ? (
                                                 <button
                                                     type="button"
                                                     onClick={() => handleRevoke(inv.invitationId)}
                                                     disabled={revokingId === inv.invitationId}
                                                     className="inline-flex items-center gap-1 text-label-sm text-critical hover:underline disabled:opacity-50"
+                                                    title="Revoke invitation"
                                                 >
                                                     <Icon name="cancel" className="size-4" />
                                                     <span>{revokingId === inv.invitationId ? "Revoking…" : "Revoke"}</span>
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDelete(inv.invitationId)}
+                                                    disabled={deletingId === inv.invitationId}
+                                                    className="inline-flex items-center gap-1 text-label-sm text-ink-subtle hover:text-critical hover:underline disabled:opacity-50"
+                                                    title="Remove from list permanently"
+                                                >
+                                                    <Icon name="delete" className="size-4" />
+                                                    <span>{deletingId === inv.invitationId ? "Removing…" : "Remove from list"}</span>
                                                 </button>
                                             )}
                                         </td>

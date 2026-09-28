@@ -14,6 +14,7 @@ import summarize from "@material-symbols/svg-400/outlined/summarize.svg?raw";
 import sync from "@material-symbols/svg-400/outlined/sync.svg?raw";
 import chevronLeft from "@material-symbols/svg-400/outlined/chevron_left.svg?raw";
 import dashboard from "@material-symbols/svg-400/outlined/dashboard.svg?raw";
+import deleteIcon from "@material-symbols/svg-400/outlined/delete.svg?raw";
 import description from "@material-symbols/svg-400/outlined/description.svg?raw";
 import error from "@material-symbols/svg-400/outlined/error.svg?raw";
 import factCheck from "@material-symbols/svg-400/outlined/fact_check.svg?raw";
@@ -37,6 +38,7 @@ const ICONS = {
     cancel,
     check_circle: checkCircle,
     dark_mode: darkMode,
+    delete: deleteIcon,
     edit,
     event,
     light_mode: lightMode,

@@ -512,3 +512,12 @@ export function revokeInvitation(invitationId: string, token?: string): Promise<
     });
 }
 
+// Permanently delete an invitation from the list (ADMIN only)
+export function deleteInvitation(invitationId: string, token?: string): Promise<{ message: string }> {
+    return apiRequest<{ message: string }>(`/api/admin/invitations/${encodeURIComponent(invitationId)}`, {
+        method: "DELETE",
+        token,
+    });
+}
+
+

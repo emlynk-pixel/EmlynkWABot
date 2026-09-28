@@ -500,4 +500,38 @@ describe("Admin Invitation System (Phase 12 Checkpoint 2)", () => {
         // Sensitive data not leaked
         assert.equal(inv.tokenHash, undefined);
     });
+
+    test("Delete invitation: ADMIN can permanently remove an invitation", async () => {
+        const adminToken = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
+        const createRes = await fetch(`${baseUrl}/api/admin/invitations`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${adminToken}`,
+            },
+            body: JSON.stringify({
+                name: "To Delete",
+                email: "todelete@example.invalid",
+                role: "VIEWER",
+            }),
+        });
+        const inv = (await createRes.json()).invitation;
+
+        const deleteRes = await fetch(`${baseUrl}/api/admin/invitations/${inv.invitationId}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${adminToken}` },
+        });
+        assert.equal(deleteRes.status, 200);
+        const deleteData = await deleteRes.json();
+        assert.ok(deleteData.message.includes("permanently removed"));
+
+        // Confirm it is gone from the database
+        const found = db.invitationRows.find((r) => r.invitationId === inv.invitationId);
+        assert.equal(found, undefined);
+
+        // Confirm audit log created
+        const audit = db.auditLogRows.find((l) => l.action === "DELETE_INVITATION" && l.newValue === "todelete@example.invalid");
+        assert.ok(audit);
+    });
 });
+
