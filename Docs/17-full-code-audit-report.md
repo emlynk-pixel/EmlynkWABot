@@ -145,6 +145,7 @@ Zero. Legitimate WhatsApp inbound messages always contain a sender number.
 ```text
 ID: AUDIT-003
 Severity: MEDIUM
+Status: VERIFIED and CLOSED
 Category: Frontend Admin Dashboard / RBAC UI Gating
 Location: admin/src/pages/ReviewDetailPage.tsx:694-716 and admin/src/pages/ClientDetailsPage.tsx:216-224
 Problem:
@@ -195,6 +196,7 @@ Zero.
 ```text
 ID: AUDIT-005
 Severity: LOW
+Status: VERIFIED and CLOSED
 Category: Database Schema & Migration Drift
 Location: prisma/schema.prisma:47,70 and prisma/migrations/20260928100000_password_reset_tokens/migration.sql:15,18
 Problem:
@@ -267,6 +269,7 @@ Zero.
 ```text
 ID: AUDIT-009
 Severity: LOW
+Status: VERIFIED and CLOSED
 Category: Code Duplication
 Location: 7 backend files (src/routes/auth.js, src/routes/admin.js, etc.)
 Problem:
@@ -450,13 +453,13 @@ A new developer can successfully clone and run the project provided the followin
 |:---:|---|---|:---:|
 | **1** | **AUDIT-001** | Make password-reset email dispatch asynchronous to eliminate timing enumeration | Low |
 | **2** | **AUDIT-002** | Add `message.from` validation in webhook handler to prevent 500 retry storms | Very Low |
-| **3** | **AUDIT-003** | Gate review action buttons and date correction controls by `admin.role` in UI | Low |
+| **3** | **AUDIT-003** (CLOSED) | Gate review action buttons and date correction controls by `admin.role` in UI | Low |
 | **4** | **AUDIT-004** | Add Invitations to navigation items and fix breadcrumb display | Very Low |
 | **5** | **AUDIT-007** | Update `.env.example` with SMTP and `APP_BASE_URL` templates | Very Low |
-| **6** | **AUDIT-005** | Remove redundant duplicate B-tree indexes from `schema.prisma` | Very Low |
+| **6** | **AUDIT-005** (CLOSED) | Remove redundant duplicate B-tree indexes from `schema.prisma` | Very Low |
 | **7** | **AUDIT-006** | Align password length policy across CLI and self-service flows | Low |
 | **8** | **AUDIT-008** | Correct role nomenclature in `Docs/13-security-overview.md` | Very Low |
-| **9** | **AUDIT-009** | Consolidate duplicated `resolveDb` / `resolveBucket` helpers | Low |
+| **9** | **AUDIT-009** (CLOSED) | Consolidate duplicated `resolveDb` / `resolveBucket` helpers | Low |
 
 ---
 
