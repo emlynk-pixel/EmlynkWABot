@@ -410,12 +410,12 @@ describe("Review actions", () => {
         expect(within(history).queryByText(/reject/i)).not.toBeInTheDocument();
     });
 
-    test("when Approve isn't possible the button is disabled with the reason", async () => {
+    test("when Approve isn't possible the button is absent but the reason is shown", async () => {
         const blocked = { ...ITEM, actions: { ...ITEM.actions!, approve: { available: false, code: "CLIENT_NOT_IDENTIFIED", message: "This file is not linked to a client, so it can't be stored in a client folder. It stays pending." } } };
         signedInBackend({ [DETAIL]: { status: 200, body: blocked }, [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse });
         renderApp(`/review/pending-${TEMP_ID}`);
         const group = await screen.findByRole("group", { name: "Review actions" });
-        expect(within(group).getByRole("button", { name: "Approve" })).toBeDisabled();
+        expect(within(group).queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
         expect(within(group).getByRole("button", { name: "Keep Pending" })).toBeEnabled();
         expect(screen.getByText(/Approve is not available: This file is not linked to a client/)).toBeInTheDocument();
     });
@@ -526,14 +526,14 @@ describe("Corrections: set document type and assign client", () => {
 
     test("offered for a waiting file only; never a Reject", async () => {
         const { group } = await open(CORRECTABLE);
-        expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Approve", "Keep Pending", "Set Document Type", "Assign Client", "Remove from Review"]);
+        expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Keep Pending", "Set Document Type", "Assign Client", "Remove from Review"]);
         expect(screen.queryByText(/reject/i)).not.toBeInTheDocument();
     });
 
     test("not offered when the server says the item can't be corrected (stored document)", async () => {
         const stored = { ...CORRECTABLE, actions: { ...CORRECTABLE.actions!, setDocumentType: { available: false, code: "NOT_CORRECTABLE", message: "x" }, assignClient: { available: false, code: "NOT_CORRECTABLE", message: "x" }, remove: { available: false, code: "NOT_REMOVABLE", message: "x" } } };
         const { group } = await open(stored);
-        expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Approve", "Keep Pending"]);
+        expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Keep Pending"]);
     });
 
     test("Set Document Type: type and reason required; sent; item reloaded, still pending", async () => {
@@ -639,8 +639,8 @@ describe("Remove from Review for a stored REVIEW_REQUIRED document (H4)", () => 
         renderApp(`/review/document-${DOC_ID}`);
         const user = userEvent.setup();
         const group = await screen.findByRole("group", { name: "Review actions" });
-        expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Approve", "Keep Pending", "Remove from Review"]);
-        expect(within(group).getByRole("button", { name: "Approve" })).toBeDisabled();
+        expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Keep Pending", "Remove from Review"]);
+        expect(within(group).queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
 
         await user.click(within(group).getByRole("button", { name: "Remove from Review" }));
         const dialog = screen.getByRole("dialog", { name: "Remove this file from review?" });
@@ -695,7 +695,7 @@ describe("M4: duplicate of a verified document", () => {
         expect(screen.getByText("Passport 3F2B8C1E")).toBeInTheDocument();
         expect(screen.getByText(/identical file \(same checksum\) · not changed/)).toBeInTheDocument();
 
-        expect(within(group).getByRole("button", { name: "Approve" })).toBeDisabled();
+        expect(within(group).queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
         expect(within(group).getByRole("button", { name: "Keep Pending" })).toBeEnabled();
         expect(within(group).getByRole("button", { name: "Remove from Review" })).toBeEnabled();
         expect(screen.getByText(/Approve is not available: This document is an exact duplicate/)).toBeInTheDocument();
@@ -748,7 +748,7 @@ describe("M4 Policy B: multiple verified documents of the same type", () => {
         expect(screen.getByRole("note")).toHaveTextContent("Client already has a verified document of this type");
         expect(screen.getByText("Existing verified document")).toBeInTheDocument();
         expect(screen.getByText("medical.pdf")).toBeInTheDocument();
-        expect(within(group).getByRole("button", { name: "Approve" })).toBeDisabled();
+        expect(within(group).queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
         expect(within(group).getByRole("button", { name: "Replace Verified Document" })).toBeEnabled();
         expect(within(group).getByRole("button", { name: "Keep as Separate Version" })).toBeEnabled();
         expect(within(group).getByRole("button", { name: "Remove from Review" })).toBeEnabled();

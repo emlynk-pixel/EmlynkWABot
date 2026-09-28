@@ -300,6 +300,8 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     // (a different, already-well-read file of a type the client has verified).
     const canReplaceVerified = hasReviewPermission && item.actions?.replaceVerified?.available === true && !!item.existingVerified;
     const canKeepAsVersion = hasReviewPermission && item.actions?.keepAsVersion?.available === true;
+    const canApprove = hasReviewPermission && item.actions?.approve?.available === true;
+    const canKeepPending = hasReviewPermission && item.actions?.keepPending?.available === true;
 
     const open = (which: "approve" | "keep" | "remove" | "type" | "client" | "retry" | "replace" | "version") => {
         setError(null);
@@ -695,9 +697,11 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                         ) : hasReviewPermission ? (
                             <>
                                 <div className="flex flex-wrap gap-2" role="group" aria-label="Review actions">
-                                    <button type="button" className={primaryButton} disabled={busy || Boolean(approveBlocked)} onClick={() => open("approve")}>
-                                        Approve
-                                    </button>
+                                    {canApprove && (
+                                        <button type="button" className={primaryButton} disabled={busy} onClick={() => open("approve")}>
+                                            Approve
+                                        </button>
+                                    )}
                                     {canReplaceVerified && (
                                         <button type="button" className={secondaryButton} disabled={busy} onClick={() => open("replace")}>
                                             Replace Verified Document
@@ -708,9 +712,11 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                             Keep as Separate Version
                                         </button>
                                     )}
-                                    <button type="button" className={secondaryButton} disabled={busy} onClick={() => open("keep")}>
-                                        Keep Pending
-                                    </button>
+                                    {canKeepPending && (
+                                        <button type="button" className={secondaryButton} disabled={busy} onClick={() => open("keep")}>
+                                            Keep Pending
+                                        </button>
+                                    )}
                                     {canSetType && (
                                         <button type="button" className={secondaryButton} disabled={busy} onClick={() => open("type")}>
                                             Set Document Type
@@ -727,7 +733,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                         </button>
                                     )}
                                 </div>
-                                {approveBlocked && <p className="text-label-sm text-ink-muted">Approve is not available: {approveBlocked}</p>}
+                                {hasReviewPermission && approveBlocked && <p className="text-label-sm text-ink-muted">Approve is not available: {approveBlocked}</p>}
                             </>
                         ) : (
                             <p className="text-body-sm text-ink-muted">
