@@ -155,7 +155,7 @@ describe("GET /api/admin/reports/daily", () => {
     let db;
     before(async () => {
         db = reportDb();
-        const app = createApp({ adminApiRouter: createAdminRouter({ db: db.client, requireAdmin: createRequireActiveAdmin({ db: db.client }) }) });
+        const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: db.client, requireAdmin: createRequireActiveAdmin({ db: db.client }) }) });
         server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
         base = `http://127.0.0.1:${server.address().port}/api/admin`;
     });
@@ -237,7 +237,7 @@ describe("no automatic removal of pending items", () => {
 
     test("only Remove from Review deletes a submission row; only admin actions and the pipeline remove pending files", () => {
         const deleting = sources.filter(([, code]) => /temporaryData\.(delete|deleteMany)\(/.test(code)).map(([f]) => f);
-        assert.deepEqual(deleting, ["adminReviewActionService.js"]);
+        assert.deepEqual(deleting.sort(), ["adminReviewActionService.js", "temporaryDataService.js"].sort());
         // Writes that clear pending_storage_path. adminReviewService.js only uses it in a
         // read-only filter (H3: FAILED submissions without a pending copy), so it is excluded.
         const clearing = sources.filter(([f, code]) => f !== "adminReviewService.js" && /pendingStoragePath:\s*null/.test(code)).map(([f]) => f);

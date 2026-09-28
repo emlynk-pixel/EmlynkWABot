@@ -83,7 +83,7 @@ function fakeReviewDb({ pending = [pendingRow()], documents = [documentRow()] } 
 const tokenFor = (adminId) => jwt.sign({ adminId }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
 
 async function startWith(db, bucket = createFakeBucket([])) {
-    const app = createApp({ adminApiRouter: createAdminRouter({ db, bucket }) });
+    const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db, bucket }) });
     const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
     const base = `http://127.0.0.1:${server.address().port}`;
     const get = async (path, token = tokenFor("admin-active")) => {

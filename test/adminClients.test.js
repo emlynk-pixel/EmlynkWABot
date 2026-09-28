@@ -179,7 +179,7 @@ let server;
 let base;
 let db;
 before(async () => {
-    const app = createApp({ adminApiRouter: (req, res, next) => createAdminRouter({ db: db.client, requireAdmin: createRequireActiveAdmin({ db: db.client }) })(req, res, next) });
+    const app = createApp({ adminApiRouter: (req, res, next) => createAdminRouter({ apiLimiter: (req, res, next) => next(), db: db.client, requireAdmin: createRequireActiveAdmin({ db: db.client }) })(req, res, next) });
     server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
     base = `http://127.0.0.1:${server.address().port}/api/admin`;
 });

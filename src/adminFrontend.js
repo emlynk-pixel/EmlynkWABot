@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import { createApiRateLimiter } from "./middleware/apiRateLimiter.js";
 
 // Built admin dashboard (admin/, `npm run admin:build`).
 export const DEFAULT_ADMIN_DIST_DIR = fileURLToPath(new URL("../admin/dist", import.meta.url));
@@ -13,8 +14,12 @@ export const DEFAULT_ADMIN_DIST_DIR = fileURLToPath(new URL("../admin/dist", imp
 // - any other GET/HEAD path: index.html, so client-side routes such as
 //   /admin/review work on reload. Never cached, so a new build is picked up.
 // Same origin as the API, so no CORS; helmet's headers (CSP etc.) apply.
-export function createAdminFrontendRouter({ distDir = DEFAULT_ADMIN_DIST_DIR } = {}) {
+export function createAdminFrontendRouter({ 
+    distDir = DEFAULT_ADMIN_DIST_DIR,
+    apiLimiter = createApiRateLimiter(),
+} = {}) {
     const router = express.Router();
+    router.use(apiLimiter);
     const indexFile = path.join(distDir, "index.html");
 
     if (!fs.existsSync(indexFile)) {

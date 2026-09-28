@@ -72,7 +72,7 @@ before(async () => {
 });
 after(() => server.close());
 function use(fixture) {
-    current = { ...fixture, router: createAdminRouter({ db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveAdmin({ db: fixture.db.client }) }) };
+    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveAdmin({ db: fixture.db.client }) }) };
     return fixture;
 }
 async function call(method, path, { body, token = tokenFor("admin-active") } = {}) {

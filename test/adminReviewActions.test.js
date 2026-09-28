@@ -91,7 +91,7 @@ before(async () => {
 after(() => server.close());
 
 function use(fixture) {
-    current = { ...fixture, router: createAdminRouter({ db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveAdmin({ db: fixture.db.client }) }) };
+    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveAdmin({ db: fixture.db.client }) }) };
     return fixture;
 }
 
@@ -567,7 +567,7 @@ describe("security and error handling", () => {
     });
 
     test("the router only writes through the review actions and corrections", () => {
-        const router = createAdminRouter({ db: current.db.client, bucket: current.bucket, requireAdmin: (req, res, next) => next() });
+        const router = createAdminRouter({ apiLimiter: (req, res, next) => next(), db: current.db.client, bucket: current.bucket, requireAdmin: (req, res, next) => next() });
         const writes = router.stack
             .filter((layer) => layer.route)
             .flatMap((layer) => Object.keys(layer.route.methods).filter((m) => m !== "get").map((m) => `${m.toUpperCase()} ${layer.route.path}`));

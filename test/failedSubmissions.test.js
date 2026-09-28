@@ -117,7 +117,7 @@ before(async () => {
     const files = { [pages.row.temporaryStoragePath]: pages.buffer, [storage.row.temporaryStoragePath]: storage.buffer };
     bucket.download = async (p) => (files[p] ? { data: files[p], error: null } : { data: null, error: { message: "not found" } });
     fixture = { db, bucket };
-    const app = createApp({ adminApiRouter: createAdminRouter({ db: db.client, bucket, requireAdmin: createRequireActiveAdmin({ db: db.client }) }) });
+    const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: db.client, bucket, requireAdmin: createRequireActiveAdmin({ db: db.client }) }) });
     server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
     base = `http://127.0.0.1:${server.address().port}/api/admin`;
 });

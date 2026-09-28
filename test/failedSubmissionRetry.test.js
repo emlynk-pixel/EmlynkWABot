@@ -89,7 +89,7 @@ const tokenFor = (adminId) => jwt.sign({ adminId }, process.env.JWT_SECRET, { al
 async function api(w, method, path, { body, token = tokenFor(ADMIN.adminId) } = {}) {
     const app = express();
     app.use(express.json());
-    app.use("/api/admin", createAdminRouter({ db: w.db.client, bucket: w.bucket, requireAdmin: createRequireActiveAdmin({ db: w.db.client }) }));
+    app.use("/api/admin", createAdminRouter({ apiLimiter: (req, res, next) => next(), db: w.db.client, bucket: w.bucket, requireAdmin: createRequireActiveAdmin({ db: w.db.client }) }));
     app.use(errorHandler);
     const server = await new Promise((r) => { const s = app.listen(0, "127.0.0.1", () => r(s)); });
     try {

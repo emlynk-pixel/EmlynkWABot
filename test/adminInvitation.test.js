@@ -45,7 +45,7 @@ before(async () => {
     app.use(express.json());
     app.use(cookieParser());
     app.use("/auth", createAuthRouter({ db, loginLimiter: noRateLimit, resetLimiter: noRateLimit }));
-    app.use("/api/admin", createAdminRouter({
+    app.use("/api/admin", createAdminRouter({ apiLimiter: (req, res, next) => next(),
         db,
         requireAdmin: createRequireActiveAdmin({ db }),
     }));

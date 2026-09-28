@@ -2,6 +2,7 @@ import express from "express";
 
 import { createRequireActiveAdmin } from "../middleware/requireActiveAdmin.js";
 import { requireRole, ADMIN_ROLES } from "../middleware/requireRole.js";
+import { createApiRateLimiter } from "../middleware/apiRateLimiter.js";
 import {
     getOverview,
     listDocuments,
@@ -74,8 +75,15 @@ const ADMINS_ONLY = [ADMIN];                     // administrators only
 // Phase 12: RBAC is enforced per-endpoint via requireRole.
 // Errors: { message } or { message, errors: [{ field, message }] }; review
 // action conflicts also carry a machine-readable { code }.
-export function createAdminRouter({ db, bucket, requireAdmin = createRequireActiveAdmin({ db }) } = {}) {
+export function createAdminRouter({ 
+    db, 
+    bucket, 
+    requireAdmin = createRequireActiveAdmin({ db }),
+    apiLimiter = createApiRateLimiter(),
+} = {}) {
     const router = express.Router();
+
+    router.use(apiLimiter);
 
     router.use((req, res, next) => {
         res.set("Cache-Control", "no-store");

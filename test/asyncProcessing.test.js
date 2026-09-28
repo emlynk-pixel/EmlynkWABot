@@ -359,7 +359,7 @@ describe("M1 regression through webhook + worker", () => {
 
 // Admin API over the same fake DB (failed submissions visible, H3).
 async function adminGet(w, path) {
-    const router = createAdminRouter({ db: w.db.client, bucket: w.bucket, requireAdmin: createRequireActiveAdmin({ db: w.db.client }) });
+    const router = createAdminRouter({ apiLimiter: (req, res, next) => next(), db: w.db.client, bucket: w.bucket, requireAdmin: createRequireActiveAdmin({ db: w.db.client }) });
     const token = jwt.sign({ adminId: "admin-a" }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
     let body;
     await withServer(w.deps, async ({ base }) => {
