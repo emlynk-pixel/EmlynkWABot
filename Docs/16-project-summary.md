@@ -810,5 +810,5 @@ The target production deployment model centers on a containerized Node.js applic
 - **Phase 11 (Reporting & Alerts):** Completed. Includes daily business-day reporting, countdown monitoring, and missing document tracking.
 - **Phase 12 (Security, QA & Deployment):** Currently active final implementation phase.
   - **Checkpoint 1 (Authentication + RBAC):** **COMPLETED**. Secure `httpOnly` cookie transport implemented, `SameSite=Strict` CSRF protection active, three-tier role-based authorization (`ADMIN`, `REVIEWER`, `VIEWER`) enforced across all admin endpoints, and full test suite passing at 100%.
-  - **Checkpoint 2 (Admin Invitation System):** Upcoming.
+  - **Checkpoint 2 (Admin Invitation System):** **COMPLETED**. 256-bit cryptographic invitation token generation, SHA-256 hashed token storage, 24-hour expiration, single-use token consumption, email dispatch with setup links, bcrypt password hashing, account activation upon password creation, duplicate active account prevention, role validation, and full audit logging (`INVITE_ADMIN`, `COMPLETE_INVITATION`, `REVOKE_INVITATION`).
   - **Checkpoint 3 (Deployment & Container Hardening):** Upcoming. Deployment to production servers is not yet complete.

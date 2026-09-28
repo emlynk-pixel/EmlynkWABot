@@ -842,3 +842,71 @@ The three-tier role model recommended in Proposal §33 is implemented directly u
   - `authenticateAdmin` accepts either `emlynk_admin_token` cookie or `Authorization: Bearer <token>` header, preserving backward compatibility for CLI scripts, testing, and legacy automation.
   - CSRF defense in depth: `SameSite=Strict` cookie policy prevents cross-site request forgery by default.
 
+## 13. Phase 12 — Checkpoint 2: Admin Invitation System
+
+Implemented on 2026-09-28 per Phase 12 Checkpoint 2 requirements.
+
+### 13.1 Overview & Architecture
+The Admin Invitation System provides a secure, self-service onboarding flow for administrative users (`ADMIN`, `REVIEWER`, `VIEWER`) without exposing credentials, shared secrets, or raw token data:
+1. An active administrator (`role: "ADMIN"`) issues an invitation through the dashboard or API.
+2. The server generates a high-entropy 256-bit cryptographically secure random token (`crypto.randomBytes(32).toString("hex")`).
+3. Only the SHA-256 hash of the token (`crypto.createHash("sha256").update(token).digest("hex")`) is persisted in the database (`admin_invitations.token_hash`). Raw tokens are never stored, logged, or returned in API responses.
+4. The invitation is configured with a strict 24-hour expiration window.
+5. An invitation email is formatted (HTML and plain text) and dispatched containing the setup link (`/admin/setup-password?token=<rawToken>`).
+6. The invitee opens the link, previews their assigned role and email, and sets their password.
+7. The password is encrypted using the existing bcrypt implementation (`hashPassword`, minimum 8 characters).
+8. The account status becomes `ACTIVE` only upon successful password creation.
+9. The invitation token is marked `ACCEPTED` and becomes permanently unusable (one-time use).
+10. All lifecycle events (`INVITE_ADMIN`, `COMPLETE_INVITATION`, `REVOKE_INVITATION`) are recorded in the append-only `audit_logs` table.
+
+### 13.2 Database Schema & Migration
+A dedicated, minimal table `admin_invitations` was created via migration `20260928090000_phase12_admin_invitations`:
+- `invitation_id`: UUID primary key.
+- `email`: lowercased recipient email address (indexed).
+- `name`: invitee full name.
+- `role`: assigned role (`ADMIN`, `REVIEWER`, `VIEWER`).
+- `token_hash`: unique SHA-256 hash of the invitation token (indexed).
+- `invited_by`: foreign key to `admins.admin_id` (`ON DELETE RESTRICT`).
+- `status`: plain text lifecycle status (`PENDING`, `ACCEPTED`, `REVOKED`, `EXPIRED`, default `PENDING`).
+- `expires_at`: timestamp marking the 24-hour validity limit.
+- `created_at`: creation timestamp.
+- `accepted_at`: timestamp of successful password configuration.
+- `revoked_at`: timestamp of administrative revocation.
+
+### 13.3 Endpoints & Authorization Rules
+| Method | Endpoint | Allowed Role | Description |
+|---|---|---|---|
+| `POST` | `/api/admin/invitations` | `ADMIN` | Issue a new admin invitation (name, email, role). Dispatches email, writes audit log. |
+| `GET` | `/api/admin/invitations` | `ADMIN` | List all invitations with computed status (`PENDING`, `ACCEPTED`, `REVOKED`, `EXPIRED`). |
+| `POST` | `/api/admin/invitations/:id/revoke` | `ADMIN` | Revoke a pending invitation. Writes audit log. |
+| `GET` | `/auth/invitation?token=...` | Public | Validate invitation token before password setup; returns safe profile details without consuming the token. |
+| `POST` | `/auth/setup-password` | Public | Set password from token, hash with bcrypt, activate admin account, mark token accepted, write audit log. |
+
+### 13.4 Security Controls & Hardening
+- **High-Entropy Tokens:** 256 bits of cryptographic randomness prevent brute-force or guessing attacks.
+- **Hashed Storage:** Storing only SHA-256 hashes ensures database compromises do not leak valid invitation setup tokens.
+- **Single-Use Enforcement:** Tokens transition to `ACCEPTED` in a transaction and reject subsequent uses with `ALREADY_USED`.
+- **24-Hour Expiration:** Expired tokens are rejected with `EXPIRED` status code.
+- **Duplicate Prevention:** Active admin accounts cannot be re-invited; attempting to invite an existing active email returns HTTP 409 `DUPLICATE_ACTIVE_ADMIN`.
+- **RBAC Enforcement:** Only administrators with `role: "ADMIN"` may issue, list, or revoke invitations. Callers with `REVIEWER` or `VIEWER` roles receive HTTP 403 `Insufficient permissions`.
+- **Audit Logging:** Every invitation issuance (`INVITE_ADMIN`), completion (`COMPLETE_INVITATION`), and revocation (`REVOKE_INVITATION`) produces an append-only row in `audit_logs`.
+- **Safe Error Responses:** Generic 500 error responses mask internal exceptions and SQL errors.
+
+### 13.5 Email Architecture
+- Clean configuration placeholders: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`, `ADMIN_SETUP_URL_BASE`, `APP_BASE_URL`.
+- Development / Test Harness: If SMTP credentials are absent or in `test`/`development` mode, dispatched emails are captured in an in-memory test queue (`getSentEmails()`, `getLastSentEmail()`) and logged safely without leaking sensitive tokens or blocking local development.
+
+### 13.6 User Interface
+- **Invitations Page (`/admin/invitations`):**
+  - Restricted to `ADMIN` role (non-admin visitors receive an "Access Restricted" notice).
+  - "Invite New Administrator" form: full name, email address, role selector (`REVIEWER`, `VIEWER`, `ADMIN`), and submit button with inline feedback.
+  - "Invitation Status & History" table: lists invitee name, email, role badge, status badge (`Pending Setup`, `Active`, `Expired`, `Revoked`), expiration and creation timestamps, and inline "Revoke" action.
+- **Setup Password Page (`/admin/setup-password`):**
+  - Public route (outside `RequireAuth`).
+  - Automatically loads and verifies the `?token=...` parameter.
+  - Displays invitee name, email, and role badge.
+  - Password and confirm password inputs with visibility toggle and minimum 8-character validation.
+  - Success screen with direct navigation to Sign In (`/admin/login`).
+  - Friendly error screens for invalid, expired, revoked, or already-used invitation tokens.
+
+

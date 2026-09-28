@@ -31,3 +31,29 @@ export async function fetchCurrentAdmin(token?: string, signal?: AbortSignal): P
 export async function logout(): Promise<void> {
     await apiRequest<{ message: string }>("/auth/logout", { method: "POST" });
 }
+
+export type InvitationDetails = {
+    invitationId: string;
+    email: string;
+    name: string;
+    role: string;
+    expiresAt: string;
+};
+
+// GET /auth/invitation?token=... — validates token without consuming it
+export async function validateInvitation(token: string, signal?: AbortSignal): Promise<InvitationDetails> {
+    const { invitation } = await apiRequest<{ invitation: InvitationDetails; message: string }>(
+        `/auth/invitation?token=${encodeURIComponent(token)}`,
+        { signal }
+    );
+    return invitation;
+}
+
+// POST /auth/setup-password — sets password and activates the account
+export async function setupPassword(token: string, password: string): Promise<string> {
+    const { message } = await apiRequest<{ message: string }>("/auth/setup-password", {
+        method: "POST",
+        body: { token, password },
+    });
+    return message;
+}

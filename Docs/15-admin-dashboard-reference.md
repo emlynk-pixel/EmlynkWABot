@@ -260,14 +260,20 @@ All endpoints are under `/api/admin` and require an ACTIVE admin session via `em
 | POST | `/review/:reviewId/keep-as-version` | ADMIN, REVIEWER | Keep document as version `{ reason? }` |
 | GET | `/police` | ADMIN, REVIEWER, VIEWER | Police Workflow (`status`, `search`, `passportId`, paging) |
 | GET | `/reports/daily` | ADMIN, REVIEWER, VIEWER | Daily Report (`date=YYYY-MM-DD`, default today) |
+| POST | `/invitations` | ADMIN | Issue new admin invitation `{ name, email, role }` (Phase 12, Checkpoint 2) |
+| GET | `/invitations` | ADMIN | List admin invitations with status (Phase 12, Checkpoint 2) |
+| POST | `/invitations/:id/revoke` | ADMIN | Revoke a pending invitation (Phase 12, Checkpoint 2) |
+| GET | `/auth/invitation?token=...` | Public | Validate setup token without consuming |
+| POST | `/auth/setup-password` | Public | Set password from invitation `{ token, password }` |
 
-Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, message }]`, refused actions (409) add a `code` such as `ALREADY_RESOLVED`, `VERIFIED_DOCUMENT_EXISTS`, `CLIENT_NOT_FOUND` or `NOT_CORRECTABLE`, and insufficient permissions (403) return `{ "message": "Insufficient permissions" }`. 401 means no or an invalid session, 404 an unknown item, 502 a storage failure, and 500 an unexpected error (no details are shown).
+Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, message }]`, refused actions (409) add a `code` such as `ALREADY_RESOLVED`, `VERIFIED_DOCUMENT_EXISTS`, `CLIENT_NOT_FOUND`, `DUPLICATE_ACTIVE_ADMIN` or `NOT_CORRECTABLE`, and insufficient permissions (403) return `{ "message": "Insufficient permissions" }`. 401 means no or an invalid session, 404 an unknown item, 502 a storage failure, and 500 an unexpected error (no details are shown).
 
 ## 7. Security
 
 - Documents are in a **private** storage bucket. The dashboard never receives a storage link or credential: files are streamed through the server to signed-in admins only and shown from a local browser copy.
 - The session authentication token is transported via a secure `httpOnly; SameSite=Strict; Secure (in production)` cookie (`emlynk_admin_token`) set on login and cleared on logout. The frontend never accesses raw JWT secrets. The server verifies on every request that the admin exists and is ACTIVE.
 - Role-based authorization (`requireRole` middleware) enforces the principle of least privilege across all endpoints.
+- Admin Invitation System (Phase 12, Checkpoint 2): 256-bit cryptographically secure random invitation tokens, stored exclusively as SHA-256 hashes, with 24-hour expiration, single-use enforcement, bcrypt password hashing, and immutable audit logging (`INVITE_ADMIN`, `COMPLETE_INVITATION`, `REVOKE_INVITATION`).
 - The server's Content Security Policy allows scripts only from the dashboard itself; the dashboard loads no external fonts or scripts.
 - Responses contain no storage paths or checksums.
 
@@ -291,6 +297,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 | 14 | Daily reporting | Moved from Phase 11 into Phase 10. Daily and current figures are kept apart; figures without a data source are not estimated. |
 | 15 | Sync | Means an explicit reload of the dashboard data only. |
 | 16 | Dark mode | Added on top of the Stitch design through its colour tokens; light mode unchanged. |
+| 17 | Admin Invitations | Self-service onboarding via one-time 24-hour setup links, hashed token storage, bcrypt password encryption, and immutable audit logging (Phase 12, Checkpoint 2). |
 
 ## 9. Known limitations
 

@@ -23,19 +23,29 @@ import lock from "@material-symbols/svg-400/outlined/lock.svg?raw";
 import logout from "@material-symbols/svg-400/outlined/logout.svg?raw";
 import mail from "@material-symbols/svg-400/outlined/mail.svg?raw";
 import menu from "@material-symbols/svg-400/outlined/menu.svg?raw";
+import personAdd from "@material-symbols/svg-400/outlined/person_add.svg?raw";
 import progressActivity from "@material-symbols/svg-400/outlined/progress_activity.svg?raw";
+import refresh from "@material-symbols/svg-400/outlined/refresh.svg?raw";
+import schedule from "@material-symbols/svg-400/outlined/schedule.svg?raw";
+import send from "@material-symbols/svg-400/outlined/send.svg?raw";
+import cancel from "@material-symbols/svg-400/outlined/cancel.svg?raw";
 import visibility from "@material-symbols/svg-400/outlined/visibility.svg?raw";
 import visibilityOff from "@material-symbols/svg-400/outlined/visibility_off.svg?raw";
 
 const ICONS = {
     assignment_late: assignmentLate,
+    cancel,
     check_circle: checkCircle,
     dark_mode: darkMode,
     edit,
     event,
     light_mode: lightMode,
+    person_add: personAdd,
     person_search: personSearch,
+    refresh,
+    schedule,
     search,
+    send,
     summarize,
     sync,
     chevron_left: chevronLeft,

@@ -44,6 +44,7 @@ import {
     setPoliceSubmittedDate,
 } from "../services/adminCorrectionService.js";
 import { getDailyReport, parseDailyReportQuery } from "../services/adminReportService.js";
+import { createInvitationRouter } from "./adminInvitations.js";
 
 // Loaded lazily so tests can pass a fake client without touching the DB.
 async function resolveDb(db) {
@@ -273,6 +274,9 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
             db: client, admin: req.admin, documentId: req.params.documentId, reason: parsed.reason, policeSubmittedDate: parsed.policeSubmittedDate,
         }));
     });
+
+    // ---------------------------------------------------------------- admin invitations (ADMIN only)
+    router.use("/invitations", createInvitationRouter({ db }));
 
     // Anything else under /api/admin (only reached by an authenticated admin).
     router.use((req, res) => res.status(404).json({ message: "Not found" }));

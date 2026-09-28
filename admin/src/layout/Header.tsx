@@ -1,4 +1,4 @@
-import { useLocation } from "react-router";
+import { useLocation, NavLink } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
 import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
@@ -74,6 +74,20 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
 
             {admin && (
                 <div className="flex items-center gap-3">
+                    {admin.role === "ADMIN" && (
+                        <NavLink
+                            to="/invitations"
+                            className={({ isActive }) =>
+                                `flex h-8 items-center gap-1.5 rounded border border-border-strong px-2.5 text-label-md shadow-surface ${
+                                    isActive ? "bg-primary text-on-primary border-primary" : "bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"
+                                }`
+                            }
+                            title="Invite Admin"
+                        >
+                            <Icon name="person_add" className="size-4" />
+                            <span className="hidden lg:inline">Invite Admin</span>
+                        </NavLink>
+                    )}
                     <div className="hidden text-right sm:block">
                         <p className="text-label-md text-ink" data-testid="admin-name">{admin.name}</p>
                         <p className="text-label-sm text-ink-subtle">{admin.role}</p>

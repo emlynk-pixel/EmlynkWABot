@@ -5,6 +5,7 @@ import { ClientDetailsPage } from "./pages/ClientDetailsPage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { DailyReportPage } from "./pages/DailyReportPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
+import { InvitationsPage } from "./pages/InvitationsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MissingDocumentsPage } from "./pages/MissingDocumentsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -12,6 +13,7 @@ import { OverviewPage } from "./pages/OverviewPage";
 import { PoliceWorkflowPage } from "./pages/PoliceWorkflowPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
+import { SetupPasswordPage } from "./pages/SetupPasswordPage";
 
 // Routes are relative to the /admin base (see main.tsx). Overview,
 // Documents, Review Queue, Review Detail, Client Details and Police Workflow
@@ -21,6 +23,7 @@ export function AppRoutes() {
     return (
         <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/setup-password" element={<SetupPasswordPage />} />
             <Route
                 element={
                     <RequireAuth>
@@ -37,6 +40,7 @@ export function AppRoutes() {
                 <Route path="missing-documents" element={<MissingDocumentsPage />} />
                 <Route path="police" element={<PoliceWorkflowPage />} />
                 <Route path="reports/daily" element={<DailyReportPage />} />
+                <Route path="invitations" element={<InvitationsPage />} />
                 <Route path="*" element={<NotFoundPage />} />
             </Route>
         </Routes>

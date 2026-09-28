@@ -16,17 +16,41 @@ datasource db {
 //Added admin table
 
 model Admin {
-  adminId      String     @id @map("admin_id")
-  name         String
-  email        String     @unique
-  passwordHash String?    @map("password_hash")
-  role         String
-  status       String     @default("ACTIVE")
-  createdDate  DateTime   @default(now()) @map("created_date")
-  updatedDate  DateTime   @updatedAt @map("updated_date")
-  auditLogs    AuditLog[]
+  adminId         String            @id @map("admin_id")
+  name            String
+  email           String            @unique
+  passwordHash    String?           @map("password_hash")
+  role            String
+  status          String            @default("ACTIVE")
+  createdDate     DateTime          @default(now()) @map("created_date")
+  updatedDate     DateTime          @updatedAt @map("updated_date")
+  auditLogs       AuditLog[]
+  invitationsSent AdminInvitation[] @relation("AdminInvitations")
 
   @@map("admins")
+}
+
+// Admin invitations (Phase 12, Checkpoint 2). One-time self-service invitation
+// tokens with 24-hour expiration. Only the SHA-256 hash of the token is stored.
+model AdminInvitation {
+  invitationId String    @id @map("invitation_id")
+  email        String    @map("email")
+  name         String    @map("name")
+  role         String    @map("role")
+  tokenHash    String    @unique @map("token_hash")
+  invitedBy    String    @map("invited_by")
+  status       String    @default("PENDING") @map("status")
+  expiresAt    DateTime  @map("expires_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  acceptedAt   DateTime? @map("accepted_at")
+  revokedAt    DateTime? @map("revoked_at")
+
+  inviter Admin @relation("AdminInvitations", fields: [invitedBy], references: [adminId], onDelete: Restrict)
+
+  @@index([email])
+  @@index([tokenHash])
+  @@index([status, expiresAt])
+  @@map("admin_invitations")
 }
 
 // Review actions taken by admins (Phase 10). Append-only: rows are never

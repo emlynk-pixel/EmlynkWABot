@@ -7,6 +7,7 @@ import { comparePassword, hashPassword } from "../utils/password.js";
 import { authenticateAdmin, JWT_ALGORITHM, AUTH_COOKIE_NAME, authCookieOptions } from "../middleware/auth.js";
 import { createLoginRateLimiter } from "../middleware/loginRateLimiter.js";
 import { ACTIVE_ADMIN_STATUS } from "../middleware/requireActiveAdmin.js";
+import { getInvitationByToken, setupPasswordFromInvitation, InvitationError } from "../services/adminInvitationService.js";
 
 // The only status that may sign in or use admin endpoints. admins.status is a
 // plain string (default "ACTIVE"); any other value counts as not active.
@@ -175,6 +176,57 @@ export function createAuthRouter({ db, loginLimiter = createLoginRateLimiter() }
   router.post("/logout", authenticateAdmin, (req, res) => {
     res.clearCookie(AUTH_COOKIE_NAME, authCookieOptions());
     return res.status(200).json({ message: "Signed out" });
+  });
+
+  // Phase 12 Checkpoint 2: Validate invitation token without consuming it.
+  // Invitee loads the setup password page; this provides the name/email/role.
+  router.get("/invitation", async (req, res) => {
+    try {
+      const token = typeof req.query.token === "string" ? req.query.token : null;
+      if (!token) {
+        return res.status(400).json({ message: "Invitation token is required" });
+      }
+
+      const client = await resolveDb(db);
+      const invitation = await getInvitationByToken({ db: client, token });
+      return res.status(200).json({
+        message: "Invitation valid",
+        invitation,
+      });
+    } catch (error) {
+      if (error instanceof InvitationError) {
+        return res.status(error.status).json({
+          message: error.message,
+          code: error.code ?? undefined,
+        });
+      }
+      console.error("Invitation check error:", { errorType: error?.name ?? "Error" });
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Phase 12 Checkpoint 2: Invitee sets password and activates account.
+  // Account becomes ACTIVE only after this succeeds. The token is marked ACCEPTED.
+  router.post("/setup-password", async (req, res) => {
+    try {
+      const { token, password } = req.body ?? {};
+      if (!token || typeof token !== "string" || !password || typeof password !== "string") {
+        return res.status(400).json({ message: "Token and password are required" });
+      }
+
+      const client = await resolveDb(db);
+      const result = await setupPasswordFromInvitation({ db: client, token, password });
+      return res.status(200).json(result);
+    } catch (error) {
+      if (error instanceof InvitationError) {
+        return res.status(error.status).json({
+          message: error.message,
+          code: error.code ?? undefined,
+        });
+      }
+      console.error("Password setup error:", { errorType: error?.name ?? "Error" });
+      return res.status(500).json({ message: "Internal server error" });
+    }
   });
 
   return router;

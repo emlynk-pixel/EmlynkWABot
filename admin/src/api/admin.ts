@@ -462,3 +462,53 @@ export function keepReviewItemPending(token: string, reviewId: string, reason: s
 export function getReviewFile(token: string, previewUrl: string, signal?: AbortSignal): Promise<Blob> {
     return apiRequestBlob(previewUrl, { token, signal });
 }
+
+export type AdminInvitationSummary = {
+    invitationId: string;
+    email: string;
+    name: string;
+    role: string;
+    status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
+    expiresAt: string;
+    createdAt: string;
+    acceptedAt: string | null;
+    revokedAt: string | null;
+    invitedBy: string;
+};
+
+export type InviteAdminPayload = {
+    name: string;
+    email: string;
+    role: string;
+};
+
+export type InviteAdminResult = {
+    message: string;
+    invitation: AdminInvitationSummary;
+};
+
+// Phase 12 Checkpoint 2: Invite a new administrator (ADMIN only)
+export function inviteAdmin(data: InviteAdminPayload, token?: string): Promise<InviteAdminResult> {
+    return apiRequest<InviteAdminResult>("/api/admin/invitations", {
+        method: "POST",
+        token,
+        body: data,
+    });
+}
+
+// Phase 12 Checkpoint 2: List all invitations (ADMIN only)
+export function listInvitations(token?: string, signal?: AbortSignal): Promise<{ invitations: AdminInvitationSummary[] }> {
+    return apiRequest<{ invitations: AdminInvitationSummary[] }>("/api/admin/invitations", {
+        token,
+        signal,
+    });
+}
+
+// Phase 12 Checkpoint 2: Revoke an invitation (ADMIN only)
+export function revokeInvitation(invitationId: string, token?: string): Promise<{ message: string }> {
+    return apiRequest<{ message: string }>(`/api/admin/invitations/${encodeURIComponent(invitationId)}/revoke`, {
+        method: "POST",
+        token,
+    });
+}
+
