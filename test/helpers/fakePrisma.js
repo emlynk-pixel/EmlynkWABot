@@ -7,6 +7,7 @@ export function createFakePrisma(users = [], { documents = [], temporaryData = [
     const rows = users.map((user) => ({ ...user }));
     const documentRows = documents.map((document) => ({ ...document }));
     const temporaryRows = temporaryData.map((row) => ({ ...row }));
+    const auditRows = [];
     const calls = [];
 
     const matches = (row, where) =>
@@ -46,6 +47,10 @@ export function createFakePrisma(users = [], { documents = [], temporaryData = [
         rows,
         documentRows,
         temporaryRows,
+        tables: { temporaryData: temporaryRows, auditLog: auditRows },
+        async $transaction(callback) {
+            return callback(this);
+        },
         user: {
             async findMany({ where = {}, select, take } = {}) {
                 calls.push({ method: "user.findMany", where });
@@ -93,6 +98,23 @@ export function createFakePrisma(users = [], { documents = [], temporaryData = [
                 calls.push({ method: "temporaryData.update", where, data });
                 return { ...where, ...data };
             },
+            async findUnique({ where = {} }) {
+                calls.push({ method: "temporaryData.findUnique", where });
+                return temporaryRows.find((row) => matches(row, where)) ?? null;
+            },
+            async delete({ where }) {
+                calls.push({ method: "temporaryData.delete", where });
+                const index = temporaryRows.findIndex((row) => matches(row, where));
+                if (index !== -1) temporaryRows.splice(index, 1);
+                return { ...where };
+            },
+        },
+        auditLog: {
+            async create({ data }) {
+                calls.push({ method: "auditLog.create", data });
+                auditRows.push({ ...data });
+                return { ...data };
+            }
         },
     };
 }

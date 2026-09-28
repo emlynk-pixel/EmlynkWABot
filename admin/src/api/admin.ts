@@ -439,6 +439,11 @@ export function retryProcessing(token: string, reviewId: string, reason: string 
     return apiRequest<RetryResult>(`/api/admin/review/${encodeURIComponent(reviewId)}/retry`, { method: "POST", token, body: reason ? { reason } : {} });
 }
 
+// Manually delete a temporary document (e.g. failed processing items).
+export function deleteTemporaryDocument(token: string, temporaryId: string): Promise<{ action: string; temporaryId: string; deleted: boolean }> {
+    return apiRequest<{ action: string; temporaryId: string; deleted: boolean }>(`/api/admin/temporary-documents/${encodeURIComponent(temporaryId)}`, { method: "DELETE", token });
+}
+
 // M4 Policy B: replaces the named existing verified document with this
 // waiting file; the existing document is kept, marked superseded.
 export function replaceVerifiedDocument(token: string, reviewId: string, documentId: string, reason: string | null, policeSubmittedDate?: string): Promise<ReplaceVerifiedResult> {

@@ -244,7 +244,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const isFailed = item.kind === "FAILED";
     const failure = isFailed ? FAILURE_REASONS[item.failure?.code ?? ""] : undefined;
 
-    const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | "type" | "client" | "retry" | "replace" | "version" | null>(null);
+    const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | "deleteTemporary" | "type" | "client" | "retry" | "replace" | "version" | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<Notice | null>(null);
@@ -254,6 +254,8 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const [removeReason, setRemoveReason] = useState("");
     const [removeConfirmed, setRemoveConfirmed] = useState(false);
     const [removeError, setRemoveError] = useState<string | null>(null);
+    const [deleteTemporaryConfirmed, setDeleteTemporaryConfirmed] = useState(false);
+    const [deleteTemporaryError, setDeleteTemporaryError] = useState<string | null>(null);
     const [removed, setRemoved] = useState<RemoveResult | null>(null);
     const [newType, setNewType] = useState("");
     const [correctionReason, setCorrectionReason] = useState("");
@@ -315,6 +317,10 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
             setRemoveReason("");
             setRemoveConfirmed(false);
             setRemoveError(null);
+        }
+        if (which === "deleteTemporary") {
+            setDeleteTemporaryConfirmed(false);
+            setDeleteTemporaryError(null);
         }
         if (which === "type" || which === "client") {
             setNewType("");
@@ -385,6 +391,26 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
         setError(null);
         try {
             setRemoved(await removeFromReview(token, item.reviewId, trimmed));
+            setDialog(null);
+        } catch (caught) {
+            fail(caught);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const confirmDeleteTemporary = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!token || busy) return;
+        if (!deleteTemporaryConfirmed) {
+            setDeleteTemporaryError("Confirm that you want to permanently delete this temporary document.");
+            return;
+        }
+        setBusy(true);
+        setError(null);
+        try {
+            await deleteTemporaryDocument(token, item.document.temporaryId!);
+            setRemoved({ action: "REMOVE_FROM_REVIEW", reviewId: item.reviewId, filesDeleted: true, audit: {} as any }); // Re-using removed state to show "This item is no longer in the Review Queue"
             setDialog(null);
         } catch (caught) {
             fail(caught);
@@ -682,9 +708,21 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                         <button type="button" className={primaryButton} disabled={busy} onClick={() => open("retry")}>
                                             Retry processing
                                         </button>
+                                        {hasReviewPermission && (
+                                            <button type="button" className={dangerButton} disabled={busy} onClick={() => open("deleteTemporary")}>
+                                                Delete temporary document
+                                            </button>
+                                        )}
                                     </div>
                                 )}
-                                <p className="text-body-sm text-ink-muted">
+                                {!canRetry && hasReviewPermission && (
+                                    <div className="flex flex-wrap gap-2" role="group" aria-label="Failed submission actions">
+                                        <button type="button" className={dangerButton} disabled={busy} onClick={() => open("deleteTemporary")}>
+                                            Delete temporary document
+                                        </button>
+                                    </div>
+                                )}
+                                <p className="text-body-sm text-ink-muted mt-2">
                                     {canRetry ? "Retry processes the original file again. " : ""}You can also ask the client to send the file again; the new submission is processed as usual.{" "}
                                     <Link to="/review?kind=FAILED" className="text-primary hover:underline">Back to failed submissions</Link>
                                 </p>
@@ -837,6 +875,35 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                         <div className="mt-4 flex justify-end gap-2">
                             <button type="button" className={secondaryButton} disabled={busy} onClick={close}>Cancel</button>
                             <button type="submit" className={dangerSolidButton} disabled={busy}>{busy ? "Removing…" : "Remove permanently"}</button>
+                        </div>
+                    </form>
+                </ActionDialog>
+            )}
+
+            {dialog === "deleteTemporary" && (
+                <ActionDialog title="Delete this temporary document?" busy={busy} onClose={close}>
+                    <form onSubmit={confirmDeleteTemporary} noValidate>
+                        <p className="text-body-sm text-ink-soft">
+                            The file will be permanently deleted from temporary storage. This cannot be undone.
+                        </p>
+                        <label className="mt-3 flex items-start gap-2 text-body-sm text-ink">
+                            <input
+                                type="checkbox"
+                                checked={deleteTemporaryConfirmed}
+                                disabled={busy}
+                                onChange={(event) => {
+                                    setDeleteTemporaryConfirmed(event.target.checked);
+                                    setDeleteTemporaryError(null);
+                                }}
+                                className="mt-0.5"
+                            />
+                            I confirm this file should be permanently deleted.
+                        </label>
+                        {deleteTemporaryError && <p className="mt-1 text-label-sm text-critical">{deleteTemporaryError}</p>}
+                        <DialogError message={error} />
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button type="button" className={secondaryButton} disabled={busy} onClick={close}>Cancel</button>
+                            <button type="submit" className={dangerButton} disabled={busy || !deleteTemporaryConfirmed}>{busy ? "Deleting…" : "Delete Document"}</button>
                         </div>
                     </form>
                 </ActionDialog>

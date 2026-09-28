@@ -572,6 +572,7 @@ describe("security and error handling", () => {
             .filter((layer) => layer.route)
             .flatMap((layer) => Object.keys(layer.route.methods).filter((m) => m !== "get").map((m) => `${m.toUpperCase()} ${layer.route.path}`));
         assert.deepEqual(writes.sort(), [
+            "DELETE /temporary-documents/:temporaryId",
             "POST /documents/:documentId/police-date",
             "POST /review/:reviewId/approve",
             "POST /review/:reviewId/assign-client",

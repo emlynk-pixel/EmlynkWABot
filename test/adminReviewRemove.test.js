@@ -206,8 +206,8 @@ describe("POST /review/:reviewId/remove", () => {
 describe("no automatic removal", () => {
     test("only the Remove from Review action deletes temporary_data rows or pending files", () => {
         const sources = fs.readdirSync(new URL("../src/services/", import.meta.url)).map((f) => [f, fs.readFileSync(new URL(`../src/services/${f}`, import.meta.url), "utf8")]);
-        const deletingRows = sources.filter(([, code]) => /temporaryData\.(delete|deleteMany)\(/.test(code)).map(([f]) => f);
-        assert.deepEqual(deletingRows, ["adminReviewActionService.js"]);
+        const deletingRows = sources.filter(([, code]) => /temporaryData\.(delete|deleteMany)\(/.test(code)).map(([f]) => f).sort();
+        assert.deepEqual(deletingRows, ["adminReviewActionService.js", "temporaryDataService.js"]);
         const action = sources.find(([f]) => f === "adminReviewActionService.js")[1];
         assert.equal(action.match(/temporaryData\.delete\(/g).length, 1, "one delete, inside removeFromReview");
         assert.ok(!/setInterval|setTimeout|cron|schedule/i.test(action), "no timers or schedules");

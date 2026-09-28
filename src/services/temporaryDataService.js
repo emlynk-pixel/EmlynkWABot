@@ -1,5 +1,6 @@
 import crypto from "crypto";
-import { resolveDb } from "../utils/resolveClients.js";
+import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
+import { removeObject } from "./permanentStorageService.js";
 
 
 // Create the temporary_data row for a newly stored document. It is the
@@ -79,5 +80,40 @@ export async function updateTemporaryDocumentRecord(temporaryId, changes, { db, 
     return client.temporaryData.update({
         where: { temporaryId },
         data,
+    });
+}
+
+// Manually delete a temporary document (used when an admin removes it).
+export async function deleteTemporaryDocument(temporaryId, admin, { db, bucket } = {}) {
+    const client = await resolveDb(db);
+    const storage = await resolveBucket(bucket);
+
+    return client.$transaction(async (tx) => {
+        const row = await tx.temporaryData.findUnique({ where: { temporaryId } });
+        if (!row) throw new Error("Temporary document not found.");
+
+        await tx.auditLog.create({
+            data: {
+                auditId: crypto.randomUUID(),
+                adminId: admin.adminId,
+                action: "DELETE_TEMPORARY_DOCUMENT",
+                temporaryId,
+                previousStatus: row.processingStatus,
+                newStatus: "DELETED",
+                documentType: row.documentType,
+                fileSha256: row.fileSha256,
+            }
+        });
+
+        await tx.temporaryData.delete({ where: { temporaryId } });
+
+        const paths = [row.temporaryStoragePath, row.pendingStoragePath].filter(Boolean);
+        const removals = await Promise.all(paths.map((p) => removeObject(p, { bucket: storage })));
+        const failed = removals.filter(r => !r.removed);
+        if (failed.length) {
+            console.warn("Manual delete: file(s) not deleted", { temporaryId, failed: failed.length });
+        }
+
+        return { deleted: true };
     });
 }

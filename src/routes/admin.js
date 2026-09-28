@@ -46,6 +46,7 @@ import {
 import { getDailyReport, parseDailyReportQuery } from "../services/adminReportService.js";
 import { createInvitationRouter } from "./adminInvitations.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
+import { deleteTemporaryDocument } from "../services/temporaryDataService.js";
 
 
 // Quotes and non-ASCII characters are replaced so the header can't be broken.
@@ -248,6 +249,27 @@ export function createAdminRouter({ db, bucket, requireAdmin = createRequireActi
     // Corrections of a waiting file; it stays pending and in the queue.
     router.post("/review/:reviewId/document-type", requireRole(REVIEWERS_UP), reviewAction(setDocumentType, { needsBucket: false, parse: parseSetDocumentTypeBody }));
     router.post("/review/:reviewId/assign-client", requireRole(REVIEWERS_UP), reviewAction(assignClient, { needsBucket: false, parse: parseAssignClientBody }));
+
+    // ---------------------------------------------------------------- temporary documents deletion (REVIEWERS_UP)
+    
+    // Manually delete a temporary document (e.g. from the Review Queue or Missing Documents).
+    router.delete("/temporary-documents/:temporaryId", requireRole(REVIEWERS_UP), async (req, res) => {
+        const { temporaryId } = req.params;
+        if (!temporaryId || typeof temporaryId !== "string" || !/^[0-9a-fA-F-]+$/.test(temporaryId)) {
+            return res.status(400).json({ message: "Invalid temporary document ID" });
+        }
+        
+        try {
+            await deleteTemporaryDocument(temporaryId, req.admin, { db, bucket });
+            return res.status(200).json({ action: "DELETE_TEMPORARY_DOCUMENT", temporaryId, deleted: true });
+        } catch (error) {
+            if (error.message === "Temporary document not found.") {
+                return res.status(404).json({ message: "Temporary document not found." });
+            }
+            console.error("Failed to delete temporary document", { temporaryId, error });
+            return res.status(500).json({ message: "An unexpected error occurred." });
+        }
+    });
 
     // ---------------------------------------------------------------- corrections (ADMIN only)
 

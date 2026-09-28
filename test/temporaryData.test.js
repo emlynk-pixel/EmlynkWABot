@@ -1,9 +1,10 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { createTemporaryDocumentRecord } from "../src/services/temporaryDataService.js";
+import { createTemporaryDocumentRecord, deleteTemporaryDocument } from "../src/services/temporaryDataService.js";
 import { sha256Hex } from "../src/utils/fileChecksum.js";
 import { createFakePrisma } from "./helpers/fakePrisma.js";
+import { createFakeBucket } from "./helpers/fakeStorage.js";
 
 describe("createTemporaryDocumentRecord", () => {
     test("stores the file checksum with the new temporary record", async () => {
@@ -32,5 +33,33 @@ describe("createTemporaryDocumentRecord", () => {
         const second = await createTemporaryDocumentRecord(input, { db });
 
         assert.notEqual(first.temporaryId, second.temporaryId);
+    });
+});
+
+describe("deleteTemporaryDocument", () => {
+    test("permanently deletes a temporary document and its files with audit", async () => {
+        const temporaryId = "tmp-test-1";
+        const admin = { adminId: "a1", name: "Alice" };
+        const temporaryData = [
+            { temporaryId, processingStatus: "FAILED", documentType: "MEDICAL", temporaryStoragePath: "temporary/f1.pdf", pendingStoragePath: null, fileSha256: "deadbeef" },
+        ];
+        const db = createFakePrisma([], { temporaryData });
+        const bucket = createFakeBucket(["temporary/f1.pdf", "other/keep.pdf"]);
+
+        const result = await deleteTemporaryDocument(temporaryId, admin, { db, bucket });
+
+        assert.equal(result.deleted, true);
+        assert.equal(db.tables.temporaryData.length, 0, "Row deleted");
+        assert.deepEqual([...bucket.objects.keys()].sort(), ["other/keep.pdf"], "File deleted from storage");
+
+        const audit = db.tables.auditLog[0];
+        assert.ok(audit, "Audit entry created");
+        assert.equal(audit.action, "DELETE_TEMPORARY_DOCUMENT");
+        assert.equal(audit.temporaryId, temporaryId);
+        assert.equal(audit.adminId, admin.adminId);
+        assert.equal(audit.previousStatus, "FAILED");
+        assert.equal(audit.newStatus, "DELETED");
+        assert.equal(audit.documentType, "MEDICAL");
+        assert.equal(audit.fileSha256, "deadbeef");
     });
 });
