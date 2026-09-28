@@ -214,7 +214,7 @@ export function createAuthRouter({
 
   // Phase 12 Checkpoint 2: Invitee sets password and activates account.
   // Account becomes ACTIVE only after this succeeds. The token is marked ACCEPTED.
-  router.post("/setup-password", async (req, res) => {
+  router.post("/setup-password", resetLimiter, async (req, res) => {
     try {
       const { token, password } = req.body ?? {};
       if (!token || typeof token !== "string" || !password || typeof password !== "string") {
@@ -285,7 +285,7 @@ export function createAuthRouter({
   });
 
   // Consumes a reset token, updates password hash, and logs audit record.
-  router.post("/reset-password", async (req, res) => {
+  router.post("/reset-password", resetLimiter, async (req, res) => {
     try {
       const { token, password } = req.body ?? {};
       if (!token || typeof token !== "string" || !password || typeof password !== "string") {
