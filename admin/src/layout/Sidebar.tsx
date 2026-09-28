@@ -1,4 +1,5 @@
 import { NavLink } from "react-router";
+import { useAuth } from "../auth/AuthProvider";
 import { Icon } from "../components/Icon";
 import { NAV_ITEMS } from "./navigation";
 
@@ -13,6 +14,10 @@ type SidebarProps = {
 // Below md it becomes an off-canvas drawer opened from the header.
 export function Sidebar({ collapsed, mobileOpen, onToggleCollapsed, onNavigate }: SidebarProps) {
     const railOnly = collapsed && !mobileOpen;
+    const { admin } = useAuth();
+    // AUDIT-003/AUDIT-004: hide ADMIN-only entries (e.g. Invitations) from
+    // VIEW_ONLY or any non-ADMIN role. Backend remains the authoritative gate.
+    const visibleItems = NAV_ITEMS.filter((item) => !item.adminOnly || admin?.role === "ADMIN");
 
     return (
         <aside
@@ -35,7 +40,7 @@ export function Sidebar({ collapsed, mobileOpen, onToggleCollapsed, onNavigate }
 
             <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-2 py-3">
                 <ul className="space-y-1">
-                    {NAV_ITEMS.map((item) => (
+                    {visibleItems.map((item) => (
                         <li key={item.to}>
                             <NavLink
                                 to={item.to}

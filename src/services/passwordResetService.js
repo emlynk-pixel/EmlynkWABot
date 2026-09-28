@@ -113,14 +113,24 @@ export async function requestPasswordReset({
             },
         });
 
-        // Dispatch reset email
-        await emailService.sendPasswordResetEmail({
-            email: admin.email,
-            name: admin.name,
-            token: rawToken,
-            expiresAt,
-            env,
-        });
+        // Dispatch reset email asynchronously (fire-and-forget).
+        // Not awaited so the response time is the same whether the account
+        // exists, is active or inactive — eliminates the timing side-channel
+        // (AUDIT-001). A send failure is logged but never surfaces to the
+        // caller; the token is already stored and valid when the admin retries.
+        void emailService
+            .sendPasswordResetEmail({
+                email: admin.email,
+                name: admin.name,
+                token: rawToken,
+                expiresAt,
+                env,
+            })
+            .catch((sendError) => {
+                console.error("Password reset email could not be sent:", {
+                    errorType: sendError?.name ?? "Error",
+                });
+            });
     }
 
     // Generic response regardless of whether account exists, is active, or inactive

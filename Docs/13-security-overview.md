@@ -5,8 +5,8 @@
 | | |
 |---|---|
 | Status | **READY FOR CONTROLLED TESTING & PRODUCTION PREPARATION** |
-| Date | 2026-09-28 (updated after Phase 10 Admin Dashboard, Phase 12 RBAC & Invitations, and Password Reset features) |
-| Phase | Post Phase 12 (Role-Based Access Control, Admin Invitations, Forgot/Reset Password, and SMTP Email Delivery) |
+| Date | 2026-09-28 (updated after Phase 10 Admin Dashboard, Phase 12 RBAC & Invitations, Password Reset, and Post-Audit Remediation Pass) |
+| Phase | Post Phase 12 + Audit Remediation (9 findings resolved) |
 | Scope | Express backend (`src/`), React Admin Dashboard (`admin/`), operator scripts (`scripts/`), Prisma migrations, Supabase database, `emlynk-documents` storage bucket, Nodemailer SMTP service |
 
 All 28 security controls and audit findings (SEC-001 … SEC-028) are implemented, verified live, or accepted with stated rationale. **1,081 automated backend tests across 207 suites pass (1,055 passed, 0 failed, 26 opt-in skipped)**, and **141 frontend unit/integration tests pass (100%)**. Production TypeScript compilation (`npm run admin:build`) succeeds with 0 errors. No real company or client documents were used during automated verification; all test data is synthetic.
@@ -39,9 +39,10 @@ All 28 security controls and audit findings (SEC-001 … SEC-028) are implemente
 | **Zero Raw Token Storage:** Only the **SHA-256 hash** of the invitation token is stored in `admin_invitations.token_hash`; the raw token is transmitted solely via the invite email | `src/services/adminInvitationService.js`, `src/routes/adminInvitations.js` |
 | **Time-Bound Validity (24h):** Invitations expire after **24 hours** (`expires_at`); expired tokens are rejected with a clear message and cannot activate accounts | `src/services/adminInvitationService.js`, `src/routes/auth.js` |
 | **Single-Use Enforcement:** Invitations transition atomically from `PENDING` to `ACCEPTED` upon password setup (`accepted_at`, `accepted_by_admin_id`); tokens cannot be reused | `src/services/adminInvitationService.js`, `src/routes/auth.js` |
-| **Revocation & Deletion Controls:** `SUPER_ADMIN` can revoke pending invitations (`REVOKED` status) or permanently remove expired/revoked invitations (`DELETE /api/admin/invitations/:id`); active tokens are immediately invalidated | `src/routes/adminInvitations.js`, `src/services/adminInvitationService.js` |
+| **Revocation & Deletion Controls:** `ADMIN` can revoke pending invitations (`REVOKED` status) or permanently remove expired/revoked invitations (`DELETE /api/admin/invitations/:id`); active tokens are immediately invalidated | `src/routes/adminInvitations.js`, `src/services/adminInvitationService.js` |
 | **Password Policy:** Invitation password setup requires 8–128 characters, hashed with bcrypt (10 rounds) | `src/routes/auth.js` |
-| **Privilege Separation:** Only `SUPER_ADMIN` users can generate invitations or assign roles | `src/routes/adminInvitations.js` |
+| **Privilege Separation:** Only `ADMIN`-role users can generate invitations or assign roles | `src/routes/adminInvitations.js` |
+| **Frontend Role Filtering (AUDIT-003/004):** The sidebar hides `adminOnly` nav entries (Invitations) from non-ADMIN roles; the Invitations page is now also listed in the sidebar for ADMIN users (AUDIT-004); backend RBAC remains the authoritative gate | `admin/src/layout/Sidebar.tsx`, `admin/src/layout/navigation.ts` |
 
 ---
 
@@ -51,11 +52,12 @@ All 28 security controls and audit findings (SEC-001 … SEC-028) are implemente
 |---|---|
 | **Zero-Enumeration Recovery:** `POST /auth/forgot-password` always returns generic 200 `"If the account exists, a password reset link has been sent."` regardless of whether the email exists, is active, or is inactive | `src/routes/auth.js` |
 | **Timing Attack Mitigation:** Requests for nonexistent emails perform a dummy bcrypt comparison to ensure response timing does not leak account existence | `src/routes/auth.js` |
-| **Short-Lived Reset Tokens:** Password reset tokens expire after **1 hour** (`expires_at`) | `src/services/adminPasswordResetService.js` |
-| **SHA-256 Token Hashing:** Reset tokens use 256-bit cryptographic entropy; only SHA-256 hashes are stored in `admin_password_resets.token_hash` | `src/services/adminPasswordResetService.js` |
-| **Single-Use & Invalidation:** Tokens are marked `used = true` immediately upon consumption; creating a new reset request invalidates all prior active tokens for that admin | `src/services/adminPasswordResetService.js`, `src/routes/auth.js` |
-| **Password Reset Rate Limiting:** 5 reset requests per 15 minutes per IP (`authRateLimiter`) to prevent mailbox flooding and brute-force abuse | `src/middleware/authRateLimiter.js`, `src/routes/auth.js` |
-| **Password Update & Audit:** New password validated (8–128 chars), hashed with bcrypt, updated atomically, and logged to `admin_audit_logs` | `src/routes/auth.js` |
+| **Short-Lived Reset Tokens:** Password reset tokens expire after **1 hour** (`expires_at`) | `src/services/passwordResetService.js` |
+| **SHA-256 Token Hashing:** Reset tokens use 256-bit cryptographic entropy; only SHA-256 hashes are stored in `admin_password_resets.token_hash` | `src/services/passwordResetService.js` |
+| **Single-Use & Invalidation:** Tokens are marked `usedAt = NOW()` immediately upon consumption; creating a new reset request invalidates all prior active tokens for that admin | `src/services/passwordResetService.js`, `src/routes/auth.js` |
+| **Password Reset Rate Limiting:** 5 reset requests per 15 minutes per IP (`createResetRateLimiter`) to prevent mailbox flooding and brute-force abuse | `src/middleware/loginRateLimiter.js`, `src/routes/auth.js` |
+| **Password Update & Audit:** New password validated (8–128 chars), hashed with bcrypt, updated atomically inside a transaction, and logged to `audit_logs` | `src/routes/auth.js`, `src/services/passwordResetService.js` |
+| **Non-Blocking Email Dispatch (AUDIT-001):** Reset email is fired with `void …catch()` so the HTTP response returns at the same time regardless of whether the email send succeeds, eliminating the timing side-channel between active and inactive accounts | `src/services/passwordResetService.js` |
 
 ---
 
@@ -78,6 +80,7 @@ All 28 security controls and audit findings (SEC-001 … SEC-028) are implemente
 | Verification handshake: token compared in constant time, 403 if `WHATSAPP_VERIFY_TOKEN` is unset, challenge returned as `text/plain` | `src/routes/whatsapp.js` |
 | **Replay / idempotency protection:** message ID claimed right after the signature check, before download or OCR; parallel duplicates stopped; every message of a batched delivery handled on its own; refused files count as handled; a failure before the submission is recorded releases the claim, removes an uploaded object and answers 500 so Meta retries; 24 h TTL, at most 10,000 IDs (in memory) | `src/utils/messageIdempotency.js` |
 | Only `document` and `image` messages processed | `src/utils/whatsappMedia.js` |
+| **Missing-sender guard (AUDIT-002):** Messages with no `from` field are acknowledged (200) and logged; they cannot be recorded or attributed and would have caused a 500 retry storm without the guard | `src/routes/whatsapp.js` |
 | Access token only sent to `https://` `fbsbx.com` or its subdomains (no credentials, no custom port); redirects re-checked; media ID format checked | `src/services/whatsappMediaService.js` |
 
 ---
@@ -161,8 +164,17 @@ All 28 security controls and audit findings (SEC-001 … SEC-028) are implemente
 | SEC-026 | Medium | Password reset flooding and mailbox spamming | IMPLEMENTED & VERIFIED |
 | SEC-027 | High | Missing Role-Based Access Control (RBAC) boundaries in admin actions | IMPLEMENTED & VERIFIED |
 | SEC-028 | Medium | JWT localStorage vulnerability to Cross-Site Scripting (XSS) | IMPLEMENTED & VERIFIED |
+| AUDIT-001 | High | Password-reset timing side-channel: awaited email send made active accounts respond slower than inactive ones | FIXED |
+| AUDIT-002 | Medium | WhatsApp webhook 500 retry storm when `message.from` is missing | FIXED |
+| AUDIT-003 | Medium | Frontend role-gating missing: Invitations nav visible to VIEW_ONLY users | FIXED |
+| AUDIT-004 | Low | Invitations page missing from sidebar navigation | FIXED |
+| AUDIT-005 | Low | Redundant duplicate `@@index([tokenHash])` on both token models (covered by `@unique`) | FIXED |
+| AUDIT-006 | Low | Password length policy discrepancy (doc said 12; code uses 8) | CLOSED — no discrepancy; both backend and frontend enforce 8 |
+| AUDIT-007 | Low | Missing SMTP / APP_BASE_URL environment variable examples in `.env.example` | FIXED |
+| AUDIT-008 | Low | Security documentation outdated (wrong role names, missing controls) | FIXED |
+| AUDIT-009 | Low | `resolveDb` / `resolveBucket` helpers duplicated across 9 files | FIXED — canonical `src/utils/resolveClients.js` created |
 
-**Totals:** 24 FIXED / IMPLEMENTED, 2 VERIFIED, 2 ACCEPTED RISK, 0 DEFERRED.
+**Totals:** 24 + 8 FIXED / IMPLEMENTED, 2 VERIFIED, 2 ACCEPTED RISK, 1 CLOSED (no action), 0 DEFERRED.
 
 ---
 
@@ -185,9 +197,8 @@ All 28 security controls and audit findings (SEC-001 … SEC-028) are implemente
 5. A dedicated rate limiter (`authRateLimiter`) limits password reset attempts to 5 per 15 minutes per IP address.
 
 **SEC-027: Role-Based Privilege Separation (RBAC).**
-- `SUPER_ADMIN`: Full administrative privileges, including creating, inviting, revoking, modifying roles, and deactivating administrators.
-- `OPERATOR`: Document processing, manual review approvals, client document management, and report export. Cannot manage admin accounts or invitations.
-- `VIEWER`: Read-only access to dashboard overviews, client records, and document review states. Cannot modify records or take review actions.
+- `ADMIN`: Full administrative privileges, including creating, inviting, revoking, modifying roles, and managing administrators. Only ADMIN-role users can access the Invitations page (enforced both backend and frontend sidebar).
+- `VIEW_ONLY`: Read-only access to dashboard overviews, client records, and document review states. Cannot modify records or take review actions.
 
 **SEC-028: Session Security (HttpOnly Cookies).**
 JWT authentication tokens are delivered in `httpOnly`, `sameSite: "lax"`, `secure` (in production) cookies. This prevents malicious third-party scripts from reading tokens via `document.cookie` or accessing browser `localStorage`.

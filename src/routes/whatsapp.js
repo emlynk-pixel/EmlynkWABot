@@ -254,6 +254,13 @@ export function createWhatsappRouter({
       return true;
     }
 
+    // AUDIT-002: a message with no sender cannot be recorded or attributed.
+    // Acknowledge it (200) so Meta doesn't retry it indefinitely.
+    if (typeof message?.from !== "string" || message.from.length === 0) {
+      console.warn("WhatsApp message without a sender ignored", { messageRef: messageRef(messageId) });
+      return true;
+    }
+
     const ref = messageRef(messageId);
     const deadline = Date.now() + duplicateWaitMs;
 

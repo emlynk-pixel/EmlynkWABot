@@ -44,7 +44,8 @@ model AdminPasswordReset {
 
   admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
 
-  @@index([tokenHash])
+  // @@index([tokenHash]) is omitted: the @unique on tokenHash already creates
+  // an index; a second explicit index would be redundant (AUDIT-005).
   @@index([adminId, expiresAt])
   @@map("admin_password_resets")
 }
@@ -67,7 +68,7 @@ model AdminInvitation {
   inviter Admin @relation("AdminInvitations", fields: [invitedBy], references: [adminId], onDelete: Restrict)
 
   @@index([email])
-  @@index([tokenHash])
+  // @@index([tokenHash]) omitted: @unique on tokenHash already provides an index (AUDIT-005).
   @@index([status, expiresAt])
   @@map("admin_invitations")
 }
