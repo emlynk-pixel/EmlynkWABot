@@ -444,6 +444,7 @@ A new developer can successfully clone and run the project provided the followin
 - **Admin Password Reset:** 1-hour expiration, SHA-256 token hashing, single-use invalidation.
 - **Admin Invitation Workflow:** 24-hour expiration, single-use consumption, cryptographic token generation.
 - **Audit Logging:** Database trigger prevents updates or deletions of audit entries.
+- **Document Retention Policy (Group A):** VERIFIED and CLOSED. Implemented as a manual, RBAC-gated Admin deletion workflow with full audit logging, as per business requirements. Temporary documents will NOT be auto-deleted by a background cron job.
 
 ---
 
