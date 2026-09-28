@@ -14,6 +14,7 @@ import {
     createInvitation,
     listInvitations,
     revokeInvitation,
+    deleteInvitation,
     InvitationError,
 } from "../services/adminInvitationService.js";
 
@@ -96,6 +97,31 @@ export function createInvitationRouter({ db } = {}) {
             return res.status(500).json({ message: "Internal server error" });
         }
     });
+
+    // Permanently remove an invitation from the list (ADMIN only)
+    const handleDelete = async (req, res) => {
+        try {
+            const client = await resolveDb(db);
+            const result = await deleteInvitation({
+                db: client,
+                admin: req.admin,
+                invitationId: req.params.invitationId,
+            });
+            return res.status(200).json(result);
+        } catch (error) {
+            if (error instanceof InvitationError) {
+                return res.status(error.status).json({
+                    message: error.message,
+                    code: error.code ?? undefined,
+                });
+            }
+            console.error("Delete invitation error:", { errorType: error?.name ?? "Error" });
+            return res.status(500).json({ message: "Internal server error" });
+        }
+    };
+
+    router.delete("/:invitationId", requireRole(ADMINS_ONLY), handleDelete);
+    router.post("/:invitationId/delete", requireRole(ADMINS_ONLY), handleDelete);
 
     return router;
 }

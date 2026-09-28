@@ -408,3 +408,41 @@ export async function revokeInvitation({ db, admin, invitationId }) {
 
     return { message: "Invitation revoked" };
 }
+
+/**
+ * Permanently removes an invitation from the database. Restricted to ADMIN role.
+ */
+export async function deleteInvitation({ db, admin, invitationId }) {
+    if (!admin || admin.status !== ACTIVE_ADMIN_STATUS) {
+        throw new InvitationError("Authentication Token is required!", 401);
+    }
+    if (admin.role !== ADMIN_ROLES.ADMIN) {
+        throw new InvitationError("Insufficient permissions", 403);
+    }
+
+    const invitation = await db.adminInvitation.findUnique({
+        where: { invitationId },
+    });
+
+    if (!invitation) {
+        throw new InvitationError("Invitation not found", 404, "NOT_FOUND");
+    }
+
+    await db.adminInvitation.delete({
+        where: { invitationId },
+    });
+
+    await db.auditLog.create({
+        data: {
+            auditId: crypto.randomUUID(),
+            adminId: admin.adminId,
+            action: "DELETE_INVITATION",
+            previousStatus: invitation.status,
+            newStatus: "DELETED",
+            reason: "Invitation removed from list permanently",
+            newValue: invitation.email,
+        },
+    });
+
+    return { message: "Invitation permanently removed" };
+}

@@ -8,7 +8,27 @@
 // emails are held in-memory and logged safely without leaking sensitive tokens
 // or external dependencies, providing a reliable local test and dev harness.
 
+import nodemailer from "nodemailer";
+
 const sentEmails = [];
+
+/**
+ * Returns a configured nodemailer SMTP transporter if SMTP credentials are present in env.
+ */
+export function getSmtpTransporter(env = process.env) {
+    if (env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS) {
+        return nodemailer.createTransport({
+            host: env.SMTP_HOST,
+            port: Number(env.SMTP_PORT) || 587,
+            secure: Number(env.SMTP_PORT) === 465,
+            auth: {
+                user: env.SMTP_USER,
+                pass: String(env.SMTP_PASS).replace(/\s+/g, ""),
+            },
+        });
+    }
+    return null;
+}
 
 /**
  * Returns the configured base URL for the admin frontend setup link.
@@ -143,10 +163,15 @@ export async function sendInvitationEmail({ email, name, role, token, expiresAt,
         return { success: true, mode: "custom-transport", setupUrl };
     }
 
-    // SMTP Placeholder: if SMTP_HOST is configured in production, real SMTP sending occurs here
-    const hasSmtpConfig = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
-    if (hasSmtpConfig && env.NODE_ENV === "production") {
-        // Placeholder for production SMTP relay
+    const smtpTransporter = getSmtpTransporter(env);
+    if (smtpTransporter) {
+        await smtpTransporter.sendMail({
+            from: fromAddress,
+            to: email,
+            subject,
+            text,
+            html,
+        });
         sentEmails.push(record);
         return { success: true, mode: "smtp", setupUrl };
     }
@@ -238,8 +263,15 @@ export async function sendPasswordResetEmail({ email, name, token, expiresAt, tr
         return { success: true, mode: "custom-transport", resetUrl };
     }
 
-    const hasSmtpConfig = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
-    if (hasSmtpConfig && env.NODE_ENV === "production") {
+    const smtpTransporter = getSmtpTransporter(env);
+    if (smtpTransporter) {
+        await smtpTransporter.sendMail({
+            from: fromAddress,
+            to: email,
+            subject,
+            text,
+            html,
+        });
         sentEmails.push(record);
         return { success: true, mode: "smtp", resetUrl };
     }
