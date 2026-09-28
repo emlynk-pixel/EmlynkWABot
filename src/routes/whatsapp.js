@@ -207,9 +207,13 @@ export function createWhatsappRouter({
 
     // An unset env var must never match a missing token.
     if (expectedToken && mode === "subscribe" && tokensMatch(token, expectedToken) && typeof challenge === "string") {
+      if (!/^[a-zA-Z0-9_\-\.\:\+]+$/.test(challenge)) {
+        return res.status(400).type("text/plain").send("Invalid challenge format");
+      }
       console.log("Webhook verified successfully!");
       // Plain text: the challenge is echoed back and must not be served as HTML.
-      return res.status(200).type("text/plain").send(challenge);
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.status(200).send(String(challenge));
     }
 
     return res.sendStatus(403);
