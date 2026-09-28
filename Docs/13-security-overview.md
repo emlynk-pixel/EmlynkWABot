@@ -19,7 +19,7 @@ All 28 security controls and audit findings (SEC-001 … SEC-028) are implemente
 
 | Control | Where |
 |---|---|
-| **Role-Based Access Control (RBAC):** Three distinct roles (`SUPER_ADMIN`, `OPERATOR`, `VIEWER`) enforced via `requirePermission(...)` middleware; granular permission flags (`MANAGE_ADMINS`, `REVIEW_DOCUMENTS`, `MANAGE_CLIENTS`, `EXPORT_REPORTS`, `VIEW_AUDIT_LOGS`) | `src/middleware/rbac.js`, `src/config/roles.js`, `src/routes/admin.js` |
+| **Role-Based Access Control (RBAC):** Three distinct roles (`ADMIN`, `REVIEWER`, `VIEWER`) enforced via `requireRole(...)` middleware; granular permission flags (`MANAGE_ADMINS`, `REVIEW_DOCUMENTS`, `MANAGE_CLIENTS`, `EXPORT_REPORTS`, `VIEW_AUDIT_LOGS`) | `src/middleware/requireRole.js`, `src/config/roles.js`, `src/routes/admin.js` |
 | **HttpOnly Cookie Authentication:** Admin login issues an **HS256 JWT** stored in a secure, `httpOnly`, `sameSite: "lax"` cookie to mitigate XSS-based token theft; `Authorization: Bearer` fallback supported for API clients | `src/routes/auth.js`, `src/middleware/auth.js`, `src/createApp.js` |
 | **JWT Secret & Expiration:** Signed with `JWT_SECRET` (≥ 32 characters, enforced at startup); tokens expire in **1 hour**; missing, malformed, expired, `alg: none`, wrong-secret, or tampered tokens return 401 | `src/middleware/auth.js`, `src/config/env.js` |
 | **Password Hashing:** Passwords hashed with **bcrypt** (10 rounds); hashes are never returned via API responses or printed to logs | `src/utils/password.js`, `src/routes/auth.js` |
@@ -198,7 +198,8 @@ All 28 security controls and audit findings (SEC-001 … SEC-028) are implemente
 
 **SEC-027: Role-Based Privilege Separation (RBAC).**
 - `ADMIN`: Full administrative privileges, including creating, inviting, revoking, modifying roles, and managing administrators. Only ADMIN-role users can access the Invitations page (enforced both backend and frontend sidebar).
-- `VIEW_ONLY`: Read-only access to dashboard overviews, client records, and document review states. Cannot modify records or take review actions.
+- `REVIEWER`: Can perform document review actions but cannot modify sensitive client data like police slip dates.
+- `VIEWER`: Read-only access to dashboard overviews, client records, and document review states. Cannot modify records or take review actions.
 
 **SEC-028: Session Security (HttpOnly Cookies).**
 JWT authentication tokens are delivered in `httpOnly`, `sameSite: "lax"`, `secure` (in production) cookies. This prevents malicious third-party scripts from reading tokens via `document.cookie` or accessing browser `localStorage`.
@@ -216,7 +217,7 @@ Latest verified results (2026-09-28):
 | Check | Result |
 |---|---|
 | `npm test` (Backend test suite) | **1,081 tests across 207 suites**: 1,055 passed, 0 failed, 26 skipped (opt-in real OCR) |
-| `npm --prefix admin test` (Frontend Vitest suite) | **141 tests**: 141 passed, 0 failed (100% pass rate) |
+| `npm --prefix admin test` (Frontend Vitest suite) | **144 tests**: 144 passed, 0 failed (100% pass rate) |
 | `npm run admin:build` (Vite & TypeScript compilation) | Clean build, 0 TypeScript errors, production assets bundled |
 | `node --check` on all JS files | No syntax or runtime check failures |
 | `prisma format` / `validate` / `generate` | Formatted, valid, client generated (6.19.3) |
@@ -245,7 +246,7 @@ Latest verified results (2026-09-28):
 | Admin provisioning, CLI safety | `test/adminProvisioning.test.js` |
 | Checksums, naming, storage, rollback | `test/fileChecksum.test.js`, `test/documentChecksum.test.js`, `test/storageNaming.test.js`, `test/permanentStorage.test.js`, `test/clientDocument.test.js` |
 | Identity rules, placement, no PII in summaries | `test/identityVerification.test.js`, `test/storagePlacement.test.js`, `test/documentProcessing.test.js`, `test/ocrDiagnostics.test.js` |
-| Frontend React components, auth flows, setup password, reset password, invitations | `admin/src/**/*.test.tsx` (141 tests) |
+| Frontend React components, auth flows, setup password, reset password, invitations | `admin/src/**/*.test.tsx` (144 tests) |
 
 ---
 

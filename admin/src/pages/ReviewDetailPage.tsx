@@ -24,7 +24,7 @@ import {
 } from "../api/admin";
 import { ApiError } from "../api/client";
 import { useAdminResource } from "../api/useAdminResource";
-import { useAuth } from "../auth/AuthProvider";
+import { useAuth, canReview, isAdmin } from "../auth/AuthProvider";
 import { Confidence } from "../components/Confidence";
 import { documentTypeLabel, formatDateTime, formatDay, formatFileSize, humanize, shortId, todayInSriLanka } from "../components/format";
 import { ActionDialog, DialogError, dangerButton, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
@@ -237,7 +237,7 @@ function ClientPicker({ selected, onSelect, disabled }: { selected: ClientListIt
 }
 
 function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () => void }) {
-    const { token, signOut } = useAuth();
+    const { token, signOut, admin } = useAuth();
     const reason = item.reviewReason ? REVIEW_REASONS[item.reviewReason] : undefined;
     const identity = item.processing?.identity;
     const idLabel = shortId((item.document.documentId ?? item.document.temporaryId ?? item.reviewId.replace(/^(pending|document|failed)-/, "")));
@@ -289,14 +289,17 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                     : item.auditLog;
     const verificationStatus = approved ? approved.document.verificationStatus : item.document.verificationStatus;
 
-    const canRemove = item.actions?.remove?.available === true;
-    const canSetType = item.actions?.setDocumentType?.available === true;
-    const canAssignClient = item.actions?.assignClient?.available === true;
-    const canRetry = isFailed && item.actions?.retry?.available === true;
+    const hasReviewPermission = canReview(admin);
+    const hasAdminPermission = isAdmin(admin);
+
+    const canRemove = hasReviewPermission && item.actions?.remove?.available === true;
+    const canSetType = hasReviewPermission && item.actions?.setDocumentType?.available === true;
+    const canAssignClient = hasReviewPermission && item.actions?.assignClient?.available === true;
+    const canRetry = hasReviewPermission && isFailed && item.actions?.retry?.available === true;
     // M4 Policy B: only offered for the waiting-file case the backend flags
     // (a different, already-well-read file of a type the client has verified).
-    const canReplaceVerified = item.actions?.replaceVerified?.available === true && !!item.existingVerified;
-    const canKeepAsVersion = item.actions?.keepAsVersion?.available === true;
+    const canReplaceVerified = hasReviewPermission && item.actions?.replaceVerified?.available === true && !!item.existingVerified;
+    const canKeepAsVersion = hasReviewPermission && item.actions?.keepAsVersion?.available === true;
 
     const open = (which: "approve" | "keep" | "remove" | "type" | "client" | "retry" | "replace" | "version") => {
         setError(null);
@@ -689,7 +692,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                 This item is no longer in the Review Queue.{" "}
                                 <Link to="/review" className="text-primary hover:underline">Back to Review Queue</Link>
                             </p>
-                        ) : (
+                        ) : hasReviewPermission ? (
                             <>
                                 <div className="flex flex-wrap gap-2" role="group" aria-label="Review actions">
                                     <button type="button" className={primaryButton} disabled={busy || Boolean(approveBlocked)} onClick={() => open("approve")}>
@@ -726,6 +729,10 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                 </div>
                                 {approveBlocked && <p className="text-label-sm text-ink-muted">Approve is not available: {approveBlocked}</p>}
                             </>
+                        ) : (
+                            <p className="text-body-sm text-ink-muted">
+                                You have view-only access and cannot review documents.
+                            </p>
                         )}
                     </Card>
                 </div>
@@ -743,7 +750,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             Submitted date read from the slip: <span className="font-medium">{formatDay(storedPoliceDate)}</span>. The 21-day follow-up runs from this date.
                         </p>
                     )}
-                    {needsPoliceDate && (
+                    {needsPoliceDate && hasAdminPermission ? (
                         <div className="mt-3">
                             <label htmlFor="police-date" className="block text-label-md text-ink">
                                 Submitted date on the police slip <span aria-hidden="true" className="text-critical">*</span>
@@ -768,11 +775,15 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                 ? <p id="police-date-error" className="mt-1 text-label-sm text-critical">{policeDateError}</p>
                                 : <p id="police-date-hint" className="mt-1 text-label-sm text-ink-muted">The date could not be read from the slip. The 21-day follow-up runs from this date; it is recorded in the audit log.</p>}
                         </div>
-                    )}
+                    ) : needsPoliceDate ? (
+                        <p className="mt-3 text-body-sm text-critical">
+                            The submitted date could not be read from the slip. Only an Administrator can approve this document by manually entering the date.
+                        </p>
+                    ) : null}
                     <DialogError message={error} />
                     <div className="mt-4 flex justify-end gap-2">
                         <button type="button" className={secondaryButton} disabled={busy} onClick={close} autoFocus>Cancel</button>
-                        <button type="button" className={primaryButton} disabled={busy} onClick={confirmApprove}>{busy ? "Approving…" : "Approve"}</button>
+                        <button type="button" className={primaryButton} disabled={busy || (needsPoliceDate && !hasAdminPermission)} onClick={confirmApprove}>{busy ? "Approving…" : "Approve"}</button>
                     </div>
                 </ActionDialog>
             )}

@@ -1,5 +1,6 @@
 import { normalizePassportId } from "../utils/passportId.js";
 import { normalizePhoneNumber } from "../utils/phoneNumber.js";
+import { resolveDb } from "../utils/resolveClients.js";
 
 export const LOOKUP_STATUS = Object.freeze({
     FOUND: "FOUND",
@@ -20,10 +21,6 @@ export const USER_LOOKUP_SELECT = Object.freeze({
     passportExpiryDate: true,
 });
 
-// Loaded lazily so unit tests can pass a fake client without touching the DB.
-async function resolveDb(db) {
-    return db ?? (await import("../config/prisma.js")).default;
-}
 
 function toResult(users) {
     if (users.length === 0) return { status: LOOKUP_STATUS.NOT_FOUND, users };

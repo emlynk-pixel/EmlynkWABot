@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router";
 import { getClientDetails, setPoliceDate, type ClientDetails } from "../api/admin";
 import { ApiError } from "../api/client";
 import { useAdminResource } from "../api/useAdminResource";
-import { useAuth } from "../auth/AuthProvider";
+import { useAuth, isAdmin } from "../auth/AuthProvider";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../components/Dialog";
 import { DocumentsTable } from "../components/DocumentsTable";
 import { documentTypeLabel, formatDate, formatDateTime, formatDay, todayInSriLanka } from "../components/format";
@@ -153,6 +153,8 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
     const [dateDialog, setDateDialog] = useState(false);
     const [notice, setNotice] = useState<string | null>(null);
     const slip = data.police.latestSlip;
+    const { admin } = useAuth();
+    const hasAdminPermission = isAdmin(admin);
 
     return (
         <div className="space-y-6">
@@ -217,9 +219,11 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
                             <span className="text-body-sm text-ink">
                                 Latest slip submitted date: <span className="font-medium">{slip.policeSubmittedDate ? formatDay(slip.policeSubmittedDate) : "not set"}</span>
                             </span>
-                            <button type="button" className={secondaryButton} onClick={() => { setNotice(null); setDateDialog(true); }}>
-                                {slip.policeSubmittedDate ? "Correct date" : "Set date"}
-                            </button>
+                            {hasAdminPermission && (
+                                <button type="button" className={secondaryButton} onClick={() => { setNotice(null); setDateDialog(true); }}>
+                                    {slip.policeSubmittedDate ? "Correct date" : "Set date"}
+                                </button>
+                            )}
                         </div>
                     )}
                     {data.police.dateChanges.length > 0 && (

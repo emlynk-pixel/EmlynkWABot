@@ -2,16 +2,12 @@
 // temporary object stays until Phase 8 finalization (decision D1). Nothing
 // here overwrites an object or creates a public URL.
 
+import { resolveBucket } from "../utils/resolveClients.js";
+
 // Enough for passport.pdf … passport_v20.pdf style collisions; more means
 // something is wrong and should fail loudly rather than loop.
 export const MAX_NAME_ATTEMPTS = 20;
 
-// The bucket is loaded lazily so tests can pass a fake without Supabase.
-async function resolveBucket(bucket) {
-    if (bucket) return bucket;
-    const { default: supabase } = await import("../config/supabase.js");
-    return supabase.storage.from(process.env.SUPABASE_BUCKET);
-}
 
 // Supabase answers a copy onto an existing key with 409 / "already exists".
 function isCollision(error) {

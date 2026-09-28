@@ -5,7 +5,7 @@ import type { ClientList, ClientListItem, DailyReport, PoliceList } from "../api
 import { todayInSriLanka } from "../components/format";
 import { THEME_KEY, initTheme } from "../theme/theme";
 import { readFileSync } from "node:fs";
-import { CLIENT_DETAILS, OVERVIEW, renderApp, signedInBackend } from "./helpers";
+import { ADMIN, CLIENT_DETAILS, OVERVIEW, renderApp, signedInBackend } from "./helpers";
 
 // Synthetic clients and figures only.
 const row = (passportId: string, uniqueId: string, name: string, completion: "COMPLETE" | "INCOMPLETE", missing: string[] = []): ClientListItem => ({
@@ -215,6 +215,17 @@ describe("Client Details: police slip date", () => {
         await user.click(within(dialog).getByRole("button", { name: "Save date" }));
         expect(within(dialog).getByText("The date can't be in the future.")).toBeInTheDocument();
         expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    });
+
+    test("REVIEWER cannot see the set-date button (requires ADMIN)", async () => {
+        signedInBackend({
+            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "REVIEWER" } } },
+            "GET /api/admin/clients/N1234567": { status: 200, body: WITH_SLIP },
+        });
+        renderApp("/clients/N1234567");
+        expect(await screen.findByRole("heading", { name: "KAMAL NIMAL PERERA" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Set date" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Correct date" })).not.toBeInTheDocument();
     });
 
     test("complete / incomplete badge and the Clients breadcrumb", async () => {

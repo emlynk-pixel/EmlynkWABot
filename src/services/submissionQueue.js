@@ -40,6 +40,7 @@ import { ClaimLostError } from "./temporaryDataService.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { safeErrorText } from "../utils/safeLog.js";
 import { STORAGE_TIMEOUT_MS, withStorageTimeout } from "../utils/storageTimeout.js";
+import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 
 export const QUEUE_DEFAULTS = Object.freeze({
     pollMs: 5_000,              // fallback poll; new submissions wake the worker at once
@@ -62,15 +63,6 @@ export function notifySubmissionQueued() {
     events.emit("queued");
 }
 
-async function resolveDb(db) {
-    return db ?? (await import("../config/prisma.js")).default;
-}
-
-async function resolveBucket(bucket) {
-    if (bucket) return bucket;
-    const { default: supabase } = await import("../config/supabase.js");
-    return supabase.storage.from(process.env.SUPABASE_BUCKET);
-}
 
 const claimSelect = {
     temporaryId: true, whatsappNumber: true, temporaryStoragePath: true, fileSha256: true, originalFilename: true,

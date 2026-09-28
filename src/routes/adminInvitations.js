@@ -17,10 +17,8 @@ import {
     deleteInvitation,
     InvitationError,
 } from "../services/adminInvitationService.js";
+import { resolveDb } from "../utils/resolveClients.js";
 
-async function resolveDb(db) {
-    return db ?? (await import("../config/prisma.js")).default;
-}
 
 const ADMINS_ONLY = [ADMIN_ROLES.ADMIN];
 

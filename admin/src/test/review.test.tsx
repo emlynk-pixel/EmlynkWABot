@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ApproveResult, AuditEntry, ReviewItem, ReviewQueue, ReviewQueueItem } from "../api/admin";
-import { CLIENT_REF, OVERVIEW as OVERVIEW_FIXTURE, TOKEN_KEY, renderApp, signedInBackend, stubBackend, type FetchRoutes } from "./helpers";
+import { ADMIN, CLIENT_REF, OVERVIEW as OVERVIEW_FIXTURE, TOKEN_KEY, renderApp, signedInBackend, stubBackend, type FetchRoutes } from "./helpers";
 
 // Synthetic review data only.
 const TEMP_ID = "11111111-1111-4111-8111-111111111111";
@@ -225,6 +225,20 @@ describe("Review Detail", () => {
         renderApp("/review/pending-99999999-9999-4999-8999-999999999999");
         expect(await screen.findByRole("heading", { name: "Review item not found" })).toBeInTheDocument();
     });
+
+    test("VIEWER cannot see review actions but still sees the document details", async () => {
+        signedInBackend({
+            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "VIEWER" } } },
+            [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: ITEM },
+            [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse,
+        });
+        renderApp(`/review/pending-${TEMP_ID}`);
+        expect(await screen.findByRole("heading", { name: "11111111" })).toBeInTheDocument();
+        expect(screen.queryByRole("group", { name: "Review actions" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Keep Pending" })).not.toBeInTheDocument();
+        expect(screen.getByText("You have view-only access and cannot review documents.")).toBeInTheDocument();
+    });
 });
 
 describe("Review actions", () => {
@@ -248,6 +262,23 @@ describe("Review actions", () => {
         await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
         expect(posts(calls)).toHaveLength(0);
+    });
+
+    test("REVIEWER sees review actions but not the set-police-date block for unreadable slips", async () => {
+        const slipItem = {
+            ...ITEM,
+            document: { ...ITEM.document, documentType: "POLICE_SLIP", policeSubmittedDate: null },
+            actions: { approve: { available: true, needsPoliceDate: true, code: null, message: null }, keepPending: { available: true, code: null, message: null } }
+        };
+        const { user, group } = await openDetail({
+            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "REVIEWER" } } },
+            [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: slipItem },
+        });
+        await user.click(within(group).getByRole("button", { name: "Approve" }));
+        const dialog = await screen.findByRole("dialog");
+        expect(screen.getByText(/Only an Administrator can approve this document by manually entering the date/)).toBeInTheDocument();
+        expect(screen.queryByLabelText(/Submitted date on the police slip/)).not.toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Approve" })).toBeDisabled();
     });
 
     test("successful approval: success message, verified status, audit entry, item leaves the queue", async () => {

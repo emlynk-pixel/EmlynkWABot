@@ -1,9 +1,6 @@
 import crypto from "crypto";
+import { resolveDb } from "../utils/resolveClients.js";
 
-// Loaded lazily so unit tests can pass a fake client without touching the DB.
-async function resolveDb(db) {
-    return db ?? (await import("../config/prisma.js")).default;
-}
 
 // Create the temporary_data row for a newly stored document. It is the
 // durable job of the background worker (M1): committed before the webhook

@@ -1,4 +1,5 @@
 import { authenticateAdmin } from "./auth.js";
+import { resolveDb } from "../utils/resolveClients.js";
 
 // The only admin status that may use admin endpoints (same rule as login and
 // GET /auth/me in src/routes/auth.js; admins.status is a plain string).
@@ -6,10 +7,6 @@ export const ACTIVE_ADMIN_STATUS = "ACTIVE";
 
 const INVALID_TOKEN = { message: "Invalid or Expired Token" };
 
-// Loaded lazily so tests can pass a fake client without touching the DB.
-async function resolveDb(db) {
-    return db ?? (await import("../config/prisma.js")).default;
-}
 
 // For /api/admin/*: a valid Bearer JWT (existing authenticateAdmin), and the
 // admin it names must still exist and be ACTIVE. The token alone doesn't

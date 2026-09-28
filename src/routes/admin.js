@@ -45,18 +45,8 @@ import {
 } from "../services/adminCorrectionService.js";
 import { getDailyReport, parseDailyReportQuery } from "../services/adminReportService.js";
 import { createInvitationRouter } from "./adminInvitations.js";
+import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 
-// Loaded lazily so tests can pass a fake client without touching the DB.
-async function resolveDb(db) {
-    return db ?? (await import("../config/prisma.js")).default;
-}
-
-// The private bucket (service-role client on the server only).
-async function resolveBucket(bucket) {
-    if (bucket) return bucket;
-    const { default: supabase } = await import("../config/supabase.js");
-    return supabase.storage.from(process.env.SUPABASE_BUCKET);
-}
 
 // Quotes and non-ASCII characters are replaced so the header can't be broken.
 function contentDisposition(fileName) {

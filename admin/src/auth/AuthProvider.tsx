@@ -15,6 +15,15 @@ type AuthContextValue = AuthState & {
     signOut: () => Promise<void>;
 };
 
+// Helpers for checking the current admin's role-based access.
+export function canReview(admin: Admin | null | undefined): boolean {
+    return admin?.role === "ADMIN" || admin?.role === "REVIEWER";
+}
+
+export function isAdmin(admin: Admin | null | undefined): boolean {
+    return admin?.role === "ADMIN";
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 // A token that is expired or has an unreadable expiry is not worth sending.

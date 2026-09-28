@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { copyToFreeName, removeObject } from "./permanentStorageService.js";
 import { placementCopyHooks } from "./placementRecovery.js";
 import { ClaimLostError } from "./temporaryDataService.js";
+import { resolveDb } from "../utils/resolveClients.js";
 import {
     clientFolderPath,
     extensionForMimeType,
@@ -54,9 +55,6 @@ export function verificationStatusForBand(band) {
     return status;
 }
 
-async function resolveDb(db) {
-    return db ?? (await import("../config/prisma.js")).default;
-}
 
 const isUniqueViolation = (error) => error?.code === "P2002";
 

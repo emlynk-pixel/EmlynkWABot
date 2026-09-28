@@ -14,6 +14,7 @@ import {
   resetPassword,
   PasswordResetError,
 } from "../services/passwordResetService.js";
+import { resolveDb } from "../utils/resolveClients.js";
 
 // The only status that may sign in or use admin endpoints. admins.status is a
 // plain string (default "ACTIVE"); any other value counts as not active.
@@ -54,10 +55,6 @@ function dummyPasswordHash() {
   return dummyHashPromise;
 }
 
-// Loaded lazily so tests can pass a fake client without touching the DB.
-async function resolveDb(db) {
-  return db ?? (await import("../config/prisma.js")).default;
-}
 
 // loginLimiter and resetLimiter can be replaced in tests; each router gets its own counts.
 export function createAuthRouter({

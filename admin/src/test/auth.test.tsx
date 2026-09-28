@@ -153,8 +153,8 @@ describe("dashboard shell", () => {
         await signedIn();
         const nav = screen.getByRole("navigation", { name: "Main navigation" });
         const links = within(nav).getAllByRole("link").map((link) => link.textContent);
-        // The Stitch sections plus Missing Documents and Daily Report (final Phase 10 scope).
-        expect(links).toEqual(["Overview", "Documents", "Review Queue", "Clients", "Missing Documents", "Police Workflow", "Daily Report"]);
+        // The Stitch sections plus Missing Documents, Daily Report, and Invitations.
+        expect(links).toEqual(["Overview", "Documents", "Review Queue", "Clients", "Missing Documents", "Police Workflow", "Daily Report", "Invitations"]);
 
         await userEvent.setup().click(within(nav).getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();

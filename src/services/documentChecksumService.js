@@ -2,6 +2,8 @@
 // Checksums are unique per client, not globally: the same file under another
 // client is a case for review, not something the database should reject.
 
+import { resolveDb } from "../utils/resolveClients.js";
+
 export const CHECKSUM_OUTCOME = Object.freeze({
     NEW: "NEW",
     // M1: this submission's own document, stored by an earlier attempt that
@@ -11,10 +13,6 @@ export const CHECKSUM_OUTCOME = Object.freeze({
     CROSS_CLIENT_CONFLICT: "CROSS_CLIENT_CONFLICT",  // another client has this exact file
 });
 
-// Loaded lazily so unit tests can pass a fake client without touching the DB.
-async function resolveDb(db) {
-    return db ?? (await import("../config/prisma.js")).default;
-}
 
 // For a document about to be stored under a client. Same-client first, so a
 // file the client already has is never reported as a conflict. The other
