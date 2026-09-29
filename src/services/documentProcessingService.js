@@ -1,4 +1,5 @@
-import { extractDocumentText } from "./ocrService.js";
+import { extractDocumentText } from "./ocrClient.js";
+import { OcrServiceUnavailableError } from "./ocrContract.js";
 import {
     classifyDocument,
     classifyDocumentContent,
@@ -175,8 +176,10 @@ function staleResult(state) {
 // date), Phase 6 (identity, reconciliation) and Phase 7 (checksum checks,
 // permanent or pending copy) for one stored document, then update its
 // temporary_data row. The temporary object is never deleted (Phase 8).
-// Never throws: a failure is recorded as FAILED with the stage it happened
-// in, so the webhook keeps working.
+// A failure is recorded as FAILED with the stage it happened in. The one
+// exception: when the OCR service can't answer (OcrServiceUnavailableError,
+// before anything was written), it is thrown to the caller, whose queue
+// processes the submission again later.
 // deps.claim (M1 background worker): this attempt's claim on the submission.
 // Every write (client record, storage copy, documents row, the final
 // temporary_data update) happens only while the attempt still owns it; once
@@ -356,6 +359,7 @@ export async function processDocument({
         state.stage = "COMPLETED";
     } catch (error) {
         if (error instanceof ClaimLostError) return staleResult(state);
+        if (error instanceof OcrServiceUnavailableError) throw error;
         state.error = safeErrorText(error);
         state.processingStatus = PROCESSING_STATUS.FAILED;
 

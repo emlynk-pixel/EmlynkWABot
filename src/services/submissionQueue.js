@@ -34,7 +34,7 @@ import { EventEmitter } from "node:events";
 import { processDocument as defaultProcessDocument } from "./documentProcessingService.js";
 import { classifyDocument } from "./documentClassificationService.js";
 import { mimeTypeForPath } from "./adminReviewService.js";
-import { MAX_CONCURRENT_OCR_JOBS } from "./ocrService.js";
+import { OcrServiceUnavailableError } from "./ocrContract.js";
 import { RECEIVED_STATUS } from "./statusMapping.js";
 import { ClaimLostError } from "./temporaryDataService.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
@@ -42,12 +42,17 @@ import { safeErrorText } from "../utils/safeLog.js";
 import { STORAGE_TIMEOUT_MS, withStorageTimeout } from "../utils/storageTimeout.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 
+// Submissions this app instance processes at once, so at most this many OCR
+// requests are in flight from it. The OCR service limits its own load
+// separately (instances x concurrency on Cloud Run, jobs per instance).
+export const MAX_CONCURRENT_OCR_REQUESTS = 2;
+
 export const QUEUE_DEFAULTS = Object.freeze({
     pollMs: 5_000,              // fallback poll; new submissions wake the worker at once
-    leaseMs: 10 * 60_000,       // longer than the slowest processing (OCR wait + job ≈ 3 min)
-    retryDelayMs: 60_000,       // after a temporary failure to load the file
+    leaseMs: 10 * 60_000,       // longer than the slowest processing (OCR request ≤ 4 min, ocrClient.js)
+    retryDelayMs: 60_000,       // after a temporary failure to load the file or reach the OCR service
     maxAttempts: 3,
-    concurrency: MAX_CONCURRENT_OCR_JOBS,
+    concurrency: MAX_CONCURRENT_OCR_REQUESTS,
     storageTimeoutMs: STORAGE_TIMEOUT_MS, // 1 min, a tenth of the lease
 });
 
@@ -154,6 +159,17 @@ async function giveUp(db, claim, stage, error) {
     return { outcome: count === 1 ? "GAVE_UP" : "STALE_DISCARDED" };
 }
 
+// A temporary failure: the lease runs out early, so the submission is
+// claimed again about retryDelayMs after `from` (only while this attempt
+// still owns it).
+async function retryLater(db, claim, from, { leaseMs, retryDelayMs }) {
+    const { count } = await db.temporaryData.updateMany({
+        where: claim.where(),
+        data: { processingStartedAt: new Date(from.getTime() - leaseMs + retryDelayMs) },
+    });
+    return { outcome: count === 1 ? "RETRY_LATER" : "STALE_DISCARDED" };
+}
+
 // One claimed submission: load the received file and run the pipeline.
 // Returns what happened (for logs and tests); never throws for a bad file.
 // Storage calls are bounded by storageTimeoutMs: a hung call fails like
@@ -177,12 +193,7 @@ export async function processClaimedSubmission(row, {
             if (row.processingAttempts >= maxAttempts) {
                 return await giveUp(db, claim, "FILE_LOAD", "The received file could not be loaded from storage");
             }
-            // Temporary: let the lease run out early so it is tried again in about retryDelayMs.
-            const { count } = await db.temporaryData.updateMany({
-                where: claim.where(),
-                data: { processingStartedAt: new Date(now.getTime() - leaseMs + retryDelayMs) },
-            });
-            return { outcome: count === 1 ? "RETRY_LATER" : "STALE_DISCARDED" };
+            return await retryLater(db, claim, now, { leaseMs, retryDelayMs });
         }
         const fileBuffer = Buffer.isBuffer(data) ? data : Buffer.from(await data.arrayBuffer());
         const mimeType = mimeTypeForPath(row.temporaryStoragePath);
@@ -191,18 +202,30 @@ export async function processClaimedSubmission(row, {
         }
 
         const fileName = row.originalFilename ?? null;
-        const { summary, stale } = await processDocument({
-            temporaryId: row.temporaryId,
-            whatsappNumber: row.whatsappNumber,
-            fileName,
-            mimeType,
-            fileBuffer,
-            fileSha256: row.fileSha256?.trim(),
-            temporaryStoragePath: row.temporaryStoragePath,
-            receivedAt: row.receivedAt ?? row.createdDate,
-            filenameClassification: classifyDocument({ fileName, mimeType }),
-            deps: { db, bucket: storage, claim, ...(extractText ? { extractText } : {}) },
-        });
+        let processed;
+        try {
+            processed = await processDocument({
+                temporaryId: row.temporaryId,
+                whatsappNumber: row.whatsappNumber,
+                fileName,
+                mimeType,
+                fileBuffer,
+                fileSha256: row.fileSha256?.trim(),
+                temporaryStoragePath: row.temporaryStoragePath,
+                receivedAt: row.receivedAt ?? row.createdDate,
+                filenameClassification: classifyDocument({ fileName, mimeType }),
+                deps: { db, bucket: storage, claim, ...(extractText ? { extractText } : {}) },
+            });
+        } catch (error) {
+            if (!(error instanceof OcrServiceUnavailableError)) throw error;
+            // The OCR service gave no answer and nothing was written: tried
+            // again like a file that couldn't be loaded, within the same attempts.
+            if (row.processingAttempts >= maxAttempts) {
+                return await giveUp(db, claim, "TEXT_EXTRACTION", safeErrorText(error));
+            }
+            return await retryLater(db, claim, clock(), { leaseMs, retryDelayMs });
+        }
+        const { summary, stale } = processed;
         return stale ? { outcome: "STALE_DISCARDED" } : { outcome: "PROCESSED", summary };
     } finally {
         activeClaims?.delete(claim);
