@@ -9,6 +9,7 @@ import { sha256Hex } from "../src/utils/fileChecksum.js";
 import { createFakePrisma } from "./helpers/fakePrisma.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
+import "./helpers/localOcrService.js";
 
 // All IDs, numbers and documents are synthetic.
 const TEMP_PATH = "temporary/tmp-1.pdf";

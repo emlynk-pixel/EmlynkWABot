@@ -12,9 +12,11 @@ export const REQUIRED_ENV_VARS = Object.freeze([
     "WHATSAPP_VERIFY_TOKEN",
     "WHATSAPP_ACCESS_TOKEN",
     "WHATSAPP_API_VERSION",
+    "OCR_SERVICE_URL",
 ]);
 
 import { parseRequiredDocumentTypes } from "./requiredDocuments.js";
+import { isLoopbackUrl } from "../services/ocrClient.js";
 
 // HS256 key: shorter secrets can be brute-forced from a single token.
 export const MIN_JWT_SECRET_LENGTH = 32;
@@ -62,6 +64,14 @@ export function findEnvProblems(env = process.env) {
     }
     if (isSet(env.DATABASE_URL) && !isUrl(env.DATABASE_URL, ["postgresql:", "postgres:"])) {
         problems.push("DATABASE_URL is not a postgresql:// URL");
+    }
+    // Plain http only to this machine: anything else carries identity tokens and documents.
+    if (isSet(env.OCR_SERVICE_URL)) {
+        if (!isUrl(env.OCR_SERVICE_URL, ["https:", "http:"])) {
+            problems.push("OCR_SERVICE_URL is not a valid URL");
+        } else if (!isUrl(env.OCR_SERVICE_URL, ["https:"]) && !isLoopbackUrl(env.OCR_SERVICE_URL)) {
+            problems.push("OCR_SERVICE_URL must use https:// unless it is a loopback address");
+        }
     }
     if (isSet(env.WHATSAPP_API_VERSION) && !/^v\d+\.\d+$/.test(env.WHATSAPP_API_VERSION)) {
         problems.push("WHATSAPP_API_VERSION must look like v21.0");

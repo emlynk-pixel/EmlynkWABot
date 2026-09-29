@@ -1,10 +1,12 @@
+import { createRequire } from "node:module";
+import path from "node:path";
 import { createWorker } from "tesseract.js";
 import { PDFParse } from "pdf-parse";
 
-import { readImageDimensions } from "../utils/imageDimensions.js";
-import { findPassportMrz, parsePassportMrz } from "../utils/mrz.js";
-import { safeErrorInfo } from "../utils/safeLog.js";
-import { createConcurrencyLimiter, LimiterBusyError } from "../utils/concurrencyLimiter.js";
+import { readImageDimensions } from "./utils/imageDimensions.js";
+import { findPassportMrz, parsePassportMrz } from "./utils/mrz.js";
+import { safeErrorInfo } from "./utils/safeLog.js";
+import { createConcurrencyLimiter, LimiterBusyError } from "./utils/concurrencyLimiter.js";
 
 // Below this, a PDF is treated as scanned (image-only) rather than text-based.
 const MIN_TEXT_LENGTH = 30;
@@ -208,7 +210,18 @@ export async function recognizeImage(worker, image, { firstRead = null } = {}) {
     return best;
 }
 
-const createEnglishWorker = () => createWorker("eng");
+// English LSTM model shipped inside the service (npm package
+// @tesseract.js-data/eng): the same file Tesseract.js would otherwise fetch
+// from its CDN on first use. Read from disk, never cached or downloaded, so
+// a fresh Cloud Run instance needs no network access for it.
+export const LANGUAGE_DATA_PATH = path.join(
+    path.dirname(createRequire(import.meta.url).resolve("@tesseract.js-data/eng/package.json")),
+    "4.0.0_best_int",
+);
+const LSTM_ONLY = 1; // Tesseract.js's default engine mode
+const TESSERACT_OPTIONS = Object.freeze({ langPath: LANGUAGE_DATA_PATH, gzip: true, cacheMethod: "none" });
+
+export const createEnglishWorker = () => createWorker("eng", LSTM_ONLY, TESSERACT_OPTIONS);
 
 // OCR several images with one worker. Starting a worker is the slow part.
 // The whole job is bounded by timeoutMs; on timeout the worker is
