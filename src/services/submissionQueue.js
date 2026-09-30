@@ -146,8 +146,8 @@ export function createClaim(row, { db, clock = () => new Date(), leaseMs = QUEUE
 }
 
 // Records FAILED for a submission the worker can't process (only while this
-// attempt still owns it).
-async function giveUp(db, claim, stage, error) {
+// attempt still owns it). `diagnostic` (see retryLater) is for the log line only.
+async function giveUp(db, claim, stage, error, diagnostic = null) {
     const { count } = await db.temporaryData.updateMany({
         where: claim.where(),
         data: {
@@ -156,18 +156,20 @@ async function giveUp(db, claim, stage, error) {
             processingSummary: { stage, error, processingStatus: "FAILED", recordUpdated: true, attempts: claim.attempt },
         },
     });
-    return { outcome: count === 1 ? "GAVE_UP" : "STALE_DISCARDED" };
+    return { outcome: count === 1 ? "GAVE_UP" : "STALE_DISCARDED", ...(diagnostic ? { diagnostic } : {}) };
 }
 
 // A temporary failure: the lease runs out early, so the submission is
 // claimed again about retryDelayMs after `from` (only while this attempt
-// still owns it).
-async function retryLater(db, claim, from, { leaseMs, retryDelayMs }) {
+// still owns it). `diagnostic`, if given, is for the caller's log line only
+// (IDs and outcomes only, see startSubmissionWorker) — it changes nothing
+// about when or how often the submission is retried.
+async function retryLater(db, claim, from, { leaseMs, retryDelayMs }, diagnostic = null) {
     const { count } = await db.temporaryData.updateMany({
         where: claim.where(),
         data: { processingStartedAt: new Date(from.getTime() - leaseMs + retryDelayMs) },
     });
-    return { outcome: count === 1 ? "RETRY_LATER" : "STALE_DISCARDED" };
+    return { outcome: count === 1 ? "RETRY_LATER" : "STALE_DISCARDED", ...(diagnostic ? { diagnostic } : {}) };
 }
 
 // One claimed submission: load the received file and run the pipeline.
@@ -219,11 +221,16 @@ export async function processClaimedSubmission(row, {
         } catch (error) {
             if (!(error instanceof OcrServiceUnavailableError)) throw error;
             // The OCR service gave no answer and nothing was written: tried
-            // again like a file that couldn't be loaded, within the same attempts.
+            // again like a file that couldn't be loaded, within the same
+            // attempts. `reason` (ocrContract.js) says why — a deployment
+            // problem (NOT_CONFIGURED, CREDENTIALS, AUTH) as opposed to the
+            // service being briefly unreachable or busy — for the log line
+            // only; every reason is retried exactly the same way.
+            const diagnostic = { errorType: error.name, reason: error.reason ?? "UNKNOWN", error: safeErrorText(error) };
             if (row.processingAttempts >= maxAttempts) {
-                return await giveUp(db, claim, "TEXT_EXTRACTION", safeErrorText(error));
+                return await giveUp(db, claim, "TEXT_EXTRACTION", safeErrorText(error), diagnostic);
             }
-            return await retryLater(db, claim, clock(), { leaseMs, retryDelayMs });
+            return await retryLater(db, claim, clock(), { leaseMs, retryDelayMs }, diagnostic);
         }
         const { summary, stale } = processed;
         return stale ? { outcome: "STALE_DISCARDED" } : { outcome: "PROCESSED", summary };
@@ -276,6 +283,14 @@ export function startSubmissionWorker(options = {}) {
                     // IDs and outcomes only: never file names, numbers or document data.
                     if (o.outcome === "STALE_DISCARDED") {
                         warn("Stale background attempt discarded (the submission was taken over or finished meanwhile):", { temporaryId: o.temporaryId, attempt: o.attempt });
+                        continue;
+                    }
+                    // A RETRY_LATER/GAVE_UP caused by the OCR service (see
+                    // processClaimedSubmission) carries `diagnostic`, so a
+                    // setup problem (e.g. missing credentials) is visible
+                    // here instead of only ever showing as "RETRY_LATER".
+                    if (o.diagnostic) {
+                        warn("Background OCR request did not succeed:", { temporaryId: o.temporaryId, attempt: o.attempt, outcome: o.outcome, ...o.diagnostic });
                         continue;
                     }
                     log.log("Submission processed in background:", { temporaryId: o.temporaryId, attempt: o.attempt, outcome: o.outcome, processingStatus: o.summary?.processingStatus ?? null });
