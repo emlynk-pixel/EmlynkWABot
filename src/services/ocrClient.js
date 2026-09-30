@@ -15,6 +15,7 @@
 
 import {
     OCR_RESOURCE_REASONS,
+    OCR_UNAVAILABLE_REASONS,
     OcrRequestRejectedError,
     OcrResourceError,
     OcrServiceUnavailableError,
@@ -81,14 +82,14 @@ export function createOcrClient({
 } = {}) {
     return async function extractDocumentText({ fileBuffer, mimeType }) {
         if (!serviceUrl) {
-            throw new OcrServiceUnavailableError("OCR service is not configured (OCR_SERVICE_URL)");
+            throw new OcrServiceUnavailableError("OCR service is not configured (OCR_SERVICE_URL)", OCR_UNAVAILABLE_REASONS.NOT_CONFIGURED);
         }
 
         let auth;
         try {
             auth = await authHeaders();
         } catch (error) {
-            throw new OcrServiceUnavailableError(`OCR service credentials unavailable (${error?.name ?? "Error"})`);
+            throw new OcrServiceUnavailableError(`OCR service credentials unavailable (${error?.name ?? "Error"})`, OCR_UNAVAILABLE_REASONS.CREDENTIALS);
         }
 
         let response;
@@ -100,13 +101,16 @@ export function createOcrClient({
                 signal: AbortSignal.timeout(timeoutMs),
             });
         } catch (error) {
-            throw new OcrServiceUnavailableError(error?.name === "TimeoutError" ? "OCR service timed out" : "OCR service unreachable");
+            throw new OcrServiceUnavailableError(
+                error?.name === "TimeoutError" ? "OCR service timed out" : "OCR service unreachable",
+                OCR_UNAVAILABLE_REASONS.NETWORK,
+            );
         }
 
         const body = await readJson(response);
         if (response.ok) {
             if (isExtractionResult(body)) return body;
-            throw new OcrServiceUnavailableError(`OCR service returned an invalid response (HTTP ${response.status})`);
+            throw new OcrServiceUnavailableError(`OCR service returned an invalid response (HTTP ${response.status})`, OCR_UNAVAILABLE_REASONS.SERVER_ERROR);
         }
 
         const code = errorCode(body);
@@ -117,13 +121,22 @@ export function createOcrClient({
         // Overloaded: the same message as before, so a submission that is
         // finally given up still shows OCR_BUSY in the dashboard.
         if (response.status === 503 && code === "OCR_BUSY") {
-            throw new OcrServiceUnavailableError(new OcrResourceError(code).message);
+            throw new OcrServiceUnavailableError(new OcrResourceError(code).message, OCR_UNAVAILABLE_REASONS.BUSY);
         }
         if (response.status === 400 || response.status === 413) {
             throw new OcrRequestRejectedError(`OCR service rejected the request (HTTP ${response.status}${code ? ` ${code}` : ""})`);
         }
-        // 401/403 (credentials), 404 (wrong URL), 429 (no instance free), 5xx.
-        throw new OcrServiceUnavailableError(`OCR service error (HTTP ${response.status}${code ? ` ${code}` : ""})`);
+        // 401/403: the token was rejected (a real setup problem, e.g. the
+        // caller lacks roles/run.invoker); 404: wrong URL/path; 429: no
+        // instance free; other 5xx: the service itself failed.
+        const reason = response.status === 401 || response.status === 403
+            ? OCR_UNAVAILABLE_REASONS.AUTH
+            : response.status === 404
+                ? OCR_UNAVAILABLE_REASONS.NOT_FOUND
+                : response.status === 429
+                    ? OCR_UNAVAILABLE_REASONS.BUSY
+                    : OCR_UNAVAILABLE_REASONS.SERVER_ERROR;
+        throw new OcrServiceUnavailableError(`OCR service error (HTTP ${response.status}${code ? ` ${code}` : ""})`, reason);
     };
 }
 
