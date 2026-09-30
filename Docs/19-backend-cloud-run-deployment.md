@@ -107,3 +107,57 @@ automatically.
 See the root `README.md` and `ocr-worker/README.md` for the OCR service's own
 deployment, and the earlier Cloud Run readiness audit for the reasoning
 behind these choices.
+
+## Step 5A — HTTP handler separated from the process lifecycle
+
+Architecture decided since the steps above: the admin UI and the stateless
+API/webhook run on **Vercel**; the submission worker runs on **Cloud Run**;
+OCR stays on its existing Cloud Run service. This step only prepares the
+Express app for the Vercel side.
+
+**Why.** A Vercel function is called once per request and is not kept alive
+in between. `src/app.js` is a process entry point: it calls `app.listen()`,
+starts the polling submission worker (`startSubmissionWorker()`) and
+registers SIGTERM/SIGINT shutdown. None of that can run inside a serverless
+function — in particular the worker loop would never get CPU time to claim
+jobs.
+
+**What changed.**
+- New `src/httpHandler.js`: runs the same runtime and environment checks as
+  `src/app.js` (throwing instead of `process.exit()` on failure), builds the
+  app with the existing `createApp()` and exports it as the default request
+  handler. It does not listen, does not start the worker, and registers no
+  signal handlers.
+- New `test/httpHandler.test.js`: importing the handler leaves nothing
+  running (the child process ends by itself — a started worker or server
+  would keep it alive; verified with a negative control); used as a handler
+  it answers `/health` 200, an admin API call without login 401, webhook
+  verification 200/403, an unsigned webhook POST 401, with security headers;
+  a missing variable throws on import without exiting the process.
+
+**What did not change.** `src/app.js` (still the entry point for local
+development, Docker and Cloud Run: same checks, `app.listen()`, worker,
+graceful shutdown), `src/createApp.js` (routes, middleware order, security
+headers, error handler), `src/services/submissionQueue.js` (claiming,
+leases, fencing, retries), WhatsApp processing, authentication and cookies,
+RBAC, rate limiting, OCR, storage, Prisma, the schema and migrations. No
+CORS, no Vercel configuration yet.
+
+With the Vercel handler alone, the webhook still records each submission
+durably (file in `temporary/`, `temporary_data` row) and answers 200; the
+submission then waits in PostgreSQL until a worker process claims it
+(Step 5B). `notifySubmissionQueued()` in the webhook becomes a no-op there
+(no worker in that process listens); the worker's own polling picks the
+submission up.
+
+**Tests.** `node --test test/httpHandler.test.js`: 4/4 pass. `npm test`:
+1039 tests, 1017 pass, 0 fail, 22 skipped (the OCR-gated ones, as before).
+`src/app.js` started with placeholder settings: listens, `/health` 200,
+worker running.
+
+**For Step 5D.** Vercel's zero-configuration Express detection may treat
+`src/app.js` as the entry point (it matches the file names it looks for);
+the Vercel configuration must point at `src/httpHandler.js` explicitly.
+The handler runs the same environment check as the server, so
+`OCR_SERVICE_URL` is required on Vercel too, although only the worker calls
+OCR.
