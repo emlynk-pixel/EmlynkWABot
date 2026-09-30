@@ -136,6 +136,52 @@ for OCR. The image runs as the unprivileged `node` user, listens on
 
 ## Google Cloud Run deployment
 
+### Current deployment (live)
+
+What is actually running today, checked directly against the project
+(`gcloud run services describe emlynk-ocr-worker --region=asia-south1`):
+
+| | |
+|---|---|
+| Service name | `emlynk-ocr-worker` |
+| Region | `asia-south1` |
+| URL (`OCR_SERVICE_URL`) | `https://emlynk-ocr-worker-76153319636.asia-south1.run.app` (Cloud Run also answers on the equivalent `…-j77vahenea-el.a.run.app` alias) |
+| Image | `asia-south1-docker.pkg.dev/project-aa11e15e-a951-4e1b-a65/emlynk-ocr/ocr-worker:latest` |
+| CPU / memory | 1 vCPU / 512 MiB |
+| Concurrency | 80 (Cloud Run's default — not set to match `MAX_CONCURRENT_OCR_JOBS`) |
+| Scaling | `min-instances` unset (0), `max-instances` 3 |
+| Ingress / auth | `all`, no `--allow-unauthenticated` (confirmed: an unauthenticated `GET /health` gets `403`) |
+| Service account | the project's default compute service account (no dedicated `ocr-worker-runtime`/`ocr-invoker` accounts exist yet) |
+| Startup CPU boost | on |
+| Timeout | 300 s |
+
+It works — the backend's ADC (the developer's own `gcloud` login, a project
+owner) has enough project-level permission to invoke a private Cloud Run
+service with no per-service IAM binding, so no dedicated `ocr-invoker`
+account was needed to get this running. Worth reviewing before this depends
+on anyone else's credentials, or before real production traffic:
+
+- **512 MiB is below the recommended 2 GiB** (§5 below) and below this
+  service's own measured "≈300 MiB peak" on small phone-photo fixtures — a
+  full-resolution photo (up to 50 MP) decoded, turned or enlarged needs
+  substantially more; this is the most likely source of an OOM under load.
+- **1 vCPU instead of 2** halves the CPU available to the two concurrent OCR
+  jobs this service runs per instance, which the measured request-latency
+  table below doesn't reflect (it was measured at 2 vCPU).
+- **Concurrency 80 instead of 2** lets Cloud Run route far more concurrent
+  requests to one instance than the service's own job limit
+  (`MAX_CONCURRENT_OCR_JOBS` = 2) can actually run at once; the extra
+  requests queue inside the service (`MAX_WAITING_OCR_JOBS` = 10, then
+  `OCR_BUSY`) instead of Cloud Run starting another instance for them.
+- **No dedicated service accounts** (§3 below) — the service runs as, and is
+  invoked by, whatever has default project access, not the least-privilege
+  identities the steps below set up.
+
+None of this was changed as part of documenting it — it's a description of
+what's live, not a change made here.
+
+### From-scratch deployment
+
 Replace `PROJECT_ID`, `REGION` (e.g. `asia-south1`, close to Sri Lanka, or the
 region nearest the backend) and the image tag.
 
