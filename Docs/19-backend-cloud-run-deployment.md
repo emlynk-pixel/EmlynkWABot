@@ -332,4 +332,126 @@ when the store's database is unreachable.
 - Production needs the migration before this code runs:
   `npx prisma migrate deploy` against the session pooler.
 
-Step 5D (Vercel routing/configuration) is still pending.
+## Step 5D — Vercel configuration and routing
+
+Nothing is deployed yet. Platform facts below are from Vercel's documentation
+(Express on Vercel, vercel.json, Rewrites, Request headers, Node.js runtime),
+checked when this was written.
+
+**Entry point.** `api/index.js` imports `src/httpHandler.js` and exports it;
+that is the only function. `vercel.json` sets `"framework": null` ("Other"):
+without it, Vercel's zero-configuration Express detection looks for
+`src/app.js` — and supports `app.listen()` — so it would run the process
+entry, including the worker.
+
+**Admin build.** One Vercel project at the repository root.
+`installCommand`: `npm ci && npm --prefix admin ci` (the root install runs
+`prisma generate`). `buildCommand`: the existing admin build with its output
+redirected: `npm --prefix admin run build -- --outDir ../public/admin
+--emptyOutDir`. `outputDirectory`: `public`, so the files sit at
+`/admin/index.html`, `/admin/assets/*`, `/admin/favicon.svg` — the URLs the
+build already uses (`base: "/admin/"`, router `basename="/admin"`). Only
+`public/` is static; the repository is not served. `npm run admin:build`
+(→ `admin/dist`, served by Express under `/admin`) is unchanged for local
+runs and Docker. `express.static()` is ignored on Vercel, which is why the
+admin is built as static files there.
+
+**Routing** (`vercel.json` rewrites; an existing file is served before any
+rewrite applies):
+
+| Browser path | Goes to |
+|---|---|
+| `/auth/*`, `/api/*`, `/whatsapp/*`, `/health` | the function (Express sees the original path) |
+| `/admin/assets/*` | the static file, or 404 if missing (like Express) |
+| `/admin`, `/admin/*` | `/admin/index.html` (client-side routes) |
+| anything else | 404 |
+
+No rewrite leaves the deployment and none uses named parameters (those would
+be added to the query string). The Cloud Run worker is not routed at all.
+
+**Cookies.** Browser, admin pages and API share one origin (the Vercel
+domain), so the login cookie stays as it is: `HttpOnly`, `SameSite=Strict`,
+`Secure` when `NODE_ENV=production`, same name, no `Domain`. No CORS, no
+cross-origin authentication, no code change. The admin client keeps its
+relative `/auth/*` and `/api/*` calls with `credentials: "include"`.
+
+**Headers.** The static admin pages get the same security headers Express
+sends through helmet (CSP, HSTS, `X-Frame-Options`, … — a test compares them
+with the running app), and `/admin/assets/*` is cached for a year, immutable,
+as Express serves it. API responses get their headers from Express as before.
+
+**Webhook.** `https://<vercel-domain>/whatsapp/webhook` (GET verification and
+POST). Not configured in Meta yet. Express's body parser reads the request
+itself and keeps the raw bytes for the signature check; `NODEJS_HELPERS=0`
+turns off Vercel's own `request.body` helper so nothing else touches the body.
+
+**Function settings.** `regions: ["hnd1"]` (Tokyo, next to the database in
+`ap-northeast-1`; the default is `iad1`). `maxDuration: 60`. `includeFiles`:
+the generated Prisma client (`generated/prisma/**`, git-ignored, created at
+install) and `@prisma/client/runtime`, which only the generated client
+imports. Node.js: `engines` in `package.json` selects the latest 24.x, which
+loads the generated `.ts` client.
+
+**Environment variables on Vercel** (the handler's code reads exactly these):
+
+| | Variables |
+|---|---|
+| Secrets | `DATABASE_URL` (session pooler URL), `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECRET`, `META_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN`, `SMTP_PASS` |
+| Non-secret, required | `SUPABASE_URL`, `SUPABASE_BUCKET`, `WHATSAPP_API_VERSION`, `OCR_SERVICE_URL`, `APP_BASE_URL` (the Vercel domain, no trailing slash), `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `EMAIL_FROM`, `TRUST_PROXY_HOPS=1`, `NODEJS_HELPERS=0` |
+| Non-secret, optional | `REQUIRED_DOCUMENT_TYPES`, `ADMIN_SETUP_URL_BASE` |
+| Not on Vercel | `GOOGLE_APPLICATION_CREDENTIALS`, any service-account key, `PORT` |
+
+`OCR_SERVICE_URL` is only there because the startup check requires it; the
+handler never calls OCR and needs no Google credential. `NODE_ENV` must be
+`production` at runtime (the cookie's `Secure` flag depends on it): check the
+`Set-Cookie` of the first login. The sender variable is `EMAIL_FROM` (there
+is no `SMTP_EMAIL_FROM`).
+
+**Cloud Run worker** (unchanged from Step 5B): secrets `DATABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`; plain `SUPABASE_URL`, `SUPABASE_BUCKET`,
+`OCR_SERVICE_URL`. No JWT, Meta, WhatsApp or SMTP values.
+
+**TRUST_PROXY_HOPS = 1.** Vercel documents `x-forwarded-for` as "the public
+IP address of the client that made the request" and states that it
+overwrites the header and does not forward external IPs, to prevent
+spoofing. So the header holds one address written by the platform; with one
+trusted hop Express uses it as `req.ip`, and a client can't supply its own.
+Unset, `req.ip` would be the platform's internal address and every client
+would share one rate-limit count. This is derived from the documentation,
+not yet observed on a deployment: confirm after the first deploy (two
+clients on different networks must not share a login allowance).
+
+**Validation (local).** `vercel.json` validates against Vercel's published
+schema (`https://openapi.vercel.sh/vercel.json`). `node --test
+test/vercelConfig.test.js`: 13/13 — entry point, auto-detection off, routing
+for every mounted backend route and the admin paths, header parity with
+Express, `api/index.js` imported as a handler leaves nothing running.
+`npm test`: 1067 tests, 1045 pass, 0 fail, 22 skipped. Admin `vitest`:
+144/144. `npm start` and `npm run worker` start as before. Not run: a real
+`vercel build` (needs the Vercel CLI linked to a project).
+
+**Admin build fix.** The admin build's type check failed on committed code
+(since `c133eb5`), so the Vercel build would have failed too:
+`admin/src/pages/ReviewDetailPage.tsx` used `deleteTemporaryDocument` without
+importing it from `../api/admin` (where it exists), and `open()`'s parameter
+type lacked `"deleteTemporary"`. Fixed with exactly those two edits; the
+"Delete Document" action on a review item now calls the existing
+`DELETE /api/admin/temporary-documents/:id` route instead of throwing.
+`npm run admin:build` and the Vercel `buildCommand` both pass (0 type errors).
+
+**Remaining, in order.**
+1. Apply the rate-limit migration to Supabase through the session pooler
+   (`npx prisma migrate deploy`) — before any deployed code uses the limiters.
+2. Deploy and test the Cloud Run worker (Step 5B settings).
+3. Create the Vercel project (root directory: repository root), set the
+   variables above, deploy; check `/health`, login (`Secure` cookie), the
+   admin pages, and the rate-limit key per client.
+4. Set the Meta webhook to `https://<vercel-domain>/whatsapp/webhook`.
+5. End-to-end test.
+
+**Known limitations.**
+- Each function instance has its own database pool (up to 10 connections)
+  against the session pooler; watch the connection count under load.
+- The webhook's worst case (media lookup 10 s + download 30 s + upload up to
+  60 s) can exceed `maxDuration`; Meta then redelivers, and the unique
+  message ID keeps the submission single.

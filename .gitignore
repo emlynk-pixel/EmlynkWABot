@@ -23,5 +23,8 @@ prisma/seed.js
 # Admin dashboard build output (npm run admin:build)
 admin/dist/
 
+# Admin dashboard build output for Vercel (vercel.json buildCommand)
+/public/
+
 # Local reference screenshots, not part of the app
 /UI/
