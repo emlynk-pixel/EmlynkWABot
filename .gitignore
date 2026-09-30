@@ -22,3 +22,6 @@ prisma/seed.js
 
 # Admin dashboard build output (npm run admin:build)
 admin/dist/
+
+# Local reference screenshots, not part of the app
+/UI/
