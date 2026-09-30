@@ -455,3 +455,43 @@ type lacked `"deleteTemporary"`. Fixed with exactly those two edits; the
 - The webhook's worst case (media lookup 10 s + download 30 s + upload up to
   60 s) can exceed `maxDuration`; Meta then redelivers, and the unique
   message ID keeps the submission single.
+
+## Step 5E — Production migration verified
+
+**Migration.** `20260930120000_phase12_rate_limits` is applied on the
+production database (recorded as finished 2026-09-30 13:31 UTC, not rolled
+back; 15 of 15 migrations applied). It was already applied when this step's
+checks began; `npx prisma migrate deploy` run here reported "No pending
+migrations to apply".
+
+**Target.** Supabase PostgreSQL through the Supavisor session pooler
+(`aws-0-ap-northeast-1.pooler.supabase.com:5432`, database `postgres`, the
+project's `postgres.<project-ref>` user). The pooler URL was supplied to the
+commands for this step only; `.env` on the development machine still holds
+the direct host.
+
+**Verification (read-only).**
+- `npx prisma migrate status`: "Database schema is up to date!".
+- `rate_limits`: `key` text (primary key), `hits` integer, `reset_at`
+  timestamptz(3), all NOT NULL; indexes `rate_limits_pkey` and
+  `rate_limits_reset_at_idx`; owner `postgres`; RLS on; no rights for `anon`
+  or `authenticated`.
+- Live database compared with `prisma/schema.prisma` (`prisma migrate diff`):
+  no difference.
+- Existing tables all present with their rows (`users`, `admins`,
+  `documents`, `temporary_data`, `audit_logs`, `admin_invitations`,
+  `admin_password_resets`, `_prisma_migrations`); nothing dropped or reset.
+- `npm run db:check`: connection successful.
+
+**Smoke test.** The real store (`postgresRateLimitStore.js`) against the
+production table, under a unique test prefix: counting, fixed window, key
+isolation, 10 concurrent increments from two store instances (distinct
+counts), a new instance continuing the count, decrement and reset — all
+pass. Its rows were deleted afterwards (0 test rows left; the table had 0
+rows before and after).
+
+**Note.** `admin_invitations` and `admin_password_resets` have row level
+security off. They are not exposed (`anon` and `authenticated` hold no rights
+on any table), but unlike the other tables they rely on that alone.
+
+Nothing was deployed. Next: the Cloud Run worker, then Vercel.
