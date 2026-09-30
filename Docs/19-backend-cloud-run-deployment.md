@@ -250,3 +250,86 @@ migrations.
   `emlynk-backend`, the four worker secrets plus `SUPABASE_URL`,
   `SUPABASE_BUCKET`, `OCR_SERVICE_URL`, `--no-cpu-throttling`,
   `--min-instances=1`, command `node src/worker.js`.
+
+## Step 5C — Rate-limit counts shared in PostgreSQL
+
+**Why.** The limiters (express-rate-limit) kept their counts in process
+memory. On Vercel each function instance has its own memory, and requests
+are spread across instances, so every instance granted its own allowance
+(e.g. 5 failed logins *per instance*).
+
+**Mechanism.** The limiters are unchanged except for their store:
+`src/middleware/postgresRateLimitStore.js`, an express-rate-limit store on
+the existing Prisma/PostgreSQL connection. PostgreSQL was chosen because it
+is already there and already shared by every instance: no new service,
+dependency or network hop. One table, `rate_limits` (migration
+`20260930120000_phase12_rate_limits`): `key` (primary key), `hits`,
+`reset_at`, one index on `reset_at`; RLS on and no rights for Supabase's
+public API roles, like the other tables. The key is
+`<limiter>:<sha256 of the client key>`, so no IP address is stored.
+
+**Limits preserved (unchanged).**
+
+| Limiter | Limit / window | Counts | Routes |
+|---|---|---|---|
+| login | 5 / 15 min | failures only | `POST /auth/login` |
+| password-reset | 5 / 15 min | every request | `/auth/setup-password`, `/auth/forgot-password`, `/auth/reset-password` |
+| generic-api | 1000 / 15 min | every request | `/api/admin/*` |
+| admin-frontend | 1000 / 15 min | every request | `/admin/*` (Express only) |
+
+Same keys (client IP), same 429 JSON messages, same `RateLimit` /
+`RateLimit-Policy` headers. The admin API and `/admin` keep separate counts
+(different prefixes), as they did in memory.
+
+**Concurrency.** One statement per counted request: `INSERT … ON CONFLICT
+(key) DO UPDATE` that increments, or restarts an expired window, and
+returns the count. The primary key serializes concurrent requests for a key,
+so each gets its own number: tested with 60 concurrent increments from two
+instances (counts 1–60, none repeated) and 20 concurrent failed logins across
+two apps (exactly 5 reach the login, 15 get 429). A naive read-then-write
+version, run as a control, let all 60 read the same count. Window times come
+from the database clock, the same for every instance. Semantics match the old
+in-memory store: fixed window from a key's first hit; successful logins are
+taken off again (never below 0).
+
+**Cleanup.** An expired row is reused by that client's next request. Rows of
+clients that don't return are deleted with one `DELETE … WHERE reset_at <=
+now()`, run at most once per window per instance, right after a count
+(awaited, never a background timer). No cron, no extra service.
+
+**Failure behavior.** If the database can't be reached, a limited request
+fails with 500 instead of passing unlimited. Login, password reset and the
+admin API need the same database anyway, so nothing that would have worked
+is blocked, and a missing `rate_limits` table (migration not applied) shows
+up at once instead of silently disabling the limits.
+
+**Cost.** One database round trip per limited request (login, password
+reset, admin API; not the webhook, not `/health`), plus the occasional
+cleanup. No other table is read.
+
+**Changed files.** New: `src/middleware/postgresRateLimitStore.js`, the
+migration, the `RateLimit` model in `prisma/schema.prisma`,
+`test/postgresRateLimitStore.test.js`. Modified: `loginRateLimiter.js` and
+`apiRateLimiter.js` (a `store` option, PostgreSQL by default; `prefix` for
+the API limiter), `src/adminFrontend.js` (its own prefix),
+`src/createApp.js` (an `adminFrontendLimiter` option for tests, like its
+other test options). Tests that exercise routes with fake databases now pass
+an in-memory store explicitly (`errorHandling`, `adminFrontend`,
+`loginRateLimit`, `adminPasswordReset`); `httpHandler.test.js` checks the
+unauthenticated response on `/auth/me` and that the admin API fails closed
+when the store's database is unreachable.
+
+**Tests.**
+- `npm test` (no database): 1054 tests, 1032 pass, 0 fail, 22 skipped.
+- `RATE_LIMIT_TEST_DATABASE_URL=<throwaway> node --test
+  test/postgresRateLimitStore.test.js`: 17/17 pass (throwaway PostgreSQL 16
+  on 127.0.0.1:55432 with all migrations applied; never production).
+- The same with the full suite: 1068 tests, 1046 pass, 0 fail, 22 skipped.
+
+**Known limitations.**
+- The key is still `req.ip`; behind Vercel, `TRUST_PROXY_HOPS` must be set
+  correctly or all clients share one key (Step 5D).
+- Production needs the migration before this code runs:
+  `npx prisma migrate deploy` against the session pooler.
+
+Step 5D (Vercel routing/configuration) is still pending.

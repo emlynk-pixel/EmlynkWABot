@@ -2,6 +2,7 @@ import { describe, test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import cookieParser from "cookie-parser";
+import { MemoryStore } from "express-rate-limit";
 
 import { createAuthRouter, ACTIVE_ADMIN_STATUS } from "../src/routes/auth.js";
 import { hashPassword, comparePassword } from "../src/utils/password.js";
@@ -389,7 +390,9 @@ describe("POST /auth/forgot-password rate limiting", () => {
             createAuthRouter({
                 db,
                 loginLimiter: noRateLimit,
-                resetLimiter: createResetRateLimiter({ limit: 3, windowMs: 60 * 1000 }),
+                // Counts in memory here; the shared PostgreSQL store is
+                // tested in postgresRateLimitStore.test.js.
+                resetLimiter: createResetRateLimiter({ limit: 3, windowMs: 60 * 1000, store: new MemoryStore() }),
             })
         );
 

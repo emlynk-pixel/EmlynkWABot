@@ -10,8 +10,9 @@ import { createAdminFrontendRouter, DEFAULT_ADMIN_DIST_DIR } from "./adminFronte
 
 // Builds the Express app without starting a server, so tests can use it.
 // Environment variables must already be loaded (src/app.js does that first).
-// Options exist for tests: another admin build folder, fake-DB routers.
-export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = authRoutes, adminApiRouter = createAdminRouter() } = {}) {
+// Options exist for tests: another admin build folder, fake-DB routers, and
+// the /admin rate limiter (its default counts in PostgreSQL).
+export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = authRoutes, adminApiRouter = createAdminRouter(), adminFrontendLimiter } = {}) {
     const app = express();
 
     // Don't advertise the framework (SEC-015).
@@ -58,7 +59,7 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
     app.use("/api/admin", adminApiRouter);
 
     // Admin dashboard (built React app from admin/), same origin as /auth.
-    app.use("/admin", createAdminFrontendRouter({ distDir: adminDistDir }));
+    app.use("/admin", createAdminFrontendRouter({ distDir: adminDistDir, ...(adminFrontendLimiter ? { apiLimiter: adminFrontendLimiter } : {}) }));
 
     app.get("/health", (req, res) => {
         res.json({
