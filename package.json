@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/app.js",
+    "worker": "node src/worker.js",
     "postinstall": "prisma generate",
     "test": "node --test \"test/**/*.test.js\"",
     "diagnose:document": "node scripts/diagnoseDocument.js",
