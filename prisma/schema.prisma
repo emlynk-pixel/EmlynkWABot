@@ -220,3 +220,17 @@ model TemporaryData {
   @@index([processingStatus, createdDate])
   @@map("temporary_data")
 }
+
+// Rate-limit counters (Phase 12, Step 5C), shared by every app instance
+// (several serverless instances on Vercel). Operational state only: one row
+// per limiter and client, reused when its window has passed, deleted once
+// expired (middleware/postgresRateLimitStore.js). key = "<limiter>:<sha256 of
+// the client key>", so no IP address is stored.
+model RateLimit {
+  key     String   @id
+  hits    Int
+  resetAt DateTime @map("reset_at") @db.Timestamptz(3)
+
+  @@index([resetAt])
+  @@map("rate_limits")
+}

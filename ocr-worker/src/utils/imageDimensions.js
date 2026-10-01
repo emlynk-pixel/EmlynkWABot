@@ -14,16 +14,20 @@ const JPEG_SOF_MARKERS = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9
 // Markers with no length field.
 const JPEG_STANDALONE_MARKERS = new Set([0x01, 0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9]);
 
-function readPng(buffer) {
+// The buffer is the request body (app.js -> ocrService.js). Its size is taken
+// once, with Buffer.byteLength after the Buffer check in readImageDimensions,
+// and passed in: never read as .length, which a string or an array could also
+// have (CodeQL: type confusion through parameter tampering).
+function readPng(buffer, size) {
     // Signature (8) + IHDR length (4) + "IHDR" (4) + width (4) + height (4)
-    if (buffer.length < 24 || buffer.toString("ascii", 12, 16) !== "IHDR") return null;
+    if (size < 24 || buffer.toString("ascii", 12, 16) !== "IHDR") return null;
     return { format: "png", width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 }
 
-function readJpeg(buffer) {
+function readJpeg(buffer, size) {
     let offset = 2; // after the FF D8 start-of-image marker
 
-    while (offset + 4 <= buffer.length) {
+    while (offset + 4 <= size) {
         if (buffer[offset] !== 0xff) return null;
         const marker = buffer[offset + 1];
 
@@ -41,7 +45,7 @@ function readJpeg(buffer) {
 
         if (JPEG_SOF_MARKERS.has(marker)) {
             // length (2) + precision (1) + height (2) + width (2)
-            if (offset + 9 > buffer.length) return null;
+            if (offset + 9 > size) return null;
             return { format: "jpeg", height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
         }
         if (marker === 0xda) return null; // image data started without a frame header
@@ -54,12 +58,13 @@ function readJpeg(buffer) {
 
 export function readImageDimensions(buffer) {
     if (!Buffer.isBuffer(buffer)) return null;
+    const size = Buffer.byteLength(buffer);
 
     let dimensions = null;
-    if (buffer.length >= 8 && buffer.subarray(0, 8).equals(PNG_SIGNATURE)) {
-        dimensions = readPng(buffer);
-    } else if (buffer.length >= 4 && buffer[0] === 0xff && buffer[1] === 0xd8) {
-        dimensions = readJpeg(buffer);
+    if (size >= 8 && buffer.subarray(0, 8).equals(PNG_SIGNATURE)) {
+        dimensions = readPng(buffer, size);
+    } else if (size >= 4 && buffer[0] === 0xff && buffer[1] === 0xd8) {
+        dimensions = readJpeg(buffer, size);
     }
 
     return dimensions && dimensions.width > 0 && dimensions.height > 0 ? dimensions : null;

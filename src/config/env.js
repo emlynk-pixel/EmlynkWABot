@@ -12,9 +12,22 @@ export const REQUIRED_ENV_VARS = Object.freeze([
     "WHATSAPP_VERIFY_TOKEN",
     "WHATSAPP_ACCESS_TOKEN",
     "WHATSAPP_API_VERSION",
+    "OCR_SERVICE_URL",
+]);
+
+// The worker-only process (src/worker.js, Step 5B) reads only these: the
+// database, storage and the OCR service. It needs no JWT, Meta or WhatsApp
+// secret, so its deployment doesn't have to hold them.
+export const WORKER_REQUIRED_ENV_VARS = Object.freeze([
+    "DATABASE_URL",
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_BUCKET",
+    "OCR_SERVICE_URL",
 ]);
 
 import { parseRequiredDocumentTypes } from "./requiredDocuments.js";
+import { isLoopbackUrl } from "../services/ocrClient.js";
 
 // HS256 key: shorter secrets can be brute-forced from a single token.
 export const MIN_JWT_SECRET_LENGTH = 32;
@@ -44,10 +57,12 @@ const isUrl = (value, protocols) => {
 const isSet = (value) => typeof value === "string" && value.trim() !== "";
 
 // Returns the names of the problems found; empty when everything is fine.
-export function findEnvProblems(env = process.env) {
+// `required` is the list of variables that must be set (the server's by
+// default); the format checks below apply to whichever are set.
+export function findEnvProblems(env = process.env, { required: requiredVars = REQUIRED_ENV_VARS } = {}) {
     const problems = [];
 
-    for (const name of REQUIRED_ENV_VARS) {
+    for (const name of requiredVars) {
         if (!isSet(env[name])) {
             problems.push(`${name} is missing`);
         }
@@ -62,6 +77,14 @@ export function findEnvProblems(env = process.env) {
     }
     if (isSet(env.DATABASE_URL) && !isUrl(env.DATABASE_URL, ["postgresql:", "postgres:"])) {
         problems.push("DATABASE_URL is not a postgresql:// URL");
+    }
+    // Plain http only to this machine: anything else carries identity tokens and documents.
+    if (isSet(env.OCR_SERVICE_URL)) {
+        if (!isUrl(env.OCR_SERVICE_URL, ["https:", "http:"])) {
+            problems.push("OCR_SERVICE_URL is not a valid URL");
+        } else if (!isUrl(env.OCR_SERVICE_URL, ["https:"]) && !isLoopbackUrl(env.OCR_SERVICE_URL)) {
+            problems.push("OCR_SERVICE_URL must use https:// unless it is a loopback address");
+        }
     }
     if (isSet(env.WHATSAPP_API_VERSION) && !/^v\d+\.\d+$/.test(env.WHATSAPP_API_VERSION)) {
         problems.push("WHATSAPP_API_VERSION must look like v21.0");
@@ -82,8 +105,8 @@ export function findEnvProblems(env = process.env) {
     return problems;
 }
 
-export function assertValidEnv(env = process.env) {
-    const problems = findEnvProblems(env);
+export function assertValidEnv(env = process.env, options) {
+    const problems = findEnvProblems(env, options);
     if (problems.length > 0) {
         throw new Error(`Invalid environment configuration:\n- ${problems.join("\n- ")}`);
     }

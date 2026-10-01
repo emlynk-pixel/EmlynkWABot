@@ -12,6 +12,7 @@ import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.j
 import { sha256Hex } from "../src/utils/fileChecksum.js";
 import { createFakePrisma } from "./helpers/fakePrisma.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
+import "./helpers/localOcrService.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
 
 Object.assign(process.env, {

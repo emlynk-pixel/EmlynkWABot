@@ -4,10 +4,12 @@ import express from "express";
 
 import { createAuthRouter } from "../src/routes/auth.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
+import { MemoryStore } from "express-rate-limit";
 import {
     LOGIN_RATE_LIMIT_WINDOW_MS,
     LOGIN_RATE_LIMIT_MAX_FAILURES,
     LOGIN_RATE_LIMIT_MESSAGE,
+    createLoginRateLimiter,
 } from "../src/middleware/loginRateLimiter.js";
 import { hashPassword } from "../src/utils/password.js";
 import { createFakeAdminDb } from "./helpers/fakeAdminDb.js";
@@ -20,7 +22,10 @@ const WRONG_PASSWORD = "wrong-password";
 const PASSWORD_HASH = await hashPassword(PASSWORD);
 
 // Every test gets a new app and therefore a new limiter with a clean count.
-// It's the real default limiter (createAuthRouter's default), not a stub.
+// It's the real login limiter with its default policy (limit, window,
+// counting, response, headers), not a stub; only its counts are kept in
+// memory here instead of PostgreSQL (the shared store is tested against a
+// real database in postgresRateLimitStore.test.js).
 async function startApp() {
     const db = createFakeAdminDb([
         { adminId: "admin-1", name: "Test Admin", email: EMAIL, passwordHash: PASSWORD_HASH, role: "ADMIN", status: "ACTIVE" },
@@ -28,7 +33,7 @@ async function startApp() {
 
     const app = express();
     app.use(express.json());
-    app.use("/auth", createAuthRouter({ db }));
+    app.use("/auth", createAuthRouter({ db, loginLimiter: createLoginRateLimiter({ store: new MemoryStore() }) }));
     app.get("/health", (req, res) => res.json({ status: "OK" }));
     app.use(errorHandler);
 

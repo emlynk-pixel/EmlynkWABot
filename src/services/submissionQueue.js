@@ -34,7 +34,7 @@ import { EventEmitter } from "node:events";
 import { processDocument as defaultProcessDocument } from "./documentProcessingService.js";
 import { classifyDocument } from "./documentClassificationService.js";
 import { mimeTypeForPath } from "./adminReviewService.js";
-import { MAX_CONCURRENT_OCR_JOBS } from "./ocrService.js";
+import { OcrServiceUnavailableError } from "./ocrContract.js";
 import { RECEIVED_STATUS } from "./statusMapping.js";
 import { ClaimLostError } from "./temporaryDataService.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
@@ -42,12 +42,17 @@ import { safeErrorText } from "../utils/safeLog.js";
 import { STORAGE_TIMEOUT_MS, withStorageTimeout } from "../utils/storageTimeout.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 
+// Submissions this app instance processes at once, so at most this many OCR
+// requests are in flight from it. The OCR service limits its own load
+// separately (instances x concurrency on Cloud Run, jobs per instance).
+export const MAX_CONCURRENT_OCR_REQUESTS = 2;
+
 export const QUEUE_DEFAULTS = Object.freeze({
     pollMs: 5_000,              // fallback poll; new submissions wake the worker at once
-    leaseMs: 10 * 60_000,       // longer than the slowest processing (OCR wait + job ≈ 3 min)
-    retryDelayMs: 60_000,       // after a temporary failure to load the file
+    leaseMs: 10 * 60_000,       // longer than the slowest processing (OCR request ≤ 4 min, ocrClient.js)
+    retryDelayMs: 60_000,       // after a temporary failure to load the file or reach the OCR service
     maxAttempts: 3,
-    concurrency: MAX_CONCURRENT_OCR_JOBS,
+    concurrency: MAX_CONCURRENT_OCR_REQUESTS,
     storageTimeoutMs: STORAGE_TIMEOUT_MS, // 1 min, a tenth of the lease
 });
 
@@ -141,8 +146,8 @@ export function createClaim(row, { db, clock = () => new Date(), leaseMs = QUEUE
 }
 
 // Records FAILED for a submission the worker can't process (only while this
-// attempt still owns it).
-async function giveUp(db, claim, stage, error) {
+// attempt still owns it). `diagnostic` (see retryLater) is for the log line only.
+async function giveUp(db, claim, stage, error, diagnostic = null) {
     const { count } = await db.temporaryData.updateMany({
         where: claim.where(),
         data: {
@@ -151,7 +156,20 @@ async function giveUp(db, claim, stage, error) {
             processingSummary: { stage, error, processingStatus: "FAILED", recordUpdated: true, attempts: claim.attempt },
         },
     });
-    return { outcome: count === 1 ? "GAVE_UP" : "STALE_DISCARDED" };
+    return { outcome: count === 1 ? "GAVE_UP" : "STALE_DISCARDED", ...(diagnostic ? { diagnostic } : {}) };
+}
+
+// A temporary failure: the lease runs out early, so the submission is
+// claimed again about retryDelayMs after `from` (only while this attempt
+// still owns it). `diagnostic`, if given, is for the caller's log line only
+// (IDs and outcomes only, see startSubmissionWorker) — it changes nothing
+// about when or how often the submission is retried.
+async function retryLater(db, claim, from, { leaseMs, retryDelayMs }, diagnostic = null) {
+    const { count } = await db.temporaryData.updateMany({
+        where: claim.where(),
+        data: { processingStartedAt: new Date(from.getTime() - leaseMs + retryDelayMs) },
+    });
+    return { outcome: count === 1 ? "RETRY_LATER" : "STALE_DISCARDED", ...(diagnostic ? { diagnostic } : {}) };
 }
 
 // One claimed submission: load the received file and run the pipeline.
@@ -177,12 +195,7 @@ export async function processClaimedSubmission(row, {
             if (row.processingAttempts >= maxAttempts) {
                 return await giveUp(db, claim, "FILE_LOAD", "The received file could not be loaded from storage");
             }
-            // Temporary: let the lease run out early so it is tried again in about retryDelayMs.
-            const { count } = await db.temporaryData.updateMany({
-                where: claim.where(),
-                data: { processingStartedAt: new Date(now.getTime() - leaseMs + retryDelayMs) },
-            });
-            return { outcome: count === 1 ? "RETRY_LATER" : "STALE_DISCARDED" };
+            return await retryLater(db, claim, now, { leaseMs, retryDelayMs });
         }
         const fileBuffer = Buffer.isBuffer(data) ? data : Buffer.from(await data.arrayBuffer());
         const mimeType = mimeTypeForPath(row.temporaryStoragePath);
@@ -191,18 +204,35 @@ export async function processClaimedSubmission(row, {
         }
 
         const fileName = row.originalFilename ?? null;
-        const { summary, stale } = await processDocument({
-            temporaryId: row.temporaryId,
-            whatsappNumber: row.whatsappNumber,
-            fileName,
-            mimeType,
-            fileBuffer,
-            fileSha256: row.fileSha256?.trim(),
-            temporaryStoragePath: row.temporaryStoragePath,
-            receivedAt: row.receivedAt ?? row.createdDate,
-            filenameClassification: classifyDocument({ fileName, mimeType }),
-            deps: { db, bucket: storage, claim, ...(extractText ? { extractText } : {}) },
-        });
+        let processed;
+        try {
+            processed = await processDocument({
+                temporaryId: row.temporaryId,
+                whatsappNumber: row.whatsappNumber,
+                fileName,
+                mimeType,
+                fileBuffer,
+                fileSha256: row.fileSha256?.trim(),
+                temporaryStoragePath: row.temporaryStoragePath,
+                receivedAt: row.receivedAt ?? row.createdDate,
+                filenameClassification: classifyDocument({ fileName, mimeType }),
+                deps: { db, bucket: storage, claim, ...(extractText ? { extractText } : {}) },
+            });
+        } catch (error) {
+            if (!(error instanceof OcrServiceUnavailableError)) throw error;
+            // The OCR service gave no answer and nothing was written: tried
+            // again like a file that couldn't be loaded, within the same
+            // attempts. `reason` (ocrContract.js) says why — a deployment
+            // problem (NOT_CONFIGURED, CREDENTIALS, AUTH) as opposed to the
+            // service being briefly unreachable or busy — for the log line
+            // only; every reason is retried exactly the same way.
+            const diagnostic = { errorType: error.name, reason: error.reason ?? "UNKNOWN", error: safeErrorText(error) };
+            if (row.processingAttempts >= maxAttempts) {
+                return await giveUp(db, claim, "TEXT_EXTRACTION", safeErrorText(error), diagnostic);
+            }
+            return await retryLater(db, claim, clock(), { leaseMs, retryDelayMs }, diagnostic);
+        }
+        const { summary, stale } = processed;
         return stale ? { outcome: "STALE_DISCARDED" } : { outcome: "PROCESSED", summary };
     } finally {
         activeClaims?.delete(claim);
@@ -253,6 +283,14 @@ export function startSubmissionWorker(options = {}) {
                     // IDs and outcomes only: never file names, numbers or document data.
                     if (o.outcome === "STALE_DISCARDED") {
                         warn("Stale background attempt discarded (the submission was taken over or finished meanwhile):", { temporaryId: o.temporaryId, attempt: o.attempt });
+                        continue;
+                    }
+                    // A RETRY_LATER/GAVE_UP caused by the OCR service (see
+                    // processClaimedSubmission) carries `diagnostic`, so a
+                    // setup problem (e.g. missing credentials) is visible
+                    // here instead of only ever showing as "RETRY_LATER".
+                    if (o.diagnostic) {
+                        warn("Background OCR request did not succeed:", { temporaryId: o.temporaryId, attempt: o.attempt, outcome: o.outcome, ...o.diagnostic });
                         continue;
                     }
                     log.log("Submission processed in background:", { temporaryId: o.temporaryId, attempt: o.attempt, outcome: o.outcome, processingStatus: o.summary?.processingStatus ?? null });

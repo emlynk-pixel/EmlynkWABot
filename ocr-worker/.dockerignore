@@ -1,0 +1,9 @@
+node_modules
+test
+*.md
+.env
+.env.*
+*.traineddata
+*.log
+Dockerfile
+.dockerignore

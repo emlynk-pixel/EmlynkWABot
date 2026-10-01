@@ -1,20 +1,21 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import {
     extractDocumentText,
     recognizeImage,
+    LANGUAGE_DATA_PATH,
     OCR_RETRY_BELOW_CONFIDENCE,
     TEXT_EXTRACTION_METHODS,
-} from "../src/services/ocrService.js";
-import { classifyDocumentContent } from "../src/services/documentClassificationService.js";
-import { extractPassportFields } from "../src/services/passportExtractionService.js";
+} from "../src/ocrService.js";
 
 const loadFile = (name) => readFileSync(new URL(`./fixtures/files/${name}`, import.meta.url));
 
-// Tesseract downloads its language data on first use and takes a few
-// seconds per page, so real OCR tests are opt-in: RUN_OCR_TESTS=1 npm test
+// Tesseract takes a few seconds per page, so real OCR tests are opt-in:
+// RUN_OCR_TESTS=1 npm test. Classification of real OCR reads is tested by
+// the backend (test/ocrPipeline.test.js), which owns the classifier.
 const ocrTest = process.env.RUN_OCR_TESTS === "1" ? test : test.skip;
 
 describe("extractDocumentText", () => {
@@ -39,14 +40,13 @@ describe("extractDocumentText", () => {
         assert.equal(result.method, TEXT_EXTRACTION_METHODS.UNSUPPORTED_DOCUMENT_TYPE);
     });
 
-    ocrTest("scanned PDF falls back to OCR and can be classified", async () => {
+    ocrTest("scanned PDF falls back to OCR", async () => {
         const result = await extractDocumentText({ fileBuffer: loadFile("scanned-police.pdf"), mimeType: "application/pdf" });
 
         assert.equal(result.method, TEXT_EXTRACTION_METHODS.PDF_OCR);
         assert.equal(result.success, true);
         assert.equal(result.pagesProcessed, 1);
         assert.ok(result.confidence > 60);
-        assert.equal(classifyDocumentContent(result.text).documentType, "POLICE_REPORT");
     });
 
     ocrTest("image OCR reads a medical report", async () => {
@@ -55,7 +55,7 @@ describe("extractDocumentText", () => {
         assert.equal(result.method, TEXT_EXTRACTION_METHODS.OCR);
         assert.equal(result.success, true);
         assert.ok(result.confidence > 60);
-        assert.equal(classifyDocumentContent(result.text).documentType, "MEDICAL");
+        assert.match(result.text, /medical/i);
     });
 
     ocrTest("blank image is not a success", async () => {
@@ -63,6 +63,14 @@ describe("extractDocumentText", () => {
 
         assert.equal(result.success, false);
         assert.equal(result.text, "");
+    });
+});
+
+describe("bundled English language data", () => {
+    test("eng.traineddata ships with the service (gzip), so no instance downloads it", () => {
+        const data = readFileSync(path.join(LANGUAGE_DATA_PATH, "eng.traineddata.gz"));
+        assert.deepEqual([...data.subarray(0, 2)], [0x1f, 0x8b], "gzip");
+        assert.ok(data.length > 1_000_000, `${data.length} bytes`);
     });
 });
 
@@ -153,35 +161,5 @@ describe("recognizeImage (OCR settings)", () => {
         assert.equal(page.text, "");
         assert.equal(page.confidence, 0);
         assert.equal(page.rotateAuto, false);
-    });
-});
-
-describe("phone photos (real OCR, synthetic fixtures)", () => {
-    ocrTest("harsh police certificate photo (tilt, shadow, blur, WhatsApp compression) is classified", async () => {
-        const result = await extractDocumentText({ fileBuffer: loadFile("police-photo-harsh.jpg"), mimeType: "image/jpeg" });
-        const classification = classifyDocumentContent(result.text);
-
-        assert.equal(classification.documentType, "POLICE_REPORT");
-        // The old default settings read this photo at about 63.
-        assert.ok(result.confidence >= OCR_RETRY_BELOW_CONFIDENCE, `confidence ${result.confidence}`);
-        assert.ok(classification.indicators.includes("police_clearance"));
-    });
-
-    ocrTest("typical police certificate photo is classified", async () => {
-        const result = await extractDocumentText({ fileBuffer: loadFile("police-photo-hard.jpg"), mimeType: "image/jpeg" });
-
-        assert.equal(classifyDocumentContent(result.text).documentType, "POLICE_REPORT");
-        assert.ok(result.confidence > 85, `confidence ${result.confidence}`);
-    });
-
-    ocrTest("passport photo still reads the MRZ with valid check digits", async () => {
-        const result = await extractDocumentText({ fileBuffer: loadFile("passport-photo.jpg"), mimeType: "image/jpeg" });
-        const passport = extractPassportFields(result.text);
-
-        assert.equal(classifyDocumentContent(result.text).documentType, "PASSPORT");
-        assert.equal(passport.status, "COMPLETE");
-        assert.equal(passport.mrz.linesFound, 2);
-        assert.equal(passport.mrz.compositeCheckValid, true);
-        assert.equal(passport.fields.passportId.value, "N1234567");
     });
 });
