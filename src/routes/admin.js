@@ -48,6 +48,26 @@ import { getDailyReport, parseDailyReportQuery } from "../services/adminReportSe
 import { createInvitationRouter } from "./adminInvitations.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 import { deleteTemporaryDocument } from "../services/temporaryDataService.js";
+import {
+    addCallLog,
+    CandidateError,
+    createCandidate,
+    getCandidate,
+    isCandidateStage,
+    isValidCandidateIdParam,
+    listCallLogs,
+    listCandidates,
+    originalFileNameFrom,
+    parseCallLogBody,
+    parseCandidateBody,
+    parseCandidateListQuery,
+    parseStageBody,
+    parseUploadQuery,
+    updateCandidateDetails,
+    updateStage,
+    uploadCandidateDocument,
+} from "../services/candidateService.js";
+import { MAX_FILE_SIZE } from "../utils/fileValidation.js";
 
 
 // Quotes and non-ASCII characters are replaced so the header can't be broken.
@@ -293,6 +313,121 @@ export function createAdminRouter({
         return runAction(res, parsed, false, ({ client }) => setPoliceSubmittedDate({
             db: client, admin: req.admin, documentId: req.params.documentId, reason: parsed.reason, policeSubmittedDate: parsed.policeSubmittedDate,
         }));
+    });
+
+    // ---------------------------------------------------------------- candidates (Admin > Candidates)
+    // Reads for every active admin; registration, details, stages, uploads
+    // and call notes for REVIEWER and above. Audited where documents change.
+
+    const invalidCandidateId = (res) => res.status(400).json({
+        message: "Invalid passport ID",
+        errors: [{ field: "passportId", message: "must be letters and digits (at most 20)" }],
+    });
+    // Runs a candidate action; CandidateError becomes { message, code } with its status.
+    const candidateAction = async (res, run) => {
+        try {
+            return await run();
+        } catch (error) {
+            if (error instanceof CandidateError) {
+                return res.status(error.status).json({ message: error.message, code: error.code, ...(error.passportId ? { passportId: error.passportId } : {}) });
+            }
+            throw error;
+        }
+    };
+
+    router.get("/candidates", requireRole(ALL_ACTIVE), async (req, res) => {
+        const parsed = parseCandidateListQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await listCandidates({ db: client, params: parsed.params }));
+    });
+
+    router.post("/candidates", requireRole(REVIEWERS_UP), async (req, res) => {
+        const parsed = parseCandidateBody(req.body, { creating: true });
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values: parsed.values })));
+    });
+
+    router.get("/candidates/:passportId", requireRole(ALL_ACTIVE), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        const candidate = await getCandidate({ db: client, passportId: req.params.passportId });
+        if (!candidate) return res.status(404).json({ message: "Candidate not found" });
+        return res.json(candidate);
+    });
+
+    router.put("/candidates/:passportId", requireRole(REVIEWERS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseCandidateBody(req.body, { creating: false });
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await updateCandidateDetails({ db: client, passportId: req.params.passportId, values: parsed.values })));
+    });
+
+    router.put("/candidates/:passportId/stages/:stage", requireRole(REVIEWERS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        if (!isCandidateStage(req.params.stage)) return res.status(404).json({ message: "Stage not found" });
+        const parsed = parseStageBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await updateStage({
+            db: client, passportId: req.params.passportId, stage: req.params.stage, values: parsed.values,
+        })));
+    });
+
+    // The file is the raw request body (Content-Type: its MIME type); the
+    // document type and variant are query parameters, the original file name
+    // the X-File-Name header (URI-encoded). Larger bodies get 413.
+    const rawUpload = express.raw({ type: () => true, limit: MAX_FILE_SIZE });
+    router.post("/candidates/:passportId/documents", requireRole(REVIEWERS_UP), rawUpload, async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseUploadQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+            return res.status(400).json({ message: "The file is missing." });
+        }
+        const mimeType = String(req.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => res.json(await uploadCandidateDocument({
+            db: client,
+            bucket: storage,
+            admin: req.admin,
+            passportId: req.params.passportId,
+            documentType: parsed.values.documentType,
+            variant: parsed.values.variant,
+            mimeType,
+            buffer: req.body,
+            originalFileName: originalFileNameFrom(req.get("x-file-name"), null),
+        })));
+    });
+
+    router.get("/candidates/:passportId/call-logs", requireRole(ALL_ACTIVE), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await listCallLogs({ db: client, passportId: req.params.passportId })));
+    });
+
+    router.post("/candidates/:passportId/call-logs", requireRole(REVIEWERS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseCallLogBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await addCallLog({
+            db: client, admin: req.admin, passportId: req.params.passportId, values: parsed.values,
+        })));
     });
 
     // ---------------------------------------------------------------- admin invitations (ADMIN only)

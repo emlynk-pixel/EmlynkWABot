@@ -32,10 +32,18 @@ import send from "@material-symbols/svg-400/outlined/send.svg?raw";
 import cancel from "@material-symbols/svg-400/outlined/cancel.svg?raw";
 import visibility from "@material-symbols/svg-400/outlined/visibility.svg?raw";
 import visibilityOff from "@material-symbols/svg-400/outlined/visibility_off.svg?raw";
+import call from "@material-symbols/svg-400/outlined/call.svg?raw";
+import check from "@material-symbols/svg-400/outlined/check.svg?raw";
+import pictureAsPdf from "@material-symbols/svg-400/outlined/picture_as_pdf.svg?raw";
+import upload from "@material-symbols/svg-400/outlined/upload.svg?raw";
 
 const ICONS = {
     assignment_late: assignmentLate,
+    call,
     cancel,
+    check,
+    picture_as_pdf: pictureAsPdf,
+    upload,
     check_circle: checkCircle,
     dark_mode: darkMode,
     delete: deleteIcon,

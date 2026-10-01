@@ -9,7 +9,7 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/", label: "Overview", icon: "dashboard", end: true },
     { to: "/documents", label: "Documents", icon: "description" },
     { to: "/review", label: "Review Queue", icon: "fact_check" },
-    { to: "/clients", label: "Clients", icon: "group" },
+    { to: "/candidates", label: "Candidates", icon: "group" },
     { to: "/missing-documents", label: "Missing Documents", icon: "assignment_late" },
     { to: "/police", label: "Police Workflow", icon: "local_police" },
     { to: "/reports/daily", label: "Daily Report", icon: "summarize" },

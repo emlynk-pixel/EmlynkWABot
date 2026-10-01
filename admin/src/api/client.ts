@@ -19,7 +19,7 @@ export class ApiError extends Error {
 }
 
 type RequestOptions = {
-    method?: "GET" | "POST" | "DELETE";
+    method?: "GET" | "POST" | "PUT" | "DELETE";
     body?: unknown;
     signal?: AbortSignal;
     token?: string;
@@ -66,6 +66,35 @@ export async function apiRequest<T>(path: string, { method = "GET", body, signal
         throw new ApiError(response.status, message);
     }
 
+    return (await response.json()) as T;
+}
+
+// Same rules as apiRequest, for a file upload: the file is the raw request
+// body with its own type; its name travels URI-encoded in X-File-Name.
+export async function apiUpload<T>(path: string, file: File, { token }: Pick<RequestOptions, "token"> = {}): Promise<T> {
+    const headers: Record<string, string> = {
+        Accept: "application/json",
+        "Content-Type": file.type || "application/octet-stream",
+        "X-File-Name": encodeURIComponent(file.name),
+    };
+    const explicitToken = token && token !== "session" && token !== "cookie" ? token : null;
+    const effectiveToken = explicitToken ?? readToken();
+    if (effectiveToken) {
+        headers["Authorization"] = `Bearer ${effectiveToken}`;
+    }
+
+    let response: Response;
+    try {
+        response = await fetch(path, { method: "POST", headers, body: file, credentials: "include", cache: "no-store" });
+    } catch {
+        throw new ApiError(0, "Cannot reach the server. Check your connection and try again.");
+    }
+    if (!response.ok) {
+        const message = response.status === 413
+            ? "The file is too large."
+            : response.status >= 500 && response.status !== 502 ? FALLBACK_MESSAGE : (await readMessage(response)) ?? FALLBACK_MESSAGE;
+        throw new ApiError(response.status, message);
+    }
     return (await response.json()) as T;
 }
 

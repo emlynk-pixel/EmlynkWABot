@@ -8,6 +8,11 @@ const DOCUMENT_TYPE_LABELS: Record<string, string> = {
     POLICE_REPORT: "Police report",
     MEDICAL: "Medical",
     UNKNOWN: "Unknown",
+    // Uploaded from Admin > Candidates.
+    NIC: "NIC",
+    SKILL_VIDEO: "Skill video",
+    AGREEMENT: "Agreement",
+    AFFIDAVIT: "Affidavit",
 };
 
 export function documentTypeLabel(type: string): string {
