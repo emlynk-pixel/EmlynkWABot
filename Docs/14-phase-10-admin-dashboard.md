@@ -18,6 +18,14 @@ Visual source of truth: Stitch project **EmlynkWABot Admin Dashboard UI** (`1368
 
 ## 1. Structure
 
+```mermaid
+graph TD
+    A[Admin Dashboard UI<br/>React + Vite] -->|HTTPS /api/admin| B(Admin API Backend<br/>Express.js)
+    B -->|Queries / Mutations| C[(PostgreSQL<br/>Database)]
+    B -->|File Access| D[(Supabase Storage<br/>temporary/ & clients/)]
+    A -->|HTTPS /auth| B
+```
+
 The dashboard is a separate frontend in `admin/` with its own `package.json`. The backend serves its build under `/admin` (same origin as the API).
 
 ```text
@@ -93,6 +101,34 @@ Backend files for the dashboard:
 Every route except `/admin/login` is behind the route guard. No page is a placeholder. Settings, global search and Export from the design are not built (not in the Phase 10 scope); Sync is (§4j).
 
 ## 3. Authentication flow
+
+```mermaid
+sequenceDiagram
+    participant User as Admin
+    participant App as Dashboard App
+    participant Storage as sessionStorage
+    participant API as Backend API
+
+    User->>App: Submits login form
+    App->>API: POST /auth/login
+    API-->>App: Returns JWT
+    App->>API: GET /auth/me (Bearer JWT)
+    API-->>App: Returns admin profile (ACTIVE)
+    App->>Storage: Stores token
+    App->>User: Shows Dashboard
+    
+    Note over App,API: On reload or new tab
+    App->>Storage: Reads token
+    App->>API: GET /auth/me
+    alt Token valid & admin ACTIVE
+        API-->>App: Profile
+        App->>User: Keeps session
+    else Invalid/Expired/Inactive
+        API-->>App: 401 Unauthorized
+        App->>Storage: Removes token
+        App->>User: Redirects to /admin/login
+    end
+```
 
 Uses the existing backend endpoints unchanged (`src/routes/auth.js`).
 
@@ -261,6 +297,27 @@ Streams the item's file from the private bucket through the backend. The object 
 The page fetches it with the admin's token and shows it from a local `blob:` URL. For that, the site CSP allows `blob:` in `img-src` and `frame-src` only; scripts remain same-origin only and `object-src` stays `'none'`.
 
 ## 4c. Review actions and audit log (Checkpoint 4)
+
+```mermaid
+stateDiagram-v2
+    state "Waiting File (pending/)" as Waiting
+    state "Stored Document (REVIEW_REQUIRED)" as Stored
+    
+    [*] --> Waiting : Pipeline flagged for review
+    [*] --> Stored : Low confidence read
+
+    Waiting --> Verified : Approve (Moves to clients/)
+    Waiting --> Waiting : Keep Pending (Stays in pending/)
+    Waiting --> Removed : Remove from Review (Deleted)
+    Waiting --> Waiting : Resolve/Correct (§4f)
+
+    Stored --> Verified : Approve (Stays in clients/)
+    Stored --> Stored : Keep Pending (Stays REVIEW_REQUIRED)
+    Stored --> Removed : Remove from Review (Deleted)
+
+    Verified --> [*]
+    Removed --> [*]
+```
 
 Review workflow: `Pending → Approve | Keep Pending | Resolve/Correct (§4f) | Remove from Review`. There is **no reject workflow** (business rule): no reject endpoint, button, status or reason. Pending documents are **never removed automatically** — not because of age, expiry, inactivity or processing time; nothing in the code removes them except the manual **Remove from Review** action below.
 
