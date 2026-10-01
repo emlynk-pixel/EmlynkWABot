@@ -40,7 +40,9 @@ export function variantLabel(variant: string | null): string | null {
 }
 
 export type StageProgress = { stage: CandidateStageKey; completed: boolean };
-export type StageState = StageProgress & { completedAt: string | null; notes: string | null };
+// automatic: completed by the record's data (Candidate details, Document
+// submission), with what is still missing; otherwise completed by an admin.
+export type StageState = StageProgress & { completedAt: string | null; notes: string | null; automatic: boolean; missing: string[] };
 
 export type CandidateListItem = {
     passportId: string;

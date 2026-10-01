@@ -10,6 +10,7 @@ import {
     type CandidateDetails,
     type CandidateDetailsInput,
     type CandidateStageKey,
+    type StageState,
 } from "../../api/candidates";
 import { documentTypeLabel } from "../format";
 import { Icon } from "../Icon";
@@ -34,33 +35,45 @@ function PanelHeading({ title, description, action }: { title: string; descripti
     );
 }
 
-// "Completed" checkbox, error, and Cancel / Save changes.
-function PanelFooter({ completedLabel, completed, onCompleted, completedDisabled, canEdit, busy, dirty, error, onCancel }: {
-    completedLabel: string;
-    completed: boolean;
-    onCompleted: (value: boolean) => void;
-    completedDisabled?: boolean;
+// Completion (a checkbox, or the automatic status), error, and Cancel / Save changes.
+function PanelFooter({ status, canEdit, busy, dirty, error, onCancel }: {
+    status: ReactNode;
     canEdit: boolean;
     busy: boolean;
     dirty: boolean;
     error: string | null;
-    onCancel: () => void;
+    onCancel?: () => void;
 }) {
-    const id = useId();
     return (
         <div className="mt-6 border-t border-border pt-4">
-            <label htmlFor={id} className="inline-flex items-center gap-2 text-body-sm text-ink">
-                <input id={id} type="checkbox" checked={completed} disabled={!canEdit || busy || completedDisabled} onChange={(event) => onCompleted(event.target.checked)} className="size-4 accent-primary" />
-                {completedLabel}
-            </label>
+            {status}
             <DialogError message={error} />
-            {canEdit && (
+            {canEdit && onCancel && (
                 <div className="mt-4 flex justify-end gap-2">
                     <button type="button" onClick={onCancel} disabled={busy || !dirty} className={secondaryButton}>Cancel</button>
                     <button type="submit" disabled={busy || !dirty} className={primaryButton}>{busy ? "Saving…" : "Save changes"}</button>
                 </div>
             )}
         </div>
+    );
+}
+
+function CompletedCheckbox({ completed, onChange, disabled }: { completed: boolean; onChange: (value: boolean) => void; disabled: boolean }) {
+    const id = useId();
+    return (
+        <label htmlFor={id} className="inline-flex items-center gap-2 text-body-sm text-ink">
+            <input id={id} type="checkbox" checked={completed} disabled={disabled} onChange={(event) => onChange(event.target.checked)} className="size-4 accent-primary" />
+            Stage completed
+        </label>
+    );
+}
+
+// Stages completed by their data: done, or what is still missing.
+function AutomaticStatus({ stage, completedLabel = "Stage completed" }: { stage: StageState; completedLabel?: string }) {
+    return stage.completed ? (
+        <p className="inline-flex items-center gap-1.5 text-body-sm text-verified"><Icon name="check" className="size-4" />{completedLabel}</p>
+    ) : (
+        <p className="text-body-sm text-ink-muted">Missing: {stage.missing.join(", ")}</p>
     );
 }
 
@@ -104,9 +117,7 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
                 <textarea id={notesId} rows={5} maxLength={2000} value={notes} disabled={!canEdit || busy} onChange={(event) => setNotes(event.target.value)} className={textAreaControl} />
             </div>
             <PanelFooter
-                completedLabel="Stage completed"
-                completed={completed}
-                onCompleted={setCompleted}
+                status={<CompletedCheckbox completed={completed} onChange={setCompleted} disabled={!canEdit || busy} />}
                 canEdit={canEdit}
                 busy={busy}
                 dirty={dirty}
@@ -126,13 +137,12 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
     const saved = stageOf(details, "CANDIDATE_DETAILS");
     const [form, setForm] = useState<CandidateDetailsInput>(() => detailsFrom(details.candidate));
     const [comment, setComment] = useState(saved.notes ?? "");
-    const [completed, setCompleted] = useState(saved.completed);
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const commentId = useId();
     const passportId = details.candidate.passportId;
-    const dirty = !sameDetails(form, detailsFrom(details.candidate)) || comment !== (saved.notes ?? "") || completed !== saved.completed;
+    const dirty = !sameDetails(form, detailsFrom(details.candidate)) || comment !== (saved.notes ?? "");
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
@@ -148,13 +158,12 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
                 next = await updateCandidate(token, passportId, form);
                 onChange(next);
             }
-            if (comment !== (saved.notes ?? "") || completed !== saved.completed) {
-                next = await updateCandidateStage(token, passportId, "CANDIDATE_DETAILS", { notes: comment.trim() || null, completed });
+            if (comment !== (saved.notes ?? "")) {
+                next = await updateCandidateStage(token, passportId, "CANDIDATE_DETAILS", { notes: comment.trim() || null });
                 onChange(next);
             }
             setForm(detailsFrom(next.candidate));
             setComment(stageOf(next, "CANDIDATE_DETAILS").notes ?? "");
-            setCompleted(stageOf(next, "CANDIDATE_DETAILS").completed);
         } catch (caught) {
             setError(message(caught));
         } finally {
@@ -178,14 +187,12 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
                 <textarea id={commentId} rows={3} maxLength={2000} value={comment} disabled={!canEdit || busy} onChange={(event) => setComment(event.target.value)} placeholder="Internal note for admins and analysts" className={textAreaControl} />
             </div>
             <PanelFooter
-                completedLabel="Stage completed"
-                completed={completed}
-                onCompleted={setCompleted}
+                status={<AutomaticStatus stage={saved} />}
                 canEdit={canEdit}
                 busy={busy}
                 dirty={dirty}
                 error={error}
-                onCancel={() => { setForm(detailsFrom(details.candidate)); setComment(saved.notes ?? ""); setCompleted(saved.completed); setFieldErrors({}); setError(null); }}
+                onCancel={() => { setForm(detailsFrom(details.candidate)); setComment(saved.notes ?? ""); setFieldErrors({}); setError(null); }}
             />
         </form>
     );
@@ -193,37 +200,20 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
 
 // Stage 3: medical, police report, agreement and affidavit, the five-document
 // check, and the PDF export.
+// Each upload saves on its own, and the stage completes once all required
+// documents are in, so there is nothing else to save here.
 export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelProps) {
-    const { token } = useAuth();
     const saved = stageOf(details, "DOCUMENT_SUBMISSION");
-    const [completed, setCompleted] = useState(saved.completed);
-    const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const passportId = details.candidate.passportId;
-    const allIncluded = details.requiredDocuments.every((r) => r.included);
     const total = details.requiredDocuments.length;
 
-    const submit = async (event: FormEvent) => {
-        event.preventDefault();
-        if (!token) return;
-        setBusy(true);
-        setError(null);
-        try {
-            const next = await updateCandidateStage(token, passportId, "DOCUMENT_SUBMISSION", { completed });
-            setCompleted(stageOf(next, "DOCUMENT_SUBMISSION").completed);
-            onChange(next);
-        } catch (caught) {
-            setError(message(caught));
-        } finally {
-            setBusy(false);
-        }
-    };
     const exportPdf = () => {
-        if (!exportDocumentSubmissionPdf(details)) setError("The browser blocked the export window. Allow pop-ups for this site and try again.");
+        setError(exportDocumentSubmissionPdf(details) ? null : "The browser blocked the export window. Allow pop-ups for this site and try again.");
     };
 
     return (
-        <form onSubmit={submit}>
+        <div>
             <PanelHeading
                 title="Document submission"
                 description="Accepted formats: PDF, JPG, PNG."
@@ -250,16 +240,12 @@ export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelPro
                 <DocumentRow passportId={passportId} documentType="AFFIDAVIT" label="Scan - Affidavit" required document={details.documents.AFFIDAVIT} variants={AFFIDAVIT_VARIANTS} readOnly={!canEdit} onUploaded={onChange} />
             </div>
             <PanelFooter
-                completedLabel={`All ${total} required documents are included`}
-                completed={completed}
-                onCompleted={setCompleted}
-                completedDisabled={!allIncluded && !completed}
+                status={<AutomaticStatus stage={saved} completedLabel={`All ${total} required documents are included`} />}
                 canEdit={canEdit}
-                busy={busy}
-                dirty={completed !== saved.completed}
+                busy={false}
+                dirty={false}
                 error={error}
-                onCancel={() => { setCompleted(saved.completed); setError(null); }}
             />
-        </form>
+        </div>
     );
 }

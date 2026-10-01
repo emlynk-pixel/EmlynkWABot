@@ -307,28 +307,52 @@ describe("independent stages", () => {
         assert.deepEqual(stages.map((s) => s.completed), [false, false, false, true, true, true]);
     });
 
-    test("Candidate Details needs the passport document; Document Submission needs all five documents", async () => {
+    test("Candidate Details and Document Submission complete automatically from the record; the list agrees", async () => {
         const db = createFakeDb();
         const bucket = createFakeBucket();
         await registered(db);
-        await assert.rejects(updateStage({ db, passportId: "N1023757", stage: "CANDIDATE_DETAILS", values: { completed: true } }), /passport document/);
-        await assert.rejects(updateStage({ db, passportId: "N1023757", stage: "DOCUMENT_SUBMISSION", values: { completed: true } }), /not included yet/);
+        const stageOf = (result, stage) => result.stages.find((s) => s.stage === stage);
+        const listed = async () => (await listCandidates({ db, params: { page: 1, pageSize: 25 } })).items[0].stages.map((s) => s.completed);
 
-        await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "PASSPORT", variant: null, mimeType: "application/pdf", buffer: PDF });
-        await updateStage({ db, passportId: "N1023757", stage: "CANDIDATE_DETAILS", values: { completed: true } });
+        let result = await getCandidate({ db, passportId: "N1023757" });
+        assert.equal(stageOf(result, "CANDIDATE_DETAILS").automatic, true);
+        assert.equal(stageOf(result, "CANDIDATE_DETAILS").completed, false);
+        assert.deepEqual(stageOf(result, "CANDIDATE_DETAILS").missing, ["passport document"]);
+        assert.deepEqual(stageOf(result, "DOCUMENT_SUBMISSION").missing, ["passport", "medical", "police report", "agreement", "affidavit"]);
+        assert.equal(stageOf(result, "TEST_DETAILS").automatic, false);
+
+        // The passport completes Candidate Details: no checkbox needed.
+        result = await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "PASSPORT", variant: null, mimeType: "application/pdf", buffer: PDF });
+        assert.equal(stageOf(result, "CANDIDATE_DETAILS").completed, true);
+        assert.deepEqual(stageOf(result, "CANDIDATE_DETAILS").missing, []);
+        assert.deepEqual(await listed(), [false, true, false, false, false, false]);
 
         const uploads = [["MEDICAL", null], ["POLICE_REPORT", "SL_VERIFIED"], ["AGREEMENT", null], ["AFFIDAVIT", "SINHALA"]];
         for (const [index, [documentType, variant]] of uploads.entries()) {
             const buffer = Buffer.concat([PDF, Buffer.from([index])]);
-            await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType, variant, mimeType: "application/pdf", buffer });
+            result = await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType, variant, mimeType: "application/pdf", buffer });
         }
-        const result = await updateStage({ db, passportId: "N1023757", stage: "DOCUMENT_SUBMISSION", values: { completed: true, notes: "All checked" } });
-        const stage = result.stages.find((s) => s.stage === "DOCUMENT_SUBMISSION");
-        assert.equal(stage.completed, true);
-        assert.equal(stage.notes, "All checked");
+        assert.equal(stageOf(result, "DOCUMENT_SUBMISSION").completed, true);
+        assert.deepEqual(await listed(), [false, true, true, false, false, false]);
         assert.deepEqual(result.requiredDocuments.map((r) => r.documentType), [...REQUIRED_SUBMISSION_DOCUMENTS]);
-        assert.ok(result.requiredDocuments.every((r) => r.included));
         assert.equal(result.documents.AFFIDAVIT.variant, "SINHALA");
+
+        // Notes can still be saved; completion can't be set by hand.
+        result = await updateStage({ db, passportId: "N1023757", stage: "DOCUMENT_SUBMISSION", values: { notes: "All checked" } });
+        assert.equal(stageOf(result, "DOCUMENT_SUBMISSION").notes, "All checked");
+        await assert.rejects(updateStage({ db, passportId: "N1023757", stage: "CANDIDATE_DETAILS", values: { completed: false } }), (error) => error.code === "AUTOMATIC_STAGE");
+    });
+
+    test("a document received on WhatsApp counts; clearing a required detail un-completes the stage", async () => {
+        const db = createFakeDb({ documents: [{ documentId: "d1", passportId: "N1023757", documentType: "PASSPORT", verificationStatus: "REVIEW_REQUIRED", receivedDate: new Date(), createdDate: new Date() }] });
+        await registered(db);
+        const stage = async () => (await getCandidate({ db, passportId: "N1023757" })).stages.find((s) => s.stage === "CANDIDATE_DETAILS");
+        assert.equal((await stage()).completed, true);
+        db.state.users[0].jobExperience = null;
+        assert.equal((await stage()).completed, false);
+        assert.deepEqual((await stage()).missing, ["job experience"]);
+        db.state.documents[0].verificationStatus = "SUPERSEDED";
+        assert.deepEqual((await stage()).missing, ["job experience", "passport document"]);
     });
 
     test("un-completing a stage clears its completion time; notes alone are saved without completing", async () => {

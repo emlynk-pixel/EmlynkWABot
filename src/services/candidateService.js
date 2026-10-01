@@ -5,10 +5,10 @@
 // record for the same person (passport ID and NIC are both unique).
 //
 // The deployment process has six stages. They are independent: any stage can
-// be opened, edited and completed at any time, in any order. Completion is an
-// explicit admin decision stored in candidate_stages; two stages check their
-// data first (CANDIDATE_DETAILS: the required details and a passport;
-// DOCUMENT_SUBMISSION: the five required documents).
+// be opened, edited and completed at any time, in any order. Two stages are
+// completed by their data (CANDIDATE_DETAILS: the required details and a
+// passport; DOCUMENT_SUBMISSION: the five required documents); the others by
+// an admin, stored in candidate_stages.
 //
 // Documents uploaded here go into the same clients/{passport_id}/{type}/
 // folders and `documents` rows as documents received on WhatsApp. An upload
@@ -266,18 +266,41 @@ const userSelect = {
 
 const isoDate = (value) => (value ? value.toISOString().slice(0, 10) : null);
 
-// Every stage in order, with its saved state (incomplete without notes when
-// nothing was saved yet).
-function stageList(rows) {
+// Stages completed by their data, not by an admin: Candidate Details when
+// the required details and a passport are on record, Document Submission
+// when the five required documents are. They follow the record (a document
+// received on WhatsApp counts; a superseded one doesn't). The other stages
+// have no data of their own and are completed by an admin.
+export const AUTOMATIC_STAGES = Object.freeze(["CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION"]);
+
+// documents: rows with documentType and verificationStatus. Returns
+// { CANDIDATE_DETAILS: [missing…], DOCUMENT_SUBMISSION: [missing…] }.
+function automaticStageMissing(user, documents) {
+    const has = (type) => documents.some((d) => d.documentType === type && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
+    const details = [];
+    if (isBlank(user.otherName)) details.push("surname");
+    if (isBlank(user.firstName)) details.push("other names");
+    if (isBlank(user.address)) details.push("address");
+    if (isBlank(user.nic)) details.push("NIC");
+    if (!parseJobTypes(user.job).length) details.push("job type");
+    if (isBlank(user.jobExperience)) details.push("job experience");
+    if (!has("PASSPORT")) details.push("passport document");
+    return {
+        CANDIDATE_DETAILS: details,
+        DOCUMENT_SUBMISSION: REQUIRED_SUBMISSION_DOCUMENTS.filter((type) => !has(type)).map((type) => type.toLowerCase().replace(/_/g, " ")),
+    };
+}
+
+// Every stage in order: saved notes, and completion (automatic stages from
+// their data, with what is still missing; the others as an admin saved it).
+function stageList(rows, missingByStage) {
     const byStage = new Map(rows.map((row) => [row.stage, row]));
     return CANDIDATE_STAGES.map((stage) => {
         const row = byStage.get(stage);
-        return {
-            stage,
-            completed: Boolean(row?.completed),
-            completedAt: row?.completedAt ?? null,
-            notes: row?.notes ?? null,
-        };
+        const missing = missingByStage[stage];
+        return missing
+            ? { stage, automatic: true, completed: missing.length === 0, completedAt: null, notes: row?.notes ?? null, missing }
+            : { stage, automatic: false, completed: Boolean(row?.completed), completedAt: row?.completedAt ?? null, notes: row?.notes ?? null, missing: [] };
     });
 }
 
@@ -364,7 +387,14 @@ export async function listCandidates({ db, params }) {
         db.user.count({ where }),
         db.user.findMany({
             where,
-            select: { ...userSelect, stages: { select: { stage: true, completed: true } } },
+            select: {
+                ...userSelect,
+                stages: { select: { stage: true, completed: true } },
+                documents: {
+                    where: { documentType: { in: REQUIRED_SUBMISSION_DOCUMENTS } },
+                    select: { documentType: true, verificationStatus: true },
+                },
+            },
             orderBy: [{ createdDate: "desc" }, { passportId: "asc" }],
             skip: (params.page - 1) * params.pageSize,
             take: params.pageSize,
@@ -373,7 +403,7 @@ export async function listCandidates({ db, params }) {
     return {
         items: users.map((user) => ({
             ...candidateSummary(user),
-            stages: stageList(user.stages).map(({ stage, completed }) => ({ stage, completed })),
+            stages: stageList(user.stages, automaticStageMissing(user, user.documents)).map(({ stage, completed }) => ({ stage, completed })),
         })),
         pagination: {
             page: params.page,
@@ -434,7 +464,7 @@ export async function getCandidate({ db, passportId }) {
             whatsappNumber: user.whatsappNumber ?? null,
             contactNumber: user.contactNumber ?? null,
         },
-        stages: stageList(user.stages),
+        stages: stageList(user.stages, automaticStageMissing(user, user.documents)),
         documents,
         requiredDocuments: REQUIRED_SUBMISSION_DOCUMENTS.map((documentType) => ({
             documentType,
@@ -540,36 +570,15 @@ export async function updateCandidateDetails({ db, passportId, values }) {
     return getCandidate({ db, passportId });
 }
 
-// Why a stage can't be marked completed yet; null when it can.
-function completionBlocker(stage, candidate) {
-    if (stage === "CANDIDATE_DETAILS") {
-        const c = candidate.candidate;
-        const missing = [];
-        if (isBlank(c.surname)) missing.push("surname");
-        if (isBlank(c.otherNames)) missing.push("other names");
-        if (isBlank(c.address)) missing.push("address");
-        if (isBlank(c.nic)) missing.push("NIC");
-        if (!c.jobTypes.length) missing.push("job type");
-        if (isBlank(c.jobExperience)) missing.push("job experience");
-        if (!candidate.documents.PASSPORT) missing.push("passport document");
-        return missing.length ? `Complete these first: ${missing.join(", ")}.` : null;
-    }
-    if (stage === "DOCUMENT_SUBMISSION") {
-        const missing = candidate.requiredDocuments.filter((r) => !r.included).map((r) => r.documentType.toLowerCase().replace(/_/g, " "));
-        return missing.length ? `These documents are not included yet: ${missing.join(", ")}.` : null;
-    }
-    return null;
-}
-
-// PUT /api/admin/candidates/:passportId/stages/:stage
+// PUT /api/admin/candidates/:passportId/stages/:stage. Automatic stages take
+// notes only; their completion follows their data.
 export async function updateStage({ db, passportId, stage, values, now = new Date() }) {
     const candidate = await getCandidate({ db, passportId });
     if (!candidate) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
 
     const current = candidate.stages.find((s) => s.stage === stage);
-    if (values.completed === true && !current.completed) {
-        const blocker = completionBlocker(stage, candidate);
-        if (blocker) throw new CandidateError(409, "STAGE_NOT_READY", blocker);
+    if (current.automatic && values.completed !== undefined) {
+        throw new CandidateError(409, "AUTOMATIC_STAGE", "This stage is completed automatically when its details and documents are on record.");
     }
 
     const data = {};

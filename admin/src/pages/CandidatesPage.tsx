@@ -4,7 +4,7 @@ import { listCandidates } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { canReview, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
-import { StageDots } from "../components/candidate/CandidateStepper";
+import { StageSummary } from "../components/candidate/CandidateStepper";
 import { Icon } from "../components/Icon";
 import { primaryButton } from "../components/Dialog";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
@@ -94,8 +94,16 @@ export function CandidatesPage() {
                                                 <span className="block text-label-sm text-ink-subtle">{item.passportId}</span>
                                             </td>
                                             <td className={`${td} whitespace-nowrap text-ink-muted`}>{item.nic ?? "—"}</td>
-                                            <td className={`${td} text-ink-muted`}>{item.jobTypes.length ? item.jobTypes.join(", ") : "—"}</td>
-                                            <td className={td}><StageDots stages={item.stages} /></td>
+                                            <td className={`${td} text-ink-muted`}>
+                                                {item.jobTypes.length ? (
+                                                    <span className="flex flex-wrap gap-1.5">
+                                                        {item.jobTypes.map((jobType) => (
+                                                            <span key={jobType} className="rounded bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft">{jobType}</span>
+                                                        ))}
+                                                    </span>
+                                                ) : "—"}
+                                            </td>
+                                            <td className={`${td} whitespace-nowrap`}><StageSummary stages={item.stages} /></td>
                                         </tr>
                                     ))}
                                 </tbody>

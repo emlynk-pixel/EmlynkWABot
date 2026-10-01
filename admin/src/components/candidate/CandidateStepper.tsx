@@ -59,15 +59,18 @@ export function CandidateStepper({ stages, current, onSelect }: { stages: StageP
     );
 }
 
-// The same six states as small dots (candidate list).
-export function StageDots({ stages }: { stages: StageProgress[] }) {
-    const tones = stepTones(stages);
+// Candidate list: the stage the candidate is at (the first one not completed)
+// and how many of the six are completed.
+export function StageSummary({ stages }: { stages: StageProgress[] }) {
     const done = stages.filter((s) => s.completed).length;
+    const current = stages.find((s) => !s.completed);
     return (
-        <span className="inline-flex items-center gap-1" role="img" aria-label={`${done} of ${stages.length} stages completed`}>
-            {stages.map((stage, index) => (
-                <span key={stage.stage} title={`${STAGE_LABELS[stage.stage]}: ${TONE_LABEL[tones[index]]}`} className={`size-2.5 rounded-full ${CIRCLE[tones[index]]}`} />
-            ))}
+        <span className="block" aria-label={`${current ? STAGE_LABELS[current.stage] : "All stages completed"}, ${done} of ${stages.length} stages completed`}>
+            <span className="block text-label-sm lowercase text-ink-subtle">{current ? STAGE_LABELS[current.stage] : "completed"}</span>
+            <span className="block text-body-sm tabular-nums">
+                <span className={done === stages.length ? "text-verified" : "text-primary"}>{done}</span>
+                <span className="text-ink-subtle">/{stages.length}</span>
+            </span>
         </span>
     );
 }

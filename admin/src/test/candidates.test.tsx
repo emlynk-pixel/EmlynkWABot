@@ -23,7 +23,13 @@ const DETAILS: CandidateDetails = {
         dateOfBirth: "1990-03-12", placeOfBirth: "COLOMBO", passportExpiryDate: "2030-05-11", passportIssueDate: null, nationality: null, sex: null,
         address: "1 Main Street", jobExperience: "5 years", whatsappNumber: "94770000002", contactNumber: null,
     },
-    stages: stages([false, false, false, true, true, true]).map((s) => ({ ...s, completedAt: null, notes: null })),
+    stages: stages([false, false, false, true, true, true]).map((s) => ({
+        ...s,
+        completedAt: null,
+        notes: null,
+        automatic: s.stage === "CANDIDATE_DETAILS" || s.stage === "DOCUMENT_SUBMISSION",
+        missing: s.stage === "CANDIDATE_DETAILS" ? ["passport document"] : s.stage === "DOCUMENT_SUBMISSION" ? ["medical", "police report", "agreement", "affidavit"] : [],
+    })),
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_REPORT: null, AGREEMENT: null, AFFIDAVIT: null },
     requiredDocuments: (["PASSPORT", "MEDICAL", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"] as const).map((documentType) => ({ documentType, included: documentType === "PASSPORT" })),
 };
@@ -44,8 +50,11 @@ describe("Candidates list", () => {
         renderApp("/candidates");
         const table = await screen.findByRole("table", { name: "Candidates" });
         expect(within(table).getByRole("link", { name: "KAMAL PERERA" })).toHaveAttribute("href", "/candidates/N0000001");
-        expect(within(table).getByText("Driver, Welder")).toBeInTheDocument();
-        expect(within(table).getByRole("img", { name: "2 of 6 stages completed" })).toBeInTheDocument();
+        expect(within(table).getByText("Driver")).toBeInTheDocument();
+        expect(within(table).getByText("Welder")).toBeInTheDocument();
+        // Current stage = first not completed; the count is completed stages.
+        expect(within(table).getByLabelText("Document submission, 2 of 6 stages completed")).toHaveTextContent("Document submission2/6");
+        expect(within(table).getByLabelText("Test details, 3 of 6 stages completed")).toHaveTextContent("Test details3/6");
         expect(screen.getByRole("link", { name: "Add candidate" })).toHaveAttribute("href", "/candidates/new");
 
         await userEvent.setup().type(screen.getByLabelText("Search candidates"), "901234567V{Enter}");
@@ -73,7 +82,10 @@ describe("Candidate deployment", () => {
         await userEvent.setup().click(within(stepper).getByRole("button", { name: /^3\. Document submission/ }));
         expect(await screen.findByRole("heading", { name: "Document submission" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Export PDF" })).toBeInTheDocument();
-        expect(screen.getByLabelText("All 5 required documents are included")).toBeDisabled();
+        // Completed by the documents themselves: no checkbox, no Save.
+        expect(screen.getByText("Missing: medical, police report, agreement, affidavit")).toBeInTheDocument();
+        expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
         for (const label of ["Medical", "Police report", "Scan - Agreement", "Scan - Affidavit"]) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     });
 
@@ -86,6 +98,19 @@ describe("Candidate deployment", () => {
         expect(screen.getByLabelText("Nationality")).toHaveValue("");
         expect(screen.getByLabelText("Sex")).toHaveValue("");
         expect(screen.getByLabelText("Passport issue date")).toHaveValue("");
+        expect(screen.getByText("Missing: passport document")).toBeInTheDocument();
+        expect(screen.queryByRole("checkbox", { name: "Stage completed" })).not.toBeInTheDocument();
+    });
+
+    test("candidate details shows completed (stepper green) once the record has everything", async () => {
+        const done: CandidateDetails = {
+            ...DETAILS,
+            stages: DETAILS.stages.map((s) => (s.stage === "CANDIDATE_DETAILS" ? { ...s, completed: true, missing: [] } : s)),
+        };
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: done } });
+        renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+        expect(await screen.findByText("Stage completed")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "2. Candidate details (completed out of order)" })).toBeInTheDocument();
     });
 });
 
