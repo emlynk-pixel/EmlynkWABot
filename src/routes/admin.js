@@ -52,23 +52,23 @@ import {
     addCallLog,
     CandidateError,
     createCandidate,
+    createUploadTarget,
+    finalizeUpload,
     getCandidate,
     resolveCandidatePassportId,
     isCandidateStage,
     isValidCandidateIdParam,
     listCallLogs,
     listCandidates,
-    originalFileNameFrom,
     parseCallLogBody,
     parseCandidateBody,
     parseCandidateListQuery,
+    parseFinalizeUploadBody,
     parseStageBody,
-    parseUploadQuery,
+    parseUploadTargetBody,
     updateCandidateDetails,
     updateStage,
-    uploadCandidateDocument,
 } from "../services/candidateService.js";
-import { MAX_FILE_SIZE } from "../utils/fileValidation.js";
 
 
 // Quotes and non-ASCII characters are replaced so the header can't be broken.
@@ -397,31 +397,40 @@ export function createAdminRouter({
         })));
     });
 
-    // The file is the raw request body (Content-Type: its MIME type); the
-    // document type and variant are query parameters, the original file name
-    // the X-File-Name header (URI-encoded). Larger bodies get 413.
-    const rawUpload = express.raw({ type: () => true, limit: MAX_FILE_SIZE });
-    router.post("/candidates/:passportId/documents", requireRole(REVIEWERS_UP), rawUpload, async (req, res) => {
+    // Document uploads: the browser sends the file straight to storage, never
+    // to this API (candidateService.js, "direct uploads"). Both requests are
+    // small JSON bodies (express.json in createApp.js); no route here parses
+    // a file body.
+    router.post("/candidates/:passportId/documents/upload-target", requireRole(REVIEWERS_UP), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
-        const parsed = parseUploadQuery(req.query);
+        const parsed = parseUploadTargetBody(req.body);
         if (parsed.errors) {
-            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
-        if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
-            return res.status(400).json({ message: "The file is missing." });
-        }
-        const mimeType = String(req.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
-        return candidateAction(res, async () => res.json(await uploadCandidateDocument({
+        return candidateAction(res, async () => res.json(await createUploadTarget({
+            db: client,
+            bucket: storage,
+            passportId: await storedCandidateId(client, req.params.passportId),
+            documentType: parsed.values.documentType,
+            mimeType: parsed.values.mimeType,
+            fileSize: parsed.values.fileSize,
+        })));
+    });
+
+    router.post("/candidates/:passportId/documents/finalize", requireRole(REVIEWERS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseFinalizeUploadBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => res.json(await finalizeUpload({
             db: client,
             bucket: storage,
             admin: req.admin,
             passportId: await storedCandidateId(client, req.params.passportId),
-            documentType: parsed.values.documentType,
-            variant: parsed.values.variant,
-            mimeType,
-            buffer: req.body,
-            originalFileName: originalFileNameFrom(req.get("x-file-name"), null),
+            ...parsed.values,
         })));
     });
 

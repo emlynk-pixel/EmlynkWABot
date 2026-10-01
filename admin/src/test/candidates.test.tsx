@@ -36,6 +36,21 @@ const DETAILS: CandidateDetails = {
 
 const VIEWER = { ...ADMIN, role: "VIEWER" };
 
+// A document upload: the API issues a signed URL for one staged object
+// (upload-target), the browser PUTs the file there, straight to storage, and
+// the API records it (finalize). The stub routes by path, so the storage
+// host is a stand-in.
+const UPLOAD_ID = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
+const SIGNED_PATH = "/storage/v1/object/upload/sign/documents/clients/N0000002/medical/upload_staged.pdf";
+const SIGNED_URL = `https://project.supabase.co${SIGNED_PATH}?token=signed`;
+function directUploadRoutes(passportId: string, finalized: CandidateDetails, { storageStatus = 200 } = {}) {
+    return {
+        [`POST /api/admin/candidates/${passportId}/documents/upload-target`]: { status: 200, body: { uploadId: UPLOAD_ID, uploadUrl: SIGNED_URL, maxFileSize: 10 * 1024 * 1024 } },
+        [`PUT ${SIGNED_PATH}`]: { status: storageStatus, body: {} },
+        [`POST /api/admin/candidates/${passportId}/documents/finalize`]: { status: 200, body: finalized },
+    };
+}
+
 describe("stepper colours", () => {
     test("stages completed after an incomplete one are 'out of order'", () => {
         expect(stepTones(stages([false, false, false, true, true, true]))).toEqual(["incomplete", "incomplete", "incomplete", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order"]);
@@ -128,13 +143,15 @@ describe("Candidate deployment", () => {
         const pdf = () => new File(["%PDF-1.4"], "report.pdf", { type: "application/pdf" });
         const document = (variant: string | null) => ({ documentId: "doc-1", originalFilename: "old-report.pdf", verificationStatus: "VERIFIED", variant, receivedDate: "2026-09-20T00:00:00.000Z" });
         const rowOf = (select: HTMLElement) => within(select.parentElement!);
-        const uploads = (calls: { method: string; path: string }[]) => calls.filter((c) => c.method === "POST").map((c) => c.path);
+        // The variant travels in the upload's description (upload-target).
+        const uploads = (calls: { path: string; body: unknown }[]) =>
+            calls.filter((c) => c.path.endsWith("/documents/upload-target")).map((c) => (c.body as { variant?: string }).variant);
 
         test("nothing is preselected; Upload stays disabled until a type is chosen; the chosen type is sent", async () => {
             const uploaded: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, POLICE_REPORT: document("ROMANIA") } };
             const { calls } = signedInBackend({
                 "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
-                "POST /api/admin/candidates/N0000002/documents": { status: 200, body: uploaded },
+                ...directUploadRoutes("N0000002", uploaded),
             });
             renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
             const user = userEvent.setup();
@@ -161,8 +178,9 @@ describe("Candidate deployment", () => {
             await user.selectOptions(police, "ROMANIA");
             expect(rowOf(police).getByRole("button", { name: "Upload" })).toBeEnabled();
             await user.upload(screen.getByLabelText("Police report file"), pdf());
-            await vi.waitFor(() => expect(uploads(calls)).toEqual(["/api/admin/candidates/N0000002/documents?type=POLICE_REPORT&variant=ROMANIA"]));
+            await vi.waitFor(() => expect(uploads(calls)).toEqual(["ROMANIA"]));
             expect(await screen.findByText(/old-report\.pdf • Romania/)).toBeInTheDocument();
+            expect(calls.find((c) => c.path.endsWith("/documents/finalize"))!.body).toMatchObject({ type: "POLICE_REPORT", variant: "ROMANIA", uploadId: UPLOAD_ID });
             expect(rowOf(police).getByRole("button", { name: "Replace" })).toBeEnabled();
         });
 
@@ -170,7 +188,7 @@ describe("Candidate deployment", () => {
             const stored: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, POLICE_REPORT: document("SL_NORMAL"), AFFIDAVIT: document("SINHALA") } };
             const { calls } = signedInBackend({
                 "GET /api/admin/candidates/N0000002": { status: 200, body: stored },
-                "POST /api/admin/candidates/N0000002/documents": { status: 200, body: stored },
+                ...directUploadRoutes("N0000002", stored),
             });
             renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
             const user = userEvent.setup();
@@ -184,10 +202,8 @@ describe("Candidate deployment", () => {
             await vi.waitFor(() => expect(uploads(calls)).toHaveLength(1));
             await user.selectOptions(police, "SL_VERIFIED");
             await user.upload(screen.getByLabelText("Police report file"), pdf());
-            await vi.waitFor(() => expect(uploads(calls)).toEqual([
-                "/api/admin/candidates/N0000002/documents?type=POLICE_REPORT&variant=SL_NORMAL",
-                "/api/admin/candidates/N0000002/documents?type=POLICE_REPORT&variant=SL_VERIFIED",
-            ]));
+            await vi.waitFor(() => expect(uploads(calls)).toEqual(["SL_NORMAL", "SL_VERIFIED"]));
+            await vi.waitFor(() => expect(calls.filter((c) => c.path.endsWith("/documents/finalize"))).toHaveLength(2));
         });
 
         test("a stored document without a type (e.g. received on WhatsApp) needs one before it is replaced", async () => {
@@ -197,6 +213,63 @@ describe("Candidate deployment", () => {
             const police = await screen.findByLabelText("Police report type");
             expect(police).toHaveValue("");
             expect(rowOf(police).getByRole("button", { name: "Replace" })).toBeDisabled();
+        });
+    });
+
+    describe("uploads go from the browser straight to storage", () => {
+        const medical = () => new File(["%PDF-1.4 medical"], "medical.pdf", { type: "application/pdf" });
+        const withMedical: CandidateDetails = {
+            ...DETAILS,
+            documents: { ...DETAILS.documents, MEDICAL: { documentId: "doc-m", originalFilename: "medical.pdf", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-01T00:00:00.000Z" } },
+        };
+
+        test("the API gets only the description; the file is PUT to the signed URL; then the upload is finalized", async () => {
+            const { calls } = signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS }, ...directUploadRoutes("N0000002", withMedical) });
+            renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+            const file = medical();
+            await userEvent.setup().upload(await screen.findByLabelText("Medical file"), file);
+
+            expect(await screen.findByText(/medical\.pdf •/)).toBeInTheDocument();
+            const uploadCalls = calls.filter((c) => c.method !== "GET");
+            expect(uploadCalls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
+                "POST /api/admin/candidates/N0000002/documents/upload-target",
+                `PUT ${SIGNED_PATH}`,
+                "POST /api/admin/candidates/N0000002/documents/finalize",
+            ]);
+            const [target, put, finalize] = uploadCalls;
+            expect(target.body).toEqual({ type: "MEDICAL", mimeType: "application/pdf", fileName: "medical.pdf", fileSize: file.size });
+            expect(put.url.href).toBe(SIGNED_URL);
+            expect(put.body).toBe(file);
+            expect(put.headers).toEqual({ "Content-Type": "application/pdf" });
+            expect(finalize.body).toEqual({ type: "MEDICAL", mimeType: "application/pdf", fileName: "medical.pdf", uploadId: UPLOAD_ID });
+            // No request to the API carries the file.
+            expect(calls.filter((c) => c.url.pathname.startsWith("/api/") && c.body instanceof File)).toEqual([]);
+        });
+
+        test("a failed upload to storage is shown and nothing is finalized; the file can be chosen again", async () => {
+            const { calls } = signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS }, ...directUploadRoutes("N0000002", withMedical, { storageStatus: 403 }) });
+            renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+            const user = userEvent.setup();
+            await user.upload(await screen.findByLabelText("Medical file"), medical());
+
+            expect(await screen.findByText("The file could not be uploaded. Please try again.")).toBeInTheDocument();
+            expect(calls.some((c) => c.url.pathname.endsWith("/documents/finalize"))).toBe(false);
+            expect(screen.getAllByText("No file uploaded").length).toBeGreaterThan(0);
+            const upload = within(screen.getByLabelText("Medical file").parentElement!).getByRole("button", { name: "Upload" });
+            expect(upload).toBeEnabled();
+        });
+
+        test("a file the API refuses (e.g. a PDF as the skill video) is never sent to storage", async () => {
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+                "POST /api/admin/candidates/N0000002/documents/upload-target": { status: 422, body: { message: "This file type is not accepted. Use MP4, MOV or WebM.", code: "FILE_REJECTED" } },
+            });
+            renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+            await userEvent.setup({ applyAccept: false }).upload(await screen.findByLabelText("Skill video file"), new File(["%PDF-1.4"], "skills.pdf", { type: "application/pdf" }));
+
+            expect(await screen.findByText("This file type is not accepted. Use MP4, MOV or WebM.")).toBeInTheDocument();
+            expect(calls.some((c) => c.method === "PUT")).toBe(false);
+            expect(calls.some((c) => c.url.pathname.endsWith("/documents/finalize"))).toBe(false);
         });
     });
 
@@ -251,7 +324,7 @@ describe("Candidate registration", () => {
         let created = false;
         const { calls } = signedInBackend({
             "POST /api/admin/candidates": () => { created = true; return { status: 201, body: { passportId: "N0000002", uniqueId: "0002" } }; },
-            "POST /api/admin/candidates/N0000002/documents": { status: 201, body: DETAILS },
+            ...directUploadRoutes("N0000002", DETAILS),
             "GET /api/admin/candidates/N0000002": () => (created ? { status: 200, body: DETAILS } : { status: 404, body: { message: "Candidate not found" } }),
         });
         renderApp("/candidates/new");
@@ -263,7 +336,11 @@ describe("Candidate registration", () => {
         expect(calls.find((c) => c.method === "POST" && c.path === "/api/admin/candidates")!.body).toMatchObject({
             nationality: "", sex: "", dateOfBirth: "", placeOfBirth: "", passportIssueDate: "", passportExpiryDate: "", whatsappNumber: "", contactNumber: "",
         });
-        expect(calls.some((c) => c.path === "/api/admin/candidates/N0000002/documents?type=PASSPORT")).toBe(true);
+        // The passport file went to storage, then was finalized; never to the API.
+        expect(calls.find((c) => c.path.endsWith("/documents/upload-target"))!.body).toMatchObject({ type: "PASSPORT", mimeType: "application/pdf", fileName: "passport.pdf" });
+        expect(calls.find((c) => c.method === "PUT")!.body).toBeInstanceOf(File);
+        expect(calls.find((c) => c.path.endsWith("/documents/finalize"))!.body).toMatchObject({ type: "PASSPORT", uploadId: UPLOAD_ID });
+        expect(calls.filter((c) => c.url.pathname.startsWith("/api/") && c.body instanceof File)).toEqual([]);
     });
 
     test("an optional value that is given is checked: issue date before expiry, phone number format", async () => {

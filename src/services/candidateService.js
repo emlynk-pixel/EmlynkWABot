@@ -15,10 +15,12 @@
 // becomes the candidate's current (VERIFIED) document of its type; a previous
 // VERIFIED one of that type is kept as SUPERSEDED (the existing replacement
 // rule, clientDocumentService.js). Each upload is written to the audit log.
+// The file itself goes from the admin's browser straight to storage, never
+// through this API (see "direct uploads" below).
 
 import crypto from "node:crypto";
 
-import { validateDocumentFile, MAX_FILE_SIZE } from "../utils/fileValidation.js";
+import { validateDocumentFile, ALLOWED_MIME_TYPES, MAX_FILE_SIZE } from "../utils/fileValidation.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { clientName } from "../utils/clientName.js";
 import { normalizePassportId } from "../utils/passportId.js";
@@ -643,7 +645,7 @@ export function validateCandidateUpload({ documentType, mimeType, buffer }) {
     return UPLOAD_REJECTION_MESSAGES[result.reason] ?? "The file was not accepted.";
 }
 
-// documentType and variant from the query: { values } or { errors }.
+// documentType ("type") and variant: { values } or { errors }.
 export function parseUploadQuery(query = {}) {
     const errors = [];
     const documentType = typeof query.type === "string" ? query.type : undefined;
@@ -661,18 +663,67 @@ export function parseUploadQuery(query = {}) {
     return errors.length ? { errors } : { values: { documentType, variant } };
 }
 
-// The name the browser sent (header X-File-Name, URI-encoded): only kept as
+// The name the browser reported for the file: only kept as
 // documents.original_filename, never used in a storage path.
-export function originalFileNameFrom(header, fallback) {
-    if (typeof header !== "string" || header === "") return fallback;
-    let decoded;
-    try {
-        decoded = decodeURIComponent(header);
-    } catch {
-        return fallback;
-    }
-    const name = decoded.split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, MAX_FILE_NAME_LENGTH);
+export function cleanOriginalFileName(value, fallback) {
+    if (typeof value !== "string") return fallback;
+    const name = value.split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, MAX_FILE_NAME_LENGTH);
     return name || fallback;
+}
+
+// The file the browser says it will upload, checked by the same rules its
+// bytes are checked by at finalization (validateCandidateUpload): the MIME
+// type the document type accepts and the size limit. fileSize is optional
+// (finalization knows the real size). Returns a message, or null.
+export function checkDeclaredFile({ documentType, mimeType, fileSize }) {
+    if (!mimeType) return UPLOAD_REJECTION_MESSAGES.MISSING_MIME_TYPE;
+    if (CANDIDATE_DOCUMENT_TYPES[documentType]?.video) {
+        if (!VIDEO_MIME_TYPES.includes(mimeType)) return "This file type is not accepted. Use MP4, MOV or WebM.";
+    } else if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
+        return UPLOAD_REJECTION_MESSAGES.UNSUPPORTED_FILE_TYPE;
+    }
+    if (fileSize === undefined) return null;
+    if (fileSize <= 0) return UPLOAD_REJECTION_MESSAGES.INVALID_FILE_SIZE;
+    if (fileSize > MAX_FILE_SIZE) return UPLOAD_REJECTION_MESSAGES.FILE_TOO_LARGE;
+    return null;
+}
+
+// crypto.randomUUID() (v4): the staged object's name, chosen by the server.
+const UPLOAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const mimeTypeFrom = (value) => (typeof value === "string" ? value.split(";")[0].trim().toLowerCase() : "");
+
+// POST …/documents/upload-target: { type, variant?, mimeType, fileSize, fileName? }.
+export function parseUploadTargetBody(body) {
+    if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
+    const parsed = parseUploadQuery(body);
+    const errors = [...(parsed.errors ?? [])];
+    if (!Number.isSafeInteger(body.fileSize) || body.fileSize < 0) errors.push({ field: "fileSize", message: "must be the file size in bytes" });
+    if (errors.length) return { errors };
+    return {
+        values: {
+            ...parsed.values,
+            mimeType: mimeTypeFrom(body.mimeType),
+            fileSize: body.fileSize,
+        },
+    };
+}
+
+// POST …/documents/finalize: { uploadId, type, variant?, mimeType, fileName? }.
+export function parseFinalizeUploadBody(body) {
+    if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
+    const parsed = parseUploadQuery(body);
+    const errors = [...(parsed.errors ?? [])];
+    if (typeof body.uploadId !== "string" || !UPLOAD_ID_PATTERN.test(body.uploadId)) errors.push({ field: "uploadId", message: "must be the upload ID from upload-target" });
+    if (errors.length) return { errors };
+    return {
+        values: {
+            ...parsed.values,
+            uploadId: body.uploadId,
+            mimeType: mimeTypeFrom(body.mimeType),
+            originalFileName: cleanOriginalFileName(body.fileName, null),
+        },
+    };
 }
 
 const isCollision = (error) => {
@@ -693,29 +744,50 @@ async function uploadToFreeName({ bucket, folder, documentType, extension, first
     throw new Error(`No free file name after ${MAX_NAME_ATTEMPTS} attempts`);
 }
 
-// POST /api/admin/candidates/:passportId/documents?type=…&variant=…
-// Body: the file bytes, Content-Type its MIME type.
-export async function uploadCandidateDocument({ db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now = new Date() }) {
-    await requireCandidate(db, passportId);
+// Move a staged upload to the first free standard name, like uploadToFreeName:
+// a name already taken is skipped (checked first, and a move onto an
+// existing object is refused by storage), so nothing is ever overwritten.
+async function moveToFreeName({ bucket, from, folder, documentType, extension, firstAttempt }) {
+    for (let version = firstAttempt; version < firstAttempt + MAX_NAME_ATTEMPTS; version++) {
+        const fileName = standardFileName(documentType, version, extension);
+        const storagePath = `${folder}/${fileName}`;
+        const taken = await bucket.exists(storagePath);
+        if (taken.data === true) continue;
+        const { error } = await bucket.move(from, storagePath);
+        if (!error) return { storagePath, fileName };
+        if (isCollision(error)) continue;
+        throw new Error(`Storage move failed: ${error.message}`);
+    }
+    throw new Error(`No free file name after ${MAX_NAME_ATTEMPTS} attempts`);
+}
 
+// The checks and the record every candidate document goes through, whoever
+// moved its bytes: content, duplicate (SHA-256), the next standard name
+// (place), then one transaction that supersedes the previous VERIFIED
+// document of the type, creates the new one and audits it. A refused file is
+// handed to discard (a staged upload is removed); a record that can't be
+// written removes the placed object again.
+async function storeCandidateDocument({ db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now, place, discard }) {
+    const refuse = async (error) => {
+        await discard();
+        throw error;
+    };
     const rejection = validateCandidateUpload({ documentType, mimeType, buffer });
-    if (rejection) throw new CandidateError(422, "FILE_REJECTED", rejection);
+    if (rejection) await refuse(new CandidateError(422, "FILE_REJECTED", rejection));
 
     const fileSha256 = sha256Hex(buffer);
     const sameFile = await db.document.findFirst({ where: { passportId, fileSha256 }, select: { documentId: true } });
-    if (sameFile) throw new CandidateError(409, "DUPLICATE_FILE", "This exact file is already stored for this candidate.");
+    if (sameFile) await refuse(new CandidateError(409, "DUPLICATE_FILE", "This exact file is already stored for this candidate."));
 
     const extension = extensionForMimeType(mimeType);
     const existingCount = await db.document.count({ where: { passportId, documentType } });
-    const { storagePath, fileName } = await uploadToFreeName({
-        bucket,
-        folder: clientFolderPath(passportId, documentType),
-        documentType,
-        extension,
-        firstAttempt: existingCount + 1,
-        buffer,
-        mimeType,
-    });
+    let placed;
+    try {
+        placed = await place({ folder: clientFolderPath(passportId, documentType), documentType, extension, firstAttempt: existingCount + 1 });
+    } catch (error) {
+        await refuse(error);
+    }
+    const { storagePath, fileName } = placed;
 
     const documentId = crypto.randomUUID();
     try {
@@ -773,6 +845,114 @@ export async function uploadCandidateDocument({ db, bucket, admin, passportId, d
     }
 
     return getCandidate({ db, passportId });
+}
+
+// A file whose bytes are already on the server, uploaded to its standard name.
+// No HTTP route takes file bytes: an admin's upload goes browser -> storage
+// directly (createUploadTarget, then finalizeUpload, below).
+export async function uploadCandidateDocument({ db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now = new Date() }) {
+    await requireCandidate(db, passportId);
+    return storeCandidateDocument({
+        db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now,
+        place: (target) => uploadToFreeName({ bucket, buffer, mimeType, ...target }),
+        discard: async () => {},
+    });
+}
+
+// ---------------------------------------------------------------- direct uploads
+//
+// The file's bytes never pass through this API (on Vercel a request body is
+// capped far below the 10 MB file limit). Instead:
+//   1. createUploadTarget: the admin's browser describes the file (type,
+//      variant, MIME type, size). Checked here as above; the answer is a
+//      signed URL for ONE new object, upload_<uploadId><ext> in the
+//      candidate's folder for that type. It expires (2 hours, set by
+//      Supabase), can't overwrite anything, and names no other path.
+//   2. The browser PUTs the file to that URL: browser -> storage.
+//   3. finalizeUpload: the server reads the staged object back from storage
+//      and gives its real bytes every check an upload had (content, size,
+//      duplicate), then moves it to the standard name (medical_v2.pdf, …) and
+//      writes the record, exactly as above. A staged file that fails is
+//      removed. The object's path comes from the passport ID in the URL, the
+//      type and the uploadId, so one candidate's upload can't be finalized
+//      for another candidate or another type.
+// An upload the browser never finalizes (tab closed between 2 and 3) stays
+// staged; staged objects older than STAGED_UPLOAD_MAX_AGE_MS are removed the
+// next time a target is requested for that candidate and type.
+
+const STAGED_UPLOAD_PREFIX = "upload_";
+export const STAGED_UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
+
+const stagedUploadPath = (passportId, documentType, uploadId, extension) =>
+    `${clientFolderPath(passportId, documentType)}/${STAGED_UPLOAD_PREFIX}${uploadId}${extension}`;
+
+// Best effort: a failure here never blocks an upload.
+async function removeStaleStagedUploads({ bucket, folder, now }) {
+    try {
+        const { data, error } = await bucket.list(folder, { search: STAGED_UPLOAD_PREFIX, limit: 100 });
+        if (error || !Array.isArray(data)) return;
+        const stale = data
+            .filter((object) => object?.name?.startsWith(STAGED_UPLOAD_PREFIX))
+            .filter((object) => Date.parse(object.created_at) < now.getTime() - STAGED_UPLOAD_MAX_AGE_MS)
+            .map((object) => `${folder}/${object.name}`);
+        if (stale.length) await bucket.remove(stale);
+    } catch {
+        // Left for the next request.
+    }
+}
+
+// POST /api/admin/candidates/:passportId/documents/upload-target
+export async function createUploadTarget({ db, bucket, passportId, documentType, mimeType, fileSize, now = new Date() }) {
+    await requireCandidate(db, passportId);
+    const rejection = checkDeclaredFile({ documentType, mimeType, fileSize });
+    if (rejection) throw new CandidateError(422, "FILE_REJECTED", rejection);
+
+    await removeStaleStagedUploads({ bucket, folder: clientFolderPath(passportId, documentType), now });
+    const uploadId = crypto.randomUUID();
+    const { data, error } = await bucket.createSignedUploadUrl(stagedUploadPath(passportId, documentType, uploadId, extensionForMimeType(mimeType)));
+    // Paths contain the passport number, so they stay out of the message.
+    if (error || !data?.signedUrl) throw new Error(`Signed upload URL not created: ${error?.message ?? "no URL returned"}`);
+    return { uploadId, uploadUrl: data.signedUrl, maxFileSize: MAX_FILE_SIZE };
+}
+
+// POST /api/admin/candidates/:passportId/documents/finalize
+export async function finalizeUpload({ db, bucket, admin, passportId, uploadId, documentType, variant, mimeType, originalFileName, now = new Date() }) {
+    await requireCandidate(db, passportId);
+    const declared = checkDeclaredFile({ documentType, mimeType });
+    if (declared) throw new CandidateError(422, "FILE_REJECTED", declared);
+
+    const stagedPath = stagedUploadPath(passportId, documentType, uploadId, extensionForMimeType(mimeType));
+    const discard = () => removeObject(stagedPath, { bucket });
+    const refuse = async (message) => {
+        await discard();
+        throw new CandidateError(422, "FILE_REJECTED", message);
+    };
+
+    const info = await bucket.info(stagedPath);
+    if (info.error || !info.data) {
+        const status = String(info.error?.statusCode ?? info.error?.status ?? "");
+        if (status === "404" || status === "400" || /not.?found/i.test(info.error?.message ?? "")) {
+            throw new CandidateError(404, "UPLOAD_NOT_FOUND", "The uploaded file was not found. Upload it again.");
+        }
+        throw new Error(`Staged upload not readable: ${info.error?.message ?? "no details"}`);
+    }
+    // Checked before reading it into memory: the signed URL itself can't cap the size.
+    const size = Number(info.data.size);
+    if (!(size > 0)) await refuse(UPLOAD_REJECTION_MESSAGES.INVALID_FILE_SIZE);
+    if (size > MAX_FILE_SIZE) await refuse(UPLOAD_REJECTION_MESSAGES.FILE_TOO_LARGE);
+    // Stored with the type the browser sent while uploading: it must be the one checked here.
+    const storedType = mimeTypeFrom(info.data.contentType);
+    if (storedType && storedType !== mimeType) await refuse(UPLOAD_REJECTION_MESSAGES.FILE_SIGNATURE_MISMATCH);
+
+    const downloaded = await bucket.download(stagedPath);
+    if (downloaded.error || !downloaded.data) throw new Error(`Staged upload not readable: ${downloaded.error?.message ?? "no data"}`);
+    const buffer = Buffer.isBuffer(downloaded.data) ? downloaded.data : Buffer.from(await downloaded.data.arrayBuffer());
+
+    return storeCandidateDocument({
+        db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now,
+        place: (target) => moveToFreeName({ bucket, from: stagedPath, ...target }),
+        discard,
+    });
 }
 
 // ---------------------------------------------------------------- call log

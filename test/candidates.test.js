@@ -13,7 +13,13 @@ import {
     formatJobTypes,
     getCandidate,
     listCandidates,
-    originalFileNameFrom,
+    cleanOriginalFileName,
+    checkDeclaredFile,
+    createUploadTarget,
+    finalizeUpload,
+    parseFinalizeUploadBody,
+    parseUploadTargetBody,
+    STAGED_UPLOAD_MAX_AGE_MS,
     parseCandidateBody,
     parseJobTypes,
     parseStageBody,
@@ -134,20 +140,61 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
     return db;
 }
 
+// Supabase Storage, as candidateService.js uses it. objects: path -> bytes.
+// signedUploads: the paths a signed upload URL was issued for; browserPut
+// stands in for the browser's PUT to that URL (only an issued path, never
+// over an existing object, like the real signed upload).
 function createFakeBucket() {
     const objects = new Map();
-    return {
+    const meta = new Map();
+    const signedUploads = [];
+    const notFound = () => ({ statusCode: "404", message: "Object not found" });
+    const store = (path, buffer, contentType, createdAt = new Date()) => {
+        objects.set(path, buffer);
+        meta.set(path, { contentType, createdAt });
+    };
+    const bucket = {
         objects,
-        upload: async (path, buffer) => {
+        signedUploads,
+        upload: async (path, buffer, { contentType } = {}) => {
             if (objects.has(path)) return { error: { statusCode: "409", message: "The resource already exists" } };
-            objects.set(path, buffer);
+            store(path, buffer, contentType);
             return { error: null };
         },
         remove: async (paths) => {
-            paths.forEach((p) => objects.delete(p));
+            paths.forEach((p) => { objects.delete(p); meta.delete(p); });
             return { error: null };
         },
+        createSignedUploadUrl: async (path) => {
+            signedUploads.push(path);
+            return { data: { signedUrl: `https://project.supabase.co/storage/v1/object/upload/sign/documents/${path}?token=signed-${signedUploads.length}`, token: `signed-${signedUploads.length}`, path }, error: null };
+        },
+        browserPut: (path, buffer, contentType, createdAt) => {
+            if (!signedUploads.includes(path)) throw new Error(`no signed upload URL for ${path}`);
+            if (objects.has(path)) throw new Error("signed upload refused: object exists");
+            store(path, buffer, contentType, createdAt);
+        },
+        info: async (path) => (objects.has(path)
+            ? { data: { name: path.split("/").pop(), size: objects.get(path).length, contentType: meta.get(path).contentType }, error: null }
+            : { data: null, error: notFound() }),
+        exists: async (path) => (objects.has(path) ? { data: true, error: null } : { data: false, error: notFound() }),
+        download: async (path) => (objects.has(path) ? { data: objects.get(path), error: null } : { data: null, error: notFound() }),
+        move: async (from, to) => {
+            if (!objects.has(from)) return { data: null, error: notFound() };
+            if (objects.has(to)) return { data: null, error: { statusCode: "409", message: "The resource already exists" } };
+            store(to, objects.get(from), meta.get(from).contentType, meta.get(from).createdAt);
+            objects.delete(from);
+            meta.delete(from);
+            return { data: { message: "Successfully moved" }, error: null };
+        },
+        list: async (folder) => ({
+            data: [...objects.keys()]
+                .filter((p) => p.startsWith(`${folder}/`) && !p.slice(folder.length + 1).includes("/"))
+                .map((p) => ({ name: p.slice(folder.length + 1), created_at: meta.get(p).createdAt.toISOString() })),
+            error: null,
+        }),
     };
+    return bucket;
 }
 
 const registered = async (db, overrides = {}) => {
@@ -510,10 +557,12 @@ describe("document uploads", () => {
         assert.equal(bucket.objects.size, 0);
     });
 
-    test("the original file name is decoded, stripped of paths, and never trusted", () => {
-        assert.equal(originalFileNameFrom(encodeURIComponent("C:\\scans\\passport copy.pdf"), null), "passport copy.pdf");
-        assert.equal(originalFileNameFrom("%E0%A4%A", "fallback"), "fallback");
-        assert.equal(originalFileNameFrom(undefined, null), null);
+    test("the original file name is stripped of paths and control characters, and never trusted", () => {
+        assert.equal(cleanOriginalFileName("C:\\scans\\passport copy.pdf", null), "passport copy.pdf");
+        assert.equal(cleanOriginalFileName("../../etc/x\u0000.pdf", null), "x.pdf");
+        assert.equal(cleanOriginalFileName("   ", "fallback"), "fallback");
+        assert.equal(cleanOriginalFileName(42, null), null);
+        assert.equal(cleanOriginalFileName(undefined, null), null);
     });
 });
 
@@ -543,8 +592,7 @@ describe("candidate list and call log", () => {
 });
 
 describe("candidate routes: roles", () => {
-    // file: { mimeType, buffer } sends the raw file body (the upload route).
-    async function call(role, method, path, body, db = createFakeDb(), { bucket = createFakeBucket(), file } = {}) {
+    async function call(role, method, path, body, db = createFakeDb(), { bucket = createFakeBucket() } = {}) {
         const app = express();
         app.use(express.json());
         const requireAdmin = (req, res, next) => { req.admin = { ...ADMIN, role }; next(); };
@@ -554,13 +602,24 @@ describe("candidate routes: roles", () => {
         try {
             const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, {
                 method,
-                headers: { "content-type": file ? file.mimeType : "application/json" },
-                body: file ? file.buffer : body === undefined ? undefined : JSON.stringify(body),
+                headers: { "content-type": "application/json" },
+                body: body === undefined ? undefined : JSON.stringify(body),
             });
             return { status: response.status, body: await response.json() };
         } finally {
             server.close();
         }
+    }
+
+    // The admin's upload through the routes: target, the browser's PUT to
+    // storage, finalize. Returns the finalize response (or the target's, when
+    // that one is refused).
+    async function directUpload(role, passportIdInUrl, db, bucket, { type, variant, mimeType = "application/pdf", buffer = PDF, fileName = "scan.pdf" }) {
+        const described = { type, ...(variant ? { variant } : {}), mimeType, fileName };
+        const target = await call(role, "POST", `/api/admin/candidates/${passportIdInUrl}/documents/upload-target`, { ...described, fileSize: buffer.length }, db, { bucket });
+        if (target.status !== 200) return target;
+        bucket.browserPut(bucket.signedUploads.at(-1), buffer, mimeType);
+        return call(role, "POST", `/api/admin/candidates/${passportIdInUrl}/documents/finalize`, { ...described, uploadId: target.body.uploadId }, db, { bucket });
     }
 
     test("a VIEWER can list candidates but not register, edit stages or add call notes", async () => {
@@ -607,8 +666,9 @@ describe("candidate routes: roles", () => {
             assert.equal(stage.status, 200);
             assert.deepEqual(db.state.stages.map((s) => [s.passportId, s.stage, s.completed]), [["n1023757", "TEST_DETAILS", true]]);
 
-            const upload = await call("REVIEWER", "POST", "/api/admin/candidates/N1023757/documents?type=MEDICAL", undefined, db, { bucket, file: { mimeType: "application/pdf", buffer: PDF } });
+            const upload = await directUpload("REVIEWER", "N1023757", db, bucket, { type: "MEDICAL" });
             assert.equal(upload.status, 200);
+            assert.match(bucket.signedUploads[0], /^clients\/n1023757\/medical\/upload_/, "staged in the stored record's folder");
             assert.equal(upload.body.documents.MEDICAL.verificationStatus, "VERIFIED");
             assert.deepEqual(db.state.documents.map((d) => d.passportId), ["n1023757"]);
             assert.deepEqual([...bucket.objects.keys()], ["clients/n1023757/medical/medical.pdf"]);
@@ -637,8 +697,9 @@ describe("candidate routes: roles", () => {
                 assert.equal(response.status, 404, `${method} ${path}`);
                 assert.equal(response.body.code, "NOT_FOUND");
             }
-            const upload = await call("ADMIN", "POST", "/api/admin/candidates/NA444444/documents?type=MEDICAL", undefined, db, { bucket, file: { mimeType: "application/pdf", buffer: PDF } });
+            const upload = await directUpload("ADMIN", "NA444444", db, bucket, { type: "MEDICAL" });
             assert.equal(upload.status, 404);
+            assert.equal(bucket.signedUploads.length, 0, "no upload URL issued");
             assert.equal(bucket.objects.size, 0);
             assert.equal(db.state.stages.length + db.state.callLogs.length + db.state.documents.length, 0);
         });
@@ -647,10 +708,221 @@ describe("candidate routes: roles", () => {
             const db = createFakeDb({ users: [LEGACY] });
             assert.equal((await call("VIEWER", "PUT", "/api/admin/candidates/N1023757", DETAILS_BODY, db)).status, 403);
             assert.equal((await call("VIEWER", "PUT", "/api/admin/candidates/N1023757/stages/TEST_DETAILS", { completed: true }, db)).status, 403);
-            assert.equal((await call("VIEWER", "POST", "/api/admin/candidates/N1023757/documents?type=MEDICAL", undefined, db, { file: { mimeType: "application/pdf", buffer: PDF } })).status, 403);
+            assert.equal((await call("VIEWER", "POST", "/api/admin/candidates/N1023757/documents/upload-target", { type: "MEDICAL", mimeType: "application/pdf", fileSize: 100 }, db)).status, 403);
+            assert.equal((await call("VIEWER", "POST", "/api/admin/candidates/N1023757/documents/finalize", { type: "MEDICAL", mimeType: "application/pdf", uploadId: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b" }, db)).status, 403);
             assert.equal((await call("VIEWER", "POST", "/api/admin/candidates/N1023757/call-logs", { note: "x" }, db)).status, 403);
             assert.equal(db.state.users[0].address, "Negombo");
         });
+    });
+
+    // The file goes browser -> storage; the API sees only JSON descriptions.
+    describe("direct uploads through the routes", () => {
+        const withCandidate = async () => {
+            const db = createFakeDb();
+            await registered(db);
+            return { db, bucket: createFakeBucket() };
+        };
+        const target = (role, db, bucket, body, passportId = "N1023757") =>
+            call(role, "POST", `/api/admin/candidates/${passportId}/documents/upload-target`, body, db, { bucket });
+
+        test("ADMIN and REVIEWER get an upload URL for one staged object in the candidate's folder; a VIEWER gets none", async () => {
+            const { db, bucket } = await withCandidate();
+            for (const role of ["ADMIN", "REVIEWER"]) {
+                const response = await target(role, db, bucket, { type: "MEDICAL", mimeType: "application/pdf", fileSize: 2048 });
+                assert.equal(response.status, 200, role);
+                assert.match(response.body.uploadId, /^[0-9a-f-]{36}$/);
+                assert.equal(response.body.uploadUrl, `https://project.supabase.co/storage/v1/object/upload/sign/documents/clients/N1023757/medical/upload_${response.body.uploadId}.pdf?token=signed-${bucket.signedUploads.length}`);
+                assert.equal(response.body.maxFileSize, 10 * 1024 * 1024);
+            }
+            assert.equal((await target("VIEWER", db, bucket, { type: "MEDICAL", mimeType: "application/pdf", fileSize: 2048 })).status, 403);
+            assert.equal(bucket.signedUploads.length, 2, "nothing issued for the viewer");
+            assert.equal(bucket.objects.size, 0, "the API itself stores nothing at this step");
+        });
+
+        test("the description is checked before any URL is issued: type, variant, MIME type, size; skill video takes videos only", async () => {
+            const { db, bucket } = await withCandidate();
+            const refused = [
+                [{ type: "POLICE_SLIP", mimeType: "application/pdf", fileSize: 10 }, 400],
+                [{ type: "POLICE_REPORT", mimeType: "application/pdf", fileSize: 10 }, 400],
+                [{ type: "AFFIDAVIT", variant: "TAMIL", mimeType: "application/pdf", fileSize: 10 }, 400],
+                [{ type: "MEDICAL", variant: "ENGLISH", mimeType: "application/pdf", fileSize: 10 }, 400],
+                [{ type: "MEDICAL", mimeType: "application/pdf", fileSize: "big" }, 400],
+                [{ type: "MEDICAL", mimeType: "application/zip", fileSize: 10 }, 422],
+                [{ type: "MEDICAL", mimeType: "", fileSize: 10 }, 422],
+                [{ type: "MEDICAL", mimeType: "application/pdf", fileSize: 0 }, 422],
+                [{ type: "MEDICAL", mimeType: "application/pdf", fileSize: 10 * 1024 * 1024 + 1 }, 422],
+                [{ type: "SKILL_VIDEO", mimeType: "application/pdf", fileSize: 10 }, 422],
+                [{ type: "SKILL_VIDEO", mimeType: "image/jpeg", fileSize: 10 }, 422],
+                [{ type: "SKILL_VIDEO", mimeType: "image/png", fileSize: 10 }, 422],
+            ];
+            for (const [body, status] of refused) {
+                assert.equal((await target("ADMIN", db, bucket, body)).status, status, JSON.stringify(body));
+            }
+            assert.equal(bucket.signedUploads.length, 0);
+            const video = await target("ADMIN", db, bucket, { type: "SKILL_VIDEO", mimeType: "application/pdf", fileSize: 10 });
+            assert.equal(video.body.message, "This file type is not accepted. Use MP4, MOV or WebM.");
+
+            for (const [mimeType, extension] of [["video/mp4", ".mp4"], ["video/quicktime", ".mov"], ["video/webm", ".webm"]]) {
+                const ok = await target("ADMIN", db, bucket, { type: "SKILL_VIDEO", mimeType, fileSize: 4096 });
+                assert.equal(ok.status, 200, mimeType);
+                assert.ok(bucket.signedUploads.at(-1).endsWith(extension));
+            }
+            assert.equal((await target("ADMIN", db, bucket, { type: "POLICE_REPORT", variant: "ROMANIA", mimeType: "application/pdf", fileSize: 10 })).status, 200);
+            assert.equal((await target("ADMIN", db, bucket, { type: "MEDICAL", mimeType: "application/pdf", fileSize: 10 }, "N9999999")).status, 404, "no such candidate");
+        });
+
+        test("finalize checks the stored bytes and records the document under its standard name; the staged object is gone", async () => {
+            const { db, bucket } = await withCandidate();
+            const done = await directUpload("REVIEWER", "N1023757", db, bucket, { type: "POLICE_REPORT", variant: "SL_VERIFIED", fileName: "report scan.pdf" });
+            assert.equal(done.status, 200);
+            assert.equal(done.body.documents.POLICE_REPORT.variant, "SL_VERIFIED");
+            assert.equal(done.body.documents.POLICE_REPORT.originalFilename, "report scan.pdf");
+            assert.deepEqual([...bucket.objects.keys()], ["clients/N1023757/police-report/police_report.pdf"]);
+            assert.deepEqual(db.state.documents.map((d) => [d.documentType, d.verificationStatus, d.storagePath, d.documentVariant]), [["POLICE_REPORT", "VERIFIED", "clients/N1023757/police-report/police_report.pdf", "SL_VERIFIED"]]);
+            assert.deepEqual(db.state.auditLogs.map((a) => [a.action, a.previousStatus, a.newValue]), [["UPLOAD_DOCUMENT", "NONE", "SL_VERIFIED"]]);
+        });
+
+        test("a skill video is accepted as MP4, MOV or WebM; a PDF named as a video is refused and removed", async () => {
+            const { db, bucket } = await withCandidate();
+            for (const [mimeType, buffer] of [["video/mp4", MP4], ["video/quicktime", MOV], ["video/webm", WEBM]]) {
+                assert.equal((await directUpload("ADMIN", "N1023757", db, bucket, { type: "SKILL_VIDEO", mimeType, buffer })).status, 200, mimeType);
+            }
+            assert.deepEqual([...bucket.objects.keys()], ["clients/N1023757/skill-video/skill_video.mp4", "clients/N1023757/skill-video/skill_video_v2.mov", "clients/N1023757/skill-video/skill_video_v3.webm"]);
+
+            const disguised = await directUpload("ADMIN", "N1023757", db, bucket, { type: "SKILL_VIDEO", mimeType: "video/mp4", buffer: Buffer.concat([PDF, Buffer.from("x")]) });
+            assert.equal(disguised.status, 422);
+            assert.equal(bucket.objects.size, 3, "the staged object was removed");
+            assert.equal(db.state.documents.length, 3);
+        });
+
+        test("the same file twice is still refused, and its staged copy removed", async () => {
+            const { db, bucket } = await withCandidate();
+            assert.equal((await directUpload("ADMIN", "N1023757", db, bucket, { type: "NIC" })).status, 200);
+            const again = await directUpload("ADMIN", "N1023757", db, bucket, { type: "NIC" });
+            assert.equal(again.status, 409);
+            assert.equal(again.body.code, "DUPLICATE_FILE");
+            assert.deepEqual([...bucket.objects.keys()], ["clients/N1023757/nic/nic.pdf"]);
+            assert.equal(db.state.documents.length, 1);
+        });
+
+        test("replacing a document: the new file becomes current, the old one is superseded, no extra rows", async () => {
+            const { db, bucket } = await withCandidate();
+            await directUpload("ADMIN", "N1023757", db, bucket, { type: "AFFIDAVIT", variant: "ENGLISH" });
+            const replaced = await directUpload("ADMIN", "N1023757", db, bucket, { type: "AFFIDAVIT", variant: "SINHALA", buffer: Buffer.concat([PDF, Buffer.from("v2")]) });
+            assert.equal(replaced.status, 200);
+            assert.equal(replaced.body.documents.AFFIDAVIT.variant, "SINHALA");
+            assert.deepEqual(db.state.documents.map((d) => [d.storedFilename, d.verificationStatus]), [["affidavit.pdf", "SUPERSEDED"], ["affidavit_v2.pdf", "VERIFIED"]]);
+            assert.deepEqual(db.state.auditLogs.map((a) => a.previousStatus), ["NONE", "VERIFIED"]);
+        });
+
+        test("finalize without an upload, or for another candidate or type, records nothing", async () => {
+            const { db, bucket } = await withCandidate();
+            await registered(db, { passportId: "P7654321", nic: "200012345678" });
+            const issued = await target("ADMIN", db, bucket, { type: "MEDICAL", mimeType: "application/pdf", fileSize: PDF.length });
+            const finalize = (passportId, body) => call("ADMIN", "POST", `/api/admin/candidates/${passportId}/documents/finalize`, { type: "MEDICAL", mimeType: "application/pdf", uploadId: issued.body.uploadId, ...body }, db, { bucket });
+
+            const notUploaded = await finalize("N1023757", {});
+            assert.equal(notUploaded.status, 404);
+            assert.equal(notUploaded.body.code, "UPLOAD_NOT_FOUND");
+
+            bucket.browserPut(bucket.signedUploads[0], PDF, "application/pdf");
+            assert.equal((await finalize("P7654321", {})).status, 404, "candidate A's upload can't be finalized for candidate B");
+            assert.equal((await finalize("N1023757", { type: "AGREEMENT" })).status, 404, "nor as another document type");
+            assert.equal((await finalize("N1023757", { uploadId: "not-a-uuid" })).status, 400);
+            assert.equal(db.state.documents.length, 0);
+            assert.equal(bucket.objects.size, 1, "A's staged upload is untouched");
+
+            assert.equal((await finalize("N1023757", {})).status, 200, "and still finalizes for A");
+            assert.deepEqual(db.state.documents.map((d) => d.passportId), ["N1023757"]);
+        });
+
+        test("a file stored with another type than the one checked is refused and removed", async () => {
+            const { db, bucket } = await withCandidate();
+            const issued = await target("ADMIN", db, bucket, { type: "MEDICAL", mimeType: "application/pdf", fileSize: PDF.length });
+            bucket.browserPut(bucket.signedUploads[0], PDF, "text/html");
+            const response = await call("ADMIN", "POST", "/api/admin/candidates/N1023757/documents/finalize", { type: "MEDICAL", mimeType: "application/pdf", uploadId: issued.body.uploadId }, db, { bucket });
+            assert.equal(response.status, 422);
+            assert.equal(bucket.objects.size, 0);
+            assert.equal(db.state.documents.length, 0);
+        });
+
+        test("no route takes a file body: the old upload route is gone and finalize ignores anything but JSON", async () => {
+            const router = createAdminRouter({ db: createFakeDb(), bucket: createFakeBucket(), requireAdmin: (req, res, next) => next(), apiLimiter: noRateLimit });
+            const documentRoutes = router.stack.filter((layer) => layer.route?.path.includes("/documents")).map((layer) => layer.route.path);
+            assert.deepEqual(documentRoutes.filter((path) => path.startsWith("/candidates")), ["/candidates/:passportId/documents/upload-target", "/candidates/:passportId/documents/finalize"]);
+            assert.equal((await call("ADMIN", "POST", "/api/admin/candidates/N1023757/documents", undefined)).status, 404);
+
+            const { db, bucket } = await withCandidate();
+            const app = express();
+            app.use(express.json());
+            app.use("/api/admin", createAdminRouter({ db, bucket, requireAdmin: (req, res, next) => { req.admin = ADMIN; next(); }, apiLimiter: noRateLimit }));
+            app.use(errorHandler);
+            const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+            try {
+                const response = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/candidates/N1023757/documents/finalize?type=MEDICAL`, {
+                    method: "POST", headers: { "content-type": "application/pdf" }, body: PDF,
+                });
+                assert.equal(response.status, 400, "a file body is not read as a document");
+            } finally {
+                server.close();
+            }
+            assert.equal(db.state.documents.length, 0);
+            assert.equal(bucket.objects.size, 0);
+        });
+    });
+});
+
+describe("direct uploads: storage handling", () => {
+    test("the declared file is checked like the bytes later are", () => {
+        assert.equal(checkDeclaredFile({ documentType: "MEDICAL", mimeType: "image/png", fileSize: 10 }), null);
+        assert.equal(checkDeclaredFile({ documentType: "SKILL_VIDEO", mimeType: "video/webm", fileSize: 10 }), null);
+        assert.match(checkDeclaredFile({ documentType: "SKILL_VIDEO", mimeType: "image/png", fileSize: 10 }), /MP4, MOV or WebM/);
+        assert.match(checkDeclaredFile({ documentType: "PASSPORT", mimeType: "video/mp4", fileSize: 10 }), /PDF, JPG or PNG/);
+        assert.match(checkDeclaredFile({ documentType: "PASSPORT", mimeType: "application/pdf", fileSize: 10 * 1024 * 1024 + 1 }), /larger than 10 MB/);
+        assert.equal(checkDeclaredFile({ documentType: "PASSPORT", mimeType: "application/pdf" }), null, "size is optional at finalization");
+        assert.deepEqual(parseUploadTargetBody({ type: "MEDICAL", mimeType: " Application/PDF; x=1 ", fileSize: 5 }).values, { documentType: "MEDICAL", variant: null, mimeType: "application/pdf", fileSize: 5 });
+        assert.ok(parseFinalizeUploadBody({ type: "MEDICAL", mimeType: "application/pdf", uploadId: "../../x" }).errors);
+        assert.ok(parseUploadTargetBody([]).errors);
+    });
+
+    test("a record that can't be written after the move removes the stored object", async () => {
+        const db = createFakeDb();
+        const bucket = createFakeBucket();
+        await registered(db);
+        const { uploadId } = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "AGREEMENT", mimeType: "application/pdf", fileSize: PDF.length });
+        bucket.browserPut(bucket.signedUploads[0], PDF, "application/pdf");
+        db.document.create = async () => { throw new Error("database down"); };
+        await assert.rejects(finalizeUpload({ db, bucket, admin: ADMIN, passportId: "N1023757", uploadId, documentType: "AGREEMENT", variant: null, mimeType: "application/pdf", originalFileName: null }), /upload removed/);
+        assert.equal(bucket.objects.size, 0, "neither the staged nor the moved object is left");
+        assert.equal(db.state.documents.length, 0);
+    });
+
+    test("a name already taken in storage is skipped, never overwritten", async () => {
+        const db = createFakeDb();
+        const bucket = createFakeBucket();
+        await registered(db);
+        await bucket.upload("clients/N1023757/medical/medical.pdf", Buffer.from("an older file with no record"), { contentType: "application/pdf" });
+        const { uploadId } = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "MEDICAL", mimeType: "application/pdf", fileSize: PDF.length });
+        bucket.browserPut(bucket.signedUploads[0], PDF, "application/pdf");
+        await finalizeUpload({ db, bucket, admin: ADMIN, passportId: "N1023757", uploadId, documentType: "MEDICAL", variant: null, mimeType: "application/pdf", originalFileName: null });
+        assert.equal(bucket.objects.get("clients/N1023757/medical/medical.pdf").toString(), "an older file with no record");
+        assert.equal(db.state.documents[0].storagePath, "clients/N1023757/medical/medical_v2.pdf");
+    });
+
+    test("a staged upload never finalized is removed when the next target is requested; documents and fresh uploads are kept", async () => {
+        const db = createFakeDb();
+        const bucket = createFakeBucket();
+        await registered(db);
+        await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "MEDICAL", variant: null, mimeType: "application/pdf", buffer: PDF });
+        const now = new Date("2026-10-01T12:00:00.000Z");
+        const first = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "MEDICAL", mimeType: "application/pdf", fileSize: 10, now });
+        bucket.browserPut(bucket.signedUploads[0], PDF, "application/pdf", new Date(now.getTime() - STAGED_UPLOAD_MAX_AGE_MS - 1000));
+        const second = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "MEDICAL", mimeType: "application/pdf", fileSize: 10, now });
+        bucket.browserPut(bucket.signedUploads[1], PNG, "application/pdf", now);
+
+        await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "MEDICAL", mimeType: "application/pdf", fileSize: 10, now });
+        assert.deepEqual([...bucket.objects.keys()].sort(), ["clients/N1023757/medical/medical.pdf", `clients/N1023757/medical/upload_${second.uploadId}.pdf`]);
+        assert.ok(first.uploadId !== second.uploadId);
     });
 });
 

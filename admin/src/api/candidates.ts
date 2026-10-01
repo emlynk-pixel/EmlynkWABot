@@ -1,4 +1,4 @@
-import { apiRequest, apiUpload } from "./client";
+import { apiRequest, uploadToSignedUrl } from "./client";
 
 // Admin > Candidates (src/routes/admin.js, /api/admin/candidates/*).
 // Reads for every admin; changes need REVIEWER or above (checked on the server).
@@ -147,10 +147,19 @@ export function updateCandidateStage(token: string, passportId: string, stage: C
     return apiRequest<CandidateDetails>(`${base(passportId)}/stages/${stage}`, { method: "PUT", token, body });
 }
 
-export function uploadCandidateDocument(token: string, passportId: string, documentType: CandidateDocumentType, file: File, variant?: string): Promise<CandidateDetails> {
-    const query = new URLSearchParams({ type: documentType });
-    if (variant) query.set("variant", variant);
-    return apiUpload<CandidateDetails>(`${base(passportId)}/documents?${query.toString()}`, file, { token });
+// The file goes browser -> storage, never through the API: the API checks the
+// description (type, variant, MIME type, size) and answers with a signed URL
+// for one object; the file is PUT there; then the API checks the stored
+// bytes and records the document.
+export async function uploadCandidateDocument(token: string, passportId: string, documentType: CandidateDocumentType, file: File, variant?: string): Promise<CandidateDetails> {
+    const described = { type: documentType, ...(variant ? { variant } : {}), mimeType: file.type, fileName: file.name };
+    const target = await apiRequest<{ uploadId: string; uploadUrl: string }>(`${base(passportId)}/documents/upload-target`, {
+        method: "POST", token, body: { ...described, fileSize: file.size },
+    });
+    await uploadToSignedUrl(target.uploadUrl, file);
+    return apiRequest<CandidateDetails>(`${base(passportId)}/documents/finalize`, {
+        method: "POST", token, body: { ...described, uploadId: target.uploadId },
+    });
 }
 
 export function listCallLogs(token: string, passportId: string, signal?: AbortSignal): Promise<{ items: CallLogEntry[] }> {
