@@ -387,7 +387,7 @@ export function createAdminRouter({
     router.put("/candidates/:passportId/stages/:stage", requireRole(REVIEWERS_UP), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         if (!isCandidateStage(req.params.stage)) return res.status(404).json({ message: "Stage not found" });
-        const parsed = parseStageBody(req.body);
+        const parsed = parseStageBody(req.body, req.params.stage);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }

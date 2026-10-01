@@ -265,6 +265,12 @@ model CandidateStage {
   completedAt DateTime? @map("completed_at")
   notes       String?
   updatedAt   DateTime  @updatedAt @map("updated_at")
+  // TEST_DETAILS only (null on the other stages): the job ID the admin
+  // enters, the test's result (PASS or FAIL) and the date the candidate
+  // actually sat it. Null until recorded.
+  jobId       String?   @map("job_id")
+  testResult  String?   @map("test_result")
+  testDate    DateTime? @map("test_date") @db.Date
 
   user User @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
 

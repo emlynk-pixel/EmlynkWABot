@@ -229,8 +229,15 @@ export function parseCandidateBody(body, { creating }) {
     return errors.length ? { errors } : { values };
 }
 
-// Stage update: { completed?: boolean, notes?: string | null }.
-export function parseStageBody(body) {
+export const TEST_RESULTS = Object.freeze(["PASS", "FAIL"]);
+
+const MAX_JOB_ID_LENGTH = 50;
+
+// Stage update: { completed?: boolean, notes?: string | null }, and for
+// TEST_DETAILS also { jobId?: string | null, testResult?: "PASS" | "FAIL" |
+// null, testDate?: "YYYY-MM-DD" | null }. A field left out is unchanged;
+// null (or empty text) clears it.
+export function parseStageBody(body, stage) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
         return { errors: [{ field: "body", message: "must be a JSON object" }] };
     }
@@ -243,8 +250,24 @@ export function parseStageBody(body) {
     if (body.notes !== undefined) {
         values.notes = text(body, "notes", errors);
     }
-    if (!errors.length && values.completed === undefined && body.notes === undefined) {
-        errors.push({ field: "body", message: "must contain completed or notes" });
+    for (const field of ["jobId", "testResult", "testDate"]) {
+        if (body[field] !== undefined && stage !== "TEST_DETAILS") errors.push({ field, message: "is only recorded for the Test details stage" });
+    }
+    if (stage === "TEST_DETAILS") {
+        if (body.jobId !== undefined) {
+            values.jobId = text(body, "jobId", errors, { max: MAX_JOB_ID_LENGTH });
+        }
+        if (body.testResult !== undefined) {
+            if (body.testResult === null) values.testResult = null;
+            else if (TEST_RESULTS.includes(body.testResult)) values.testResult = body.testResult;
+            else errors.push({ field: "testResult", message: `must be one of: ${TEST_RESULTS.join(", ")}` });
+        }
+        if (body.testDate !== undefined) {
+            values.testDate = date(body, "testDate", errors);
+        }
+    }
+    if (!errors.length && Object.keys(values).length === 0 && body.notes === undefined) {
+        errors.push({ field: "body", message: "must contain completed, notes, or (Test details) jobId, testResult or testDate" });
     }
     return errors.length ? { errors } : { values };
 }
@@ -300,9 +323,11 @@ function stageList(rows, missingByStage) {
     return CANDIDATE_STAGES.map((stage) => {
         const row = byStage.get(stage);
         const missing = missingByStage[stage];
+        // Recorded on TEST_DETAILS only; null on every other stage.
+        const test = { jobId: row?.jobId ?? null, testResult: row?.testResult ?? null, testDate: isoDate(row?.testDate) };
         return missing
-            ? { stage, automatic: true, completed: missing.length === 0, completedAt: null, notes: row?.notes ?? null, missing }
-            : { stage, automatic: false, completed: Boolean(row?.completed), completedAt: row?.completedAt ?? null, notes: row?.notes ?? null, missing: [] };
+            ? { stage, automatic: true, completed: missing.length === 0, completedAt: null, notes: row?.notes ?? null, missing, ...test }
+            : { stage, automatic: false, completed: Boolean(row?.completed), completedAt: row?.completedAt ?? null, notes: row?.notes ?? null, missing: [], ...test };
     });
 }
 
@@ -437,7 +462,7 @@ export async function getCandidate({ db, passportId }) {
         where: { passportId },
         select: {
             ...userSelect,
-            stages: { select: { stage: true, completed: true, completedAt: true, notes: true } },
+            stages: { select: { stage: true, completed: true, completedAt: true, notes: true, jobId: true, testResult: true, testDate: true } },
             documents: {
                 where: { documentType: { in: Object.keys(CANDIDATE_DOCUMENT_TYPES) } },
                 select: {
@@ -602,6 +627,11 @@ export async function updateStage({ db, passportId, stage, values, now = new Dat
         data.completedAt = values.completed ? (current.completed ? current.completedAt : now) : null;
     }
     if (values.notes !== undefined) data.notes = values.notes;
+    if (stage === "TEST_DETAILS") {
+        if (values.jobId !== undefined) data.jobId = values.jobId;
+        if (values.testResult !== undefined) data.testResult = values.testResult;
+        if (values.testDate !== undefined) data.testDate = values.testDate;
+    }
 
     await db.candidateStage.upsert({
         where: { passportId_stage: { passportId, stage } },

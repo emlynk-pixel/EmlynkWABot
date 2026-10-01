@@ -5,17 +5,19 @@ import {
     AFFIDAVIT_VARIANTS,
     POLICE_REPORT_VARIANTS,
     STAGE_LABELS,
+    TEST_RESULT_OPTIONS,
     updateCandidate,
     updateCandidateStage,
     type CandidateDetails,
     type CandidateDetailsInput,
     type CandidateStageKey,
     type StageState,
+    type TestResult,
 } from "../../api/candidates";
 import { documentTypeLabel } from "../format";
 import { Icon } from "../Icon";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
-import { CandidateFields, detailsFrom, textAreaControl, validateDetails } from "./CandidateFields";
+import { CandidateFields, detailsFrom, Field, fieldControl, textAreaControl, validateDetails } from "./CandidateFields";
 import { DocumentRow, VIDEO_ACCEPT } from "./DocumentRow";
 import { exportDocumentSubmissionPdf } from "./exportPdf";
 
@@ -79,17 +81,33 @@ function AutomaticStatus({ stage, completedLabel = "Stage completed" }: { stage:
 
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "The changes could not be saved.");
 
-// Stages without their own data yet (Test details, IVS interview, Visa
-// approval, Finalizing the job): notes and completion.
+// The stages completed by an admin (Test details, IVS interview, Visa
+// approval, Finalizing the job): notes and completion. Test details also
+// records the job ID (entered by the admin), the test's result and the date
+// it was sat; the client name shown with them comes from the candidate's record.
 export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & { stage: CandidateStageKey }) {
     const { token } = useAuth();
     const saved = stageOf(details, stage);
+    const isTest = stage === "TEST_DETAILS";
     const [notes, setNotes] = useState(saved.notes ?? "");
     const [completed, setCompleted] = useState(saved.completed);
+    const [jobId, setJobId] = useState(saved.jobId ?? "");
+    const [testResult, setTestResult] = useState<TestResult | "">(saved.testResult ?? "");
+    const [testDate, setTestDate] = useState(saved.testDate ?? "");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const notesId = useId();
-    const dirty = notes !== (saved.notes ?? "") || completed !== saved.completed;
+    const testId = useId();
+    const dirty = notes !== (saved.notes ?? "") || completed !== saved.completed
+        || (isTest && (jobId !== (saved.jobId ?? "") || testResult !== (saved.testResult ?? "") || testDate !== (saved.testDate ?? "")));
+
+    const showSaved = (state: StageState) => {
+        setNotes(state.notes ?? "");
+        setCompleted(state.completed);
+        setJobId(state.jobId ?? "");
+        setTestResult(state.testResult ?? "");
+        setTestDate(state.testDate ?? "");
+    };
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
@@ -97,10 +115,12 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
         setBusy(true);
         setError(null);
         try {
-            const next = await updateCandidateStage(token, details.candidate.passportId, stage, { notes: notes.trim() || null, completed });
-            const after = stageOf(next, stage);
-            setNotes(after.notes ?? "");
-            setCompleted(after.completed);
+            const next = await updateCandidateStage(token, details.candidate.passportId, stage, {
+                notes: notes.trim() || null,
+                completed,
+                ...(isTest ? { jobId: jobId.trim() || null, testResult: testResult || null, testDate: testDate || null } : {}),
+            });
+            showSaved(stageOf(next, stage));
             onChange(next);
         } catch (caught) {
             setError(message(caught));
@@ -112,6 +132,31 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
     return (
         <form onSubmit={submit}>
             <PanelHeading title={STAGE_LABELS[stage]} />
+            {isTest && (
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <Field label="Client name" htmlFor={`${testId}-client`}>
+                        <input id={`${testId}-client`} value={details.candidate.name ?? ""} readOnly className={`${fieldControl} bg-canvas text-ink-muted`} />
+                    </Field>
+                    <Field label="Job ID" htmlFor={`${testId}-job`}>
+                        <input id={`${testId}-job`} value={jobId} maxLength={50} disabled={!canEdit || busy} onChange={(event) => setJobId(event.target.value)} className={fieldControl} />
+                    </Field>
+                    <Field label="Test result" htmlFor={`${testId}-result`}>
+                        <select
+                            id={`${testId}-result`}
+                            value={testResult}
+                            disabled={!canEdit || busy}
+                            onChange={(event) => setTestResult(TEST_RESULT_OPTIONS.find((o) => o.value === event.target.value)?.value ?? "")}
+                            className={fieldControl}
+                        >
+                            <option value="">Select result…</option>
+                            {TEST_RESULT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                    </Field>
+                    <Field label="Test date" htmlFor={`${testId}-date`}>
+                        <input id={`${testId}-date`} type="date" value={testDate} disabled={!canEdit || busy} onChange={(event) => setTestDate(event.target.value)} className={fieldControl} />
+                    </Field>
+                </div>
+            )}
             <div className="mt-4">
                 <label htmlFor={notesId} className="mb-1 block text-label-sm text-ink-muted">Notes</label>
                 <textarea id={notesId} rows={5} maxLength={2000} value={notes} disabled={!canEdit || busy} onChange={(event) => setNotes(event.target.value)} className={textAreaControl} />
@@ -122,7 +167,7 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
                 busy={busy}
                 dirty={dirty}
                 error={error}
-                onCancel={() => { setNotes(saved.notes ?? ""); setCompleted(saved.completed); setError(null); }}
+                onCancel={() => { showSaved(saved); setError(null); }}
             />
         </form>
     );

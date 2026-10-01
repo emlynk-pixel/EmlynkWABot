@@ -42,7 +42,22 @@ export function variantLabel(variant: string | null): string | null {
 export type StageProgress = { stage: CandidateStageKey; completed: boolean };
 // automatic: completed by the record's data (Candidate details, Document
 // submission), with what is still missing; otherwise completed by an admin.
-export type StageState = StageProgress & { completedAt: string | null; notes: string | null; automatic: boolean; missing: string[] };
+export const TEST_RESULT_OPTIONS = [
+    { value: "PASS", label: "Pass" },
+    { value: "FAIL", label: "Fail" },
+] as const;
+export type TestResult = (typeof TEST_RESULT_OPTIONS)[number]["value"];
+
+// jobId / testResult / testDate (YYYY-MM-DD): recorded on Test details only, null elsewhere.
+export type StageState = StageProgress & {
+    completedAt: string | null;
+    notes: string | null;
+    automatic: boolean;
+    missing: string[];
+    jobId: string | null;
+    testResult: TestResult | null;
+    testDate: string | null;
+};
 
 export type CandidateListItem = {
     passportId: string;
@@ -143,7 +158,12 @@ export function updateCandidate(token: string, passportId: string, body: Candida
     return apiRequest<CandidateDetails>(base(passportId), { method: "PUT", token, body });
 }
 
-export function updateCandidateStage(token: string, passportId: string, stage: CandidateStageKey, body: { completed?: boolean; notes?: string | null }): Promise<CandidateDetails> {
+export function updateCandidateStage(
+    token: string,
+    passportId: string,
+    stage: CandidateStageKey,
+    body: { completed?: boolean; notes?: string | null; jobId?: string | null; testResult?: TestResult | null; testDate?: string | null },
+): Promise<CandidateDetails> {
     return apiRequest<CandidateDetails>(`${base(passportId)}/stages/${stage}`, { method: "PUT", token, body });
 }
 
