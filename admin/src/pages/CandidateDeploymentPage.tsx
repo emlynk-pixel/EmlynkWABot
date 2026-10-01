@@ -27,8 +27,14 @@ export function CandidateDeploymentPage() {
     // A reload (Sync) replaces any locally updated copy.
     useEffect(() => setUpdated(null), [resource.data]);
 
+    // Reset local state when the route parameter changes.
+    useEffect(() => {
+        setUpdated(null);
+        setCallLogOpen(false);
+    }, [passportId]);
+
     const details = updated ?? resource.data;
-    if (!details) {
+    if (!details || details.candidate.passportId.toUpperCase() !== passportId.toUpperCase()) {
         return resource.status === "error"
             ? <Card><ErrorState message={resource.error.message} onRetry={resource.reload} /></Card>
             : <Card><LoadingState label="Loading candidate…" /></Card>;

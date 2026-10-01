@@ -537,6 +537,7 @@ export async function createCandidate({ db, values }) {
             const target = uniqueTarget(error);
             if (/unique_id|uniqueId/.test(target)) continue;
             if (/nic/.test(target)) throw new CandidateError(409, "NIC_EXISTS", "Another candidate is already registered with this NIC.");
+            if (/whatsapp/.test(target)) throw new CandidateError(409, "WHATSAPP_EXISTS", "Another candidate is already registered with this WhatsApp number.");
             throw new CandidateError(409, "CANDIDATE_EXISTS", "A candidate with this passport ID is already registered.");
         }
     }
@@ -564,7 +565,11 @@ export async function updateCandidateDetails({ db, passportId, values }) {
     try {
         await db.user.update({ where: { passportId }, data });
     } catch (error) {
-        if (isUniqueViolation(error)) throw new CandidateError(409, "NIC_EXISTS", "Another candidate is already registered with this NIC.");
+        if (isUniqueViolation(error)) {
+            const target = uniqueTarget(error);
+            if (/whatsapp/.test(target)) throw new CandidateError(409, "WHATSAPP_EXISTS", "Another candidate is already registered with this WhatsApp number.");
+            throw new CandidateError(409, "NIC_EXISTS", "Another candidate is already registered with this NIC.");
+        }
         throw error;
     }
     return getCandidate({ db, passportId });

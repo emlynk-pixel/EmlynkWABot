@@ -8,6 +8,7 @@ import { StageSummary } from "../components/candidate/CandidateStepper";
 import { Icon } from "../components/Icon";
 import { primaryButton } from "../components/Dialog";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
+import { useRef } from "react";
 
 const PAGE_SIZE = 25;
 const th = "h-[34px] whitespace-nowrap border-b border-border bg-canvas px-4 text-left text-label-caps uppercase text-ink-subtle";
@@ -33,9 +34,14 @@ export function CandidatesPage() {
         setSearchParams(next);
     };
     const open = (passportId: string) => navigate(`/candidates/${encodeURIComponent(passportId)}`);
+    const wasErrorRef = useRef(false);
+    if (list.status === "error") wasErrorRef.current = true;
+    if (list.status === "success") wasErrorRef.current = false;
+
     // A failed request shows its error only: the rows still held from an
     // earlier search or page are not the results of this one.
-    const data = list.status === "error" ? null : list.data;
+    // If retrying after an error, keep them hidden so they don't briefly reappear.
+    const data = (list.status === "error" || (list.status === "loading" && wasErrorRef.current)) ? null : list.data;
 
     return (
         <section aria-labelledby="page-title" className="space-y-4">

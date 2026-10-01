@@ -173,7 +173,10 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
             <Field label="Place of birth" htmlFor={`${id}-placeOfBirth`} error={errors.placeOfBirth}>{input("placeOfBirth")}</Field>
             <Field label="Passport issue date" htmlFor={`${id}-passportIssueDate`} error={errors.passportIssueDate}>{input("passportIssueDate", { type: "date" })}</Field>
             <Field label="Passport expiry date" htmlFor={`${id}-passportExpiryDate`} error={errors.passportExpiryDate}>{input("passportExpiryDate", { type: "date" })}</Field>
-            <Field label="WhatsApp number" htmlFor={`${id}-whatsappNumber`} error={errors.whatsappNumber}>{input("whatsappNumber", { type: "tel", maxLength: 30, readOnly: whatsappLocked })}</Field>
+            <Field label="WhatsApp number" htmlFor={`${id}-whatsappNumber`} error={errors.whatsappNumber}>
+                {input("whatsappNumber", { type: "tel", maxLength: 30, readOnly: whatsappLocked })}
+                {whatsappLocked && <div className="mt-1 text-label-sm text-ink-muted">Registered WhatsApp numbers cannot be changed.</div>}
+            </Field>
             <Field label="Contact number" htmlFor={`${id}-contactNumber`} error={errors.contactNumber}>{input("contactNumber", { type: "tel", maxLength: 30 })}</Field>
             <Field label="Job type" required htmlFor={`${id}-jobTypes`} error={errors.jobTypes} className="md:col-span-2">
                 <JobTypesInput id={`${id}-jobTypes`} value={value.jobTypes} onChange={(next) => onChange({ ...value, jobTypes: next })} disabled={disabled} invalid={Boolean(errors.jobTypes)} />
