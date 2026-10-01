@@ -63,9 +63,15 @@ export const CANDIDATE_DOCUMENT_TYPES = Object.freeze({
 // in Document Submission.
 export const REQUIRED_SUBMISSION_DOCUMENTS = Object.freeze(["PASSPORT", "MEDICAL", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"]);
 
-// Skill videos only. Same size limit as every other document: the private
-// bucket refuses larger objects.
+// Skill videos only.
 export const VIDEO_MIME_TYPES = Object.freeze(["video/mp4", "video/quicktime", "video/webm"]);
+
+// A skill video may be up to 50 MB; every other candidate document keeps the
+// 10 MB document limit (MAX_FILE_SIZE, shared with WhatsApp intake). The
+// storage bucket's own file size limit must be at least the larger one.
+export const MAX_VIDEO_FILE_SIZE = 50 * 1024 * 1024;
+export const maxFileSizeFor = (documentType) => (CANDIDATE_DOCUMENT_TYPES[documentType]?.video ? MAX_VIDEO_FILE_SIZE : MAX_FILE_SIZE);
+const tooLargeMessage = (limit) => `The file is larger than ${limit / (1024 * 1024)} MB.`;
 
 const MAX_NAME_LENGTH = 100;
 const MAX_ADDRESS_LENGTH = 500;
@@ -667,7 +673,7 @@ export function validateCandidateUpload({ documentType, mimeType, buffer }) {
         if (!mimeType) return UPLOAD_REJECTION_MESSAGES.MISSING_MIME_TYPE;
         if (!VIDEO_MIME_TYPES.includes(mimeType)) return "This file type is not accepted. Use MP4, MOV or WebM.";
         if (!buffer?.length) return "The file is empty.";
-        if (buffer.length > MAX_FILE_SIZE) return UPLOAD_REJECTION_MESSAGES.FILE_TOO_LARGE;
+        if (buffer.length > MAX_VIDEO_FILE_SIZE) return tooLargeMessage(MAX_VIDEO_FILE_SIZE);
         return videoSignatureMatches(buffer, mimeType) ? null : UPLOAD_REJECTION_MESSAGES.FILE_SIGNATURE_MISMATCH;
     }
     const result = validateDocumentFile({ mimeType, fileSize: buffer?.length ?? 0, fileBuffer: buffer });
@@ -714,7 +720,7 @@ export function checkDeclaredFile({ documentType, mimeType, fileSize }) {
     }
     if (fileSize === undefined) return null;
     if (fileSize <= 0) return UPLOAD_REJECTION_MESSAGES.INVALID_FILE_SIZE;
-    if (fileSize > MAX_FILE_SIZE) return UPLOAD_REJECTION_MESSAGES.FILE_TOO_LARGE;
+    if (fileSize > maxFileSizeFor(documentType)) return tooLargeMessage(maxFileSizeFor(documentType));
     return null;
 }
 
@@ -892,7 +898,7 @@ export async function uploadCandidateDocument({ db, bucket, admin, passportId, d
 // ---------------------------------------------------------------- direct uploads
 //
 // The file's bytes never pass through this API (on Vercel a request body is
-// capped far below the 10 MB file limit). Instead:
+// capped far below the file limits: 10 MB, 50 MB for a skill video). Instead:
 //   1. createUploadTarget: the admin's browser describes the file (type,
 //      variant, MIME type, size). Checked here as above; the answer is a
 //      signed URL for ONE new object, upload_<uploadId><ext> in the
@@ -942,7 +948,7 @@ export async function createUploadTarget({ db, bucket, passportId, documentType,
     const { data, error } = await bucket.createSignedUploadUrl(stagedUploadPath(passportId, documentType, uploadId, extensionForMimeType(mimeType)));
     // Paths contain the passport number, so they stay out of the message.
     if (error || !data?.signedUrl) throw new Error(`Signed upload URL not created: ${error?.message ?? "no URL returned"}`);
-    return { uploadId, uploadUrl: data.signedUrl, maxFileSize: MAX_FILE_SIZE };
+    return { uploadId, uploadUrl: data.signedUrl, maxFileSize: maxFileSizeFor(documentType) };
 }
 
 // POST /api/admin/candidates/:passportId/documents/finalize
@@ -969,7 +975,7 @@ export async function finalizeUpload({ db, bucket, admin, passportId, uploadId, 
     // Checked before reading it into memory: the signed URL itself can't cap the size.
     const size = Number(info.data.size);
     if (!(size > 0)) await refuse(UPLOAD_REJECTION_MESSAGES.INVALID_FILE_SIZE);
-    if (size > MAX_FILE_SIZE) await refuse(UPLOAD_REJECTION_MESSAGES.FILE_TOO_LARGE);
+    if (size > maxFileSizeFor(documentType)) await refuse(tooLargeMessage(maxFileSizeFor(documentType)));
     // Stored with the type the browser sent while uploading: it must be the one checked here.
     const storedType = mimeTypeFrom(info.data.contentType);
     if (storedType && storedType !== mimeType) await refuse(UPLOAD_REJECTION_MESSAGES.FILE_SIGNATURE_MISMATCH);

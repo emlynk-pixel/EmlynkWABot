@@ -949,6 +949,62 @@ describe("candidate routes: roles", () => {
     });
 });
 
+describe("file size limits: 50 MB for a skill video, 10 MB for documents", () => {
+    const MB = 1024 * 1024;
+    // A valid MP4 header followed by padding up to the given size.
+    const mp4Of = (bytes) => Buffer.concat([MP4, Buffer.alloc(bytes - MP4.length)]);
+
+    test("declared sizes: a video may exceed 10 MB up to 50 MB; documents stay at 10 MB", () => {
+        assert.equal(checkDeclaredFile({ documentType: "SKILL_VIDEO", mimeType: "video/mp4", fileSize: 10 * MB + 1 }), null);
+        assert.equal(checkDeclaredFile({ documentType: "SKILL_VIDEO", mimeType: "video/webm", fileSize: 50 * MB }), null);
+        assert.match(checkDeclaredFile({ documentType: "SKILL_VIDEO", mimeType: "video/mp4", fileSize: 50 * MB + 1 }), /larger than 50 MB/);
+        for (const documentType of ["PASSPORT", "NIC", "MEDICAL", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"]) {
+            assert.match(checkDeclaredFile({ documentType, mimeType: "application/pdf", fileSize: 10 * MB + 1 }), /larger than 10 MB/, documentType);
+        }
+    });
+
+    test("the stored bytes are held to the same limits", () => {
+        assert.equal(validateCandidateUpload({ documentType: "SKILL_VIDEO", mimeType: "video/mp4", buffer: mp4Of(12 * MB) }), null);
+        assert.match(validateCandidateUpload({ documentType: "SKILL_VIDEO", mimeType: "video/mp4", buffer: mp4Of(50 * MB + 1) }), /larger than 50 MB/);
+        const bigPdf = Buffer.concat([PDF, Buffer.alloc(10 * MB + 1 - PDF.length)]);
+        assert.match(validateCandidateUpload({ documentType: "MEDICAL", mimeType: "application/pdf", buffer: bigPdf }), /larger than 10 MB/);
+    });
+
+    test("a 12 MB skill video goes through target and finalize; the target reports the 50 MB limit", async () => {
+        const db = createFakeDb();
+        const bucket = createFakeBucket();
+        await registered(db);
+        const video = mp4Of(12 * MB);
+        const target = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "SKILL_VIDEO", mimeType: "video/mp4", fileSize: video.length });
+        assert.equal(target.maxFileSize, 50 * MB);
+        const document = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "MEDICAL", mimeType: "application/pdf", fileSize: 10 });
+        assert.equal(document.maxFileSize, 10 * MB);
+
+        bucket.browserPut(bucket.signedUploads[0], video, "video/mp4");
+        const done = await finalizeUpload({ db, bucket, admin: ADMIN, passportId: "N1023757", uploadId: target.uploadId, documentType: "SKILL_VIDEO", variant: null, mimeType: "video/mp4", originalFileName: "skills.mp4" });
+        assert.equal(done.documents.SKILL_VIDEO.originalFilename, "skills.mp4");
+        assert.equal(db.state.documents[0].fileSize, BigInt(12 * MB));
+    });
+
+    test("a staged video over 50 MB is refused before it is read, and removed", async () => {
+        const db = createFakeDb();
+        const bucket = createFakeBucket();
+        await registered(db);
+        const target = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "SKILL_VIDEO", mimeType: "video/mp4", fileSize: 20 * MB });
+        bucket.browserPut(bucket.signedUploads[0], mp4Of(50 * MB + 1), "video/mp4"); // bigger than it said
+        let downloaded = false;
+        const download = bucket.download;
+        bucket.download = async (path) => { downloaded = true; return download(path); };
+        await assert.rejects(
+            finalizeUpload({ db, bucket, admin: ADMIN, passportId: "N1023757", uploadId: target.uploadId, documentType: "SKILL_VIDEO", variant: null, mimeType: "video/mp4", originalFileName: null }),
+            (error) => error.code === "FILE_REJECTED" && /larger than 50 MB/.test(error.message),
+        );
+        assert.equal(downloaded, false);
+        assert.equal(bucket.objects.size, 0);
+        assert.equal(db.state.documents.length, 0);
+    });
+});
+
 describe("direct uploads: storage handling", () => {
     test("the declared file is checked like the bytes later are", () => {
         assert.equal(checkDeclaredFile({ documentType: "MEDICAL", mimeType: "image/png", fileSize: 10 }), null);
