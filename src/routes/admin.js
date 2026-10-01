@@ -60,10 +60,12 @@ import {
     isValidCandidateIdParam,
     listCallLogs,
     listCandidates,
+    removeCandidateDocument,
     parseCallLogBody,
     parseCandidateBody,
     parseCandidateListQuery,
     parseFinalizeUploadBody,
+    parseRemoveDocumentBody,
     parseStageBody,
     parseUploadTargetBody,
     updateCandidateDetails,
@@ -431,6 +433,28 @@ export function createAdminRouter({
             admin: req.admin,
             passportId: await storedCandidateId(client, req.params.passportId),
             ...parsed.values,
+        })));
+    });
+
+    // Removes the candidate's current document of a type: record and file,
+    // with a required reason, audited (like Remove from Review).
+    router.post("/candidates/:passportId/documents/:documentId/remove", requireRole(REVIEWERS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        if (!isValidDocumentIdParam(req.params.documentId)) {
+            return res.status(400).json({ message: "Invalid document ID", errors: [{ field: "documentId", message: "must be a document ID" }] });
+        }
+        const parsed = parseRemoveDocumentBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => res.json(await removeCandidateDocument({
+            db: client,
+            bucket: storage,
+            admin: req.admin,
+            passportId: await storedCandidateId(client, req.params.passportId),
+            documentId: req.params.documentId,
+            reason: parsed.values.reason,
         })));
     });
 

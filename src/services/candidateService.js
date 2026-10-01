@@ -991,6 +991,75 @@ export async function finalizeUpload({ db, bucket, admin, passportId, uploadId, 
     });
 }
 
+// ---------------------------------------------------------------- removing a document
+//
+// Like Remove from Review (adminReviewActionService.js): an explicit reason,
+// one audit entry (append-only, so it outlives the document), the record
+// deleted in a transaction, then its file, unless another record still
+// points at it. Only the candidate's current document of a candidate type
+// can be removed: earlier versions (SUPERSEDED) stay as history, and the
+// type's slot is left empty (not rolled back to the previous version).
+
+export const REMOVED_STATUS = "REMOVED";
+const MAX_REMOVE_REASON_LENGTH = 500;
+
+// POST …/documents/:documentId/remove: { reason } (required).
+export function parseRemoveDocumentBody(body) {
+    if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
+    const errors = [];
+    const reason = text(body, "reason", errors, { required: true, max: MAX_REMOVE_REASON_LENGTH });
+    return errors.length ? { errors } : { values: { reason } };
+}
+
+// POST /api/admin/candidates/:passportId/documents/:documentId/remove
+export async function removeCandidateDocument({ db, bucket, admin, passportId, documentId, reason }) {
+    await requireCandidate(db, passportId);
+    const notFound = () => new CandidateError(404, "DOCUMENT_NOT_FOUND", "This document is no longer on record for this candidate. Refresh the page.");
+
+    const outcome = await db.$transaction(async (tx) => {
+        const row = await tx.document.findFirst({
+            where: {
+                documentId,
+                passportId,
+                documentType: { in: Object.keys(CANDIDATE_DOCUMENT_TYPES) },
+                verificationStatus: { not: VERIFICATION_STATUS.SUPERSEDED },
+            },
+            select: { documentId: true, documentType: true, verificationStatus: true, storagePath: true, fileSha256: true, temporaryId: true },
+        });
+        if (!row) throw notFound();
+
+        await tx.auditLog.create({
+            data: {
+                auditId: crypto.randomUUID(),
+                adminId: admin.adminId,
+                action: "REMOVE_DOCUMENT",
+                temporaryId: row.temporaryId ?? null,
+                documentId: row.documentId,
+                passportId,
+                previousStatus: row.verificationStatus,
+                newStatus: REMOVED_STATUS,
+                reason,
+                documentType: row.documentType,
+                fileSha256: row.fileSha256 ?? null,
+            },
+        });
+        // Only if it is still the same record: a second, concurrent removal finds nothing.
+        const { count } = await tx.document.deleteMany({ where: { documentId: row.documentId, passportId, verificationStatus: row.verificationStatus } });
+        if (count !== 1) throw notFound();
+        // The file goes only if no other record points at it.
+        const shared = row.storagePath ? await tx.document.count({ where: { storagePath: row.storagePath } }) : 0;
+        return { path: shared === 0 ? row.storagePath : null };
+    });
+
+    // Committed: the record is gone. Now its file.
+    const removal = outcome.path ? await removeObject(outcome.path, { bucket }) : { removed: true };
+    if (!removal.removed) {
+        // The path holds the passport number, so only the document ID is logged.
+        console.warn("Candidate document remove: file not deleted after the record was removed", { documentId, error: removal.error });
+    }
+    return getCandidate({ db, passportId });
+}
+
 // ---------------------------------------------------------------- call log
 
 export async function listCallLogs({ db, passportId }) {

@@ -1,10 +1,11 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
-import { uploadCandidateDocument, variantLabel, type CandidateDetails, type CandidateDocument, type CandidateDocumentType } from "../../api/candidates";
+import { removeCandidateDocument, uploadCandidateDocument, variantLabel, type CandidateDetails, type CandidateDocument, type CandidateDocumentType } from "../../api/candidates";
 import { formatDate } from "../format";
 import { Icon } from "../Icon";
-import { secondaryButton } from "../Dialog";
+import { ActionDialog, DialogError, dangerButton, dangerSolidButton, secondaryButton } from "../Dialog";
+import { textAreaControl } from "./CandidateFields";
 
 export const DOCUMENT_ACCEPT = "application/pdf,image/jpeg,image/png";
 export const VIDEO_ACCEPT = "video/mp4,video/quicktime,video/webm";
@@ -14,10 +15,13 @@ function statusLine(document: CandidateDocument | null, description?: string) {
     return [description, document.originalFilename, variantLabel(document.variant), formatDate(document.receivedDate)].filter(Boolean).join(" • ");
 }
 
-// One document: its name, what is stored now, an optional type selector and
-// Upload. A file is uploaded as soon as it is chosen. A document with
-// variants (police report, affidavit) needs its type chosen first: nothing is
-// preselected unless the stored document already has one.
+// One document: its name, what is stored now, an optional type selector,
+// Upload / Replace and Remove. A file is uploaded as soon as it is chosen. A
+// document with variants (police report, affidavit) needs its type chosen
+// first: nothing is preselected unless the stored document already has one.
+// Remove deletes the stored document and its file, after a confirmation with
+// a reason (kept in the audit log). onUploaded gets the candidate after an
+// upload or a removal.
 export function DocumentRow({ passportId, documentType, label, description, required, document, variants, accept = DOCUMENT_ACCEPT, readOnly, onUploaded }: {
     passportId: string;
     documentType: CandidateDocumentType;
@@ -35,19 +39,50 @@ export function DocumentRow({ passportId, documentType, label, description, requ
     const [variant, setVariant] = useState(() => (variants?.some((v) => v.value === document?.variant) ? document?.variant ?? "" : ""));
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    // An upload is saved as soon as it finishes (the form's Save changes is
-    // for the form's fields): say so, so the admin doesn't look for a save.
-    const [saved, setSaved] = useState(false);
+    // An upload or a removal is saved as soon as it finishes (the form's Save
+    // changes is for the form's fields): say so, so the admin doesn't look for a save.
+    const [done, setDone] = useState<"Saved" | "Removed" | null>(null);
+    const [removing, setRemoving] = useState(false);
+    const [reason, setReason] = useState("");
+    const [removeError, setRemoveError] = useState<string | null>(null);
+    const reasonId = useId();
     const needsVariant = Boolean(variants) && !variant;
+
+    const closeRemove = () => {
+        setRemoving(false);
+        setReason("");
+        setRemoveError(null);
+    };
+
+    const confirmRemove = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!token || !document || busy) return;
+        if (!reason.trim()) {
+            setRemoveError("Enter the reason for removing this file.");
+            return;
+        }
+        setBusy(true);
+        setRemoveError(null);
+        try {
+            onUploaded(await removeCandidateDocument(token, passportId, document.documentId, reason.trim()));
+            closeRemove();
+            setError(null);
+            setDone("Removed");
+        } catch (caught) {
+            setRemoveError(caught instanceof ApiError ? caught.message : "The file could not be removed.");
+        } finally {
+            setBusy(false);
+        }
+    };
 
     const upload = async (file: File | undefined) => {
         if (!file || !token || needsVariant) return;
         setBusy(true);
         setError(null);
-        setSaved(false);
+        setDone(null);
         try {
             onUploaded(await uploadCandidateDocument(token, passportId, documentType, file, variants ? variant : undefined));
-            setSaved(true);
+            setDone("Saved");
         } catch (caught) {
             setError(caught instanceof ApiError ? caught.message : "The file could not be uploaded.");
         } finally {
@@ -63,7 +98,7 @@ export function DocumentRow({ passportId, documentType, label, description, requ
                     <p className="text-label-md text-ink">
                         {label}{required && <span className="text-critical"> *</span>}
                         {document?.verificationStatus === "REVIEW_REQUIRED" && <span className="ml-2 text-label-sm text-review">Needs review</span>}
-                        {saved && <span role="status" className="ml-2 inline-flex items-center gap-1 text-label-sm text-verified"><Icon name="check" className="size-3.5" />Saved</span>}
+                        {done && <span role="status" className="ml-2 inline-flex items-center gap-1 text-label-sm text-verified"><Icon name="check" className="size-3.5" />{done}</span>}
                     </p>
                     <p className="truncate text-label-sm text-ink-subtle">{statusLine(document, description)}</p>
                 </div>
@@ -82,11 +117,33 @@ export function DocumentRow({ passportId, documentType, label, description, requ
                     )}
                     <input ref={input} type="file" accept={accept} className="hidden" aria-label={`${label} file`} disabled={readOnly || busy || needsVariant} onChange={(event) => upload(event.target.files?.[0])} />
                     <button type="button" disabled={readOnly || busy || needsVariant} onClick={() => input.current?.click()} className={`${secondaryButton} inline-flex items-center gap-1.5`}>
-                        <Icon name="upload" className="size-4" />{busy ? "Uploading…" : document ? "Replace" : "Upload"}
+                        <Icon name="upload" className="size-4" />{busy && !removing ? "Uploading…" : document ? "Replace" : "Upload"}
                     </button>
+                    {document && !readOnly && (
+                        <button type="button" disabled={busy} onClick={() => setRemoving(true)} className={`${dangerButton} inline-flex items-center gap-1.5`}>
+                            <Icon name="delete" className="size-4" />Remove
+                        </button>
+                    )}
                 </div>
             </div>
             {error && <p role="alert" className="mt-2 text-label-sm text-critical">{error}</p>}
+            {removing && document && (
+                <ActionDialog title={`Remove ${label}?`} busy={busy} onClose={closeRemove}>
+                    <form onSubmit={confirmRemove}>
+                        <p className="text-body-sm text-ink-muted">
+                            <span className="font-medium text-ink">{document.originalFilename}</span> will be deleted permanently: the file and its record.
+                            The removal and your reason are kept in the audit log.
+                        </p>
+                        <label htmlFor={reasonId} className="mb-1 mt-4 block text-label-sm text-ink-muted">Reason<span className="text-critical"> *</span></label>
+                        <textarea id={reasonId} rows={3} maxLength={500} value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)} className={textAreaControl} />
+                        <DialogError message={removeError} />
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button type="button" onClick={closeRemove} disabled={busy} className={secondaryButton}>Cancel</button>
+                            <button type="submit" disabled={busy} className={dangerSolidButton}>{busy ? "Removing…" : "Remove"}</button>
+                        </div>
+                    </form>
+                </ActionDialog>
+            )}
         </div>
     );
 }

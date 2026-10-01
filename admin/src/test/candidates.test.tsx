@@ -360,6 +360,72 @@ describe("Candidate deployment", () => {
         });
     });
 
+    describe("removing a document", () => {
+        const stored = (documentId: string, name: string) => ({ documentId, originalFilename: name, verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-01T00:00:00.000Z" });
+        const withNic: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, NIC: stored("doc-nic", "nic-scan.pdf") } };
+        const rowOf = (fileLabel: string) => within(screen.getByLabelText(fileLabel).closest("div.rounded-lg") as HTMLElement);
+
+        test("only a stored document has Remove; the reason is required; removing empties the row and says Removed", async () => {
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withNic },
+                "POST /api/admin/candidates/N0000002/documents/doc-nic/remove": { status: 200, body: DETAILS },
+            });
+            renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+            const user = userEvent.setup();
+
+            await screen.findByLabelText("NIC document file");
+            expect(rowOf("Passport file").queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+            expect(rowOf("Skill video file").queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+
+            await user.click(rowOf("NIC document file").getByRole("button", { name: "Remove" }));
+            const dialog = screen.getByRole("dialog", { name: "Remove NIC document?" });
+            expect(dialog).toHaveTextContent("nic-scan.pdf will be deleted permanently");
+
+            await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+            expect(within(dialog).getByText("Enter the reason for removing this file.")).toBeInTheDocument();
+            expect(calls.some((c) => c.path.endsWith("/remove")), "nothing sent without a reason").toBe(false);
+
+            await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+            expect(calls.some((c) => c.path.endsWith("/remove"))).toBe(false);
+
+            await user.click(rowOf("NIC document file").getByRole("button", { name: "Remove" }));
+            await user.type(screen.getByLabelText("Reason *"), "Wrong person's NIC");
+            await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove" }));
+
+            await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+            expect(calls.find((c) => c.path.endsWith("/remove"))!.body).toEqual({ reason: "Wrong person's NIC" });
+            expect(rowOf("NIC document file").getByRole("status")).toHaveTextContent("Removed");
+            expect(rowOf("NIC document file").getByText("No file uploaded")).toBeInTheDocument();
+            expect(rowOf("NIC document file").getByRole("button", { name: "Upload" })).toBeEnabled();
+            expect(rowOf("NIC document file").queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+        });
+
+        test("a refused removal is shown in the dialog and nothing changes", async () => {
+            signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withNic },
+                "POST /api/admin/candidates/N0000002/documents/doc-nic/remove": { status: 404, body: { message: "This document is no longer on record for this candidate. Refresh the page.", code: "DOCUMENT_NOT_FOUND" } },
+            });
+            renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+            const user = userEvent.setup();
+            await screen.findByLabelText("NIC document file");
+            await user.click(rowOf("NIC document file").getByRole("button", { name: "Remove" }));
+            await user.type(screen.getByLabelText("Reason *"), "Duplicate");
+            await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove" }));
+
+            expect(await within(screen.getByRole("dialog")).findByText("This document is no longer on record for this candidate. Refresh the page.")).toBeInTheDocument();
+            expect(rowOf("NIC document file").getByText(/^nic-scan\.pdf •/)).toBeInTheDocument();
+            expect(rowOf("NIC document file").queryByRole("status")).not.toBeInTheDocument();
+        });
+
+        test("a viewer has no Remove", async () => {
+            signedInBackend({ "GET /auth/me": { status: 200, body: { admin: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withNic } });
+            renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+            await screen.findByLabelText("NIC document file");
+            expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+        });
+    });
+
     test("candidate details: optional fields are empty when not on record; a WhatsApp number on record is read-only", async () => {
         signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");

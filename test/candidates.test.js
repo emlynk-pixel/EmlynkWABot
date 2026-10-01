@@ -18,6 +18,8 @@ import {
     createUploadTarget,
     finalizeUpload,
     parseFinalizeUploadBody,
+    parseRemoveDocumentBody,
+    removeCandidateDocument,
     parseUploadTargetBody,
     STAGED_UPLOAD_MAX_AGE_MS,
     parseCandidateBody,
@@ -68,6 +70,7 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
             if ("equals" in condition) return condition.mode === "insensitive" ? String(value).toLowerCase() === String(condition.equals).toLowerCase() : value === condition.equals;
             if ("contains" in condition) return value != null && String(value).toLowerCase().includes(String(condition.contains).toLowerCase());
             if ("endsWith" in condition) return value != null && String(value).endsWith(condition.endsWith);
+            if ("not" in condition) return value !== condition.not;
         }
         return value === condition;
     });
@@ -126,6 +129,11 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
             },
             create: async ({ data }) => {
                 state.documents.push({ createdDate: new Date(), ...data });
+            },
+            deleteMany: async ({ where }) => {
+                const before = state.documents.length;
+                state.documents = state.documents.filter((d) => !matches(d, where));
+                return { count: before - state.documents.length };
             },
         },
         auditLog: { create: async ({ data }) => { state.auditLogs.push(data); } },
@@ -926,7 +934,8 @@ describe("candidate routes: roles", () => {
         test("no route takes a file body: the old upload route is gone and finalize ignores anything but JSON", async () => {
             const router = createAdminRouter({ db: createFakeDb(), bucket: createFakeBucket(), requireAdmin: (req, res, next) => next(), apiLimiter: noRateLimit });
             const documentRoutes = router.stack.filter((layer) => layer.route?.path.includes("/documents")).map((layer) => layer.route.path);
-            assert.deepEqual(documentRoutes.filter((path) => path.startsWith("/candidates")), ["/candidates/:passportId/documents/upload-target", "/candidates/:passportId/documents/finalize"]);
+            // All JSON only (remove takes { reason }).
+            assert.deepEqual(documentRoutes.filter((path) => path.startsWith("/candidates")), ["/candidates/:passportId/documents/upload-target", "/candidates/:passportId/documents/finalize", "/candidates/:passportId/documents/:documentId/remove"]);
             assert.equal((await call("ADMIN", "POST", "/api/admin/candidates/N1023757/documents", undefined)).status, 404);
 
             const { db, bucket } = await withCandidate();
@@ -946,6 +955,133 @@ describe("candidate routes: roles", () => {
             assert.equal(db.state.documents.length, 0);
             assert.equal(bucket.objects.size, 0);
         });
+    });
+});
+
+describe("removing a document", () => {
+    const seed = async () => {
+        const db = createFakeDb();
+        const bucket = createFakeBucket();
+        await registered(db);
+        const upload = (documentType, buffer, variant = null) => uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType, variant, mimeType: "application/pdf", buffer });
+        return { db, bucket, upload };
+    };
+    const remove = (db, bucket, documentId, passportId = "N1023757", reason = "Wrong file uploaded") =>
+        removeCandidateDocument({ db, bucket, admin: ADMIN, passportId, documentId, reason });
+
+    test("the reason is required, at most 500 characters", () => {
+        assert.ok(parseRemoveDocumentBody({}).errors);
+        assert.ok(parseRemoveDocumentBody({ reason: "   " }).errors);
+        assert.ok(parseRemoveDocumentBody({ reason: "x".repeat(501) }).errors);
+        assert.ok(parseRemoveDocumentBody([]).errors);
+        assert.deepEqual(parseRemoveDocumentBody({ reason: " Wrong file " }).values, { reason: "Wrong file" });
+    });
+
+    test("removes the record and its file, audits it, and empties the slot; stage completion follows", async () => {
+        const { db, bucket, upload } = await seed();
+        let details = await upload("PASSPORT", PDF);
+        assert.equal(details.stages.find((s) => s.stage === "CANDIDATE_DETAILS").completed, true);
+
+        details = await remove(db, bucket, details.documents.PASSPORT.documentId);
+        assert.equal(details.documents.PASSPORT, null);
+        assert.equal(db.state.documents.length, 0);
+        assert.equal(bucket.objects.size, 0, "the file is deleted");
+        assert.deepEqual(details.stages.find((s) => s.stage === "CANDIDATE_DETAILS").missing, ["passport document"]);
+        const audit = db.state.auditLogs.at(-1);
+        assert.deepEqual([audit.action, audit.previousStatus, audit.newStatus, audit.reason, audit.documentType, audit.passportId], ["REMOVE_DOCUMENT", "VERIFIED", "REMOVED", "Wrong file uploaded", "PASSPORT", "N1023757"]);
+    });
+
+    test("the same file can be uploaded again after it was removed", async () => {
+        const { db, bucket, upload } = await seed();
+        const first = await upload("NIC", PDF);
+        await remove(db, bucket, first.documents.NIC.documentId);
+        const again = await upload("NIC", PDF);
+        assert.equal(again.documents.NIC.verificationStatus, "VERIFIED");
+        assert.equal(db.state.documents.length, 1);
+    });
+
+    test("after removing a replacement, earlier versions stay as history and the slot stays empty", async () => {
+        const { db, bucket, upload } = await seed();
+        await upload("MEDICAL", PDF);
+        const replaced = await upload("MEDICAL", Buffer.concat([PDF, Buffer.from("v2")]));
+        const details = await remove(db, bucket, replaced.documents.MEDICAL.documentId);
+        assert.equal(details.documents.MEDICAL, null);
+        assert.deepEqual(db.state.documents.map((d) => [d.storedFilename, d.verificationStatus]), [["medical.pdf", "SUPERSEDED"]]);
+        assert.deepEqual([...bucket.objects.keys()], ["clients/N1023757/medical/medical.pdf"]);
+    });
+
+    test("only this candidate's current document: a superseded version, another candidate's, or one already removed is not found", async () => {
+        const { db, bucket, upload } = await seed();
+        await registered(db, { passportId: "P7654321", nic: "200012345678" });
+        const old = await upload("AGREEMENT", PDF);
+        await upload("AGREEMENT", Buffer.concat([PDF, Buffer.from("v2")]));
+        const superseded = old.documents.AGREEMENT.documentId;
+        await assert.rejects(remove(db, bucket, superseded), (error) => error.code === "DOCUMENT_NOT_FOUND" && error.status === 404);
+
+        const current = db.state.documents.find((d) => d.verificationStatus === "VERIFIED").documentId;
+        await assert.rejects(remove(db, bucket, current, "P7654321"), (error) => error.code === "DOCUMENT_NOT_FOUND", "candidate B can't remove A's document");
+        assert.equal(db.state.documents.length, 2, "nothing removed");
+        assert.equal(bucket.objects.size, 2);
+
+        await remove(db, bucket, current);
+        await assert.rejects(remove(db, bucket, current), (error) => error.code === "DOCUMENT_NOT_FOUND", "already removed");
+        assert.equal(db.state.auditLogs.filter((a) => a.action === "REMOVE_DOCUMENT").length, 1);
+    });
+
+    test("a file another record still points at is kept", async () => {
+        const { db, bucket, upload } = await seed();
+        const details = await upload("PASSPORT", PDF);
+        const row = db.state.documents[0];
+        db.state.documents.push({ ...row, documentId: "f1c2a3b4-0000-4000-8000-000000000099", documentType: "POLICE_SLIP", fileSha256: "other" });
+        await remove(db, bucket, details.documents.PASSPORT.documentId);
+        assert.equal(bucket.objects.size, 1, "still referenced");
+    });
+
+    test("a file that can't be deleted doesn't undo the removal", async () => {
+        const { db, bucket, upload } = await seed();
+        const details = await upload("PASSPORT", PDF);
+        bucket.remove = async () => ({ error: { message: "storage unavailable" } });
+        const warnings = [];
+        const warn = console.warn;
+        console.warn = (...args) => warnings.push(args);
+        try {
+            const after = await remove(db, bucket, details.documents.PASSPORT.documentId);
+            assert.equal(after.documents.PASSPORT, null);
+        } finally {
+            console.warn = warn;
+        }
+        assert.equal(db.state.documents.length, 0);
+        assert.equal(warnings.length, 1);
+        assert.ok(!JSON.stringify(warnings).includes("N1023757"), "the passport number isn't logged");
+    });
+
+    test("the route: REVIEWER and ADMIN may remove with a reason; a VIEWER may not; bad input is refused", async () => {
+        const { db, bucket, upload } = await seed();
+        const details = await upload("NIC", PDF);
+        const documentId = details.documents.NIC.documentId;
+        const request = async (role, path, body) => {
+            const app = express();
+            app.use(express.json());
+            app.use("/api/admin", createAdminRouter({ db, bucket, requireAdmin: (req, res, next) => { req.admin = { ...ADMIN, role }; next(); }, apiLimiter: noRateLimit }));
+            app.use(errorHandler);
+            const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+            try {
+                const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+                return { status: response.status, body: await response.json() };
+            } finally {
+                server.close();
+            }
+        };
+        const path = `/api/admin/candidates/N1023757/documents/${documentId}/remove`;
+        assert.equal((await request("VIEWER", path, { reason: "x" })).status, 403);
+        assert.equal((await request("REVIEWER", path, {})).status, 400, "reason required");
+        assert.equal((await request("REVIEWER", "/api/admin/candidates/N1023757/documents/not-an-id/remove", { reason: "x" })).status, 400);
+        assert.equal(db.state.documents.length, 1, "nothing removed yet");
+
+        const removed = await request("REVIEWER", path, { reason: "Wrong NIC" });
+        assert.equal(removed.status, 200);
+        assert.equal(removed.body.documents.NIC, null);
+        assert.equal((await request("ADMIN", path, { reason: "again" })).status, 404);
     });
 });
 

@@ -186,6 +186,12 @@ export async function uploadCandidateDocument(token: string, passportId: string,
     });
 }
 
+// Deletes the candidate's current document (record and file); the reason is
+// required and kept in the audit log.
+export function removeCandidateDocument(token: string, passportId: string, documentId: string, reason: string): Promise<CandidateDetails> {
+    return apiRequest<CandidateDetails>(`${base(passportId)}/documents/${encodeURIComponent(documentId)}/remove`, { method: "POST", token, body: { reason } });
+}
+
 export function listCallLogs(token: string, passportId: string, signal?: AbortSignal): Promise<{ items: CallLogEntry[] }> {
     return apiRequest(`${base(passportId)}/call-logs`, { token, signal });
 }

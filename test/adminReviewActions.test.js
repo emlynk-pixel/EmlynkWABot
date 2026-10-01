@@ -575,6 +575,7 @@ describe("security and error handling", () => {
             "DELETE /temporary-documents/:temporaryId",
             "POST /candidates", // candidate management (REVIEWER and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",
+            "POST /candidates/:passportId/documents/:documentId/remove", // reason required, audited
             "POST /candidates/:passportId/documents/finalize", // JSON only: the file goes browser -> storage
             "POST /candidates/:passportId/documents/upload-target",
             "POST /documents/:documentId/police-date",
