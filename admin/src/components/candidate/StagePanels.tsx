@@ -166,7 +166,7 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
         <form onSubmit={submit}>
             <PanelHeading title="Candidate details" />
             <div className="mt-4">
-                <CandidateFields value={form} onChange={setForm} errors={fieldErrors} disabled={!canEdit || busy} passportId={{ value: passportId }} />
+                <CandidateFields value={form} onChange={setForm} errors={fieldErrors} disabled={!canEdit || busy} passportId={{ value: passportId }} whatsappLocked={Boolean(details.candidate.whatsappNumber)} />
             </div>
             <div className="mt-6 space-y-2">
                 <DocumentRow passportId={passportId} documentType="PASSPORT" label="Passport" required document={details.documents.PASSPORT} readOnly={!canEdit} onUploaded={onChange} />

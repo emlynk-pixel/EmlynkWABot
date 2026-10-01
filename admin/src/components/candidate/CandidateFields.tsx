@@ -1,11 +1,12 @@
 import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { CandidateDetails, CandidateDetailsInput } from "../../api/candidates";
+import { SEX_OPTIONS, type CandidateDetails, type CandidateDetailsInput } from "../../api/candidates";
 
 export const fieldControl = "h-10 w-full rounded border border-border-strong bg-surface px-3 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
 export const textAreaControl = "w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
 
 export const emptyDetails = (): CandidateDetailsInput => ({
-    surname: "", otherNames: "", nic: "", address: "", jobTypes: [], jobExperience: "", dateOfBirth: "", placeOfBirth: "", passportExpiryDate: "",
+    surname: "", otherNames: "", nic: "", address: "", jobTypes: [], jobExperience: "",
+    nationality: "", sex: "", dateOfBirth: "", placeOfBirth: "", passportIssueDate: "", passportExpiryDate: "", whatsappNumber: "", contactNumber: "",
 });
 
 export function detailsFrom(candidate: CandidateDetails["candidate"]): CandidateDetailsInput {
@@ -16,16 +17,28 @@ export function detailsFrom(candidate: CandidateDetails["candidate"]): Candidate
         address: candidate.address ?? "",
         jobTypes: candidate.jobTypes,
         jobExperience: candidate.jobExperience ?? "",
+        nationality: candidate.nationality ?? "",
+        sex: candidate.sex ?? "",
         dateOfBirth: candidate.dateOfBirth ?? "",
         placeOfBirth: candidate.placeOfBirth ?? "",
+        passportIssueDate: candidate.passportIssueDate ?? "",
         passportExpiryDate: candidate.passportExpiryDate ?? "",
+        whatsappNumber: candidate.whatsappNumber ?? "",
+        contactNumber: candidate.contactNumber ?? "",
     };
 }
 
 const NIC_PATTERN = /^(\d{9}[VXvx]|\d{12})$/;
+// 8 to 15 digits once spaces, dashes, "+" and a leading "00" are removed
+// (the server stores the normalized number).
+const isPhoneNumber = (value: string) => {
+    const digits = value.replace(/\D/g, "").replace(/^00/, "");
+    return /^[\d\s()+-]+$/.test(value) && digits.length >= 8 && digits.length <= 15;
+};
 
 // The same rules the server applies (candidateService.js), checked first so
-// the admin sees which field to fix. Returns field -> message.
+// the admin sees which field to fix. Returns field -> message. The passport
+// and contact details are optional: only a value that is given is checked.
 export function validateDetails(value: CandidateDetailsInput): Record<string, string> {
     const errors: Record<string, string> = {};
     if (!value.surname.trim()) errors.surname = "Enter the surname.";
@@ -35,6 +48,12 @@ export function validateDetails(value: CandidateDetailsInput): Record<string, st
     if (!value.address.trim()) errors.address = "Enter the address.";
     if (!value.jobTypes.length) errors.jobTypes = "Add at least one job type.";
     if (!value.jobExperience.trim()) errors.jobExperience = "Enter the job experience.";
+    if (value.passportIssueDate && value.passportExpiryDate && value.passportIssueDate >= value.passportExpiryDate) {
+        errors.passportIssueDate = "Must be before the expiry date.";
+    }
+    for (const field of ["whatsappNumber", "contactNumber"] as const) {
+        if (value[field].trim() && !isPhoneNumber(value[field].trim())) errors[field] = "Enter a phone number, e.g. 0771234567.";
+    }
     return errors;
 }
 
@@ -90,27 +109,31 @@ function JobTypesInput({ id, value, onChange, disabled, invalid }: { id: string;
     );
 }
 
-// Candidate details: passport details, NIC, address, job types and experience.
-// The passport ID is entered once at registration and shown read-only after.
-export function CandidateFields({ value, onChange, errors = {}, disabled, passportId }: {
+// Candidate details: passport details, NIC, contact numbers, address, job
+// types and experience. Required fields are marked; the rest are optional.
+// The passport ID is entered once at registration and shown read-only after;
+// so is a WhatsApp number already on record (whatsappLocked).
+export function CandidateFields({ value, onChange, errors = {}, disabled, passportId, whatsappLocked }: {
     value: CandidateDetailsInput;
     onChange: (next: CandidateDetailsInput) => void;
     errors?: Record<string, string>;
     disabled?: boolean;
-    passportId: { value: string; onChange?: (next: string) => void; error?: string };
+    passportId: { value: string; onChange?: (next: string) => void; onBlur?: () => void; error?: string; hint?: ReactNode };
+    whatsappLocked?: boolean;
 }) {
     const id = useId();
     const set = (field: keyof CandidateDetailsInput) => (next: string) => onChange({ ...value, [field]: next });
-    const input = (field: Exclude<keyof CandidateDetailsInput, "jobTypes">, props: { type?: string; maxLength?: number } = {}) => (
+    const input = (field: Exclude<keyof CandidateDetailsInput, "jobTypes" | "sex">, props: { type?: string; maxLength?: number; readOnly?: boolean } = {}) => (
         <input
             id={`${id}-${field}`}
             type={props.type ?? "text"}
             maxLength={props.maxLength ?? 100}
             value={value[field]}
-            disabled={disabled}
+            disabled={disabled && !props.readOnly}
+            readOnly={props.readOnly}
             onChange={(event) => set(field)(event.target.value)}
             aria-invalid={Boolean(errors[field])}
-            className={`${fieldControl} ${errors[field] ? "border-critical" : ""}`}
+            className={`${fieldControl} ${props.readOnly ? "bg-canvas text-ink-muted" : ""} ${errors[field] ? "border-critical" : ""}`}
         />
     );
 
@@ -127,14 +150,31 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
                     readOnly={!passportId.onChange}
                     disabled={disabled && Boolean(passportId.onChange)}
                     onChange={(event) => passportId.onChange?.(event.target.value.toUpperCase())}
+                    onBlur={passportId.onBlur}
                     aria-invalid={Boolean(passportId.error)}
                     className={`${fieldControl} ${passportId.onChange ? "" : "bg-canvas text-ink-muted"} ${passportId.error ? "border-critical" : ""}`}
                 />
+                {passportId.hint && <div className="mt-1 text-label-sm" aria-live="polite">{passportId.hint}</div>}
+            </Field>
+            <Field label="Nationality" htmlFor={`${id}-nationality`} error={errors.nationality}>{input("nationality", { maxLength: 60 })}</Field>
+            <Field label="Sex" htmlFor={`${id}-sex`} error={errors.sex}>
+                <select
+                    id={`${id}-sex`}
+                    value={value.sex}
+                    disabled={disabled}
+                    onChange={(event) => onChange({ ...value, sex: SEX_OPTIONS.find((o) => o.value === event.target.value)?.value ?? "" })}
+                    className={fieldControl}
+                >
+                    <option value="">—</option>
+                    {SEX_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
             </Field>
             <Field label="Date of birth" htmlFor={`${id}-dateOfBirth`} error={errors.dateOfBirth}>{input("dateOfBirth", { type: "date" })}</Field>
             <Field label="Place of birth" htmlFor={`${id}-placeOfBirth`} error={errors.placeOfBirth}>{input("placeOfBirth")}</Field>
+            <Field label="Passport issue date" htmlFor={`${id}-passportIssueDate`} error={errors.passportIssueDate}>{input("passportIssueDate", { type: "date" })}</Field>
             <Field label="Passport expiry date" htmlFor={`${id}-passportExpiryDate`} error={errors.passportExpiryDate}>{input("passportExpiryDate", { type: "date" })}</Field>
-            <div className="hidden md:block" aria-hidden="true" />
+            <Field label="WhatsApp number" htmlFor={`${id}-whatsappNumber`} error={errors.whatsappNumber}>{input("whatsappNumber", { type: "tel", maxLength: 30, readOnly: whatsappLocked })}</Field>
+            <Field label="Contact number" htmlFor={`${id}-contactNumber`} error={errors.contactNumber}>{input("contactNumber", { type: "tel", maxLength: 30 })}</Field>
             <Field label="Job type" required htmlFor={`${id}-jobTypes`} error={errors.jobTypes} className="md:col-span-2">
                 <JobTypesInput id={`${id}-jobTypes`} value={value.jobTypes} onChange={(next) => onChange({ ...value, jobTypes: next })} disabled={disabled} invalid={Boolean(errors.jobTypes)} />
             </Field>

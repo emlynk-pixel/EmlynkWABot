@@ -1,6 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { CANDIDATE_STAGES, type CandidateDetails, type CandidateList } from "../api/candidates";
 import { stepTones } from "../components/candidate/CandidateStepper";
 import { ADMIN, renderApp, signedInBackend } from "./helpers";
@@ -20,7 +20,8 @@ const LIST: CandidateList = {
 const DETAILS: CandidateDetails = {
     candidate: {
         passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: "901234567V", jobTypes: ["Driver"], surname: "SILVA", otherNames: "SAMAN",
-        dateOfBirth: "1990-03-12", placeOfBirth: "COLOMBO", passportExpiryDate: "2030-05-11", address: "1 Main Street", jobExperience: "5 years", whatsappNumber: null,
+        dateOfBirth: "1990-03-12", placeOfBirth: "COLOMBO", passportExpiryDate: "2030-05-11", passportIssueDate: null, nationality: null, sex: null,
+        address: "1 Main Street", jobExperience: "5 years", whatsappNumber: "94770000002", contactNumber: null,
     },
     stages: stages([false, false, false, true, true, true]).map((s) => ({ ...s, completedAt: null, notes: null })),
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_REPORT: null, AGREEMENT: null, AFFIDAVIT: null },
@@ -75,6 +76,17 @@ describe("Candidate deployment", () => {
         expect(screen.getByLabelText("All 5 required documents are included")).toBeDisabled();
         for (const label of ["Medical", "Police report", "Scan - Agreement", "Scan - Affidavit"]) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     });
+
+    test("candidate details: optional fields are empty when not on record; a WhatsApp number on record is read-only", async () => {
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+        renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+        expect(await screen.findByLabelText("WhatsApp number")).toHaveAttribute("readonly");
+        expect(screen.getByLabelText("WhatsApp number")).toHaveValue("94770000002");
+        expect(screen.getByLabelText("Contact number")).not.toHaveAttribute("readonly");
+        expect(screen.getByLabelText("Nationality")).toHaveValue("");
+        expect(screen.getByLabelText("Sex")).toHaveValue("");
+        expect(screen.getByLabelText("Passport issue date")).toHaveValue("");
+    });
 });
 
 describe("Candidate registration", () => {
@@ -87,10 +99,7 @@ describe("Candidate registration", () => {
         expect(calls.some((c) => c.method === "POST")).toBe(false);
     });
 
-    test("an already registered passport links to that candidate", async () => {
-        const { calls } = signedInBackend({ "POST /api/admin/candidates": { status: 409, body: { message: "A candidate with this passport ID is already registered.", code: "CANDIDATE_EXISTS" } } });
-        renderApp("/candidates/new");
-        const user = userEvent.setup();
+    async function fillRequired(user: ReturnType<typeof userEvent.setup>) {
         await user.type(await screen.findByLabelText("Surname *"), "SILVA");
         await user.type(screen.getByLabelText("Other names *"), "SAMAN");
         await user.type(screen.getByLabelText("NIC *"), "901234567V");
@@ -99,11 +108,153 @@ describe("Candidate registration", () => {
         await user.type(screen.getByLabelText("Job experience *"), "5 years");
         await user.type(screen.getByLabelText("Address *"), "1 Main Street");
         await user.upload(screen.getByLabelText("Passport *"), new File(["%PDF-1.4"], "passport.pdf", { type: "application/pdf" }));
+    }
+
+    test("registers with only the required fields; the optional passport and contact details are sent empty", async () => {
+        let created = false;
+        const { calls } = signedInBackend({
+            "POST /api/admin/candidates": () => { created = true; return { status: 201, body: { passportId: "N0000002", uniqueId: "0002" } }; },
+            "POST /api/admin/candidates/N0000002/documents": { status: 201, body: DETAILS },
+            "GET /api/admin/candidates/N0000002": () => (created ? { status: 200, body: DETAILS } : { status: 404, body: { message: "Candidate not found" } }),
+        });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await fillRequired(user);
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+
+        expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
+        expect(calls.find((c) => c.method === "POST" && c.path === "/api/admin/candidates")!.body).toMatchObject({
+            nationality: "", sex: "", dateOfBirth: "", placeOfBirth: "", passportIssueDate: "", passportExpiryDate: "", whatsappNumber: "", contactNumber: "",
+        });
+        expect(calls.some((c) => c.path === "/api/admin/candidates/N0000002/documents?type=PASSPORT")).toBe(true);
+    });
+
+    test("an optional value that is given is checked: issue date before expiry, phone number format", async () => {
+        const { calls } = signedInBackend();
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await fillRequired(user);
+        await user.type(screen.getByLabelText("Passport issue date"), "2031-01-01");
+        await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-01");
+        await user.type(screen.getByLabelText("WhatsApp number"), "12");
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+        expect(screen.getByText("Must be before the expiry date.")).toBeInTheDocument();
+        expect(screen.getByText("Enter a phone number, e.g. 0771234567.")).toBeInTheDocument();
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+    });
+
+    test("an already registered passport links to that candidate", async () => {
+        const { calls } = signedInBackend({ "POST /api/admin/candidates": { status: 409, body: { message: "A candidate with this passport ID is already registered.", code: "CANDIDATE_EXISTS" } } });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await fillRequired(user);
         await user.click(screen.getByRole("button", { name: "Register candidate" }));
 
         expect(await screen.findByText("A candidate with this passport ID is already registered.")).toBeInTheDocument();
         expect(screen.getByRole("link", { name: "Open the registered candidate" })).toHaveAttribute("href", "/candidates/N0000002");
         expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ passportId: "N0000002", surname: "SILVA", jobTypes: ["Driver"], nic: "901234567V" });
+    });
+
+    // An existing candidate: some optional values, a passport and a medical
+    // report on record, no NIC document or skill video, progress on stage 4.
+    const EXISTING: CandidateDetails = {
+        ...DETAILS,
+        candidate: { ...DETAILS.candidate, nationality: "Sri Lankan", sex: "M", contactNumber: null },
+        documents: {
+            ...DETAILS.documents,
+            PASSPORT: { documentId: "doc-passport", originalFilename: "passport-scan.pdf", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-09-20T00:00:00.000Z" },
+            MEDICAL: { documentId: "doc-medical", originalFilename: "medical.pdf", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-09-21T00:00:00.000Z" },
+        },
+        stages: DETAILS.stages.map((s) => (s.stage === "CANDIDATE_DETAILS" ? { ...s, notes: "Prefers morning calls" } : s)),
+    };
+
+    test("passport ID not on record: lookup on leaving the field, then the normal new-candidate form", async () => {
+        const { calls } = signedInBackend();
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await user.type(await screen.findByLabelText("Passport ID *"), "n7654321");
+        await user.tab();
+        await vi.waitFor(() => expect(calls.some((c) => c.path === "/api/admin/candidates/N7654321")).toBe(true));
+        expect(screen.getByLabelText("Passport ID *")).not.toHaveAttribute("readonly");
+        expect(screen.queryByText(/Existing candidate found/)).not.toBeInTheDocument();
+        expect(screen.getByLabelText("Passport *")).toHaveAttribute("type", "file");
+        expect(screen.getByRole("button", { name: "Register candidate" })).toBeInTheDocument();
+        expect(calls.filter((c) => c.path.startsWith("/api/admin/candidates/")).length).toBe(1);
+    });
+
+    test("passport ID on record: details, comment and stored documents are loaded; missing documents stay uploadable", async () => {
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: EXISTING } });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await user.type(await screen.findByLabelText("Passport ID *"), "n0000002");
+        await user.tab();
+
+        expect(await screen.findByText("Existing candidate found — details loaded.")).toBeInTheDocument();
+        expect(screen.getByLabelText("Passport ID *")).toHaveAttribute("readonly");
+        expect(screen.getByLabelText("Surname *")).toHaveValue("SILVA");
+        expect(screen.getByLabelText("Other names *")).toHaveValue("SAMAN");
+        expect(screen.getByLabelText("NIC *")).toHaveValue("901234567V");
+        expect(screen.getByLabelText("Address *")).toHaveValue("1 Main Street");
+        expect(screen.getByLabelText("Job experience *")).toHaveValue("5 years");
+        expect(screen.getByText("Driver")).toBeInTheDocument();
+        expect(screen.getByLabelText("Nationality")).toHaveValue("Sri Lankan");
+        expect(screen.getByLabelText("Sex")).toHaveValue("M");
+        expect(screen.getByLabelText("Date of birth")).toHaveValue("1990-03-12");
+        expect(screen.getByLabelText("Passport expiry date")).toHaveValue("2030-05-11");
+        expect(screen.getByLabelText("Passport issue date")).toHaveValue("");
+        expect(screen.getByLabelText("WhatsApp number")).toHaveValue("94770000002");
+        expect(screen.getByLabelText("Contact number")).toHaveValue("");
+        expect(screen.getByLabelText("Comment")).toHaveValue("Prefers morning calls");
+
+        expect(screen.getByText(/passport-scan\.pdf/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Replace" })).toBeInTheDocument();
+        expect(screen.getAllByRole("button", { name: "Upload" })).toHaveLength(2);
+        expect(screen.getAllByText("No file uploaded")).toHaveLength(2);
+        expect(screen.getByText("Also on record: Medical")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save changes" })).toBeInTheDocument();
+    });
+
+    test("saving a loaded candidate updates their record; nothing is registered or uploaded", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: EXISTING },
+            "PUT /api/admin/candidates/N0000002": { status: 200, body: EXISTING },
+        });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await user.type(await screen.findByLabelText("Passport ID *"), "N0000002");
+        await user.tab();
+        await screen.findByText("Existing candidate found — details loaded.");
+        await user.clear(screen.getByLabelText("Address *"));
+        await user.type(screen.getByLabelText("Address *"), "2 Lake Road");
+        await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+        expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
+        const put = calls.find((c) => c.method === "PUT")!;
+        expect(put.path).toBe("/api/admin/candidates/N0000002");
+        expect(put.body).toMatchObject({ address: "2 Lake Road", surname: "SILVA", nationality: "Sri Lankan", sex: "M" });
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+        expect(calls.some((c) => c.path.includes("/stages/")), "stage progress untouched (comment unchanged)").toBe(false);
+    });
+
+    test("register pressed straight after typing an existing passport ID loads that candidate instead of creating one", async () => {
+        const { calls } = signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: EXISTING } });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await user.type(await screen.findByLabelText("Passport ID *"), "N0000002");
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+        expect(await screen.findByText("Existing candidate found — details loaded.")).toBeInTheDocument();
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+        expect(calls.filter((c) => c.path === "/api/admin/candidates/N0000002")).toHaveLength(1);
+    });
+
+    test("a failed lookup is shown and can be retried", async () => {
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 503, body: {} } });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await user.type(await screen.findByLabelText("Passport ID *"), "N0000002");
+        await user.tab();
+        expect(await screen.findByText("The passport ID could not be checked.")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
     });
 
     test("a viewer sees no registration form", async () => {

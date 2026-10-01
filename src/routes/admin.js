@@ -53,6 +53,7 @@ import {
     CandidateError,
     createCandidate,
     getCandidate,
+    resolveCandidatePassportId,
     isCandidateStage,
     isValidCandidateIdParam,
     listCallLogs,
@@ -356,7 +357,9 @@ export function createAdminRouter({
     router.get("/candidates/:passportId", requireRole(ALL_ACTIVE), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
-        const candidate = await getCandidate({ db: client, passportId: req.params.passportId });
+        // Also the registration lookup: the response carries the stored passport ID.
+        const passportId = await resolveCandidatePassportId({ db: client, passportId: req.params.passportId });
+        const candidate = passportId && await getCandidate({ db: client, passportId });
         if (!candidate) return res.status(404).json({ message: "Candidate not found" });
         return res.json(candidate);
     });

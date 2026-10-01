@@ -77,16 +77,30 @@ export type CandidateDetails = {
         dateOfBirth: string | null;
         placeOfBirth: string | null;
         passportExpiryDate: string | null;
+        passportIssueDate: string | null;
+        nationality: string | null;
+        sex: CandidateSex | null;
         address: string | null;
         jobExperience: string | null;
         whatsappNumber: string | null;
+        contactNumber: string | null;
     };
     stages: StageState[];
     documents: Record<CandidateDocumentType, CandidateDocument | null>;
     requiredDocuments: { documentType: CandidateDocumentType; included: boolean }[];
 };
 
-// What the Candidate Details form sends (registration adds passportId and comment).
+// As printed on passports: male, female, unspecified.
+export const SEX_OPTIONS = [
+    { value: "M", label: "Male" },
+    { value: "F", label: "Female" },
+    { value: "X", label: "Unspecified" },
+] as const;
+export type CandidateSex = (typeof SEX_OPTIONS)[number]["value"];
+
+// What the Candidate Details form sends (registration adds passportId and
+// comment). Everything after jobExperience is optional ("" = not given).
+// A WhatsApp number already on record is kept by the server.
 export type CandidateDetailsInput = {
     surname: string;
     otherNames: string;
@@ -94,9 +108,14 @@ export type CandidateDetailsInput = {
     address: string;
     jobTypes: string[];
     jobExperience: string;
+    nationality: string;
+    sex: CandidateSex | "";
     dateOfBirth: string;
     placeOfBirth: string;
+    passportIssueDate: string;
     passportExpiryDate: string;
+    whatsappNumber: string;
+    contactNumber: string;
 };
 export type CandidateRegistration = CandidateDetailsInput & { passportId: string; comment: string };
 

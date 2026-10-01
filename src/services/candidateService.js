@@ -22,10 +22,12 @@ import { validateDocumentFile, MAX_FILE_SIZE } from "../utils/fileValidation.js"
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { clientName } from "../utils/clientName.js";
 import { normalizePassportId } from "../utils/passportId.js";
+import { normalizePhoneNumber } from "../utils/phoneNumber.js";
 import { clientFolderPath, extensionForMimeType, standardFileName } from "../utils/storageNaming.js";
 import { MAX_NAME_ATTEMPTS, removeObject } from "./permanentStorageService.js";
 import { DOCUMENT_PROCESSING_STATUS_STORED, VERIFICATION_STATUS } from "./clientDocumentService.js";
 import { clientSearchWhere } from "./adminClientService.js";
+import { findUsersByWhatsappNumber } from "./userLookupService.js";
 
 // ---------------------------------------------------------------- definitions
 
@@ -69,6 +71,9 @@ const MAX_TEXT_LENGTH = 2000;
 const MAX_JOB_TYPES = 10;
 const MAX_JOB_TYPE_LENGTH = 60;
 const MAX_FILE_NAME_LENGTH = 200;
+const MAX_NATIONALITY_LENGTH = 60;
+// As printed on passports (ICAO 9303): male, female, unspecified.
+export const SEX_VALUES = Object.freeze(["M", "F", "X"]);
 
 // Sri Lankan NIC: old format 9 digits + V/X, new format 12 digits.
 const NIC_PATTERN = /^(\d{9}[VX]|\d{12})$/;
@@ -137,6 +142,16 @@ function date(body, field, errors) {
     return parsed;
 }
 
+// Stored in the same normalized form as WhatsApp sender numbers (94771234567),
+// so the WhatsApp lookup compares like with like.
+function phone(body, field, errors) {
+    const value = text(body, field, errors, { max: 30 });
+    if (value === null) return null;
+    const normalized = normalizePhoneNumber(value);
+    if (!normalized) errors.push({ field, message: "must be a phone number (for example 0771234567 or +94771234567)" });
+    return normalized;
+}
+
 function jobTypes(body, errors) {
     const value = body.jobTypes;
     if (!Array.isArray(value) || value.length === 0) {
@@ -184,9 +199,20 @@ export function parseCandidateBody(body, { creating }) {
     values.firstName = text(body, "otherNames", errors, { required: true, max: MAX_NAME_LENGTH });
     values.address = text(body, "address", errors, { required: true, max: MAX_ADDRESS_LENGTH });
     values.jobExperience = text(body, "jobExperience", errors, { required: true });
+    // Optional passport and contact details: empty is stored as NULL.
     values.placeOfBirth = text(body, "placeOfBirth", errors, { max: MAX_NAME_LENGTH });
     values.dateOfBirth = date(body, "dateOfBirth", errors);
     values.passportExpiryDate = date(body, "passportExpiryDate", errors);
+    values.passportIssueDate = date(body, "passportIssueDate", errors);
+    if (values.passportIssueDate && values.passportExpiryDate && values.passportIssueDate >= values.passportExpiryDate) {
+        errors.push({ field: "passportIssueDate", message: "must be before the passport expiry date" });
+    }
+    values.nationality = text(body, "nationality", errors, { max: MAX_NATIONALITY_LENGTH });
+    const sex = text(body, "sex", errors, { max: 1 });
+    if (sex !== null && !SEX_VALUES.includes(sex.toUpperCase())) errors.push({ field: "sex", message: `must be one of: ${SEX_VALUES.join(", ")}` });
+    values.sex = sex === null ? null : sex.toUpperCase();
+    values.whatsappNumber = phone(body, "whatsappNumber", errors);
+    values.contactNumber = phone(body, "contactNumber", errors);
 
     const nic = text(body, "nic", errors, { required: true, max: 12 });
     if (nic !== null) {
@@ -235,6 +261,7 @@ export function parseCallLogBody(body) {
 const userSelect = {
     passportId: true, uniqueId: true, firstName: true, otherName: true, dateOfBirth: true, placeOfBirth: true,
     passportExpiryDate: true, address: true, job: true, nic: true, jobExperience: true, whatsappNumber: true,
+    contactNumber: true, nationality: true, sex: true, passportIssueDate: true,
 };
 
 const isoDate = (value) => (value ? value.toISOString().slice(0, 10) : null);
@@ -358,6 +385,20 @@ export async function listCandidates({ db, params }) {
     };
 }
 
+// The stored passport ID for a requested one: the exact row, otherwise the
+// one row that matches ignoring case (legacy rows may be lowercase; registration
+// compares the same way). Null when there is none, or more than one.
+export async function resolveCandidatePassportId({ db, passportId }) {
+    const exact = await db.user.findUnique({ where: { passportId }, select: { passportId: true } });
+    if (exact) return exact.passportId;
+    const rows = await db.user.findMany({
+        where: { passportId: { equals: passportId, mode: "insensitive" } },
+        select: { passportId: true },
+        take: 2,
+    });
+    return rows.length === 1 ? rows[0].passportId : null;
+}
+
 // GET /api/admin/candidates/:passportId — null when there is no such candidate.
 export async function getCandidate({ db, passportId }) {
     const user = await db.user.findUnique({
@@ -385,9 +426,13 @@ export async function getCandidate({ db, passportId }) {
             dateOfBirth: isoDate(user.dateOfBirth),
             placeOfBirth: user.placeOfBirth ?? null,
             passportExpiryDate: isoDate(user.passportExpiryDate),
+            passportIssueDate: isoDate(user.passportIssueDate),
+            nationality: user.nationality ?? null,
+            sex: user.sex ?? null,
             address: user.address ?? null,
             jobExperience: user.jobExperience ?? null,
             whatsappNumber: user.whatsappNumber ?? null,
+            contactNumber: user.contactNumber ?? null,
         },
         stages: stageList(user.stages),
         documents,
@@ -418,6 +463,17 @@ async function assertNicFree(db, nic, exceptPassportId) {
     }
 }
 
+// A WhatsApp number identifies the sender of documents (identityVerificationService.js).
+// One already on another record would make that person's matches ambiguous,
+// so it is refused rather than shared.
+async function assertWhatsappFree(db, whatsappNumber, exceptPassportId) {
+    if (!whatsappNumber) return;
+    const { users } = await findUsersByWhatsappNumber(whatsappNumber, { db });
+    if (users.some((user) => user.passportId !== exceptPassportId)) {
+        throw new CandidateError(409, "WHATSAPP_EXISTS", "Another candidate is already registered with this WhatsApp number.");
+    }
+}
+
 // POST /api/admin/candidates. An existing passport ID is never registered
 // again (409 with the existing record's passport ID, so the admin can open it).
 export async function createCandidate({ db, values }) {
@@ -432,6 +488,7 @@ export async function createCandidate({ db, values }) {
         throw error;
     }
     await assertNicFree(db, values.nic);
+    await assertWhatsappFree(db, values.whatsappNumber);
 
     const { comment, ...details } = values;
     // A parallel registration can take the same unique ID: try the next one.
@@ -463,11 +520,19 @@ async function requireCandidate(db, passportId) {
 }
 
 // PUT /api/admin/candidates/:passportId (Candidate Details stage).
+// A WhatsApp number already on record is never changed here: it is what
+// documents sent on WhatsApp are matched by. One can only be added when the
+// record has none.
 export async function updateCandidateDetails({ db, passportId, values }) {
-    await requireCandidate(db, passportId);
+    const user = await requireCandidate(db, passportId);
     await assertNicFree(db, values.nic, passportId);
+    const { whatsappNumber, ...data } = values;
+    if (!user.whatsappNumber && whatsappNumber) {
+        await assertWhatsappFree(db, whatsappNumber, passportId);
+        data.whatsappNumber = whatsappNumber;
+    }
     try {
-        await db.user.update({ where: { passportId }, data: values });
+        await db.user.update({ where: { passportId }, data });
     } catch (error) {
         if (isUniqueViolation(error)) throw new CandidateError(409, "NIC_EXISTS", "Another candidate is already registered with this NIC.");
         throw error;

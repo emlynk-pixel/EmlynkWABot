@@ -138,6 +138,11 @@ model User {
   // person can't be registered twice under two passport records.
   nic                String?            @unique
   jobExperience      String?            @map("job_experience")
+  // Optional passport details with no earlier column (the passport OCR reads
+  // date of birth, place of birth and expiry only). sex: M, F or X.
+  nationality        String?
+  sex                String?
+  passportIssueDate  DateTime?          @map("passport_issue_date")
   stages             CandidateStage[]
   callLogs           CandidateCallLog[]
 

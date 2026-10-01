@@ -18,6 +18,7 @@ import {
     parseJobTypes,
     parseStageBody,
     parseUploadQuery,
+    resolveCandidatePassportId,
     updateCandidateDetails,
     updateStage,
     uploadCandidateDocument,
@@ -57,6 +58,7 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
             if ("in" in condition) return condition.in.includes(value);
             if ("equals" in condition) return condition.mode === "insensitive" ? String(value).toLowerCase() === String(condition.equals).toLowerCase() : value === condition.equals;
             if ("contains" in condition) return value != null && String(value).toLowerCase().includes(String(condition.contains).toLowerCase());
+            if ("endsWith" in condition) return value != null && String(value).endsWith(condition.endsWith);
         }
         return value === condition;
     });
@@ -203,6 +205,93 @@ describe("registration", () => {
     test("an NIC already registered to someone else is refused", async () => {
         const db = createFakeDb({ users: [{ passportId: "P2222222", uniqueId: "0001", firstName: "B", nic: "965404378V" }] });
         await assert.rejects(registered(db), (error) => error.code === "NIC_EXISTS");
+    });
+});
+
+describe("optional passport and contact details", () => {
+    const REQUIRED_ONLY = Object.freeze({
+        passportId: "N1023757", surname: "De Soysa", otherNames: "Anusha", nic: "965404378V",
+        address: "Negombo", jobTypes: ["Caregiver"], jobExperience: "2 years",
+    });
+    const OPTIONAL_FIELDS = ["nationality", "sex", "dateOfBirth", "placeOfBirth", "passportIssueDate", "passportExpiryDate", "whatsappNumber", "contactNumber"];
+
+    test("registration succeeds with every optional field empty or missing; they are stored as NULL", async () => {
+        const db = createFakeDb();
+        const empty = Object.fromEntries(OPTIONAL_FIELDS.map((field) => [field, ""]));
+        for (const body of [REQUIRED_ONLY, { ...REQUIRED_ONLY, ...empty }]) {
+            const parsed = parseCandidateBody(body, { creating: true });
+            assert.equal(parsed.errors, undefined, JSON.stringify(parsed.errors));
+            for (const column of ["nationality", "sex", "dateOfBirth", "placeOfBirth", "passportIssueDate", "passportExpiryDate", "whatsappNumber", "contactNumber"]) {
+                assert.equal(parsed.values[column], null, `${column} is NULL`);
+            }
+        }
+        await createCandidate({ db, values: parseCandidateBody(REQUIRED_ONLY, { creating: true }).values });
+        const { candidate } = await getCandidate({ db, passportId: "N1023757" });
+        for (const field of OPTIONAL_FIELDS) assert.equal(candidate[field], null, `${field} reads as null`);
+    });
+
+    test("the required fields are unchanged", () => {
+        for (const field of ["passportId", "surname", "otherNames", "nic", "address", "jobTypes", "jobExperience"]) {
+            const body = { ...REQUIRED_ONLY };
+            delete body[field];
+            const { errors } = parseCandidateBody(body, { creating: true });
+            assert.deepEqual(errors?.map((e) => e.field), [field], `${field} still required`);
+        }
+    });
+
+    test("values are normalized: sex upper case, phone numbers in the WhatsApp sender format", () => {
+        const { values } = parseCandidateBody({
+            ...REQUIRED_ONLY, nationality: " Sri Lankan ", sex: "f", passportIssueDate: "2021-05-12", passportExpiryDate: "2031-05-11",
+            whatsappNumber: "077 123 4567", contactNumber: "+94 11 234 5678",
+        }, { creating: true });
+        assert.equal(values.nationality, "Sri Lankan");
+        assert.equal(values.sex, "F");
+        assert.equal(values.passportIssueDate.toISOString().slice(0, 10), "2021-05-12");
+        assert.equal(values.whatsappNumber, "94771234567");
+        assert.equal(values.contactNumber, "94112345678");
+    });
+
+    test("an optional value that is given must be valid", () => {
+        const fields = (body) => parseCandidateBody({ ...REQUIRED_ONLY, ...body }, { creating: true }).errors?.map((e) => e.field);
+        assert.deepEqual(fields({ sex: "Q" }), ["sex"]);
+        assert.deepEqual(fields({ passportIssueDate: "2031-05-12", passportExpiryDate: "2031-05-11" }), ["passportIssueDate"]);
+        assert.deepEqual(fields({ passportIssueDate: "12/05/2021" }), ["passportIssueDate"]);
+        assert.deepEqual(fields({ whatsappNumber: "12" }), ["whatsappNumber"]);
+        assert.deepEqual(fields({ contactNumber: "call me" }), ["contactNumber"]);
+    });
+
+    test("a WhatsApp number already on another record is refused (it would make document matching ambiguous)", async () => {
+        const db = createFakeDb({ users: [{ passportId: "P2222222", uniqueId: "0001", firstName: "B", whatsappNumber: "+94 77 123 4567" }] });
+        const values = parseCandidateBody({ ...REQUIRED_ONLY, whatsappNumber: "0771234567" }, { creating: true }).values;
+        await assert.rejects(createCandidate({ db, values }), (error) => error.code === "WHATSAPP_EXISTS");
+        assert.equal(db.state.users.length, 1);
+    });
+
+    test("details updates keep an existing WhatsApp number; a missing one can be added", async () => {
+        const db = createFakeDb({ users: [
+            { passportId: "P3333333", uniqueId: "0001", firstName: "Legacy", whatsappNumber: "94770000001" },
+            { passportId: "P4444444", uniqueId: "0002", firstName: "NoPhone" },
+        ] });
+        const update = (passportId, body) => updateCandidateDetails({ db, passportId, values: parseCandidateBody({ ...REQUIRED_ONLY, ...body }, { creating: false }).values });
+
+        const kept = await update("P3333333", { nic: "200012345678", whatsappNumber: "0779999999" });
+        assert.equal(kept.candidate.whatsappNumber, "94770000001", "the number documents are matched by is not changed");
+        assert.equal((await update("P3333333", { nic: "200012345678", whatsappNumber: "" })).candidate.whatsappNumber, "94770000001", "and not cleared");
+
+        await assert.rejects(update("P4444444", { nic: "200012345679", whatsappNumber: "0770000001" }), (error) => error.code === "WHATSAPP_EXISTS", "another record's number");
+        const added = await update("P4444444", { nic: "200012345679", whatsappNumber: "0779999999", sex: "M", nationality: "Sri Lankan" });
+        assert.equal(added.candidate.whatsappNumber, "94779999999");
+        assert.equal(added.candidate.sex, "M");
+    });
+
+    test("an existing record without any of the new details still reads correctly", async () => {
+        const db = createFakeDb({ users: [{ passportId: "P5555555", uniqueId: "0003", firstName: "Old", otherName: null, job: null }] });
+        const { candidate } = await getCandidate({ db, passportId: "P5555555" });
+        assert.equal(candidate.nationality, null);
+        assert.equal(candidate.sex, null);
+        assert.equal(candidate.passportIssueDate, null);
+        assert.equal(candidate.contactNumber, null);
+        assert.deepEqual(candidate.jobTypes, []);
     });
 });
 
@@ -358,11 +447,11 @@ describe("candidate list and call log", () => {
 });
 
 describe("candidate routes: roles", () => {
-    async function call(role, method, path, body) {
+    async function call(role, method, path, body, db = createFakeDb()) {
         const app = express();
         app.use(express.json());
         const requireAdmin = (req, res, next) => { req.admin = { ...ADMIN, role }; next(); };
-        app.use("/api/admin", createAdminRouter({ db: createFakeDb(), bucket: createFakeBucket(), requireAdmin, apiLimiter: noRateLimit }));
+        app.use("/api/admin", createAdminRouter({ db, bucket: createFakeBucket(), requireAdmin, apiLimiter: noRateLimit }));
         app.use(errorHandler);
         const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
         try {
@@ -391,5 +480,59 @@ describe("candidate routes: roles", () => {
         assert.equal((await call("REVIEWER", "POST", "/api/admin/candidates", { surname: "x" })).status, 400);
         assert.equal((await call("ADMIN", "PUT", "/api/admin/candidates/N1023757/stages/NOT_A_STAGE", { completed: true })).status, 404);
         assert.equal((await call("ADMIN", "GET", "/api/admin/candidates/N1023757")).status, 404, "this fake starts empty per request");
+    });
+
+    test("the registration lookup (GET by passport ID) finds a legacy lowercase record and returns its stored ID", async () => {
+        const db = createFakeDb({ users: [{ passportId: "n1023757", uniqueId: "0001", firstName: "Anusha", otherName: "De Soysa" }] });
+        const found = await call("VIEWER", "GET", "/api/admin/candidates/N1023757", undefined, db);
+        assert.equal(found.status, 200);
+        assert.equal(found.body.candidate.passportId, "n1023757");
+        assert.equal(found.body.candidate.surname, "De Soysa");
+        assert.equal((await call("VIEWER", "GET", "/api/admin/candidates/N9999999", undefined, db)).status, 404, "not found -> new registration");
+    });
+});
+
+describe("registration lookup of an existing passport ID", () => {
+    test("exact, then case-insensitive; never a guess between two rows", async () => {
+        const db = createFakeDb({ users: [
+            { passportId: "N1111111", uniqueId: "0001", firstName: "A" },
+            { passportId: "n2222222", uniqueId: "0002", firstName: "B" },
+            { passportId: "n3333333", uniqueId: "0003", firstName: "C" },
+            { passportId: "N3333333", uniqueId: "0004", firstName: "D" },
+            { passportId: "na444444", uniqueId: "0005", firstName: "E" },
+            { passportId: "Na444444", uniqueId: "0006", firstName: "F" },
+        ] });
+        assert.equal(await resolveCandidatePassportId({ db, passportId: "N1111111" }), "N1111111");
+        assert.equal(await resolveCandidatePassportId({ db, passportId: "N2222222" }), "n2222222");
+        assert.equal(await resolveCandidatePassportId({ db, passportId: "N3333333" }), "N3333333", "exact match wins");
+        assert.equal(await resolveCandidatePassportId({ db, passportId: "NA444444" }), null, "two rows differ only in case: no guess");
+        assert.equal(await resolveCandidatePassportId({ db, passportId: "N5555555" }), null);
+    });
+
+    test("the lookup returns the stored details, documents and stages; saving updates that record only", async () => {
+        const db = createFakeDb();
+        const bucket = createFakeBucket();
+        await registered(db, { nationality: "Sri Lankan", sex: "F", whatsappNumber: "0771234567" });
+        await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "PASSPORT", variant: null, mimeType: "application/pdf", buffer: PDF, originalFileName: "passport.pdf" });
+        await updateStage({ db, passportId: "N1023757", stage: "IVS_INTERVIEW", values: { completed: true, notes: "Passed" } });
+
+        const loaded = await getCandidate({ db, passportId: await resolveCandidatePassportId({ db, passportId: "N1023757" }) });
+        assert.equal(loaded.candidate.nationality, "Sri Lankan");
+        assert.equal(loaded.candidate.whatsappNumber, "94771234567");
+        assert.equal(loaded.documents.PASSPORT.originalFilename, "passport.pdf", "existing document returned");
+        assert.equal(loaded.documents.NIC, null, "missing document stays uploadable");
+        assert.equal(loaded.documents.SKILL_VIDEO, null);
+
+        const before = { users: db.state.users.length, documents: db.state.documents.length, objects: bucket.objects.size, stages: structuredClone(db.state.stages) };
+        const { values } = parseCandidateBody({ ...VALID_BODY, address: "Kandy", nationality: "Sri Lankan", sex: "F" }, { creating: false });
+        const saved = await updateCandidateDetails({ db, passportId: "N1023757", values });
+
+        assert.equal(saved.candidate.address, "Kandy", "the existing users row is updated");
+        assert.equal(db.state.users.length, before.users, "no duplicate user");
+        assert.equal(db.state.documents.length, before.documents, "no duplicate document");
+        assert.equal(bucket.objects.size, before.objects, "no file copied");
+        assert.deepEqual(db.state.stages, before.stages, "stage progress preserved");
+        assert.equal(saved.stages.find((s) => s.stage === "IVS_INTERVIEW").completed, true);
+        assert.equal(saved.documents.PASSPORT.documentId, loaded.documents.PASSPORT.documentId, "same document reference");
     });
 });
