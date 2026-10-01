@@ -14,7 +14,10 @@
     "admin:install": "npm --prefix admin install",
     "admin:dev": "npm --prefix admin run dev",
     "admin:build": "npm --prefix admin run build",
-    "admin:test": "npm --prefix admin test"
+    "admin:test": "npm --prefix admin test",
+    "ocr:install": "npm --prefix ocr-worker ci",
+    "ocr:start": "npm --prefix ocr-worker start",
+    "ocr:test": "npm --prefix ocr-worker test"
   },
   "repository": {
     "type": "git",
@@ -31,7 +34,6 @@
   },
   "homepage": "https://github.com/emlynk-pixel/EmlynkWABot#readme",
   "dependencies": {
-    "@napi-rs/canvas": "0.1.80",
     "@prisma/adapter-pg": "6.19.3",
     "@prisma/client": "6.19.3",
     "@supabase/supabase-js": "^2.117.1",
@@ -40,14 +42,15 @@
     "dotenv": "^18.0.1",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
+    "google-auth-library": "^11.1.0",
     "helmet": "^8.3.0",
-    "jpeg-js": "0.4.4",
     "jsonwebtoken": "^9.0.3",
     "nodemailer": "^10.0.11",
-    "pdf-parse": "^2.4.5",
     "pg": "^8.23.0",
-    "pngjs": "7.0.0",
-    "prisma": "6.19.3",
-    "tesseract.js": "^7.0.0"
+    "prisma": "6.19.3"
+  },
+  "devDependencies": {
+    "jpeg-js": "0.4.4",
+    "pngjs": "7.0.0"
   }
 }

@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import {
     extractDocumentText,
@@ -14,17 +14,17 @@ import {
     MAX_IMAGE_PIXELS,
     OCR_JOB_TIMEOUT_MS,
     UPSCALE_BELOW_LONG_SIDE,
-} from "../src/services/ocrService.js";
+} from "../src/ocrService.js";
 import { readImageDimensions } from "../src/utils/imageDimensions.js";
-import { classifyDocumentContent } from "../src/services/documentClassificationService.js";
-import { extractPassportFields } from "../src/services/passportExtractionService.js";
-import { processDocument } from "../src/services/documentProcessingService.js";
-import { PASSPORT_ACCEPTANCE_FLAG } from "../src/services/passportAcceptanceService.js";
-import { createFakePrisma } from "./helpers/fakePrisma.js";
-import { createFakeBucket } from "./helpers/fakeStorage.js";
-import { loadDocumentText } from "./helpers/fixtures.js";
 
-const loadFile = (name) => readFileSync(new URL(`./fixtures/files/${name}`, import.meta.url));
+// Passport field extraction and classification of these reads, and the
+// pipeline on them, are tested by the backend: test/ocrPipeline.test.js.
+const loadFile = (name) => {
+    const local = new URL(`./fixtures/files/${name}`, import.meta.url);
+    if (existsSync(local)) return readFileSync(local);
+    return readFileSync(new URL(`../../test/fixtures/files/${name}`, import.meta.url));
+};
+const loadDocumentText = (name) => readFileSync(new URL(`./fixtures/documents/${name}.txt`, import.meta.url), "utf8");
 const ocrTest = process.env.RUN_OCR_TESTS === "1" ? test : test.skip;
 
 // passport-photo-small.jpg: a synthetic passport page (fictional N1234567,
@@ -285,20 +285,13 @@ describe("recognizeImageWithUpscale", () => {
 });
 
 describe("small passport photo (real OCR, synthetic fixture)", () => {
-    ocrTest("380 x 520 low-quality passport JPEG: 2x read finds both MRZ lines with valid check digits", async () => {
+    ocrTest("380 x 520 low-quality passport JPEG: the 2x read finds the MRZ with all check digits valid", async () => {
         const started = Date.now();
         const result = await extractDocumentText({ fileBuffer: loadFile(SMALL_PASSPORT), mimeType: "image/jpeg" });
         const elapsedMs = Date.now() - started;
-        const passport = extractPassportFields(result.text);
 
         assert.equal(result.upscaled, true);
-        assert.equal(classifyDocumentContent(result.text).documentType, "PASSPORT");
-        assert.equal(passport.mrz.linesFound, 2);
-        assert.equal(passport.fields.passportId.value, "N1234567");
-        for (const field of ["passportId", "dateOfBirth", "passportExpiryDate"]) {
-            assert.equal(passport.fields[field].source, "MRZ", field);
-            assert.equal(passport.fields[field].checkDigitValid, true, field);
-        }
+        assert.equal(mrzEvidence(result.text), 4);
         assert.ok(result.confidence < 60, `the low measured confidence is kept (${result.confidence})`);
         assert.ok(elapsedMs < OCR_JOB_TIMEOUT_MS / 4, `OCR took ${elapsedMs} ms`);
     });
@@ -308,80 +301,5 @@ describe("small passport photo (real OCR, synthetic fixture)", () => {
             const result = await extractDocumentText({ fileBuffer: loadFile(name), mimeType });
             assert.equal(result.upscaled, false, name);
         }
-    });
-});
-
-describe("small passport photo through the pipeline (real OCR)", () => {
-    const TEMP_PATH = "temporary/tmp-small.jpeg";
-    const users = () => [
-        {
-            passportId: "N1234567", uniqueId: "0001", whatsappNumber: "0771234567",
-            firstName: "KAMAL NIMAL", otherName: "PERERA",
-            dateOfBirth: new Date("1990-03-12T00:00:00Z"),
-            passportExpiryDate: new Date("2030-05-11T00:00:00Z"),
-            placeOfBirth: null,
-        },
-    ];
-
-    async function run({ extractText } = {}) {
-        const db = createFakePrisma(users());
-        const bucket = createFakeBucket([TEMP_PATH]);
-        const { summary } = await processDocument({
-            temporaryId: "tmp-small",
-            whatsappNumber: "94771234567",
-            fileName: null,
-            mimeType: "image/jpeg",
-            fileBuffer: loadFile(SMALL_PASSPORT),
-            temporaryStoragePath: TEMP_PATH,
-            deps: { db, bucket, now: new Date("2026-09-25T08:00:00Z"), ...(extractText ? { extractText } : {}) },
-        });
-        return { summary, db, objects: [...bucket.objects.keys()] };
-    }
-
-    ocrTest("matching client -> accepted for review in the client folder, real confidence kept", async () => {
-        const { summary, db, objects } = await run();
-
-        assert.equal(summary.documentType, "PASSPORT");
-        assert.equal(summary.ocrUpscaled, true);
-        assert.equal(summary.passport.mrzLinesFound, 2);
-        assert.equal(summary.passport.passportIdBand, "VERIFIED");
-        assert.equal(summary.identity.status, "VERIFIED_MATCH");
-        assert.equal(summary.confidence.document, Math.min(summary.confidence.extraction, summary.confidence.classification));
-        assert.ok(summary.confidence.document < 60, `measured ${summary.confidence.document}`);
-        assert.ok(summary.confidence.flags.includes(PASSPORT_ACCEPTANCE_FLAG));
-        assert.equal(summary.storage.placement, "CLIENT");
-        assert.equal(summary.storage.verificationStatus, "REVIEW_REQUIRED");
-        assert.equal(summary.storage.documentStored, true);
-        assert.ok(objects.some((path) => path.startsWith("clients/N1234567/passport/")));
-        assert.equal(db.documentRows[0].verificationStatus, "REVIEW_REQUIRED");
-    });
-
-    // The real OCR read of the photo, with the MRZ date-of-birth check digit changed.
-    async function tamperedRead() {
-        const real = await extractDocumentText({ fileBuffer: loadFile(SMALL_PASSPORT), mimeType: "image/jpeg" });
-        const text = real.text.replace(/(LKA\d{6})\d/, (match, head) => `${head}${(Number(match.at(-1)) + 1) % 10}`);
-        assert.notEqual(text, real.text);
-        return { ...real, text };
-    }
-
-    ocrTest("DOB check digit fails at company-photo confidence (~34, UNDEFINED) -> not accepted, stays pending", async () => {
-        // 34 is what the real low-quality WhatsApp passport photos measured.
-        const read = { ...(await tamperedRead()), confidence: 34 };
-        const { summary, objects, db } = await run({ extractText: async () => read });
-
-        assert.ok(!summary.confidence.flags.includes(PASSPORT_ACCEPTANCE_FLAG));
-        assert.deepEqual(summary.passportAcceptance.failedConditions, ["DATE_OF_BIRTH_VERIFIED"]);
-        assert.equal(summary.processingStatus, "UNDEFINED");
-        assert.equal(summary.storage.placement, "PENDING");
-        assert.ok(!objects.some((path) => path.startsWith("clients/")));
-        assert.equal(db.documentRows.length, 0);
-    });
-
-    ocrTest("DOB check digit fails at confidence 40-59 (UNCLEAR) -> not accepted; existing UNCLEAR rule: review only, never VERIFIED", async () => {
-        const { summary } = await run({ extractText: async () => tamperedRead() });
-
-        assert.ok(!summary.confidence.flags.includes(PASSPORT_ACCEPTANCE_FLAG));
-        assert.equal(summary.confidence.band, "UNCLEAR");
-        assert.equal(summary.storage.verificationStatus, "REVIEW_REQUIRED");
     });
 });

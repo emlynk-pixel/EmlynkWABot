@@ -218,13 +218,13 @@ describe("no automatic removal of pending items", () => {
         for (const [file, code] of sources) {
             assert.ok(!/setInterval\(|node-cron|cron\.schedule|agenda|bull(mq)?\b/i.test(code), file);
         }
-        // The only timeouts: bounded waits (OCR, concurrency limiter, storage call limit,
-        // shutdown deadline), which touch no data or files; the webhook's bounded wait for a
-        // duplicate delivery (M1); and the M1 background worker's poll, which processes waiting
-        // submissions but never deletes a submission, a document or a file, and never clears a
-        // pending copy.
+        // The only timeouts: bounded waits (storage call limit, shutdown deadline), which
+        // touch no data or files; the webhook's bounded wait for a duplicate delivery (M1);
+        // and the M1 background worker's poll, which processes waiting submissions but never
+        // deletes a submission, a document or a file, and never clears a pending copy.
+        // (OCR and its concurrency limiter run in the separate OCR service, ocr-worker/.)
         const timeouts = sources.filter(([, code]) => /setTimeout\(/.test(code));
-        assert.deepEqual(timeouts.map(([f]) => f).sort(), ["concurrencyLimiter.js", "ocrService.js", "shutdown.js", "storageTimeout.js", "submissionQueue.js", "whatsapp.js"]);
+        assert.deepEqual(timeouts.map(([f]) => f).sort(), ["shutdown.js", "storageTimeout.js", "submissionQueue.js", "whatsapp.js"]);
         for (const [file, code] of timeouts.filter(([f]) => !["submissionQueue.js", "whatsapp.js"].includes(f))) assert.ok(!/temporaryData\.|removeObject|\.remove\(|\.delete\(/.test(code), file);
         // The webhook removes only its own just-uploaded object (record insert failed, or the
         // message was already recorded: H2 / M1), never a pending copy or a stored document.

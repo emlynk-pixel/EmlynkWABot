@@ -299,7 +299,7 @@ erDiagram
 | **Containerization** | Docker & Docker Compose | Containerized local PostgreSQL service |
 | **Security & Auth** | `bcrypt` (v6.0), `jsonwebtoken` (v9.0) | Password hashing & JWT access token middleware |
 | **Configuration** | `dotenv` (v18.0) | Environment variable management |
-| **OCR & PDF text** | `tesseract.js` (v7), `pdf-parse` (v2.4) | Passport/police/medical text extraction and scanned-PDF OCR (Phase 5) |
+| **OCR & PDF text** | `tesseract.js` (v7), `pdf-parse` (v2.4), in the separate OCR service `ocr-worker/` on Google Cloud Run | Passport/police/medical text extraction and scanned-PDF OCR (Phase 5); called from the submission queue with a Google identity token (`google-auth-library`) |
 | **Object Storage** | Supabase Storage (`@supabase/supabase-js` v2), private bucket | `temporary/`, `clients/{passport_id}/…` and `pending/` folders (Phase 7) |
 | **Admin Dashboard** | React 19, TypeScript, Vite, Tailwind CSS v4, React Router | `admin/` frontend, served by Express under `/admin` (Phase 10) |
 
@@ -448,6 +448,9 @@ JWT_SECRET="your-super-secret-jwt-key-change-in-production"
 # WhatsApp Business API Webhook Verification Token
 WHATSAPP_VERIFY_TOKEN="Add whatsapp verify token here"
 
+# OCR service (ocr-worker/): locally http://127.0.0.1:8080, in production the Cloud Run URL
+OCR_SERVICE_URL="http://127.0.0.1:8080"
+
 # Optional: documents every client must have (must include PASSPORT;
 # allowed: PASSPORT, POLICE_SLIP, POLICE_REPORT, MEDICAL). Invalid values stop the server.
 # REQUIRED_DOCUMENT_TYPES=PASSPORT,POLICE_REPORT,MEDICAL
@@ -514,6 +517,22 @@ Verify backend health by visiting or requesting `http://localhost:3000/health`:
   "message": "Emlynk backend is running..!"
 }
 ```
+
+### OCR Service
+
+Text extraction (Tesseract.js OCR, PDF text) runs in its own service,
+`ocr-worker/`, deployed on Google Cloud Run. The backend's submission queue
+sends each document to it (`src/services/ocrClient.js`); the webhook never
+waits for it. Locally:
+
+```bash
+npm run ocr:install     # once; also needed by the backend tests
+npm run ocr:start       # http://127.0.0.1:8080, with OCR_SERVICE_URL=http://127.0.0.1:8080
+npm run ocr:test
+```
+
+API, Docker, Cloud Run deployment (IAM, settings, costs) and rollback:
+[`ocr-worker/README.md`](ocr-worker/README.md).
 
 ### Admin Dashboard
 

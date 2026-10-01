@@ -8,6 +8,7 @@ import express from "express";
 import { createMessageIdCache } from "../src/utils/messageIdempotency.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
+import "./helpers/localOcrService.js";
 
 // Placeholders so the modules load without real credentials.
 Object.assign(process.env, {
@@ -227,7 +228,7 @@ describe("Webhook response timing: acknowledgement never waits for OCR, classifi
 
     test("no second processing pipeline: the webhook route never imports OCR or document-processing services", () => {
         const source = fs.readFileSync(new URL("../src/routes/whatsapp.js", import.meta.url), "utf8");
-        assert.ok(!/documentProcessingService|ocrService|documentClassificationService/.test(source), "the webhook must hand off to the single worker pipeline, not run its own");
+        assert.ok(!/documentProcessingService|ocrService|ocrClient|documentClassificationService/.test(source), "the webhook must hand off to the single worker pipeline, not run its own");
         // It may only ever notify the worker to wake up.
         const submissionQueueImports = [...source.matchAll(/from ["']\.\.\/services\/submissionQueue\.js["'];?\s*\n?\s*import\s*{([^}]*)}/g)];
         const imported = source.match(/import\s*{\s*([^}]*)\s*}\s*from\s*["']\.\.\/services\/submissionQueue\.js["']/);

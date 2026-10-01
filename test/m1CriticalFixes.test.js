@@ -9,6 +9,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createMessageIdCache } from "../src/utils/messageIdempotency.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
+import "./helpers/localOcrService.js";
 
 // Placeholders so the modules load without real credentials.
 Object.assign(process.env, {

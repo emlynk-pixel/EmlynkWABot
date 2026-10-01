@@ -9,6 +9,7 @@ import { createMessageIdCache } from "../src/utils/messageIdempotency.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
+import { ocrServiceUrl } from "./helpers/localOcrService.js";
 
 // Placeholders so the modules load without real credentials.
 Object.assign(process.env, {
@@ -23,7 +24,8 @@ const { createTemporaryDocumentRecord } = await import("../src/services/temporar
 const { saveTemporaryFile } = await import("../src/services/temporaryStorageService.js");
 const { removeObject } = await import("../src/services/permanentStorageService.js");
 const { processDocument } = await import("../src/services/documentProcessingService.js");
-const { OcrResourceError } = await import("../src/services/ocrService.js");
+const { OcrResourceError, OcrServiceUnavailableError } = await import("../src/services/ocrContract.js");
+const { createOcrClient, OCR_REQUEST_TIMEOUT_MS } = await import("../src/services/ocrClient.js");
 const { claimNextSubmission, drainSubmissionQueue, processClaimedSubmission, startSubmissionWorker, QUEUE_DEFAULTS } = await import("../src/services/submissionQueue.js");
 const { createAdminRouter } = await import("../src/routes/admin.js");
 const { createRequireActiveAdmin } = await import("../src/middleware/requireActiveAdmin.js");
@@ -289,6 +291,74 @@ describe("M1 worker", () => {
         assert.equal(outcomes[0].outcome, "GAVE_UP");
         assert.equal((await adminGet(w2, "/review?kind=FAILED")).items[0].failure.code, "ATTEMPTS_EXHAUSTED");
         assert.equal(w2.db.tables.document.length, 0);
+    });
+
+    test("OCR service unavailable -> nothing written, tried again after retryDelayMs, then processed once", async () => {
+        const w = await recorded([["m1", PASSPORT_PDF, "passport.pdf"]]);
+        let clock = Date.now();
+        const now = () => new Date(clock);
+        // The service fails 3 minutes into the attempt (e.g. a request that timed out).
+        const down = async () => { clock += 3 * 60_000; throw new OcrServiceUnavailableError("OCR service timed out"); };
+
+        const [first] = await drainSubmissionQueue({ db: w.db.client, bucket: w.bucket, now, extractText: down });
+        assert.deepEqual([first.attempt, first.outcome], [1, "RETRY_LATER"]);
+        const [row] = w.db.tables.temporaryData;
+        assert.equal(row.processingStatus, "TEMPORARY_STORED", "not recorded against the document");
+        assert.equal(row.processingSummary ?? null, null);
+        assert.equal(w.db.tables.document.length, 0);
+        assert.ok(![...w.bucket.objects.keys()].some((p) => p.startsWith("clients/") || p.startsWith("pending/")));
+
+        // retryDelayMs counts from the failure, not from the claim.
+        assert.equal(await claimNextSubmission({ db: w.db.client, now: new Date(clock + QUEUE_DEFAULTS.retryDelayMs - 1_000) }), null);
+        clock += QUEUE_DEFAULTS.retryDelayMs + 1_000;
+        const [second] = await drainSubmissionQueue({ db: w.db.client, bucket: w.bucket, now });
+        assert.deepEqual([second.attempt, second.outcome], [2, "PROCESSED"]);
+        assert.equal(w.db.tables.temporaryData[0].processingStatus, "VERIFIED");
+        assert.equal(w.db.tables.document.length, 1);
+        assert.equal([...w.bucket.objects.keys()].filter((p) => p.startsWith("clients/")).length, 1);
+    });
+
+    test("OCR service down on every attempt -> FAILED at TEXT_EXTRACTION after maxAttempts; OCR_BUSY keeps its code", async () => {
+        for (const [error, code] of [[new OcrServiceUnavailableError("OCR service unreachable"), "TEXT_EXTRACTION_FAILED"], [new OcrServiceUnavailableError(new OcrResourceError("OCR_BUSY").message), "OCR_BUSY"]]) {
+            const w = await recorded([["m1", PASSPORT_PDF, "passport.pdf"]]);
+            let clock = Date.now();
+            const now = () => new Date(clock);
+            const outcomes = [];
+            for (let attempt = 1; attempt <= QUEUE_DEFAULTS.maxAttempts; attempt++) {
+                const [outcome] = await drainSubmissionQueue({ db: w.db.client, bucket: w.bucket, now, extractText: async () => { throw error; } });
+                outcomes.push(outcome.outcome);
+                clock += QUEUE_DEFAULTS.retryDelayMs + 1_000;
+            }
+            assert.deepEqual(outcomes, ["RETRY_LATER", "RETRY_LATER", "GAVE_UP"]);
+            const [row] = w.db.tables.temporaryData;
+            assert.deepEqual([row.processingStatus, row.reviewReason, row.processingSummary.stage], ["FAILED", "PROCESSING_FAILED", "TEXT_EXTRACTION"]);
+            assert.equal(w.db.tables.document.length, 0);
+            assert.deepEqual((await adminGet(w, "/review?kind=FAILED")).items.map((i) => i.failure), [{ code, stage: "TEXT_EXTRACTION" }]);
+            assert.equal(await claimNextSubmission({ db: w.db.client, now: new Date(clock + QUEUE_DEFAULTS.leaseMs) }), null, "given up: never claimed again");
+        }
+    });
+
+    test("through HTTP: the service answers 503, then recovers -> the submission is processed on the next attempt", async () => {
+        const w = await recorded([["m1", PASSPORT_PDF, "passport.pdf"]]);
+        let serviceUp = false;
+        const client = createOcrClient({ serviceUrl: ocrServiceUrl });
+        const fetch = async (target, init) => (serviceUp ? globalThis.fetch(target, init) : new Response("Service Unavailable", { status: 503 }));
+        const extractText = createOcrClient({ serviceUrl: ocrServiceUrl, fetch });
+        let clock = Date.now();
+        const now = () => new Date(clock);
+
+        assert.equal((await drainSubmissionQueue({ db: w.db.client, bucket: w.bucket, now, extractText }))[0].outcome, "RETRY_LATER");
+        serviceUp = true;
+        clock += QUEUE_DEFAULTS.retryDelayMs + 1_000;
+        const [out] = await drainSubmissionQueue({ db: w.db.client, bucket: w.bucket, now, extractText });
+        assert.equal(out.outcome, "PROCESSED");
+        assert.equal(out.summary.extractionMethod, "PDF_TEXT");
+        assert.deepEqual((await client({ fileBuffer: PASSPORT_PDF, mimeType: "application/pdf" })).method, "PDF_TEXT");
+        assert.deepEqual(w.db.tables.document.map((d) => [d.documentType, d.verificationStatus]), [["PASSPORT", "VERIFIED"]]);
+    });
+
+    test("an OCR request always ends well inside the lease", () => {
+        assert.ok(OCR_REQUEST_TIMEOUT_MS * 2 < QUEUE_DEFAULTS.leaseMs);
     });
 
     test("the worker logs IDs and outcomes only (no names, numbers, file names or paths)", async () => {
