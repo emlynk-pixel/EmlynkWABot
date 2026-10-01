@@ -205,6 +205,7 @@ describe("Candidate deployment", () => {
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
         expect(await screen.findByLabelText("WhatsApp number")).toHaveAttribute("readonly");
         expect(screen.getByLabelText("WhatsApp number")).toHaveValue("94770000002");
+        expect(screen.getByText("Registered WhatsApp numbers cannot be changed.")).toBeInTheDocument();
         expect(screen.getByLabelText("Contact number")).not.toHaveAttribute("readonly");
         expect(screen.getByLabelText("Nationality")).toHaveValue("");
         expect(screen.getByLabelText("Sex")).toHaveValue("");
@@ -338,7 +339,9 @@ describe("Candidate registration", () => {
         expect(screen.getByLabelText("Date of birth")).toHaveValue("1990-03-12");
         expect(screen.getByLabelText("Passport expiry date")).toHaveValue("2030-05-11");
         expect(screen.getByLabelText("Passport issue date")).toHaveValue("");
+        expect(screen.getByLabelText("WhatsApp number")).toHaveAttribute("readonly");
         expect(screen.getByLabelText("WhatsApp number")).toHaveValue("94770000002");
+        expect(screen.getByText("Registered WhatsApp numbers cannot be changed.")).toBeInTheDocument();
         expect(screen.getByLabelText("Contact number")).toHaveValue("");
         expect(screen.getByLabelText("Comment")).toHaveValue("Prefers morning calls");
 
@@ -367,9 +370,31 @@ describe("Candidate registration", () => {
         expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
         const put = calls.find((c) => c.method === "PUT")!;
         expect(put.path).toBe("/api/admin/candidates/N0000002");
-        expect(put.body).toMatchObject({ address: "2 Lake Road", surname: "SILVA", nationality: "Sri Lankan", sex: "M" });
+        expect(put.body).toMatchObject({ address: "2 Lake Road", surname: "SILVA", nationality: "Sri Lankan", sex: "M", whatsappNumber: "94770000002" });
         expect(calls.some((c) => c.method === "POST")).toBe(false);
         expect(calls.some((c) => c.path.includes("/stages/")), "stage progress untouched (comment unchanged)").toBe(false);
+    });
+
+    // L2: the field is read-only, so the UI itself can never send a changed
+    // value — this covers the server explicitly refusing one anyway (e.g. a
+    // stale client or a direct API call), rather than it appearing to work.
+    test("a WHATSAPP_LOCKED response from the server is shown, not treated as success", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: EXISTING },
+            "PUT /api/admin/candidates/N0000002": { status: 409, body: { message: "The WhatsApp number is already set for this candidate and cannot be changed here.", code: "WHATSAPP_LOCKED" } },
+        });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await user.type(await screen.findByLabelText("Passport ID *"), "N0000002");
+        await user.tab();
+        await screen.findByText("Existing candidate found — details loaded.");
+        await user.clear(screen.getByLabelText("Address *"));
+        await user.type(screen.getByLabelText("Address *"), "2 Lake Road");
+        await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+        expect(await screen.findByText("The WhatsApp number is already set for this candidate and cannot be changed here.")).toBeInTheDocument();
+        expect(screen.queryByRole("navigation", { name: "Deployment stages" })).not.toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
     });
 
     test("register pressed straight after typing an existing passport ID loads that candidate instead of creating one", async () => {

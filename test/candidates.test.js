@@ -270,21 +270,58 @@ describe("optional passport and contact details", () => {
         assert.equal(db.state.users.length, 1);
     });
 
-    test("details updates keep an existing WhatsApp number; a missing one can be added", async () => {
+    test("a missing WhatsApp number can be added, and is still refused when another record already has it", async () => {
         const db = createFakeDb({ users: [
             { passportId: "P3333333", uniqueId: "0001", firstName: "Legacy", whatsappNumber: "94770000001" },
             { passportId: "P4444444", uniqueId: "0002", firstName: "NoPhone" },
         ] });
         const update = (passportId, body) => updateCandidateDetails({ db, passportId, values: parseCandidateBody({ ...REQUIRED_ONLY, ...body }, { creating: false }).values });
 
-        const kept = await update("P3333333", { nic: "200012345678", whatsappNumber: "0779999999" });
-        assert.equal(kept.candidate.whatsappNumber, "94770000001", "the number documents are matched by is not changed");
-        assert.equal((await update("P3333333", { nic: "200012345678", whatsappNumber: "" })).candidate.whatsappNumber, "94770000001", "and not cleared");
-
         await assert.rejects(update("P4444444", { nic: "200012345679", whatsappNumber: "0770000001" }), (error) => error.code === "WHATSAPP_EXISTS", "another record's number");
         const added = await update("P4444444", { nic: "200012345679", whatsappNumber: "0779999999", sex: "M", nationality: "Sri Lankan" });
         assert.equal(added.candidate.whatsappNumber, "94779999999");
         assert.equal(added.candidate.sex, "M");
+    });
+
+    // L2: an existing WhatsApp number is locked (the admin's form shows it
+    // read-only), so it is never silently changed. The same number comes
+    // back unchanged whatever form it is resubmitted in (case C); leaving it
+    // out is the same as resubmitting it (also not a change); a genuinely
+    // different number is refused outright, never silently kept (case D).
+    describe("an existing WhatsApp number is locked, not silently kept", () => {
+        const update = (db, passportId, body) => updateCandidateDetails({ db, passportId, values: parseCandidateBody({ ...REQUIRED_ONLY, ...body }, { creating: false }).values });
+
+        test("resubmitting the exact same number (already normalized on record) succeeds unchanged", async () => {
+            const db = createFakeDb({ users: [{ passportId: "P3333333", uniqueId: "0001", firstName: "Legacy", whatsappNumber: "94770000001" }] });
+            const result = await update(db, "P3333333", { nic: "200012345678", whatsappNumber: "0770000001" });
+            assert.equal(result.candidate.whatsappNumber, "94770000001");
+        });
+
+        test("resubmitting the same number in a differently formatted (unnormalized) stored record succeeds unchanged", async () => {
+            // A legacy/manually entered row, stored with a leading "+" rather
+            // than the normalized sender format: the comparison still
+            // recognizes it as the same number, not a change.
+            const db = createFakeDb({ users: [{ passportId: "P6666666", uniqueId: "0006", firstName: "Legacy", whatsappNumber: "+94771581916" }] });
+            const result = await update(db, "P6666666", { nic: "200012345680", whatsappNumber: "0771581916" });
+            assert.equal(result.candidate.whatsappNumber, "+94771581916", "the stored value is untouched");
+        });
+
+        test("leaving the field out (or empty) is not an attempted change and is accepted", async () => {
+            const db = createFakeDb({ users: [{ passportId: "P3333333", uniqueId: "0001", firstName: "Legacy", whatsappNumber: "94770000001" }] });
+            const result = await update(db, "P3333333", { nic: "200012345678", whatsappNumber: "" });
+            assert.equal(result.candidate.whatsappNumber, "94770000001", "unchanged, not cleared");
+        });
+
+        test("a genuinely different number is refused outright, not silently kept", async () => {
+            const db = createFakeDb({ users: [{ passportId: "P3333333", uniqueId: "0001", firstName: "Legacy", whatsappNumber: "94770000001" }] });
+            await assert.rejects(
+                update(db, "P3333333", { nic: "200012345678", whatsappNumber: "0779999999" }),
+                (error) => error.code === "WHATSAPP_LOCKED" && error.status === 409,
+            );
+            // Refused before anything else in the request is written.
+            assert.equal(db.state.users[0].whatsappNumber, "94770000001");
+            assert.equal(db.state.users[0].nic, undefined, "no partial update either");
+        });
     });
 
     test("an existing record without any of the new details still reads correctly", async () => {

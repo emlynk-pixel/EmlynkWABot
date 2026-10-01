@@ -553,12 +553,20 @@ async function requireCandidate(db, passportId) {
 // PUT /api/admin/candidates/:passportId (Candidate Details stage).
 // A WhatsApp number already on record is never changed here: it is what
 // documents sent on WhatsApp are matched by. One can only be added when the
-// record has none.
+// record has none. Resubmitting the same number (the admin's form always
+// does, since the field is read-only once set) is not an attempted change —
+// compared after normalizing the stored value, so an older unnormalized
+// record doesn't falsely look different from itself. A genuinely different
+// number is refused outright rather than silently kept.
 export async function updateCandidateDetails({ db, passportId, values }) {
     const user = await requireCandidate(db, passportId);
     await assertNicFree(db, values.nic, passportId);
     const { whatsappNumber, ...data } = values;
-    if (!user.whatsappNumber && whatsappNumber) {
+    if (user.whatsappNumber) {
+        if (whatsappNumber && whatsappNumber !== normalizePhoneNumber(user.whatsappNumber)) {
+            throw new CandidateError(409, "WHATSAPP_LOCKED", "The WhatsApp number is already set for this candidate and cannot be changed here.");
+        }
+    } else if (whatsappNumber) {
         await assertWhatsappFree(db, whatsappNumber, passportId);
         data.whatsappNumber = whatsappNumber;
     }

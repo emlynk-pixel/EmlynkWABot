@@ -123,6 +123,12 @@ model User {
   placeOfBirth       String?         @map("place_of_birth")
   passportExpiryDate DateTime?       @map("passport_expiry_date")
   picture            String?
+  // A partial unique index on this column (not expressible in Prisma's
+  // schema DSL — a WHERE-conditioned unique index) is defined directly in
+  // SQL by migration 20261001140000_whatsapp_unique_constraint. Do not add
+  // @unique here: that would create a second, unconditional index rather
+  // than represent the real constraint. Maintain the real one through a SQL
+  // migration, not this field.
   whatsappNumber     String?         @map("whatsapp_number")
   contactNumber      String?         @map("contact_number")
   address            String?
