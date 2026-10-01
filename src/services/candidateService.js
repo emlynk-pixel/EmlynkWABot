@@ -613,16 +613,20 @@ const UPLOAD_REJECTION_MESSAGES = {
     FILE_SIGNATURE_MISMATCH: "The file's content does not match its type.",
 };
 
+// A video document type (the skill video) takes videos only: a PDF or an
+// image is refused, never checked as a document. Every other type takes
+// PDF, JPEG or PNG (validateDocumentFile).
 export function validateCandidateUpload({ documentType, mimeType, buffer }) {
     const definition = CANDIDATE_DOCUMENT_TYPES[documentType];
-    if (definition?.video && VIDEO_MIME_TYPES.includes(mimeType)) {
+    if (definition?.video) {
+        if (!mimeType) return UPLOAD_REJECTION_MESSAGES.MISSING_MIME_TYPE;
+        if (!VIDEO_MIME_TYPES.includes(mimeType)) return "This file type is not accepted. Use MP4, MOV or WebM.";
         if (!buffer?.length) return "The file is empty.";
         if (buffer.length > MAX_FILE_SIZE) return UPLOAD_REJECTION_MESSAGES.FILE_TOO_LARGE;
         return videoSignatureMatches(buffer, mimeType) ? null : UPLOAD_REJECTION_MESSAGES.FILE_SIGNATURE_MISMATCH;
     }
     const result = validateDocumentFile({ mimeType, fileSize: buffer?.length ?? 0, fileBuffer: buffer });
     if (result.valid) return null;
-    if (definition?.video && result.reason === "UNSUPPORTED_FILE_TYPE") return "This file type is not accepted. Use MP4, MOV or WebM.";
     return UPLOAD_REJECTION_MESSAGES[result.reason] ?? "The file was not accepted.";
 }
 

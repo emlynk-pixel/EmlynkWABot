@@ -61,6 +61,41 @@ describe("Candidates list", () => {
         expect(calls.at(-1)!.path).toBe("/api/admin/candidates?page=1&pageSize=25&search=901234567V");
     });
 
+    test("a failed search shows its error and Try again, not the previous results", async () => {
+        let failing = true;
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates": (url) => (url.searchParams.get("search") && failing ? { status: 503, body: {} } : { status: 200, body: LIST }),
+        });
+        renderApp("/candidates");
+        await screen.findByRole("table", { name: "Candidates" });
+        const user = userEvent.setup();
+        await user.type(screen.getByLabelText("Search candidates"), "nobody{Enter}");
+
+        expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
+        expect(screen.queryByRole("table", { name: "Candidates" })).not.toBeInTheDocument();
+        expect(screen.queryByText("KAMAL PERERA")).not.toBeInTheDocument();
+        expect(screen.queryByText(/candidates? match|No candidates yet/)).not.toBeInTheDocument();
+
+        failing = false;
+        await user.click(screen.getByRole("button", { name: "Try again" }));
+        expect(await screen.findByRole("table", { name: "Candidates" })).toBeInTheDocument();
+        expect(calls.at(-1)!.path).toBe("/api/admin/candidates?page=1&pageSize=25&search=nobody");
+    });
+
+    test("a failed page change shows its error, not the previous page", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates": (url) => (url.searchParams.get("page") === "2"
+                ? { status: 503, body: {} }
+                : { status: 200, body: { ...LIST, pagination: { page: 1, pageSize: 25, total: 30, totalPages: 2 } } }),
+        });
+        renderApp("/candidates");
+        await screen.findByRole("table", { name: "Candidates" });
+        await userEvent.setup().click(screen.getByRole("button", { name: "Next" }));
+        expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
+        expect(screen.queryByText("KAMAL PERERA")).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    });
+
     test("a viewer cannot add candidates", async () => {
         signedInBackend({ "GET /auth/me": { status: 200, body: { admin: VIEWER } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
         renderApp("/candidates");
@@ -87,6 +122,82 @@ describe("Candidate deployment", () => {
         expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
         for (const label of ["Medical", "Police report", "Scan - Agreement", "Scan - Affidavit"]) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    });
+
+    describe("document type (police report, affidavit) must be chosen", () => {
+        const pdf = () => new File(["%PDF-1.4"], "report.pdf", { type: "application/pdf" });
+        const document = (variant: string | null) => ({ documentId: "doc-1", originalFilename: "old-report.pdf", verificationStatus: "VERIFIED", variant, receivedDate: "2026-09-20T00:00:00.000Z" });
+        const rowOf = (select: HTMLElement) => within(select.parentElement!);
+        const uploads = (calls: { method: string; path: string }[]) => calls.filter((c) => c.method === "POST").map((c) => c.path);
+
+        test("nothing is preselected; Upload stays disabled until a type is chosen; the chosen type is sent", async () => {
+            const uploaded: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, POLICE_REPORT: document("ROMANIA") } };
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+                "POST /api/admin/candidates/N0000002/documents": { status: 200, body: uploaded },
+            });
+            renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+            const user = userEvent.setup();
+
+            const police = await screen.findByLabelText("Police report type");
+            expect(police).toHaveValue("");
+            expect(within(police).getByRole("option", { name: "Select type…" })).toBeInTheDocument();
+            expect(within(police).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select type…", "SL Verified", "Romania", "SL Normal"]);
+            expect(rowOf(police).getByRole("button", { name: "Upload" })).toBeDisabled();
+
+            const affidavit = screen.getByLabelText("Scan - Affidavit type");
+            expect(affidavit).toHaveValue("");
+            expect(within(affidavit).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select type…", "English Affidavit", "Sinhala Affidavit"]);
+            expect(rowOf(affidavit).getByRole("button", { name: "Upload" })).toBeDisabled();
+
+            // Documents without types are unaffected.
+            expect(screen.queryByLabelText("Medical type")).not.toBeInTheDocument();
+            expect(screen.getAllByRole("button", { name: "Upload" }).filter((b) => !(b as HTMLButtonElement).disabled)).toHaveLength(2);
+
+            // A file can't be sent before the type is chosen.
+            await user.upload(screen.getByLabelText("Police report file"), pdf());
+            expect(uploads(calls)).toEqual([]);
+
+            await user.selectOptions(police, "ROMANIA");
+            expect(rowOf(police).getByRole("button", { name: "Upload" })).toBeEnabled();
+            await user.upload(screen.getByLabelText("Police report file"), pdf());
+            await vi.waitFor(() => expect(uploads(calls)).toEqual(["/api/admin/candidates/N0000002/documents?type=POLICE_REPORT&variant=ROMANIA"]));
+            expect(await screen.findByText(/old-report\.pdf • Romania/)).toBeInTheDocument();
+            expect(rowOf(police).getByRole("button", { name: "Replace" })).toBeEnabled();
+        });
+
+        test("a stored document keeps its type; replacing it sends that type, or a newly chosen one", async () => {
+            const stored: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, POLICE_REPORT: document("SL_NORMAL"), AFFIDAVIT: document("SINHALA") } };
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: stored },
+                "POST /api/admin/candidates/N0000002/documents": { status: 200, body: stored },
+            });
+            renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+            const user = userEvent.setup();
+
+            const police = await screen.findByLabelText("Police report type");
+            expect(police).toHaveValue("SL_NORMAL");
+            expect(screen.getByLabelText("Scan - Affidavit type")).toHaveValue("SINHALA");
+            expect(rowOf(police).getByRole("button", { name: "Replace" })).toBeEnabled();
+
+            await user.upload(screen.getByLabelText("Police report file"), pdf());
+            await vi.waitFor(() => expect(uploads(calls)).toHaveLength(1));
+            await user.selectOptions(police, "SL_VERIFIED");
+            await user.upload(screen.getByLabelText("Police report file"), pdf());
+            await vi.waitFor(() => expect(uploads(calls)).toEqual([
+                "/api/admin/candidates/N0000002/documents?type=POLICE_REPORT&variant=SL_NORMAL",
+                "/api/admin/candidates/N0000002/documents?type=POLICE_REPORT&variant=SL_VERIFIED",
+            ]));
+        });
+
+        test("a stored document without a type (e.g. received on WhatsApp) needs one before it is replaced", async () => {
+            const stored: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, POLICE_REPORT: document(null) } };
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: stored } });
+            renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+            const police = await screen.findByLabelText("Police report type");
+            expect(police).toHaveValue("");
+            expect(rowOf(police).getByRole("button", { name: "Replace" })).toBeDisabled();
+        });
     });
 
     test("candidate details: optional fields are empty when not on record; a WhatsApp number on record is read-only", async () => {

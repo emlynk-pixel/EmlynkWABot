@@ -33,6 +33,9 @@ const ADMIN = { adminId: "admin-1", name: "Test Admin", role: "ADMIN", status: "
 const PDF = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(64, 0x20)]);
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
 const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypmp42"), Buffer.alloc(64)]);
+const MOV = Buffer.concat([Buffer.from([0, 0, 0, 0x14]), Buffer.from("ftypqt  "), Buffer.alloc(64)]);
+const WEBM = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(64)]);
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64)]);
 
 const VALID_BODY = Object.freeze({
     passportId: "n1023757",
@@ -404,6 +407,38 @@ describe("document uploads", () => {
         assert.match(validateCandidateUpload({ documentType: "SKILL_VIDEO", mimeType: "video/mp4", buffer: PDF }), /does not match/);
     });
 
+    test("the skill video takes MP4, MOV and WebM only; a PDF or an image is refused", () => {
+        const skill = (mimeType, buffer) => validateCandidateUpload({ documentType: "SKILL_VIDEO", mimeType, buffer });
+        assert.equal(skill("video/mp4", MP4), null);
+        assert.equal(skill("video/quicktime", MOV), null);
+        assert.equal(skill("video/webm", WEBM), null);
+
+        // Real documents, honestly labelled: valid for every other type, not for the skill video.
+        for (const [mimeType, buffer] of [["application/pdf", PDF], ["image/jpeg", JPEG], ["image/png", PNG]]) {
+            assert.match(skill(mimeType, buffer), /Use MP4, MOV or WebM/, `${mimeType} refused`);
+            assert.equal(validateCandidateUpload({ documentType: "MEDICAL", mimeType, buffer }), null, `${mimeType} still fine for a document`);
+        }
+        assert.match(skill("video/x-matroska", MP4), /Use MP4, MOV or WebM/);
+        assert.match(skill(undefined, MP4), /no type/);
+
+        // Video types whose content isn't that video stay refused.
+        assert.match(skill("video/webm", MP4), /does not match/);
+        assert.match(skill("video/quicktime", PNG), /does not match/);
+        assert.match(skill("video/mp4", Buffer.alloc(0)), /empty/);
+    });
+
+    test("an upload of a PDF as the skill video stores nothing", async () => {
+        const db = createFakeDb();
+        const bucket = createFakeBucket();
+        await registered(db);
+        await assert.rejects(
+            uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "SKILL_VIDEO", variant: null, mimeType: "application/pdf", buffer: PDF }),
+            (error) => error.status === 422 && error.code === "FILE_REJECTED",
+        );
+        assert.equal(bucket.objects.size, 0);
+        assert.equal(db.state.documents.length, 0);
+    });
+
     test("an upload becomes the current document; the previous one is superseded, never deleted; each upload is audited", async () => {
         const db = createFakeDb();
         const bucket = createFakeBucket();
@@ -471,18 +506,19 @@ describe("candidate list and call log", () => {
 });
 
 describe("candidate routes: roles", () => {
-    async function call(role, method, path, body, db = createFakeDb()) {
+    // file: { mimeType, buffer } sends the raw file body (the upload route).
+    async function call(role, method, path, body, db = createFakeDb(), { bucket = createFakeBucket(), file } = {}) {
         const app = express();
         app.use(express.json());
         const requireAdmin = (req, res, next) => { req.admin = { ...ADMIN, role }; next(); };
-        app.use("/api/admin", createAdminRouter({ db, bucket: createFakeBucket(), requireAdmin, apiLimiter: noRateLimit }));
+        app.use("/api/admin", createAdminRouter({ db, bucket, requireAdmin, apiLimiter: noRateLimit }));
         app.use(errorHandler);
         const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
         try {
             const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, {
                 method,
-                headers: { "content-type": "application/json" },
-                body: body === undefined ? undefined : JSON.stringify(body),
+                headers: { "content-type": file ? file.mimeType : "application/json" },
+                body: file ? file.buffer : body === undefined ? undefined : JSON.stringify(body),
             });
             return { status: response.status, body: await response.json() };
         } finally {
@@ -513,6 +549,71 @@ describe("candidate routes: roles", () => {
         assert.equal(found.body.candidate.passportId, "n1023757");
         assert.equal(found.body.candidate.surname, "De Soysa");
         assert.equal((await call("VIEWER", "GET", "/api/admin/candidates/N9999999", undefined, db)).status, 404, "not found -> new registration");
+    });
+
+    // A legacy record stored in lowercase, reached with the uppercase ID:
+    // every action works on that record, which keeps its stored ID.
+    describe("a legacy lowercase passport ID, used in uppercase", () => {
+        const LEGACY = { passportId: "n1023757", uniqueId: "0001", firstName: "Anusha", otherName: "De Soysa", nic: "965404378V", address: "Negombo", job: "Caregiver", jobExperience: "2 years" };
+        const { passportId: _ignored, comment: _comment, ...DETAILS_BODY } = VALID_BODY;
+
+        test("details, stages, documents and call notes all reach the stored record", async () => {
+            const db = createFakeDb({ users: [LEGACY] });
+            const bucket = createFakeBucket();
+
+            const details = await call("REVIEWER", "PUT", "/api/admin/candidates/N1023757", { ...DETAILS_BODY, address: "Kandy" }, db);
+            assert.equal(details.status, 200);
+            assert.equal(details.body.candidate.passportId, "n1023757");
+            assert.equal(db.state.users[0].address, "Kandy");
+
+            const stage = await call("REVIEWER", "PUT", "/api/admin/candidates/N1023757/stages/TEST_DETAILS", { completed: true, notes: "Booked" }, db);
+            assert.equal(stage.status, 200);
+            assert.deepEqual(db.state.stages.map((s) => [s.passportId, s.stage, s.completed]), [["n1023757", "TEST_DETAILS", true]]);
+
+            const upload = await call("REVIEWER", "POST", "/api/admin/candidates/N1023757/documents?type=MEDICAL", undefined, db, { bucket, file: { mimeType: "application/pdf", buffer: PDF } });
+            assert.equal(upload.status, 200);
+            assert.equal(upload.body.documents.MEDICAL.verificationStatus, "VERIFIED");
+            assert.deepEqual(db.state.documents.map((d) => d.passportId), ["n1023757"]);
+            assert.deepEqual([...bucket.objects.keys()], ["clients/n1023757/medical/medical.pdf"]);
+
+            assert.equal((await call("REVIEWER", "POST", "/api/admin/candidates/N1023757/call-logs", { note: "Called" }, db)).status, 201);
+            const logs = await call("VIEWER", "GET", "/api/admin/candidates/N1023757/call-logs", undefined, db);
+            assert.equal(logs.status, 200);
+            assert.deepEqual(logs.body.items.map((i) => i.note), ["Called"]);
+            assert.deepEqual(db.state.callLogs.map((c) => c.passportId), ["n1023757"]);
+
+            assert.equal(db.state.users.length, 1, "no second record");
+            assert.equal(db.state.users[0].passportId, "n1023757", "stored ID unchanged");
+        });
+
+        test("two records differing only in case: every action is 404, nothing is written", async () => {
+            const db = createFakeDb({ users: [{ ...LEGACY, passportId: "na444444", nic: null }, { ...LEGACY, passportId: "Na444444", uniqueId: "0002", nic: null }] });
+            const bucket = createFakeBucket();
+            const requests = [
+                ["PUT", "/api/admin/candidates/NA444444", DETAILS_BODY],
+                ["PUT", "/api/admin/candidates/NA444444/stages/TEST_DETAILS", { completed: true }],
+                ["POST", "/api/admin/candidates/NA444444/call-logs", { note: "x" }],
+                ["GET", "/api/admin/candidates/NA444444/call-logs", undefined],
+            ];
+            for (const [method, path, body] of requests) {
+                const response = await call("ADMIN", method, path, body, db);
+                assert.equal(response.status, 404, `${method} ${path}`);
+                assert.equal(response.body.code, "NOT_FOUND");
+            }
+            const upload = await call("ADMIN", "POST", "/api/admin/candidates/NA444444/documents?type=MEDICAL", undefined, db, { bucket, file: { mimeType: "application/pdf", buffer: PDF } });
+            assert.equal(upload.status, 404);
+            assert.equal(bucket.objects.size, 0);
+            assert.equal(db.state.stages.length + db.state.callLogs.length + db.state.documents.length, 0);
+        });
+
+        test("roles are unchanged: a VIEWER still can't change the record", async () => {
+            const db = createFakeDb({ users: [LEGACY] });
+            assert.equal((await call("VIEWER", "PUT", "/api/admin/candidates/N1023757", DETAILS_BODY, db)).status, 403);
+            assert.equal((await call("VIEWER", "PUT", "/api/admin/candidates/N1023757/stages/TEST_DETAILS", { completed: true }, db)).status, 403);
+            assert.equal((await call("VIEWER", "POST", "/api/admin/candidates/N1023757/documents?type=MEDICAL", undefined, db, { file: { mimeType: "application/pdf", buffer: PDF } })).status, 403);
+            assert.equal((await call("VIEWER", "POST", "/api/admin/candidates/N1023757/call-logs", { note: "x" }, db)).status, 403);
+            assert.equal(db.state.users[0].address, "Negombo");
+        });
     });
 });
 

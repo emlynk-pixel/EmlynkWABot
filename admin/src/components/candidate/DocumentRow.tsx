@@ -15,7 +15,9 @@ function statusLine(document: CandidateDocument | null, description?: string) {
 }
 
 // One document: its name, what is stored now, an optional type selector and
-// Upload. A file is uploaded as soon as it is chosen.
+// Upload. A file is uploaded as soon as it is chosen. A document with
+// variants (police report, affidavit) needs its type chosen first: nothing is
+// preselected unless the stored document already has one.
 export function DocumentRow({ passportId, documentType, label, description, required, document, variants, accept = DOCUMENT_ACCEPT, readOnly, onUploaded }: {
     passportId: string;
     documentType: CandidateDocumentType;
@@ -30,12 +32,13 @@ export function DocumentRow({ passportId, documentType, label, description, requ
 }) {
     const { token } = useAuth();
     const input = useRef<HTMLInputElement>(null);
-    const [variant, setVariant] = useState(document?.variant ?? variants?.[0]?.value ?? "");
+    const [variant, setVariant] = useState(() => (variants?.some((v) => v.value === document?.variant) ? document?.variant ?? "" : ""));
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const needsVariant = Boolean(variants) && !variant;
 
     const upload = async (file: File | undefined) => {
-        if (!file || !token) return;
+        if (!file || !token || needsVariant) return;
         setBusy(true);
         setError(null);
         try {
@@ -67,11 +70,12 @@ export function DocumentRow({ passportId, documentType, label, description, requ
                             onChange={(event) => setVariant(event.target.value)}
                             className="h-9 rounded border border-border-strong bg-surface px-2 text-label-sm text-ink focus:border-primary focus:outline-none"
                         >
+                            <option value="" disabled>Select type…</option>
                             {variants.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                         </select>
                     )}
-                    <input ref={input} type="file" accept={accept} className="hidden" aria-label={`${label} file`} onChange={(event) => upload(event.target.files?.[0])} />
-                    <button type="button" disabled={readOnly || busy} onClick={() => input.current?.click()} className={`${secondaryButton} inline-flex items-center gap-1.5`}>
+                    <input ref={input} type="file" accept={accept} className="hidden" aria-label={`${label} file`} disabled={readOnly || busy || needsVariant} onChange={(event) => upload(event.target.files?.[0])} />
+                    <button type="button" disabled={readOnly || busy || needsVariant} onClick={() => input.current?.click()} className={`${secondaryButton} inline-flex items-center gap-1.5`}>
                         <Icon name="upload" className="size-4" />{busy ? "Uploading…" : document ? "Replace" : "Upload"}
                     </button>
                 </div>

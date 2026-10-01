@@ -33,7 +33,9 @@ export function CandidatesPage() {
         setSearchParams(next);
     };
     const open = (passportId: string) => navigate(`/candidates/${encodeURIComponent(passportId)}`);
-    const data = list.data;
+    // A failed request shows its error only: the rows still held from an
+    // earlier search or page are not the results of this one.
+    const data = list.status === "error" ? null : list.data;
 
     return (
         <section aria-labelledby="page-title" className="space-y-4">
