@@ -35,14 +35,19 @@ export function DocumentRow({ passportId, documentType, label, description, requ
     const [variant, setVariant] = useState(() => (variants?.some((v) => v.value === document?.variant) ? document?.variant ?? "" : ""));
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // An upload is saved as soon as it finishes (the form's Save changes is
+    // for the form's fields): say so, so the admin doesn't look for a save.
+    const [saved, setSaved] = useState(false);
     const needsVariant = Boolean(variants) && !variant;
 
     const upload = async (file: File | undefined) => {
         if (!file || !token || needsVariant) return;
         setBusy(true);
         setError(null);
+        setSaved(false);
         try {
             onUploaded(await uploadCandidateDocument(token, passportId, documentType, file, variants ? variant : undefined));
+            setSaved(true);
         } catch (caught) {
             setError(caught instanceof ApiError ? caught.message : "The file could not be uploaded.");
         } finally {
@@ -58,6 +63,7 @@ export function DocumentRow({ passportId, documentType, label, description, requ
                     <p className="text-label-md text-ink">
                         {label}{required && <span className="text-critical"> *</span>}
                         {document?.verificationStatus === "REVIEW_REQUIRED" && <span className="ml-2 text-label-sm text-review">Needs review</span>}
+                        {saved && <span role="status" className="ml-2 inline-flex items-center gap-1 text-label-sm text-verified"><Icon name="check" className="size-3.5" />Saved</span>}
                     </p>
                     <p className="truncate text-label-sm text-ink-subtle">{statusLine(document, description)}</p>
                 </div>

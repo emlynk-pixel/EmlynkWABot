@@ -136,6 +136,10 @@ export type CandidateDetailsInput = {
 };
 export type CandidateRegistration = CandidateDetailsInput & { passportId: string; comment: string };
 
+// A file registration couldn't upload, reported on the candidate's page
+// (navigation state) until that document is on record.
+export type FailedUpload = { documentType: CandidateDocumentType; message: string };
+
 export type CallLogEntry = { callLogId: string; note: string; createdDate: string; adminName: string | null };
 
 const base = (passportId: string) => `/api/admin/candidates/${encodeURIComponent(passportId)}`;

@@ -407,6 +407,56 @@ describe("Candidate registration", () => {
         await user.upload(screen.getByLabelText("Passport *"), new File(["%PDF-1.4"], "passport.pdf", { type: "application/pdf" }));
     }
 
+    test("a file that failed at registration is reported until it's uploaded; the upload says Saved; form edits still save to the same records", async () => {
+        const doc = (name: string) => ({ documentId: name, originalFilename: name, verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-01T00:00:00.000Z" });
+        const withPassport: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, PASSPORT: doc("passport.pdf") } };
+        const withVideo: CandidateDetails = { ...withPassport, documents: { ...withPassport.documents, SKILL_VIDEO: doc("skills.mp4") } };
+        let created = false;
+        let targets = 0;
+        let finalizes = 0;
+        const { calls } = signedInBackend({
+            "POST /api/admin/candidates": () => { created = true; return { status: 201, body: { passportId: "N0000002", uniqueId: "0002" } }; },
+            "GET /api/admin/candidates/N0000002": () => (created ? { status: 200, body: withPassport } : { status: 404, body: { message: "Candidate not found" } }),
+            // Registration: the passport goes through, the skill video doesn't; on the candidate page it does.
+            "POST /api/admin/candidates/N0000002/documents/upload-target": () => {
+                targets += 1;
+                return targets === 2
+                    ? { status: 422, body: { message: "The file could not be uploaded. Please try again.", code: "FILE_REJECTED" } }
+                    : { status: 200, body: { uploadId: UPLOAD_ID, uploadUrl: SIGNED_URL } };
+            },
+            [`PUT ${SIGNED_PATH}`]: { status: 200, body: {} },
+            "POST /api/admin/candidates/N0000002/documents/finalize": () => { finalizes += 1; return { status: 200, body: finalizes === 1 ? withPassport : withVideo }; },
+            "PUT /api/admin/candidates/N0000002/stages/CANDIDATE_DETAILS": { status: 200, body: withVideo },
+            "PUT /api/admin/candidates/N0000002": { status: 200, body: withVideo },
+        });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await fillRequired(user);
+        await user.upload(screen.getByLabelText("Skill video"), new File(["video"], "skills.mp4", { type: "video/mp4" }));
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+
+        const notice = await screen.findByText(/The candidate was registered, but these files were not uploaded/);
+        expect(notice).toHaveTextContent("Skill video: The file could not be uploaded. Please try again.");
+        expect(notice).not.toHaveTextContent("Passport");
+
+        // Uploaded here: the report goes, and the row says it's saved. Save changes has nothing to save.
+        await user.upload(screen.getByLabelText("Skill video file"), new File(["video"], "skills.mp4", { type: "video/mp4" }));
+        expect(await screen.findByRole("status")).toHaveTextContent("Saved");
+        expect(screen.queryByText(/these files were not uploaded/)).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+
+        // Editing the form enables Save; saving updates the existing records (PUTs), never creates new ones.
+        const postsBefore = calls.filter((c) => c.method === "POST").length;
+        await user.type(screen.getByLabelText("Comment"), "Called back");
+        await user.type(screen.getByLabelText("Address *"), ", Kandy");
+        expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+        await user.click(screen.getByRole("button", { name: "Save changes" }));
+        await vi.waitFor(() => expect(calls.filter((c) => c.method === "PUT" && c.path.startsWith("/api/"))).toHaveLength(2));
+        expect(calls.find((c) => c.method === "PUT" && c.path === "/api/admin/candidates/N0000002")!.body).toMatchObject({ address: "1 Main Street, Kandy" });
+        expect(calls.find((c) => c.path.endsWith("/stages/CANDIDATE_DETAILS"))!.body).toEqual({ notes: "Called back" });
+        expect(calls.filter((c) => c.method === "POST").length, "nothing new is created").toBe(postsBefore);
+    });
+
     test("registers with only the required fields; the optional passport and contact details are sent empty", async () => {
         let created = false;
         const { calls } = signedInBackend({
