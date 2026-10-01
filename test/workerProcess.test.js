@@ -209,7 +209,7 @@ describe("Step 5B: the worker entry point (node src/worker.js)", () => {
     });
 
     test("starts with the worker settings only, stays running and answers /health", async () => {
-        const child = spawn(process.execPath, [workerPath], { env: childEnv({ PORT: "0" }), stdio: ["ignore", "pipe", "pipe"] });
+        const child = spawn(process.execPath, [workerPath], { env: childEnv({ PORT: "0", FORCE_COLOR: "0" }), stdio: ["ignore", "pipe", "pipe"] });
         let stdout = "";
         child.stdout.on("data", (chunk) => { stdout += chunk; });
         const exited = new Promise((resolve) => child.once("exit", (code) => resolve(code)));

@@ -62,6 +62,24 @@ A candidate is stored as a row in the `users` table identified by their **passpo
 
 The **Add candidate** page (`CandidateRegistrationPage`) works in two modes depending on whether the entered passport ID is already on record:
 
+```mermaid
+flowchart TD
+    Start([Admin visits /admin/candidates/new]) --> Input[Enter Passport ID]
+    Input --> Lookup{GET /api/admin/candidates/:passportId}
+    
+    Lookup -- 404 Not Found --> New[New Candidate Flow]
+    New --> FillNew[Fill all required details]
+    FillNew --> UploadNew[Upload Passport, NIC, Skill Video]
+    UploadNew --> SaveNew[POST /api/admin/candidates]
+    SaveNew --> DoneNew([Navigate to Candidate Details Stage])
+    
+    Lookup -- 200 OK --> Existing[Existing Candidate Flow]
+    Existing --> PrePopulate[Form pre-populated with stored details]
+    PrePopulate --> Edit[Edit details or update documents]
+    Edit --> SaveExisting[PUT /api/admin/candidates/:passportId]
+    SaveExisting --> DoneExisting([Stay on current page])
+```
+
 ### 3.1 New candidate
 
 1. The admin enters a passport ID (6–9 alphanumeric characters, must include at least one digit).
@@ -109,6 +127,21 @@ On save, the form calls `PUT /api/admin/candidates/:passportId` and, if the comm
 ## 4. Six-Stage Deployment Process
 
 Each candidate has exactly **six stages**, always in this order:
+
+```mermaid
+flowchart LR
+    S1[1. Test Details\n(Admin)] --> S2[2. Candidate Details\n(Automatic)]
+    S2 --> S3[3. Document Submission\n(Automatic)]
+    S3 --> S4[4. IVS Interview\n(Admin)]
+    S4 --> S5[5. Visa Approval\n(Admin)]
+    S5 --> S6[6. Finalizing Job\n(Admin)]
+    
+    classDef auto fill:#e1bee7,stroke:#8e24aa,stroke-width:2px,color:#000;
+    classDef manual fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000;
+    
+    class S1,S4,S5,S6 manual;
+    class S2,S3 auto;
+```
 
 | # | Stage key | Label | Completed by |
 |---|---|---|---|
@@ -245,6 +278,22 @@ The size limit is **50 MB** for all types (enforced by both the Express route an
 ### Versioning
 
 Uploading a new file of a document type that already has a `VERIFIED` document:
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant Server
+    participant Storage as Supabase Bucket
+    participant Database
+
+    Admin->>Server: POST /documents?type=...
+    Server->>Storage: Upload new file
+    Server->>Database: Update previous VERIFIED document to SUPERSEDED
+    Server->>Database: Insert new file as VERIFIED
+    Server->>Database: Append action to audit_logs
+    Server-->>Admin: 200 OK (Updated Candidate Details)
+```
+
 - The new file becomes `VERIFIED`.
 - The previous `VERIFIED` file is set to `SUPERSEDED` (it is not deleted from storage).
 
