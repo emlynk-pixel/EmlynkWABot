@@ -37,14 +37,22 @@ export function createApp({ extractText = extractDocumentText, log = console } =
         if (!MIME_TYPE.test(mimeType)) {
             return sendError(res, 400, "INVALID_REQUEST", "Content-Type must be the document's MIME type");
         }
-        if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+        // express.raw gives a Buffer, but the body is checked here rather than
+        // trusted: only a Buffer is accepted, and its size comes from
+        // Buffer.byteLength, never from a .length a string or an array could
+        // also have (CodeQL: type confusion through parameter tampering).
+        const document = req.body;
+        if (!Buffer.isBuffer(document)) {
+            return sendError(res, 400, "INVALID_REQUEST", "The request body must be the document");
+        }
+        const bytes = Buffer.byteLength(document);
+        if (bytes === 0) {
             return sendError(res, 400, "INVALID_REQUEST", "The request body must be the document");
         }
 
-        const bytes = req.body.length;
         const started = Date.now();
         try {
-            const result = await extractText({ fileBuffer: req.body, mimeType });
+            const result = await extractText({ fileBuffer: document, mimeType });
             log.log("OCR done:", { mimeType, bytes, method: result.method, success: result.success, ms: Date.now() - started });
             return res.json(result);
         } catch (error) {
