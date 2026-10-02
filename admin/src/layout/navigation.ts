@@ -16,5 +16,5 @@ export const NAV_ITEMS: NavItem[] = [
     // AUDIT-004: Invitations was only reachable via the header button;
     // added here so the sidebar links ADMIN-role users to the full page.
     // adminOnly: true hides this entry from VIEW_ONLY-role users.
-    { to: "/invitations", label: "Invitations", icon: "person_add", adminOnly: true },
+    { to: "/invitations", label: "Invite Admin", icon: "person_add", adminOnly: true },
 ];
