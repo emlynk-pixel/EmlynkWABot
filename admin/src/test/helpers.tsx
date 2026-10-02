@@ -27,7 +27,7 @@ export function stubBackend(routes: FetchRoutes) {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
         const url = new URL(String(input), "http://localhost");
         const method = init.method ?? "GET";
-        calls.push({ method, path: url.pathname + url.search, url, headers: (init.headers ?? {}) as Record<string, string>, body: init.body ? JSON.parse(String(init.body)) : undefined });
+        calls.push({ method, path: url.pathname + url.search, url, headers: (init.headers ?? {}) as Record<string, string>, body: typeof init.body === "string" ? JSON.parse(init.body) : init.body ?? undefined });
         const route = routes[`${method} ${url.pathname}`];
         const { status, body } = typeof route === "function" ? await route(url) : route ?? { status: 404, body: { message: "Not found" } };
         return new Response(JSON.stringify(body ?? {}), { status, headers: { "Content-Type": "application/json" } });

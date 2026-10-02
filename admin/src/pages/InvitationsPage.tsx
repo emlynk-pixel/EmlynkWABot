@@ -32,7 +32,7 @@ export function InvitationsPage() {
     // Form state
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
-    const [role, setRole] = useState<"REVIEWER" | "VIEWER" | "ADMIN">("REVIEWER");
+    const [role, setRole] = useState<"ANALYST" | "ADMIN">("ANALYST");
     const [submitting, setSubmitting] = useState(false);
     const [formSuccess, setFormSuccess] = useState<string | null>(null);
     const [formError, setFormError] = useState<string | null>(null);
@@ -82,7 +82,7 @@ export function InvitationsPage() {
             setFormSuccess(`Invitation sent to ${result.invitation.email}. Setup link has been dispatched.`);
             setName("");
             setEmail("");
-            setRole("REVIEWER");
+            setRole("ANALYST");
             loadInvitations();
         } catch (err) {
             setFormError(err instanceof ApiError ? err.message : "Failed to send invitation. Please try again.");
@@ -143,7 +143,7 @@ export function InvitationsPage() {
             <div>
                 <h1 className="text-headline-lg text-ink font-bold">Admin Invitations</h1>
                 <p className="mt-1 text-body-md text-ink-muted">
-                    Invite new administrators, reviewers, and viewers. Invites are cryptographically signed, expire after 24 hours, and can only be used once.
+                    Invite new administrators, analysts, and viewers. Invites are cryptographically signed, expire after 24 hours, and can only be used once.
                 </p>
             </div>
 
@@ -215,12 +215,11 @@ export function InvitationsPage() {
                             <select
                                 id="invite-role"
                                 value={role}
-                                onChange={(e) => setRole(e.target.value as "REVIEWER" | "VIEWER" | "ADMIN")}
+                                onChange={(e) => setRole(e.target.value as "ANALYST" | "ADMIN")}
                                 className="h-9 w-full rounded border border-border-strong bg-surface px-3 text-body-sm text-ink focus:border-primary focus:outline-none"
                             >
-                                <option value="REVIEWER">REVIEWER (Review & Approve Docs)</option>
-                                <option value="VIEWER">VIEWER (Read-Only Access)</option>
-                                <option value="ADMIN">ADMIN (Full Administrative Control)</option>
+                                <option value="ANALYST">Analyst</option>
+                                <option value="ADMIN">Admin, Managers</option>
                             </select>
                         </div>
                     </div>

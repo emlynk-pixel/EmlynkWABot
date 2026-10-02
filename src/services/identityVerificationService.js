@@ -69,7 +69,7 @@ export function decideIdentity({ isPassportDocument, passportIdConfidence = 0, p
         passportIdConfidence < MIN_PASSPORT_ID_CONFIDENCE;
 
     // G: we can't trust the passport number. A WhatsApp match is kept only
-    // as a provisional candidate for the reviewer.
+    // as a provisional candidate for the analyst.
     if (passportUnreadable) {
         const notes = passportLookup && passportLookup.status !== LOOKUP_STATUS.INVALID_INPUT
             ? [IDENTITY_NOTES.PASSPORT_ID_LOW_CONFIDENCE]

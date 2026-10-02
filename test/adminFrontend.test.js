@@ -16,7 +16,16 @@ Object.assign(process.env, {
     META_APP_SECRET: "test-app-secret-placeholder",
     JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
-const { createApp } = await import("../src/createApp.js");
+const { createApp: createAppWithDefaults } = await import("../src/createApp.js");
+const { createApiRateLimiter } = await import("../src/middleware/apiRateLimiter.js");
+const { MemoryStore } = await import("express-rate-limit");
+
+// The real /admin limiter, counting in memory here (its default store is
+// PostgreSQL, which these tests don't have).
+const createApp = (options) => createAppWithDefaults({
+    adminFrontendLimiter: createApiRateLimiter({ store: new MemoryStore() }),
+    ...options,
+});
 
 // A stand-in admin build: index.html, one hashed asset, one public file.
 function fakeBuild() {

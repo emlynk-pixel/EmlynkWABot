@@ -1,0 +1,25 @@
+{
+  "name": "emlynk-ocr-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Internal OCR service (Tesseract.js) for the Emlynk WhatsApp document pipeline",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "license": "ISC",
+  "engines": {
+    "node": "^22.18.0 || >=23.6.0"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "0.1.80",
+    "@tesseract.js-data/eng": "1.0.0",
+    "express": "^5.2.1",
+    "jpeg-js": "0.4.4",
+    "pdf-parse": "^2.4.5",
+    "pngjs": "7.0.0",
+    "tesseract.js": "^7.0.0"
+  }
+}

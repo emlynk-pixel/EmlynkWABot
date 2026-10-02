@@ -1,6 +1,8 @@
-# Phase 10 — Admin Dashboard
+# Admin Dashboard — API Reference
 
-Status: **Final Phase 10 scope implemented and verified. The five Phase 10 migrations are applied to the live database (read-only check 2026-09-26); the M1 migrations `20260927120000_m1_async_processing` and `20260927130000_m1_placement_path` (§4m) are not.** The standalone reference for the finished dashboard is [`15-admin-dashboard-reference.md`](15-admin-dashboard-reference.md); it also lists every decision and deviation from the proposal.
+Developer/API reference for the admin dashboard. For the operator-facing guide (screens, workflows, day-to-day use), see [`09b-admin-dashboard-guide.md`](09b-admin-dashboard-guide.md). For the database schema and current security model, see `03-database-design.md` and `10-security.md`.
+
+Status: **Final Phase 10 scope implemented and verified.** All Phase 10 migrations, and the later M1 async-processing migrations (`20260927120000_m1_async_processing`, `20260927130000_m1_placement_path`, §4m), are applied to the live database — see `03-database-design.md` for the full migration history.
 
 | Checkpoint | Scope | Status |
 |---|---|---|
@@ -107,7 +109,7 @@ Error messages: the backend's own short messages are shown for 4xx responses ("I
 
 **Token storage:** `sessionStorage` — survives reloads of the tab, is removed when the tab closes, is not shared between tabs and is never sent automatically. If storage is blocked, an in-memory copy keeps the current tab working. Because JavaScript can read it, it relies on the Content Security Policy (scripts from the same origin only) against XSS. Moving to an httpOnly cookie is planned for **Phase 12**.
 
-The first admin account is created with `npm run admin:create` (see `Docs/13-security-overview.md`).
+The first admin account is created with `npm run admin:create` (see `10-security.md`).
 
 ## 4. Admin API (`/api/admin`)
 

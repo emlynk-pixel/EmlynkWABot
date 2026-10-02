@@ -1,5 +1,5 @@
 import { DOCUMENT_TYPES } from "./documentClassificationService.js";
-import { TEXT_EXTRACTION_METHODS } from "./ocrService.js";
+import { TEXT_EXTRACTION_METHODS } from "./ocrContract.js";
 import { CROSS_CHECK } from "./passportExtractionService.js";
 
 // All confidence values in this project use one scale: 0-100 (percent),

@@ -8,6 +8,11 @@ const DOCUMENT_TYPE_LABELS: Record<string, string> = {
     POLICE_REPORT: "Police report",
     MEDICAL: "Medical",
     UNKNOWN: "Unknown",
+    // Uploaded from Admin > Candidates.
+    NIC: "NIC",
+    SKILL_VIDEO: "Skill video",
+    AGREEMENT: "Agreement",
+    AFFIDAVIT: "Affidavit",
 };
 
 export function documentTypeLabel(type: string): string {
@@ -40,6 +45,26 @@ export function formatDay(ymd: string | null | undefined): string {
 // Today in Sri Lanka as "YYYY-MM-DD" (the latest date a slip can carry).
 export function todayInSriLanka(now: Date = new Date()): string {
     return new Intl.DateTimeFormat("en-CA", { timeZone: BUSINESS_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+
+const timeFormat = new Intl.DateTimeFormat("en-GB", { timeZone: BUSINESS_TIME_ZONE, hour: "2-digit", minute: "2-digit", hour12: false });
+
+// "14:30", Sri Lanka time.
+export function formatTime(iso: string | null | undefined): string {
+    if (!iso) return "—";
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? "—" : timeFormat.format(date);
+}
+
+// Now in Sri Lanka, as the values of a date and a time input.
+export function nowInSriLanka(now: Date = new Date()): { date: string; time: string } {
+    return { date: todayInSriLanka(now), time: timeFormat.format(now) };
+}
+
+// A date and time entered in Sri Lanka ("2026-10-02", "14:30") as an ISO
+// string with its offset. Sri Lanka has no daylight saving: always +05:30.
+export function sriLankaDateTime(date: string, time: string): string {
+    return `${date}T${time}:00+05:30`;
 }
 
 export function formatDateTime(iso: string | null | undefined): string {

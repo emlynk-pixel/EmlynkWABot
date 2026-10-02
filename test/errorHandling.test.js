@@ -14,6 +14,15 @@ process.env.META_APP_SECRET = "test-app-secret-placeholder";
 process.env.JWT_SECRET = "test-jwt-secret-placeholder";
 
 const { createApp } = await import("../src/createApp.js");
+const { createAuthRouter } = await import("../src/routes/auth.js");
+const { createLoginRateLimiter } = await import("../src/middleware/loginRateLimiter.js");
+const { MemoryStore } = await import("express-rate-limit");
+
+// The real auth routes and login limiter; the limiter counts in memory here
+// (its default store is PostgreSQL, which these tests don't have).
+const appWithMemoryLimiter = () => createApp({
+    authRouter: createAuthRouter({ loginLimiter: createLoginRateLimiter({ store1: new MemoryStore(), store2: new MemoryStore() }) }),
+});
 
 // Anything that would reveal internals if it appeared in a response.
 const LEAK_PATTERNS = [
@@ -70,7 +79,7 @@ describe("error responses from the real app", () => {
     before(async () => {
         savedNodeEnv = process.env.NODE_ENV;
         delete process.env.NODE_ENV; // must be safe even without NODE_ENV=production
-        ({ server, baseUrl } = await startServer(createApp()));
+        ({ server, baseUrl } = await startServer(appWithMemoryLimiter()));
     });
 
     after(() => {

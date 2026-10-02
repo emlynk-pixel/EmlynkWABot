@@ -48,6 +48,29 @@ import { getDailyReport, parseDailyReportQuery } from "../services/adminReportSe
 import { createInvitationRouter } from "./adminInvitations.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 import { deleteTemporaryDocument } from "../services/temporaryDataService.js";
+import {
+    addCallLog,
+    CandidateError,
+    createCandidate,
+    createUploadTarget,
+    finalizeUpload,
+    getCandidate,
+    resolveCandidatePassportId,
+    isCandidateStage,
+    isValidCandidateIdParam,
+    listCallLogs,
+    listCandidates,
+    removeCandidateDocument,
+    parseCallLogBody,
+    parseCandidateBody,
+    parseCandidateListQuery,
+    parseFinalizeUploadBody,
+    parseRemoveDocumentBody,
+    parseStageBody,
+    parseUploadTargetBody,
+    updateCandidateDetails,
+    updateStage,
+} from "../services/candidateService.js";
 
 
 // Quotes and non-ASCII characters are replaced so the header can't be broken.
@@ -57,12 +80,12 @@ function contentDisposition(fileName) {
 }
 
 // Phase 12 RBAC: role shorthand constants for this router.
-// VIEWER: read-only endpoints (GET). REVIEWER: reads + review actions.
+// ANALYST: reads + review actions.
 // ADMIN: full access including police-date corrections.
-const { ADMIN, REVIEWER, VIEWER } = ADMIN_ROLES;
+const { ADMIN, ANALYST } = ADMIN_ROLES;
 // The set of roles allowed for each endpoint tier.
-const ALL_ACTIVE = [ADMIN, REVIEWER, VIEWER];  // any active admin
-const REVIEWERS_UP = [ADMIN, REVIEWER];          // reviewer or above
+const ALL_ACTIVE = [ADMIN, ANALYST];  // any active admin
+const ANALYSTS_UP = [ADMIN, ANALYST];          // analyst or above
 const ADMINS_ONLY = [ADMIN];                     // administrators only
 
 // Admin dashboard API, mounted at /api/admin (Phase 10). Read-only except
@@ -207,7 +230,7 @@ export function createAdminRouter({
         return res.send(file.buffer);
     });
 
-    // ---------------------------------------------------------------- review actions (REVIEWER and above)
+    // ---------------------------------------------------------------- review actions (ANALYST and above)
 
     // Review actions. The admin comes from the token (req.admin), never the body.
     // `parse` validates the body and returns the action's arguments or { errors }.
@@ -236,32 +259,32 @@ export function createAdminRouter({
 
     // PENDING: pending/ -> client folder, VERIFIED. DOCUMENT: REVIEW_REQUIRED -> VERIFIED.
     // A police slip is approved with its submitted date (entered, or confirmed if OCR read it).
-    router.post("/review/:reviewId/approve", requireRole(REVIEWERS_UP), reviewAction(approveReviewItem, { reasonRequired: false, needsBucket: true, acceptsPoliceDate: true }));
+    router.post("/review/:reviewId/approve", requireRole(ANALYSTS_UP), reviewAction(approveReviewItem, { reasonRequired: false, needsBucket: true, acceptsPoliceDate: true }));
     // Stays pending and in the queue; the reason is required.
-    router.post("/review/:reviewId/keep-pending", requireRole(REVIEWERS_UP), reviewAction(keepReviewItemPending, { reasonRequired: true, needsBucket: false }));
+    router.post("/review/:reviewId/keep-pending", requireRole(ANALYSTS_UP), reviewAction(keepReviewItemPending, { reasonRequired: true, needsBucket: false }));
     // Permanently deletes one waiting file and its record after an admin's
     // inspection; the reason is required. Only files in pending/.
-    router.post("/review/:reviewId/remove", requireRole(REVIEWERS_UP), reviewAction(removeFromReview, { reasonRequired: true, needsBucket: true }));
+    router.post("/review/:reviewId/remove", requireRole(ANALYSTS_UP), reviewAction(removeFromReview, { reasonRequired: true, needsBucket: true }));
     // H3: a failed submission (failed-<id>) is processed again by the
     // background worker; the reason is optional. Audited.
-    router.post("/review/:reviewId/retry", requireRole(REVIEWERS_UP), reviewAction(retryFailedSubmission, { reasonRequired: false, needsBucket: true }));
+    router.post("/review/:reviewId/retry", requireRole(ANALYSTS_UP), reviewAction(retryFailedSubmission, { reasonRequired: false, needsBucket: true }));
 
     // M4 Policy B: a waiting file of a type the client already has VERIFIED
     // (pending-<id> only). Replace names the existing document explicitly
     // (documentId in the body) and supersedes it; Keep as Version stores the
     // new file as a second, REVIEW_REQUIRED document. Both are audited and
     // never remove or overwrite the existing VERIFIED document.
-    router.post("/review/:reviewId/replace-verified", requireRole(REVIEWERS_UP), reviewAction(replaceVerifiedDocument, { needsBucket: true, parse: parseReplaceVerifiedBody }));
-    router.post("/review/:reviewId/keep-as-version", requireRole(REVIEWERS_UP), reviewAction(keepDocumentAsVersion, { reasonRequired: false, needsBucket: true }));
+    router.post("/review/:reviewId/replace-verified", requireRole(ANALYSTS_UP), reviewAction(replaceVerifiedDocument, { needsBucket: true, parse: parseReplaceVerifiedBody }));
+    router.post("/review/:reviewId/keep-as-version", requireRole(ANALYSTS_UP), reviewAction(keepDocumentAsVersion, { reasonRequired: false, needsBucket: true }));
 
     // Corrections of a waiting file; it stays pending and in the queue.
-    router.post("/review/:reviewId/document-type", requireRole(REVIEWERS_UP), reviewAction(setDocumentType, { needsBucket: false, parse: parseSetDocumentTypeBody }));
-    router.post("/review/:reviewId/assign-client", requireRole(REVIEWERS_UP), reviewAction(assignClient, { needsBucket: false, parse: parseAssignClientBody }));
+    router.post("/review/:reviewId/document-type", requireRole(ANALYSTS_UP), reviewAction(setDocumentType, { needsBucket: false, parse: parseSetDocumentTypeBody }));
+    router.post("/review/:reviewId/assign-client", requireRole(ANALYSTS_UP), reviewAction(assignClient, { needsBucket: false, parse: parseAssignClientBody }));
 
-    // ---------------------------------------------------------------- temporary documents deletion (REVIEWERS_UP)
+    // ---------------------------------------------------------------- temporary documents deletion (ANALYSTS_UP)
     
     // Manually delete a temporary document (e.g. from the Review Queue or Missing Documents).
-    router.delete("/temporary-documents/:temporaryId", requireRole(REVIEWERS_UP), async (req, res) => {
+    router.delete("/temporary-documents/:temporaryId", requireRole(ANALYSTS_UP), async (req, res) => {
         const { temporaryId } = req.params;
         if (!temporaryId || typeof temporaryId !== "string" || !/^[0-9a-fA-F-]+$/.test(temporaryId)) {
             return res.status(400).json({ message: "Invalid temporary document ID" });
@@ -283,7 +306,7 @@ export function createAdminRouter({
 
     // Sets or corrects a stored police slip's submitted date (audited).
     // This modifies a stored document (not just a pending item) so it is
-    // reserved for ADMIN; a REVIEWER can approve slips with a date but cannot
+    // reserved for ADMIN; a ANALYST can approve slips with a date but cannot
     // change a date after the fact.
     router.post("/documents/:documentId/police-date", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!isValidDocumentIdParam(req.params.documentId)) {
@@ -293,6 +316,164 @@ export function createAdminRouter({
         return runAction(res, parsed, false, ({ client }) => setPoliceSubmittedDate({
             db: client, admin: req.admin, documentId: req.params.documentId, reason: parsed.reason, policeSubmittedDate: parsed.policeSubmittedDate,
         }));
+    });
+
+    // ---------------------------------------------------------------- candidates (Admin > Candidates)
+    // Reads for every active admin; registration, details, stages, uploads
+    // and call notes for ANALYST and above. Audited where documents change.
+
+    const invalidCandidateId = (res) => res.status(400).json({
+        message: "Invalid passport ID",
+        errors: [{ field: "passportId", message: "must be letters and digits (at most 20)" }],
+    });
+    // Runs a candidate action; CandidateError becomes { message, code } with its status.
+    const candidateAction = async (res, run) => {
+        try {
+            return await run();
+        } catch (error) {
+            if (error instanceof CandidateError) {
+                return res.status(error.status).json({ message: error.message, code: error.code, ...(error.passportId ? { passportId: error.passportId } : {}) });
+            }
+            throw error;
+        }
+    };
+    // The stored passport ID for the one in the URL, resolved like the GET
+    // below (exact, else the single case-insensitive match; never a guess
+    // between two rows). Every candidate action runs on the stored ID.
+    const storedCandidateId = async (client, requested) => {
+        const passportId = await resolveCandidatePassportId({ db: client, passportId: requested });
+        if (!passportId) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
+        return passportId;
+    };
+
+    router.get("/candidates", requireRole(ALL_ACTIVE), async (req, res) => {
+        const parsed = parseCandidateListQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await listCandidates({ db: client, params: parsed.params }));
+    });
+
+    router.post("/candidates", requireRole(ANALYSTS_UP), async (req, res) => {
+        const parsed = parseCandidateBody(req.body, { creating: true });
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values: parsed.values })));
+    });
+
+    router.get("/candidates/:passportId", requireRole(ALL_ACTIVE), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        // Also the registration lookup: the response carries the stored passport ID.
+        const passportId = await resolveCandidatePassportId({ db: client, passportId: req.params.passportId });
+        const candidate = passportId && await getCandidate({ db: client, passportId });
+        if (!candidate) return res.status(404).json({ message: "Candidate not found" });
+        return res.json(candidate);
+    });
+
+    router.put("/candidates/:passportId", requireRole(ANALYSTS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseCandidateBody(req.body, { creating: false });
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await updateCandidateDetails({
+            db: client, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
+        })));
+    });
+
+    router.put("/candidates/:passportId/stages/:stage", requireRole(ANALYSTS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        if (!isCandidateStage(req.params.stage)) return res.status(404).json({ message: "Stage not found" });
+        const parsed = parseStageBody(req.body, req.params.stage);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await updateStage({
+            db: client, passportId: await storedCandidateId(client, req.params.passportId), stage: req.params.stage, values: parsed.values,
+        })));
+    });
+
+    // Document uploads: the browser sends the file straight to storage, never
+    // to this API (candidateService.js, "direct uploads"). Both requests are
+    // small JSON bodies (express.json in createApp.js); no route here parses
+    // a file body.
+    router.post("/candidates/:passportId/documents/upload-target", requireRole(ANALYSTS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseUploadTargetBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => res.json(await createUploadTarget({
+            db: client,
+            bucket: storage,
+            passportId: await storedCandidateId(client, req.params.passportId),
+            documentType: parsed.values.documentType,
+            mimeType: parsed.values.mimeType,
+            fileSize: parsed.values.fileSize,
+        })));
+    });
+
+    router.post("/candidates/:passportId/documents/finalize", requireRole(ANALYSTS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseFinalizeUploadBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => res.json(await finalizeUpload({
+            db: client,
+            bucket: storage,
+            admin: req.admin,
+            passportId: await storedCandidateId(client, req.params.passportId),
+            ...parsed.values,
+        })));
+    });
+
+    // Removes the candidate's current document of a type: record and file,
+    // with a required reason, audited (like Remove from Review).
+    router.post("/candidates/:passportId/documents/:documentId/remove", requireRole(ANALYSTS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        if (!isValidDocumentIdParam(req.params.documentId)) {
+            return res.status(400).json({ message: "Invalid document ID", errors: [{ field: "documentId", message: "must be a document ID" }] });
+        }
+        const parsed = parseRemoveDocumentBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => res.json(await removeCandidateDocument({
+            db: client,
+            bucket: storage,
+            admin: req.admin,
+            passportId: await storedCandidateId(client, req.params.passportId),
+            documentId: req.params.documentId,
+            reason: parsed.values.reason,
+        })));
+    });
+
+    router.get("/candidates/:passportId/call-logs", requireRole(ALL_ACTIVE), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await listCallLogs({ db: client, passportId: await storedCandidateId(client, req.params.passportId) })));
+    });
+
+    router.post("/candidates/:passportId/call-logs", requireRole(ANALYSTS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseCallLogBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await addCallLog({
+            db: client, admin: req.admin, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
+        })));
     });
 
     // ---------------------------------------------------------------- admin invitations (ADMIN only)
