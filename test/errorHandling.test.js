@@ -21,7 +21,7 @@ const { MemoryStore } = await import("express-rate-limit");
 // The real auth routes and login limiter; the limiter counts in memory here
 // (its default store is PostgreSQL, which these tests don't have).
 const appWithMemoryLimiter = () => createApp({
-    authRouter: createAuthRouter({ loginLimiter: createLoginRateLimiter({ store: new MemoryStore() }) }),
+    authRouter: createAuthRouter({ loginLimiter: createLoginRateLimiter({ store1: new MemoryStore(), store2: new MemoryStore() }) }),
 });
 
 // Anything that would reveal internals if it appeared in a response.

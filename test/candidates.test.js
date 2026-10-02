@@ -432,7 +432,7 @@ describe("document uploads", () => {
         assert.ok(parseUploadQuery({ type: "POLICE_REPORT" }).errors, "variant required");
         assert.ok(parseUploadQuery({ type: "AFFIDAVIT", variant: "TAMIL" }).errors);
         assert.ok(parseUploadQuery({ type: "MEDICAL", variant: "ENGLISH" }).errors, "no variant for medical");
-        assert.ok(parseUploadQuery({ type: "POLICE_SLIP" }).errors, "only candidate document types");
+        assert.ok(parseUploadQuery({ type: "UNKNOWN_DOC" }).errors, "only candidate document types");
     });
 
     test("file checks: documents are PDF/JPG/PNG; only the skill video may be a video, with a real video header", () => {

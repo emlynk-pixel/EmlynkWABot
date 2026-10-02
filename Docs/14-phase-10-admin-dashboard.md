@@ -81,7 +81,49 @@ Backend files for the dashboard:
 | `src/utils/clientName.js` | Client display name (shared) |
 | `src/createApp.js` | Mounts `/admin` and `/api/admin` (injectable routers for tests) |
 
-`/auth/login`, `/auth/me`, the WhatsApp webhook and document processing are unchanged. The `ACTIVE_ADMIN_STATUS` constant now lives in the shared middleware and is re-exported by `src/routes/auth.js`, so existing imports keep working.
+/auth/login`, `/auth/me`, the WhatsApp webhook and document processing are unchanged. The `ACTIVE_ADMIN_STATUS` constant now lives in the shared middleware and is re-exported by `src/routes/auth.js`, so existing imports keep working.
+
+### 1.1 Admin Authentication & Rate Limiting
+
+The admin dashboard is protected by an authentication layer. A tiered rate-limiting mechanism is implemented on the login route to protect against brute-force and dictionary attacks, sharing counts across server instances using PostgreSQL.
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant Frontend
+    participant Tier2 as Limiter (20m / 8 max)
+    participant Tier1 as Limiter (5m / 5 max)
+    participant DB as Postgres Store
+
+    Admin->>Frontend: Enter credentials
+    Frontend->>Tier2: POST /auth/login
+    Tier2->>DB: Increment Tier2 count
+    DB-->>Tier2: Total Hits
+    alt Tier2 Hits > 8
+        Tier2-->>Frontend: 429 Too Many Requests
+        Frontend-->>Admin: Show countdown
+    else
+        Tier2->>Tier1: Forward Request
+        Tier1->>DB: Increment Tier1 count
+        DB-->>Tier1: Total Hits
+        alt Tier1 Hits > 5
+            Tier1-->>Frontend: 429 Too Many Requests
+            Frontend-->>Admin: Show countdown (Wait 5m)
+        else
+            Tier1->>DB: Validate Credentials
+            DB-->>Tier1: Success
+            Tier1->>DB: Decrement both counts
+            Tier1-->>Frontend: 200 OK + Auth Cookie
+            Frontend-->>Admin: Redirect to Dashboard
+        end
+    end
+```
+
+**Rate Limiting Logic:**
+*   **Tier 1**: Blocks after **5 failed attempts** within a 5-minute window.
+*   **Tier 2**: Blocks after **8 failed attempts** within a 20-minute window (e.g., failing 5 times, waiting 5 minutes, then failing 3 more times).
+*   **Successful Logins**: Decrement the rate limiter counts (using `skipSuccessfulRequests: true`), ensuring legitimate admins never accidentally exhaust their limits.
+*   **Live Countdown**: The `resetTime` is exposed in the `429` JSON response, allowing the frontend to present a live ticking countdown timer to the user until their lockout expires.
 
 ## 2. Routes
 

@@ -25,7 +25,7 @@ const normalizePassportId = (value: string) => value.replace(/[\s-]/g, "").toUpp
 const isPassportId = (value: string) => PASSPORT_PATTERN.test(value) && /\d/.test(value);
 
 // Documents collected in Document Submission: listed here only when on record.
-const OTHER_DOCUMENTS = ["MEDICAL", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"] as const;
+const OTHER_DOCUMENTS = ["MEDICAL", "POLICE_SLIP", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"] as const;
 
 // The passport ID lookup: not run yet, running, no candidate (new
 // registration), an existing candidate (loaded into the form), or failed.

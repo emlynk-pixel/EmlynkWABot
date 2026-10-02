@@ -10,11 +10,13 @@ import { readToken } from "../auth/tokenStorage";
 
 export class ApiError extends Error {
     readonly status: number;
+    readonly resetTime?: Date;
 
-    constructor(status: number, message: string) {
+    constructor(status: number, message: string, resetTime?: Date) {
         super(message);
         this.name = "ApiError";
         this.status = status;
+        this.resetTime = resetTime;
     }
 }
 
@@ -27,12 +29,16 @@ type RequestOptions = {
 
 const FALLBACK_MESSAGE = "Something went wrong. Please try again.";
 
-async function readMessage(response: Response): Promise<string | null> {
+type ErrorData = { message: string | null; resetTime?: string };
+async function readErrorData(response: Response): Promise<ErrorData> {
     try {
-        const data = (await response.json()) as { message?: unknown };
-        return typeof data?.message === "string" && data.message.length <= 200 ? data.message : null;
+        const data = (await response.json()) as { message?: unknown; resetTime?: unknown };
+        return {
+            message: typeof data?.message === "string" && data.message.length <= 200 ? data.message : null,
+            resetTime: typeof data?.resetTime === "string" ? data.resetTime : undefined
+        };
     } catch {
-        return null;
+        return { message: null };
     }
 }
 
@@ -62,8 +68,9 @@ export async function apiRequest<T>(path: string, { method = "GET", body, signal
     }
 
     if (!response.ok) {
-        const message = response.status >= 500 && response.status !== 502 ? FALLBACK_MESSAGE : (await readMessage(response)) ?? FALLBACK_MESSAGE;
-        throw new ApiError(response.status, message);
+        const data = await readErrorData(response);
+        const message = response.status >= 500 && response.status !== 502 ? FALLBACK_MESSAGE : data.message ?? FALLBACK_MESSAGE;
+        throw new ApiError(response.status, message, data.resetTime ? new Date(data.resetTime) : undefined);
     }
 
     return (await response.json()) as T;
@@ -90,10 +97,11 @@ export async function apiUpload<T>(path: string, file: File, { token }: Pick<Req
         throw new ApiError(0, "Cannot reach the server. Check your connection and try again.");
     }
     if (!response.ok) {
+        const data = await readErrorData(response);
         const message = response.status === 413
             ? "The file is too large."
-            : response.status >= 500 && response.status !== 502 ? FALLBACK_MESSAGE : (await readMessage(response)) ?? FALLBACK_MESSAGE;
-        throw new ApiError(response.status, message);
+            : response.status >= 500 && response.status !== 502 ? FALLBACK_MESSAGE : data.message ?? FALLBACK_MESSAGE;
+        throw new ApiError(response.status, message, data.resetTime ? new Date(data.resetTime) : undefined);
     }
     return (await response.json()) as T;
 }
@@ -120,8 +128,9 @@ export async function apiRequestBlob(path: string, { signal, token }: Pick<Reque
         throw new ApiError(0, "Cannot reach the server. Check your connection and try again.");
     }
     if (!response.ok) {
-        const message = response.status >= 500 ? FALLBACK_MESSAGE : (await readMessage(response)) ?? FALLBACK_MESSAGE;
-        throw new ApiError(response.status, message);
+        const data = await readErrorData(response);
+        const message = response.status >= 500 ? FALLBACK_MESSAGE : data.message ?? FALLBACK_MESSAGE;
+        throw new ApiError(response.status, message, data.resetTime ? new Date(data.resetTime) : undefined);
     }
     return response.blob();
 }
