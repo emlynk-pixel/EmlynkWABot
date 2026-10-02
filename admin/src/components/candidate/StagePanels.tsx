@@ -218,29 +218,33 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
     };
 
     return (
-        <form onSubmit={submit}>
-            <PanelHeading title="Candidate details" />
-            <div className="mt-4">
-                <CandidateFields value={form} onChange={setForm} errors={fieldErrors} disabled={!canEdit || busy} passportId={{ value: passportId }} whatsappLocked={Boolean(details.candidate.whatsappNumber)} />
-            </div>
+        <div>
+            <form onSubmit={submit}>
+                <PanelHeading title="Candidate details" />
+                <div className="mt-4">
+                    <CandidateFields value={form} onChange={setForm} errors={fieldErrors} disabled={!canEdit || busy} passportId={{ value: passportId }} whatsappLocked={Boolean(details.candidate.whatsappNumber)} />
+                </div>
+            </form>
             <div className="mt-6 space-y-2">
                 <DocumentRow passportId={passportId} documentType="PASSPORT" label="Passport" required document={details.documents.PASSPORT} readOnly={!canEdit} onUploaded={onChange} />
                 <DocumentRow passportId={passportId} documentType="NIC" label="NIC document" document={details.documents.NIC} readOnly={!canEdit} onUploaded={onChange} />
                 <DocumentRow passportId={passportId} documentType="SKILL_VIDEO" label="Skill video" document={details.documents.SKILL_VIDEO} accept={VIDEO_ACCEPT} readOnly={!canEdit} onUploaded={onChange} />
             </div>
-            <div className="mt-6">
-                <label htmlFor={commentId} className="mb-1 block text-label-sm text-ink-muted">Comment</label>
-                <textarea id={commentId} rows={3} maxLength={2000} value={comment} disabled={!canEdit || busy} onChange={(event) => setComment(event.target.value)} placeholder="Internal note for admins and analysts" className={textAreaControl} />
-            </div>
-            <PanelFooter
-                status={<AutomaticStatus stage={saved} />}
-                canEdit={canEdit}
-                busy={busy}
-                dirty={dirty}
-                error={error}
-                onCancel={() => { setForm(detailsFrom(details.candidate)); setComment(saved.notes ?? ""); setFieldErrors({}); setError(null); }}
-            />
-        </form>
+            <form onSubmit={submit}>
+                <div className="mt-6">
+                    <label htmlFor={commentId} className="mb-1 block text-label-sm text-ink-muted">Comment</label>
+                    <textarea id={commentId} rows={3} maxLength={2000} value={comment} disabled={!canEdit || busy} onChange={(event) => setComment(event.target.value)} placeholder="Internal note for admins and analysts" className={textAreaControl} />
+                </div>
+                <PanelFooter
+                    status={<AutomaticStatus stage={saved} />}
+                    canEdit={canEdit}
+                    busy={busy}
+                    dirty={dirty}
+                    error={error}
+                    onCancel={() => { setForm(detailsFrom(details.candidate)); setComment(saved.notes ?? ""); setFieldErrors({}); setError(null); }}
+                />
+            </form>
+        </div>
     );
 }
 

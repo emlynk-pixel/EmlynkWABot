@@ -33,15 +33,11 @@ const DETAILS: CandidateDetails = {
         automatic: s.stage === "CANDIDATE_DETAILS" || s.stage === "DOCUMENT_SUBMISSION",
         missing: s.stage === "CANDIDATE_DETAILS" ? ["passport document"] : s.stage === "DOCUMENT_SUBMISSION" ? ["medical", "police report", "agreement", "affidavit"] : [],
     })),
-<<<<<<< HEAD
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, AGREEMENT: null, AFFIDAVIT: null },
-=======
-    documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_REPORT: null, AGREEMENT: null, AFFIDAVIT: null },
     variantDocuments: {
         POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null },
         AFFIDAVIT: { byVariant: { ENGLISH: null, SINHALA: null }, untyped: null },
     },
->>>>>>> version/candidate-management-pool
     requiredDocuments: (["PASSPORT", "MEDICAL", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"] as const).map((documentType) => ({ documentType, included: documentType === "PASSPORT" })),
 };
 
@@ -364,7 +360,7 @@ describe("Candidate deployment", () => {
             const user = userEvent.setup();
             await user.upload(await screen.findByLabelText("Medical file"), medical());
 
-            expect(await screen.findByText("The file could not be uploaded. Please try again.")).toBeInTheDocument();
+            expect(await screen.findByText("The file could not be uploaded. Check your connection and try again.")).toBeInTheDocument();
             expect(calls.some((c) => c.url.pathname.endsWith("/documents/finalize"))).toBe(false);
             expect(screen.getAllByText("No file uploaded").length).toBeGreaterThan(0);
             const upload = within(screen.getByLabelText("Medical file").parentElement!).getByRole("button", { name: "Upload" });

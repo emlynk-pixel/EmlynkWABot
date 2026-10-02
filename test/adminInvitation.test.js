@@ -34,7 +34,7 @@ before(async () => {
     const admins = [
         { adminId: "admin-1", name: "Super Admin", email: "admin@example.invalid", passwordHash: adminPasswordHash, role: ADMIN_ROLES.ADMIN, status: ACTIVE_ADMIN_STATUS },
         { adminId: "analyst-1", name: "Analyst Admin", email: "analyst@example.invalid", passwordHash: adminPasswordHash, role: ADMIN_ROLES.ANALYST, status: ACTIVE_ADMIN_STATUS },
-        { adminId: "viewer-1", name: "Viewer Admin", email: "viewer@example.invalid", passwordHash: adminPasswordHash, role: ADMIN_ROLES.VIEWER, status: ACTIVE_ADMIN_STATUS },
+        { adminId: "analyst-2", name: "Viewer Admin", email: "analyst-dup@example.invalid", passwordHash: adminPasswordHash, role: ADMIN_ROLES.ANALYST, status: ACTIVE_ADMIN_STATUS },
         { adminId: "inactive-1", name: "Inactive Admin", email: "inactive@example.invalid", passwordHash: adminPasswordHash, role: ADMIN_ROLES.ADMIN, status: "INACTIVE" },
         { adminId: "existing-active", name: "Already Active", email: "active@example.invalid", passwordHash: adminPasswordHash, role: ADMIN_ROLES.ANALYST, status: ACTIVE_ADMIN_STATUS },
     ];
@@ -110,7 +110,7 @@ describe("Admin Invitation System (Phase 12 Checkpoint 2)", () => {
             body: JSON.stringify({
                 name: "Hash Test",
                 email: "hashtest@example.invalid",
-                role: "VIEWER",
+                role: "ANALYST",
             }),
         });
 
@@ -166,7 +166,7 @@ describe("Admin Invitation System (Phase 12 Checkpoint 2)", () => {
         assert.equal(data.code, "DUPLICATE_ACTIVE_ADMIN");
     });
 
-    test("Unauthorized attempts: ANALYST or VIEWER cannot invite admins (403)", async () => {
+    test("Unauthorized attempts: ANALYST or ANALYST cannot invite admins (403)", async () => {
         const analystToken = makeToken({ adminId: "analyst-1", email: "analyst@example.invalid", role: ADMIN_ROLES.ANALYST });
         const resAnalyst = await fetch(`${baseUrl}/api/admin/invitations`, {
             method: "POST",
@@ -174,20 +174,20 @@ describe("Admin Invitation System (Phase 12 Checkpoint 2)", () => {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${analystToken}`,
             },
-            body: JSON.stringify({ name: "Bob", email: "bob@example.invalid", role: "VIEWER" }),
+            body: JSON.stringify({ name: "Bob", email: "bob@example.invalid", role: "ANALYST" }),
         });
         assert.equal(resAnalyst.status, 403);
         const revData = await resAnalyst.json();
         assert.equal(revData.message, "Insufficient permissions");
 
-        const viewerToken = makeToken({ adminId: "viewer-1", email: "viewer@example.invalid", role: ADMIN_ROLES.VIEWER });
+        const viewerToken = makeToken({ adminId: "analyst-2", email: "analyst-dup@example.invalid", role: ADMIN_ROLES.ANALYST });
         const resViewer = await fetch(`${baseUrl}/api/admin/invitations`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${viewerToken}`,
             },
-            body: JSON.stringify({ name: "Bob", email: "bob@example.invalid", role: "VIEWER" }),
+            body: JSON.stringify({ name: "Bob", email: "bob@example.invalid", role: "ANALYST" }),
         });
         assert.equal(resViewer.status, 403);
     });
@@ -324,7 +324,7 @@ describe("Admin Invitation System (Phase 12 Checkpoint 2)", () => {
             body: JSON.stringify({
                 name: "Expired Test",
                 email: "expired@example.invalid",
-                role: "VIEWER",
+                role: "ANALYST",
             }),
         });
 
@@ -462,7 +462,7 @@ describe("Admin Invitation System (Phase 12 Checkpoint 2)", () => {
             body: JSON.stringify({
                 name: "Revoke Audit",
                 email: "revokeaudit@example.invalid",
-                role: "VIEWER",
+                role: "ANALYST",
             }),
         });
         const inv2 = (await res2.json()).invitation;
@@ -512,7 +512,7 @@ describe("Admin Invitation System (Phase 12 Checkpoint 2)", () => {
             body: JSON.stringify({
                 name: "To Delete",
                 email: "todelete@example.invalid",
-                role: "VIEWER",
+                role: "ANALYST",
             }),
         });
         const inv = (await createRes.json()).invitation;
