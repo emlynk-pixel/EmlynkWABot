@@ -63,7 +63,7 @@ export const CANDIDATE_DOCUMENT_TYPES = Object.freeze({
 // The five documents a candidate's submission must include (Document
 // Submission stage): the passport (Candidate Details) and the four collected
 // in Document Submission.
-export const REQUIRED_SUBMISSION_DOCUMENTS = Object.freeze(["PASSPORT", "MEDICAL", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"]);
+export const REQUIRED_SUBMISSION_DOCUMENTS = Object.freeze(["PASSPORT", "MEDICAL", "POLICE_REPORT", "AGREEMENT"]);
 
 // Skill videos only.
 export const VIDEO_MIME_TYPES = Object.freeze(["video/mp4", "video/quicktime", "video/webm"]);
@@ -336,6 +336,7 @@ export const AUTOMATIC_STAGES = Object.freeze(["CANDIDATE_DETAILS", "DOCUMENT_SU
 // { CANDIDATE_DETAILS: [missing…], DOCUMENT_SUBMISSION: [missing…] }.
 function automaticStageMissing(user, documents) {
     const has = (type) => documents.some((d) => d.documentType === type && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
+    const hasVariant = (type, variant) => documents.some((d) => d.documentType === type && d.documentVariant === variant && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
     const details = [];
     if (isBlank(user.otherName)) details.push("surname");
     if (isBlank(user.firstName)) details.push("other names");
@@ -344,9 +345,16 @@ function automaticStageMissing(user, documents) {
     if (!parseJobTypes(user.job).length) details.push("job type");
     if (isBlank(user.jobExperience)) details.push("job experience");
     if (!has("PASSPORT")) details.push("passport document");
+
+    const submissionMissing = [];
+    if (!has("MEDICAL")) submissionMissing.push("medical");
+    if (!hasVariant("POLICE_REPORT", "SL_VERIFIED")) submissionMissing.push("sl verified police report");
+    if (!hasVariant("POLICE_REPORT", "ROMANIA")) submissionMissing.push("romania police report");
+    if (!has("AGREEMENT")) submissionMissing.push("agreement");
+
     return {
         CANDIDATE_DETAILS: details,
-        DOCUMENT_SUBMISSION: REQUIRED_SUBMISSION_DOCUMENTS.filter((type) => !has(type)).map((type) => type.toLowerCase().replace(/_/g, " ")),
+        DOCUMENT_SUBMISSION: submissionMissing,
     };
 }
 
@@ -551,10 +559,17 @@ export async function getCandidate({ db, passportId }) {
         stages: stageList(user.stages, automaticStageMissing(user, user.documents)),
         documents,
         variantDocuments: variantDocuments(user.documents),
-        requiredDocuments: REQUIRED_SUBMISSION_DOCUMENTS.map((documentType) => ({
-            documentType,
-            included: Boolean(documents[documentType]),
-        })),
+        requiredDocuments: REQUIRED_SUBMISSION_DOCUMENTS.map((documentType) => {
+            if (documentType === "POLICE_REPORT") {
+                const hasSLVerified = user.documents.some((d) => d.documentType === "POLICE_REPORT" && d.documentVariant === "SL_VERIFIED" && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
+                const hasRomania = user.documents.some((d) => d.documentType === "POLICE_REPORT" && d.documentVariant === "ROMANIA" && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
+                return { documentType, included: hasSLVerified && hasRomania };
+            }
+            return {
+                documentType,
+                included: Boolean(documents[documentType]),
+            };
+        }),
     };
 }
 
@@ -1008,8 +1023,13 @@ export async function createUploadTarget({ db, bucket, passportId, documentType,
 }
 
 // POST /api/admin/candidates/:passportId/documents/finalize
-export async function finalizeUpload({ db, bucket, admin, passportId, uploadId, documentType, variant, mimeType, originalFileName, now = new Date() }) {
+export async function finalizeUpload({ db, bucket, admin, passportId, uploadId, documentType, variant, mimeType, originalFileName: providedFileName, now = new Date() }) {
     await requireCandidate(db, passportId);
+    
+    // Auto-rename original file name based on passport ID and document type
+    const extension = extensionForMimeType(mimeType);
+    const originalFileName = `${passportId} - ${documentType}${extension}`.toUpperCase();
+
     const declared = checkDeclaredFile({ documentType, mimeType });
     if (declared) throw new CandidateError(422, "FILE_REJECTED", declared);
 

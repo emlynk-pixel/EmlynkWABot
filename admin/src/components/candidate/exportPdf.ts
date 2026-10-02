@@ -19,7 +19,7 @@ export function exportDocumentSubmissionPdf(details: CandidateDetails): boolean 
         return documents.map((document) => `<tr>
             <td>${escape(documentTypeLabel(documentType))}</td>
             <td>Included</td>
-            <td>${escape(document.originalFilename)}</td>
+            <td>${escape(document.originalFilename.replace(/^Copy of\s+/i, ""))}</td>
             <td>${escape(variantLabel(document.variant) ?? "—")}</td>
             <td>${escape(formatDate(document.receivedDate))}</td>
         </tr>`).join("");

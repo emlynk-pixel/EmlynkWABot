@@ -12,7 +12,8 @@ export const VIDEO_ACCEPT = "video/mp4,video/quicktime,video/webm";
 
 function statusLine(document: CandidateDocument | null, description?: string, showVariant = true) {
     if (!document) return [description, "No file uploaded"].filter(Boolean).join(" • ");
-    return [description, document.originalFilename, showVariant ? variantLabel(document.variant) : null, formatDate(document.receivedDate)].filter(Boolean).join(" • ");
+    const displayName = document.originalFilename.replace(/^Copy of\s+/i, "");
+    return [description, displayName, showVariant ? variantLabel(document.variant) : null, formatDate(document.receivedDate)].filter(Boolean).join(" • ");
 }
 
 // One document: its name, what is stored now, Upload / Replace and Remove. A
@@ -123,7 +124,7 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
                 <ActionDialog title={`Remove ${removeTitle}?`} busy={busy} onClose={closeRemove}>
                     <form onSubmit={confirmRemove}>
                         <p className="text-body-sm text-ink-muted">
-                            <span className="font-medium text-ink">{document.originalFilename}</span> will be deleted permanently: the file and its record.
+                            <span className="font-medium text-ink">{document.originalFilename.replace(/^Copy of\s+/i, "")}</span> will be deleted permanently: the file and its record.
                             The removal and your reason are kept in the audit log.
                         </p>
                         <label htmlFor={reasonId} className="mb-1 mt-4 block text-label-sm text-ink-muted">Reason<span className="text-critical"> *</span></label>

@@ -248,7 +248,7 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
 // file, so any or all of them can be on record (one is required). A stored
 // one with no known variant (e.g. received on WhatsApp) is listed too; it can
 // be removed, and a typed one uploaded beside it.
-function VariantDocumentGroup({ passportId, documentType, label, variants, details, readOnly, onUploaded }: {
+function VariantDocumentGroup({ passportId, documentType, label, variants, details, readOnly, onUploaded, required = false, requiredVariants = [] }: {
     passportId: string;
     documentType: VariantDocumentType;
     label: string;
@@ -256,11 +256,13 @@ function VariantDocumentGroup({ passportId, documentType, label, variants, detai
     details: CandidateDetails;
     readOnly: boolean;
     onUploaded: (details: CandidateDetails) => void;
+    required?: boolean;
+    requiredVariants?: readonly string[];
 }) {
     const stored = details.variantDocuments[documentType];
     return (
         <section aria-label={label} className="space-y-2">
-            <p className="text-label-md text-ink">{label}<span className="text-critical"> *</span></p>
+            <p className="text-label-md text-ink">{label}{required && <span className="text-critical"> *</span>}</p>
             <div className="space-y-2 border-l-2 border-border pl-3">
                 {variants.map((option) => (
                     <DocumentRow
@@ -273,6 +275,7 @@ function VariantDocumentGroup({ passportId, documentType, label, variants, detai
                         document={stored.byVariant[option.value] ?? null}
                         readOnly={readOnly}
                         onUploaded={onUploaded}
+                        required={requiredVariants?.includes(option.value)}
                     />
                 ))}
                 {stored.untyped && (
@@ -329,9 +332,9 @@ export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelPro
             </ul>
             <div className="mt-4 space-y-3">
                 <DocumentRow passportId={passportId} documentType="MEDICAL" label="Medical" required document={details.documents.MEDICAL} readOnly={!canEdit} onUploaded={onChange} />
-                <VariantDocumentGroup passportId={passportId} documentType="POLICE_REPORT" label="Police report" variants={POLICE_REPORT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} />
+                <VariantDocumentGroup passportId={passportId} documentType="POLICE_REPORT" label="Police report" variants={POLICE_REPORT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} required={true} requiredVariants={["SL_VERIFIED", "ROMANIA"]} />
                 <DocumentRow passportId={passportId} documentType="AGREEMENT" label="Scan - Agreement" required description="Agreement document" document={details.documents.AGREEMENT} readOnly={!canEdit} onUploaded={onChange} />
-                <VariantDocumentGroup passportId={passportId} documentType="AFFIDAVIT" label="Scan - Affidavit" variants={AFFIDAVIT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} />
+                <VariantDocumentGroup passportId={passportId} documentType="AFFIDAVIT" label="Scan - Affidavit" variants={AFFIDAVIT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} required={false} />
             </div>
             <PanelFooter
                 status={<AutomaticStatus stage={saved} completedLabel={`All ${total} required documents are included`} />}
