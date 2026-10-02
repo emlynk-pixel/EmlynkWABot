@@ -5,17 +5,20 @@ import {
     AFFIDAVIT_VARIANTS,
     POLICE_REPORT_VARIANTS,
     STAGE_LABELS,
+    TEST_RESULT_OPTIONS,
     updateCandidate,
     updateCandidateStage,
     type CandidateDetails,
     type CandidateDetailsInput,
     type CandidateStageKey,
     type StageState,
+    type TestResult,
+    type VariantDocumentType,
 } from "../../api/candidates";
 import { documentTypeLabel } from "../format";
 import { Icon } from "../Icon";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
-import { CandidateFields, detailsFrom, textAreaControl, validateDetails } from "./CandidateFields";
+import { CandidateFields, detailsFrom, Field, fieldControl, textAreaControl, validateDetails } from "./CandidateFields";
 import { DocumentRow, VIDEO_ACCEPT } from "./DocumentRow";
 import { exportDocumentSubmissionPdf } from "./exportPdf";
 
@@ -79,17 +82,33 @@ function AutomaticStatus({ stage, completedLabel = "Stage completed" }: { stage:
 
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "The changes could not be saved.");
 
-// Stages without their own data yet (Test details, IVS interview, Visa
-// approval, Finalizing the job): notes and completion.
+// The stages completed by an admin (Test details, IVS interview, Visa
+// approval, Finalizing the job): notes and completion. Test details also
+// records the job ID (entered by the admin), the test's result and the date
+// it was sat; the client name shown with them comes from the candidate's record.
 export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & { stage: CandidateStageKey }) {
     const { token } = useAuth();
     const saved = stageOf(details, stage);
+    const isTest = stage === "TEST_DETAILS";
     const [notes, setNotes] = useState(saved.notes ?? "");
     const [completed, setCompleted] = useState(saved.completed);
+    const [jobId, setJobId] = useState(saved.jobId ?? "");
+    const [testResult, setTestResult] = useState<TestResult | "">(saved.testResult ?? "");
+    const [testDate, setTestDate] = useState(saved.testDate ?? "");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const notesId = useId();
-    const dirty = notes !== (saved.notes ?? "") || completed !== saved.completed;
+    const testId = useId();
+    const dirty = notes !== (saved.notes ?? "") || completed !== saved.completed
+        || (isTest && (jobId !== (saved.jobId ?? "") || testResult !== (saved.testResult ?? "") || testDate !== (saved.testDate ?? "")));
+
+    const showSaved = (state: StageState) => {
+        setNotes(state.notes ?? "");
+        setCompleted(state.completed);
+        setJobId(state.jobId ?? "");
+        setTestResult(state.testResult ?? "");
+        setTestDate(state.testDate ?? "");
+    };
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
@@ -97,10 +116,12 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
         setBusy(true);
         setError(null);
         try {
-            const next = await updateCandidateStage(token, details.candidate.passportId, stage, { notes: notes.trim() || null, completed });
-            const after = stageOf(next, stage);
-            setNotes(after.notes ?? "");
-            setCompleted(after.completed);
+            const next = await updateCandidateStage(token, details.candidate.passportId, stage, {
+                notes: notes.trim() || null,
+                completed,
+                ...(isTest ? { jobId: jobId.trim() || null, testResult: testResult || null, testDate: testDate || null } : {}),
+            });
+            showSaved(stageOf(next, stage));
             onChange(next);
         } catch (caught) {
             setError(message(caught));
@@ -112,6 +133,31 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
     return (
         <form onSubmit={submit}>
             <PanelHeading title={STAGE_LABELS[stage]} />
+            {isTest && (
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <Field label="Client name" htmlFor={`${testId}-client`}>
+                        <input id={`${testId}-client`} value={details.candidate.name ?? ""} readOnly className={`${fieldControl} bg-canvas text-ink-muted`} />
+                    </Field>
+                    <Field label="Job ID" htmlFor={`${testId}-job`}>
+                        <input id={`${testId}-job`} value={jobId} maxLength={50} disabled={!canEdit || busy} onChange={(event) => setJobId(event.target.value)} className={fieldControl} />
+                    </Field>
+                    <Field label="Test result" htmlFor={`${testId}-result`}>
+                        <select
+                            id={`${testId}-result`}
+                            value={testResult}
+                            disabled={!canEdit || busy}
+                            onChange={(event) => setTestResult(TEST_RESULT_OPTIONS.find((o) => o.value === event.target.value)?.value ?? "")}
+                            className={fieldControl}
+                        >
+                            <option value="">Select result…</option>
+                            {TEST_RESULT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                    </Field>
+                    <Field label="Test date" htmlFor={`${testId}-date`}>
+                        <input id={`${testId}-date`} type="date" value={testDate} disabled={!canEdit || busy} onChange={(event) => setTestDate(event.target.value)} className={fieldControl} />
+                    </Field>
+                </div>
+            )}
             <div className="mt-4">
                 <label htmlFor={notesId} className="mb-1 block text-label-sm text-ink-muted">Notes</label>
                 <textarea id={notesId} rows={5} maxLength={2000} value={notes} disabled={!canEdit || busy} onChange={(event) => setNotes(event.target.value)} className={textAreaControl} />
@@ -122,7 +168,7 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
                 busy={busy}
                 dirty={dirty}
                 error={error}
-                onCancel={() => { setNotes(saved.notes ?? ""); setCompleted(saved.completed); setError(null); }}
+                onCancel={() => { showSaved(saved); setError(null); }}
             />
         </form>
     );
@@ -198,6 +244,57 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
     );
 }
 
+// A police report or an affidavit: one row per variant, each with its own
+// file, so any or all of them can be on record (one is required). A stored
+// one with no known variant (e.g. received on WhatsApp) is listed too; it can
+// be removed, and a typed one uploaded beside it.
+function VariantDocumentGroup({ passportId, documentType, label, variants, details, readOnly, onUploaded, required = false, requiredVariants = [] }: {
+    passportId: string;
+    documentType: VariantDocumentType;
+    label: string;
+    variants: readonly { value: string; label: string }[];
+    details: CandidateDetails;
+    readOnly: boolean;
+    onUploaded: (details: CandidateDetails) => void;
+    required?: boolean;
+    requiredVariants?: readonly string[];
+}) {
+    const stored = details.variantDocuments[documentType];
+    return (
+        <section aria-label={label} className="space-y-2">
+            <p className="text-label-md text-ink">{label}{required && <span className="text-critical"> *</span>}</p>
+            <div className="space-y-2 border-l-2 border-border pl-3">
+                {variants.map((option) => (
+                    <DocumentRow
+                        key={option.value}
+                        passportId={passportId}
+                        documentType={documentType}
+                        label={option.label}
+                        removeTitle={`${label} (${option.label})`}
+                        variant={option.value}
+                        document={stored.byVariant[option.value] ?? null}
+                        readOnly={readOnly}
+                        onUploaded={onUploaded}
+                        required={requiredVariants?.includes(option.value)}
+                    />
+                ))}
+                {stored.untyped && (
+                    <DocumentRow
+                        passportId={passportId}
+                        documentType={documentType}
+                        label="Type not set"
+                        removeTitle={`${label} (type not set)`}
+                        document={stored.untyped}
+                        uploadable={false}
+                        readOnly={readOnly}
+                        onUploaded={onUploaded}
+                    />
+                )}
+            </div>
+        </section>
+    );
+}
+
 // Stage 3: medical, police report, agreement and affidavit, the five-document
 // check, and the PDF export.
 // Each upload saves on its own, and the stage completes once all required
@@ -233,12 +330,12 @@ export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelPro
                     </li>
                 ))}
             </ul>
-            <div className="mt-4 space-y-2">
+            <div className="mt-4 space-y-3">
                 <DocumentRow passportId={passportId} documentType="MEDICAL" label="Medical" required document={details.documents.MEDICAL} readOnly={!canEdit} onUploaded={onChange} />
                 <DocumentRow passportId={passportId} documentType="POLICE_SLIP" label="Police slip" document={details.documents.POLICE_SLIP} readOnly={!canEdit} onUploaded={onChange} />
-                <DocumentRow passportId={passportId} documentType="POLICE_REPORT" label="Police report" required document={details.documents.POLICE_REPORT} variants={POLICE_REPORT_VARIANTS} readOnly={!canEdit} onUploaded={onChange} />
+                <VariantDocumentGroup passportId={passportId} documentType="POLICE_REPORT" label="Police report" variants={POLICE_REPORT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} required={true} requiredVariants={["SL_VERIFIED", "ROMANIA"]} />
                 <DocumentRow passportId={passportId} documentType="AGREEMENT" label="Scan - Agreement" required description="Agreement document" document={details.documents.AGREEMENT} readOnly={!canEdit} onUploaded={onChange} />
-                <DocumentRow passportId={passportId} documentType="AFFIDAVIT" label="Scan - Affidavit" required document={details.documents.AFFIDAVIT} variants={AFFIDAVIT_VARIANTS} readOnly={!canEdit} onUploaded={onChange} />
+                <VariantDocumentGroup passportId={passportId} documentType="AFFIDAVIT" label="Scan - Affidavit" variants={AFFIDAVIT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} required={false} />
             </div>
             <PanelFooter
                 status={<AutomaticStatus stage={saved} completedLabel={`All ${total} required documents are included`} />}
