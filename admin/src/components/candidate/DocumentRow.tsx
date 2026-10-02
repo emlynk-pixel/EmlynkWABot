@@ -10,33 +10,34 @@ import { textAreaControl } from "./CandidateFields";
 export const DOCUMENT_ACCEPT = "application/pdf,image/jpeg,image/png";
 export const VIDEO_ACCEPT = "video/mp4,video/quicktime,video/webm";
 
-function statusLine(document: CandidateDocument | null, description?: string) {
+function statusLine(document: CandidateDocument | null, description?: string, showVariant = true) {
     if (!document) return [description, "No file uploaded"].filter(Boolean).join(" • ");
-    return [description, document.originalFilename, variantLabel(document.variant), formatDate(document.receivedDate)].filter(Boolean).join(" • ");
+    return [description, document.originalFilename, showVariant ? variantLabel(document.variant) : null, formatDate(document.receivedDate)].filter(Boolean).join(" • ");
 }
 
-// One document: its name, what is stored now, an optional type selector,
-// Upload / Replace and Remove. A file is uploaded as soon as it is chosen. A
-// document with variants (police report, affidavit) needs its type chosen
-// first: nothing is preselected unless the stored document already has one.
-// Remove deletes the stored document and its file, after a confirmation with
-// a reason (kept in the audit log). onUploaded gets the candidate after an
-// upload or a removal.
-export function DocumentRow({ passportId, documentType, label, description, required, document, variants, accept = DOCUMENT_ACCEPT, readOnly, onUploaded }: {
+// One document: its name, what is stored now, Upload / Replace and Remove. A
+// file is uploaded as soon as it is chosen. `variant`: this row is one variant
+// of a police report or affidavit (each has its own row and its own current
+// document). `uploadable={false}`: a stored document that can only be removed
+// (a police report with no known variant). Remove deletes the stored document
+// and its file, after a confirmation with a reason (kept in the audit log).
+// onUploaded gets the candidate after an upload or a removal.
+export function DocumentRow({ passportId, documentType, label, removeTitle = label, description, required, document, variant, uploadable = true, accept = DOCUMENT_ACCEPT, readOnly, onUploaded }: {
     passportId: string;
     documentType: CandidateDocumentType;
     label: string;
+    removeTitle?: string;
     description?: string;
     required?: boolean;
     document: CandidateDocument | null;
-    variants?: readonly { value: string; label: string }[];
+    variant?: string;
+    uploadable?: boolean;
     accept?: string;
     readOnly?: boolean;
     onUploaded: (details: CandidateDetails) => void;
 }) {
     const { token } = useAuth();
     const input = useRef<HTMLInputElement>(null);
-    const [variant, setVariant] = useState(() => (variants?.some((v) => v.value === document?.variant) ? document?.variant ?? "" : ""));
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     // An upload or a removal is saved as soon as it finishes (the form's Save
@@ -46,7 +47,6 @@ export function DocumentRow({ passportId, documentType, label, description, requ
     const [reason, setReason] = useState("");
     const [removeError, setRemoveError] = useState<string | null>(null);
     const reasonId = useId();
-    const needsVariant = Boolean(variants) && !variant;
 
     const closeRemove = () => {
         setRemoving(false);
@@ -76,12 +76,12 @@ export function DocumentRow({ passportId, documentType, label, description, requ
     };
 
     const upload = async (file: File | undefined) => {
-        if (!file || !token || needsVariant) return;
+        if (!file || !token || !uploadable) return;
         setBusy(true);
         setError(null);
         setDone(null);
         try {
-            onUploaded(await uploadCandidateDocument(token, passportId, documentType, file, variants ? variant : undefined));
+            onUploaded(await uploadCandidateDocument(token, passportId, documentType, file, variant));
             setDone("Saved");
         } catch (caught) {
             setError(caught instanceof ApiError ? caught.message : "The file could not be uploaded.");
@@ -100,25 +100,17 @@ export function DocumentRow({ passportId, documentType, label, description, requ
                         {document?.verificationStatus === "REVIEW_REQUIRED" && <span className="ml-2 text-label-sm text-review">Needs review</span>}
                         {done && <span role="status" className="ml-2 inline-flex items-center gap-1 text-label-sm text-verified"><Icon name="check" className="size-3.5" />{done}</span>}
                     </p>
-                    <p className="truncate text-label-sm text-ink-subtle">{statusLine(document, description)}</p>
+                    <p className="truncate text-label-sm text-ink-subtle">{statusLine(document, description, !variant)}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    {variants && (
-                        <select
-                            aria-label={`${label} type`}
-                            value={variant}
-                            disabled={readOnly || busy}
-                            onChange={(event) => setVariant(event.target.value)}
-                            className="h-9 rounded border border-border-strong bg-surface px-2 text-label-sm text-ink focus:border-primary focus:outline-none"
-                        >
-                            <option value="" disabled>Select type…</option>
-                            {variants.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                        </select>
+                    {uploadable && (
+                        <>
+                            <input ref={input} type="file" accept={accept} className="hidden" aria-label={`${removeTitle} file`} disabled={readOnly || busy} onChange={(event) => upload(event.target.files?.[0])} />
+                            <button type="button" disabled={readOnly || busy} onClick={() => input.current?.click()} className={`${secondaryButton} inline-flex items-center gap-1.5`}>
+                                <Icon name="upload" className="size-4" />{busy && !removing ? "Uploading…" : document ? "Replace" : "Upload"}
+                            </button>
+                        </>
                     )}
-                    <input ref={input} type="file" accept={accept} className="hidden" aria-label={`${label} file`} disabled={readOnly || busy || needsVariant} onChange={(event) => upload(event.target.files?.[0])} />
-                    <button type="button" disabled={readOnly || busy || needsVariant} onClick={() => input.current?.click()} className={`${secondaryButton} inline-flex items-center gap-1.5`}>
-                        <Icon name="upload" className="size-4" />{busy && !removing ? "Uploading…" : document ? "Replace" : "Upload"}
-                    </button>
                     {document && !readOnly && (
                         <button type="button" disabled={busy} onClick={() => setRemoving(true)} className={`${dangerButton} inline-flex items-center gap-1.5`}>
                             <Icon name="delete" className="size-4" />Remove
@@ -128,7 +120,7 @@ export function DocumentRow({ passportId, documentType, label, description, requ
             </div>
             {error && <p role="alert" className="mt-2 text-label-sm text-critical">{error}</p>}
             {removing && document && (
-                <ActionDialog title={`Remove ${label}?`} busy={busy} onClose={closeRemove}>
+                <ActionDialog title={`Remove ${removeTitle}?`} busy={busy} onClose={closeRemove}>
                     <form onSubmit={confirmRemove}>
                         <p className="text-body-sm text-ink-muted">
                             <span className="font-medium text-ink">{document.originalFilename}</span> will be deleted permanently: the file and its record.

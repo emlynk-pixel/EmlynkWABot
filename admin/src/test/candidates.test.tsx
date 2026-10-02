@@ -34,6 +34,10 @@ const DETAILS: CandidateDetails = {
         missing: s.stage === "CANDIDATE_DETAILS" ? ["passport document"] : s.stage === "DOCUMENT_SUBMISSION" ? ["medical", "police report", "agreement", "affidavit"] : [],
     })),
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_REPORT: null, AGREEMENT: null, AFFIDAVIT: null },
+    variantDocuments: {
+        POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null },
+        AFFIDAVIT: { byVariant: { ENGLISH: null, SINHALA: null }, untyped: null },
+    },
     requiredDocuments: (["PASSPORT", "MEDICAL", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"] as const).map((documentType) => ({ documentType, included: documentType === "PASSPORT" })),
 };
 
@@ -226,80 +230,97 @@ describe("Candidate deployment", () => {
         });
     });
 
-    describe("document type (police report, affidavit) must be chosen", () => {
-        const pdf = () => new File(["%PDF-1.4"], "report.pdf", { type: "application/pdf" });
-        const document = (variant: string | null) => ({ documentId: "doc-1", originalFilename: "old-report.pdf", verificationStatus: "VERIFIED", variant, receivedDate: "2026-09-20T00:00:00.000Z" });
-        const rowOf = (select: HTMLElement) => within(select.parentElement!);
+    describe("police reports and affidavits: one row per variant, any or all can be on record", () => {
+        const pdf = (name = "report.pdf") => new File([`%PDF-1.4 ${name}`], name, { type: "application/pdf" });
+        const document = (id: string, variant: string | null, name = `${id}.pdf`) => ({ documentId: id, originalFilename: name, verificationStatus: "VERIFIED", variant, receivedDate: "2026-09-20T00:00:00.000Z" });
+        const groupOf = (name: string) => within(screen.getByRole("region", { name }));
         // The variant travels in the upload's description (upload-target).
         const uploads = (calls: { path: string; body: unknown }[]) =>
             calls.filter((c) => c.path.endsWith("/documents/upload-target")).map((c) => (c.body as { variant?: string }).variant);
+        const withPolice = (byVariant: Record<string, ReturnType<typeof document> | null>, untyped: ReturnType<typeof document> | null = null): CandidateDetails => ({
+            ...DETAILS,
+            variantDocuments: { ...DETAILS.variantDocuments, POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null, ...byVariant }, untyped } },
+        });
 
-        test("nothing is preselected; Upload stays disabled until a type is chosen; the chosen type is sent", async () => {
-            const uploaded: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, POLICE_REPORT: document("ROMANIA") } };
+        test("every variant has its own Upload, with no type to choose; each upload sends its own variant", async () => {
             const { calls } = signedInBackend({
                 "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
-                ...directUploadRoutes("N0000002", uploaded),
+                ...directUploadRoutes("N0000002", withPolice({ ROMANIA: document("r1", "ROMANIA") })),
             });
             renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
             const user = userEvent.setup();
 
-            const police = await screen.findByLabelText("Police report type");
-            expect(police).toHaveValue("");
-            expect(within(police).getByRole("option", { name: "Select type…" })).toBeInTheDocument();
-            expect(within(police).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select type…", "SL Verified", "Romania", "SL Normal"]);
-            expect(rowOf(police).getByRole("button", { name: "Upload" })).toBeDisabled();
+            await screen.findByRole("region", { name: "Police report" });
+            expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+            const police = groupOf("Police report");
+            expect(police.getByText("SL Verified")).toBeInTheDocument();
+            expect(police.getByText("Romania")).toBeInTheDocument();
+            expect(police.getByText("SL Normal")).toBeInTheDocument();
+            expect(police.getAllByRole("button", { name: "Upload" })).toHaveLength(3);
+            const affidavit = groupOf("Scan - Affidavit");
+            expect(affidavit.getByText("English Affidavit")).toBeInTheDocument();
+            expect(affidavit.getByText("Sinhala Affidavit")).toBeInTheDocument();
+            expect(affidavit.getAllByRole("button", { name: "Upload" })).toHaveLength(2);
 
-            const affidavit = screen.getByLabelText("Scan - Affidavit type");
-            expect(affidavit).toHaveValue("");
-            expect(within(affidavit).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select type…", "English Affidavit", "Sinhala Affidavit"]);
-            expect(rowOf(affidavit).getByRole("button", { name: "Upload" })).toBeDisabled();
-
-            // Documents without types are unaffected.
-            expect(screen.queryByLabelText("Medical type")).not.toBeInTheDocument();
-            expect(screen.getAllByRole("button", { name: "Upload" }).filter((b) => !(b as HTMLButtonElement).disabled)).toHaveLength(2);
-
-            // A file can't be sent before the type is chosen.
-            await user.upload(screen.getByLabelText("Police report file"), pdf());
-            expect(uploads(calls)).toEqual([]);
-
-            await user.selectOptions(police, "ROMANIA");
-            expect(rowOf(police).getByRole("button", { name: "Upload" })).toBeEnabled();
-            await user.upload(screen.getByLabelText("Police report file"), pdf());
+            await user.upload(screen.getByLabelText("Police report (Romania) file"), pdf());
             await vi.waitFor(() => expect(uploads(calls)).toEqual(["ROMANIA"]));
-            expect(await screen.findByText(/old-report\.pdf • Romania/)).toBeInTheDocument();
             expect(calls.find((c) => c.path.endsWith("/documents/finalize"))!.body).toMatchObject({ type: "POLICE_REPORT", variant: "ROMANIA", uploadId: UPLOAD_ID });
-            expect(rowOf(police).getByRole("button", { name: "Replace" })).toBeEnabled();
+            // Romania now has its file; the other two are still free to upload.
+            expect(await police.findByText(/r1\.pdf/)).toBeInTheDocument();
+            expect(police.getAllByRole("button", { name: "Upload" })).toHaveLength(2);
+            expect(police.getAllByRole("button", { name: "Replace" })).toHaveLength(1);
         });
 
-        test("a stored document keeps its type; replacing it sends that type, or a newly chosen one", async () => {
-            const stored: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, POLICE_REPORT: document("SL_NORMAL"), AFFIDAVIT: document("SINHALA") } };
+        test("all three police reports on record: each shows its own file, Replace and Remove; replacing one sends only its variant", async () => {
+            const all = withPolice({ SL_VERIFIED: document("v", "SL_VERIFIED", "verified.pdf"), ROMANIA: document("r", "ROMANIA", "romania.pdf"), SL_NORMAL: document("n", "SL_NORMAL", "normal.pdf") });
             const { calls } = signedInBackend({
-                "GET /api/admin/candidates/N0000002": { status: 200, body: stored },
-                ...directUploadRoutes("N0000002", stored),
+                "GET /api/admin/candidates/N0000002": { status: 200, body: all },
+                ...directUploadRoutes("N0000002", all),
             });
             renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
-            const user = userEvent.setup();
+            await screen.findByRole("region", { name: "Police report" });
+            const police = groupOf("Police report");
+            for (const name of ["verified.pdf", "romania.pdf", "normal.pdf"]) expect(police.getByText(new RegExp(name.replace(".", "\\.")))).toBeInTheDocument();
+            expect(police.getAllByRole("button", { name: "Replace" })).toHaveLength(3);
+            expect(police.getAllByRole("button", { name: "Remove" })).toHaveLength(3);
+            expect(police.queryByRole("button", { name: "Upload" })).not.toBeInTheDocument();
 
-            const police = await screen.findByLabelText("Police report type");
-            expect(police).toHaveValue("SL_NORMAL");
-            expect(screen.getByLabelText("Scan - Affidavit type")).toHaveValue("SINHALA");
-            expect(rowOf(police).getByRole("button", { name: "Replace" })).toBeEnabled();
-
-            await user.upload(screen.getByLabelText("Police report file"), pdf());
-            await vi.waitFor(() => expect(uploads(calls)).toHaveLength(1));
-            await user.selectOptions(police, "SL_VERIFIED");
-            await user.upload(screen.getByLabelText("Police report file"), pdf());
-            await vi.waitFor(() => expect(uploads(calls)).toEqual(["SL_NORMAL", "SL_VERIFIED"]));
-            await vi.waitFor(() => expect(calls.filter((c) => c.path.endsWith("/documents/finalize"))).toHaveLength(2));
+            await userEvent.setup().upload(screen.getByLabelText("Police report (SL Normal) file"), pdf("new-normal.pdf"));
+            await vi.waitFor(() => expect(uploads(calls)).toEqual(["SL_NORMAL"]));
         });
 
-        test("a stored document without a type (e.g. received on WhatsApp) needs one before it is replaced", async () => {
-            const stored: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, POLICE_REPORT: document(null) } };
-            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: stored } });
+        test("removing one police report asks for that variant by name", async () => {
+            const all = withPolice({ SL_VERIFIED: document("v", "SL_VERIFIED", "verified.pdf"), ROMANIA: document("r", "ROMANIA", "romania.pdf") });
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: all } });
             renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
-            const police = await screen.findByLabelText("Police report type");
-            expect(police).toHaveValue("");
-            expect(rowOf(police).getByRole("button", { name: "Replace" })).toBeDisabled();
+            await screen.findByRole("region", { name: "Police report" });
+            await userEvent.setup().click(groupOf("Police report").getAllByRole("button", { name: "Remove" })[1]);
+            const dialog = await screen.findByRole("dialog", { name: "Remove Police report (Romania)?" });
+            expect(within(dialog).getByText("romania.pdf")).toBeInTheDocument();
+        });
+
+        test("a police report without a type (e.g. received on WhatsApp) is listed and can be removed, not replaced; typed ones can still be uploaded", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: withPolice({}, document("wa", null, "whatsapp-report.jpg")) } });
+            renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+            await screen.findByRole("region", { name: "Police report" });
+            const police = groupOf("Police report");
+            expect(police.getByText("Type not set")).toBeInTheDocument();
+            expect(police.getByText(/whatsapp-report\.jpg/)).toBeInTheDocument();
+            expect(police.getAllByRole("button", { name: "Upload" })).toHaveLength(3);
+            expect(police.queryByRole("button", { name: "Replace" })).not.toBeInTheDocument();
+            expect(police.getAllByRole("button", { name: "Remove" })).toHaveLength(1);
+        });
+
+        test("a viewer sees the files but can't upload or remove", async () => {
+            signedInBackend({
+                "GET /auth/me": { status: 200, body: { admin: VIEWER } },
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withPolice({ ROMANIA: document("r", "ROMANIA", "romania.pdf") }) },
+            });
+            renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+            await screen.findByRole("region", { name: "Police report" });
+            const police = groupOf("Police report");
+            expect(police.getByText(/romania\.pdf/)).toBeInTheDocument();
+            for (const button of police.getAllByRole("button")) expect(button).toBeDisabled();
         });
     });
 

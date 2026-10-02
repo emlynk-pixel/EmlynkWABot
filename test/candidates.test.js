@@ -625,6 +625,60 @@ describe("document uploads", () => {
         assert.equal((await getCandidate({ db, passportId: "N1023757" })).documents.MEDICAL.originalFilename, "medical report.pdf");
     });
 
+    test("all three police reports and both affidavits can be on record together; each variant replaces only itself", async () => {
+        const db = createFakeDb();
+        const bucket = createFakeBucket();
+        await registered(db);
+        let n = 0;
+        const upload = (documentType, variant) => uploadCandidateDocument({
+            db, bucket, admin: ADMIN, passportId: "N1023757", documentType, variant, mimeType: "application/pdf",
+            buffer: Buffer.concat([PDF, Buffer.from(`file-${n++}`)]), originalFileName: `${documentType}-${variant}.pdf`,
+        });
+        await upload("POLICE_REPORT", "SL_VERIFIED");
+        await upload("POLICE_REPORT", "ROMANIA");
+        await upload("POLICE_REPORT", "SL_NORMAL");
+        await upload("AFFIDAVIT", "ENGLISH");
+        let result = await upload("AFFIDAVIT", "SINHALA");
+
+        const names = (type) => Object.fromEntries(Object.entries(result.variantDocuments[type].byVariant).map(([v, d]) => [v, d?.originalFilename ?? null]));
+        assert.deepEqual(names("POLICE_REPORT"), { SL_VERIFIED: "POLICE_REPORT-SL_VERIFIED.pdf", ROMANIA: "POLICE_REPORT-ROMANIA.pdf", SL_NORMAL: "POLICE_REPORT-SL_NORMAL.pdf" });
+        assert.deepEqual(names("AFFIDAVIT"), { ENGLISH: "AFFIDAVIT-ENGLISH.pdf", SINHALA: "AFFIDAVIT-SINHALA.pdf" });
+        assert.equal(db.state.documents.filter((d) => d.verificationStatus === "VERIFIED").length, 5, "nothing superseded");
+        assert.equal(result.variantDocuments.POLICE_REPORT.untyped, null);
+        assert.ok(result.requiredDocuments.find((r) => r.documentType === "POLICE_REPORT").included);
+
+        // A new Romania report supersedes the old Romania one only.
+        result = await upload("POLICE_REPORT", "ROMANIA");
+        const police = db.state.documents.filter((d) => d.documentType === "POLICE_REPORT").map((d) => [d.documentVariant, d.verificationStatus]);
+        assert.deepEqual(police, [["SL_VERIFIED", "VERIFIED"], ["ROMANIA", "SUPERSEDED"], ["SL_NORMAL", "VERIFIED"], ["ROMANIA", "VERIFIED"]]);
+        assert.equal(result.variantDocuments.POLICE_REPORT.byVariant.ROMANIA.originalFilename, "POLICE_REPORT-ROMANIA.pdf");
+        assert.equal(db.state.auditLogs.at(-1).previousStatus, "VERIFIED", "it replaced a Romania report");
+        assert.equal(db.state.auditLogs[1].previousStatus, "NONE", "the first Romania report replaced nothing (SL Verified was already there)");
+
+        // Removing one variant leaves the others.
+        const slNormal = result.variantDocuments.POLICE_REPORT.byVariant.SL_NORMAL.documentId;
+        result = await removeCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentId: slNormal, reason: "Wrong file" });
+        assert.equal(result.variantDocuments.POLICE_REPORT.byVariant.SL_NORMAL, null);
+        assert.ok(result.variantDocuments.POLICE_REPORT.byVariant.SL_VERIFIED);
+        assert.ok(result.variantDocuments.POLICE_REPORT.byVariant.ROMANIA);
+    });
+
+    test("a police report without a variant (e.g. received on WhatsApp) is shown as untyped and isn't replaced by a typed upload", async () => {
+        const legacy = { documentId: "wa-1", passportId: "N1023757", documentType: "POLICE_REPORT", documentVariant: null, verificationStatus: "VERIFIED", originalFilename: "report.jpg", receivedDate: new Date("2026-09-01"), createdDate: new Date("2026-09-01") };
+        const db = createFakeDb({ documents: [legacy] });
+        const bucket = createFakeBucket();
+        await registered(db);
+        let result = await getCandidate({ db, passportId: "N1023757" });
+        assert.equal(result.variantDocuments.POLICE_REPORT.untyped.documentId, "wa-1");
+        assert.deepEqual(Object.values(result.variantDocuments.POLICE_REPORT.byVariant), [null, null, null]);
+        assert.ok(result.requiredDocuments.find((r) => r.documentType === "POLICE_REPORT").included, "it still counts as the police report");
+
+        result = await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "POLICE_REPORT", variant: "SL_VERIFIED", mimeType: "application/pdf", buffer: PDF });
+        assert.equal(db.state.documents.find((d) => d.documentId === "wa-1").verificationStatus, "VERIFIED");
+        assert.equal(result.variantDocuments.POLICE_REPORT.untyped.documentId, "wa-1");
+        assert.ok(result.variantDocuments.POLICE_REPORT.byVariant.SL_VERIFIED);
+    });
+
     test("the same file twice is refused and nothing new is stored", async () => {
         const db = createFakeDb();
         const bucket = createFakeBucket();
@@ -923,14 +977,21 @@ describe("candidate routes: roles", () => {
             assert.equal(db.state.documents.length, 1);
         });
 
-        test("replacing a document: the new file becomes current, the old one is superseded, no extra rows", async () => {
+        test("replacing a document: the new file becomes current, the old one of that variant is superseded, no extra rows", async () => {
             const { db, bucket } = await withCandidate();
             await directUpload("ADMIN", "N1023757", db, bucket, { type: "AFFIDAVIT", variant: "ENGLISH" });
-            const replaced = await directUpload("ADMIN", "N1023757", db, bucket, { type: "AFFIDAVIT", variant: "SINHALA", buffer: Buffer.concat([PDF, Buffer.from("v2")]) });
+            const replaced = await directUpload("ADMIN", "N1023757", db, bucket, { type: "AFFIDAVIT", variant: "ENGLISH", buffer: Buffer.concat([PDF, Buffer.from("v2")]) });
             assert.equal(replaced.status, 200);
-            assert.equal(replaced.body.documents.AFFIDAVIT.variant, "SINHALA");
+            assert.equal(replaced.body.variantDocuments.AFFIDAVIT.byVariant.ENGLISH.variant, "ENGLISH");
             assert.deepEqual(db.state.documents.map((d) => [d.storedFilename, d.verificationStatus]), [["affidavit.pdf", "SUPERSEDED"], ["affidavit_v2.pdf", "VERIFIED"]]);
             assert.deepEqual(db.state.auditLogs.map((a) => a.previousStatus), ["NONE", "VERIFIED"]);
+
+            // The other variant is kept alongside, not a replacement.
+            const sinhala = await directUpload("ADMIN", "N1023757", db, bucket, { type: "AFFIDAVIT", variant: "SINHALA", buffer: Buffer.concat([PDF, Buffer.from("v3")]) });
+            assert.equal(sinhala.status, 200);
+            assert.deepEqual(db.state.documents.map((d) => [d.documentVariant, d.verificationStatus]), [["ENGLISH", "SUPERSEDED"], ["ENGLISH", "VERIFIED"], ["SINHALA", "VERIFIED"]]);
+            assert.ok(sinhala.body.variantDocuments.AFFIDAVIT.byVariant.ENGLISH);
+            assert.ok(sinhala.body.variantDocuments.AFFIDAVIT.byVariant.SINHALA);
         });
 
         test("finalize without an upload, or for another candidate or type, records nothing", async () => {

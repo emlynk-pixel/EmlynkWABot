@@ -13,6 +13,7 @@ import {
     type CandidateStageKey,
     type StageState,
     type TestResult,
+    type VariantDocumentType,
 } from "../../api/candidates";
 import { documentTypeLabel } from "../format";
 import { Icon } from "../Icon";
@@ -243,6 +244,54 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
     );
 }
 
+// A police report or an affidavit: one row per variant, each with its own
+// file, so any or all of them can be on record (one is required). A stored
+// one with no known variant (e.g. received on WhatsApp) is listed too; it can
+// be removed, and a typed one uploaded beside it.
+function VariantDocumentGroup({ passportId, documentType, label, variants, details, readOnly, onUploaded }: {
+    passportId: string;
+    documentType: VariantDocumentType;
+    label: string;
+    variants: readonly { value: string; label: string }[];
+    details: CandidateDetails;
+    readOnly: boolean;
+    onUploaded: (details: CandidateDetails) => void;
+}) {
+    const stored = details.variantDocuments[documentType];
+    return (
+        <section aria-label={label} className="space-y-2">
+            <p className="text-label-md text-ink">{label}<span className="text-critical"> *</span></p>
+            <div className="space-y-2 border-l-2 border-border pl-3">
+                {variants.map((option) => (
+                    <DocumentRow
+                        key={option.value}
+                        passportId={passportId}
+                        documentType={documentType}
+                        label={option.label}
+                        removeTitle={`${label} (${option.label})`}
+                        variant={option.value}
+                        document={stored.byVariant[option.value] ?? null}
+                        readOnly={readOnly}
+                        onUploaded={onUploaded}
+                    />
+                ))}
+                {stored.untyped && (
+                    <DocumentRow
+                        passportId={passportId}
+                        documentType={documentType}
+                        label="Type not set"
+                        removeTitle={`${label} (type not set)`}
+                        document={stored.untyped}
+                        uploadable={false}
+                        readOnly={readOnly}
+                        onUploaded={onUploaded}
+                    />
+                )}
+            </div>
+        </section>
+    );
+}
+
 // Stage 3: medical, police report, agreement and affidavit, the five-document
 // check, and the PDF export.
 // Each upload saves on its own, and the stage completes once all required
@@ -278,11 +327,11 @@ export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelPro
                     </li>
                 ))}
             </ul>
-            <div className="mt-4 space-y-2">
+            <div className="mt-4 space-y-3">
                 <DocumentRow passportId={passportId} documentType="MEDICAL" label="Medical" required document={details.documents.MEDICAL} readOnly={!canEdit} onUploaded={onChange} />
-                <DocumentRow passportId={passportId} documentType="POLICE_REPORT" label="Police report" required document={details.documents.POLICE_REPORT} variants={POLICE_REPORT_VARIANTS} readOnly={!canEdit} onUploaded={onChange} />
+                <VariantDocumentGroup passportId={passportId} documentType="POLICE_REPORT" label="Police report" variants={POLICE_REPORT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} />
                 <DocumentRow passportId={passportId} documentType="AGREEMENT" label="Scan - Agreement" required description="Agreement document" document={details.documents.AGREEMENT} readOnly={!canEdit} onUploaded={onChange} />
-                <DocumentRow passportId={passportId} documentType="AFFIDAVIT" label="Scan - Affidavit" required document={details.documents.AFFIDAVIT} variants={AFFIDAVIT_VARIANTS} readOnly={!canEdit} onUploaded={onChange} />
+                <VariantDocumentGroup passportId={passportId} documentType="AFFIDAVIT" label="Scan - Affidavit" variants={AFFIDAVIT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} />
             </div>
             <PanelFooter
                 status={<AutomaticStatus stage={saved} completedLabel={`All ${total} required documents are included`} />}

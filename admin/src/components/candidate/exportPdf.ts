@@ -1,4 +1,4 @@
-import { variantLabel, type CandidateDetails } from "../../api/candidates";
+import { storedDocuments, variantLabel, type CandidateDetails } from "../../api/candidates";
 import { documentTypeLabel, formatDate, formatDateTime } from "../format";
 
 const escape = (value: string | null | undefined) =>
@@ -9,15 +9,20 @@ const escape = (value: string | null | undefined) =>
 // Returns false when the browser blocked the new window.
 export function exportDocumentSubmissionPdf(details: CandidateDetails): boolean {
     const c = details.candidate;
+    // One row per stored document (a police report or an affidavit can have
+    // several, one per variant); one "Missing" row for a type with none.
     const rows = details.requiredDocuments.map(({ documentType, included }) => {
-        const document = details.documents[documentType];
-        return `<tr>
+        const documents = storedDocuments(details, documentType);
+        if (!documents.length) {
+            return `<tr><td>${escape(documentTypeLabel(documentType))}</td><td>${included ? "Included" : "Missing"}</td><td>—</td><td>—</td><td>—</td></tr>`;
+        }
+        return documents.map((document) => `<tr>
             <td>${escape(documentTypeLabel(documentType))}</td>
-            <td>${included ? "Included" : "Missing"}</td>
-            <td>${escape(document?.originalFilename ?? "—")}</td>
-            <td>${escape(variantLabel(document?.variant ?? null) ?? "—")}</td>
-            <td>${escape(document ? formatDate(document.receivedDate) : "—")}</td>
-        </tr>`;
+            <td>Included</td>
+            <td>${escape(document.originalFilename)}</td>
+            <td>${escape(variantLabel(document.variant) ?? "—")}</td>
+            <td>${escape(formatDate(document.receivedDate))}</td>
+        </tr>`).join("");
     }).join("");
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Document submission – ${escape(c.name ?? c.passportId)}</title>

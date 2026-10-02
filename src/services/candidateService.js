@@ -14,7 +14,9 @@
 // folders and `documents` rows as documents received on WhatsApp. An upload
 // becomes the candidate's current (VERIFIED) document of its type; a previous
 // VERIFIED one of that type is kept as SUPERSEDED (the existing replacement
-// rule, clientDocumentService.js). Each upload is written to the audit log.
+// rule, clientDocumentService.js). Police reports and affidavits are kept per
+// variant: each variant has its own current document, so a candidate can have
+// all of them. Each upload is written to the audit log.
 // The file itself goes from the admin's browser straight to storage, never
 // through this API (see "direct uploads" below).
 
@@ -363,26 +365,49 @@ function stageList(rows, missingByStage) {
     });
 }
 
-// The candidate's current document of each type: the newest VERIFIED one,
-// otherwise the newest one waiting for review. SUPERSEDED never counts.
+// Of some documents, the current one: the newest VERIFIED, otherwise the
+// newest waiting for review. SUPERSEDED never counts.
+function currentOf(documents) {
+    const live = documents
+        .filter((d) => d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED)
+        .sort((a, b) => b.receivedDate - a.receivedDate || b.createdDate - a.createdDate);
+    const chosen = live.find((d) => d.verificationStatus === VERIFICATION_STATUS.VERIFIED) ?? live[0];
+    return chosen
+        ? {
+            documentId: chosen.documentId,
+            originalFilename: chosen.originalFilename,
+            verificationStatus: chosen.verificationStatus,
+            variant: chosen.documentVariant ?? null,
+            receivedDate: chosen.receivedDate,
+        }
+        : null;
+}
+
+// The candidate's current document of each type. For a type with variants
+// this is the newest of any variant (enough to say the type is included).
 function currentDocuments(documents) {
     const current = {};
     for (const type of Object.keys(CANDIDATE_DOCUMENT_TYPES)) {
-        const ofType = documents
-            .filter((d) => d.documentType === type && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED)
-            .sort((a, b) => b.receivedDate - a.receivedDate || b.createdDate - a.createdDate);
-        const chosen = ofType.find((d) => d.verificationStatus === VERIFICATION_STATUS.VERIFIED) ?? ofType[0];
-        current[type] = chosen
-            ? {
-                documentId: chosen.documentId,
-                originalFilename: chosen.originalFilename,
-                verificationStatus: chosen.verificationStatus,
-                variant: chosen.documentVariant ?? null,
-                receivedDate: chosen.receivedDate,
-            }
-            : null;
+        current[type] = currentOf(documents.filter((d) => d.documentType === type));
     }
     return current;
+}
+
+// Types with variants keep one current document per variant: a candidate
+// can have all three police reports (SL Verified, Romania, SL Normal) and
+// both affidavits. `untyped`: the current one with no known variant (a police
+// report received on WhatsApp, or uploaded before variants were recorded).
+function variantDocuments(documents) {
+    const result = {};
+    for (const [type, definition] of Object.entries(CANDIDATE_DOCUMENT_TYPES)) {
+        if (!definition.variants) continue;
+        const ofType = documents.filter((d) => d.documentType === type);
+        result[type] = {
+            byVariant: Object.fromEntries(definition.variants.map((variant) => [variant, currentOf(ofType.filter((d) => d.documentVariant === variant))])),
+            untyped: currentOf(ofType.filter((d) => !definition.variants.includes(d.documentVariant))),
+        };
+    }
+    return result;
 }
 
 function candidateSummary(user) {
@@ -525,6 +550,7 @@ export async function getCandidate({ db, passportId }) {
         },
         stages: stageList(user.stages, automaticStageMissing(user, user.documents)),
         documents,
+        variantDocuments: variantDocuments(user.documents),
         requiredDocuments: REQUIRED_SUBMISSION_DOCUMENTS.map((documentType) => ({
             documentType,
             included: Boolean(documents[documentType]),
@@ -826,7 +852,8 @@ async function moveToFreeName({ bucket, from, folder, documentType, extension, f
 // The checks and the record every candidate document goes through, whoever
 // moved its bytes: content, duplicate (SHA-256), the next standard name
 // (place), then one transaction that supersedes the previous VERIFIED
-// document of the type, creates the new one and audits it. A refused file is
+// document of the type (of the type and variant, for a type with variants),
+// creates the new one and audits it. A refused file is
 // handed to discard (a staged upload is removed); a record that can't be
 // written removes the placed object again.
 async function storeCandidateDocument({ db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now, place, discard }) {
@@ -852,10 +879,13 @@ async function storeCandidateDocument({ db, bucket, admin, passportId, documentT
     const { storagePath, fileName } = placed;
 
     const documentId = crypto.randomUUID();
+    // A type with variants is replaced per variant: a new Romania police
+    // report supersedes the previous Romania one only, never SL Verified.
+    const replaces = CANDIDATE_DOCUMENT_TYPES[documentType]?.variants ? { documentVariant: variant } : {};
     try {
         await db.$transaction(async (tx) => {
             const previous = await tx.document.findMany({
-                where: { passportId, documentType, verificationStatus: VERIFICATION_STATUS.VERIFIED },
+                where: { passportId, documentType, ...replaces, verificationStatus: VERIFICATION_STATUS.VERIFIED },
                 select: { documentId: true },
             });
             if (previous.length) {

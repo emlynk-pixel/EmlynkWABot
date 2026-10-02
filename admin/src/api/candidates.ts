@@ -103,9 +103,27 @@ export type CandidateDetails = {
         contactNumber: string | null;
     };
     stages: StageState[];
+    // The current document of each type (for a type with variants: the newest of any variant).
     documents: Record<CandidateDocumentType, CandidateDocument | null>;
+    // Police reports and affidavits: the current document of each variant (a
+    // candidate can have all of them), and one with no known variant, if any.
+    variantDocuments: Record<VariantDocumentType, VariantDocuments>;
     requiredDocuments: { documentType: CandidateDocumentType; included: boolean }[];
 };
+
+export type VariantDocumentType = "POLICE_REPORT" | "AFFIDAVIT";
+export type VariantDocuments = { byVariant: Record<string, CandidateDocument | null>; untyped: CandidateDocument | null };
+
+const isVariantType = (type: CandidateDocumentType): type is VariantDocumentType => type === "POLICE_REPORT" || type === "AFFIDAVIT";
+
+// Every current document of a type: one for most types; for a police report
+// or an affidavit, each stored variant (in their usual order), then an untyped one.
+export function storedDocuments(details: CandidateDetails, type: CandidateDocumentType): CandidateDocument[] {
+    if (!isVariantType(type)) return details.documents[type] ? [details.documents[type]] : [];
+    const stored = details.variantDocuments[type];
+    const order = type === "POLICE_REPORT" ? POLICE_REPORT_VARIANTS : AFFIDAVIT_VARIANTS;
+    return [...order.map((v) => stored.byVariant[v.value] ?? null), stored.untyped].filter((d): d is CandidateDocument => d !== null);
+}
 
 // As printed on passports: male, female, unspecified.
 export const SEX_OPTIONS = [

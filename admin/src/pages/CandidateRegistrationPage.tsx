@@ -7,6 +7,7 @@ import {
     updateCandidate,
     updateCandidateStage,
     uploadCandidateDocument,
+    storedDocuments,
     variantLabel,
     type CandidateDetails,
     type CandidateDetailsInput,
@@ -240,12 +241,10 @@ export function CandidateRegistrationPage() {
                 )
                 : undefined;
 
-    const others = existing ? OTHER_DOCUMENTS.flatMap((type) => {
-        const document = existing.documents[type];
-        if (!document) return [];
+    const others = existing ? OTHER_DOCUMENTS.flatMap((type) => storedDocuments(existing, type).map((document) => {
         const variant = variantLabel(document.variant);
-        return [`${documentTypeLabel(type)}${variant ? ` (${variant})` : ""}`];
-    }) : [];
+        return `${documentTypeLabel(type)}${variant ? ` (${variant})` : ""}`;
+    })) : [];
 
     return (
         <section aria-labelledby="page-title" className="mx-auto max-w-4xl space-y-4">
