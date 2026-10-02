@@ -22,7 +22,7 @@ export const STAGE_LABELS: Record<CandidateStageKey, string> = {
     FINALIZING_JOB: "Finalizing the job",
 };
 
-export type CandidateDocumentType = "PASSPORT" | "NIC" | "SKILL_VIDEO" | "MEDICAL" | "POLICE_REPORT" | "AGREEMENT" | "AFFIDAVIT";
+export type CandidateDocumentType = "PASSPORT" | "NIC" | "SKILL_VIDEO" | "MEDICAL" | "POLICE_SLIP" | "POLICE_REPORT" | "AGREEMENT" | "AFFIDAVIT";
 
 export const POLICE_REPORT_VARIANTS = [
     { value: "SL_VERIFIED", label: "SL Verified" },

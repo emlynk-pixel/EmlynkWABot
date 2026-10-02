@@ -235,6 +235,7 @@ export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelPro
             </ul>
             <div className="mt-4 space-y-2">
                 <DocumentRow passportId={passportId} documentType="MEDICAL" label="Medical" required document={details.documents.MEDICAL} readOnly={!canEdit} onUploaded={onChange} />
+                <DocumentRow passportId={passportId} documentType="POLICE_SLIP" label="Police slip" document={details.documents.POLICE_SLIP} readOnly={!canEdit} onUploaded={onChange} />
                 <DocumentRow passportId={passportId} documentType="POLICE_REPORT" label="Police report" required document={details.documents.POLICE_REPORT} variants={POLICE_REPORT_VARIANTS} readOnly={!canEdit} onUploaded={onChange} />
                 <DocumentRow passportId={passportId} documentType="AGREEMENT" label="Scan - Agreement" required description="Agreement document" document={details.documents.AGREEMENT} readOnly={!canEdit} onUploaded={onChange} />
                 <DocumentRow passportId={passportId} documentType="AFFIDAVIT" label="Scan - Affidavit" required document={details.documents.AFFIDAVIT} variants={AFFIDAVIT_VARIANTS} readOnly={!canEdit} onUploaded={onChange} />

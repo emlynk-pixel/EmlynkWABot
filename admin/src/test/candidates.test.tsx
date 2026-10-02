@@ -30,7 +30,7 @@ const DETAILS: CandidateDetails = {
         automatic: s.stage === "CANDIDATE_DETAILS" || s.stage === "DOCUMENT_SUBMISSION",
         missing: s.stage === "CANDIDATE_DETAILS" ? ["passport document"] : s.stage === "DOCUMENT_SUBMISSION" ? ["medical", "police report", "agreement", "affidavit"] : [],
     })),
-    documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_REPORT: null, AGREEMENT: null, AFFIDAVIT: null },
+    documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, AGREEMENT: null, AFFIDAVIT: null },
     requiredDocuments: (["PASSPORT", "MEDICAL", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"] as const).map((documentType) => ({ documentType, included: documentType === "PASSPORT" })),
 };
 
@@ -152,7 +152,7 @@ describe("Candidate deployment", () => {
 
             // Documents without types are unaffected.
             expect(screen.queryByLabelText("Medical type")).not.toBeInTheDocument();
-            expect(screen.getAllByRole("button", { name: "Upload" }).filter((b) => !(b as HTMLButtonElement).disabled)).toHaveLength(2);
+            expect(screen.getAllByRole("button", { name: "Upload" }).filter((b) => !(b as HTMLButtonElement).disabled)).toHaveLength(3);
 
             // A file can't be sent before the type is chosen.
             await user.upload(screen.getByLabelText("Police report file"), pdf());
@@ -423,5 +423,46 @@ describe("Candidate registration", () => {
         renderApp("/candidates/new");
         expect(await screen.findByText("Candidate registration needs an admin or reviewer account.")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Register candidate" })).not.toBeInTheDocument();
+    });
+});
+
+describe("Candidate Document Submission: Police Slip", () => {
+    test("shows Police slip row with Upload when none exists", async () => {
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+        renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+        await screen.findByRole("heading", { name: "Document submission" });
+        expect(screen.getByText("Police slip")).toBeInTheDocument();
+        // Since no required flag is on Police slip, there's no asterisk
+        expect(screen.queryByText("Police slip *")).not.toBeInTheDocument();
+        const row = screen.getByText("Police slip").closest("div.border") as HTMLElement;
+        expect(within(row).getByText("No file uploaded", { selector: "p.truncate" })).toBeInTheDocument();
+        expect(within(row).getByRole("button", { name: "Upload" })).toBeInTheDocument();
+    });
+
+    test("shows filename and Replace when Police slip exists", async () => {
+        const withSlip = {
+            ...DETAILS,
+            documents: {
+                ...DETAILS.documents,
+                POLICE_SLIP: { documentId: "doc-1", originalFilename: "slip.pdf", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-02T10:00:00.000Z" }
+            }
+        };
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: withSlip } });
+        renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+        await screen.findByRole("heading", { name: "Document submission" });
+        expect(screen.getByText("slip.pdf • 02 Oct 2026")).toBeInTheDocument();
+        const row = screen.getByText("Police slip").closest("div.border") as HTMLElement;
+        expect(within(row!).getByRole("button", { name: "Replace" })).toBeInTheDocument();
+    });
+
+    test("VIEWER cannot upload a Police slip", async () => {
+        signedInBackend({
+            "GET /auth/me": { status: 200, body: { admin: VIEWER } },
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS }
+        });
+        renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+        await screen.findByRole("heading", { name: "Document submission" });
+        const row = screen.getByText("Police slip").closest("div.border") as HTMLElement;
+        expect(within(row!).getByRole("button", { name: "Upload" })).toBeDisabled();
     });
 });

@@ -51,6 +51,7 @@ export const CANDIDATE_DOCUMENT_TYPES = Object.freeze({
     NIC: {},
     SKILL_VIDEO: { video: true },
     MEDICAL: {},
+    POLICE_SLIP: {},
     POLICE_REPORT: { variants: POLICE_REPORT_VARIANTS },
     AGREEMENT: {},
     AFFIDAVIT: { variants: AFFIDAVIT_VARIANTS },
