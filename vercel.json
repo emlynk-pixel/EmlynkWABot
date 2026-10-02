@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "npm ci && npm --prefix admin ci",
+  "installCommand": "npm ci && npm --prefix admin install",
   "buildCommand": "npm --prefix admin run build -- --outDir ../public/admin --emptyOutDir",
   "outputDirectory": "public",
   "regions": ["hnd1"],
