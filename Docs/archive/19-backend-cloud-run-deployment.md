@@ -495,3 +495,69 @@ security off. They are not exposed (`anon` and `authenticated` hold no rights
 on any table), but unlike the other tables they rely on that alone.
 
 Nothing was deployed. Next: the Cloud Run worker, then Vercel.
+
+## Step 5F — Cloud Run submission worker deployed
+
+The standalone worker (`node src/worker.js`, Step 5B) is deployed as its own
+Cloud Run service. No application code changed; `submissionQueue.js`,
+document processing, OCR and WhatsApp ingestion are exactly as they were.
+
+**Service.**
+
+| | |
+|---|---|
+| Name | `emlynk-submission-worker` |
+| Region | `asia-northeast1` (Tokyo, next to the database) |
+| Image | `asia-northeast1-docker.pkg.dev/project-aa11e15e-a951-4e1b-a65/emlynk-backend/worker:v1` (new Artifact Registry repo `emlynk-backend`, built from the unchanged root `Dockerfile`) |
+| Command | `node src/worker.js` |
+| Service account | `emlynk-backend@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com` (no key file; Application Default Credentials come from Cloud Run's attached identity) |
+| CPU / memory | 1 / 1Gi, `--no-cpu-throttling`, `--cpu-boost` |
+| Concurrency / timeout | 80 / 300 s |
+| Scaling | `--min-instances=1 --max-instances=1` (kept low for this first verification, as planned) |
+| Ingress / auth | private; no `--allow-unauthenticated`; confirmed with an unauthenticated `GET /health` → 403 |
+| URL | `https://emlynk-submission-worker-76153319636.asia-northeast1.run.app` |
+
+**Environment.** Exactly the 5 variables the worker's code reads
+(`WORKER_REQUIRED_ENV_VARS`, Step 5B): `DATABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` from the existing Secret Manager secrets
+(`--set-secrets`, latest version); `SUPABASE_URL`, `SUPABASE_BUCKET`,
+`OCR_SERVICE_URL` as plain values. `DATABASE_URL` is the Supavisor session
+pooler, the same one verified in Step 5E — not the direct host. No
+`GOOGLE_APPLICATION_CREDENTIALS`, no service-account key.
+
+**Startup.** Logs show, in order: the instance starting (min-instances),
+"Submission worker running: { healthPort: 8080 }", and the startup TCP probe
+succeeding — no exception, no missing-variable error, no Prisma failure. The
+only WARNING logged was an intentionally unauthenticated request made during
+verification (confirms the service is private, not an application problem).
+
+**Production verification (all against the real database, storage and OCR
+service; nothing simulated).**
+- **Database:** connects through the session pooler (confirmed both from a
+  local container run and from the deployed service's own logs).
+- **Storage:** the worker read and wrote the private bucket with the
+  service-role key (upload, and later the real placement move).
+- **OCR:** the deployed service reached `emlynk-ocr-worker` and got a real
+  result back, using its own Cloud Run identity — no key, no
+  `GOOGLE_APPLICATION_CREDENTIALS`. This is the one thing that could not be
+  checked before deployment (a local container has no metadata server to
+  source identity tokens from; it correctly logged `reason: CREDENTIALS` and
+  retried when tried locally, exactly as designed).
+- **Queue processing, end to end, against the live deployment:** a synthetic
+  submission (a non-identity test image, a WhatsApp number that cannot match
+  any real client) was inserted the same way the webhook does
+  (`saveTemporaryFile` + `createTemporaryDocumentRecord`). The deployed
+  worker claimed it, ran OCR, classified it (`MEDICAL`), and — since the
+  number matches no client — correctly routed it to
+  `pending/unidentified/.../uncleared-docs/` with `MANUAL_REVIEW`
+  (`outcome: PROCESSED` in the logs, one attempt). Its temporary and pending
+  storage objects and its `temporary_data` row were then deleted; a
+  follow-up query confirmed no row remains for the test number. No real
+  client data was read, written or touched.
+
+**Logs.** Checked directly: only `temporaryId`, `attempt`, `outcome` and
+`processingStatus` appear — no document text, file name, phone number, token
+or key, consistent with `safeLog.js` throughout.
+
+**Not yet done:** raising `--max-instances` beyond 1 (intentionally deferred
+per this step's plan), Vercel deployment, and the Meta webhook.
