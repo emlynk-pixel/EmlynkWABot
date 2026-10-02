@@ -74,18 +74,18 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
 
             {admin && (
                 <div className="flex items-center gap-3">
-                    {admin.role === "ADMIN" && (
+                    {admin.role !== "VIEWER" && (
                         <NavLink
-                            to="/invitations"
+                            to="/candidates/new"
                             className={({ isActive }) =>
                                 `flex h-8 items-center gap-1.5 rounded border border-border-strong px-2.5 text-label-md shadow-surface ${
                                     isActive ? "bg-primary text-on-primary border-primary" : "bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"
                                 }`
                             }
-                            title="Invite Admin"
+                            title="Register Candidate"
                         >
                             <Icon name="person_add" className="size-4" />
-                            <span className="hidden lg:inline">Invite Admin</span>
+                            <span className="hidden lg:inline">Register Candidate</span>
                         </NavLink>
                     )}
                     <div className="hidden text-right sm:block">
