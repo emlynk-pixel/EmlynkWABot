@@ -140,7 +140,8 @@ export type CandidateRegistration = CandidateDetailsInput & { passportId: string
 // (navigation state) until that document is on record.
 export type FailedUpload = { documentType: CandidateDocumentType; message: string };
 
-export type CallLogEntry = { callLogId: string; note: string; createdDate: string; adminName: string | null };
+// calledAt: when the call took place; note: what the candidate said.
+export type CallLogEntry = { callLogId: string; note: string; calledAt: string; adminName: string | null };
 
 const base = (passportId: string) => `/api/admin/candidates/${encodeURIComponent(passportId)}`;
 
@@ -196,6 +197,6 @@ export function listCallLogs(token: string, passportId: string, signal?: AbortSi
     return apiRequest(`${base(passportId)}/call-logs`, { token, signal });
 }
 
-export function addCallLog(token: string, passportId: string, note: string): Promise<{ items: CallLogEntry[] }> {
-    return apiRequest(`${base(passportId)}/call-logs`, { method: "POST", token, body: { note } });
+export function addCallLog(token: string, passportId: string, call: { note: string; calledAt: string }): Promise<{ items: CallLogEntry[] }> {
+    return apiRequest(`${base(passportId)}/call-logs`, { method: "POST", token, body: call });
 }

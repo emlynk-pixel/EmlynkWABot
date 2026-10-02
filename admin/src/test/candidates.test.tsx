@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import { CANDIDATE_STAGES, type CandidateDetails, type CandidateList } from "../api/candidates";
@@ -449,6 +449,88 @@ describe("Candidate deployment", () => {
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
         expect(await screen.findByText("Stage completed")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "2. Candidate details (completed out of order)" })).toBeInTheDocument();
+    });
+});
+
+describe("Call log", () => {
+    const CALLS = {
+        items: [
+            { callLogId: "c2", note: "Said the police report is ready", calledAt: "2026-10-01T11:15:00.000Z", adminName: "Test Admin" },
+            { callLogId: "c1", note: "Asked about the medical", calledAt: "2026-09-30T04:45:00.000Z", adminName: null },
+        ],
+    };
+    const openCallLog = async () => {
+        await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
+        return screen.findByRole("dialog", { name: "Call log" });
+    };
+
+    test("shows each call's date, time (Sri Lanka) and note, newest first", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        const items = within(await within(dialog).findByRole("list", { name: "Calls" })).getAllByRole("listitem");
+        expect(items.map((item) => item.textContent)).toEqual([
+            "01 Oct 2026 · 16:45Test AdminSaid the police report is ready",
+            "30 Sept 2026 · 10:15Asked about the medical",
+        ]);
+    });
+
+    test("a new call takes a date, a time and what the candidate said; it defaults to now", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": { status: 201, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        expect(await within(dialog).findByText("No calls logged yet.")).toBeInTheDocument();
+
+        const date = within(dialog).getByLabelText("Date *");
+        const time = within(dialog).getByLabelText("Time *");
+        expect(date).toHaveValue(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Colombo" }).format(new Date()));
+        expect((time as HTMLInputElement).value).toMatch(/^\d{2}:\d{2}$/);
+        expect(within(dialog).getByRole("button", { name: "Add call" })).toBeDisabled();
+
+        fireEvent.change(date, { target: { value: "2026-10-01" } });
+        fireEvent.change(time, { target: { value: "16:45" } });
+        await userEvent.setup().type(within(dialog).getByLabelText("What the candidate said *"), "Said the police report is ready");
+        await userEvent.setup().click(within(dialog).getByRole("button", { name: "Add call" }));
+
+        expect(await within(dialog).findByText("Said the police report is ready")).toBeInTheDocument();
+        const post = calls.find((c) => c.method === "POST")!;
+        expect(post.body).toEqual({ note: "Said the police report is ready", calledAt: "2026-10-01T16:45:00+05:30" });
+        expect(within(dialog).getByLabelText("What the candidate said *")).toHaveValue("");
+    });
+
+    test("a call in the future is refused before anything is sent", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No calls logged yet.");
+        fireEvent.change(within(dialog).getByLabelText("Date *"), { target: { value: "2099-01-01" } });
+        await userEvent.setup().type(within(dialog).getByLabelText("What the candidate said *"), "x");
+        await userEvent.setup().click(within(dialog).getByRole("button", { name: "Add call" }));
+        expect(within(dialog).getByText("The call can't be in the future.")).toBeInTheDocument();
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+    });
+
+    test("a viewer sees the calls but can't add one", async () => {
+        signedInBackend({
+            "GET /auth/me": { status: 200, body: { admin: VIEWER } },
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        expect(await within(dialog).findByText("Asked about the medical")).toBeInTheDocument();
+        expect(within(dialog).queryByLabelText("What the candidate said *")).not.toBeInTheDocument();
+        expect(within(dialog).queryByRole("button", { name: "Add call" })).not.toBeInTheDocument();
     });
 });
 

@@ -278,13 +278,39 @@ export function parseStageBody(body, stage) {
     return errors.length ? { errors } : { values };
 }
 
-export function parseCallLogBody(body) {
+// A call: when it took place (date and time with its offset, e.g.
+// "2026-10-02T14:30:00+05:30"; omitted = now) and a short note of what the
+// candidate said. A call can't be in the future (a few minutes of clock
+// difference are allowed).
+const CALL_NOTE_MAX_LENGTH = 500;
+const CALL_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+// A real calendar date and time (JavaScript would turn 30 February into 2 March).
+function parseCallTime(value) {
+    if (typeof value !== "string" || !CALL_TIME_PATTERN.test(value)) return null;
+    const [year, month, day, hour, minute] = value.slice(0, 16).split(/[-T:]/).map(Number);
+    const check = new Date(Date.UTC(year, month - 1, day, hour, minute));
+    if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day || check.getUTCHours() !== hour || check.getUTCMinutes() !== minute) {
+        return null;
+    }
+    return new Date(value);
+}
+
+export function parseCallLogBody(body, { now = new Date() } = {}) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
         return { errors: [{ field: "body", message: "must be a JSON object" }] };
     }
     const errors = [];
-    const note = text(body, "note", errors, { required: true });
-    return errors.length ? { errors } : { values: { note } };
+    const note = text(body, "note", errors, { required: true, max: CALL_NOTE_MAX_LENGTH });
+    let calledAt = null;
+    if (body.calledAt !== undefined && body.calledAt !== null && body.calledAt !== "") {
+        const parsed = parseCallTime(body.calledAt);
+        if (!parsed || Number.isNaN(parsed.getTime())) errors.push({ field: "calledAt", message: "must be a date and time" });
+        else if (parsed.getTime() > now.getTime() + CLOCK_SKEW_MS) errors.push({ field: "calledAt", message: "can't be in the future" });
+        else calledAt = parsed;
+    }
+    return errors.length ? { errors } : { values: { note, calledAt } };
 }
 
 // ---------------------------------------------------------------- reading
@@ -1062,22 +1088,30 @@ export async function removeCandidateDocument({ db, bucket, admin, passportId, d
 
 // ---------------------------------------------------------------- call log
 
+// candidate_call_logs.created_date holds when the call took place (the date
+// and time the admin entered, or the moment it was noted). Newest call first.
 export async function listCallLogs({ db, passportId }) {
     await requireCandidate(db, passportId);
     const rows = await db.candidateCallLog.findMany({
         where: { passportId },
         select: { callLogId: true, note: true, createdDate: true, admin: { select: { name: true } } },
-        orderBy: { createdDate: "desc" },
+        orderBy: [{ createdDate: "desc" }, { callLogId: "asc" }],
     });
     return {
-        items: rows.map((row) => ({ callLogId: row.callLogId, note: row.note, createdDate: row.createdDate, adminName: row.admin?.name ?? null })),
+        items: rows.map((row) => ({ callLogId: row.callLogId, note: row.note, calledAt: row.createdDate, adminName: row.admin?.name ?? null })),
     };
 }
 
 export async function addCallLog({ db, admin, passportId, values }) {
     await requireCandidate(db, passportId);
     await db.candidateCallLog.create({
-        data: { callLogId: crypto.randomUUID(), passportId, adminId: admin.adminId, note: values.note },
+        data: {
+            callLogId: crypto.randomUUID(),
+            passportId,
+            adminId: admin.adminId,
+            note: values.note,
+            ...(values.calledAt ? { createdDate: values.calledAt } : {}),
+        },
     });
     return listCallLogs({ db, passportId });
 }

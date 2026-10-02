@@ -22,6 +22,7 @@ import {
     removeCandidateDocument,
     parseUploadTargetBody,
     STAGED_UPLOAD_MAX_AGE_MS,
+    parseCallLogBody,
     parseCandidateBody,
     parseJobTypes,
     parseStageBody,
@@ -139,8 +140,10 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
         auditLog: { create: async ({ data }) => { state.auditLogs.push(data); } },
         candidateCallLog: {
             create: async ({ data }) => { state.callLogs.push({ createdDate: new Date(), ...data }); },
+            // Newest call first, like orderBy createdDate desc.
             findMany: async ({ where }) => state.callLogs
                 .filter((c) => matches(c, where))
+                .sort((a, b) => b.createdDate - a.createdDate)
                 .map((c) => ({ ...c, admin: state.admins.find((a) => a.adminId === c.adminId) ?? null })),
         },
         $transaction: async (fn) => fn(db),
@@ -673,6 +676,36 @@ describe("candidate list and call log", () => {
         await registered(db);
         const { items } = await addCallLog({ db, admin: ADMIN, passportId: "N1023757", values: { note: "Called about medical" } });
         assert.deepEqual(items.map((i) => [i.note, i.adminName]), [["Called about medical", "Test Admin"]]);
+    });
+
+    test("a call keeps the date and time it took place; newest call first; no time given = now", async () => {
+        const db = createFakeDb();
+        await registered(db);
+        const add = (body) => addCallLog({ db, admin: ADMIN, passportId: "N1023757", values: parseCallLogBody(body).values });
+        await add({ note: "Asked about the medical", calledAt: "2026-09-30T10:15:00+05:30" });
+        await add({ note: "Said the police report is ready", calledAt: "2026-10-01T16:45:00+05:30" });
+        const before = Date.now();
+        const { items } = await add({ note: "No answer" });
+
+        assert.deepEqual(items.map((i) => i.note), ["No answer", "Said the police report is ready", "Asked about the medical"]);
+        assert.equal(items[1].calledAt.toISOString(), "2026-10-01T11:15:00.000Z", "16:45 in Sri Lanka");
+        assert.equal(items[2].calledAt.toISOString(), "2026-09-30T04:45:00.000Z");
+        assert.ok(items[0].calledAt.getTime() >= before, "no time given: now");
+    });
+
+    test("call note validation: a short note is required; the time must be a real date and time, not in the future", () => {
+        const now = new Date("2026-10-02T09:00:00Z");
+        const fields = (body) => parseCallLogBody(body, { now }).errors?.map((e) => e.field);
+        assert.deepEqual(parseCallLogBody({ note: "  Will send medical  " }, { now }).values, { note: "Will send medical", calledAt: null });
+        assert.deepEqual(fields({}), ["note"]);
+        assert.deepEqual(fields({ note: "x".repeat(501) }), ["note"], "a short note: at most 500 characters");
+        assert.equal(parseCallLogBody({ note: "x".repeat(500) }, { now }).errors, undefined);
+        assert.deepEqual(fields({ note: "x", calledAt: "yesterday" }), ["calledAt"]);
+        assert.deepEqual(fields({ note: "x", calledAt: "2026-10-02T14:30" }), ["calledAt"], "the offset is required");
+        assert.deepEqual(fields({ note: "x", calledAt: "2026-02-30T10:00:00+05:30" }), ["calledAt"]);
+        assert.deepEqual(fields({ note: "x", calledAt: 1727850000000 }), ["calledAt"]);
+        assert.deepEqual(fields({ note: "x", calledAt: "2026-10-02T15:00:00+05:30" }), ["calledAt"], "later today is the future");
+        assert.equal(parseCallLogBody({ note: "x", calledAt: "2026-10-02T14:33:00+05:30" }, { now }).errors, undefined, "a few minutes of clock difference are fine");
     });
 });
 
