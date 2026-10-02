@@ -87,7 +87,7 @@ export function clearSentEmails() {
  * @param {object} params
  * @param {string} params.email - Invitee email address
  * @param {string} params.name - Invitee name
- * @param {string} params.role - Assigned role ('ADMIN' | 'REVIEWER' | 'VIEWER')
+ * @param {string} params.role - Assigned role ('ADMIN' | 'ANALYST' | 'VIEWER')
  * @param {string} params.token - Raw invitation token
  * @param {Date} params.expiresAt - Token expiration timestamp
  * @param {object} [params.transport] - Optional custom transport for test injection

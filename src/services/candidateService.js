@@ -14,11 +14,15 @@
 // folders and `documents` rows as documents received on WhatsApp. An upload
 // becomes the candidate's current (VERIFIED) document of its type; a previous
 // VERIFIED one of that type is kept as SUPERSEDED (the existing replacement
-// rule, clientDocumentService.js). Each upload is written to the audit log.
+// rule, clientDocumentService.js). Police reports and affidavits are kept per
+// variant: each variant has its own current document, so a candidate can have
+// all of them. Each upload is written to the audit log.
+// The file itself goes from the admin's browser straight to storage, never
+// through this API (see "direct uploads" below).
 
 import crypto from "node:crypto";
 
-import { validateDocumentFile, MAX_FILE_SIZE } from "../utils/fileValidation.js";
+import { validateDocumentFile, ALLOWED_MIME_TYPES, MAX_FILE_SIZE } from "../utils/fileValidation.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { clientName } from "../utils/clientName.js";
 import { normalizePassportId } from "../utils/passportId.js";
@@ -51,6 +55,7 @@ export const CANDIDATE_DOCUMENT_TYPES = Object.freeze({
     NIC: {},
     SKILL_VIDEO: { video: true },
     MEDICAL: {},
+    POLICE_SLIP: {},
     POLICE_REPORT: { variants: POLICE_REPORT_VARIANTS },
     AGREEMENT: {},
     AFFIDAVIT: { variants: AFFIDAVIT_VARIANTS },
@@ -59,11 +64,17 @@ export const CANDIDATE_DOCUMENT_TYPES = Object.freeze({
 // The five documents a candidate's submission must include (Document
 // Submission stage): the passport (Candidate Details) and the four collected
 // in Document Submission.
-export const REQUIRED_SUBMISSION_DOCUMENTS = Object.freeze(["PASSPORT", "MEDICAL", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"]);
+export const REQUIRED_SUBMISSION_DOCUMENTS = Object.freeze(["PASSPORT", "MEDICAL", "POLICE_REPORT", "AGREEMENT"]);
 
-// Skill videos only. Same size limit as every other document: the private
-// bucket refuses larger objects.
+// Skill videos only.
 export const VIDEO_MIME_TYPES = Object.freeze(["video/mp4", "video/quicktime", "video/webm"]);
+
+// A skill video may be up to 50 MB; every other candidate document keeps the
+// 10 MB document limit (MAX_FILE_SIZE, shared with WhatsApp intake). The
+// storage bucket's own file size limit must be at least the larger one.
+export const MAX_VIDEO_FILE_SIZE = 50 * 1024 * 1024;
+export const maxFileSizeFor = (documentType) => (CANDIDATE_DOCUMENT_TYPES[documentType]?.video ? MAX_VIDEO_FILE_SIZE : MAX_FILE_SIZE);
+const tooLargeMessage = (limit) => `The file is larger than ${limit / (1024 * 1024)} MB.`;
 
 const MAX_NAME_LENGTH = 100;
 const MAX_ADDRESS_LENGTH = 500;
@@ -227,8 +238,15 @@ export function parseCandidateBody(body, { creating }) {
     return errors.length ? { errors } : { values };
 }
 
-// Stage update: { completed?: boolean, notes?: string | null }.
-export function parseStageBody(body) {
+export const TEST_RESULTS = Object.freeze(["PASS", "FAIL"]);
+
+const MAX_JOB_ID_LENGTH = 50;
+
+// Stage update: { completed?: boolean, notes?: string | null }, and for
+// TEST_DETAILS also { jobId?: string | null, testResult?: "PASS" | "FAIL" |
+// null, testDate?: "YYYY-MM-DD" | null }. A field left out is unchanged;
+// null (or empty text) clears it.
+export function parseStageBody(body, stage) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
         return { errors: [{ field: "body", message: "must be a JSON object" }] };
     }
@@ -241,19 +259,61 @@ export function parseStageBody(body) {
     if (body.notes !== undefined) {
         values.notes = text(body, "notes", errors);
     }
-    if (!errors.length && values.completed === undefined && body.notes === undefined) {
-        errors.push({ field: "body", message: "must contain completed or notes" });
+    for (const field of ["jobId", "testResult", "testDate"]) {
+        if (body[field] !== undefined && stage !== "TEST_DETAILS") errors.push({ field, message: "is only recorded for the Test details stage" });
+    }
+    if (stage === "TEST_DETAILS") {
+        if (body.jobId !== undefined) {
+            values.jobId = text(body, "jobId", errors, { max: MAX_JOB_ID_LENGTH });
+        }
+        if (body.testResult !== undefined) {
+            if (body.testResult === null) values.testResult = null;
+            else if (TEST_RESULTS.includes(body.testResult)) values.testResult = body.testResult;
+            else errors.push({ field: "testResult", message: `must be one of: ${TEST_RESULTS.join(", ")}` });
+        }
+        if (body.testDate !== undefined) {
+            values.testDate = date(body, "testDate", errors);
+        }
+    }
+    if (!errors.length && Object.keys(values).length === 0 && body.notes === undefined) {
+        errors.push({ field: "body", message: "must contain completed, notes, or (Test details) jobId, testResult or testDate" });
     }
     return errors.length ? { errors } : { values };
 }
 
-export function parseCallLogBody(body) {
+// A call: when it took place (date and time with its offset, e.g.
+// "2026-10-02T14:30:00+05:30"; omitted = now) and a short note of what the
+// candidate said. A call can't be in the future (a few minutes of clock
+// difference are allowed).
+const CALL_NOTE_MAX_LENGTH = 500;
+const CALL_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+// A real calendar date and time (JavaScript would turn 30 February into 2 March).
+function parseCallTime(value) {
+    if (typeof value !== "string" || !CALL_TIME_PATTERN.test(value)) return null;
+    const [year, month, day, hour, minute] = value.slice(0, 16).split(/[-T:]/).map(Number);
+    const check = new Date(Date.UTC(year, month - 1, day, hour, minute));
+    if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day || check.getUTCHours() !== hour || check.getUTCMinutes() !== minute) {
+        return null;
+    }
+    return new Date(value);
+}
+
+export function parseCallLogBody(body, { now = new Date() } = {}) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
         return { errors: [{ field: "body", message: "must be a JSON object" }] };
     }
     const errors = [];
-    const note = text(body, "note", errors, { required: true });
-    return errors.length ? { errors } : { values: { note } };
+    const note = text(body, "note", errors, { required: true, max: CALL_NOTE_MAX_LENGTH });
+    let calledAt = null;
+    if (body.calledAt !== undefined && body.calledAt !== null && body.calledAt !== "") {
+        const parsed = parseCallTime(body.calledAt);
+        if (!parsed || Number.isNaN(parsed.getTime())) errors.push({ field: "calledAt", message: "must be a date and time" });
+        else if (parsed.getTime() > now.getTime() + CLOCK_SKEW_MS) errors.push({ field: "calledAt", message: "can't be in the future" });
+        else calledAt = parsed;
+    }
+    return errors.length ? { errors } : { values: { note, calledAt } };
 }
 
 // ---------------------------------------------------------------- reading
@@ -277,6 +337,7 @@ export const AUTOMATIC_STAGES = Object.freeze(["CANDIDATE_DETAILS", "DOCUMENT_SU
 // { CANDIDATE_DETAILS: [missing…], DOCUMENT_SUBMISSION: [missing…] }.
 function automaticStageMissing(user, documents) {
     const has = (type) => documents.some((d) => d.documentType === type && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
+    const hasVariant = (type, variant) => documents.some((d) => d.documentType === type && d.documentVariant === variant && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
     const details = [];
     if (isBlank(user.otherName)) details.push("surname");
     if (isBlank(user.firstName)) details.push("other names");
@@ -285,9 +346,16 @@ function automaticStageMissing(user, documents) {
     if (!parseJobTypes(user.job).length) details.push("job type");
     if (isBlank(user.jobExperience)) details.push("job experience");
     if (!has("PASSPORT")) details.push("passport document");
+
+    const submissionMissing = [];
+    if (!has("MEDICAL")) submissionMissing.push("medical");
+    if (!hasVariant("POLICE_REPORT", "SL_VERIFIED")) submissionMissing.push("sl verified police report");
+    if (!hasVariant("POLICE_REPORT", "ROMANIA")) submissionMissing.push("romania police report");
+    if (!has("AGREEMENT")) submissionMissing.push("agreement");
+
     return {
         CANDIDATE_DETAILS: details,
-        DOCUMENT_SUBMISSION: REQUIRED_SUBMISSION_DOCUMENTS.filter((type) => !has(type)).map((type) => type.toLowerCase().replace(/_/g, " ")),
+        DOCUMENT_SUBMISSION: submissionMissing,
     };
 }
 
@@ -298,32 +366,57 @@ function stageList(rows, missingByStage) {
     return CANDIDATE_STAGES.map((stage) => {
         const row = byStage.get(stage);
         const missing = missingByStage[stage];
+        // Recorded on TEST_DETAILS only; null on every other stage.
+        const test = { jobId: row?.jobId ?? null, testResult: row?.testResult ?? null, testDate: isoDate(row?.testDate) };
         return missing
-            ? { stage, automatic: true, completed: missing.length === 0, completedAt: null, notes: row?.notes ?? null, missing }
-            : { stage, automatic: false, completed: Boolean(row?.completed), completedAt: row?.completedAt ?? null, notes: row?.notes ?? null, missing: [] };
+            ? { stage, automatic: true, completed: missing.length === 0, completedAt: null, notes: row?.notes ?? null, missing, ...test }
+            : { stage, automatic: false, completed: Boolean(row?.completed), completedAt: row?.completedAt ?? null, notes: row?.notes ?? null, missing: [], ...test };
     });
 }
 
-// The candidate's current document of each type: the newest VERIFIED one,
-// otherwise the newest one waiting for review. SUPERSEDED never counts.
+// Of some documents, the current one: the newest VERIFIED, otherwise the
+// newest waiting for review. SUPERSEDED never counts.
+function currentOf(documents) {
+    const live = documents
+        .filter((d) => d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED)
+        .sort((a, b) => b.receivedDate - a.receivedDate || b.createdDate - a.createdDate);
+    const chosen = live.find((d) => d.verificationStatus === VERIFICATION_STATUS.VERIFIED) ?? live[0];
+    return chosen
+        ? {
+            documentId: chosen.documentId,
+            originalFilename: chosen.originalFilename,
+            verificationStatus: chosen.verificationStatus,
+            variant: chosen.documentVariant ?? null,
+            receivedDate: chosen.receivedDate,
+        }
+        : null;
+}
+
+// The candidate's current document of each type. For a type with variants
+// this is the newest of any variant (enough to say the type is included).
 function currentDocuments(documents) {
     const current = {};
     for (const type of Object.keys(CANDIDATE_DOCUMENT_TYPES)) {
-        const ofType = documents
-            .filter((d) => d.documentType === type && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED)
-            .sort((a, b) => b.receivedDate - a.receivedDate || b.createdDate - a.createdDate);
-        const chosen = ofType.find((d) => d.verificationStatus === VERIFICATION_STATUS.VERIFIED) ?? ofType[0];
-        current[type] = chosen
-            ? {
-                documentId: chosen.documentId,
-                originalFilename: chosen.originalFilename,
-                verificationStatus: chosen.verificationStatus,
-                variant: chosen.documentVariant ?? null,
-                receivedDate: chosen.receivedDate,
-            }
-            : null;
+        current[type] = currentOf(documents.filter((d) => d.documentType === type));
     }
     return current;
+}
+
+// Types with variants keep one current document per variant: a candidate
+// can have all three police reports (SL Verified, Romania, SL Normal) and
+// both affidavits. `untyped`: the current one with no known variant (a police
+// report received on WhatsApp, or uploaded before variants were recorded).
+function variantDocuments(documents) {
+    const result = {};
+    for (const [type, definition] of Object.entries(CANDIDATE_DOCUMENT_TYPES)) {
+        if (!definition.variants) continue;
+        const ofType = documents.filter((d) => d.documentType === type);
+        result[type] = {
+            byVariant: Object.fromEntries(definition.variants.map((variant) => [variant, currentOf(ofType.filter((d) => d.documentVariant === variant))])),
+            untyped: currentOf(ofType.filter((d) => !definition.variants.includes(d.documentVariant))),
+        };
+    }
+    return result;
 }
 
 function candidateSummary(user) {
@@ -435,7 +528,7 @@ export async function getCandidate({ db, passportId }) {
         where: { passportId },
         select: {
             ...userSelect,
-            stages: { select: { stage: true, completed: true, completedAt: true, notes: true } },
+            stages: { select: { stage: true, completed: true, completedAt: true, notes: true, jobId: true, testResult: true, testDate: true } },
             documents: {
                 where: { documentType: { in: Object.keys(CANDIDATE_DOCUMENT_TYPES) } },
                 select: {
@@ -466,10 +559,18 @@ export async function getCandidate({ db, passportId }) {
         },
         stages: stageList(user.stages, automaticStageMissing(user, user.documents)),
         documents,
-        requiredDocuments: REQUIRED_SUBMISSION_DOCUMENTS.map((documentType) => ({
-            documentType,
-            included: Boolean(documents[documentType]),
-        })),
+        variantDocuments: variantDocuments(user.documents),
+        requiredDocuments: REQUIRED_SUBMISSION_DOCUMENTS.map((documentType) => {
+            if (documentType === "POLICE_REPORT") {
+                const hasSLVerified = user.documents.some((d) => d.documentType === "POLICE_REPORT" && d.documentVariant === "SL_VERIFIED" && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
+                const hasRomania = user.documents.some((d) => d.documentType === "POLICE_REPORT" && d.documentVariant === "ROMANIA" && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
+                return { documentType, included: hasSLVerified && hasRomania };
+            }
+            return {
+                documentType,
+                included: Boolean(documents[documentType]),
+            };
+        }),
     };
 }
 
@@ -600,6 +701,11 @@ export async function updateStage({ db, passportId, stage, values, now = new Dat
         data.completedAt = values.completed ? (current.completed ? current.completedAt : now) : null;
     }
     if (values.notes !== undefined) data.notes = values.notes;
+    if (stage === "TEST_DETAILS") {
+        if (values.jobId !== undefined) data.jobId = values.jobId;
+        if (values.testResult !== undefined) data.testResult = values.testResult;
+        if (values.testDate !== undefined) data.testDate = values.testDate;
+    }
 
     await db.candidateStage.upsert({
         where: { passportId_stage: { passportId, stage } },
@@ -635,7 +741,7 @@ export function validateCandidateUpload({ documentType, mimeType, buffer }) {
         if (!mimeType) return UPLOAD_REJECTION_MESSAGES.MISSING_MIME_TYPE;
         if (!VIDEO_MIME_TYPES.includes(mimeType)) return "This file type is not accepted. Use MP4, MOV or WebM.";
         if (!buffer?.length) return "The file is empty.";
-        if (buffer.length > MAX_FILE_SIZE) return UPLOAD_REJECTION_MESSAGES.FILE_TOO_LARGE;
+        if (buffer.length > MAX_VIDEO_FILE_SIZE) return tooLargeMessage(MAX_VIDEO_FILE_SIZE);
         return videoSignatureMatches(buffer, mimeType) ? null : UPLOAD_REJECTION_MESSAGES.FILE_SIGNATURE_MISMATCH;
     }
     const result = validateDocumentFile({ mimeType, fileSize: buffer?.length ?? 0, fileBuffer: buffer });
@@ -643,7 +749,7 @@ export function validateCandidateUpload({ documentType, mimeType, buffer }) {
     return UPLOAD_REJECTION_MESSAGES[result.reason] ?? "The file was not accepted.";
 }
 
-// documentType and variant from the query: { values } or { errors }.
+// documentType ("type") and variant: { values } or { errors }.
 export function parseUploadQuery(query = {}) {
     const errors = [];
     const documentType = typeof query.type === "string" ? query.type : undefined;
@@ -661,18 +767,67 @@ export function parseUploadQuery(query = {}) {
     return errors.length ? { errors } : { values: { documentType, variant } };
 }
 
-// The name the browser sent (header X-File-Name, URI-encoded): only kept as
+// The name the browser reported for the file: only kept as
 // documents.original_filename, never used in a storage path.
-export function originalFileNameFrom(header, fallback) {
-    if (typeof header !== "string" || header === "") return fallback;
-    let decoded;
-    try {
-        decoded = decodeURIComponent(header);
-    } catch {
-        return fallback;
-    }
-    const name = decoded.split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, MAX_FILE_NAME_LENGTH);
+export function cleanOriginalFileName(value, fallback) {
+    if (typeof value !== "string") return fallback;
+    const name = value.split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, MAX_FILE_NAME_LENGTH);
     return name || fallback;
+}
+
+// The file the browser says it will upload, checked by the same rules its
+// bytes are checked by at finalization (validateCandidateUpload): the MIME
+// type the document type accepts and the size limit. fileSize is optional
+// (finalization knows the real size). Returns a message, or null.
+export function checkDeclaredFile({ documentType, mimeType, fileSize }) {
+    if (!mimeType) return UPLOAD_REJECTION_MESSAGES.MISSING_MIME_TYPE;
+    if (CANDIDATE_DOCUMENT_TYPES[documentType]?.video) {
+        if (!VIDEO_MIME_TYPES.includes(mimeType)) return "This file type is not accepted. Use MP4, MOV or WebM.";
+    } else if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
+        return UPLOAD_REJECTION_MESSAGES.UNSUPPORTED_FILE_TYPE;
+    }
+    if (fileSize === undefined) return null;
+    if (fileSize <= 0) return UPLOAD_REJECTION_MESSAGES.INVALID_FILE_SIZE;
+    if (fileSize > maxFileSizeFor(documentType)) return tooLargeMessage(maxFileSizeFor(documentType));
+    return null;
+}
+
+// crypto.randomUUID() (v4): the staged object's name, chosen by the server.
+const UPLOAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const mimeTypeFrom = (value) => (typeof value === "string" ? value.split(";")[0].trim().toLowerCase() : "");
+
+// POST …/documents/upload-target: { type, variant?, mimeType, fileSize, fileName? }.
+export function parseUploadTargetBody(body) {
+    if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
+    const parsed = parseUploadQuery(body);
+    const errors = [...(parsed.errors ?? [])];
+    if (!Number.isSafeInteger(body.fileSize) || body.fileSize < 0) errors.push({ field: "fileSize", message: "must be the file size in bytes" });
+    if (errors.length) return { errors };
+    return {
+        values: {
+            ...parsed.values,
+            mimeType: mimeTypeFrom(body.mimeType),
+            fileSize: body.fileSize,
+        },
+    };
+}
+
+// POST …/documents/finalize: { uploadId, type, variant?, mimeType, fileName? }.
+export function parseFinalizeUploadBody(body) {
+    if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
+    const parsed = parseUploadQuery(body);
+    const errors = [...(parsed.errors ?? [])];
+    if (typeof body.uploadId !== "string" || !UPLOAD_ID_PATTERN.test(body.uploadId)) errors.push({ field: "uploadId", message: "must be the upload ID from upload-target" });
+    if (errors.length) return { errors };
+    return {
+        values: {
+            ...parsed.values,
+            uploadId: body.uploadId,
+            mimeType: mimeTypeFrom(body.mimeType),
+            originalFileName: cleanOriginalFileName(body.fileName, null),
+        },
+    };
 }
 
 const isCollision = (error) => {
@@ -693,35 +848,60 @@ async function uploadToFreeName({ bucket, folder, documentType, extension, first
     throw new Error(`No free file name after ${MAX_NAME_ATTEMPTS} attempts`);
 }
 
-// POST /api/admin/candidates/:passportId/documents?type=…&variant=…
-// Body: the file bytes, Content-Type its MIME type.
-export async function uploadCandidateDocument({ db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now = new Date() }) {
-    await requireCandidate(db, passportId);
+// Move a staged upload to the first free standard name, like uploadToFreeName:
+// a name already taken is skipped (checked first, and a move onto an
+// existing object is refused by storage), so nothing is ever overwritten.
+async function moveToFreeName({ bucket, from, folder, documentType, extension, firstAttempt }) {
+    for (let version = firstAttempt; version < firstAttempt + MAX_NAME_ATTEMPTS; version++) {
+        const fileName = standardFileName(documentType, version, extension);
+        const storagePath = `${folder}/${fileName}`;
+        const taken = await bucket.exists(storagePath);
+        if (taken.data === true) continue;
+        const { error } = await bucket.move(from, storagePath);
+        if (!error) return { storagePath, fileName };
+        if (isCollision(error)) continue;
+        throw new Error(`Storage move failed: ${error.message}`);
+    }
+    throw new Error(`No free file name after ${MAX_NAME_ATTEMPTS} attempts`);
+}
 
+// The checks and the record every candidate document goes through, whoever
+// moved its bytes: content, duplicate (SHA-256), the next standard name
+// (place), then one transaction that supersedes the previous VERIFIED
+// document of the type (of the type and variant, for a type with variants),
+// creates the new one and audits it. A refused file is
+// handed to discard (a staged upload is removed); a record that can't be
+// written removes the placed object again.
+async function storeCandidateDocument({ db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now, place, discard }) {
+    const refuse = async (error) => {
+        await discard();
+        throw error;
+    };
     const rejection = validateCandidateUpload({ documentType, mimeType, buffer });
-    if (rejection) throw new CandidateError(422, "FILE_REJECTED", rejection);
+    if (rejection) await refuse(new CandidateError(422, "FILE_REJECTED", rejection));
 
     const fileSha256 = sha256Hex(buffer);
     const sameFile = await db.document.findFirst({ where: { passportId, fileSha256 }, select: { documentId: true } });
-    if (sameFile) throw new CandidateError(409, "DUPLICATE_FILE", "This exact file is already stored for this candidate.");
+    if (sameFile) await refuse(new CandidateError(409, "DUPLICATE_FILE", "This exact file is already stored for this candidate."));
 
     const extension = extensionForMimeType(mimeType);
     const existingCount = await db.document.count({ where: { passportId, documentType } });
-    const { storagePath, fileName } = await uploadToFreeName({
-        bucket,
-        folder: clientFolderPath(passportId, documentType),
-        documentType,
-        extension,
-        firstAttempt: existingCount + 1,
-        buffer,
-        mimeType,
-    });
+    let placed;
+    try {
+        placed = await place({ folder: clientFolderPath(passportId, documentType), documentType, extension, firstAttempt: existingCount + 1 });
+    } catch (error) {
+        await refuse(error);
+    }
+    const { storagePath, fileName } = placed;
 
     const documentId = crypto.randomUUID();
+    // A type with variants is replaced per variant: a new Romania police
+    // report supersedes the previous Romania one only, never SL Verified.
+    const replaces = CANDIDATE_DOCUMENT_TYPES[documentType]?.variants ? { documentVariant: variant } : {};
     try {
         await db.$transaction(async (tx) => {
             const previous = await tx.document.findMany({
-                where: { passportId, documentType, verificationStatus: VERIFICATION_STATUS.VERIFIED },
+                where: { passportId, documentType, ...replaces, verificationStatus: VERIFICATION_STATUS.VERIFIED },
                 select: { documentId: true },
             });
             if (previous.length) {
@@ -775,24 +955,214 @@ export async function uploadCandidateDocument({ db, bucket, admin, passportId, d
     return getCandidate({ db, passportId });
 }
 
+// A file whose bytes are already on the server, uploaded to its standard name.
+// No HTTP route takes file bytes: an admin's upload goes browser -> storage
+// directly (createUploadTarget, then finalizeUpload, below).
+export async function uploadCandidateDocument({ db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now = new Date() }) {
+    await requireCandidate(db, passportId);
+    return storeCandidateDocument({
+        db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now,
+        place: (target) => uploadToFreeName({ bucket, buffer, mimeType, ...target }),
+        discard: async () => {},
+    });
+}
+
+// ---------------------------------------------------------------- direct uploads
+//
+// The file's bytes never pass through this API (on Vercel a request body is
+// capped far below the file limits: 10 MB, 50 MB for a skill video). Instead:
+//   1. createUploadTarget: the admin's browser describes the file (type,
+//      variant, MIME type, size). Checked here as above; the answer is a
+//      signed URL for ONE new object, upload_<uploadId><ext> in the
+//      candidate's folder for that type. It expires (2 hours, set by
+//      Supabase), can't overwrite anything, and names no other path.
+//   2. The browser PUTs the file to that URL: browser -> storage.
+//   3. finalizeUpload: the server reads the staged object back from storage
+//      and gives its real bytes every check an upload had (content, size,
+//      duplicate), then moves it to the standard name (medical_v2.pdf, …) and
+//      writes the record, exactly as above. A staged file that fails is
+//      removed. The object's path comes from the passport ID in the URL, the
+//      type and the uploadId, so one candidate's upload can't be finalized
+//      for another candidate or another type.
+// An upload the browser never finalizes (tab closed between 2 and 3) stays
+// staged; staged objects older than STAGED_UPLOAD_MAX_AGE_MS are removed the
+// next time a target is requested for that candidate and type.
+
+const STAGED_UPLOAD_PREFIX = "upload_";
+export const STAGED_UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
+
+const stagedUploadPath = (passportId, documentType, uploadId, extension) =>
+    `${clientFolderPath(passportId, documentType)}/${STAGED_UPLOAD_PREFIX}${uploadId}${extension}`;
+
+// Best effort: a failure here never blocks an upload.
+async function removeStaleStagedUploads({ bucket, folder, now }) {
+    try {
+        const { data, error } = await bucket.list(folder, { search: STAGED_UPLOAD_PREFIX, limit: 100 });
+        if (error || !Array.isArray(data)) return;
+        const stale = data
+            .filter((object) => object?.name?.startsWith(STAGED_UPLOAD_PREFIX))
+            .filter((object) => Date.parse(object.created_at) < now.getTime() - STAGED_UPLOAD_MAX_AGE_MS)
+            .map((object) => `${folder}/${object.name}`);
+        if (stale.length) await bucket.remove(stale);
+    } catch {
+        // Left for the next request.
+    }
+}
+
+// POST /api/admin/candidates/:passportId/documents/upload-target
+export async function createUploadTarget({ db, bucket, passportId, documentType, mimeType, fileSize, now = new Date() }) {
+    await requireCandidate(db, passportId);
+    const rejection = checkDeclaredFile({ documentType, mimeType, fileSize });
+    if (rejection) throw new CandidateError(422, "FILE_REJECTED", rejection);
+
+    await removeStaleStagedUploads({ bucket, folder: clientFolderPath(passportId, documentType), now });
+    const uploadId = crypto.randomUUID();
+    const { data, error } = await bucket.createSignedUploadUrl(stagedUploadPath(passportId, documentType, uploadId, extensionForMimeType(mimeType)));
+    // Paths contain the passport number, so they stay out of the message.
+    if (error || !data?.signedUrl) throw new Error(`Signed upload URL not created: ${error?.message ?? "no URL returned"}`);
+    return { uploadId, uploadUrl: data.signedUrl, maxFileSize: maxFileSizeFor(documentType) };
+}
+
+// POST /api/admin/candidates/:passportId/documents/finalize
+export async function finalizeUpload({ db, bucket, admin, passportId, uploadId, documentType, variant, mimeType, originalFileName: providedFileName, now = new Date() }) {
+    await requireCandidate(db, passportId);
+    
+    // Auto-rename original file name based on passport ID and document type
+    const extension = extensionForMimeType(mimeType);
+    const originalFileName = `${passportId} - ${documentType}${extension}`.toUpperCase();
+
+    const declared = checkDeclaredFile({ documentType, mimeType });
+    if (declared) throw new CandidateError(422, "FILE_REJECTED", declared);
+
+    const stagedPath = stagedUploadPath(passportId, documentType, uploadId, extensionForMimeType(mimeType));
+    const discard = () => removeObject(stagedPath, { bucket });
+    const refuse = async (message) => {
+        await discard();
+        throw new CandidateError(422, "FILE_REJECTED", message);
+    };
+
+    const info = await bucket.info(stagedPath);
+    if (info.error || !info.data) {
+        const status = String(info.error?.statusCode ?? info.error?.status ?? "");
+        if (status === "404" || status === "400" || /not.?found/i.test(info.error?.message ?? "")) {
+            throw new CandidateError(404, "UPLOAD_NOT_FOUND", "The uploaded file was not found. Upload it again.");
+        }
+        throw new Error(`Staged upload not readable: ${info.error?.message ?? "no details"}`);
+    }
+    // Checked before reading it into memory: the signed URL itself can't cap the size.
+    const size = Number(info.data.size);
+    if (!(size > 0)) await refuse(UPLOAD_REJECTION_MESSAGES.INVALID_FILE_SIZE);
+    if (size > maxFileSizeFor(documentType)) await refuse(tooLargeMessage(maxFileSizeFor(documentType)));
+    // Stored with the type the browser sent while uploading: it must be the one checked here.
+    const storedType = mimeTypeFrom(info.data.contentType);
+    if (storedType && storedType !== mimeType) await refuse(UPLOAD_REJECTION_MESSAGES.FILE_SIGNATURE_MISMATCH);
+
+    const downloaded = await bucket.download(stagedPath);
+    if (downloaded.error || !downloaded.data) throw new Error(`Staged upload not readable: ${downloaded.error?.message ?? "no data"}`);
+    const buffer = Buffer.isBuffer(downloaded.data) ? downloaded.data : Buffer.from(await downloaded.data.arrayBuffer());
+
+    return storeCandidateDocument({
+        db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now,
+        place: (target) => moveToFreeName({ bucket, from: stagedPath, ...target }),
+        discard,
+    });
+}
+
+// ---------------------------------------------------------------- removing a document
+//
+// Like Remove from Review (adminReviewActionService.js): an explicit reason,
+// one audit entry (append-only, so it outlives the document), the record
+// deleted in a transaction, then its file, unless another record still
+// points at it. Only the candidate's current document of a candidate type
+// can be removed: earlier versions (SUPERSEDED) stay as history, and the
+// type's slot is left empty (not rolled back to the previous version).
+
+export const REMOVED_STATUS = "REMOVED";
+const MAX_REMOVE_REASON_LENGTH = 500;
+
+// POST …/documents/:documentId/remove: { reason } (required).
+export function parseRemoveDocumentBody(body) {
+    if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
+    const errors = [];
+    const reason = text(body, "reason", errors, { required: true, max: MAX_REMOVE_REASON_LENGTH });
+    return errors.length ? { errors } : { values: { reason } };
+}
+
+// POST /api/admin/candidates/:passportId/documents/:documentId/remove
+export async function removeCandidateDocument({ db, bucket, admin, passportId, documentId, reason }) {
+    await requireCandidate(db, passportId);
+    const notFound = () => new CandidateError(404, "DOCUMENT_NOT_FOUND", "This document is no longer on record for this candidate. Refresh the page.");
+
+    const outcome = await db.$transaction(async (tx) => {
+        const row = await tx.document.findFirst({
+            where: {
+                documentId,
+                passportId,
+                documentType: { in: Object.keys(CANDIDATE_DOCUMENT_TYPES) },
+                verificationStatus: { not: VERIFICATION_STATUS.SUPERSEDED },
+            },
+            select: { documentId: true, documentType: true, verificationStatus: true, storagePath: true, fileSha256: true, temporaryId: true },
+        });
+        if (!row) throw notFound();
+
+        await tx.auditLog.create({
+            data: {
+                auditId: crypto.randomUUID(),
+                adminId: admin.adminId,
+                action: "REMOVE_DOCUMENT",
+                temporaryId: row.temporaryId ?? null,
+                documentId: row.documentId,
+                passportId,
+                previousStatus: row.verificationStatus,
+                newStatus: REMOVED_STATUS,
+                reason,
+                documentType: row.documentType,
+                fileSha256: row.fileSha256 ?? null,
+            },
+        });
+        // Only if it is still the same record: a second, concurrent removal finds nothing.
+        const { count } = await tx.document.deleteMany({ where: { documentId: row.documentId, passportId, verificationStatus: row.verificationStatus } });
+        if (count !== 1) throw notFound();
+        // The file goes only if no other record points at it.
+        const shared = row.storagePath ? await tx.document.count({ where: { storagePath: row.storagePath } }) : 0;
+        return { path: shared === 0 ? row.storagePath : null };
+    });
+
+    // Committed: the record is gone. Now its file.
+    const removal = outcome.path ? await removeObject(outcome.path, { bucket }) : { removed: true };
+    if (!removal.removed) {
+        // The path holds the passport number, so only the document ID is logged.
+        console.warn("Candidate document remove: file not deleted after the record was removed", { documentId, error: removal.error });
+    }
+    return getCandidate({ db, passportId });
+}
+
 // ---------------------------------------------------------------- call log
 
+// candidate_call_logs.created_date holds when the call took place (the date
+// and time the admin entered, or the moment it was noted). Newest call first.
 export async function listCallLogs({ db, passportId }) {
     await requireCandidate(db, passportId);
     const rows = await db.candidateCallLog.findMany({
         where: { passportId },
         select: { callLogId: true, note: true, createdDate: true, admin: { select: { name: true } } },
-        orderBy: { createdDate: "desc" },
+        orderBy: [{ createdDate: "desc" }, { callLogId: "asc" }],
     });
     return {
-        items: rows.map((row) => ({ callLogId: row.callLogId, note: row.note, createdDate: row.createdDate, adminName: row.admin?.name ?? null })),
+        items: rows.map((row) => ({ callLogId: row.callLogId, note: row.note, calledAt: row.createdDate, adminName: row.admin?.name ?? null })),
     };
 }
 
 export async function addCallLog({ db, admin, passportId, values }) {
     await requireCandidate(db, passportId);
     await db.candidateCallLog.create({
-        data: { callLogId: crypto.randomUUID(), passportId, adminId: admin.adminId, note: values.note },
+        data: {
+            callLogId: crypto.randomUUID(),
+            passportId,
+            adminId: admin.adminId,
+            note: values.note,
+            ...(values.calledAt ? { createdDate: values.calledAt } : {}),
+        },
     });
     return listCallLogs({ db, passportId });
 }

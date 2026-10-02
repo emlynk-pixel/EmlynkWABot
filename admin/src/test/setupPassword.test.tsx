@@ -7,7 +7,7 @@ const INVITATION = {
     invitationId: "inv-abc",
     email: "sarath@example.invalid",
     name: "Sarath Fonseka",
-    role: "REVIEWER",
+    role: "ANALYST",
     expiresAt: new Date(Date.now() + 86400000).toISOString(),
 };
 
@@ -21,7 +21,7 @@ describe("Setup Password Page", () => {
 
         expect(await screen.findByRole("heading", { name: "Set Your Password" })).toBeInTheDocument();
         expect(screen.getByText("Sarath Fonseka")).toBeInTheDocument();
-        expect(screen.getByText("REVIEWER")).toBeInTheDocument();
+        expect(screen.getByText("ANALYST")).toBeInTheDocument();
         expect(screen.getByLabelText("Email Address")).toHaveValue("sarath@example.invalid");
     });
 

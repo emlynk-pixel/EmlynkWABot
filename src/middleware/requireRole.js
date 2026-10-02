@@ -2,7 +2,7 @@
 //
 // The proposal (§33) recommends three roles:
 //   ADMIN    — full access: every read and every write action
-//   REVIEWER — read access + review actions (approve/keep-pending/remove/retry/
+//   ANALYST — read access + review actions (approve/keep-pending/remove/retry/
 //              replace-verified/keep-as-version/document-type/assign-client)
 //              but NOT police-date corrections, which change stored documents
 //              rather than waiting pending items
@@ -19,16 +19,14 @@
 
 export const ADMIN_ROLES = Object.freeze({
     ADMIN: "ADMIN",
-    REVIEWER: "REVIEWER",
-    VIEWER: "VIEWER",
+    ANALYST: "ANALYST",
 });
 
 // Ordered by privilege (most privileged first). Used to validate role values
 // when creating or updating admins.
 export const ALL_ROLES = Object.freeze([
     ADMIN_ROLES.ADMIN,
-    ADMIN_ROLES.REVIEWER,
-    ADMIN_ROLES.VIEWER,
+    ADMIN_ROLES.ANALYST,
 ]);
 
 const INSUFFICIENT_ROLE = { message: "Insufficient permissions" };

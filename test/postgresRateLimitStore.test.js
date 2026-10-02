@@ -183,9 +183,10 @@ describe("PostgreSQL rate-limit store (real database)", { skip: !TEST_DB_URL && 
                 assert.equal(statuses.filter((s) => s === 401).length, 5);
                 assert.equal(statuses.filter((s) => s === 429).length, 15);
                 const limited = responses.find((r) => r.status === 429);
-                assert.deepEqual(await limited.json(), { message: LOGIN_RATE_LIMIT_MESSAGE });
+                const body = await limited.json();
+                assert.equal(body.message, LOGIN_RATE_LIMIT_MESSAGE);
                 assert.match(limited.headers.get("ratelimit-policy"), /q=5\b/);
-                assert.match(limited.headers.get("ratelimit-policy"), /w=900\b/);
+                assert.match(limited.headers.get("ratelimit-policy"), /w=300\b/);
             } finally {
                 await one.close();
                 await two.close();
@@ -208,7 +209,7 @@ describe("PostgreSQL rate-limit store (real database)", { skip: !TEST_DB_URL && 
         });
 
         test("the window resets", async () => {
-            const limiter = createLoginRateLimiter({ windowMs: 1_000, store: createPostgresRateLimitStore({ prefix: "login:", db }) });
+            const limiter = createLoginRateLimiter({ windowMs1: 1_000, windowMs2: 1_000, store1: createPostgresRateLimitStore({ prefix: "login:t1:", db }), store2: createPostgresRateLimitStore({ prefix: "login:t2:", db }) });
             const one = await startInstance(failingLogin(limiter));
             try {
                 for (let i = 0; i < 5; i++) assert.equal((await fetch(`${one.url}/login`, { method: "POST" })).status, 401);

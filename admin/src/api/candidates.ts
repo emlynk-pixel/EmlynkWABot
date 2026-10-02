@@ -1,7 +1,7 @@
-import { apiRequest, apiUpload } from "./client";
+import { apiRequest, uploadToSignedUrl } from "./client";
 
 // Admin > Candidates (src/routes/admin.js, /api/admin/candidates/*).
-// Reads for every admin; changes need REVIEWER or above (checked on the server).
+// Reads for every admin; changes need ANALYST or above (checked on the server).
 
 export const CANDIDATE_STAGES = [
     "TEST_DETAILS",
@@ -22,7 +22,7 @@ export const STAGE_LABELS: Record<CandidateStageKey, string> = {
     FINALIZING_JOB: "Finalizing the job",
 };
 
-export type CandidateDocumentType = "PASSPORT" | "NIC" | "SKILL_VIDEO" | "MEDICAL" | "POLICE_REPORT" | "AGREEMENT" | "AFFIDAVIT";
+export type CandidateDocumentType = "PASSPORT" | "NIC" | "SKILL_VIDEO" | "MEDICAL" | "POLICE_SLIP" | "POLICE_REPORT" | "AGREEMENT" | "AFFIDAVIT";
 
 export const POLICE_REPORT_VARIANTS = [
     { value: "SL_VERIFIED", label: "SL Verified" },
@@ -42,7 +42,22 @@ export function variantLabel(variant: string | null): string | null {
 export type StageProgress = { stage: CandidateStageKey; completed: boolean };
 // automatic: completed by the record's data (Candidate details, Document
 // submission), with what is still missing; otherwise completed by an admin.
-export type StageState = StageProgress & { completedAt: string | null; notes: string | null; automatic: boolean; missing: string[] };
+export const TEST_RESULT_OPTIONS = [
+    { value: "PASS", label: "Pass" },
+    { value: "FAIL", label: "Fail" },
+] as const;
+export type TestResult = (typeof TEST_RESULT_OPTIONS)[number]["value"];
+
+// jobId / testResult / testDate (YYYY-MM-DD): recorded on Test details only, null elsewhere.
+export type StageState = StageProgress & {
+    completedAt: string | null;
+    notes: string | null;
+    automatic: boolean;
+    missing: string[];
+    jobId: string | null;
+    testResult: TestResult | null;
+    testDate: string | null;
+};
 
 export type CandidateListItem = {
     passportId: string;
@@ -88,9 +103,27 @@ export type CandidateDetails = {
         contactNumber: string | null;
     };
     stages: StageState[];
+    // The current document of each type (for a type with variants: the newest of any variant).
     documents: Record<CandidateDocumentType, CandidateDocument | null>;
+    // Police reports and affidavits: the current document of each variant (a
+    // candidate can have all of them), and one with no known variant, if any.
+    variantDocuments: Record<VariantDocumentType, VariantDocuments>;
     requiredDocuments: { documentType: CandidateDocumentType; included: boolean }[];
 };
+
+export type VariantDocumentType = "POLICE_REPORT" | "AFFIDAVIT";
+export type VariantDocuments = { byVariant: Record<string, CandidateDocument | null>; untyped: CandidateDocument | null };
+
+const isVariantType = (type: CandidateDocumentType): type is VariantDocumentType => type === "POLICE_REPORT" || type === "AFFIDAVIT";
+
+// Every current document of a type: one for most types; for a police report
+// or an affidavit, each stored variant (in their usual order), then an untyped one.
+export function storedDocuments(details: CandidateDetails, type: CandidateDocumentType): CandidateDocument[] {
+    if (!isVariantType(type)) return details.documents[type] ? [details.documents[type]] : [];
+    const stored = details.variantDocuments[type];
+    const order = type === "POLICE_REPORT" ? POLICE_REPORT_VARIANTS : AFFIDAVIT_VARIANTS;
+    return [...order.map((v) => stored.byVariant[v.value] ?? null), stored.untyped].filter((d): d is CandidateDocument => d !== null);
+}
 
 // As printed on passports: male, female, unspecified.
 export const SEX_OPTIONS = [
@@ -121,7 +154,12 @@ export type CandidateDetailsInput = {
 };
 export type CandidateRegistration = CandidateDetailsInput & { passportId: string; comment: string };
 
-export type CallLogEntry = { callLogId: string; note: string; createdDate: string; adminName: string | null };
+// A file registration couldn't upload, reported on the candidate's page
+// (navigation state) until that document is on record.
+export type FailedUpload = { documentType: CandidateDocumentType; message: string };
+
+// calledAt: when the call took place; note: what the candidate said.
+export type CallLogEntry = { callLogId: string; note: string; calledAt: string; adminName: string | null };
 
 const base = (passportId: string) => `/api/admin/candidates/${encodeURIComponent(passportId)}`;
 
@@ -143,20 +181,40 @@ export function updateCandidate(token: string, passportId: string, body: Candida
     return apiRequest<CandidateDetails>(base(passportId), { method: "PUT", token, body });
 }
 
-export function updateCandidateStage(token: string, passportId: string, stage: CandidateStageKey, body: { completed?: boolean; notes?: string | null }): Promise<CandidateDetails> {
+export function updateCandidateStage(
+    token: string,
+    passportId: string,
+    stage: CandidateStageKey,
+    body: { completed?: boolean; notes?: string | null; jobId?: string | null; testResult?: TestResult | null; testDate?: string | null },
+): Promise<CandidateDetails> {
     return apiRequest<CandidateDetails>(`${base(passportId)}/stages/${stage}`, { method: "PUT", token, body });
 }
 
-export function uploadCandidateDocument(token: string, passportId: string, documentType: CandidateDocumentType, file: File, variant?: string): Promise<CandidateDetails> {
-    const query = new URLSearchParams({ type: documentType });
-    if (variant) query.set("variant", variant);
-    return apiUpload<CandidateDetails>(`${base(passportId)}/documents?${query.toString()}`, file, { token });
+// The file goes browser -> storage, never through the API: the API checks the
+// description (type, variant, MIME type, size) and answers with a signed URL
+// for one object; the file is PUT there; then the API checks the stored
+// bytes and records the document.
+export async function uploadCandidateDocument(token: string, passportId: string, documentType: CandidateDocumentType, file: File, variant?: string): Promise<CandidateDetails> {
+    const described = { type: documentType, ...(variant ? { variant } : {}), mimeType: file.type, fileName: file.name };
+    const target = await apiRequest<{ uploadId: string; uploadUrl: string }>(`${base(passportId)}/documents/upload-target`, {
+        method: "POST", token, body: { ...described, fileSize: file.size },
+    });
+    await uploadToSignedUrl(target.uploadUrl, file);
+    return apiRequest<CandidateDetails>(`${base(passportId)}/documents/finalize`, {
+        method: "POST", token, body: { ...described, uploadId: target.uploadId },
+    });
+}
+
+// Deletes the candidate's current document (record and file); the reason is
+// required and kept in the audit log.
+export function removeCandidateDocument(token: string, passportId: string, documentId: string, reason: string): Promise<CandidateDetails> {
+    return apiRequest<CandidateDetails>(`${base(passportId)}/documents/${encodeURIComponent(documentId)}/remove`, { method: "POST", token, body: { reason } });
 }
 
 export function listCallLogs(token: string, passportId: string, signal?: AbortSignal): Promise<{ items: CallLogEntry[] }> {
     return apiRequest(`${base(passportId)}/call-logs`, { token, signal });
 }
 
-export function addCallLog(token: string, passportId: string, note: string): Promise<{ items: CallLogEntry[] }> {
-    return apiRequest(`${base(passportId)}/call-logs`, { method: "POST", token, body: { note } });
+export function addCallLog(token: string, passportId: string, call: { note: string; calledAt: string }): Promise<{ items: CallLogEntry[] }> {
+    return apiRequest(`${base(passportId)}/call-logs`, { method: "POST", token, body: call });
 }

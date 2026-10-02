@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router";
-import { CANDIDATE_STAGES, getCandidate, type CandidateDetails, type CandidateStageKey } from "../api/candidates";
+import { CANDIDATE_STAGES, getCandidate, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { canReview, useAuth } from "../auth/AuthProvider";
 import { CallLogDialog } from "../components/candidate/CallLogDialog";
 import { CandidateStepper } from "../components/candidate/CandidateStepper";
 import { CandidateDetailsStage, DocumentSubmissionStage, NotesStage } from "../components/candidate/StagePanels";
 import { secondaryButton } from "../components/Dialog";
+import { documentTypeLabel } from "../components/format";
 import { Icon } from "../components/Icon";
 import { Card, ErrorState, LoadingState } from "../components/States";
 
@@ -22,7 +23,7 @@ export function CandidateDeploymentPage() {
     const resource = useAdminResource(`candidate:${passportId}`, (token, signal) => getCandidate(token, passportId, signal));
     const [updated, setUpdated] = useState<CandidateDetails | null>(null);
     const [callLogOpen, setCallLogOpen] = useState(false);
-    const notice = (location.state as { notice?: string } | null)?.notice;
+    const failedUploads = (location.state as { failedUploads?: FailedUpload[] } | null)?.failedUploads ?? [];
 
     // A reload (Sync) replaces any locally updated copy.
     useEffect(() => setUpdated(null), [resource.data]);
@@ -46,6 +47,9 @@ export function CandidateDeploymentPage() {
     const canEdit = canReview(admin);
     const c = details.candidate;
     const panelProps = { details, canEdit, onChange: setUpdated };
+    // Files registration couldn't upload, as long as they're still missing:
+    // the message goes once each one has been uploaded here.
+    const stillMissing = failedUploads.filter((failed) => !details.documents[failed.documentType]);
 
     return (
         <section aria-labelledby="page-title" className="mx-auto max-w-5xl space-y-4">
@@ -60,7 +64,11 @@ export function CandidateDeploymentPage() {
                 </button>
             </div>
 
-            {notice && <p role="alert" className="rounded border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">{notice}</p>}
+            {stillMissing.length > 0 && (
+                <p role="alert" className="rounded border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
+                    The candidate was registered, but these files were not uploaded — {stillMissing.map((failed) => `${documentTypeLabel(failed.documentType)}: ${failed.message}`).join("; ")}
+                </p>
+            )}
 
             <Card className="px-4 py-5">
                 <CandidateStepper stages={details.stages} current={current} onSelect={select} />

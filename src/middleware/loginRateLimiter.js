@@ -27,22 +27,43 @@ export const LOGIN_RATE_LIMIT_MESSAGE = "Too many login attempts. Please try aga
 // instance and kept across restarts, so several serverless instances can't
 // each grant their own allowance. Tests may pass another store.
 export function createLoginRateLimiter({
-    windowMs = LOGIN_RATE_LIMIT_WINDOW_MS,
-    limit = LOGIN_RATE_LIMIT_MAX_FAILURES,
-    store = createPostgresRateLimitStore({ prefix: "login:" }),
+    windowMs1 = 5 * 60 * 1000, // 5 minutes
+    limit1 = 5,
+    windowMs2 = 20 * 60 * 1000, // 20 minutes
+    limit2 = 8,
+    store1,
+    store2,
+    store,
 } = {}) {
-    return rateLimit({
-        windowMs,
-        limit,
-        store,
+    // For backwards compatibility in tests that pass a custom store.
+    store1 = store1 || store || createPostgresRateLimitStore({ prefix: "login:t1:" });
+    store2 = store2 || store || createPostgresRateLimitStore({ prefix: "login:t2:" });
+
+    const handler = (req, res, next, options) => {
+        res.status(options.statusCode).json({ message: LOGIN_RATE_LIMIT_MESSAGE, resetTime: req.rateLimit.resetTime.toISOString() });
+    };
+
+    const tier2 = rateLimit({
+        windowMs: windowMs2,
+        limit: limit2,
+        store: store2,
         skipSuccessfulRequests: true,
         standardHeaders: "draft-8",
         legacyHeaders: false,
-        identifier: "login",
-        handler: (req, res, next, options) => {
-            res.status(options.statusCode).json({ message: LOGIN_RATE_LIMIT_MESSAGE });
-        },
+        handler,
     });
+
+    const tier1 = rateLimit({
+        windowMs: windowMs1,
+        limit: limit1,
+        store: store1,
+        skipSuccessfulRequests: true,
+        standardHeaders: "draft-8",
+        legacyHeaders: false,
+        handler,
+    });
+
+    return [tier2, tier1];
 }
 
 // Abuse protection for POST /auth/forgot-password.

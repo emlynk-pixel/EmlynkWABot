@@ -7,10 +7,12 @@ import {
     updateCandidate,
     updateCandidateStage,
     uploadCandidateDocument,
+    storedDocuments,
     variantLabel,
     type CandidateDetails,
     type CandidateDetailsInput,
     type CandidateDocumentType,
+    type FailedUpload,
 } from "../api/candidates";
 import { canReview, useAuth } from "../auth/AuthProvider";
 import { CandidateFields, detailsFrom, emptyDetails, Field, textAreaControl, validateDetails } from "../components/candidate/CandidateFields";
@@ -25,7 +27,7 @@ const normalizePassportId = (value: string) => value.replace(/[\s-]/g, "").toUpp
 const isPassportId = (value: string) => PASSPORT_PATTERN.test(value) && /\d/.test(value);
 
 // Documents collected in Document Submission: listed here only when on record.
-const OTHER_DOCUMENTS = ["MEDICAL", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"] as const;
+const OTHER_DOCUMENTS = ["MEDICAL", "POLICE_SLIP", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"] as const;
 
 // The passport ID lookup: not run yet, running, no candidate (new
 // registration), an existing candidate (loaded into the form), or failed.
@@ -75,7 +77,7 @@ export function CandidateRegistrationPage() {
     const pending = useRef<{ passportId: string; promise: Promise<CandidateDetails | null> } | null>(null);
 
     if (!canReview(admin)) {
-        return <Card><EmptyState title="Candidate registration needs an admin or reviewer account." /></Card>;
+        return <Card><EmptyState title="Candidate registration needs an admin or analyst account." /></Card>;
     }
 
     const existing = lookup.status === "found" ? lookup.details : null;
@@ -202,19 +204,19 @@ export function CandidateRegistrationPage() {
         }
 
         // The candidate exists now; a failed upload is reported on their page,
-        // where it can be uploaded again.
-        const failed: string[] = [];
+        // where it can be uploaded again (the report goes once it is).
+        const failedUploads: FailedUpload[] = [];
         for (const documentType of ["PASSPORT", "NIC", "SKILL_VIDEO"] as CandidateDocumentType[]) {
             const file = files[documentType as keyof typeof files];
             if (!file) continue;
             try {
                 await uploadCandidateDocument(token, created, documentType, file);
             } catch (caught) {
-                failed.push(`${documentTypeLabel(documentType)}: ${caught instanceof ApiError ? caught.message : "upload failed"}`);
+                failedUploads.push({ documentType, message: caught instanceof ApiError ? caught.message : "upload failed" });
             }
         }
         navigate(`/candidates/${encodeURIComponent(created)}?stage=CANDIDATE_DETAILS`, {
-            state: failed.length ? { notice: `The candidate was registered, but these files were not uploaded — ${failed.join("; ")}` } : undefined,
+            state: failedUploads.length ? { failedUploads } : undefined,
         });
     };
 
@@ -239,12 +241,10 @@ export function CandidateRegistrationPage() {
                 )
                 : undefined;
 
-    const others = existing ? OTHER_DOCUMENTS.flatMap((type) => {
-        const document = existing.documents[type];
-        if (!document) return [];
+    const others = existing ? OTHER_DOCUMENTS.flatMap((type) => storedDocuments(existing, type).map((document) => {
         const variant = variantLabel(document.variant);
-        return [`${documentTypeLabel(type)}${variant ? ` (${variant})` : ""}`];
-    }) : [];
+        return `${documentTypeLabel(type)}${variant ? ` (${variant})` : ""}`;
+    })) : [];
 
     return (
         <section aria-labelledby="page-title" className="mx-auto max-w-4xl space-y-4">

@@ -391,12 +391,12 @@ EmlynkWABot/
 | **WhatsApp Media Download Service** | ✅ Completed | Fetches Graph API media URLs & downloads file buffers into backend |
 | **Document File & MIME Validation** | ✅ Completed | `validateDocumentFile` checks MIME type constraints and size limits |
 | **Temporary File & DB Storage** | ✅ Completed | Saves files in temp storage & creates `temporary_data` records via `createTemporaryDocumentRecord` |
-| **Document Classification Engine** | ✅ Completed | Content-based classifier (passport, police slip, police report, medical) with filename hints — `Docs/06` |
-| **Passport OCR & Full Extraction** | ✅ Completed | Tesseract.js OCR, scanned-PDF OCR, MRZ + printed-field extraction with check digits — `Docs/06` |
-| **Identity Conflict Engine** | ✅ Completed | Passport/WhatsApp identity matrix, conflict detection, field reconciliation — `Docs/07` |
+| **Document Classification Engine** | ✅ Completed | Content-based classifier (passport, police slip, police report, medical) with filename hints — `Docs/05` |
+| **Passport OCR & Full Extraction** | ✅ Completed | Tesseract.js OCR, scanned-PDF OCR, MRZ + printed-field extraction with check digits — `Docs/05` |
+| **Identity Conflict Engine** | ✅ Completed | Passport/WhatsApp identity matrix, conflict detection, field reconciliation — `Docs/05` |
 | **21-Day Police Report Countdown** | ⏳ Planned | Submission date extraction & background reminder scheduler |
-| **Private Object Storage** | ✅ Completed | Private Supabase bucket, client folders, versioning, checksum duplicates, pending storage — `Docs/11`, `Docs/12` |
-| **Admin Dashboard UI** | ✅ Completed (not deployed) | Overview, Documents, Review Queue, Review Detail (Approve, Keep Pending, Set Document Type, Assign Client, Remove from Review; audit log), Clients, Client Details (police slip date), Missing Documents, Police Workflow with search, Daily Report, Sync, Dark Mode — `Docs/14`, `Docs/15` |
+| **Private Object Storage** | ✅ Completed | Private Supabase bucket, client folders, versioning, checksum duplicates, pending storage — `Docs/06` |
+| **Admin Dashboard UI** | ✅ Completed (not deployed) | Overview, Documents, Review Queue, Review Detail (Approve, Keep Pending, Set Document Type, Assign Client, Remove from Review; audit log), Clients, Client Details (police slip date), Missing Documents, Police Workflow with search, Daily Report, Sync, Dark Mode — `Docs/09a`, `Docs/09b` |
 
 ---
 
@@ -408,9 +408,9 @@ EmlynkWABot/
 | **Phase 2** | Database Preparation | ✅ Completed | Prisma ORM setup, core 4 models, migrations, DB seed script |
 | **Phase 3** | WhatsApp Integration | ✅ Completed | Meta Webhook verification, HMAC SHA-256 signature verification & webhook route |
 | **Phase 4** | Document Ingestion | ✅ Completed | WhatsApp Graph API media download, MIME validation & duplicate idempotency tracking |
-| **Phase 5** | Classification & OCR | ✅ Completed | Content classification, OCR, confidence bands, passport fields, police slip date — `Docs/06` |
-| **Phase 6** | Passport Verification | ✅ Completed | Identity matching rules, conflict detection & anti-overwrite checks — `Docs/07` |
-| **Phase 7** | Permanent Storage | ✅ Completed | Structured folder naming, private cloud storage, checksums, pending storage — `Docs/11`, `Docs/12` |
+| **Phase 5** | Classification & OCR | ✅ Completed | Content classification, OCR, confidence bands, passport fields, police slip date — `Docs/05` |
+| **Phase 6** | Passport Verification | ✅ Completed | Identity matching rules, conflict detection & anti-overwrite checks — `Docs/05` |
+| **Phase 7** | Permanent Storage | ✅ Completed | Structured folder naming, private cloud storage, checksums, pending storage — `Docs/06` |
 | **Phase 8** | Temporary Workflow | ✅ Completed | Disk storage & `temporary_data` table integration for incoming unverified files |
 | **Phase 9** | Police Report Countdown | 🚧 Partly | Done in Phase 10: slip submitted date stored (or set by an admin), calculated 21-day status (stops when a verified police report exists), dashboard views. Not done: reminders/warnings (Phase 11) |
 | **Phase 10** | Admin Dashboard | ✅ Completed (migrations not yet applied to the live database) | Admin frontend and API; review actions (Approve, Keep Pending, Remove from Review; no reject) and corrections with an append-only audit log; Clients, Missing Documents, configurable required documents, Police Workflow, Daily Report (moved from Phase 11), Sync, Dark Mode |
@@ -544,7 +544,7 @@ npm run admin:build     # production build into admin/dist, then `npm start`
 npm run admin:test      # frontend tests
 ```
 
-Sign in with an admin account created by `npm run admin:create`. Details: [`Docs/14-phase-10-admin-dashboard.md`](Docs/14-phase-10-admin-dashboard.md).
+Sign in with an admin account created by `npm run admin:create`. Details: [`Docs/09a-admin-dashboard-api.md`](Docs/09a-admin-dashboard-api.md).
 
 ---
 
@@ -570,7 +570,7 @@ Sign in with an admin account created by `npm run admin:create`. Details: [`Docs
 
 ### Admin Dashboard API (`/api/admin`)
 
-All routes need `Authorization: Bearer <token>` of an **ACTIVE** admin (checked against the database on every request). Reads, plus review actions and corrections — each writes an append-only audit entry; the admin always comes from the token. There is no reject endpoint, and nothing removes a pending item automatically. Details: [`Docs/14-phase-10-admin-dashboard.md`](Docs/14-phase-10-admin-dashboard.md), reference: [`Docs/15-admin-dashboard-reference.md`](Docs/15-admin-dashboard-reference.md).
+All routes need `Authorization: Bearer <token>` of an **ACTIVE** admin (checked against the database on every request). Reads, plus review actions and corrections — each writes an append-only audit entry; the admin always comes from the token. There is no reject endpoint, and nothing removes a pending item automatically. Details: [`Docs/09a-admin-dashboard-api.md`](Docs/09a-admin-dashboard-api.md), reference: [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md).
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -745,15 +745,15 @@ Commit messages must adhere to conventional prefix standard:
 
 ## Documentation Reference
 
-Comprehensive setup logs, implementation history, and architectural proposals are maintained under the [`Docs/`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs) directory:
+The `Docs/` folder was reorganized into one numbered set of living documents, each covering one topic; see [`Docs/README.md`](Docs/README.md) for the full index and what moved where. A few direct links:
 
-- 📄 [`Docs/01-initial-backend-database-setup.md`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/01-initial-backend-database-setup.md): Node.js init, Docker PostgreSQL, & Prisma setup log.
-- 📄 [`Docs/02-seed-data.md`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/02-seed-data.md): Database seeding documentation and sample entity records.
-- 📄 [`Docs/03-admin-authentication.md`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/03-admin-authentication.md): Admin authentication, bcrypt hashing, and JWT middleware specs.
-- 📄 [`Docs/13-security-overview.md`](Docs/13-security-overview.md): Security status, controls and findings.
-- 📄 [`Docs/14-phase-10-admin-dashboard.md`](Docs/14-phase-10-admin-dashboard.md): Admin dashboard development log: structure, API, migrations, tests and decisions per checkpoint.
-- 📄 [`Docs/15-admin-dashboard-reference.md`](Docs/15-admin-dashboard-reference.md): Admin dashboard reference: every screen, action, rule and setting, and the decisions that differ from the proposal.
-- 📄 [`Docs/WhatsApp_Document_Processing_Project_Proposal_Final.md`](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/WhatsApp_Document_Processing_Project_Proposal_Final.md): Complete technical design proposal & specification.
+- 📄 [`Docs/03-database-design.md`](Docs/03-database-design.md): schema, models, migration history.
+- 📄 [`Docs/10-security.md`](Docs/10-security.md): authentication, RBAC, security status and controls.
+- 📄 [`Docs/09a-admin-dashboard-api.md`](Docs/09a-admin-dashboard-api.md): admin dashboard development log: structure, API, migrations, tests and decisions per checkpoint.
+- 📄 [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md): admin dashboard reference: every screen, action, rule and setting, and the decisions that differ from the proposal.
+- 📄 [`Docs/archive/whatsapp-document-processing-proposal.md`](Docs/archive/whatsapp-document-processing-proposal.md): the original technical design proposal & specification.
+
+Setup logs, phase-by-phase development history and dated audit reports are preserved in full in [`Docs/archive/`](Docs/archive/).
 
 ---
 

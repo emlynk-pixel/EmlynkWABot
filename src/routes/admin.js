@@ -52,23 +52,25 @@ import {
     addCallLog,
     CandidateError,
     createCandidate,
+    createUploadTarget,
+    finalizeUpload,
     getCandidate,
     resolveCandidatePassportId,
     isCandidateStage,
     isValidCandidateIdParam,
     listCallLogs,
     listCandidates,
-    originalFileNameFrom,
+    removeCandidateDocument,
     parseCallLogBody,
     parseCandidateBody,
     parseCandidateListQuery,
+    parseFinalizeUploadBody,
+    parseRemoveDocumentBody,
     parseStageBody,
-    parseUploadQuery,
+    parseUploadTargetBody,
     updateCandidateDetails,
     updateStage,
-    uploadCandidateDocument,
 } from "../services/candidateService.js";
-import { MAX_FILE_SIZE } from "../utils/fileValidation.js";
 
 
 // Quotes and non-ASCII characters are replaced so the header can't be broken.
@@ -78,12 +80,12 @@ function contentDisposition(fileName) {
 }
 
 // Phase 12 RBAC: role shorthand constants for this router.
-// VIEWER: read-only endpoints (GET). REVIEWER: reads + review actions.
+// ANALYST: reads + review actions.
 // ADMIN: full access including police-date corrections.
-const { ADMIN, REVIEWER, VIEWER } = ADMIN_ROLES;
+const { ADMIN, ANALYST } = ADMIN_ROLES;
 // The set of roles allowed for each endpoint tier.
-const ALL_ACTIVE = [ADMIN, REVIEWER, VIEWER];  // any active admin
-const REVIEWERS_UP = [ADMIN, REVIEWER];          // reviewer or above
+const ALL_ACTIVE = [ADMIN, ANALYST];  // any active admin
+const ANALYSTS_UP = [ADMIN, ANALYST];          // analyst or above
 const ADMINS_ONLY = [ADMIN];                     // administrators only
 
 // Admin dashboard API, mounted at /api/admin (Phase 10). Read-only except
@@ -228,7 +230,7 @@ export function createAdminRouter({
         return res.send(file.buffer);
     });
 
-    // ---------------------------------------------------------------- review actions (REVIEWER and above)
+    // ---------------------------------------------------------------- review actions (ANALYST and above)
 
     // Review actions. The admin comes from the token (req.admin), never the body.
     // `parse` validates the body and returns the action's arguments or { errors }.
@@ -257,32 +259,32 @@ export function createAdminRouter({
 
     // PENDING: pending/ -> client folder, VERIFIED. DOCUMENT: REVIEW_REQUIRED -> VERIFIED.
     // A police slip is approved with its submitted date (entered, or confirmed if OCR read it).
-    router.post("/review/:reviewId/approve", requireRole(REVIEWERS_UP), reviewAction(approveReviewItem, { reasonRequired: false, needsBucket: true, acceptsPoliceDate: true }));
+    router.post("/review/:reviewId/approve", requireRole(ANALYSTS_UP), reviewAction(approveReviewItem, { reasonRequired: false, needsBucket: true, acceptsPoliceDate: true }));
     // Stays pending and in the queue; the reason is required.
-    router.post("/review/:reviewId/keep-pending", requireRole(REVIEWERS_UP), reviewAction(keepReviewItemPending, { reasonRequired: true, needsBucket: false }));
+    router.post("/review/:reviewId/keep-pending", requireRole(ANALYSTS_UP), reviewAction(keepReviewItemPending, { reasonRequired: true, needsBucket: false }));
     // Permanently deletes one waiting file and its record after an admin's
     // inspection; the reason is required. Only files in pending/.
-    router.post("/review/:reviewId/remove", requireRole(REVIEWERS_UP), reviewAction(removeFromReview, { reasonRequired: true, needsBucket: true }));
+    router.post("/review/:reviewId/remove", requireRole(ANALYSTS_UP), reviewAction(removeFromReview, { reasonRequired: true, needsBucket: true }));
     // H3: a failed submission (failed-<id>) is processed again by the
     // background worker; the reason is optional. Audited.
-    router.post("/review/:reviewId/retry", requireRole(REVIEWERS_UP), reviewAction(retryFailedSubmission, { reasonRequired: false, needsBucket: true }));
+    router.post("/review/:reviewId/retry", requireRole(ANALYSTS_UP), reviewAction(retryFailedSubmission, { reasonRequired: false, needsBucket: true }));
 
     // M4 Policy B: a waiting file of a type the client already has VERIFIED
     // (pending-<id> only). Replace names the existing document explicitly
     // (documentId in the body) and supersedes it; Keep as Version stores the
     // new file as a second, REVIEW_REQUIRED document. Both are audited and
     // never remove or overwrite the existing VERIFIED document.
-    router.post("/review/:reviewId/replace-verified", requireRole(REVIEWERS_UP), reviewAction(replaceVerifiedDocument, { needsBucket: true, parse: parseReplaceVerifiedBody }));
-    router.post("/review/:reviewId/keep-as-version", requireRole(REVIEWERS_UP), reviewAction(keepDocumentAsVersion, { reasonRequired: false, needsBucket: true }));
+    router.post("/review/:reviewId/replace-verified", requireRole(ANALYSTS_UP), reviewAction(replaceVerifiedDocument, { needsBucket: true, parse: parseReplaceVerifiedBody }));
+    router.post("/review/:reviewId/keep-as-version", requireRole(ANALYSTS_UP), reviewAction(keepDocumentAsVersion, { reasonRequired: false, needsBucket: true }));
 
     // Corrections of a waiting file; it stays pending and in the queue.
-    router.post("/review/:reviewId/document-type", requireRole(REVIEWERS_UP), reviewAction(setDocumentType, { needsBucket: false, parse: parseSetDocumentTypeBody }));
-    router.post("/review/:reviewId/assign-client", requireRole(REVIEWERS_UP), reviewAction(assignClient, { needsBucket: false, parse: parseAssignClientBody }));
+    router.post("/review/:reviewId/document-type", requireRole(ANALYSTS_UP), reviewAction(setDocumentType, { needsBucket: false, parse: parseSetDocumentTypeBody }));
+    router.post("/review/:reviewId/assign-client", requireRole(ANALYSTS_UP), reviewAction(assignClient, { needsBucket: false, parse: parseAssignClientBody }));
 
-    // ---------------------------------------------------------------- temporary documents deletion (REVIEWERS_UP)
+    // ---------------------------------------------------------------- temporary documents deletion (ANALYSTS_UP)
     
     // Manually delete a temporary document (e.g. from the Review Queue or Missing Documents).
-    router.delete("/temporary-documents/:temporaryId", requireRole(REVIEWERS_UP), async (req, res) => {
+    router.delete("/temporary-documents/:temporaryId", requireRole(ANALYSTS_UP), async (req, res) => {
         const { temporaryId } = req.params;
         if (!temporaryId || typeof temporaryId !== "string" || !/^[0-9a-fA-F-]+$/.test(temporaryId)) {
             return res.status(400).json({ message: "Invalid temporary document ID" });
@@ -304,7 +306,7 @@ export function createAdminRouter({
 
     // Sets or corrects a stored police slip's submitted date (audited).
     // This modifies a stored document (not just a pending item) so it is
-    // reserved for ADMIN; a REVIEWER can approve slips with a date but cannot
+    // reserved for ADMIN; a ANALYST can approve slips with a date but cannot
     // change a date after the fact.
     router.post("/documents/:documentId/police-date", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!isValidDocumentIdParam(req.params.documentId)) {
@@ -318,7 +320,7 @@ export function createAdminRouter({
 
     // ---------------------------------------------------------------- candidates (Admin > Candidates)
     // Reads for every active admin; registration, details, stages, uploads
-    // and call notes for REVIEWER and above. Audited where documents change.
+    // and call notes for ANALYST and above. Audited where documents change.
 
     const invalidCandidateId = (res) => res.status(400).json({
         message: "Invalid passport ID",
@@ -353,7 +355,7 @@ export function createAdminRouter({
         return res.json(await listCandidates({ db: client, params: parsed.params }));
     });
 
-    router.post("/candidates", requireRole(REVIEWERS_UP), async (req, res) => {
+    router.post("/candidates", requireRole(ANALYSTS_UP), async (req, res) => {
         const parsed = parseCandidateBody(req.body, { creating: true });
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
@@ -372,7 +374,7 @@ export function createAdminRouter({
         return res.json(candidate);
     });
 
-    router.put("/candidates/:passportId", requireRole(REVIEWERS_UP), async (req, res) => {
+    router.put("/candidates/:passportId", requireRole(ANALYSTS_UP), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseCandidateBody(req.body, { creating: false });
         if (parsed.errors) {
@@ -384,10 +386,10 @@ export function createAdminRouter({
         })));
     });
 
-    router.put("/candidates/:passportId/stages/:stage", requireRole(REVIEWERS_UP), async (req, res) => {
+    router.put("/candidates/:passportId/stages/:stage", requireRole(ANALYSTS_UP), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         if (!isCandidateStage(req.params.stage)) return res.status(404).json({ message: "Stage not found" });
-        const parsed = parseStageBody(req.body);
+        const parsed = parseStageBody(req.body, req.params.stage);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
@@ -397,31 +399,62 @@ export function createAdminRouter({
         })));
     });
 
-    // The file is the raw request body (Content-Type: its MIME type); the
-    // document type and variant are query parameters, the original file name
-    // the X-File-Name header (URI-encoded). Larger bodies get 413.
-    const rawUpload = express.raw({ type: () => true, limit: MAX_FILE_SIZE });
-    router.post("/candidates/:passportId/documents", requireRole(REVIEWERS_UP), rawUpload, async (req, res) => {
+    // Document uploads: the browser sends the file straight to storage, never
+    // to this API (candidateService.js, "direct uploads"). Both requests are
+    // small JSON bodies (express.json in createApp.js); no route here parses
+    // a file body.
+    router.post("/candidates/:passportId/documents/upload-target", requireRole(ANALYSTS_UP), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
-        const parsed = parseUploadQuery(req.query);
+        const parsed = parseUploadTargetBody(req.body);
         if (parsed.errors) {
-            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
-        if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
-            return res.status(400).json({ message: "The file is missing." });
-        }
-        const mimeType = String(req.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
-        return candidateAction(res, async () => res.json(await uploadCandidateDocument({
+        return candidateAction(res, async () => res.json(await createUploadTarget({
+            db: client,
+            bucket: storage,
+            passportId: await storedCandidateId(client, req.params.passportId),
+            documentType: parsed.values.documentType,
+            mimeType: parsed.values.mimeType,
+            fileSize: parsed.values.fileSize,
+        })));
+    });
+
+    router.post("/candidates/:passportId/documents/finalize", requireRole(ANALYSTS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseFinalizeUploadBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => res.json(await finalizeUpload({
             db: client,
             bucket: storage,
             admin: req.admin,
             passportId: await storedCandidateId(client, req.params.passportId),
-            documentType: parsed.values.documentType,
-            variant: parsed.values.variant,
-            mimeType,
-            buffer: req.body,
-            originalFileName: originalFileNameFrom(req.get("x-file-name"), null),
+            ...parsed.values,
+        })));
+    });
+
+    // Removes the candidate's current document of a type: record and file,
+    // with a required reason, audited (like Remove from Review).
+    router.post("/candidates/:passportId/documents/:documentId/remove", requireRole(ANALYSTS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        if (!isValidDocumentIdParam(req.params.documentId)) {
+            return res.status(400).json({ message: "Invalid document ID", errors: [{ field: "documentId", message: "must be a document ID" }] });
+        }
+        const parsed = parseRemoveDocumentBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => res.json(await removeCandidateDocument({
+            db: client,
+            bucket: storage,
+            admin: req.admin,
+            passportId: await storedCandidateId(client, req.params.passportId),
+            documentId: req.params.documentId,
+            reason: parsed.values.reason,
         })));
     });
 
@@ -431,7 +464,7 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await listCallLogs({ db: client, passportId: await storedCandidateId(client, req.params.passportId) })));
     });
 
-    router.post("/candidates/:passportId/call-logs", requireRole(REVIEWERS_UP), async (req, res) => {
+    router.post("/candidates/:passportId/call-logs", requireRole(ANALYSTS_UP), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseCallLogBody(req.body);
         if (parsed.errors) {
