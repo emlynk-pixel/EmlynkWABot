@@ -570,11 +570,11 @@ describe("candidate routes: roles", () => {
         assert.equal((await call("VIEWER", "POST", "/api/admin/candidates/N1023757/call-logs", { note: "x" })).status, 403);
     });
 
-    test("a REVIEWER can register a candidate; bad input and unknown stages are refused", async () => {
-        const created = await call("REVIEWER", "POST", "/api/admin/candidates", VALID_BODY);
+    test("a ANALYST can register a candidate; bad input and unknown stages are refused", async () => {
+        const created = await call("ANALYST", "POST", "/api/admin/candidates", VALID_BODY);
         assert.equal(created.status, 201);
         assert.equal(created.body.passportId, "N1023757");
-        assert.equal((await call("REVIEWER", "POST", "/api/admin/candidates", { surname: "x" })).status, 400);
+        assert.equal((await call("ANALYST", "POST", "/api/admin/candidates", { surname: "x" })).status, 400);
         assert.equal((await call("ADMIN", "PUT", "/api/admin/candidates/N1023757/stages/NOT_A_STAGE", { completed: true })).status, 404);
         assert.equal((await call("ADMIN", "GET", "/api/admin/candidates/N1023757")).status, 404, "this fake starts empty per request");
     });
@@ -598,22 +598,22 @@ describe("candidate routes: roles", () => {
             const db = createFakeDb({ users: [LEGACY] });
             const bucket = createFakeBucket();
 
-            const details = await call("REVIEWER", "PUT", "/api/admin/candidates/N1023757", { ...DETAILS_BODY, address: "Kandy" }, db);
+            const details = await call("ANALYST", "PUT", "/api/admin/candidates/N1023757", { ...DETAILS_BODY, address: "Kandy" }, db);
             assert.equal(details.status, 200);
             assert.equal(details.body.candidate.passportId, "n1023757");
             assert.equal(db.state.users[0].address, "Kandy");
 
-            const stage = await call("REVIEWER", "PUT", "/api/admin/candidates/N1023757/stages/TEST_DETAILS", { completed: true, notes: "Booked" }, db);
+            const stage = await call("ANALYST", "PUT", "/api/admin/candidates/N1023757/stages/TEST_DETAILS", { completed: true, notes: "Booked" }, db);
             assert.equal(stage.status, 200);
             assert.deepEqual(db.state.stages.map((s) => [s.passportId, s.stage, s.completed]), [["n1023757", "TEST_DETAILS", true]]);
 
-            const upload = await call("REVIEWER", "POST", "/api/admin/candidates/N1023757/documents?type=MEDICAL", undefined, db, { bucket, file: { mimeType: "application/pdf", buffer: PDF } });
+            const upload = await call("ANALYST", "POST", "/api/admin/candidates/N1023757/documents?type=MEDICAL", undefined, db, { bucket, file: { mimeType: "application/pdf", buffer: PDF } });
             assert.equal(upload.status, 200);
             assert.equal(upload.body.documents.MEDICAL.verificationStatus, "VERIFIED");
             assert.deepEqual(db.state.documents.map((d) => d.passportId), ["n1023757"]);
             assert.deepEqual([...bucket.objects.keys()], ["clients/n1023757/medical/medical.pdf"]);
 
-            assert.equal((await call("REVIEWER", "POST", "/api/admin/candidates/N1023757/call-logs", { note: "Called" }, db)).status, 201);
+            assert.equal((await call("ANALYST", "POST", "/api/admin/candidates/N1023757/call-logs", { note: "Called" }, db)).status, 201);
             const logs = await call("VIEWER", "GET", "/api/admin/candidates/N1023757/call-logs", undefined, db);
             assert.equal(logs.status, 200);
             assert.deepEqual(logs.body.items.map((i) => i.note), ["Called"]);

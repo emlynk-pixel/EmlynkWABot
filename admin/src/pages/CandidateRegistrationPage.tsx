@@ -75,7 +75,7 @@ export function CandidateRegistrationPage() {
     const pending = useRef<{ passportId: string; promise: Promise<CandidateDetails | null> } | null>(null);
 
     if (!canReview(admin)) {
-        return <Card><EmptyState title="Candidate registration needs an admin or reviewer account." /></Card>;
+        return <Card><EmptyState title="Candidate registration needs an admin or analyst account." /></Card>;
     }
 
     const existing = lookup.status === "found" ? lookup.details : null;

@@ -1,7 +1,7 @@
 import { apiRequest, apiUpload } from "./client";
 
 // Admin > Candidates (src/routes/admin.js, /api/admin/candidates/*).
-// Reads for every admin; changes need REVIEWER or above (checked on the server).
+// Reads for every admin; changes need ANALYST or above (checked on the server).
 
 export const CANDIDATE_STAGES = [
     "TEST_DETAILS",

@@ -573,7 +573,7 @@ describe("security and error handling", () => {
             .flatMap((layer) => Object.keys(layer.route.methods).filter((m) => m !== "get").map((m) => `${m.toUpperCase()} ${layer.route.path}`));
         assert.deepEqual(writes.sort(), [
             "DELETE /temporary-documents/:temporaryId",
-            "POST /candidates", // candidate management (REVIEWER and above, see candidates.test.js)
+            "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",
             "POST /candidates/:passportId/documents",
             "POST /documents/:documentId/police-date",

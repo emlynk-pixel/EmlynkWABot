@@ -264,14 +264,14 @@ describe("Review actions", () => {
         expect(posts(calls)).toHaveLength(0);
     });
 
-    test("REVIEWER sees review actions but not the set-police-date block for unreadable slips", async () => {
+    test("ANALYST sees review actions but not the set-police-date block for unreadable slips", async () => {
         const slipItem = {
             ...ITEM,
             document: { ...ITEM.document, documentType: "POLICE_SLIP", policeSubmittedDate: null },
             actions: { approve: { available: true, needsPoliceDate: true, code: null, message: null }, keepPending: { available: true, code: null, message: null } }
         };
         const { user, group } = await openDetail({
-            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "REVIEWER" } } },
+            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "ANALYST" } } },
             [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: slipItem },
         });
         await user.click(within(group).getByRole("button", { name: "Approve" }));

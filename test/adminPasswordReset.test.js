@@ -35,7 +35,7 @@ before(async () => {
             name: "Inactive Admin",
             email: "inactive@example.invalid",
             passwordHash,
-            role: "REVIEWER",
+            role: "ANALYST",
             status: "INACTIVE",
         },
         {
