@@ -50,6 +50,25 @@ function isSafePrismaMetaValue(value) {
     return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+// P2010 ("raw query failed", e.g. from $queryRaw/$executeRaw) carries the
+// underlying driver failure as `meta.code` + `meta.message` instead of the
+// schema-name keys above. `meta.code` is the driver/Postgres SQLSTATE (a
+// fixed 5-character code such as "42501" permission denied or "08006"
+// connection failure, see
+// https://www.postgresql.org/docs/current/errcodes-appendix.html) - a
+// category label, never a value, so it's safe to log. `meta.message` is not:
+// for a raw query it can quote the failing SQL text. Kept separate from the
+// generic allowlist above (and from the outer `prismaCode`) so a future code
+// reusing a "code" key in `.meta` for something else isn't trusted by accident.
+const SQLSTATE_PATTERN = /^[0-9A-Z]{5}$/;
+
+function safeRawQueryMeta(meta) {
+    if (meta && typeof meta.code === "string" && SQLSTATE_PATTERN.test(meta.code)) {
+        return { dbErrorCode: meta.code };
+    }
+    return null;
+}
+
 // Duck-typed on `.code` matching Prisma's "P" + 4 digits format, so this
 // doesn't need to import the generated client just to check `instanceof`.
 // Returns null for anything else (including non-Prisma errors).
@@ -64,6 +83,9 @@ export function safePrismaErrorFields(error) {
             if (key in error.meta && isSafePrismaMetaValue(error.meta[key])) {
                 meta[key] = error.meta[key];
             }
+        }
+        if (error.code === "P2010") {
+            Object.assign(meta, safeRawQueryMeta(error.meta));
         }
     }
 
