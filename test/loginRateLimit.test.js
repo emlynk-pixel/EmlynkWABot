@@ -171,7 +171,10 @@ describe("other routes are not affected by the login limiter", () => {
 
         const good = await fetch(`${app.baseUrl}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
         assert.equal(good.status, 200);
-        assert.equal(good.headers.get("ratelimit-policy"), null, "no rate-limit headers on /auth/me");
+        // /auth/me has its own generic API rate limit (CodeQL: missing rate
+        // limiting), separate from and much higher than the login limiter -
+        // confirms login being limited doesn't also limit /auth/me.
+        assert.match(good.headers.get("ratelimit-policy") ?? "", /^"generic-api"/);
     });
 
     test("8. /health is unaffected", async () => {
