@@ -5,6 +5,7 @@ import { useAdminResource } from "../api/useAdminResource";
 import { ClientTable, Pager } from "../components/ClientTable";
 import { documentTypeLabel, formatNumber } from "../components/format";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
+import { filterControl } from "../components/ui";
 
 const PAGE_SIZE = 25;
 const COMPLETIONS: Completion[] = ["COMPLETE", "INCOMPLETE"];
@@ -60,7 +61,7 @@ export function ClientsPage() {
     };
     const data = list.data;
     const summary = data?.summary;
-    const control = "h-9 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
+    const control = filterControl;
     const hasFilters = Boolean(params.search || params.completion || params.missingType);
 
     return (
@@ -86,7 +87,7 @@ export function ClientsPage() {
                 </Link>
             </div>
 
-            <Card className="p-4">
+            <Card className="p-5">
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-12">
                     <form role="search" onSubmit={submitSearch} className="flex gap-2 md:col-span-6">
                         <label htmlFor="client-search" className="sr-only">Search clients</label>

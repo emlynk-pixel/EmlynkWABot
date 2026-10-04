@@ -33,6 +33,8 @@ import { Icon } from "../components/Icon";
 import { AUDIT_ACTIONS, FAILURE_REASONS, IDENTITY_NOTES, REVIEW_REASONS, failureLabel, reviewReasonLabel, reviewReasonTone } from "../components/reviewLabels";
 import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
 import { StatusBadge, ToneBadge } from "../components/StatusBadge";
+import { HelpTip } from "../components/Form";
+import { inputClass, textareaClass } from "../components/ui";
 
 // The file is fetched through the backend with the admin's token and shown
 // from a local blob: URL (released when the page closes).
@@ -210,7 +212,7 @@ function ClientPicker({ selected, onSelect, disabled }: { selected: ClientListIt
                         }
                     }}
                     placeholder="Passport ID, unique ID, name or WhatsApp number"
-                    className="h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                    className={inputClass()}
                 />
                 <button type="button" className={secondaryButton} disabled={disabled || !text.trim() || state.status === "loading"} onClick={() => void search()}>
                     {state.status === "loading" ? "Searching…" : "Search"}
@@ -561,7 +563,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                     Removed from review. The file and its record were permanently deleted; the audit log entry is kept.
                     {!removed.filesDeleted && " (A stored copy could not be deleted and has been logged for clean-up.)"}
                 </div>
-                <Card className="p-4">
+                <Card className="p-5">
                     <SectionHeading title="Audit log" />
                     <AuditLog entries={[removed.audit, ...item.auditLog]} />
                 </Card>
@@ -588,7 +590,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
             )}
 
             <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-12">
-                <Card className="p-4 xl:col-span-7">
+                <Card className="p-5 xl:col-span-7">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <p className="text-label-md text-ink">{item.file.name}</p>
                         <span className="text-label-sm text-ink-muted">
@@ -618,7 +620,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                         </div>
                     )}
 
-                    <Card className="p-4">
+                    <Card className="p-5">
                         <SectionHeading title="Document information" />
                         <dl className="mt-2 divide-y divide-border">
                             <Row label="Document type">{documentTypeLabel(item.document.documentType)}</Row>
@@ -672,7 +674,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                         </dl>
                     </Card>
 
-                    <Card className="p-4">
+                    <Card className="p-5">
                         <SectionHeading title="Identity" />
                         {identity ? (
                             <dl className="mt-2 divide-y divide-border">
@@ -683,17 +685,17 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                         ) : <p className="mt-2 text-body-sm text-ink-muted">No identity check was recorded.</p>}
                     </Card>
 
-                    <Card className="p-4">
+                    <Card className="p-5">
                         <SectionHeading title="Processing details" />
                         <div className="mt-2"><ProcessingDetails processing={item.processing} /></div>
                     </Card>
 
-                    <Card className="p-4">
+                    <Card className="p-5">
                         <SectionHeading title="Audit log" />
                         <AuditLog entries={auditLog} />
                     </Card>
 
-                    <Card className="space-y-2 p-4">
+                    <Card className="space-y-2 p-5">
                         {isFailed && retried ? (
                             <div role="status" className="space-y-1 text-body-sm">
                                 <p className="text-ink">Queued for processing again.</p>
@@ -814,7 +816,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                     setPoliceDate(event.target.value);
                                     setPoliceDateError(null);
                                 }}
-                                className="mt-1 h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                                className={inputClass(Boolean(policeDateError), { extra: "mt-1" })}
                             />
                             {policeDateError
                                 ? <p id="police-date-error" className="mt-1 text-label-sm text-critical">{policeDateError}</p>
@@ -855,7 +857,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                 setRemoveReason(event.target.value);
                                 setRemoveError(null);
                             }}
-                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            className={textareaClass()}
                             autoFocus
                         />
                         <label className="mt-3 flex items-start gap-2 text-body-sm text-ink">
@@ -927,7 +929,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                 setNewType(event.target.value);
                                 setCorrectionError(null);
                             }}
-                            className="mt-1 h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            className={inputClass(false, { extra: "mt-1" })}
                         >
                             <option value="">Choose…</option>
                             {SETTABLE_TYPES.filter((type) => type !== item.document.documentType).map((type) => <option key={type} value={type}>{documentTypeLabel(type)}</option>)}
@@ -945,7 +947,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                 setCorrectionReason(event.target.value);
                                 setCorrectionError(null);
                             }}
-                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            className={textareaClass()}
                         />
                         {correctionError && <p className="mt-2 text-label-sm text-critical">{correctionError}</p>}
                         <DialogError message={error} />
@@ -981,7 +983,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                 setCorrectionReason(event.target.value);
                                 setCorrectionError(null);
                             }}
-                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            className={textareaClass()}
                         />
                         <label className="mt-3 flex items-start gap-2 text-body-sm text-ink">
                             <input
@@ -1020,7 +1022,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             value={retryReason}
                             disabled={busy}
                             onChange={(event) => setRetryReason(event.target.value)}
-                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            className={textareaClass()}
                             autoFocus
                         />
                         <DialogError message={error} />
@@ -1045,13 +1047,19 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                         )}
                         {needsPoliceDate && (
                             <div className="mt-3">
-                                <label htmlFor="replace-police-date" className="block text-label-md text-ink">
-                                    Submitted date on the police slip <span aria-hidden="true" className="text-critical">*</span>
-                                </label>
+                                <div className="flex items-center gap-1.5">
+                                    <label htmlFor="replace-police-date" className="block text-label-md text-ink">
+                                        Submitted date on the police slip
+                                    </label>
+                                    <span aria-hidden="true" className="text-label-md text-critical">*</span>
+                                    <HelpTip label="Submitted date on the police slip" text="The date printed on the police slip. The 21-day wait for the final police report is counted from it." />
+                                </div>
                                 <input
                                     id="replace-police-date"
                                     type="date"
                                     required
+                                    aria-invalid={replacePoliceDateError ? "true" : undefined}
+                                    aria-describedby={replacePoliceDateError ? "replace-police-date-error" : undefined}
                                     min="2000-01-01"
                                     max={todayInSriLanka()}
                                     value={replacePoliceDate}
@@ -1060,9 +1068,9 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                         setReplacePoliceDate(event.target.value);
                                         setReplacePoliceDateError(null);
                                     }}
-                                    className="mt-1 h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                                    className={inputClass(Boolean(replacePoliceDateError), { extra: "mt-1" })}
                                 />
-                                {replacePoliceDateError && <p className="mt-1 text-label-sm text-critical">{replacePoliceDateError}</p>}
+                                {replacePoliceDateError && <p id="replace-police-date-error" className="mt-1 text-label-sm text-critical">{replacePoliceDateError}</p>}
                             </div>
                         )}
                         <label htmlFor="replace-reason" className="mt-3 block text-label-md text-ink">Reason (optional)</label>
@@ -1073,7 +1081,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             value={replaceReason}
                             disabled={busy}
                             onChange={(event) => setReplaceReason(event.target.value)}
-                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            className={textareaClass()}
                         />
                         <label className="mt-3 flex items-start gap-2 text-body-sm text-ink">
                             <input
@@ -1108,7 +1116,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             value={versionReason}
                             disabled={busy}
                             onChange={(event) => setVersionReason(event.target.value)}
-                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            className={textareaClass()}
                             autoFocus
                         />
                         <DialogError message={error} />
@@ -1140,7 +1148,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                 setKeepReason(event.target.value);
                                 setReasonError(null);
                             }}
-                            className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                            className={textareaClass(Boolean(reasonError))}
                             autoFocus
                         />
                         {reasonError && <p id="keep-reason-error" className="mt-1 text-label-sm text-critical">{reasonError}</p>}

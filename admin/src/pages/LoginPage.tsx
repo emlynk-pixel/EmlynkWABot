@@ -3,6 +3,15 @@ import { Link, Navigate, useLocation, useNavigate, type Location } from "react-r
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { Icon } from "../components/Icon";
+import { FormField, fieldA11y } from "../components/Form";
+import { inputClass } from "../components/ui";
+import { emailError } from "../components/validation";
+
+type LoginErrors = { email?: string | null; password?: string | null };
+
+function validateLogin(email: string, password: string): LoginErrors {
+    return { email: emailError(email), password: password ? null : "Enter your password." };
+}
 
 // Only returns within the admin app are followed after sign-in.
 function returnPath(state: unknown): string {
@@ -26,6 +35,7 @@ export function LoginPage() {
     const [showPassword, setShowPassword] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [fieldErrors, setFieldErrors] = useState<LoginErrors>({});
     const [resetTime, setResetTime] = useState<Date | null>(null);
     const [countdown, setCountdown] = useState<number | null>(null);
 
@@ -56,8 +66,10 @@ export function LoginPage() {
         if (submitting) return;
         setError(null);
 
-        if (!email.trim() || !password) {
-            setError("Enter your email and password.");
+        const errors = validateLogin(email, password);
+        setFieldErrors(errors);
+        if (errors.email || errors.password) {
+            document.getElementById(errors.email ? "email" : "password")?.focus();
             return;
         }
 
@@ -78,8 +90,10 @@ export function LoginPage() {
         }
     }
 
-    const inputClass =
-        "h-9 w-full rounded border border-border-strong bg-surface pl-9 pr-3 text-body-sm text-ink shadow-[inset_0_1px_1px_rgba(15,23,42,0.03)] placeholder:text-ink-subtle focus:border-primary focus:shadow-focus focus:outline-none";
+    // An error shown for a field is cleared as soon as its value is valid.
+    const recheck = (field: keyof LoginErrors, nextEmail: string, nextPassword: string) => {
+        if (fieldErrors[field]) setFieldErrors((current) => ({ ...current, [field]: validateLogin(nextEmail, nextPassword)[field] }));
+    };
 
     return (
         <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
@@ -110,63 +124,69 @@ export function LoginPage() {
                         </div>
                     )}
 
-                    <form className="mt-5 space-y-4" onSubmit={handleSubmit} noValidate>
-                        <div>
-                            <label htmlFor="email" className="mb-1 block text-label-md text-ink-soft">Email</label>
+                    <form className="mt-6 space-y-5" onSubmit={handleSubmit} noValidate>
+                        <FormField id="email" label="Email" required error={fieldErrors.email}>
                             <div className="relative">
-                                <Icon name="mail" className="pointer-events-none absolute left-3 top-2.5 size-4 text-ink-subtle" />
+                                <Icon name="mail" className="pointer-events-none absolute left-3 top-3 size-4 text-ink-subtle" />
                                 <input
-                                    id="email"
+                                    {...fieldA11y("email", fieldErrors.email)}
                                     name="email"
                                     type="email"
                                     autoComplete="username"
                                     maxLength={MAX_EMAIL_LENGTH}
                                     required
                                     value={email}
-                                    onChange={(event) => setEmail(event.target.value)}
-                                    className={inputClass}
+                                    onChange={(event) => {
+                                        setEmail(event.target.value);
+                                        recheck("email", event.target.value, password);
+                                    }}
+                                    className={inputClass(Boolean(fieldErrors.email), { padding: "pl-9 pr-3" })}
                                 />
                             </div>
-                        </div>
+                        </FormField>
 
-                        <div>
-                            <div className="mb-1 flex items-center justify-between">
-                                <label htmlFor="password" className="block text-label-md text-ink-soft">Password</label>
-                                <Link
-                                    to="/forgot-password"
-                                    className="text-label-sm font-medium text-primary hover:text-primary-hover hover:underline"
-                                >
+                        <FormField
+                            id="password"
+                            label="Password"
+                            required
+                            error={fieldErrors.password}
+                            action={
+                                <Link to="/forgot-password" className="text-label-sm font-medium text-primary hover:text-primary-hover hover:underline">
                                     Forgot password?
                                 </Link>
-                            </div>
+                            }
+                        >
                             <div className="relative">
-                                <Icon name="lock" className="pointer-events-none absolute left-3 top-2.5 size-4 text-ink-subtle" />
+                                <Icon name="lock" className="pointer-events-none absolute left-3 top-3 size-4 text-ink-subtle" />
                                 <input
-                                    id="password"
+                                    {...fieldA11y("password", fieldErrors.password)}
                                     name="password"
                                     type={showPassword ? "text" : "password"}
                                     autoComplete="current-password"
                                     maxLength={MAX_PASSWORD_LENGTH}
                                     required
                                     value={password}
-                                    onChange={(event) => setPassword(event.target.value)}
-                                    className={`${inputClass} pr-10`}
+                                    onChange={(event) => {
+                                        setPassword(event.target.value);
+                                        recheck("password", email, event.target.value);
+                                    }}
+                                    className={inputClass(Boolean(fieldErrors.password), { padding: "pl-9 pr-10" })}
                                 />
                                 <button
                                     type="button"
                                     onClick={() => setShowPassword((value) => !value)}
-                                    className="absolute right-1 top-1 flex size-7 items-center justify-center rounded text-ink-subtle hover:bg-canvas-muted hover:text-ink"
+                                    className="absolute right-1.5 top-1.5 flex size-7 items-center justify-center rounded text-ink-subtle hover:bg-canvas-muted hover:text-ink"
                                 >
                                     <Icon name={showPassword ? "visibility_off" : "visibility"} className="size-4" />
                                     <span className="sr-only">{showPassword ? "Hide password" : "Show password"}</span>
                                 </button>
                             </div>
-                        </div>
+                        </FormField>
 
                         <button
                             type="submit"
                             disabled={submitting}
-                            className="flex h-9 w-full items-center justify-center gap-2 rounded bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
+                            className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
                         >
                             {submitting && <Icon name="progress_activity" className="size-4 animate-spin" />}
                             {submitting ? "Signing in…" : "Sign in"}

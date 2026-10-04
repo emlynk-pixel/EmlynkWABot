@@ -3,12 +3,13 @@ import type { DocumentItem } from "../api/admin";
 import { Confidence } from "./Confidence";
 import { documentTypeLabel, formatDateTime, shortId } from "./format";
 import { StatusBadge } from "./StatusBadge";
+import { tableCell, tableHead } from "./ui";
 
 // High-density documents table (Stitch "Data Tables"). Columns can be
 // dropped where the context already says them (e.g. the client page).
 export function DocumentsTable({ documents, showClient = true, caption }: { documents: DocumentItem[]; showClient?: boolean; caption: string }) {
-    const th = "sticky top-0 h-[34px] whitespace-nowrap border-b border-border bg-canvas px-4 text-left text-label-caps uppercase text-ink-subtle";
-    const td = "h-11 whitespace-nowrap border-b border-canvas-muted px-4 text-body-sm";
+    const th = `sticky top-0 ${tableHead}`;
+    const td = tableCell;
 
     return (
         <div className="overflow-x-auto">

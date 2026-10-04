@@ -3,13 +3,15 @@ import { Link } from "react-router";
 import { ApiError } from "../api/client";
 import { forgotPassword } from "../api/auth";
 import { Icon } from "../components/Icon";
-
-const MAX_EMAIL_LENGTH = 254;
+import { FormField, fieldA11y } from "../components/Form";
+import { inputClass } from "../components/ui";
+import { MAX_EMAIL_LENGTH, emailError } from "../components/validation";
 
 export function ForgotPasswordPage() {
     const [email, setEmail] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [fieldError, setFieldError] = useState<string | null>(null);
     const [submitted, setSubmitted] = useState(false);
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -17,11 +19,13 @@ export function ForgotPasswordPage() {
         if (submitting) return;
         setError(null);
 
-        const cleanEmail = email.trim();
-        if (!cleanEmail) {
-            setError("Enter your email address.");
+        const invalid = emailError(email);
+        setFieldError(invalid);
+        if (invalid) {
+            document.getElementById("email")?.focus();
             return;
         }
+        const cleanEmail = email.trim();
 
         setSubmitting(true);
         try {
@@ -33,9 +37,6 @@ export function ForgotPasswordPage() {
             setSubmitting(false);
         }
     }
-
-    const inputClass =
-        "h-9 w-full rounded border border-border-strong bg-surface pl-9 pr-3 text-body-sm text-ink shadow-[inset_0_1px_1px_rgba(15,23,42,0.03)] placeholder:text-ink-subtle focus:border-primary focus:shadow-focus focus:outline-none";
 
     return (
         <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
@@ -66,7 +67,7 @@ export function ForgotPasswordPage() {
                             <div className="mt-6">
                                 <Link
                                     to="/login"
-                                    className="flex h-9 w-full items-center justify-center rounded bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover"
+                                    className="flex h-10 w-full items-center justify-center rounded-md bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover"
                                 >
                                     Return to sign in
                                 </Link>
@@ -89,35 +90,32 @@ export function ForgotPasswordPage() {
                                 </div>
                             )}
 
-                            <form className="mt-5 space-y-4" onSubmit={handleSubmit} noValidate>
-                                <div>
-                                    <label htmlFor="email" className="mb-1 block text-label-md text-ink-soft">
-                                        Email
-                                    </label>
+                            <form className="mt-6 space-y-5" onSubmit={handleSubmit} noValidate>
+                                <FormField id="email" label="Email" required help="Use the email address of your administrator account." error={fieldError}>
                                     <div className="relative">
-                                        <Icon
-                                            name="mail"
-                                            className="pointer-events-none absolute left-3 top-2.5 size-4 text-ink-subtle"
-                                        />
+                                        <Icon name="mail" className="pointer-events-none absolute left-3 top-3 size-4 text-ink-subtle" />
                                         <input
-                                            id="email"
+                                            {...fieldA11y("email", fieldError)}
                                             name="email"
                                             type="email"
                                             autoComplete="email"
                                             maxLength={MAX_EMAIL_LENGTH}
                                             required
                                             value={email}
-                                            onChange={(event) => setEmail(event.target.value)}
-                                            className={inputClass}
+                                            onChange={(event) => {
+                                                setEmail(event.target.value);
+                                                if (fieldError) setFieldError(emailError(event.target.value));
+                                            }}
+                                            className={inputClass(Boolean(fieldError), { padding: "pl-9 pr-3" })}
                                             placeholder="admin@example.com"
                                         />
                                     </div>
-                                </div>
+                                </FormField>
 
                                 <button
                                     type="submit"
                                     disabled={submitting}
-                                    className="flex h-9 w-full items-center justify-center gap-2 rounded bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
+                                    className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
                                 >
                                     {submitting && <Icon name="progress_activity" className="size-4 animate-spin" />}
                                     {submitting ? "Sending reset link…" : "Send reset link"}

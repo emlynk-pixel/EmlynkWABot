@@ -21,7 +21,7 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
     const { pathname } = useLocation();
     const { syncing, result, sync } = useSync();
     const { theme, toggle } = useTheme();
-    const control = "flex h-8 items-center gap-2 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft shadow-surface hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-60";
+    const control = "flex h-9 items-center gap-2 rounded-md border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-60";
 
     return (
         <header className="sticky top-0 z-40 flex h-header shrink-0 items-center gap-3 border-b border-border bg-surface px-4 md:px-6">
@@ -73,11 +73,11 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
             </div>
 
             {admin && (
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 border-l border-border pl-3">
                     <NavLink
                         to="/candidates/new"
                         className={({ isActive }) =>
-                            `flex h-8 items-center gap-1.5 rounded border border-border-strong px-2.5 text-label-md shadow-surface ${
+                            `flex h-9 items-center gap-1.5 rounded-md border border-border-strong px-2.5 text-label-md ${
                                 isActive ? "bg-primary text-on-primary border-primary" : "bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"
                             }`
                         }
@@ -96,7 +96,7 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
                     <button
                         type="button"
                         onClick={signOut}
-                        className="flex h-8 items-center gap-2 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft shadow-surface hover:border-border-focus hover:bg-canvas"
+                        className={control}
                     >
                         <Icon name="logout" className="size-4" />
                         <span className="sr-only sm:not-sr-only">Sign out</span>

@@ -9,10 +9,11 @@ import { documentTypeLabel, formatDate, formatDateTime, formatNumber } from "../
 import { Icon, type IconName } from "../components/Icon";
 import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
 import { StatusBadge, statusLabel, statusTone, toneDotClass } from "../components/StatusBadge";
+import { tableCell, tableHead } from "../components/ui";
 
 function KpiCard({ label, value, hint, icon }: { label: string; value: number; hint: string; icon: IconName }) {
     return (
-        <Card className="flex flex-col justify-between p-4">
+        <Card className="flex flex-col justify-between p-5">
             <div className="flex items-start justify-between">
                 <div>
                     <p className="text-label-caps uppercase text-ink-subtle">{label}</p>
@@ -69,7 +70,7 @@ function PoliceDue({ police }: { police: Overview["police"] }) {
         { label: "Not uploaded", value: police.notUploaded, status: "NOT_UPLOADED", critical: true },
     ];
     return (
-        <Card className="space-y-3 p-4">
+        <Card className="space-y-3 p-5">
             <SectionHeading
                 title="Police reports"
                 description="Final police reports due 21 days after the police slip was submitted"
@@ -98,7 +99,7 @@ function ClientCompleteness({ clients, requiredTypes }: { clients: Overview["cli
         { label: "Missing documents", value: clients.missingDocuments, to: "/missing-documents", critical: true },
     ];
     return (
-        <Card className="space-y-3 p-4">
+        <Card className="space-y-3 p-5">
             <SectionHeading
                 title="Client documents"
                 description={`A client is complete when every required document (${requiredTypes.map(documentTypeLabel).join(", ")}) is verified`}
@@ -173,7 +174,7 @@ function MonthlyOverview() {
         : [];
 
     return (
-        <Card className="space-y-3 p-4">
+        <Card className="space-y-3 p-5">
             <SectionHeading
                 title="Monthly overview"
                 action={
@@ -224,11 +225,11 @@ function OverviewContent({ data }: { data: Overview }) {
             </div>
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-                <Card className="space-y-4 p-4 lg:col-span-7">
+                <Card className="space-y-4 p-5 lg:col-span-7">
                     <SectionHeading title="Document processing statuses" description="Outcome of every document received on WhatsApp" />
                     <Breakdown counts={data.submissionsByStatus} label={statusLabel} dotClass={(key) => toneDotClass(statusTone(key))} />
                 </Card>
-                <Card className="space-y-4 p-4 lg:col-span-5">
+                <Card className="space-y-4 p-5 lg:col-span-5">
                     <SectionHeading title="Documents by type" description="Received documents by detected type" />
                     <Breakdown counts={data.submissionsByType} label={documentTypeLabel} dotClass={() => "bg-primary"} />
                 </Card>
@@ -286,18 +287,18 @@ function OverviewContent({ data }: { data: Overview }) {
                             <thead>
                                 <tr>
                                     {["Type", "Reason", "Client", "Received"].map((heading) => (
-                                        <th key={heading} scope="col" className="h-[34px] border-b border-border bg-canvas px-4 text-left text-label-caps uppercase text-ink-subtle">{heading}</th>
+                                        <th key={heading} scope="col" className={tableHead}>{heading}</th>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
                                 {reviewQueue.items.map((item) => (
                                     <tr key={item.temporaryId} className="hover:bg-canvas">
-                                        <td className="h-11 border-b border-canvas-muted px-4 text-body-sm">
+                                        <td className={tableCell}>
                                             <Link to={`/review/pending-${encodeURIComponent(item.temporaryId)}`} className="text-primary hover:underline">{documentTypeLabel(item.documentType)}</Link>
                                         </td>
-                                        <td className="h-11 border-b border-canvas-muted px-4"><StatusBadge status={item.processingStatus} /></td>
-                                        <td className="h-11 border-b border-canvas-muted px-4 text-body-sm">
+                                        <td className={tableCell}><StatusBadge status={item.processingStatus} /></td>
+                                        <td className={tableCell}>
                                             {item.client ? (
                                                 <Link to={`/clients/${encodeURIComponent(item.client.passportId)}`} className="text-primary hover:underline">
                                                     {item.client.name ?? item.client.passportId}
@@ -306,7 +307,7 @@ function OverviewContent({ data }: { data: Overview }) {
                                                 <span className="text-ink-subtle">Not identified</span>
                                             )}
                                         </td>
-                                        <td className="h-11 border-b border-canvas-muted px-4 text-label-sm text-ink-muted">{formatDateTime(item.receivedDate)}</td>
+                                        <td className={`${tableCell} text-label-sm text-ink-muted`}>{formatDateTime(item.receivedDate)}</td>
                                     </tr>
                                 ))}
                             </tbody>

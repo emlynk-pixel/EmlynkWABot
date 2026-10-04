@@ -2,9 +2,10 @@ import { Link } from "react-router";
 import type { ClientList, ClientListItem } from "../api/admin";
 import { documentTypeLabel, formatNumber } from "./format";
 import { StatusBadge, ToneBadge } from "./StatusBadge";
+import { tableCellWrap, tableHead } from "./ui";
 
-const th = "h-[34px] whitespace-nowrap border-b border-border bg-canvas px-4 text-left text-label-caps uppercase text-ink-subtle";
-const td = "h-11 border-b border-canvas-muted px-4 py-2 text-body-sm";
+const th = tableHead;
+const td = tableCellWrap;
 
 // Clients with their required documents (Clients directory, Missing Documents).
 export function ClientTable({ items, caption, showWhatsapp = true }: { items: ClientListItem[]; caption: string; showWhatsapp?: boolean }) {

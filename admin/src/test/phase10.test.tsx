@@ -363,8 +363,22 @@ describe("Dark mode", () => {
         expect(contrast(DARK.primary, DARK["primary-soft"])).toBeGreaterThanOrEqual(4.5);
     });
 
-    test("light mode tokens are the unchanged Stitch values", () => {
-        expect(LIGHT).toMatchObject({ primary: "#2563eb", canvas: "#f8fafc", surface: "#ffffff", ink: "#0f172a", "ink-muted": "#475569", sidebar: "#0f172a", critical: "#dc2626", "on-primary": "#ffffff" });
+    test("light mode keeps the brand identity (the redesign changes only canvas, borders and subtle text)", () => {
+        expect(LIGHT).toMatchObject({ primary: "#2563eb", canvas: "#f3f5f8", surface: "#ffffff", ink: "#0f172a", "ink-muted": "#475569", sidebar: "#0f172a", critical: "#dc2626", "on-primary": "#ffffff" });
+    });
+
+    test("the Candidates screens (.ui-classic) get back every previous value the redesign changed", () => {
+        const block = (selector: string) => css.slice(css.indexOf(selector), css.indexOf("}", css.indexOf(selector)));
+        const light = tokens(block(':root:not([data-theme="dark"]) .ui-classic'));
+        expect(light).toEqual({ canvas: "#f8fafc", "canvas-muted": "#f1f5f9", border: "#e2e8f0", "border-strong": "#cbd5e1", "border-focus": "#94a3b8", "ink-subtle": "#64748b" });
+        const dark = tokens(block(':root[data-theme="dark"] .ui-classic'));
+        expect(dark).toEqual({ border: "#243044", "border-strong": "#3a4a61", "border-focus": "#64748b" });
+        const text = block(".ui-classic {");
+        // Text with no size class inherits the base size from <body>; the
+        // wrapper must re-apply the original one.
+        for (const size of ["--text-body-sm: 13px", "--text-body-md: 14px", "--text-label-md: 13px", "--text-label-sm: 12px", "--text-label-caps: 11px", "font-size: var(--text-body-md)", "line-height: var(--text-body-md--line-height)"]) {
+            expect(text, size).toContain(size);
+        }
     });
 
     test("components use tokens, not fixed colours that break in dark mode", () => {

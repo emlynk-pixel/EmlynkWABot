@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate, Link } from "react-router";
 import { Icon } from "../components/Icon";
 import { validateResetToken, resetPassword } from "../api/auth";
 import { ApiError } from "../api/client";
+import { NewPasswordFields, hasNewPasswordErrors, validateNewPassword, type NewPasswordErrors } from "../components/NewPasswordFields";
 
 export function ResetPasswordPage() {
     const [searchParams] = useSearchParams();
@@ -15,7 +16,7 @@ export function ResetPasswordPage() {
     // Form state
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
-    const [showPassword, setShowPassword] = useState(false);
+    const [fieldErrors, setFieldErrors] = useState<NewPasswordErrors>({});
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
@@ -56,13 +57,10 @@ export function ResetPasswordPage() {
         e.preventDefault();
         setSubmitError(null);
 
-        if (password.length < 8) {
-            setSubmitError("Password must be at least 8 characters long.");
-            return;
-        }
-
-        if (password !== confirmPassword) {
-            setSubmitError("Passwords do not match.");
+        const errors = validateNewPassword(password, confirmPassword);
+        setFieldErrors(errors);
+        if (hasNewPasswordErrors(errors)) {
+            document.getElementById(errors.password ? "new-password" : "confirm-password")?.focus();
             return;
         }
 
@@ -78,9 +76,6 @@ export function ResetPasswordPage() {
             setSubmitting(false);
         }
     }
-
-    const inputClass =
-        "h-9 w-full rounded border border-border-strong bg-surface pl-9 pr-10 text-body-sm text-ink shadow-[inset_0_1px_1px_rgba(15,23,42,0.03)] placeholder:text-ink-subtle focus:border-primary focus:shadow-focus focus:outline-none";
 
     return (
         <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
@@ -162,71 +157,23 @@ export function ResetPasswordPage() {
                                 </div>
                             )}
 
-                            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-                                <div>
-                                    <label htmlFor="new-password" className="mb-1 block text-label-md text-ink-soft">
-                                        New Password
-                                    </label>
-                                    <div className="relative">
-                                        <Icon
-                                            name="lock"
-                                            className="pointer-events-none absolute left-3 top-2.5 size-4 text-ink-subtle"
-                                        />
-                                        <input
-                                            id="new-password"
-                                            type={showPassword ? "text" : "password"}
-                                            value={password}
-                                            onChange={(e) => setPassword(e.target.value)}
-                                            placeholder="At least 8 characters"
-                                            required
-                                            minLength={8}
-                                            maxLength={128}
-                                            autoComplete="new-password"
-                                            className={inputClass}
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowPassword(!showPassword)}
-                                            className="absolute right-1 top-1 flex size-7 items-center justify-center rounded text-ink-subtle hover:bg-canvas-muted hover:text-ink"
-                                            tabIndex={-1}
-                                        >
-                                            <Icon name={showPassword ? "visibility_off" : "visibility"} className="size-4" />
-                                            <span className="sr-only">
-                                                {showPassword ? "Hide password" : "Show password"}
-                                            </span>
-                                        </button>
-                                    </div>
-                                    <p className="mt-1 text-label-sm text-ink-subtle">Minimum 8 characters.</p>
-                                </div>
-
-                                <div>
-                                    <label htmlFor="confirm-password" className="mb-1 block text-label-md text-ink-soft">
-                                        Confirm Password
-                                    </label>
-                                    <div className="relative">
-                                        <Icon
-                                            name="lock"
-                                            className="pointer-events-none absolute left-3 top-2.5 size-4 text-ink-subtle"
-                                        />
-                                        <input
-                                            id="confirm-password"
-                                            type={showPassword ? "text" : "password"}
-                                            value={confirmPassword}
-                                            onChange={(e) => setConfirmPassword(e.target.value)}
-                                            placeholder="Re-enter password"
-                                            required
-                                            minLength={8}
-                                            maxLength={128}
-                                            autoComplete="new-password"
-                                            className={inputClass}
-                                        />
-                                    </div>
-                                </div>
+                            <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+                                <NewPasswordFields
+                                    passwordId="new-password"
+                                    password={password}
+                                    confirm={confirmPassword}
+                                    errors={fieldErrors}
+                                    onChange={(next) => {
+                                        setPassword(next.password);
+                                        setConfirmPassword(next.confirm);
+                                        setFieldErrors(next.errors);
+                                    }}
+                                />
 
                                 <button
                                     type="submit"
                                     disabled={submitting}
-                                    className="flex h-9 w-full items-center justify-center gap-2 rounded bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
+                                    className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
                                 >
                                     {submitting && <Icon name="progress_activity" className="size-4 animate-spin" />}
                                     {submitting ? "Resetting password…" : "Reset password"}

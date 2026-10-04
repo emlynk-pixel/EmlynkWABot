@@ -20,16 +20,18 @@
     --color-on-critical: #ffffff;
 
     /* Canvas, surfaces, borders */
-    --color-canvas: #f8fafc;
-    --color-canvas-muted: #f1f5f9;
+    /* Redesign: a slightly deeper canvas so white cards stand out, and
+       borders visible enough to separate sections without shadows. */
+    --color-canvas: #f3f5f8;
+    --color-canvas-muted: #ecf0f4;
     --color-surface: #ffffff;
-    --color-border: #e2e8f0;
-    --color-border-strong: #cbd5e1;
-    --color-border-focus: #94a3b8;
+    --color-border: #d5dce5;
+    --color-border-strong: #b6c0cd;
+    --color-border-focus: #8494a8;
     --color-ink: #0f172a;
     --color-ink-soft: #1e293b;
     --color-ink-muted: #475569;
-    --color-ink-subtle: #64748b;
+    --color-ink-subtle: #5a6679;
 
     /* Dark sidebar workspace */
     --color-sidebar: #0f172a;
@@ -75,23 +77,25 @@
     --text-headline-sm--line-height: 22px;
     --text-headline-sm--letter-spacing: -0.005em;
     --text-headline-sm--font-weight: 600;
-    --text-body-lg: 15px;
-    --text-body-lg--line-height: 22px;
+    /* Redesign: no text below 12px, and more line height for scanning
+       long tables and forms. */
+    --text-body-lg: 16px;
+    --text-body-lg--line-height: 24px;
     --text-body-lg--letter-spacing: -0.005em;
-    --text-body-md: 14px;
-    --text-body-md--line-height: 20px;
-    --text-body-sm: 13px;
-    --text-body-sm--line-height: 18px;
-    --text-label-caps: 11px;
+    --text-body-md: 15px;
+    --text-body-md--line-height: 22px;
+    --text-body-sm: 14px;
+    --text-body-sm--line-height: 20px;
+    --text-label-caps: 12px;
     --text-label-caps--line-height: 16px;
-    --text-label-caps--letter-spacing: 0.06em;
+    --text-label-caps--letter-spacing: 0.04em;
     --text-label-caps--font-weight: 600;
-    --text-label-md: 13px;
-    --text-label-md--line-height: 18px;
+    --text-label-md: 14px;
+    --text-label-md--line-height: 20px;
     --text-label-md--font-weight: 500;
-    --text-label-sm: 12px;
-    --text-label-sm--line-height: 16px;
-    --text-label-sm--letter-spacing: 0.01em;
+    --text-label-sm: 13px;
+    --text-label-sm--line-height: 18px;
+    --text-label-sm--letter-spacing: 0.005em;
     --text-label-sm--font-weight: 500;
 
     /* Shapes */
@@ -136,9 +140,9 @@
     --color-canvas: #0b1220;
     --color-canvas-muted: #1a2436;
     --color-surface: #111a2b;
-    --color-border: #243044;
-    --color-border-strong: #3a4a61;
-    --color-border-focus: #64748b;
+    --color-border: #2b384d;
+    --color-border-strong: #45556d;
+    --color-border-focus: #6b7b92;
     --color-ink: #f1f5f9;
     --color-ink-soft: #e2e8f0;
     --color-ink-muted: #b6c2d3;
@@ -200,4 +204,50 @@
         height: 100%;
         fill: currentColor;
     }
+}
+
+/*
+ * Candidates screens keep their original look (they are out of scope of the
+ * redesign): AdminLayout wraps those routes in .ui-classic, which restores
+ * the previous token values inside them. Only tokens the redesign changed
+ * are listed. Light colours apply only in light mode, so dark mode keeps
+ * its own values there.
+ */
+.ui-classic {
+    --text-body-lg: 15px;
+    --text-body-lg--line-height: 22px;
+    --text-body-md: 14px;
+    --text-body-md--line-height: 20px;
+    --text-body-sm: 13px;
+    --text-body-sm--line-height: 18px;
+    --text-label-caps: 11px;
+    --text-label-caps--letter-spacing: 0.06em;
+    --text-label-md: 13px;
+    --text-label-md--line-height: 18px;
+    --text-label-sm: 12px;
+    --text-label-sm--line-height: 16px;
+    --text-label-sm--letter-spacing: 0.01em;
+    /* body sets the base text size, and children inherit body's computed
+       (redesigned) value; re-apply the original base size here. */
+    font-size: var(--text-body-md);
+    line-height: var(--text-body-md--line-height);
+}
+
+:root:not([data-theme="dark"]) .ui-classic {
+    --color-canvas: #f8fafc;
+    --color-canvas-muted: #f1f5f9;
+    --color-border: #e2e8f0;
+    --color-border-strong: #cbd5e1;
+    --color-border-focus: #94a3b8;
+    --color-ink-subtle: #64748b;
+}
+
+:root[data-theme="dark"] .ui-classic {
+    --color-border: #243044;
+    --color-border-strong: #3a4a61;
+    --color-border-focus: #64748b;
+}
+
+:root:not([data-theme="dark"]) body.ui-classic-page {
+    background-color: #f8fafc;
 }

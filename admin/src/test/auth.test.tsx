@@ -87,12 +87,33 @@ describe("login", () => {
         expect(alert).not.toHaveTextContent("/srv");
     });
 
-    test("empty fields are caught before any request", async () => {
+    test("empty fields are caught before any request, with the error under each field", async () => {
         const { calls } = stubBackend({});
         renderApp("/login");
         await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in" }));
-        expect(await screen.findByRole("alert")).toHaveTextContent("Enter your email and password.");
+        expect(screen.getByLabelText("Email")).toHaveAccessibleDescription("Enter your email address.");
+        expect(screen.getByLabelText("Email")).toHaveAttribute("aria-invalid", "true");
+        expect(screen.getByLabelText("Password")).toHaveAccessibleDescription("Enter your password.");
+        expect(screen.getByLabelText("Email")).toHaveFocus();
         expect(calls).toHaveLength(0);
+    });
+
+    test("an invalid email is caught before any request; the error clears once the value is valid", async () => {
+        const { calls } = stubBackend({});
+        renderApp("/login");
+        const user = userEvent.setup();
+        await user.type(await screen.findByLabelText("Email"), "admin.example");
+        await user.type(screen.getByLabelText("Password"), "Correct-Horse-7");
+        await user.click(screen.getByRole("button", { name: "Sign in" }));
+        const email = screen.getByLabelText("Email");
+        expect(email).toHaveAccessibleDescription("Enter a valid email address, like name@example.com.");
+        expect(screen.getByLabelText("Password")).not.toHaveAttribute("aria-invalid");
+        expect(calls).toHaveLength(0);
+
+        await user.clear(email);
+        await user.type(email, "admin@example.invalid");
+        expect(email).not.toHaveAttribute("aria-invalid");
+        expect(screen.queryByText(/Enter a valid email address/)).not.toBeInTheDocument();
     });
 
     test("an already signed-in admin opening /login goes to the dashboard", async () => {
