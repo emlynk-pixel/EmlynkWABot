@@ -3,6 +3,7 @@ import express from "express";
 import { createRequireActiveAdmin } from "../middleware/requireActiveAdmin.js";
 import { requireRole, ADMIN_ROLES } from "../middleware/requireRole.js";
 import { createApiRateLimiter } from "../middleware/apiRateLimiter.js";
+import { doubleCsrfProtection } from "../middleware/csrf.js";
 import {
     getOverview,
     listDocuments,
@@ -84,6 +85,12 @@ export function createAdminRouter({
     const router = express.Router();
 
     router.use(apiLimiter);
+
+    // Defence in depth on top of the httpOnly + SameSite=Strict auth cookie
+    // (see middleware/csrf.js); GET reads are unaffected (ignoredMethods),
+    // and Bearer-authenticated callers (CLI tools, tests) are exempt since
+    // they can't be forged cross-site.
+    router.use(doubleCsrfProtection);
 
     router.use((req, res, next) => {
         res.set("Cache-Control", "no-store");

@@ -88,6 +88,22 @@ function makeToken({ adminId, email, role, expiresIn = "1h" }) {
     });
 }
 
+// Cookie-authenticated mutating routes (POST /auth/logout, /api/admin/*) now
+// require a CSRF token bound to that session cookie (middleware/csrf.js).
+// Fetches one and returns the headers a mutating request needs: both the
+// session cookie and the matching CSRF cookie, plus the token header.
+async function csrfHeaders(token) {
+    const res = await fetch(`${baseUrl}/auth/csrf-token`, {
+        headers: { Cookie: `${AUTH_COOKIE_NAME}=${token}` },
+    });
+    const { csrfToken } = await res.json();
+    const csrfCookie = (res.headers.get("set-cookie") || "").split(";")[0];
+    return {
+        Cookie: `${AUTH_COOKIE_NAME}=${token}; ${csrfCookie}`,
+        "x-csrf-token": csrfToken,
+    };
+}
+
 describe("Cookie-based Admin Authentication", () => {
     test("login sets httpOnly, sameSite=strict cookie", async () => {
         const res = await fetch(`${baseUrl}/auth/login`, {
@@ -123,7 +139,7 @@ describe("Cookie-based Admin Authentication", () => {
         const token = makeToken({ adminId: "admin-super", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
         const res = await fetch(`${baseUrl}/auth/logout`, {
             method: "POST",
-            headers: { Cookie: `${AUTH_COOKIE_NAME}=${token}` },
+            headers: await csrfHeaders(token),
         });
         assert.equal(res.status, 200);
         const cookieHeader = res.headers.get("set-cookie") || "";
@@ -226,7 +242,7 @@ describe("Role-Based Authorization (RBAC)", () => {
         test("ADMIN can execute review action (keep-pending)", async () => {
             const res = await fetch(`${baseUrl}/api/admin/review/pending-11111111-2222-3333-4444-555555555555/keep-pending`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", Cookie: `${AUTH_COOKIE_NAME}=${adminToken}` },
+                headers: { "Content-Type": "application/json", ...(await csrfHeaders(adminToken)) },
                 body: JSON.stringify({ reason: "Needs further check" }),
             });
             assert.equal(res.status, 200);
@@ -235,7 +251,7 @@ describe("Role-Based Authorization (RBAC)", () => {
         test("REVIEWER can execute review action (keep-pending)", async () => {
             const res = await fetch(`${baseUrl}/api/admin/review/pending-11111111-2222-3333-4444-555555555555/keep-pending`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", Cookie: `${AUTH_COOKIE_NAME}=${reviewerToken}` },
+                headers: { "Content-Type": "application/json", ...(await csrfHeaders(reviewerToken)) },
                 body: JSON.stringify({ reason: "Reviewer checking" }),
             });
             assert.equal(res.status, 200);
@@ -244,7 +260,7 @@ describe("Role-Based Authorization (RBAC)", () => {
         test("VIEWER is refused on review actions -> 403 Insufficient permissions", async () => {
             const res = await fetch(`${baseUrl}/api/admin/review/pending-11111111-2222-3333-4444-555555555555/keep-pending`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", Cookie: `${AUTH_COOKIE_NAME}=${viewerToken}` },
+                headers: { "Content-Type": "application/json", ...(await csrfHeaders(viewerToken)) },
                 body: JSON.stringify({ reason: "Viewer trying" }),
             });
             assert.equal(res.status, 403);
@@ -255,7 +271,7 @@ describe("Role-Based Authorization (RBAC)", () => {
         test("VIEWER is refused on approve -> 403 Insufficient permissions", async () => {
             const res = await fetch(`${baseUrl}/api/admin/review/pending-11111111-2222-3333-4444-555555555555/approve`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", Cookie: `${AUTH_COOKIE_NAME}=${viewerToken}` },
+                headers: { "Content-Type": "application/json", ...(await csrfHeaders(viewerToken)) },
                 body: JSON.stringify({}),
             });
             assert.equal(res.status, 403);
@@ -266,7 +282,7 @@ describe("Role-Based Authorization (RBAC)", () => {
         test("VIEWER is refused on remove -> 403 Insufficient permissions", async () => {
             const res = await fetch(`${baseUrl}/api/admin/review/pending-11111111-2222-3333-4444-555555555555/remove`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", Cookie: `${AUTH_COOKIE_NAME}=${viewerToken}` },
+                headers: { "Content-Type": "application/json", ...(await csrfHeaders(viewerToken)) },
                 body: JSON.stringify({ reason: "Try delete" }),
             });
             assert.equal(res.status, 403);
@@ -279,7 +295,7 @@ describe("Role-Based Authorization (RBAC)", () => {
         test("ADMIN can correct police slip date on stored document", async () => {
             const res = await fetch(`${baseUrl}/api/admin/documents/3f2b8c1e-0000-4000-8000-000000000001/police-date`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", Cookie: `${AUTH_COOKIE_NAME}=${adminToken}` },
+                headers: { "Content-Type": "application/json", ...(await csrfHeaders(adminToken)) },
                 body: JSON.stringify({ policeSubmittedDate: "2026-09-19", reason: "Corrected per paper receipt" }),
             });
             assert.equal(res.status, 200);
@@ -291,7 +307,7 @@ describe("Role-Based Authorization (RBAC)", () => {
         test("REVIEWER cannot correct police slip date on stored document -> 403 Insufficient permissions", async () => {
             const res = await fetch(`${baseUrl}/api/admin/documents/3f2b8c1e-0000-4000-8000-000000000001/police-date`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", Cookie: `${AUTH_COOKIE_NAME}=${reviewerToken}` },
+                headers: { "Content-Type": "application/json", ...(await csrfHeaders(reviewerToken)) },
                 body: JSON.stringify({ policeSubmittedDate: "2026-09-19", reason: "Reviewer try" }),
             });
             assert.equal(res.status, 403);
@@ -302,7 +318,7 @@ describe("Role-Based Authorization (RBAC)", () => {
         test("VIEWER cannot correct police slip date on stored document -> 403 Insufficient permissions", async () => {
             const res = await fetch(`${baseUrl}/api/admin/documents/3f2b8c1e-0000-4000-8000-000000000001/police-date`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", Cookie: `${AUTH_COOKIE_NAME}=${viewerToken}` },
+                headers: { "Content-Type": "application/json", ...(await csrfHeaders(viewerToken)) },
                 body: JSON.stringify({ policeSubmittedDate: "2026-09-19", reason: "Viewer try" }),
             });
             assert.equal(res.status, 403);
