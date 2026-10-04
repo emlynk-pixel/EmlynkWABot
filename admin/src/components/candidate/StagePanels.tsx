@@ -338,13 +338,7 @@ export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelPro
                 <DocumentRow passportId={passportId} documentType="MEDICAL" label="Medical" required document={details.documents.MEDICAL} readOnly={!canEdit} onUploaded={onChange} />
                 <DocumentRow passportId={passportId} documentType="POLICE_SLIP" label="Police slip" document={details.documents.POLICE_SLIP} readOnly={!canEdit} onUploaded={onChange} />
                 <VariantDocumentGroup passportId={passportId} documentType="POLICE_REPORT" label="Police report" variants={POLICE_REPORT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} required={true} requiredVariants={["SL_VERIFIED", "ROMANIA"]} />
-                <section aria-label="Scans" className="space-y-2">
-                    <p className="text-label-md text-ink">Scans</p>
-                    <div className="space-y-3 border-l-2 border-border pl-3">
-                        <DocumentRow passportId={passportId} documentType="AGREEMENT" label="Agreement" required description="Agreement document" document={details.documents.AGREEMENT} readOnly={!canEdit} onUploaded={onChange} />
-                        <VariantDocumentGroup passportId={passportId} documentType="AFFIDAVIT" label="Affidavit" variants={AFFIDAVIT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} required={false} />
-                    </div>
-                </section>
+                <DocumentRow passportId={passportId} documentType="AGREEMENT" label="Scans" required description="Combined scanned documents" title="Please ensure this file contains: Agreement, English Affidavit, Sinhala Affidavit" document={details.documents.AGREEMENT} readOnly={!canEdit} onUploaded={onChange} />
             </div>
             <PanelFooter
                 status={<AutomaticStatus stage={saved} completedLabel={`All ${total} required documents are included`} />}

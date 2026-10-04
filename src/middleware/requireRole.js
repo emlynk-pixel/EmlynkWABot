@@ -19,14 +19,18 @@
 
 export const ADMIN_ROLES = Object.freeze({
     ADMIN: "ADMIN",
+    MANAGER: "MANAGER",
     ANALYST: "ANALYST",
+    REGISTRATION_DESK: "REGISTRATION_DESK",
 });
 
 // Ordered by privilege (most privileged first). Used to validate role values
 // when creating or updating admins.
 export const ALL_ROLES = Object.freeze([
     ADMIN_ROLES.ADMIN,
+    ADMIN_ROLES.MANAGER,
     ADMIN_ROLES.ANALYST,
+    ADMIN_ROLES.REGISTRATION_DESK,
 ]);
 
 const INSUFFICIENT_ROLE = { message: "Insufficient permissions" };
