@@ -11,8 +11,7 @@ const DOCUMENT_TYPE_LABELS: Record<string, string> = {
     // Uploaded from Admin > Candidates.
     NIC: "NIC",
     SKILL_VIDEO: "Skill video",
-    AGREEMENT: "Agreement",
-    AFFIDAVIT: "Affidavit",
+    SCAN: "Scan",
 };
 
 export function documentTypeLabel(type: string): string {

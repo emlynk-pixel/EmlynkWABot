@@ -53,7 +53,7 @@ A candidate is stored as a row in the `users` table identified by their **passpo
 |---|---|
 | `users` | One row per candidate (same table used for WhatsApp clients) |
 | `candidate_stages` | One row per stage per candidate: completion, notes, timestamps |
-| `documents` | All uploaded files (passport, NIC, skill video, medical, police report, agreement, affidavit) |
+| `documents` | All uploaded files (passport, NIC, skill video, medical, police report, scan) |
 | `audit_logs` | Every document upload is appended here |
 
 ---
@@ -164,7 +164,7 @@ The panel shows what is still missing (`Missing: …`) until complete.
 
 **Stage 3 — Document submission** is marked complete when all five required documents are on record:
 
-- PASSPORT, MEDICAL, POLICE_REPORT, AGREEMENT, AFFIDAVIT.
+- PASSPORT, MEDICAL, POLICE_REPORT, SCAN.
 
 A checklist of the five documents is shown at the top of the panel.
 
@@ -268,7 +268,7 @@ Normal pagination is unaffected: rows from the previous page remain visible whil
 
 | Document type | Accepted MIME types |
 |---|---|
-| Passport, NIC, Medical, Police Report, Agreement, Affidavit | `image/jpeg`, `image/png`, `application/pdf` |
+| Passport, NIC, Medical, Police Report, Scan | `image/jpeg`, `image/png`, `application/pdf` |
 | Skill video | `video/mp4`, `video/quicktime`, `video/webm` |
 
 Size limits: **50 MB** for a skill video, **10 MB** for every other document. They are checked when the upload is requested, again on the stored file, and by the Supabase bucket (its file size limit must be at least 50 MB).
@@ -319,7 +319,7 @@ This is one of two places that delete documents; the other is Remove from Review
 | Document | Variants |
 |---|---|
 | Police Report | `SL_VERIFIED`, `ROMANIA`, `SL_NORMAL` |
-| Affidavit | `ENGLISH`, `SINHALA` |
+
 | Others | None |
 
 ---
@@ -375,7 +375,7 @@ No route accepts a file body; both upload requests are small JSON.
 
 | Request | Body |
 |---|---|
-| `upload-target` | `{ type, variant?, mimeType, fileSize, fileName? }` (`variant` required for Police Report and Affidavit) |
+| `upload-target` | `{ type, variant?, mimeType, fileSize, fileName? }` (`variant` required for Police Report) |
 | `finalize` | `{ uploadId, type, variant?, mimeType, fileName? }` (`uploadId` from `upload-target`) |
 | `remove` | `{ reason }` (1–500 characters) |
 

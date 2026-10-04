@@ -795,9 +795,10 @@ Implemented on 2026-09-27 per Proposal §33 and Phase 12 Checkpoint 1 requiremen
 
 ### 12.1 Role Model Architecture
 The three-tier role model recommended in Proposal §33 is implemented directly using the existing `Admin.role` column (no new migrations):
-- **`ADMIN`** (Administrator): Full access. Can perform all reads, all review actions, and stored document modifications (e.g., correcting stored police slip submission dates).
-- **`REVIEWER`** (Reviewer): Read access across all sections + review execution actions (`approve`, `keep-pending`, `remove`, `retry`, `replace-verified`, `keep-as-version`, `document-type`, `assign-client`). Refused on stored document modifications.
-- **`VIEWER`** (Read-only / reporting user): Read access across all sections (`/overview`, `/documents`, `/clients`, `/police`, `/reports/daily`, `/review`, `/me`). Refused on all state-changing actions.
+- **`ADMIN`** (Administrator): Full access. Can do anything, including changing roles.
+- **`MANAGER`** (Manager): Full access across all sections and actions, but cannot change roles.
+- **`ANALYST`** (Analyst): Can review, add candidates, and do basic system works. Cannot access admin and manager specific powers.
+- **`REGISTRATION_DESK`** (Registration Desk): Can only add candidates.
 
 ### 12.2 Authorization & Security Middleware
 - **`requireRole(allowedRoles)`** middleware (`src/middleware/requireRole.js`):
@@ -805,7 +806,7 @@ The three-tier role model recommended in Proposal §33 is implemented directly u
   - Validates `req.admin.role` against permitted roles.
   - Rejection response: HTTP 403 `{ "message": "Insufficient permissions" }` (constant safe error message; never leaks role or user details).
 - **Endpoint Permissions Map**:
-  - `ALL_ACTIVE` (`ADMIN`, `REVIEWER`, `VIEWER`):
+  - `ALL_ACTIVE` (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`):
     - `GET /api/admin/overview`
     - `GET /api/admin/documents`
     - `GET /api/admin/documents/:id`
@@ -818,7 +819,7 @@ The three-tier role model recommended in Proposal §33 is implemented directly u
     - `GET /api/admin/review/:id`
     - `GET /api/admin/review/:id/file`
     - `GET /auth/me`
-  - `REVIEWERS_UP` (`ADMIN`, `REVIEWER`):
+  - `MANAGERS_UP` (`ADMIN`, `MANAGER`):
     - `POST /api/admin/review/:id/approve`
     - `POST /api/admin/review/:id/keep-pending`
     - `POST /api/admin/review/:id/remove`
@@ -849,7 +850,7 @@ The three-tier role model recommended in Proposal §33 is implemented directly u
 Implemented on 2026-09-28 per Phase 12 Checkpoint 2 requirements.
 
 ### 13.1 Overview & Architecture
-The Admin Invitation System provides a secure, self-service onboarding flow for administrative users (`ADMIN`, `REVIEWER`, `VIEWER`) without exposing credentials, shared secrets, or raw token data:
+The Admin Invitation System provides a secure, self-service onboarding flow for administrative users (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`) without exposing credentials, shared secrets, or raw token data:
 1. An active administrator (`role: "ADMIN"`) issues an invitation through the dashboard or API.
 2. The server generates a high-entropy 256-bit cryptographically secure random token (`crypto.randomBytes(32).toString("hex")`).
 3. Only the SHA-256 hash of the token (`crypto.createHash("sha256").update(token).digest("hex")`) is persisted in the database (`admin_invitations.token_hash`). Raw tokens are never stored, logged, or returned in API responses.
@@ -866,7 +867,7 @@ A dedicated, minimal table `admin_invitations` was created via migration `202609
 - `invitation_id`: UUID primary key.
 - `email`: lowercased recipient email address (indexed).
 - `name`: invitee full name.
-- `role`: assigned role (`ADMIN`, `REVIEWER`, `VIEWER`).
+- `role`: assigned role (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`).
 - `token_hash`: unique SHA-256 hash of the invitation token (indexed).
 - `invited_by`: foreign key to `admins.admin_id` (`ON DELETE RESTRICT`).
 - `status`: plain text lifecycle status (`PENDING`, `ACCEPTED`, `REVOKED`, `EXPIRED`, default `PENDING`).
@@ -890,7 +891,7 @@ A dedicated, minimal table `admin_invitations` was created via migration `202609
 - **Single-Use Enforcement:** Tokens transition to `ACCEPTED` in a transaction and reject subsequent uses with `ALREADY_USED`.
 - **24-Hour Expiration:** Expired tokens are rejected with `EXPIRED` status code.
 - **Duplicate Prevention:** Active admin accounts cannot be re-invited; attempting to invite an existing active email returns HTTP 409 `DUPLICATE_ACTIVE_ADMIN`.
-- **RBAC Enforcement:** Only administrators with `role: "ADMIN"` may issue, list, or revoke invitations. Callers with `REVIEWER` or `VIEWER` roles receive HTTP 403 `Insufficient permissions`.
+- **RBAC Enforcement:** Only administrators with `role: "ADMIN"` may issue, list, or revoke invitations. Callers with `MANAGER`, `ANALYST` or `REGISTRATION_DESK` roles receive HTTP 403 `Insufficient permissions`.
 - **Audit Logging:** Every invitation issuance (`INVITE_ADMIN`), completion (`COMPLETE_INVITATION`), and revocation (`REVOKE_INVITATION`) produces an append-only row in `audit_logs`.
 - **Safe Error Responses:** Generic 500 error responses mask internal exceptions and SQL errors.
 
@@ -901,7 +902,7 @@ A dedicated, minimal table `admin_invitations` was created via migration `202609
 ### 13.6 User Interface
 - **Invitations Page (`/admin/invitations`):**
   - Restricted to `ADMIN` role (non-admin visitors receive an "Access Restricted" notice).
-  - "Invite New Administrator" form: full name, email address, role selector (`REVIEWER`, `VIEWER`, `ADMIN`), and submit button with inline feedback.
+  - "Invite New Administrator" form: full name, email address, role selector (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`), and submit button with inline feedback.
   - "Invitation Status & History" table: lists invitee name, email, role badge, status badge (`Pending Setup`, `Active`, `Expired`, `Revoked`), expiration and creation timestamps, and inline "Revoke" action.
 - **Setup Password Page (`/admin/setup-password`):**
   - Public route (outside `RequireAuth`).

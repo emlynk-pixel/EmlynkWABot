@@ -46,7 +46,7 @@ export const CANDIDATE_STAGES = Object.freeze([
 ]);
 
 export const POLICE_REPORT_VARIANTS = Object.freeze(["SL_VERIFIED", "ROMANIA", "SL_NORMAL"]);
-export const AFFIDAVIT_VARIANTS = Object.freeze(["ENGLISH", "SINHALA"]);
+
 
 // Documents an admin can upload for a candidate. `variants`: the variant is
 // required and must be one of these; otherwise none is accepted.
@@ -57,14 +57,13 @@ export const CANDIDATE_DOCUMENT_TYPES = Object.freeze({
     MEDICAL: {},
     POLICE_SLIP: {},
     POLICE_REPORT: { variants: POLICE_REPORT_VARIANTS },
-    AGREEMENT: {},
-    AFFIDAVIT: { variants: AFFIDAVIT_VARIANTS },
+    SCAN: {},
 });
 
 // The five documents a candidate's submission must include (Document
 // Submission stage): the passport (Candidate Details) and the four collected
 // in Document Submission.
-export const REQUIRED_SUBMISSION_DOCUMENTS = Object.freeze(["PASSPORT", "MEDICAL", "POLICE_REPORT", "AGREEMENT"]);
+export const REQUIRED_SUBMISSION_DOCUMENTS = Object.freeze(["PASSPORT", "MEDICAL", "POLICE_REPORT", "SCAN"]);
 
 // Skill videos only.
 export const VIDEO_MIME_TYPES = Object.freeze(["video/mp4", "video/quicktime", "video/webm"]);
@@ -351,7 +350,7 @@ function automaticStageMissing(user, documents) {
     if (!has("MEDICAL")) submissionMissing.push("medical");
     if (!hasVariant("POLICE_REPORT", "SL_VERIFIED")) submissionMissing.push("sl verified police report");
     if (!hasVariant("POLICE_REPORT", "ROMANIA")) submissionMissing.push("romania police report");
-    if (!has("AGREEMENT")) submissionMissing.push("scans");
+    if (!has("SCAN")) submissionMissing.push("scans");
 
     return {
         CANDIDATE_DETAILS: details,

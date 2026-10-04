@@ -10,6 +10,7 @@ export const DOCUMENT_TYPES = Object.freeze({
     POLICE_SLIP: "POLICE_SLIP",
     POLICE_REPORT: "POLICE_REPORT",
     MEDICAL: "MEDICAL",
+    SCAN: "SCAN",
     UNKNOWN: "UNKNOWN",
 });
 

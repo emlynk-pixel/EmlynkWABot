@@ -10,8 +10,7 @@ export const DOCUMENT_STORAGE_TYPES = Object.freeze({
     // Uploaded by admins only (candidateService.js), never from WhatsApp.
     NIC: { folder: "nic", baseName: "nic" },
     SKILL_VIDEO: { folder: "skill-video", baseName: "skill_video" },
-    AGREEMENT: { folder: "agreement", baseName: "agreement" },
-    AFFIDAVIT: { folder: "affidavit", baseName: "affidavit" },
+    SCAN: { folder: "scan", baseName: "scan" },
 });
 
 // The extension always comes from the validated MIME type, never from the
