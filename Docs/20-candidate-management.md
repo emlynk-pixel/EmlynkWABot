@@ -53,7 +53,7 @@ A candidate is stored as a row in the `users` table identified by their **passpo
 |---|---|
 | `users` | One row per candidate (same table used for WhatsApp clients) |
 | `candidate_stages` | One row per stage per candidate: completion, notes, timestamps |
-| `documents` | All uploaded files (passport, NIC, skill video, medical, police report, agreement, affidavit) |
+| `documents` | All uploaded files (passport, NIC, skill video, medical, police report, scan) |
 | `audit_logs` | Every document upload is appended here |
 
 ---
@@ -319,7 +319,7 @@ This is one of two places that delete documents; the other is Remove from Review
 | Document | Variants |
 |---|---|
 | Police Report | `SL_VERIFIED`, `ROMANIA`, `SL_NORMAL` |
-| Affidavit | `ENGLISH`, `SINHALA` |
+
 | Others | None |
 
 ---

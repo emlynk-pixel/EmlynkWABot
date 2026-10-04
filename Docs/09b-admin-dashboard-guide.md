@@ -239,27 +239,27 @@ WhatsApp documents are processed in the background. When a document arrives, the
 
 ## 6. API
 
-All endpoints are under `/api/admin` and require an ACTIVE admin session via `emlynk_admin_token` httpOnly cookie (preferred) or `Authorization: Bearer <token>`. Role-based access control (RBAC) enforces endpoint permissions based on `admin.role` (`ADMIN`, `REVIEWER`, `VIEWER`). Responses are never cached.
+All endpoints are under `/api/admin` and require an ACTIVE admin session via `emlynk_admin_token` httpOnly cookie (preferred) or `Authorization: Bearer <token>`. Role-based access control (RBAC) enforces endpoint permissions based on `admin.role` (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`). Responses are never cached.
 
 | Method | Path | Allowed Roles | Purpose |
 |---|---|---|---|
-| GET | `/overview` | ADMIN, REVIEWER, VIEWER | Overview figures |
-| GET | `/documents` | ADMIN, REVIEWER, VIEWER | Stored documents (search, filters, sort, paging) |
-| GET | `/documents/missing` | ADMIN, REVIEWER, VIEWER | Incomplete clients and missing types (`documentType`, `search`, paging) |
+| GET | `/overview` | ADMIN, MANAGER, ANALYST | Overview figures |
+| GET | `/documents` | ADMIN, MANAGER, ANALYST | Stored documents (search, filters, sort, paging) |
+| GET | `/documents/missing` | ADMIN, MANAGER, ANALYST | Incomplete clients and missing types (`documentType`, `search`, paging) |
 | POST | `/documents/:documentId/police-date` | ADMIN | Set or correct a police slip date `{ policeSubmittedDate, reason }` |
-| GET | `/clients` | ADMIN, REVIEWER, VIEWER | Clients directory (`search`, `completion`, `missingType`, paging) |
-| GET | `/clients/:passportId` | ADMIN, REVIEWER, VIEWER | Client details |
-| GET | `/review`, `/review/:reviewId`, `/review/:reviewId/file` | ADMIN, REVIEWER, VIEWER | Review Queue, one item, its file |
-| POST | `/review/:reviewId/approve` | ADMIN, REVIEWER | Approve `{ reason?, policeSubmittedDate? }` |
-| POST | `/review/:reviewId/keep-pending` | ADMIN, REVIEWER | Keep Pending `{ reason }` |
-| POST | `/review/:reviewId/remove` | ADMIN, REVIEWER | Remove from Review `{ reason }` |
-| POST | `/review/:reviewId/document-type` | ADMIN, REVIEWER | Set Document Type `{ documentType, reason }` |
-| POST | `/review/:reviewId/assign-client` | ADMIN, REVIEWER | Assign Client `{ passportId, reason }` |
-| POST | `/review/:reviewId/retry` | ADMIN, REVIEWER | Retry processing `{ reason? }` |
-| POST | `/review/:reviewId/replace-verified` | ADMIN, REVIEWER | Replace verified document `{ existingDocumentId, reason?, policeSubmittedDate? }` |
-| POST | `/review/:reviewId/keep-as-version` | ADMIN, REVIEWER | Keep document as version `{ reason? }` |
-| GET | `/police` | ADMIN, REVIEWER, VIEWER | Police Workflow (`status`, `search`, `passportId`, paging) |
-| GET | `/reports/daily` | ADMIN, REVIEWER, VIEWER | Daily Report (`date=YYYY-MM-DD`, default today) |
+| GET | `/clients` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Clients directory (`search`, `completion`, `missingType`, paging) |
+| GET | `/clients/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Client details |
+| GET | `/review`, `/review/:reviewId`, `/review/:reviewId/file` | ADMIN, MANAGER, ANALYST | Review Queue, one item, its file |
+| POST | `/review/:reviewId/approve` | ADMIN, MANAGER | Approve `{ reason?, policeSubmittedDate? }` |
+| POST | `/review/:reviewId/keep-pending` | ADMIN, MANAGER | Keep Pending `{ reason }` |
+| POST | `/review/:reviewId/remove` | ADMIN, MANAGER | Remove from Review `{ reason }` |
+| POST | `/review/:reviewId/document-type` | ADMIN, MANAGER | Set Document Type `{ documentType, reason }` |
+| POST | `/review/:reviewId/assign-client` | ADMIN, MANAGER | Assign Client `{ passportId, reason }` |
+| POST | `/review/:reviewId/retry` | ADMIN, MANAGER | Retry processing `{ reason? }` |
+| POST | `/review/:reviewId/replace-verified` | ADMIN, MANAGER | Replace verified document `{ existingDocumentId, reason?, policeSubmittedDate? }` |
+| POST | `/review/:reviewId/keep-as-version` | ADMIN, MANAGER | Keep document as version `{ reason? }` |
+| GET | `/police` | ADMIN, MANAGER, ANALYST | Police Workflow (`status`, `search`, `passportId`, paging) |
+| GET | `/reports/daily` | ADMIN, MANAGER, ANALYST | Daily Report (`date=YYYY-MM-DD`, default today) |
 | POST | `/invitations` | ADMIN | Issue new admin invitation `{ name, email, role }` (Phase 12, Checkpoint 2) |
 | GET | `/invitations` | ADMIN | List admin invitations with status (Phase 12, Checkpoint 2) |
 | POST | `/invitations/:id/revoke` | ADMIN | Revoke a pending invitation (Phase 12, Checkpoint 2) |
@@ -285,7 +285,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 | 2 | Remove from Review | Manual, after inspection, with a required reason and confirmation; permanently deletes the waiting file (with its original and record) or the stored *Review required* document (with its file); the audit entry stays; no undo; never a verified document. |
 | 3 | Automatic removal | Pending documents are never removed automatically. |
 | 4 | Audit log | Every admin action is recorded in an append-only table (`audit_logs`, protected by a database trigger). |
-| 5 | Roles | Implemented in Phase 12 Checkpoint 1 per Proposal §33: three roles (`ADMIN`, `REVIEWER`, `VIEWER`) using the existing `Admin.role` column, enforced via `requireRole` middleware with safe 403 responses. |
+| 5 | Roles | Implemented in Phase 12 Checkpoint 1 per Proposal §33: four roles (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`) using the existing `Admin.role` column, enforced via `requireRole` middleware with safe 403 responses. |
 | 6 | Identity assignment | Admins may link a waiting file to an existing client only; no client is created; the sender's number and the original identity result are kept. |
 | 7 | Police report completion | A verified police report completes the workflow, whenever it arrived. Admins enter or confirm the slip's submitted date when approving, and can set or correct it later. There is no admin upload of the police report. |
 | 8 | Required documents | Configured with `REQUIRED_DOCUMENT_TYPES` (environment, validated at startup); no document-type table and no Settings page. |
