@@ -3,7 +3,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { Icon } from "../components/Icon";
 import { listAdmins, updateAdminRole, type AdminAccount } from "../api/admin";
 import { ApiError } from "../api/client";
-import { selectClass } from "../components/ui";
+import { inputClass } from "../components/ui";
 
 const dateFormat = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Colombo",
@@ -30,7 +30,7 @@ export function AdminRolesPage() {
         if (!isAdmin) return;
         setFetchError(null);
         try {
-            const data = await listAdmins(token ?? undefined);
+            const data = await listAdmins(token as string);
             setAdmins(data);
         } catch (err) {
             setFetchError(err instanceof ApiError ? err.message : "Failed to load admins.");
@@ -55,7 +55,7 @@ export function AdminRolesPage() {
         setActionError(null);
         setActionSuccess(null);
         try {
-            await updateAdminRole(token ?? undefined, adminId, newRole);
+            await updateAdminRole(token as string, adminId, newRole);
             setActionSuccess("Role updated successfully.");
             loadAdmins();
         } catch (err) {
@@ -157,7 +157,7 @@ export function AdminRolesPage() {
                                         <td className="px-4 py-3 align-top">
                                             <select
                                                 aria-label={`Change role for ${account.name}`}
-                                                className={selectClass}
+                                                className={inputClass(false, { extra: "w-auto" })}
                                                 value={account.role}
                                                 disabled={updatingId === account.adminId || account.adminId === admin?.adminId}
                                                 onChange={(e) => handleRoleChange(account.adminId, e.target.value)}

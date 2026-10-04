@@ -2,7 +2,6 @@ import { useId, useState, type FormEvent, type ReactNode } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import {
-    AFFIDAVIT_VARIANTS,
     POLICE_REPORT_VARIANTS,
     STAGE_LABELS,
     TEST_RESULT_OPTIONS,

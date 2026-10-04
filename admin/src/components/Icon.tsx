@@ -36,6 +36,7 @@ import call from "@material-symbols/svg-400/outlined/call.svg?raw";
 import check from "@material-symbols/svg-400/outlined/check.svg?raw";
 import pictureAsPdf from "@material-symbols/svg-400/outlined/picture_as_pdf.svg?raw";
 import upload from "@material-symbols/svg-400/outlined/upload.svg?raw";
+import manageAccounts from "@material-symbols/svg-400/outlined/manage_accounts.svg?raw";
 
 const ICONS = {
     assignment_late: assignmentLate,
@@ -64,6 +65,7 @@ const ICONS = {
     error,
     fact_check: factCheck,
     group,
+    manage_accounts: manageAccounts,
     local_police: localPolice,
     lock,
     logout,
