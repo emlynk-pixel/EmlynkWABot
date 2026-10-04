@@ -154,8 +154,8 @@ function date(body, field, errors) {
 
 // Stored in the same normalized form as WhatsApp sender numbers (94771234567),
 // so the WhatsApp lookup compares like with like.
-function phone(body, field, errors) {
-    const value = text(body, field, errors, { max: 30 });
+function phone(body, field, errors, options = {}) {
+    const value = text(body, field, errors, { required: options.required, max: 30 });
     if (value === null) return null;
     const normalized = normalizePhoneNumber(value);
     if (!normalized) errors.push({ field, message: "must be a phone number (for example 0771234567 or +94771234567)" });
@@ -207,7 +207,9 @@ export function parseCandidateBody(body, { creating }) {
 
     values.otherName = text(body, "surname", errors, { required: true, max: MAX_NAME_LENGTH });
     values.firstName = text(body, "otherNames", errors, { required: true, max: MAX_NAME_LENGTH });
-    values.address = text(body, "address", errors, { required: true, max: MAX_ADDRESS_LENGTH });
+    // Optional here (registration and saving details); required to complete
+    // Candidate Details (automaticStageMissing), like the passport document.
+    values.address = text(body, "address", errors, { max: MAX_ADDRESS_LENGTH });
     values.jobExperience = text(body, "jobExperience", errors, { required: true });
     // Optional passport and contact details: empty is stored as NULL.
     values.placeOfBirth = text(body, "placeOfBirth", errors, { max: MAX_NAME_LENGTH });
@@ -221,7 +223,10 @@ export function parseCandidateBody(body, { creating }) {
     const sex = text(body, "sex", errors, { max: 1 });
     if (sex !== null && !SEX_VALUES.includes(sex.toUpperCase())) errors.push({ field: "sex", message: `must be one of: ${SEX_VALUES.join(", ")}` });
     values.sex = sex === null ? null : sex.toUpperCase();
-    values.whatsappNumber = phone(body, "whatsappNumber", errors);
+    // Required to register. On an update it may be left out: a number on
+    // record is locked (updateCandidateDetails keeps it), and Candidate
+    // Details can't complete without one (automaticStageMissing).
+    values.whatsappNumber = phone(body, "whatsappNumber", errors, { required: creating });
     values.contactNumber = phone(body, "contactNumber", errors);
 
     const nic = text(body, "nic", errors, { required: true, max: 12 });
@@ -344,6 +349,7 @@ function automaticStageMissing(user, documents) {
     if (isBlank(user.nic)) details.push("NIC");
     if (!parseJobTypes(user.job).length) details.push("job type");
     if (isBlank(user.jobExperience)) details.push("job experience");
+    if (isBlank(user.whatsappNumber)) details.push("WhatsApp number");
     if (!has("PASSPORT")) details.push("passport document");
 
     const submissionMissing = [];

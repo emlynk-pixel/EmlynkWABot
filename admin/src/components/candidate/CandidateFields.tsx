@@ -36,16 +36,25 @@ const isPhoneNumber = (value: string) => {
     return /^[\d\s()+-]+$/.test(value) && digits.length >= 8 && digits.length <= 15;
 };
 
+// "registration": the WhatsApp number is required; the address (and the
+// passport document) are not. "details": saving Candidate Details is never
+// blocked by the address or WhatsApp number (completionGaps reports them);
+// the stage only completes once they and the passport are on record.
+export type DetailsForm = "registration" | "details";
+
+const COMPLETION_REQUIRED = "Required to complete Candidate details.";
+
 // The same rules the server applies (candidateService.js), checked first so
-// the admin sees which field to fix. Returns field -> message. The passport
-// and contact details are optional: only a value that is given is checked.
-export function validateDetails(value: CandidateDetailsInput): Record<string, string> {
+// the admin sees which field to fix. Returns field -> message; any message
+// blocks saving. The passport and contact details are optional: only a value
+// that is given is checked.
+export function validateDetails(value: CandidateDetailsInput, form: DetailsForm = "registration"): Record<string, string> {
     const errors: Record<string, string> = {};
     if (!value.surname.trim()) errors.surname = "Enter the surname.";
     if (!value.otherNames.trim()) errors.otherNames = "Enter the other names.";
     if (!value.nic.trim()) errors.nic = "Enter the NIC.";
     else if (!NIC_PATTERN.test(value.nic.replace(/\s/g, ""))) errors.nic = "Use 9 digits and V or X, or 12 digits.";
-    if (!value.address.trim()) errors.address = "Enter the address.";
+    if (form === "registration" && !value.whatsappNumber.trim()) errors.whatsappNumber = "Enter the WhatsApp number.";
     if (!value.jobTypes.length) errors.jobTypes = "Add at least one job type.";
     if (!value.jobExperience.trim()) errors.jobExperience = "Enter the job experience.";
     if (value.passportIssueDate && value.passportExpiryDate && value.passportIssueDate >= value.passportExpiryDate) {
@@ -55,6 +64,16 @@ export function validateDetails(value: CandidateDetailsInput): Record<string, st
         if (value[field].trim() && !isPhoneNumber(value[field].trim())) errors[field] = "Enter a phone number, e.g. 0771234567.";
     }
     return errors;
+}
+
+// Candidate Details: what is still needed to complete the stage (shown under
+// the fields, without blocking the save). The passport document is shown by
+// its own upload row and the stage status.
+export function completionGaps(value: CandidateDetailsInput): Record<string, string> {
+    const gaps: Record<string, string> = {};
+    if (!value.whatsappNumber.trim()) gaps.whatsappNumber = COMPLETION_REQUIRED;
+    if (!value.address.trim()) gaps.address = COMPLETION_REQUIRED;
+    return gaps;
 }
 
 export function Field({ label, required, error, htmlFor, children, className = "" }: { label: string; required?: boolean; error?: string; htmlFor: string; children: ReactNode; className?: string }) {
@@ -113,13 +132,16 @@ function JobTypesInput({ id, value, onChange, disabled, invalid }: { id: string;
 // types and experience. Required fields are marked; the rest are optional.
 // The passport ID is entered once at registration and shown read-only after;
 // so is a WhatsApp number already on record (whatsappLocked).
-export function CandidateFields({ value, onChange, errors = {}, disabled, passportId, whatsappLocked }: {
+// `form` marks what is required where: the address only for Candidate Details
+// (registration doesn't need it), the WhatsApp number on both.
+export function CandidateFields({ value, onChange, errors = {}, disabled, passportId, whatsappLocked, form = "registration" }: {
     value: CandidateDetailsInput;
     onChange: (next: CandidateDetailsInput) => void;
     errors?: Record<string, string>;
     disabled?: boolean;
     passportId: { value: string; onChange?: (next: string) => void; onBlur?: () => void; error?: string; hint?: ReactNode };
     whatsappLocked?: boolean;
+    form?: DetailsForm;
 }) {
     const id = useId();
     const set = (field: keyof CandidateDetailsInput) => (next: string) => onChange({ ...value, [field]: next });
@@ -173,7 +195,7 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
             <Field label="Place of birth" htmlFor={`${id}-placeOfBirth`} error={errors.placeOfBirth}>{input("placeOfBirth")}</Field>
             <Field label="Passport issue date" htmlFor={`${id}-passportIssueDate`} error={errors.passportIssueDate}>{input("passportIssueDate", { type: "date" })}</Field>
             <Field label="Passport expiry date" htmlFor={`${id}-passportExpiryDate`} error={errors.passportExpiryDate}>{input("passportExpiryDate", { type: "date" })}</Field>
-            <Field label="WhatsApp number" htmlFor={`${id}-whatsappNumber`} error={errors.whatsappNumber}>
+            <Field label="WhatsApp number" required htmlFor={`${id}-whatsappNumber`} error={errors.whatsappNumber}>
                 {input("whatsappNumber", { type: "tel", maxLength: 30, readOnly: whatsappLocked })}
                 {whatsappLocked && <div className="mt-1 text-label-sm text-ink-muted">Registered WhatsApp numbers cannot be changed.</div>}
             </Field>
@@ -184,7 +206,7 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
             <Field label="Job experience" required htmlFor={`${id}-jobExperience`} error={errors.jobExperience} className="md:col-span-2">
                 {input("jobExperience", { maxLength: 2000 })}
             </Field>
-            <Field label="Address" required htmlFor={`${id}-address`} error={errors.address} className="md:col-span-2">
+            <Field label="Address" required={form === "details"} htmlFor={`${id}-address`} error={errors.address} className="md:col-span-2">
                 <textarea
                     id={`${id}-address`}
                     rows={2}
