@@ -16,10 +16,13 @@ export function stepTones(stages: { completed: boolean }[]): StepTone[] {
 }
 
 const CIRCLE: Record<StepTone, string> = {
-    incomplete: "bg-critical text-on-critical",
+    incomplete: "border-2 border-critical bg-stepper-white text-critical",
     complete: "bg-verified text-surface",
     "complete-out-of-order": "border border-verified bg-verified-bg text-verified",
 };
+
+// The selected incomplete stage is filled in, so it stands out from the others.
+const INCOMPLETE_ACTIVE = "border-2 border-critical bg-critical text-stepper-white";
 
 const TONE_LABEL: Record<StepTone, string> = {
     incomplete: "incomplete",
@@ -36,6 +39,7 @@ export function CandidateStepper({ stages, current, onSelect }: { stages: StageP
                 {stages.map((stage, index) => {
                     const active = stage.stage === current;
                     const tone = tones[index];
+                    const circle = tone === "incomplete" && active ? INCOMPLETE_ACTIVE : CIRCLE[tone];
                     return (
                         <li key={stage.stage} className="relative flex flex-1 flex-col items-center">
                             {index > 0 && <span aria-hidden="true" className="absolute top-4 right-1/2 h-px w-full bg-border" />}
@@ -46,8 +50,8 @@ export function CandidateStepper({ stages, current, onSelect }: { stages: StageP
                                 aria-label={`${index + 1}. ${STAGE_LABELS[stage.stage]} (${TONE_LABEL[tone]})`}
                                 className="group relative z-10 flex flex-col items-center gap-2 px-1 focus:outline-none"
                             >
-                                <span className={`flex size-8 items-center justify-center rounded-full text-label-md tabular-nums ${CIRCLE[tone]} ${active ? "ring-2 ring-primary ring-offset-2 ring-offset-surface" : ""} group-focus-visible:shadow-focus`}>
-                                    {stage.completed ? <Icon name="check" className="size-4" /> : index + 1}
+                                <span className={`flex size-8 items-center justify-center rounded-full text-label-md tabular-nums ${circle} ${active ? "ring-2 ring-primary ring-offset-2 ring-offset-surface" : ""} group-focus-visible:shadow-focus`}>
+                                    {stage.completed ? <Icon name="check" className="size-4" /> : <span aria-hidden="true" className="font-bold">!</span>}
                                 </span>
                                 <span className={`text-center text-label-sm ${active ? "font-semibold text-ink" : "text-ink-muted"}`}>{STAGE_LABELS[stage.stage]}</span>
                             </button>
