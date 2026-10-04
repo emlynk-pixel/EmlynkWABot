@@ -56,34 +56,102 @@ describe("safePrismaErrorFields", () => {
     });
 
     describe("P2010 (raw query failed, e.g. $queryRaw/$executeRaw)", () => {
-        test("a SQLSTATE-shaped meta.code is kept as dbErrorCode", () => {
-            const error = Object.assign(new Error("raw query failed"), {
-                code: "P2010",
-                meta: { code: "42501", message: "permission denied for table rate_limits" },
+        describe("@prisma/adapter-pg shape (this project's PrismaClient, see config/prisma.js)", () => {
+            test("driverAdapterError.cause.{kind,originalCode} are kept as dbErrorKind/dbErrorCode", () => {
+                const error = Object.assign(new Error("raw query failed"), {
+                    code: "P2010",
+                    meta: {
+                        driverAdapterError: {
+                            cause: {
+                                kind: "DatabaseAccessDenied",
+                                originalCode: "42501",
+                                originalMessage: "permission denied for table rate_limits",
+                            },
+                        },
+                    },
+                });
+                assert.deepEqual(safePrismaErrorFields(error), {
+                    prismaCode: "P2010",
+                    prismaMeta: { dbErrorKind: "DatabaseAccessDenied", dbErrorCode: "42501" },
+                });
             });
-            assert.deepEqual(safePrismaErrorFields(error), {
-                prismaCode: "P2010",
-                prismaMeta: { dbErrorCode: "42501" },
+
+            test("cause.originalMessage (can quote the failing SQL/values) is never returned", () => {
+                const error = Object.assign(new Error("raw query failed"), {
+                    code: "P2010",
+                    meta: {
+                        driverAdapterError: {
+                            cause: {
+                                kind: "postgres",
+                                originalCode: "08006",
+                                originalMessage: "connection to server at \"db.internal\" failed: password=hunter2",
+                            },
+                        },
+                    },
+                });
+                const result = safePrismaErrorFields(error);
+                assert.ok(!JSON.stringify(result).includes("hunter2"));
+                assert.ok(!JSON.stringify(result).includes("db.internal"));
+                assert.deepEqual(result, {
+                    prismaCode: "P2010",
+                    prismaMeta: { dbErrorKind: "postgres", dbErrorCode: "08006" },
+                });
+            });
+
+            test("an originalCode that isn't SQLSTATE-shaped is dropped, kind is kept", () => {
+                const error = Object.assign(new Error("raw query failed"), {
+                    code: "P2010",
+                    meta: {
+                        driverAdapterError: {
+                            cause: { kind: "TableDoesNotExist", originalCode: "not a sqlstate" },
+                        },
+                    },
+                });
+                assert.deepEqual(safePrismaErrorFields(error), {
+                    prismaCode: "P2010",
+                    prismaMeta: { dbErrorKind: "TableDoesNotExist" },
+                });
+            });
+
+            test("a non-string kind and non-SQLSTATE originalCode -> no meta kept", () => {
+                const error = Object.assign(new Error("raw query failed"), {
+                    code: "P2010",
+                    meta: { driverAdapterError: { cause: { kind: 123, originalCode: "nope" } } },
+                });
+                assert.deepEqual(safePrismaErrorFields(error), { prismaCode: "P2010" });
             });
         });
 
-        test("meta.message (can quote the failing SQL/values) is never returned", () => {
-            const error = Object.assign(new Error("raw query failed"), {
-                code: "P2010",
-                meta: { code: "08006", message: "connection to server at \"db.internal\" failed: password=hunter2" },
+        describe("legacy binary-engine shape (kept for safety; not used by this project's client)", () => {
+            test("a SQLSTATE-shaped meta.code is kept as dbErrorCode", () => {
+                const error = Object.assign(new Error("raw query failed"), {
+                    code: "P2010",
+                    meta: { code: "42501", message: "permission denied for table rate_limits" },
+                });
+                assert.deepEqual(safePrismaErrorFields(error), {
+                    prismaCode: "P2010",
+                    prismaMeta: { dbErrorCode: "42501" },
+                });
             });
-            const result = safePrismaErrorFields(error);
-            assert.ok(!JSON.stringify(result).includes("hunter2"));
-            assert.ok(!JSON.stringify(result).includes("db.internal"));
-            assert.deepEqual(result, { prismaCode: "P2010", prismaMeta: { dbErrorCode: "08006" } });
-        });
 
-        test("a meta.code that isn't SQLSTATE-shaped is dropped, not passed through", () => {
-            const error = Object.assign(new Error("raw query failed"), {
-                code: "P2010",
-                meta: { code: "some arbitrary driver text, not a SQLSTATE" },
+            test("meta.message (can quote the failing SQL/values) is never returned", () => {
+                const error = Object.assign(new Error("raw query failed"), {
+                    code: "P2010",
+                    meta: { code: "08006", message: "connection to server at \"db.internal\" failed: password=hunter2" },
+                });
+                const result = safePrismaErrorFields(error);
+                assert.ok(!JSON.stringify(result).includes("hunter2"));
+                assert.ok(!JSON.stringify(result).includes("db.internal"));
+                assert.deepEqual(result, { prismaCode: "P2010", prismaMeta: { dbErrorCode: "08006" } });
             });
-            assert.deepEqual(safePrismaErrorFields(error), { prismaCode: "P2010" });
+
+            test("a meta.code that isn't SQLSTATE-shaped is dropped, not passed through", () => {
+                const error = Object.assign(new Error("raw query failed"), {
+                    code: "P2010",
+                    meta: { code: "some arbitrary driver text, not a SQLSTATE" },
+                });
+                assert.deepEqual(safePrismaErrorFields(error), { prismaCode: "P2010" });
+            });
         });
 
         test("no meta at all -> just the code", () => {
