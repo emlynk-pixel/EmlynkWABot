@@ -337,7 +337,7 @@ export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelPro
                 <DocumentRow passportId={passportId} documentType="MEDICAL" label="Medical" required document={details.documents.MEDICAL} readOnly={!canEdit} onUploaded={onChange} />
                 <DocumentRow passportId={passportId} documentType="POLICE_SLIP" label="Police slip" document={details.documents.POLICE_SLIP} readOnly={!canEdit} onUploaded={onChange} />
                 <VariantDocumentGroup passportId={passportId} documentType="POLICE_REPORT" label="Police report" variants={POLICE_REPORT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} required={true} requiredVariants={["SL_VERIFIED", "ROMANIA"]} />
-                <DocumentRow passportId={passportId} documentType="SCAN" label="Scans" required description="Combined scanned documents" document={details.documents.SCAN} readOnly={!canEdit} onUploaded={onChange} />
+                <DocumentRow passportId={passportId} documentType="SCAN" label="Scans" required description="Combined scanned documents" title="Please ensure this file contains: Agreement, English Affidavit, Sinhala Affidavit" document={details.documents.SCAN} readOnly={!canEdit} onUploaded={onChange} />
             </div>
             <PanelFooter
                 status={<AutomaticStatus stage={saved} completedLabel={`All ${total} required documents are included`} />}
