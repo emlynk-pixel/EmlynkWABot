@@ -5,6 +5,7 @@ import express from "express";
 import { createAuthRouter } from "../src/routes/auth.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { MemoryStore } from "express-rate-limit";
+import { createApiRateLimiter } from "../src/middleware/apiRateLimiter.js";
 import {
     LOGIN_RATE_LIMIT_MESSAGE,
     createLoginRateLimiter,
@@ -31,7 +32,11 @@ async function startApp() {
 
     const app = express();
     app.use(express.json());
-    app.use("/auth", createAuthRouter({ db, loginLimiter: createLoginRateLimiter({ store1: new MemoryStore(), store2: new MemoryStore() }) }));
+    app.use("/auth", createAuthRouter({
+        db,
+        loginLimiter: createLoginRateLimiter({ store1: new MemoryStore(), store2: new MemoryStore() }),
+        apiLimiter: createApiRateLimiter({ store: new MemoryStore() }),
+    }));
     app.get("/health", (req, res) => res.json({ status: "OK" }));
     app.use(errorHandler);
 
@@ -171,7 +176,10 @@ describe("other routes are not affected by the login limiter", () => {
 
         const good = await fetch(`${app.baseUrl}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
         assert.equal(good.status, 200);
-        assert.equal(good.headers.get("ratelimit-policy"), null, "no rate-limit headers on /auth/me");
+        // /auth/me has its own generic API rate limit (CodeQL: missing rate
+        // limiting), separate from and much higher than the login limiter -
+        // confirms login being limited doesn't also limit /auth/me.
+        assert.match(good.headers.get("ratelimit-policy") ?? "", /^"generic-api"/);
     });
 
     test("8. /health is unaffected", async () => {

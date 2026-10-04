@@ -30,7 +30,7 @@ before(async () => {
     app.use(express.json());
     // Rate limiting has its own tests (loginRateLimit.test.js); here it would
     // block the many deliberate failures these login-logic tests make.
-    app.use("/auth", createAuthRouter({ db, loginLimiter: noRateLimit }));
+    app.use("/auth", createAuthRouter({ db, loginLimiter: noRateLimit, apiLimiter: noRateLimit }));
     app.use(errorHandler);
 
     await new Promise((resolve) => {
