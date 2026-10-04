@@ -18,11 +18,11 @@ export async function listAdmins({ db }) {
             email: true,
             role: true,
             status: true,
-            createdAt: true,
+            createdDate: true,
         },
         orderBy: [
             { status: 'asc' }, // Active first
-            { createdAt: 'desc' },
+            { createdDate: 'desc' },
         ],
     });
     return admins;

@@ -152,7 +152,7 @@ export function AdminRolesPage() {
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 align-top whitespace-nowrap text-ink-subtle">
-                                            {dateFormat.format(new Date(account.createdAt))}
+                                            {dateFormat.format(new Date(account.createdDate))}
                                         </td>
                                         <td className="px-4 py-3 align-top">
                                             <select

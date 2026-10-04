@@ -551,7 +551,7 @@ export function deleteInvitation(invitationId: string, token?: string): Promise<
     email: string;
     role: string;
     status: string;
-    createdAt: string;
+    createdDate: string;
 };
 
 export async function listAdmins(token: string, signal?: AbortSignal): Promise<AdminAccount[]> {
