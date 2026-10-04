@@ -501,8 +501,6 @@ export function createAdminRouter({
     // ---------------------------------------------------------------- admin invitations (ADMIN only)
     router.use("/invitations", createInvitationRouter({ db }));
 
-    // Anything else under /api/admin (only reached by an authenticated admin).
-    router.use((req, res) => res.status(404).json({ message: "Not found" }));
 
     // ---------------------------------------------------------------- admin accounts (ADMIN only)
     router.get("/admins", requireRole(ADMINS_ONLY), async (req, res) => {
@@ -524,6 +522,9 @@ export function createAdminRouter({
             return res.status(500).json({ message: "Internal server error" });
         }
     });
+
+    // Anything else under /api/admin (only reached by an authenticated admin).
+    router.use((req, res) => res.status(404).json({ message: "Not found" }));
 
     return router;
 }
