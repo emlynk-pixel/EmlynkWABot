@@ -39,6 +39,7 @@
     "@supabase/supabase-js": "^2.117.1",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
+    "csrf-csrf": "^4.0.3",
     "dotenv": "^18.0.1",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
@@ -52,5 +53,8 @@
   "devDependencies": {
     "jpeg-js": "0.4.4",
     "pngjs": "7.0.0"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2"
   }
 }
