@@ -76,7 +76,11 @@ describe("safePrismaErrorFields", () => {
                 });
                 assert.deepEqual(safePrismaErrorFields(error), {
                     prismaCode: "P2010",
-                    prismaMeta: { dbErrorCode: "42P01", dbErrorMessage: "relation [redacted] does not exist" },
+                    prismaMeta: {
+                        dbMetaKeys: ["code", "message"],
+                        dbErrorCode: "42P01",
+                        dbErrorMessage: "relation [redacted] does not exist",
+                    },
                 });
             });
 
@@ -87,7 +91,11 @@ describe("safePrismaErrorFields", () => {
                 });
                 assert.deepEqual(safePrismaErrorFields(error), {
                     prismaCode: "P2010",
-                    prismaMeta: { dbErrorCode: "42501", dbErrorMessage: "permission denied for table rate_limits" },
+                    prismaMeta: {
+                        dbMetaKeys: ["code", "message"],
+                        dbErrorCode: "42501",
+                        dbErrorMessage: "permission denied for table rate_limits",
+                    },
                 });
             });
 
@@ -104,7 +112,11 @@ describe("safePrismaErrorFields", () => {
                 assert.ok(!JSON.stringify(result).includes("myproject"));
                 assert.deepEqual(result, {
                     prismaCode: "P2010",
-                    prismaMeta: { dbErrorCode: "28P01", dbErrorMessage: "password authentication failed for user [redacted]" },
+                    prismaMeta: {
+                        dbMetaKeys: ["code", "message"],
+                        dbErrorCode: "28P01",
+                        dbErrorMessage: "password authentication failed for user [redacted]",
+                    },
                 });
             });
 
@@ -117,39 +129,77 @@ describe("safePrismaErrorFields", () => {
                 assert.equal(result.prismaMeta.dbErrorMessage.length, 200);
             });
 
-            test("no meta.message -> dbErrorCode only, no dbErrorMessage key", () => {
+            test("no meta.message -> dbErrorCode and dbMetaKeys, no dbErrorMessage key", () => {
                 const error = Object.assign(new Error("raw query failed"), {
                     code: "P2010",
                     meta: { code: "53300" },
                 });
                 assert.deepEqual(safePrismaErrorFields(error), {
                     prismaCode: "P2010",
-                    prismaMeta: { dbErrorCode: "53300" },
+                    prismaMeta: { dbMetaKeys: ["code"], dbErrorCode: "53300" },
                 });
             });
+        });
 
-            test("a meta.code that isn't SQLSTATE-shaped is dropped, not passed through", () => {
+        // Production has shown a P2010 that doesn't fit the confirmed shape above
+        // (no dbErrorCode came through). These document the fallback that exists
+        // specifically so an unanticipated shape is still visible in logs, never
+        // silently dropped - this is deliberately permissive, not a claim that
+        // any of these shapes is what production is actually producing.
+        describe("fallback for a P2010 whose meta doesn't fit the confirmed shape", () => {
+            test("a meta.code that isn't SQLSTATE-shaped is kept capped, as dbErrorCodeRaw, alongside the key list", () => {
                 const error = Object.assign(new Error("raw query failed"), {
                     code: "P2010",
-                    meta: { code: "some arbitrary driver text, not a SQLSTATE" },
+                    meta: { code: "some arbitrary driver text, not a SQLSTATE, that goes on for quite a while past the cap" },
                 });
-                assert.deepEqual(safePrismaErrorFields(error), { prismaCode: "P2010" });
+                const result = safePrismaErrorFields(error);
+                assert.equal(result.prismaMeta.dbErrorCodeRaw.length, 40);
+                assert.ok(!("dbErrorCode" in result.prismaMeta));
+                assert.deepEqual(result.prismaMeta.dbMetaKeys, ["code"]);
             });
-        });
 
-        test("a nested driverAdapterError.cause shape (not what this stack produces) is not specially unwrapped", () => {
-            const error = Object.assign(new Error("raw query failed"), {
-                code: "P2010",
-                meta: { driverAdapterError: { cause: { kind: "DatabaseAccessDenied", originalCode: "42501" } } },
+            test("a nested driverAdapterError.cause shape (no top-level meta.code) -> only the key list, no code/message extracted", () => {
+                const error = Object.assign(new Error("raw query failed"), {
+                    code: "P2010",
+                    meta: { driverAdapterError: { cause: { kind: "DatabaseAccessDenied", originalCode: "42501" } } },
+                });
+                assert.deepEqual(safePrismaErrorFields(error), {
+                    prismaCode: "P2010",
+                    prismaMeta: { dbMetaKeys: ["driverAdapterError"] },
+                });
             });
-            // No top-level meta.code here, so nothing is extracted - documents
-            // current behaviour rather than asserting this shape is real.
-            assert.deepEqual(safePrismaErrorFields(error), { prismaCode: "P2010" });
-        });
 
-        test("no meta at all -> just the code", () => {
-            const error = Object.assign(new Error("raw query failed"), { code: "P2010" });
-            assert.deepEqual(safePrismaErrorFields(error), { prismaCode: "P2010" });
+            test("meta is an empty object -> empty key list, nothing else", () => {
+                const error = Object.assign(new Error("raw query failed"), { code: "P2010", meta: {} });
+                assert.deepEqual(safePrismaErrorFields(error), {
+                    prismaCode: "P2010",
+                    prismaMeta: { dbMetaKeys: [] },
+                });
+            });
+
+            test("meta is missing entirely -> dbMetaShape records that, not silently nothing", () => {
+                const error = Object.assign(new Error("raw query failed"), { code: "P2010" });
+                assert.deepEqual(safePrismaErrorFields(error), {
+                    prismaCode: "P2010",
+                    prismaMeta: { dbMetaShape: "undefined" },
+                });
+            });
+
+            test("meta is null -> dbMetaShape records that distinctly from undefined", () => {
+                const error = Object.assign(new Error("raw query failed"), { code: "P2010", meta: null });
+                assert.deepEqual(safePrismaErrorFields(error), {
+                    prismaCode: "P2010",
+                    prismaMeta: { dbMetaShape: "null" },
+                });
+            });
+
+            test("meta is a non-object (e.g. a string) -> dbMetaShape records the type, no crash", () => {
+                const error = Object.assign(new Error("raw query failed"), { code: "P2010", meta: "unexpected" });
+                assert.deepEqual(safePrismaErrorFields(error), {
+                    prismaCode: "P2010",
+                    prismaMeta: { dbMetaShape: "string" },
+                });
+            });
         });
 
         test("a bare 'code' key in meta is only trusted for P2010, not other codes", () => {

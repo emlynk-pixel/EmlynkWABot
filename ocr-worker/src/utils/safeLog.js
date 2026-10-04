@@ -58,7 +58,9 @@ function isSafePrismaMetaValue(value) {
 // https://www.postgresql.org/docs/current/errcodes-appendix.html) - a
 // category label, never a value, so it's safe to log. `meta.message` is not:
 // for a raw query it can quote the failing SQL text or values, so it is
-// never read here.
+// passed through `safeErrorText` (the same redaction/truncation used
+// everywhere else in this file) before being kept, as `dbErrorMessage`,
+// rather than dropped outright.
 //
 // Confirmed shape: reproduced locally against this project's exact stack
 // (PrismaClient 6.19.3 + `@prisma/adapter-pg`, config/prisma.js) by forcing
@@ -76,13 +78,38 @@ function isSafePrismaMetaValue(value) {
 // Kept separate from the generic allowlist above (and from the outer
 // `prismaCode`) so a future code reusing a "code" key in `.meta` for
 // something else isn't trusted by accident.
+//
+// Production has shown a P2010 whose `.meta` doesn't fit the confirmed shape
+// above (no `dbErrorCode`/`dbErrorMessage` came through at all), so this also
+// reports the shape itself - `meta`'s own key names (never their values,
+// except the capped fallback below) - so the next occurrence says which
+// assumption was wrong instead of silently producing nothing again.
 const SQLSTATE_PATTERN = /^[0-9A-Z]{5}$/;
+const MAX_RAW_CODE_LENGTH = 40;
 
 function safeRawQueryMeta(meta) {
-    if (meta && typeof meta.code === "string" && SQLSTATE_PATTERN.test(meta.code)) {
-        return { dbErrorCode: meta.code };
+    if (meta === null || meta === undefined) {
+        return { dbMetaShape: meta === null ? "null" : "undefined" };
     }
-    return null;
+    if (typeof meta !== "object") {
+        return { dbMetaShape: typeof meta };
+    }
+
+    const out = { dbMetaKeys: Object.keys(meta) };
+    if (typeof meta.code === "string") {
+        if (SQLSTATE_PATTERN.test(meta.code)) {
+            out.dbErrorCode = meta.code;
+        } else {
+            // Not SQLSTATE-shaped (5 upper-case/digit chars) - still just a
+            // short driver/category code, not a value, so safe to log
+            // capped, to see what shape it actually is.
+            out.dbErrorCodeRaw = meta.code.slice(0, MAX_RAW_CODE_LENGTH);
+        }
+    }
+    if (typeof meta.message === "string") {
+        out.dbErrorMessage = safeErrorText(meta.message);
+    }
+    return out;
 }
 
 // Duck-typed on `.code` matching Prisma's "P" + 4 digits format, so this
@@ -94,14 +121,17 @@ export function safePrismaErrorFields(error) {
     }
 
     const meta = {};
-    if (error.meta && typeof error.meta === "object") {
+    if (error.code === "P2010") {
+        // Unlike every other code below, checked unconditionally (even when
+        // `error.meta` itself is missing/not an object) - that shape mismatch
+        // is exactly what production has been hitting, and is itself useful
+        // to see rather than silently producing no diagnostic fields at all.
+        Object.assign(meta, safeRawQueryMeta(error.meta));
+    } else if (error.meta && typeof error.meta === "object") {
         for (const key of SAFE_PRISMA_META_KEYS) {
             if (key in error.meta && isSafePrismaMetaValue(error.meta[key])) {
                 meta[key] = error.meta[key];
             }
-        }
-        if (error.code === "P2010") {
-            Object.assign(meta, safeRawQueryMeta(error.meta));
         }
     }
 
