@@ -76,25 +76,16 @@ export async function apiRequest<T>(path: string, { method = "GET", body, signal
     return (await response.json()) as T;
 }
 
-// Same rules as apiRequest, for a file upload: the file is the raw request
-// body with its own type; its name travels URI-encoded in X-File-Name.
-export async function apiUpload<T>(path: string, file: File, { token }: Pick<RequestOptions, "token"> = {}): Promise<T> {
-    const headers: Record<string, string> = {
-        Accept: "application/json",
-        "Content-Type": file.type || "application/octet-stream",
-        "X-File-Name": encodeURIComponent(file.name),
-    };
-    const explicitToken = token && token !== "session" && token !== "cookie" ? token : null;
-    const effectiveToken = explicitToken ?? readToken();
-    if (effectiveToken) {
-        headers["Authorization"] = `Bearer ${effectiveToken}`;
-    }
-
+// A file sent straight to storage, to a signed upload URL the API issued for
+// one object. The URL carries its own token, so no admin token or cookie is
+// sent (the request leaves this origin), and the file never passes through
+// the API.
+export async function uploadToSignedUrl(url: string, file: File): Promise<void> {
     let response: Response;
     try {
-        response = await fetch(path, { method: "POST", headers, body: file, credentials: "include", cache: "no-store" });
+        response = await fetch(url, { method: "PUT", headers: { "Content-Type": file.type }, body: file, credentials: "omit", cache: "no-store" });
     } catch {
-        throw new ApiError(0, "Cannot reach the server. Check your connection and try again.");
+        throw new ApiError(0, "The file could not be uploaded. Check your connection and try again.");
     }
     if (!response.ok) {
         const data = await readErrorData(response);
@@ -103,7 +94,6 @@ export async function apiUpload<T>(path: string, file: File, { token }: Pick<Req
             : response.status >= 500 && response.status !== 502 ? FALLBACK_MESSAGE : data.message ?? FALLBACK_MESSAGE;
         throw new ApiError(response.status, message, data.resetTime ? new Date(data.resetTime) : undefined);
     }
-    return (await response.json()) as T;
 }
 
 // Same rules as apiRequest, for a binary response (the review file preview).

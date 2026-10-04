@@ -28,3 +28,5 @@ admin/dist/
 
 # Local reference screenshots, not part of the app
 /UI/
+.vercel
+.env*

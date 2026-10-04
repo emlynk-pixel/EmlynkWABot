@@ -271,33 +271,48 @@ Normal pagination is unaffected: rows from the previous page remain visible whil
 | Passport, NIC, Medical, Police Report, Agreement, Affidavit | `image/jpeg`, `image/png`, `application/pdf` |
 | Skill video | `video/mp4`, `video/quicktime`, `video/webm` |
 
-The size limit is **50 MB** for all types (enforced by both the Express route and the Supabase bucket).
+Size limits: **50 MB** for a skill video, **10 MB** for every other document. They are checked when the upload is requested, again on the stored file, and by the Supabase bucket (its file size limit must be at least 50 MB).
 
-**Production note:** For skill video uploads to work in production, the Supabase bucket's **Allowed MIME types** setting must include `video/mp4`, `video/quicktime`, and `video/webm`. This is configured in the Supabase Dashboard under **Storage → Bucket Settings**, not in the source code.
+**Production note:** the Supabase bucket must stay private, and its **Allowed MIME types** must include the six types above (`video/mp4`, `video/quicktime`, `video/webm` for skill videos). This is set in the Supabase Dashboard under **Storage → Bucket Settings**, not in the source code.
 
-### Versioning
+### Upload flow (browser → Supabase, never through the API)
 
-Uploading a new file of a document type that already has a `VERIFIED` document:
+The file goes straight from the admin's browser to Supabase Storage; the API only receives two small JSON requests. On Vercel this keeps large files (videos) clear of the request body limit.
 
 ```mermaid
 sequenceDiagram
-    participant Admin
+    participant Admin as Admin's browser
     participant Server
     participant Storage as Supabase Bucket
     participant Database
 
-    Admin->>Server: POST /documents?type=...
-    Server->>Storage: Upload new file
-    Server->>Database: Update previous VERIFIED document to SUPERSEDED
-    Server->>Database: Insert new file as VERIFIED
-    Server->>Database: Append action to audit_logs
-    Server-->>Admin: 200 OK (Updated Candidate Details)
+    Admin->>Server: POST /documents/upload-target { type, variant, mimeType, fileSize }
+    Server-->>Admin: { uploadId, uploadUrl } (signed URL for one staged object, 2 hours)
+    Admin->>Storage: PUT the file to uploadUrl
+    Admin->>Server: POST /documents/finalize { uploadId, type, variant, mimeType, fileName }
+    Server->>Storage: Read the staged file back, check type, size, content and duplicates
+    Server->>Storage: Move it to the standard name (medical.pdf, medical_v2.pdf, ...)
+    Server->>Database: Previous VERIFIED document of the type -> SUPERSEDED
+    Server->>Database: Insert the new document as VERIFIED, append to audit_logs
+    Server-->>Admin: 200 OK (updated candidate details)
 ```
 
-- The new file becomes `VERIFIED`.
-- The previous `VERIFIED` file is set to `SUPERSEDED` (it is not deleted from storage).
+- The new file becomes `VERIFIED`; the previous `VERIFIED` file becomes `SUPERSEDED` (kept, not deleted) — the same rule as WhatsApp-submitted documents (`clientDocumentService.js`).
+- A refused file (wrong type, too large, duplicate) is removed from storage and nothing is recorded.
+- An upload never finalized (tab closed mid-way) stays as `upload_<uuid>` and is removed the next time that document type is uploaded for the candidate, once it is over an hour old.
+- An upload or replacement is saved as soon as it finishes; the document row then shows **Saved**. **Save changes** is only for the form's fields.
 
-This is the same behaviour as WhatsApp-submitted documents (`clientDocumentService.js`).
+### Removing a document
+
+**Remove** (on a document row with a stored file; admins and reviewers) permanently deletes the candidate's current document of that type: its `documents` row and its file in storage.
+
+- A reason is required; the removal is written to `audit_logs` (`REMOVE_DOCUMENT`, previous status, reason, type, checksum) and the entry is kept after the document is gone.
+- Only the current document can be removed. Earlier versions (`SUPERSEDED`) stay as history, and the slot is left empty, not rolled back to the previous version.
+- The file is kept if another record still points at it.
+- Stage completion follows: removing the passport makes Candidate details incomplete again.
+- The same file can be uploaded again afterwards.
+
+This is one of two places that delete documents; the other is Remove from Review. A guard test (`test/adminReviewRemoveStored.test.js`) fails if any other code deletes a document.
 
 ### Document variants
 
@@ -320,7 +335,9 @@ All routes are mounted under `/api/admin/candidates` by `src/routes/admin.js`.
 | `GET` | `/candidates/:passportId` | All active admins | Get a single candidate (also used for the registration lookup) |
 | `PUT` | `/candidates/:passportId` | Reviewer+ | Update candidate details |
 | `PUT` | `/candidates/:passportId/stages/:stage` | Reviewer+ | Update a stage (notes, completed) |
-| `POST` | `/candidates/:passportId/documents` | Reviewer+ | Upload a document (raw body, `Content-Type` is the MIME type) |
+| `POST` | `/candidates/:passportId/documents/upload-target` | Reviewer+ | Check a file's description; returns a signed upload URL (JSON only) |
+| `POST` | `/candidates/:passportId/documents/finalize` | Reviewer+ | Check the uploaded file and record it (JSON only) |
+| `POST` | `/candidates/:passportId/documents/:documentId/remove` | Reviewer+ | Delete the current document and its file; `{ reason }` required |
 | `GET` | `/candidates/:passportId/call-logs` | All active admins | List call log entries |
 | `POST` | `/candidates/:passportId/call-logs` | Reviewer+ | Add a call log entry |
 
@@ -331,11 +348,18 @@ All routes are mounted under `/api/admin/candidates` by `src/routes/admin.js`.
 | Code | HTTP | Meaning |
 |---|---|---|
 | `NOT_FOUND` | 404 | Passport ID does not exist |
-| `ALREADY_EXISTS` | 409 | Passport ID is already registered |
+| `CANDIDATE_EXISTS` | 409 | Passport ID is already registered |
 | `NIC_EXISTS` | 409 | NIC is already in use by another candidate |
 | `WHATSAPP_EXISTS` | 409 | WhatsApp number is already registered to another candidate |
-| `INVALID_STAGE` | 400 | Unknown stage key |
-| `UPLOAD_FAILED` | 500 | Storage copy failed |
+| `WHATSAPP_LOCKED` | 409 | A different WhatsApp number was sent for a candidate who already has one |
+| `AUTOMATIC_STAGE` | 409 | Completion was set by hand on a stage completed by its data (Candidate details, Document submission) |
+| `FILE_REJECTED` | 422 | Wrong file type, empty, too large, or content not matching its type |
+| `DUPLICATE_FILE` | 409 | This exact file is already stored for the candidate |
+| `UPLOAD_NOT_FOUND` | 404 | Finalize found no uploaded file for that upload ID, candidate and type |
+| `DOCUMENT_NOT_FOUND` | 404 | Remove: not the candidate's current document (already removed or replaced) |
+| `TRY_AGAIN` | 503 | Registration could not get a free unique ID; retry |
+
+An unknown stage key returns 404 `Stage not found`; malformed input returns 400 with `errors`.
 
 ### Query parameters — `GET /candidates`
 
@@ -345,14 +369,15 @@ All routes are mounted under `/api/admin/candidates` by `src/routes/admin.js`.
 | `pageSize` | integer | 25 | Results per page |
 | `search` | string | — | Search by name, passport ID, NIC, WhatsApp number |
 
-### Upload headers
+### Upload request bodies
 
-| Header | Value |
+No route accepts a file body; both upload requests are small JSON.
+
+| Request | Body |
 |---|---|
-| `Content-Type` | MIME type of the file (`image/jpeg`, `video/mp4`, etc.) |
-| `X-File-Name` | URI-encoded original file name |
-
-Query parameters: `type=<DOCUMENT_TYPE>`, optionally `variant=<VARIANT>`.
+| `upload-target` | `{ type, variant?, mimeType, fileSize, fileName? }` (`variant` required for Police Report and Affidavit) |
+| `finalize` | `{ uploadId, type, variant?, mimeType, fileName? }` (`uploadId` from `upload-target`) |
+| `remove` | `{ reason }` (1–500 characters) |
 
 ---
 

@@ -265,6 +265,12 @@ model CandidateStage {
   completedAt DateTime? @map("completed_at")
   notes       String?
   updatedAt   DateTime  @updatedAt @map("updated_at")
+  // TEST_DETAILS only (null on the other stages): the job ID the admin
+  // enters, the test's result (PASS or FAIL) and the date the candidate
+  // actually sat it. Null until recorded.
+  jobId       String?   @map("job_id")
+  testResult  String?   @map("test_result")
+  testDate    DateTime? @map("test_date") @db.Date
 
   user User @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
 
@@ -277,7 +283,9 @@ model CandidateCallLog {
   callLogId   String   @id @map("call_log_id")
   passportId  String   @map("passport_id")
   adminId     String   @map("admin_id")
+  // What the candidate said (a short note).
   note        String
+  // When the call took place: the date and time the admin entered, or now.
   createdDate DateTime @default(now()) @map("created_date")
 
   user  User  @relation(fields: [passportId], references: [passportId], onDelete: Cascade)

@@ -203,4 +203,37 @@ describe("errorHandler with other errors", () => {
             server.close();
         }
     });
+
+    // Mirrors how a real P2010 reaches this handler in production: the login
+    // and forgot-password rate limiters run as middleware, before the route
+    // handler's own try/catch, so a failing $queryRaw in
+    // postgresRateLimitStore.js surfaces here, not in src/routes/auth.js.
+    test("a raw-query Prisma error (P2010) from middleware -> still a generic 500, log gains the SQLSTATE", async () => {
+        const error = Object.assign(new Error("Raw query failed. Code: `42501`. Message: `permission denied for table rate_limits`"), {
+            name: "PrismaClientKnownRequestError",
+            code: "P2010",
+            meta: { code: "42501", message: "permission denied for table rate_limits" },
+        });
+        const { server, baseUrl } = await startServer(appThatThrows(error));
+
+        try {
+            const response = await fetch(`${baseUrl}/boom`);
+            const text = await response.text();
+
+            assert.equal(response.status, 500);
+            assert.deepEqual(JSON.parse(text), { message: "Internal server error" });
+            assert.ok(!text.includes("permission denied"));
+
+            assert.equal(logged.length, 1);
+            const [label, details] = logged[0];
+            assert.equal(label, "Request failed:");
+            assert.equal(details.prismaCode, "P2010");
+            assert.deepEqual(details.prismaMeta, { dbErrorCode: "42501" });
+
+            const serialized = JSON.stringify(logged);
+            assert.ok(!serialized.includes("permission denied"), "the driver message must never be logged");
+        } finally {
+            server.close();
+        }
+    });
 });

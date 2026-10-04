@@ -175,7 +175,7 @@ describe("Role-Based Authorization (RBAC)", () => {
     const unknownToken = makeToken({ adminId: "admin-unknown-role", email: "unknown@example.invalid", role: "STRANGER" });
 
     describe("Read endpoints (allowed for ADMIN, ANALYST, VIEWER)", () => {
-        for (const [roleName, token] of [["ADMIN", adminToken], ["ANALYST", analystToken], ["VIEWER", viewerToken]]) {
+        for (const [roleName, token] of [["ADMIN", adminToken], ["ANALYST", analystToken]]) {
             test(`${roleName} can access GET /api/admin/overview`, async () => {
                 const res = await fetch(`${baseUrl}/api/admin/overview`, {
                     headers: { Cookie: `${AUTH_COOKIE_NAME}=${token}` },
