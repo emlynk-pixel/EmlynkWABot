@@ -51,22 +51,27 @@ function isSafePrismaMetaValue(value) {
 }
 
 // P2010 ("raw query failed", e.g. from $queryRaw/$executeRaw) carries the
-// underlying driver failure instead of the schema-name keys above. The shape
-// depends on which Prisma engine produced it:
+// underlying driver failure instead of the schema-name keys above, as
+// `meta.code` + `meta.message`. `meta.code` is the driver/Postgres SQLSTATE
+// (a fixed 5-character code such as "42501" permission denied or "42P01"
+// relation does not exist, see
+// https://www.postgresql.org/docs/current/errcodes-appendix.html) - a
+// category label, never a value, so it's safe to log. `meta.message` is not:
+// for a raw query it can quote the failing SQL text or values, so it is
+// never read here.
 //
-// - `@prisma/adapter-pg` (driver adapters - what this project's PrismaClient
-//   uses, see config/prisma.js): `meta.driverAdapterError.cause` is an object
-//   with `kind` (a fixed label such as "TableDoesNotExist",
-//   "DatabaseAccessDenied", or the generic "postgres" - never a value, always
-//   one of a known set) and `originalCode`, the Postgres SQLSTATE (a fixed
-//   5-character code such as "42501" permission denied or "08006" connection
-//   failure, see https://www.postgresql.org/docs/current/errcodes-appendix.html).
-//   Both are category labels, safe to log. `cause.originalMessage` is not:
-//   for a raw query it can quote the failing SQL text or values, so it is
-//   never read here.
-// - The legacy/binary query engine shape: `meta.code` + `meta.message`
-//   directly, with the same SQLSTATE/unsafe-message split. Kept for safety
-//   even though this project's client doesn't use that engine.
+// Confirmed shape: reproduced locally against this project's exact stack
+// (PrismaClient 6.19.3 + `@prisma/adapter-pg`, config/prisma.js) by forcing
+// a `$queryRaw`/`$executeRaw` call to fail against a stubbed `pg.Pool`. The
+// resulting `PrismaClientKnownRequestError` is `{ code: "P2010", meta: {
+// code: "<SQLSTATE>", message: "<driver message>" } }` - Prisma normalizes
+// driver-adapter raw-query failures back to this flat shape for backward
+// compatibility with the classic query engine's public contract, even
+// though internally (see @prisma/adapter-pg's `convertDriverError`) the
+// error is first mapped into a richer `{ kind, originalCode,
+// originalMessage }` object. That richer shape is not what reaches
+// application code through the public `.meta` property and is not read
+// here.
 //
 // Kept separate from the generic allowlist above (and from the outer
 // `prismaCode`) so a future code reusing a "code" key in `.meta` for
@@ -74,18 +79,6 @@ function isSafePrismaMetaValue(value) {
 const SQLSTATE_PATTERN = /^[0-9A-Z]{5}$/;
 
 function safeRawQueryMeta(meta) {
-    const driverCause = meta?.driverAdapterError?.cause;
-    if (driverCause && typeof driverCause === "object") {
-        const out = {};
-        if (typeof driverCause.kind === "string") {
-            out.dbErrorKind = driverCause.kind;
-        }
-        if (typeof driverCause.originalCode === "string" && SQLSTATE_PATTERN.test(driverCause.originalCode)) {
-            out.dbErrorCode = driverCause.originalCode;
-        }
-        return Object.keys(out).length > 0 ? out : null;
-    }
-
     if (meta && typeof meta.code === "string" && SQLSTATE_PATTERN.test(meta.code)) {
         return { dbErrorCode: meta.code };
     }

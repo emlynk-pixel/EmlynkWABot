@@ -47,8 +47,8 @@ describe("PostgreSQL rate-limit store: cost and shape (no database)", () => {
 
         for (let i = 0; i < 10; i++) await store.increment("client");
 
-        const upserts = db.calls.filter((s) => s.startsWith("INSERT INTO \"rate_limits\""));
-        const cleanups = db.calls.filter((s) => s.startsWith("DELETE FROM \"rate_limits\" WHERE \"reset_at\""));
+        const upserts = db.calls.filter((s) => s.startsWith("INSERT INTO \"public\".\"rate_limits\""));
+        const cleanups = db.calls.filter((s) => s.startsWith("DELETE FROM \"public\".\"rate_limits\" WHERE \"reset_at\""));
         assert.equal(upserts.length, 10);
         assert.equal(cleanups.length, 1, "cleanup ran once, not per request");
         assert.equal(db.calls.length, 11, "no other queries");

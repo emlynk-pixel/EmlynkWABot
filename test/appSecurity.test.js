@@ -66,6 +66,14 @@ describe("startup environment check (SEC-019)", () => {
         }
     });
 
+    test("TRUST_PROXY_HOPS: on Vercel (VERCEL=1), unset defaults to exactly 1 hop, never true", () => {
+        assert.equal(trustProxyHops(undefined, true), 1);
+        assert.equal(trustProxyHops("", true), 1);
+        // An explicit value still wins over the Vercel default in either direction.
+        assert.equal(trustProxyHops("2", true), 2);
+        assert.equal(trustProxyHops(undefined, false), null);
+    });
+
     test("the server exits at startup, naming only the missing variables", () => {
         const appPath = fileURLToPath(new URL("../src/app.js", import.meta.url));
         const env = { ...process.env, ...VALID_ENV, DOTENV_CONFIG_PATH: "does-not-exist.env", DOTENV_CONFIG_QUIET: "true" };

@@ -56,73 +56,30 @@ describe("safePrismaErrorFields", () => {
     });
 
     describe("P2010 (raw query failed, e.g. $queryRaw/$executeRaw)", () => {
-        describe("@prisma/adapter-pg shape (this project's PrismaClient, see config/prisma.js)", () => {
-            test("driverAdapterError.cause.{kind,originalCode} are kept as dbErrorKind/dbErrorCode", () => {
-                const error = Object.assign(new Error("raw query failed"), {
+        describe("confirmed shape for this project's stack (PrismaClient 6.19.3 + @prisma/adapter-pg)", () => {
+            // Reproduced locally: a `$queryRaw`/`$executeRaw` tagged-template call
+            // against a stubbed `pg.Pool` that rejects with a duck-typed Postgres
+            // driver error ({ code: "42P01", severity: "ERROR", message: ... },
+            // matching node-postgres's own error shape) surfaces to application
+            // code as exactly this - a flat `meta.code`/`meta.message`, not the
+            // richer internal `{ driverAdapterError: { cause: { kind,
+            // originalCode, originalMessage } } }` shape the adapter uses
+            // internally. Prisma normalizes it back to the flat shape for
+            // backward compatibility with the classic query engine's public
+            // `.meta` contract.
+            test("a captured real error: relation does not exist (42P01)", () => {
+                const error = Object.assign(new Error('relation "rate_limits" does not exist'), {
                     code: "P2010",
-                    meta: {
-                        driverAdapterError: {
-                            cause: {
-                                kind: "DatabaseAccessDenied",
-                                originalCode: "42501",
-                                originalMessage: "permission denied for table rate_limits",
-                            },
-                        },
-                    },
+                    meta: { code: "42P01", message: 'relation "rate_limits" does not exist' },
+                    clientVersion: "6.19.3",
+                    name: "PrismaClientKnownRequestError",
                 });
                 assert.deepEqual(safePrismaErrorFields(error), {
                     prismaCode: "P2010",
-                    prismaMeta: { dbErrorKind: "DatabaseAccessDenied", dbErrorCode: "42501" },
+                    prismaMeta: { dbErrorCode: "42P01" },
                 });
             });
 
-            test("cause.originalMessage (can quote the failing SQL/values) is never returned", () => {
-                const error = Object.assign(new Error("raw query failed"), {
-                    code: "P2010",
-                    meta: {
-                        driverAdapterError: {
-                            cause: {
-                                kind: "postgres",
-                                originalCode: "08006",
-                                originalMessage: "connection to server at \"db.internal\" failed: password=hunter2",
-                            },
-                        },
-                    },
-                });
-                const result = safePrismaErrorFields(error);
-                assert.ok(!JSON.stringify(result).includes("hunter2"));
-                assert.ok(!JSON.stringify(result).includes("db.internal"));
-                assert.deepEqual(result, {
-                    prismaCode: "P2010",
-                    prismaMeta: { dbErrorKind: "postgres", dbErrorCode: "08006" },
-                });
-            });
-
-            test("an originalCode that isn't SQLSTATE-shaped is dropped, kind is kept", () => {
-                const error = Object.assign(new Error("raw query failed"), {
-                    code: "P2010",
-                    meta: {
-                        driverAdapterError: {
-                            cause: { kind: "TableDoesNotExist", originalCode: "not a sqlstate" },
-                        },
-                    },
-                });
-                assert.deepEqual(safePrismaErrorFields(error), {
-                    prismaCode: "P2010",
-                    prismaMeta: { dbErrorKind: "TableDoesNotExist" },
-                });
-            });
-
-            test("a non-string kind and non-SQLSTATE originalCode -> no meta kept", () => {
-                const error = Object.assign(new Error("raw query failed"), {
-                    code: "P2010",
-                    meta: { driverAdapterError: { cause: { kind: 123, originalCode: "nope" } } },
-                });
-                assert.deepEqual(safePrismaErrorFields(error), { prismaCode: "P2010" });
-            });
-        });
-
-        describe("legacy binary-engine shape (kept for safety; not used by this project's client)", () => {
             test("a SQLSTATE-shaped meta.code is kept as dbErrorCode", () => {
                 const error = Object.assign(new Error("raw query failed"), {
                     code: "P2010",
@@ -152,6 +109,16 @@ describe("safePrismaErrorFields", () => {
                 });
                 assert.deepEqual(safePrismaErrorFields(error), { prismaCode: "P2010" });
             });
+        });
+
+        test("a nested driverAdapterError.cause shape (not what this stack produces) is not specially unwrapped", () => {
+            const error = Object.assign(new Error("raw query failed"), {
+                code: "P2010",
+                meta: { driverAdapterError: { cause: { kind: "DatabaseAccessDenied", originalCode: "42501" } } },
+            });
+            // No top-level meta.code here, so nothing is extracted - documents
+            // current behaviour rather than asserting this shape is real.
+            assert.deepEqual(safePrismaErrorFields(error), { prismaCode: "P2010" });
         });
 
         test("no meta at all -> just the code", () => {
