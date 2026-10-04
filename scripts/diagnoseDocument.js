@@ -5,13 +5,13 @@
 //
 // Prints counts, confidence, indicator IDs and which known vocabulary words
 // OCR recognized. It never prints document text, and a file downloaded from
-// Supabase stays in memory only.
+// Supabase stays in memory only. Runs the OCR service's code in this process,
+// so it needs that service's dependencies: npm run ocr:install.
 import "dotenv/config";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { createWorker } from "tesseract.js";
 
-import { extractDocumentText, OCR_THRESHOLDING, recognizeImage } from "../src/services/ocrService.js";
+import { createEnglishWorker, extractDocumentText, OCR_THRESHOLDING, recognizeImage } from "../ocr-worker/src/ocrService.js";
 import { describeTextForDiagnostics } from "../src/utils/ocrDiagnostics.js";
 
 const MIME_BY_EXTENSION = { ".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png" };
@@ -36,7 +36,7 @@ async function loadInput(args) {
 // Compare OCR settings on an image: the old default, each setting on its
 // own, and the production behaviour (default read, then alternatives if weak).
 async function compareImageSettings(buffer) {
-    const worker = await createWorker("eng");
+    const worker = await createEnglishWorker();
     const rows = [];
 
     try {

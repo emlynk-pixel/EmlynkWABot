@@ -1,6 +1,9 @@
 import { Route, Routes } from "react-router";
 import { RequireAuth } from "./auth/RequireAuth";
 import { AdminLayout } from "./layout/AdminLayout";
+import { CandidateDeploymentPage } from "./pages/CandidateDeploymentPage";
+import { CandidateRegistrationPage } from "./pages/CandidateRegistrationPage";
+import { CandidatesPage } from "./pages/CandidatesPage";
 import { ClientDetailsPage } from "./pages/ClientDetailsPage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { DailyReportPage } from "./pages/DailyReportPage";
@@ -39,6 +42,11 @@ export function AppRoutes() {
                 <Route path="documents" element={<DocumentsPage />} />
                 <Route path="review" element={<ReviewQueuePage />} />
                 <Route path="review/:id" element={<ReviewDetailPage />} />
+                <Route path="candidates" element={<CandidatesPage />} />
+                <Route path="candidates/new" element={<CandidateRegistrationPage />} />
+                <Route path="candidates/:passportId" element={<CandidateDeploymentPage />} />
+                {/* No longer in the sidebar (Candidates replaces it); kept for the
+                    Overview completeness links and the client-details breadcrumb. */}
                 <Route path="clients" element={<ClientsPage />} />
                 <Route path="clients/:passportId" element={<ClientDetailsPage />} />
                 <Route path="missing-documents" element={<MissingDocumentsPage />} />

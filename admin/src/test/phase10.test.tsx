@@ -217,9 +217,9 @@ describe("Client Details: police slip date", () => {
         expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
     });
 
-    test("REVIEWER cannot see the set-date button (requires ADMIN)", async () => {
+    test("ANALYST cannot see the set-date button (requires ADMIN)", async () => {
         signedInBackend({
-            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "REVIEWER" } } },
+            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "ANALYST" } } },
             "GET /api/admin/clients/N1234567": { status: 200, body: WITH_SLIP },
         });
         renderApp("/clients/N1234567");

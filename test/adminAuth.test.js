@@ -30,7 +30,7 @@ before(async () => {
     app.use(express.json());
     // Rate limiting has its own tests (loginRateLimit.test.js); here it would
     // block the many deliberate failures these login-logic tests make.
-    app.use("/auth", createAuthRouter({ db, loginLimiter: noRateLimit }));
+    app.use("/auth", createAuthRouter({ db, loginLimiter: noRateLimit, apiLimiter: noRateLimit }));
     app.use(errorHandler);
 
     await new Promise((resolve) => {
@@ -353,5 +353,61 @@ describe("admin token checks (SEC-022)", () => {
         const bad = await getProfile(expired);
         assert.deepEqual(bad.body, { message: "Invalid or Expired Token" });
         assert.doesNotMatch(bad.text, /jwt|expired at|signature|malformed/i);
+    });
+});
+
+describe("POST /auth/login: Prisma error diagnostics", () => {
+    // A schema-mismatch error (table/column missing in the live database),
+    // shaped like a real PrismaClientKnownRequestError, thrown from the one
+    // query the login handler itself makes.
+    test("db.admin.findUnique throwing a Prisma error -> still a generic 500, but the log carries the code and safe meta", async () => {
+        const realFindUnique = db.admin.findUnique;
+        db.admin.findUnique = async () => {
+            throw Object.assign(new Error('The table `public.admins` does not exist in the current database.'), {
+                code: "P2021",
+                meta: { table: "public.admins" },
+            });
+        };
+
+        try {
+            const result = await login("active@example.invalid", PASSWORD);
+
+            assert.equal(result.status, 500);
+            assert.deepEqual(result.body, { message: "Internal server error" });
+            assert.ok(!result.text.includes("does not exist"), "raw Prisma message must not reach the client");
+
+            assert.equal(logged.length, 1);
+            const [label, details] = logged[0];
+            assert.equal(label, "Login error:");
+            assert.deepEqual(details, {
+                errorType: "Error",
+                prismaCode: "P2021",
+                prismaMeta: { table: "public.admins" },
+            });
+
+            const serialized = JSON.stringify(logged);
+            assert.ok(!serialized.includes("does not exist"), "raw Prisma message must never be logged");
+            assert.ok(!serialized.includes("active@example.invalid"), "the attempted email must never be logged");
+        } finally {
+            db.admin.findUnique = realFindUnique;
+        }
+    });
+
+    test("a non-Prisma error during login logs no code/meta fields (shape unchanged)", async () => {
+        const realFindUnique = db.admin.findUnique;
+        db.admin.findUnique = async () => {
+            throw new Error("boom");
+        };
+
+        try {
+            const result = await login("active@example.invalid", PASSWORD);
+            assert.equal(result.status, 500);
+
+            assert.equal(logged.length, 1);
+            const [, details] = logged[0];
+            assert.deepEqual(details, { errorType: "Error" });
+        } finally {
+            db.admin.findUnique = realFindUnique;
+        }
     });
 });

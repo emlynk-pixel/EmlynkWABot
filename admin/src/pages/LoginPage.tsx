@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate, type Location } from "react-router";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
@@ -26,6 +26,26 @@ export function LoginPage() {
     const [showPassword, setShowPassword] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [resetTime, setResetTime] = useState<Date | null>(null);
+    const [countdown, setCountdown] = useState<number | null>(null);
+
+    useEffect(() => {
+        if (!resetTime) {
+            setCountdown(null);
+            return;
+        }
+        const update = () => {
+            const left = Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000));
+            setCountdown(left);
+            if (left <= 0) {
+                setResetTime(null);
+                setError(null);
+            }
+        };
+        update();
+        const id = setInterval(update, 1000);
+        return () => clearInterval(id);
+    }, [resetTime]);
 
     if (status === "authenticated") {
         return <Navigate to={returnPath(location.state)} replace />;
@@ -47,6 +67,11 @@ export function LoginPage() {
             navigate(returnPath(location.state), { replace: true });
         } catch (caught) {
             setError(caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
+            if (caught instanceof ApiError && caught.resetTime) {
+                setResetTime(caught.resetTime);
+            } else {
+                setResetTime(null);
+            }
             setPassword("");
         } finally {
             setSubmitting(false);
@@ -72,9 +97,16 @@ export function LoginPage() {
                     <p className="mt-1 text-body-sm text-ink-muted">Use your administrator account.</p>
 
                     {error && (
-                        <div role="alert" className="mt-4 flex items-start gap-2 rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">
-                            <Icon name="error" className="mt-px size-4" />
-                            <span>{error}</span>
+                        <div role="alert" className="mt-4 flex flex-col gap-1 rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">
+                            <div className="flex items-start gap-2">
+                                <Icon name="error" className="mt-px size-4 shrink-0" />
+                                <span>{error}</span>
+                            </div>
+                            {countdown !== null && countdown > 0 && (
+                                <p className="pl-6 font-medium">
+                                    Please try again in {Math.floor(countdown / 60)}m {String(countdown % 60).padStart(2, '0')}s
+                                </p>
+                            )}
                         </div>
                     )}
 

@@ -27,6 +27,7 @@ model Admin {
   auditLogs       AuditLog[]
   invitationsSent AdminInvitation[] @relation("AdminInvitations")
   passwordResets  AdminPasswordReset[]
+  callLogs        CandidateCallLog[]
 
   @@map("admins")
 }
@@ -122,14 +123,34 @@ model User {
   placeOfBirth       String?         @map("place_of_birth")
   passportExpiryDate DateTime?       @map("passport_expiry_date")
   picture            String?
+  // A partial unique index on this column (not expressible in Prisma's
+  // schema DSL — a WHERE-conditioned unique index) is defined directly in
+  // SQL by migration 20261001140000_whatsapp_unique_constraint. Do not add
+  // @unique here: that would create a second, unconditional index rather
+  // than represent the real constraint. Maintain the real one through a SQL
+  // migration, not this field.
   whatsappNumber     String?         @map("whatsapp_number")
   contactNumber      String?         @map("contact_number")
   address            String?
+  // Job types: a comma-separated list ("Construction Worker, Caregiver").
+  // Older records hold a single value, which reads as a list of one.
   job                String?
   createdDate        DateTime        @default(now()) @map("created_date")
   updatedDate        DateTime        @updatedAt @map("updated_date")
   documents          Document[]
   temporaryData      TemporaryData[]
+
+  // Candidate deployment (candidateService.js). NIC is unique, so the same
+  // person can't be registered twice under two passport records.
+  nic                String?            @unique
+  jobExperience      String?            @map("job_experience")
+  // Optional passport details with no earlier column (the passport OCR reads
+  // date of birth, place of birth and expiry only). sex: M, F or X.
+  nationality        String?
+  sex                String?
+  passportIssueDate  DateTime?          @map("passport_issue_date")
+  stages             CandidateStage[]
+  callLogs           CandidateCallLog[]
 
   @@map("users")
 }
@@ -165,6 +186,11 @@ model Document {
   // starts the 21-day wait for the final police report. Read by OCR or
   // entered by an admin when approving the slip; null otherwise.
   policeSubmittedDate DateTime? @map("police_submitted_date") @db.Date
+
+  // Which form of the document an admin uploaded (candidateService.js):
+  // police reports SL_VERIFIED / ROMANIA / SL_NORMAL, affidavits ENGLISH /
+  // SINHALA. Null for every other document.
+  documentVariant String? @map("document_variant")
 
   @@unique([passportId, fileSha256])
   @@index([fileSha256])
@@ -219,4 +245,61 @@ model TemporaryData {
   @@index([whatsappNumber, fileSha256])
   @@index([processingStatus, createdDate])
   @@map("temporary_data")
+}
+
+// Rate-limit counters (Phase 12, Step 5C), shared by every app instance
+// (several serverless instances on Vercel). Operational state only: one row
+// per limiter and client, reused when its window has passed, deleted once
+// expired (middleware/postgresRateLimitStore.js). key = "<limiter>:<sha256 of
+// the client key>", so no IP address is stored.
+// Candidate deployment stages (candidateService.js). One row per candidate
+// and stage once anything is saved for it; a missing row is an incomplete
+// stage without notes. Stages are independent: any can be completed in any
+// order.
+model CandidateStage {
+  passportId  String    @map("passport_id")
+  // TEST_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION | IVS_INTERVIEW
+  // | VISA_APPROVAL | FINALIZING_JOB
+  stage       String
+  completed   Boolean   @default(false)
+  completedAt DateTime? @map("completed_at")
+  notes       String?
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  // TEST_DETAILS only (null on the other stages): the job ID the admin
+  // enters, the test's result (PASS or FAIL) and the date the candidate
+  // actually sat it. Null until recorded.
+  jobId       String?   @map("job_id")
+  testResult  String?   @map("test_result")
+  testDate    DateTime? @map("test_date") @db.Date
+
+  user User @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
+
+  @@id([passportId, stage])
+  @@map("candidate_stages")
+}
+
+// Calls made to a candidate, noted by admins (candidateService.js).
+model CandidateCallLog {
+  callLogId   String   @id @map("call_log_id")
+  passportId  String   @map("passport_id")
+  adminId     String   @map("admin_id")
+  // What the candidate said (a short note).
+  note        String
+  // When the call took place: the date and time the admin entered, or now.
+  createdDate DateTime @default(now()) @map("created_date")
+
+  user  User  @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
+  admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Restrict)
+
+  @@index([passportId, createdDate])
+  @@map("candidate_call_logs")
+}
+
+model RateLimit {
+  key     String   @id
+  hits    Int
+  resetAt DateTime @map("reset_at") @db.Timestamptz(3)
+
+  @@index([resetAt])
+  @@map("rate_limits")
 }

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import jwt from "jsonwebtoken";
 
 import { processDocument } from "../src/services/documentProcessingService.js";
-import { OcrResourceError } from "../src/services/ocrService.js";
+import { OcrResourceError } from "../src/services/ocrContract.js";
 import { describeFailure, FAILURE_CODE } from "../src/services/failureReason.js";
 import { parseReviewQueueQuery } from "../src/services/adminReviewService.js";
 import { createAdminRouter } from "../src/routes/admin.js";
@@ -13,6 +13,7 @@ import { sha256Hex } from "../src/utils/fileChecksum.js";
 import { createFakePrisma } from "./helpers/fakePrisma.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
+import "./helpers/localOcrService.js";
 
 Object.assign(process.env, {
     SUPABASE_URL: "http://127.0.0.1:1",

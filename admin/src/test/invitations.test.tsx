@@ -8,7 +8,7 @@ const INVITATIONS = [
         invitationId: "inv-1",
         email: "priyantha@example.invalid",
         name: "Priyantha Silva",
-        role: "REVIEWER",
+        role: "ANALYST",
         status: "PENDING",
         expiresAt: new Date(Date.now() + 86400000).toISOString(),
         createdAt: new Date().toISOString(),
@@ -63,7 +63,7 @@ describe("Admin Invitations Page", () => {
                         invitationId: "inv-new",
                         email: "newcolleague@example.invalid",
                         name: "New Colleague",
-                        role: "REVIEWER",
+                        role: "ANALYST",
                         status: "PENDING",
                         expiresAt: new Date(Date.now() + 86400000).toISOString(),
                         createdAt: new Date().toISOString(),
@@ -88,13 +88,13 @@ describe("Admin Invitations Page", () => {
         expect(postCall?.body).toEqual({
             name: "New Colleague",
             email: "newcolleague@example.invalid",
-            role: "REVIEWER",
+            role: "ANALYST",
         });
     });
 
     test("non-ADMIN role sees access restricted message", async () => {
         signedInBackend({
-            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "REVIEWER" } } },
+            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "ANALYST" } } },
         });
 
         renderApp("/invitations");

@@ -566,13 +566,18 @@ describe("security and error handling", () => {
         assert.deepEqual(current.db.tables.auditLog, [snapshot]);
     });
 
-    test("the router only writes through the review actions and corrections", () => {
+    test("the router only writes through the review actions, corrections and candidate management", () => {
         const router = createAdminRouter({ apiLimiter: (req, res, next) => next(), db: current.db.client, bucket: current.bucket, requireAdmin: (req, res, next) => next() });
         const writes = router.stack
             .filter((layer) => layer.route)
             .flatMap((layer) => Object.keys(layer.route.methods).filter((m) => m !== "get").map((m) => `${m.toUpperCase()} ${layer.route.path}`));
         assert.deepEqual(writes.sort(), [
             "DELETE /temporary-documents/:temporaryId",
+            "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
+            "POST /candidates/:passportId/call-logs",
+            "POST /candidates/:passportId/documents/:documentId/remove", // reason required, audited
+            "POST /candidates/:passportId/documents/finalize", // JSON only: the file goes browser -> storage
+            "POST /candidates/:passportId/documents/upload-target",
             "POST /documents/:documentId/police-date",
             "POST /review/:reviewId/approve",
             "POST /review/:reviewId/assign-client",
@@ -582,6 +587,8 @@ describe("security and error handling", () => {
             "POST /review/:reviewId/remove",
             "POST /review/:reviewId/replace-verified", // M4 Policy B: existing verified document of the same type only
             "POST /review/:reviewId/retry", // H3: failed submissions only
+            "PUT /candidates/:passportId",
+            "PUT /candidates/:passportId/stages/:stage",
         ]);
     });
 

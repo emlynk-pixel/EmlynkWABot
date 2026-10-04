@@ -17,6 +17,7 @@ import {
   PasswordResetError,
 } from "../services/passwordResetService.js";
 import { resolveDb } from "../utils/resolveClients.js";
+import { safePrismaErrorFields } from "../utils/safeLog.js";
 
 // The only status that may sign in or use admin endpoints. admins.status is a
 // plain string (default "ACTIVE"); any other value counts as not active.
@@ -127,7 +128,13 @@ export function createAuthRouter({
       });
     } catch (error) {
       // Error type only: a database error can quote the email that was tried.
-      console.error("Login error:", { errorType: error?.name ?? "Error" });
+      // A Prisma error additionally gets its `.code` and an allowlisted,
+      // value-free subset of `.meta` (e.g. P2021/table), to tell apart "wrong
+      // table/column" from other failures without logging the query or args.
+      console.error("Login error:", {
+        errorType: error?.name ?? "Error",
+        ...safePrismaErrorFields(error),
+      });
 
       return res.status(500).json({
         message: "Internal server error",
@@ -137,7 +144,9 @@ export function createAuthRouter({
 
   // Current admin's profile, looked up from the token's adminId. The token
   // alone doesn't show a later deactivation, so the stored status is checked
-  // here; future admin endpoints need the same check.
+  // here; future admin endpoints need the same check. The rate limiter runs
+  // first so that brute-force requests are rejected before the auth middleware
+  // touches the database.
   router.get("/me", apiLimiter, authenticateAdmin, async (req, res) => {
     try {
       const client = await resolveDb(db);

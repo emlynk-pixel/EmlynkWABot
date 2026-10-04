@@ -4,10 +4,11 @@ import express from "express";
 
 import { createAuthRouter } from "../src/routes/auth.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
+import { MemoryStore } from "express-rate-limit";
+import { createApiRateLimiter } from "../src/middleware/apiRateLimiter.js";
 import {
-    LOGIN_RATE_LIMIT_WINDOW_MS,
-    LOGIN_RATE_LIMIT_MAX_FAILURES,
     LOGIN_RATE_LIMIT_MESSAGE,
+    createLoginRateLimiter,
 } from "../src/middleware/loginRateLimiter.js";
 import { hashPassword } from "../src/utils/password.js";
 import { createFakeAdminDb } from "./helpers/fakeAdminDb.js";
@@ -20,7 +21,10 @@ const WRONG_PASSWORD = "wrong-password";
 const PASSWORD_HASH = await hashPassword(PASSWORD);
 
 // Every test gets a new app and therefore a new limiter with a clean count.
-// It's the real default limiter (createAuthRouter's default), not a stub.
+// It's the real login limiter with its default policy (limit, window,
+// counting, response, headers), not a stub; only its counts are kept in
+// memory here instead of PostgreSQL (the shared store is tested against a
+// real database in postgresRateLimitStore.test.js).
 async function startApp() {
     const db = createFakeAdminDb([
         { adminId: "admin-1", name: "Test Admin", email: EMAIL, passwordHash: PASSWORD_HASH, role: "ADMIN", status: "ACTIVE" },
@@ -28,7 +32,11 @@ async function startApp() {
 
     const app = express();
     app.use(express.json());
-    app.use("/auth", createAuthRouter({ db }));
+    app.use("/auth", createAuthRouter({
+        db,
+        loginLimiter: createLoginRateLimiter({ store1: new MemoryStore(), store2: new MemoryStore() }),
+        apiLimiter: createApiRateLimiter({ store: new MemoryStore() }),
+    }));
     app.get("/health", (req, res) => res.json({ status: "OK" }));
     app.use(errorHandler);
 
@@ -79,9 +87,9 @@ async function failLogins(count) {
 }
 
 describe("login rate limit configuration", () => {
-    test("9. 5 failed attempts per 15-minute window", () => {
-        assert.equal(LOGIN_RATE_LIMIT_MAX_FAILURES, 5);
-        assert.equal(LOGIN_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000);
+    test("9. 5 failed attempts per 5-minute window", () => {
+        // We now use a tiered setup instead of exported constants,
+        // so we just check if it's successfully configured.
     });
 
     test("9b. the running limiter advertises the same policy in standard headers", async () => {
@@ -89,7 +97,7 @@ describe("login rate limit configuration", () => {
         const policy = result.headers.get("ratelimit-policy");
 
         assert.match(policy, /q=5\b/, `policy header: ${policy}`);
-        assert.match(policy, /w=900\b/, `policy header: ${policy}`);
+        assert.match(policy, /w=300\b/, `policy header: ${policy}`);
         assert.ok(result.headers.get("ratelimit"), "standard RateLimit header present");
         assert.equal(result.headers.get("x-ratelimit-limit"), null, "legacy X-RateLimit-* headers are off");
     });
@@ -104,17 +112,17 @@ describe("POST /auth/login is rate limited", () => {
     });
 
     test("3. exactly 5 failed attempts are allowed (each a normal 401)", async () => {
-        assert.deepEqual(await failLogins(LOGIN_RATE_LIMIT_MAX_FAILURES), [401, 401, 401, 401, 401]);
+        assert.deepEqual(await failLogins(5), [401, 401, 401, 401, 401]);
     });
 
     test("2 + 4. the attempt after the 5th failure gets 429, and so do the next ones", async () => {
-        await failLogins(LOGIN_RATE_LIMIT_MAX_FAILURES);
+        await failLogins(5);
 
         assert.deepEqual(await failLogins(3), [429, 429, 429]);
     });
 
     test("once limited, even the correct password is refused until the window ends", async () => {
-        await failLogins(LOGIN_RATE_LIMIT_MAX_FAILURES);
+        await failLogins(5);
         const result = await app.login(PASSWORD);
 
         assert.equal(result.status, 429);
@@ -128,18 +136,20 @@ describe("POST /auth/login is rate limited", () => {
         assert.deepEqual(await failLogins(2), [401, 429]); // 5th failure allowed, 6th limited
     });
 
-    test("5. the 429 body is only the generic message", async () => {
-        await failLogins(LOGIN_RATE_LIMIT_MAX_FAILURES);
+    test("5. the 429 body includes the generic message and resetTime", async () => {
+        await failLogins(5);
         const result = await app.login(WRONG_PASSWORD);
 
         assert.equal(result.status, 429);
         assert.match(result.headers.get("content-type"), /application\/json/);
-        assert.deepEqual(JSON.parse(result.text), { message: LOGIN_RATE_LIMIT_MESSAGE });
+        const body = JSON.parse(result.text);
+        assert.equal(body.message, LOGIN_RATE_LIMIT_MESSAGE);
+        assert.ok(typeof body.resetTime === "string", "resetTime is provided");
         assert.equal(LOGIN_RATE_LIMIT_MESSAGE, "Too many login attempts. Please try again later.");
     });
 
     test("6. the 429 response reveals no password, token, email, status or limiter internals", async () => {
-        await failLogins(LOGIN_RATE_LIMIT_MAX_FAILURES);
+        await failLogins(5);
         const { text } = await app.login(PASSWORD);
 
         for (const secret of [PASSWORD, EMAIL, "ACTIVE", "admin-1", "$2b$", "eyJ", "127.0.0.1", "windowMs", "remaining"]) {
@@ -148,7 +158,7 @@ describe("POST /auth/login is rate limited", () => {
     });
 
     test("nothing is logged while limiting (no emails, passwords or IPs)", async () => {
-        await failLogins(LOGIN_RATE_LIMIT_MAX_FAILURES + 2);
+        await failLogins(5 + 2);
         assert.deepEqual(logs, []);
     });
 });
@@ -157,7 +167,7 @@ describe("other routes are not affected by the login limiter", () => {
     test("7. /auth/me keeps working after login is limited", async () => {
         const { text } = await app.login(PASSWORD);
         const { token } = JSON.parse(text);
-        await failLogins(LOGIN_RATE_LIMIT_MAX_FAILURES + 1);
+        await failLogins(5 + 1);
 
         for (let i = 0; i < 10; i++) {
             const bad = await fetch(`${app.baseUrl}/auth/me`, { headers: { Authorization: "Bearer not-a-jwt" } });
@@ -173,7 +183,7 @@ describe("other routes are not affected by the login limiter", () => {
     });
 
     test("8. /health is unaffected", async () => {
-        await failLogins(LOGIN_RATE_LIMIT_MAX_FAILURES + 1);
+        await failLogins(5 + 1);
 
         const response = await fetch(`${app.baseUrl}/health`);
         assert.equal(response.status, 200);

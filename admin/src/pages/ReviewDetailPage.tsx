@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import {
     approveReviewItem,
     assignClient,
+    deleteTemporaryDocument,
     getReviewFile,
     getReviewItem,
     keepDocumentAsVersion,
@@ -305,7 +306,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const canApprove = hasReviewPermission && item.actions?.approve?.available === true;
     const canKeepPending = hasReviewPermission && item.actions?.keepPending?.available === true;
 
-    const open = (which: "approve" | "keep" | "remove" | "type" | "client" | "retry" | "replace" | "version") => {
+    const open = (which: "approve" | "keep" | "remove" | "deleteTemporary" | "type" | "client" | "retry" | "replace" | "version") => {
         setError(null);
         setReasonError(null);
         setPoliceDateError(null);

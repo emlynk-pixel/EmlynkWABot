@@ -1,6 +1,5 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import jpeg from "jpeg-js";
 import { PNG } from "pngjs";
@@ -12,16 +11,14 @@ import {
     mrzEvidence,
     OcrResourceError,
     ORIENTATION_CANDIDATES,
-} from "../src/services/ocrService.js";
+} from "../src/ocrService.js";
 import { readImageDimensions } from "../src/utils/imageDimensions.js";
-import { classifyDocumentContent } from "../src/services/documentClassificationService.js";
-import { processDocument } from "../src/services/documentProcessingService.js";
-import { createFakePrisma } from "./helpers/fakePrisma.js";
 
 // Photos taken sideways or upside down (0°, 90°, 180°, 270°). Synthetic data only.
+// Classification of turned real photos, and the pipeline storing the
+// received file unchanged, are tested by the backend: test/ocrPipeline.test.js.
 const loadFile = (name) => readFileSync(new URL(`./fixtures/files/${name}`, import.meta.url));
 const ocrTest = process.env.RUN_OCR_TESTS === "1" ? test : test.skip;
-const sha = (buffer) => crypto.createHash("sha256").update(buffer).digest("hex");
 
 // Rotates an image clockwise pixel by pixel (pngjs / jpeg-js only), independent
 // of the code under test, and returns a PNG.
@@ -173,20 +170,13 @@ describe("OCR orientation: the OCR input is turned upright, the received file ne
 });
 
 describe("OCR orientation with real Tesseract (RUN_OCR_TESTS=1)", () => {
-    const cases = [
-        ["passport-photo.jpg", "PASSPORT"],
-        ["image-medical.png", "MEDICAL"],
-        ["police-photo-hard.jpg", "POLICE_REPORT"],
-    ];
-    for (const [file, type] of cases) {
-        for (const received of [0, 90, 180, 270]) {
-            ocrTest(`${file} received at ${received}° -> ${type}, same read as upright`, async () => {
-                const image = received === 0 ? loadFile(file) : turnImage(loadFile(file), received);
-                const result = await extractTextFromImage(image);
-                assert.equal(classifyDocumentContent(result.text).documentType, type);
+    for (const file of ["passport-photo.jpg", "image-medical.png", "police-photo-hard.jpg"]) {
+        for (const received of [90, 180, 270]) {
+            ocrTest(`${file} received at ${received}° is turned back upright for OCR`, async () => {
+                const result = await extractTextFromImage(turnImage(loadFile(file), received));
                 assert.equal(result.rotation, (360 - received) % 360);
                 assert.ok(result.confidence >= 80, `confidence ${result.confidence}`);
-                if (type === "PASSPORT") assert.equal(mrzEvidence(result.text), 4);
+                if (file.startsWith("passport")) assert.equal(mrzEvidence(result.text), 4);
             });
         }
     }
@@ -200,32 +190,5 @@ describe("OCR orientation with real Tesseract (RUN_OCR_TESTS=1)", () => {
     ocrTest("a blank image is never turned", async () => {
         const result = await extractTextFromImage(turnImage(loadFile("blank.png"), 90));
         assert.equal(result.rotation, 0);
-    });
-
-    ocrTest("pipeline: a passport photo received at 90° is stored as VERIFIED; the stored file is the received file, unchanged", async () => {
-        const received = turnImage(loadFile("passport-photo.jpg"), 90);
-        const before = Buffer.from(received);
-        const TEMP = "temporary/rotated.png";
-        const objects = new Map([[TEMP, received]]);
-        const bucket = {
-            objects,
-            async exists(p) { return objects.has(p) ? { data: true, error: null } : { data: false, error: { statusCode: "404", message: "Object not found" } }; },
-            async copy(from, to) { if (objects.has(to)) return { data: null, error: { statusCode: "409", message: "exists" } }; objects.set(to, objects.get(from)); return { data: { path: to }, error: null }; },
-            async upload() { throw new Error("the pipeline must not upload anything"); },
-            async remove(paths) { paths.forEach((p) => objects.delete(p)); return { data: paths, error: null }; },
-        };
-        const db = createFakePrisma([{ passportId: "N1234567", uniqueId: "0001", whatsappNumber: "0771234567", firstName: "KAMAL NIMAL", otherName: "PERERA", dateOfBirth: null, placeOfBirth: null, passportExpiryDate: null }]);
-        const { summary } = await processDocument({
-            temporaryId: "tmp-rotated", whatsappNumber: "94771234567", fileName: null, mimeType: "image/png",
-            fileBuffer: received, temporaryStoragePath: TEMP, deps: { db, bucket, now: new Date("2026-09-27T08:00:00Z") },
-        });
-        assert.equal(summary.documentType, "PASSPORT");
-        assert.equal(summary.ocrRotation, 270);
-        assert.equal(summary.storage.placement, "CLIENT");
-        const stored = [...objects.keys()].find((p) => p.startsWith("clients/"));
-        assert.ok(stored, "stored in the client folder");
-        assert.equal(sha(objects.get(stored)), sha(before), "the stored copy is the received file, not the turned OCR input");
-        assert.equal(sha(objects.get(TEMP)), sha(before), "the temporary object is unchanged");
-        assert.ok(received.equals(before));
     });
 });

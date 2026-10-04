@@ -203,12 +203,25 @@ describe("A: Remove from Review for a stored REVIEW_REQUIRED document", () => {
         assert.equal(db.tables.document.some((d) => d.documentId === REVIEW_ID), false);
     });
 
-    test("only Remove from Review deletes document rows, and only REVIEW_REQUIRED ones", () => {
+    // Two code paths delete document rows, each one row, audited, with a reason:
+    // Remove from Review (a stored REVIEW_REQUIRED document only), and the
+    // candidate page's Remove (the candidate's current document of a candidate
+    // type, VERIFIED or REVIEW_REQUIRED; a SUPERSEDED version is history and
+    // can't be removed). Nothing else may delete a document.
+    test("only Remove from Review and a candidate's Remove delete document rows, each scoped to one row", () => {
         const sources = fs.readdirSync(new URL("../src/services/", import.meta.url)).map((f) => [f, fs.readFileSync(new URL(`../src/services/${f}`, import.meta.url), "utf8")]);
-        assert.deepEqual(sources.filter(([, code]) => /document\.(delete|deleteMany)\(/.test(code)).map(([f]) => f), ["adminReviewActionService.js"]);
-        const code = sources.find(([f]) => f === "adminReviewActionService.js")[1];
-        assert.equal(code.match(/document\.(delete|deleteMany)\(/g).length, 1);
-        assert.match(code, /tx\.document\.deleteMany\(\{\s*where: \{ documentId: row\.documentId, verificationStatus: VERIFICATION_STATUS\.REVIEW_REQUIRED \}/);
+        assert.deepEqual(sources.filter(([, code]) => /document\.(delete|deleteMany)\(/.test(code)).map(([f]) => f), ["adminReviewActionService.js", "candidateService.js"]);
+
+        const review = sources.find(([f]) => f === "adminReviewActionService.js")[1];
+        assert.equal(review.match(/document\.(delete|deleteMany)\(/g).length, 1);
+        assert.match(review, /tx\.document\.deleteMany\(\{\s*where: \{ documentId: row\.documentId, verificationStatus: VERIFICATION_STATUS\.REVIEW_REQUIRED \}/);
+
+        const candidate = sources.find(([f]) => f === "candidateService.js")[1];
+        assert.equal(candidate.match(/document\.(delete|deleteMany)\(/g).length, 1);
+        assert.match(candidate, /tx\.document\.deleteMany\(\{ where: \{ documentId: row\.documentId, passportId, verificationStatus: row\.verificationStatus \} \}\)/);
+        // The row it deletes: this candidate's, a candidate document type, never SUPERSEDED; audited before the delete.
+        assert.match(candidate, /documentType: \{ in: Object\.keys\(CANDIDATE_DOCUMENT_TYPES\) \},\s*verificationStatus: \{ not: VERIFICATION_STATUS\.SUPERSEDED \}/);
+        assert.match(candidate, /action: "REMOVE_DOCUMENT"[\s\S]*?reason,[\s\S]*?tx\.document\.deleteMany/);
     });
 });
 

@@ -16,7 +16,16 @@ Object.assign(process.env, {
     META_APP_SECRET: "test-app-secret-placeholder",
     JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
-const { createApp } = await import("../src/createApp.js");
+const { createApp: createAppWithDefaults } = await import("../src/createApp.js");
+const { createApiRateLimiter } = await import("../src/middleware/apiRateLimiter.js");
+const { MemoryStore } = await import("express-rate-limit");
+
+// The real /admin limiter, counting in memory here (its default store is
+// PostgreSQL, which these tests don't have).
+const createApp = (options) => createAppWithDefaults({
+    adminFrontendLimiter: createApiRateLimiter({ store: new MemoryStore() }),
+    ...options,
+});
 
 // A stand-in admin build: index.html, one hashed asset, one public file.
 function fakeBuild() {
@@ -133,7 +142,7 @@ describe("dashboard login flow against the real auth routes (same origin)", () =
         const db = createFakeAdminDb([
             { adminId: "admin-1", name: "Test Admin", email: "admin@example.invalid", passwordHash: await hashPassword(PASSWORD), role: "ADMIN", status: ACTIVE_ADMIN_STATUS },
         ]);
-        http = await start(createApp({ adminDistDir: dist, authRouter: createAuthRouter({ db, loginLimiter: noRateLimit }) }));
+        http = await start(createApp({ adminDistDir: dist, authRouter: createAuthRouter({ db, loginLimiter: noRateLimit, apiLimiter: noRateLimit }) }));
     });
     after(() => {
         http.server.close();

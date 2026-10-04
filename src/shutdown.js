@@ -11,6 +11,8 @@
 //   4. the process exits. If anything is still waiting at the deadline, it
 //      exits anyway (code 1): a webhook cut off then was not acknowledged,
 //      so Meta sends it again, and the unique message ID keeps it single.
+// `server` is optional: the worker-only process (src/worker.js) has none
+// when it runs without a health port.
 
 export const SHUTDOWN_DEADLINE_MS = 8_000;          // < Docker's 10 s grace period
 const CLEANUP_RESERVE_MS = 2_000;                   // releasing jobs + disconnecting Prisma
@@ -34,7 +36,9 @@ export function createShutdown({ server, worker, db, deadlineMs = SHUTDOWN_DEADL
             }, deadlineMs);
 
             let code = 0;
-            const serverClosed = new Promise((resolve) => server.close((error) => resolve(error ?? null)));
+            const serverClosed = server
+                ? new Promise((resolve) => server.close((error) => resolve(error ?? null)))
+                : Promise.resolve(null);
             const [closeError, workerResult] = await Promise.all([
                 serverClosed,
                 worker.stop({ timeoutMs: Math.max(0, workerStopMs) }).catch((error) => ({ error })),

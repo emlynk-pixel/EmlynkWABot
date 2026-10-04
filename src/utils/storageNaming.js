@@ -7,14 +7,23 @@ export const DOCUMENT_STORAGE_TYPES = Object.freeze({
     POLICE_SLIP: { folder: "police-slip", baseName: "police_slip" },
     POLICE_REPORT: { folder: "police-report", baseName: "police_report" },
     MEDICAL: { folder: "medical", baseName: "medical" },
+    // Uploaded by admins only (candidateService.js), never from WhatsApp.
+    NIC: { folder: "nic", baseName: "nic" },
+    SKILL_VIDEO: { folder: "skill-video", baseName: "skill_video" },
+    AGREEMENT: { folder: "agreement", baseName: "agreement" },
+    AFFIDAVIT: { folder: "affidavit", baseName: "affidavit" },
 });
 
 // The extension always comes from the validated MIME type, never from the
-// sender's file name ("scan.exe" sent as a PDF is stored as .pdf).
+// sender's file name ("scan.exe" sent as a PDF is stored as .pdf). Videos
+// are accepted only for an admin's skill-video upload (candidateService.js).
 const EXTENSION_BY_MIME_TYPE = new Map([
     ["application/pdf", ".pdf"],
     ["image/jpeg", ".jpeg"],
     ["image/png", ".png"],
+    ["video/mp4", ".mp4"],
+    ["video/quicktime", ".mov"],
+    ["video/webm", ".webm"],
 ]);
 
 const MAX_BASE_NAME_LENGTH = 100;

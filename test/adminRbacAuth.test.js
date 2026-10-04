@@ -24,7 +24,7 @@ before(async () => {
     const passwordHash = await hashPassword(PASSWORD);
     const admins = [
         { adminId: "admin-super", name: "Admin User", email: "admin@example.invalid", passwordHash, role: ADMIN_ROLES.ADMIN, status: ACTIVE_ADMIN_STATUS },
-        { adminId: "admin-reviewer", name: "Reviewer User", email: "reviewer@example.invalid", passwordHash, role: ADMIN_ROLES.REVIEWER, status: ACTIVE_ADMIN_STATUS },
+        { adminId: "admin-analyst", name: "Analyst User", email: "analyst@example.invalid", passwordHash, role: ADMIN_ROLES.ANALYST, status: ACTIVE_ADMIN_STATUS },
         { adminId: "admin-viewer", name: "Viewer User", email: "viewer@example.invalid", passwordHash, role: ADMIN_ROLES.VIEWER, status: ACTIVE_ADMIN_STATUS },
         { adminId: "admin-unknown-role", name: "Unknown Role", email: "unknown@example.invalid", passwordHash, role: "STRANGER", status: ACTIVE_ADMIN_STATUS },
         { adminId: "admin-inactive", name: "Inactive User", email: "inactive@example.invalid", passwordHash, role: ADMIN_ROLES.ADMIN, status: "INACTIVE" },
@@ -63,7 +63,7 @@ before(async () => {
     const app = express();
     app.use(express.json());
     app.use(cookieParser());
-    app.use("/auth", createAuthRouter({ db: db.client, loginLimiter: noRateLimit }));
+    app.use("/auth", createAuthRouter({ db: db.client, loginLimiter: noRateLimit, apiLimiter: noRateLimit }));
     app.use("/api/admin", createAdminRouter({ apiLimiter: (req, res, next) => next(),
         db: db.client,
         requireAdmin: createRequireActiveAdmin({ db: db.client }),
@@ -186,12 +186,12 @@ describe("Cookie-based Admin Authentication", () => {
 
 describe("Role-Based Authorization (RBAC)", () => {
     const adminToken = makeToken({ adminId: "admin-super", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-    const reviewerToken = makeToken({ adminId: "admin-reviewer", email: "reviewer@example.invalid", role: ADMIN_ROLES.REVIEWER });
+    const analystToken = makeToken({ adminId: "admin-analyst", email: "analyst@example.invalid", role: ADMIN_ROLES.ANALYST });
     const viewerToken = makeToken({ adminId: "admin-viewer", email: "viewer@example.invalid", role: ADMIN_ROLES.VIEWER });
     const unknownToken = makeToken({ adminId: "admin-unknown-role", email: "unknown@example.invalid", role: "STRANGER" });
 
-    describe("Read endpoints (allowed for ADMIN, REVIEWER, VIEWER)", () => {
-        for (const [roleName, token] of [["ADMIN", adminToken], ["REVIEWER", reviewerToken], ["VIEWER", viewerToken]]) {
+    describe("Read endpoints (allowed for ADMIN, ANALYST, VIEWER)", () => {
+        for (const [roleName, token] of [["ADMIN", adminToken], ["ANALYST", analystToken]]) {
             test(`${roleName} can access GET /api/admin/overview`, async () => {
                 const res = await fetch(`${baseUrl}/api/admin/overview`, {
                     headers: { Cookie: `${AUTH_COOKIE_NAME}=${token}` },
@@ -238,7 +238,7 @@ describe("Role-Based Authorization (RBAC)", () => {
         });
     });
 
-    describe("Review action endpoints (allowed for ADMIN and REVIEWER, refused for VIEWER)", () => {
+    describe("Review action endpoints (allowed for ADMIN and ANALYST, refused for VIEWER)", () => {
         test("ADMIN can execute review action (keep-pending)", async () => {
             const res = await fetch(`${baseUrl}/api/admin/review/pending-11111111-2222-3333-4444-555555555555/keep-pending`, {
                 method: "POST",
@@ -248,11 +248,11 @@ describe("Role-Based Authorization (RBAC)", () => {
             assert.equal(res.status, 200);
         });
 
-        test("REVIEWER can execute review action (keep-pending)", async () => {
+        test("ANALYST can execute review action (keep-pending)", async () => {
             const res = await fetch(`${baseUrl}/api/admin/review/pending-11111111-2222-3333-4444-555555555555/keep-pending`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", ...(await csrfHeaders(reviewerToken)) },
-                body: JSON.stringify({ reason: "Reviewer checking" }),
+                headers: { "Content-Type": "application/json", ...(await csrfHeaders(analystToken)) },
+                body: JSON.stringify({ reason: "Analyst checking" }),
             });
             assert.equal(res.status, 200);
         });
@@ -304,11 +304,11 @@ describe("Role-Based Authorization (RBAC)", () => {
             assert.equal(data.policeSubmittedDate, "2026-09-19");
         });
 
-        test("REVIEWER cannot correct police slip date on stored document -> 403 Insufficient permissions", async () => {
+        test("ANALYST cannot correct police slip date on stored document -> 403 Insufficient permissions", async () => {
             const res = await fetch(`${baseUrl}/api/admin/documents/3f2b8c1e-0000-4000-8000-000000000001/police-date`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", ...(await csrfHeaders(reviewerToken)) },
-                body: JSON.stringify({ policeSubmittedDate: "2026-09-19", reason: "Reviewer try" }),
+                headers: { "Content-Type": "application/json", ...(await csrfHeaders(analystToken)) },
+                body: JSON.stringify({ policeSubmittedDate: "2026-09-19", reason: "Analyst try" }),
             });
             assert.equal(res.status, 403);
             const data = await res.json();
