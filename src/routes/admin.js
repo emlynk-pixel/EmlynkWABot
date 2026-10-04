@@ -48,6 +48,7 @@ import { getDailyReport, getMonthlyOverview, parseDailyReportQuery, parseMonthly
 import { createInvitationRouter } from "./adminInvitations.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 import { deleteTemporaryDocument } from "../services/temporaryDataService.js";
+import { listAdmins, updateAdminRole, AdminAccountError } from "../services/adminAccountService.js";
 import {
     addCallLog,
     CandidateError,
@@ -81,12 +82,16 @@ function contentDisposition(fileName) {
 
 // Phase 12 RBAC: role shorthand constants for this router.
 // ANALYST: reads + review actions.
-// ADMIN: full access including police-date corrections.
-const { ADMIN, ANALYST } = ADMIN_ROLES;
+// MANAGER: full access except user management.
+// ADMIN: full access including user management.
+// REGISTRATION_DESK: only candidate registration.
+const { ADMIN, MANAGER, ANALYST, REGISTRATION_DESK } = ADMIN_ROLES;
 // The set of roles allowed for each endpoint tier.
-const ALL_ACTIVE = [ADMIN, ANALYST];  // any active admin
-const ANALYSTS_UP = [ADMIN, ANALYST];          // analyst or above
-const ADMINS_ONLY = [ADMIN];                     // administrators only
+const ALL_ACTIVE = [ADMIN, MANAGER, ANALYST];                   // overview, reports, etc
+const REGISTRATION_UP = [ADMIN, MANAGER, ANALYST, REGISTRATION_DESK]; // candidate basic routes
+const ANALYSTS_UP = [ADMIN, MANAGER, ANALYST];                  // analyst or above
+const MANAGERS_UP = [ADMIN, MANAGER];                           // manager or above
+const ADMINS_ONLY = [ADMIN];                                    // administrators only
 
 // Admin dashboard API, mounted at /api/admin (Phase 10). Read-only except
 // the review actions (approve, keep pending, remove from review) and the
@@ -318,7 +323,7 @@ export function createAdminRouter({
     // This modifies a stored document (not just a pending item) so it is
     // reserved for ADMIN; a ANALYST can approve slips with a date but cannot
     // change a date after the fact.
-    router.post("/documents/:documentId/police-date", requireRole(ADMINS_ONLY), async (req, res) => {
+    router.post("/documents/:documentId/police-date", requireRole(MANAGERS_UP), async (req, res) => {
         if (!isValidDocumentIdParam(req.params.documentId)) {
             return res.status(400).json({ message: "Invalid document ID", errors: [{ field: "documentId", message: "must be a document ID" }] });
         }
@@ -356,7 +361,7 @@ export function createAdminRouter({
         return passportId;
     };
 
-    router.get("/candidates", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/candidates", requireRole(REGISTRATION_UP), async (req, res) => {
         const parsed = parseCandidateListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -365,7 +370,7 @@ export function createAdminRouter({
         return res.json(await listCandidates({ db: client, params: parsed.params }));
     });
 
-    router.post("/candidates", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.post("/candidates", requireRole(REGISTRATION_UP), async (req, res) => {
         const parsed = parseCandidateBody(req.body, { creating: true });
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
@@ -374,7 +379,7 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values: parsed.values })));
     });
 
-    router.get("/candidates/:passportId", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/candidates/:passportId", requireRole(REGISTRATION_UP), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         // Also the registration lookup: the response carries the stored passport ID.
@@ -384,7 +389,7 @@ export function createAdminRouter({
         return res.json(candidate);
     });
 
-    router.put("/candidates/:passportId", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.put("/candidates/:passportId", requireRole(REGISTRATION_UP), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseCandidateBody(req.body, { creating: false });
         if (parsed.errors) {
@@ -491,6 +496,27 @@ export function createAdminRouter({
 
     // Anything else under /api/admin (only reached by an authenticated admin).
     router.use((req, res) => res.status(404).json({ message: "Not found" }));
+
+    // ---------------------------------------------------------------- admin accounts (ADMIN only)
+    router.get("/admins", requireRole(ADMINS_ONLY), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json(await listAdmins({ db: client }));
+    });
+
+    router.put("/admins/:adminId/role", requireRole(ADMINS_ONLY), async (req, res) => {
+        const { role } = req.body;
+        if (!role) return res.status(400).json({ message: "Role is required" });
+        try {
+            const client = await resolveDb(db);
+            return res.json(await updateAdminRole({ db: client, admin: req.admin, targetAdminId: req.params.adminId, newRole: role }));
+        } catch (error) {
+            if (error instanceof AdminAccountError) {
+                return res.status(error.status).json({ message: error.message, code: error.code });
+            }
+            console.error("Update admin role error:", error);
+            return res.status(500).json({ message: "Internal server error" });
+        }
+    });
 
     return router;
 }

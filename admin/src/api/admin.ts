@@ -545,6 +545,23 @@ export function deleteInvitation(invitationId: string, token?: string): Promise<
         method: "DELETE",
         token,
     });
+}export type AdminAccount = {
+    adminId: string;
+    name: string;
+    email: string;
+    role: string;
+    status: string;
+    createdAt: string;
+};
+
+export async function listAdmins(token: string, signal?: AbortSignal): Promise<AdminAccount[]> {
+    return apiRequest<AdminAccount[]>("/api/admin/admins", { token, signal });
 }
 
-
+export async function updateAdminRole(token: string, adminId: string, role: string): Promise<AdminAccount> {
+    return apiRequest<AdminAccount>(`/api/admin/admins/${encodeURIComponent(adminId)}/role`, {
+        method: "PUT",
+        token,
+        body: JSON.stringify({ role }),
+    });
+}

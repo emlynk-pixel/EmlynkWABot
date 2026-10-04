@@ -174,8 +174,8 @@ describe("dashboard shell", () => {
         await signedIn();
         const nav = screen.getByRole("navigation", { name: "Main navigation" });
         const links = within(nav).getAllByRole("link").map((link) => link.textContent);
-        // The Stitch sections plus Missing Documents, Daily Report, and Invite Admin.
-        expect(links).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Missing Documents", "Police Workflow", "Daily Report", "Invite Admin"]);
+        // The Stitch sections plus Missing Documents, Daily Report, Invite Admin, and Change Roles.
+        expect(links).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Missing Documents", "Police Workflow", "Daily Report", "Invite Admin", "Change Roles"]);
 
         await userEvent.setup().click(within(nav).getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();

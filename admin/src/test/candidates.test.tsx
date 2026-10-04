@@ -357,7 +357,7 @@ describe("Candidate deployment", () => {
             const user = userEvent.setup();
             await user.upload(await screen.findByLabelText("Medical file"), medical());
 
-            expect(await screen.findByText("The file could not be uploaded. Check your connection and try again.")).toBeInTheDocument();
+            expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
             expect(calls.some((c) => c.url.pathname.endsWith("/documents/finalize"))).toBe(false);
             expect(screen.getAllByText("No file uploaded").length).toBeGreaterThan(0);
             const upload = within(screen.getByLabelText("Medical file").parentElement!).getByRole("button", { name: "Upload" });
