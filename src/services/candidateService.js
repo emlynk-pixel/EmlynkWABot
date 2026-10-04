@@ -351,7 +351,7 @@ function automaticStageMissing(user, documents) {
     if (!has("MEDICAL")) submissionMissing.push("medical");
     if (!hasVariant("POLICE_REPORT", "SL_VERIFIED")) submissionMissing.push("sl verified police report");
     if (!hasVariant("POLICE_REPORT", "ROMANIA")) submissionMissing.push("romania police report");
-    if (!has("AGREEMENT")) submissionMissing.push("agreement");
+    if (!has("AGREEMENT")) submissionMissing.push("scans");
 
     return {
         CANDIDATE_DETAILS: details,
@@ -1155,13 +1155,24 @@ export async function listCallLogs({ db, passportId }) {
 
 export async function addCallLog({ db, admin, passportId, values }) {
     await requireCandidate(db, passportId);
+    // The user picks only HH:MM, so two calls in the same minute would get the
+    // exact same createdDate and sort in random UUID order.  Preserve the user's
+    // date/hour/minute but stamp the *current* seconds + milliseconds so that
+    // entries within the same minute are still ordered by real insertion time.
+    let storedDate = undefined;                       // let the DB default to now()
+    if (values.calledAt) {
+        const entered = new Date(values.calledAt);
+        const now = new Date();
+        entered.setSeconds(now.getSeconds(), now.getMilliseconds());
+        storedDate = entered;
+    }
     await db.candidateCallLog.create({
         data: {
             callLogId: crypto.randomUUID(),
             passportId,
             adminId: admin.adminId,
             note: values.note,
-            ...(values.calledAt ? { createdDate: values.calledAt } : {}),
+            ...(storedDate ? { createdDate: storedDate } : {}),
         },
     });
     return listCallLogs({ db, passportId });

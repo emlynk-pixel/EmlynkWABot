@@ -185,6 +185,28 @@ export function getDailyReport(token: string, date: string | undefined, signal?:
     return apiRequest<DailyReport>(`/api/admin/reports/daily${queryString({ date })}`, { token, signal });
 }
 
+// ---------------------------------------------------------------- monthly overview
+// Counts for one business month (Sri Lanka); months are "YYYY-MM".
+
+export type MonthlyOverview = {
+    month: string;
+    thisMonth: string;
+    isCurrentMonth: boolean;
+    timeZone: string;
+    range: { start: string; end: string };
+    candidatesRegistered: number;
+    documentsSubmitted: number;
+    successfullyProcessed: number;
+    pending: number;
+    rejected: number;
+    manualReview: number;
+    sources: { whatsappSubmissions: number; adminUploads: number };
+};
+
+export function getMonthlyOverview(token: string, month: string | undefined, signal?: AbortSignal): Promise<MonthlyOverview> {
+    return apiRequest<MonthlyOverview>(`/api/admin/reports/monthly${queryString({ month })}`, { token, signal });
+}
+
 // ---------------------------------------------------------------- police workflow
 // Calculated by the backend every time; dates are "YYYY-MM-DD" (Sri Lanka).
 
@@ -523,6 +545,23 @@ export function deleteInvitation(invitationId: string, token?: string): Promise<
         method: "DELETE",
         token,
     });
+}export type AdminAccount = {
+    adminId: string;
+    name: string;
+    email: string;
+    role: string;
+    status: string;
+    createdDate: string;
+};
+
+export async function listAdmins(token: string, signal?: AbortSignal): Promise<AdminAccount[]> {
+    return apiRequest<AdminAccount[]>("/api/admin/admins", { token, signal });
 }
 
-
+export async function updateAdminRole(token: string, adminId: string, role: string): Promise<AdminAccount> {
+    return apiRequest<AdminAccount>(`/api/admin/admins/${encodeURIComponent(adminId)}/role`, {
+        method: "PUT",
+        token,
+        body: { role },
+    });
+}

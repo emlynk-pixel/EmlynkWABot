@@ -17,4 +17,5 @@ export const NAV_ITEMS: NavItem[] = [
     // added here so the sidebar links ADMIN-role users to the full page.
     // adminOnly: true hides this entry from VIEW_ONLY-role users.
     { to: "/invitations", label: "Invite Admin", icon: "person_add", adminOnly: true },
+    { to: "/roles", label: "Change Roles", icon: "manage_accounts", adminOnly: true },
 ];

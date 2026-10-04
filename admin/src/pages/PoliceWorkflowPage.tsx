@@ -7,6 +7,7 @@ import { Icon, type IconName } from "../components/Icon";
 import { POLICE_STATUSES, daysLeftLabel, policeStatusLabel } from "../components/policeLabels";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { StatusBadge, ToneBadge, statusTone } from "../components/StatusBadge";
+import { filterControl, tableCell, tableHead } from "../components/ui";
 
 const PAGE_SIZE = 25;
 const STATUS_VALUES = POLICE_STATUSES.map((s) => s.status);
@@ -68,9 +69,9 @@ export function PoliceWorkflowPage() {
     };
     const data = list.data;
     const byStatus = data?.summary.byStatus;
-    const control = "h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
-    const th = "h-[34px] whitespace-nowrap border-b border-border bg-canvas px-4 text-left text-label-caps uppercase text-ink-subtle";
-    const td = "h-11 whitespace-nowrap border-b border-canvas-muted px-4 text-body-sm";
+    const control = filterControl;
+    const th = tableHead;
+    const td = tableCell;
 
     return (
         <section aria-labelledby="page-title" className="space-y-4">
@@ -88,7 +89,7 @@ export function PoliceWorkflowPage() {
                 <StatCard label="Pending (over 7 days)" value={byStatus?.PENDING} icon="local_police" status="PENDING" active={params.status === "PENDING"} onSelect={toggleStatus} />
             </div>
 
-            <Card className="flex flex-wrap items-center gap-3 p-4">
+            <Card className="flex flex-wrap items-center gap-3 p-5">
                 <form role="search" onSubmit={submitSearch} className="flex w-full gap-2 md:w-auto md:min-w-[22rem]">
                     <label htmlFor="police-search" className="sr-only">Search clients</label>
                     <input

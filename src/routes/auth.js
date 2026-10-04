@@ -6,6 +6,8 @@ import crypto from "crypto";
 import { comparePassword, hashPassword } from "../utils/password.js";
 import { authenticateAdmin, JWT_ALGORITHM, AUTH_COOKIE_NAME, authCookieOptions } from "../middleware/auth.js";
 import { createLoginRateLimiter, createResetRateLimiter } from "../middleware/loginRateLimiter.js";
+import { createApiRateLimiter } from "../middleware/apiRateLimiter.js";
+import { generateCsrfToken, doubleCsrfProtection } from "../middleware/csrf.js";
 import { ACTIVE_ADMIN_STATUS } from "../middleware/requireActiveAdmin.js";
 import { getInvitationByToken, setupPasswordFromInvitation, InvitationError } from "../services/adminInvitationService.js";
 import {
@@ -57,15 +59,17 @@ function dummyPasswordHash() {
 }
 
 
-// loginLimiter and resetLimiter can be replaced in tests; each router gets its own counts.
+// loginLimiter, resetLimiter and apiLimiter can be replaced in tests; each
+// router gets its own counts.
 export function createAuthRouter({
   db,
   loginLimiter = createLoginRateLimiter(),
   resetLimiter = createResetRateLimiter(),
+  apiLimiter = createApiRateLimiter(),
 } = {}) {
   const router = express.Router();
 
-  // Admin login. Rate limited here only, not on /me or other routes.
+  // Admin login.
   router.post("/login", loginLimiter, async (req, res) => {
     try {
       const invalidRequest = validateLoginBody(req.body);
@@ -140,8 +144,10 @@ export function createAuthRouter({
 
   // Current admin's profile, looked up from the token's adminId. The token
   // alone doesn't show a later deactivation, so the stored status is checked
-  // here; future admin endpoints need the same check.
-  router.get("/me", authenticateAdmin, async (req, res) => {
+  // here; future admin endpoints need the same check. The rate limiter runs
+  // first so that brute-force requests are rejected before the auth middleware
+  // touches the database.
+  router.get("/me", apiLimiter, authenticateAdmin, async (req, res) => {
     try {
       const client = await resolveDb(db);
       const admin = await client.admin.findUnique({
@@ -182,12 +188,22 @@ export function createAuthRouter({
     }
   });
 
+  // Issues a CSRF token bound to the caller's current session cookie (see
+  // middleware/csrf.js). Public: a token on its own authorises nothing,
+  // skipCsrfProtection already lets non-cookie (Bearer) callers through
+  // without needing one, and the frontend must be able to fetch one even
+  // before any cookie-authenticated mutation.
+  router.get("/csrf-token", apiLimiter, (req, res) => {
+    return res.status(200).json({ csrfToken: generateCsrfToken(req, res) });
+  });
+
   // Phase 12: explicit sign-out clears the cookie server-side. A CSRF attack
   // cannot forge this because the cookie is SameSite=Strict; cross-site
-  // requests never carry it. Requires a valid session to prevent logout-CSRF
-  // amplification (an attacker cannot force a sign-out of a victim's session
-  // they cannot observe).
-  router.post("/logout", authenticateAdmin, (req, res) => {
+  // requests never carry it. doubleCsrfProtection is defence in depth on top
+  // of that (see middleware/csrf.js). Requires a valid session to prevent
+  // logout-CSRF amplification (an attacker cannot force a sign-out of a
+  // victim's session they cannot observe).
+  router.post("/logout", apiLimiter, doubleCsrfProtection, authenticateAdmin, (req, res) => {
     res.clearCookie(AUTH_COOKIE_NAME, authCookieOptions());
     return res.status(200).json({ message: "Signed out" });
   });

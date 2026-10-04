@@ -7,6 +7,7 @@ import { Icon, type IconName } from "../components/Icon";
 import { CATEGORY_LABELS, REVIEW_REASONS, failureLabel, reviewReasonLabel, reviewReasonTone } from "../components/reviewLabels";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { StatusBadge, ToneBadge } from "../components/StatusBadge";
+import { filterControl, tableCell, tableHead } from "../components/ui";
 
 const PAGE_SIZE = 25;
 
@@ -24,7 +25,7 @@ function paramsFrom(search: URLSearchParams): ReviewQueueParams {
 
 function StatCard({ label, value, icon }: { label: string; value: number | undefined; icon: IconName }) {
     return (
-        <Card className="flex items-start justify-between p-4">
+        <Card className="flex items-start justify-between p-5">
             <div>
                 <p className="text-label-caps uppercase text-ink-subtle">{label}</p>
                 <p className="mt-1 text-headline-xl tabular-nums text-ink">{value === undefined ? "—" : formatNumber(value)}</p>
@@ -55,9 +56,9 @@ export function ReviewQueuePage() {
     const showingFailed = params.kind === "FAILED";
     const data = queue.data;
     const summary = data?.summary;
-    const control = "h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
-    const th = "h-[34px] whitespace-nowrap border-b border-border bg-canvas px-4 text-left text-label-caps uppercase text-ink-subtle";
-    const td = "h-11 whitespace-nowrap border-b border-canvas-muted px-4 text-body-sm";
+    const control = filterControl;
+    const th = tableHead;
+    const td = tableCell;
 
     return (
         <section aria-labelledby="page-title" className="space-y-4">
@@ -86,7 +87,7 @@ export function ReviewQueuePage() {
                 <StatCard label={CATEGORY_LABELS.CONFLICT} value={summary?.byCategory.CONFLICT} icon="error" />
             </div>
 
-            <Card className="grid grid-cols-1 gap-2 p-4 md:grid-cols-4">
+            <Card className="grid grid-cols-1 gap-2 p-5 md:grid-cols-4">
                 <select aria-label="Source" value={params.kind ?? ""} onChange={(e) => update({ kind: e.target.value || undefined })} className={control}>
                     <option value="">All items</option>
                     <option value="PENDING">Files waiting in pending storage</option>

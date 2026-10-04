@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { Link } from "react-router";
-import { getOverview, type Overview } from "../api/admin";
+import { getMonthlyOverview, getOverview, type Overview } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
 import { useSync } from "../sync/SyncProvider";
@@ -8,10 +9,11 @@ import { documentTypeLabel, formatDate, formatDateTime, formatNumber } from "../
 import { Icon, type IconName } from "../components/Icon";
 import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
 import { StatusBadge, statusLabel, statusTone, toneDotClass } from "../components/StatusBadge";
+import { tableCell, tableHead } from "../components/ui";
 
 function KpiCard({ label, value, hint, icon }: { label: string; value: number; hint: string; icon: IconName }) {
     return (
-        <Card className="flex flex-col justify-between p-4">
+        <Card className="flex flex-col justify-between p-5">
             <div className="flex items-start justify-between">
                 <div>
                     <p className="text-label-caps uppercase text-ink-subtle">{label}</p>
@@ -68,7 +70,7 @@ function PoliceDue({ police }: { police: Overview["police"] }) {
         { label: "Not uploaded", value: police.notUploaded, status: "NOT_UPLOADED", critical: true },
     ];
     return (
-        <Card className="space-y-3 p-4">
+        <Card className="space-y-3 p-5">
             <SectionHeading
                 title="Police reports"
                 description="Final police reports due 21 days after the police slip was submitted"
@@ -97,7 +99,7 @@ function ClientCompleteness({ clients, requiredTypes }: { clients: Overview["cli
         { label: "Missing documents", value: clients.missingDocuments, to: "/missing-documents", critical: true },
     ];
     return (
-        <Card className="space-y-3 p-4">
+        <Card className="space-y-3 p-5">
             <SectionHeading
                 title="Client documents"
                 description={`A client is complete when every required document (${requiredTypes.map(documentTypeLabel).join(", ")}) is verified`}
@@ -122,6 +124,90 @@ function ClientCompleteness({ clients, requiredTypes }: { clients: Overview["cli
     );
 }
 
+// Monthly overview: shown or hidden with the header toggle, remembered per
+// browser (off when storage is unavailable).
+export const MONTHLY_OVERVIEW_KEY = "emlynk.admin.monthlyOverview";
+const MONTH_OPTIONS = 24;
+
+function readMonthlyPreference(): boolean {
+    try {
+        return window.localStorage.getItem(MONTHLY_OVERVIEW_KEY) === "on";
+    } catch {
+        return false;
+    }
+}
+
+function saveMonthlyPreference(on: boolean) {
+    try {
+        window.localStorage.setItem(MONTHLY_OVERVIEW_KEY, on ? "on" : "off");
+    } catch {
+        // kept for this page only
+    }
+}
+
+function monthLabel(month: string): string {
+    return new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00Z`));
+}
+
+// "YYYY-MM" of `thisMonth` and the months before it, newest first.
+function recentMonths(thisMonth: string, count: number): string[] {
+    const [year, month] = thisMonth.split("-").map(Number);
+    return Array.from({ length: count }, (_, i) => {
+        const date = new Date(Date.UTC(year, month - 1 - i, 1));
+        return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+    });
+}
+
+function MonthlyOverview() {
+    const [month, setMonth] = useState<string | undefined>(undefined);
+    const report = useAdminResource(`monthly:${month ?? ""}`, (token, signal) => getMonthlyOverview(token, month, signal));
+    const data = report.data;
+    const items = data
+        ? [
+              { label: "Candidates registered", value: data.candidatesRegistered, tone: "text-ink" },
+              { label: "Documents submitted", value: data.documentsSubmitted, tone: "text-ink" },
+              { label: "Processed", value: data.successfullyProcessed, tone: "text-verified" },
+              { label: "Pending", value: data.pending, tone: "text-review" },
+              { label: "Rejected", value: data.rejected, tone: "text-critical" },
+              { label: "Manual review", value: data.manualReview, tone: "text-review" },
+          ]
+        : [];
+
+    return (
+        <Card className="space-y-3 p-5">
+            <SectionHeading
+                title="Monthly overview"
+                action={
+                    data && (
+                        <select
+                            aria-label="Month"
+                            value={month ?? data.month}
+                            onChange={(event) => setMonth(event.target.value)}
+                            className="h-8 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
+                        >
+                            {recentMonths(data.thisMonth, MONTH_OPTIONS).map((option) => (
+                                <option key={option} value={option}>{monthLabel(option)}</option>
+                            ))}
+                        </select>
+                    )
+                }
+            />
+            {report.status === "error" && !data && <ErrorState message={report.error.message} onRetry={report.reload} />}
+            {report.status === "loading" && !data && <LoadingState label="Loading monthly overview…" />}
+            {data && (
+                <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label={`Monthly overview for ${monthLabel(data.month)}`} aria-busy={report.status === "loading"}>
+                    {items.map((item) => (
+                        <li key={item.label} className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2">
+                            <span className="text-body-sm text-ink">{item.label}</span>
+                            <span className={`text-headline-md tabular-nums ${item.value > 0 ? item.tone : "text-ink"}`}>{formatNumber(item.value)}</span>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </Card>
+    );
+}
+
 function OverviewContent({ data }: { data: Overview }) {
     const { kpis, reviewQueue } = data;
     return (
@@ -139,11 +225,11 @@ function OverviewContent({ data }: { data: Overview }) {
             </div>
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-                <Card className="space-y-4 p-4 lg:col-span-7">
+                <Card className="space-y-4 p-5 lg:col-span-7">
                     <SectionHeading title="Document processing statuses" description="Outcome of every document received on WhatsApp" />
                     <Breakdown counts={data.submissionsByStatus} label={statusLabel} dotClass={(key) => toneDotClass(statusTone(key))} />
                 </Card>
-                <Card className="space-y-4 p-4 lg:col-span-5">
+                <Card className="space-y-4 p-5 lg:col-span-5">
                     <SectionHeading title="Documents by type" description="Received documents by detected type" />
                     <Breakdown counts={data.submissionsByType} label={documentTypeLabel} dotClass={() => "bg-primary"} />
                 </Card>
@@ -201,18 +287,18 @@ function OverviewContent({ data }: { data: Overview }) {
                             <thead>
                                 <tr>
                                     {["Type", "Reason", "Client", "Received"].map((heading) => (
-                                        <th key={heading} scope="col" className="h-[34px] border-b border-border bg-canvas px-4 text-left text-label-caps uppercase text-ink-subtle">{heading}</th>
+                                        <th key={heading} scope="col" className={tableHead}>{heading}</th>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
                                 {reviewQueue.items.map((item) => (
                                     <tr key={item.temporaryId} className="hover:bg-canvas">
-                                        <td className="h-11 border-b border-canvas-muted px-4 text-body-sm">
+                                        <td className={tableCell}>
                                             <Link to={`/review/pending-${encodeURIComponent(item.temporaryId)}`} className="text-primary hover:underline">{documentTypeLabel(item.documentType)}</Link>
                                         </td>
-                                        <td className="h-11 border-b border-canvas-muted px-4"><StatusBadge status={item.processingStatus} /></td>
-                                        <td className="h-11 border-b border-canvas-muted px-4 text-body-sm">
+                                        <td className={tableCell}><StatusBadge status={item.processingStatus} /></td>
+                                        <td className={tableCell}>
                                             {item.client ? (
                                                 <Link to={`/clients/${encodeURIComponent(item.client.passportId)}`} className="text-primary hover:underline">
                                                     {item.client.name ?? item.client.passportId}
@@ -221,7 +307,7 @@ function OverviewContent({ data }: { data: Overview }) {
                                                 <span className="text-ink-subtle">Not identified</span>
                                             )}
                                         </td>
-                                        <td className="h-11 border-b border-canvas-muted px-4 text-label-sm text-ink-muted">{formatDateTime(item.receivedDate)}</td>
+                                        <td className={`${tableCell} text-label-sm text-ink-muted`}>{formatDateTime(item.receivedDate)}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -239,6 +325,13 @@ export function OverviewPage() {
     const { admin } = useAuth();
     const overview = useAdminResource("overview", (token, signal) => getOverview(token, signal));
     const { syncing } = useSync();
+    const [showMonthly, setShowMonthly] = useState(readMonthlyPreference);
+    const toggleMonthly = () => {
+        setShowMonthly((on) => {
+            saveMonthlyPreference(!on);
+            return !on;
+        });
+    };
 
     return (
         <section aria-labelledby="page-title" className="space-y-6">
@@ -247,15 +340,27 @@ export function OverviewPage() {
                     <h1 id="page-title" className="text-headline-lg text-ink">Overview</h1>
                     <p className="mt-1 text-body-sm text-ink-muted">Welcome{admin ? `, ${admin.name}` : ""}. Current figures; Sri Lanka time. For one day's figures see the <Link to="/reports/daily" className="text-primary hover:underline">Daily Report</Link>.</p>
                 </div>
-                <button
-                    type="button"
-                    onClick={overview.reload}
-                    disabled={overview.status === "loading" || syncing}
-                    className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft shadow-surface hover:border-border-focus hover:bg-canvas disabled:opacity-60"
-                >
-                    Refresh
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={toggleMonthly}
+                        aria-pressed={showMonthly}
+                        className={`h-8 rounded border px-3 text-label-md shadow-surface ${showMonthly ? "border-primary bg-primary-soft text-primary" : "border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"}`}
+                    >
+                        Monthly overview
+                    </button>
+                    <button
+                        type="button"
+                        onClick={overview.reload}
+                        disabled={overview.status === "loading" || syncing}
+                        className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft shadow-surface hover:border-border-focus hover:bg-canvas disabled:opacity-60"
+                    >
+                        Refresh
+                    </button>
+                </div>
             </div>
+
+            {showMonthly && <MonthlyOverview />}
 
             {overview.status === "error" && !overview.data && <Card><ErrorState message={overview.error.message} onRetry={overview.reload} /></Card>}
             {overview.status === "loading" && !overview.data && <Card><LoadingState label="Loading overview…" /></Card>}

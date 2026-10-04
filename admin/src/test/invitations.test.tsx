@@ -40,9 +40,9 @@ describe("Admin Invitations Page", () => {
 
         expect(await screen.findByRole("heading", { name: "Admin Invitations" })).toBeInTheDocument();
         expect(screen.getByRole("heading", { name: "Invite New Administrator" })).toBeInTheDocument();
-        expect(screen.getByLabelText(/Full Name/i)).toBeInTheDocument();
-        expect(screen.getByLabelText(/Email Address/i)).toBeInTheDocument();
-        expect(screen.getByLabelText(/Assigned Role/i)).toBeInTheDocument();
+        expect(screen.getByLabelText("Full Name")).toBeInTheDocument();
+        expect(screen.getByLabelText("Email Address")).toBeInTheDocument();
+        expect(screen.getByLabelText("Assigned Role")).toBeInTheDocument();
 
         // Invitations list
         expect(await screen.findByText("Priyantha Silva")).toBeInTheDocument();
@@ -76,8 +76,8 @@ describe("Admin Invitations Page", () => {
         await screen.findByRole("heading", { name: "Admin Invitations" });
 
         const user = userEvent.setup();
-        await user.type(screen.getByLabelText(/Full Name/i), "New Colleague");
-        await user.type(screen.getByLabelText(/Email Address/i), "newcolleague@example.invalid");
+        await user.type(screen.getByLabelText("Full Name"), "New Colleague");
+        await user.type(screen.getByLabelText("Email Address"), "newcolleague@example.invalid");
         await user.click(screen.getByRole("button", { name: /Send Invitation/i }));
 
         expect(await screen.findByText(/Invitation Dispatched/i)).toBeInTheDocument();

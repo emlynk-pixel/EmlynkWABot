@@ -23,7 +23,7 @@ function statusLine(document: CandidateDocument | null, description?: string, sh
 // (a police report with no known variant). Remove deletes the stored document
 // and its file, after a confirmation with a reason (kept in the audit log).
 // onUploaded gets the candidate after an upload or a removal.
-export function DocumentRow({ passportId, documentType, label, removeTitle = label, description, required, document, variant, uploadable = true, accept = DOCUMENT_ACCEPT, readOnly, onUploaded }: {
+export function DocumentRow({ passportId, documentType, label, removeTitle = label, description, required, document, variant, uploadable = true, accept = DOCUMENT_ACCEPT, readOnly, onUploaded, title }: {
     passportId: string;
     documentType: CandidateDocumentType;
     label: string;
@@ -36,6 +36,7 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
     accept?: string;
     readOnly?: boolean;
     onUploaded: (details: CandidateDetails) => void;
+    title?: string;
 }) {
     const { token } = useAuth();
     const input = useRef<HTMLInputElement>(null);
@@ -93,7 +94,7 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
     };
 
     return (
-        <div className="rounded-lg border border-border px-4 py-3">
+        <div className="rounded-lg border border-border px-4 py-3" title={title}>
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
                     <p className="text-label-md text-ink">

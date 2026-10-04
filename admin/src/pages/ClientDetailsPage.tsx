@@ -173,7 +173,7 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
 
             {notice && <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
 
-            <Card className="p-4">
+            <Card className="p-5">
                 <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     <Field label="Passport ID">{client.passportId}</Field>
                     <Field label="WhatsApp">{client.whatsappNumber}</Field>
@@ -189,7 +189,7 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
             </Card>
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <Card className="space-y-3 p-4">
+                <Card className="space-y-3 p-5">
                     <SectionHeading
                         title="Required documents"
                         description={missing.length ? `Missing: ${missing.map(documentTypeLabel).join(", ")}` : "Every required document has been received."}
@@ -204,7 +204,7 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
                     </ul>
                 </Card>
 
-                <Card className="space-y-3 p-4">
+                <Card className="space-y-3 p-5">
                     <div className="flex items-center gap-2">
                         <span className="flex size-8 items-center justify-center rounded bg-primary-soft text-primary"><Icon name="local_police" className="size-5" /></span>
                         <SectionHeading title="Police documents" description="Latest stored slip and final report" />

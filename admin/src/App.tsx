@@ -1,4 +1,5 @@
-import { Route, Routes } from "react-router";
+import { useEffect } from "react";
+import { Outlet, Route, Routes } from "react-router";
 import { RequireAuth } from "./auth/RequireAuth";
 import { AdminLayout } from "./layout/AdminLayout";
 import { CandidateDeploymentPage } from "./pages/CandidateDeploymentPage";
@@ -10,6 +11,7 @@ import { DailyReportPage } from "./pages/DailyReportPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { InvitationsPage } from "./pages/InvitationsPage";
+import { AdminRolesPage } from "./pages/AdminRolesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MissingDocumentsPage } from "./pages/MissingDocumentsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -19,6 +21,21 @@ import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { SetupPasswordPage } from "./pages/SetupPasswordPage";
+
+// The Candidates screens keep their original look; .ui-classic (index.css)
+// restores the previous design tokens inside them, and the body class the
+// previous page background behind them.
+function ClassicArea() {
+    useEffect(() => {
+        document.body.classList.add("ui-classic-page");
+        return () => document.body.classList.remove("ui-classic-page");
+    }, []);
+    return (
+        <div className="ui-classic">
+            <Outlet />
+        </div>
+    );
+}
 
 // Routes are relative to the /admin base (see main.tsx). Overview,
 // Documents, Review Queue, Review Detail, Client Details and Police Workflow
@@ -42,9 +59,11 @@ export function AppRoutes() {
                 <Route path="documents" element={<DocumentsPage />} />
                 <Route path="review" element={<ReviewQueuePage />} />
                 <Route path="review/:id" element={<ReviewDetailPage />} />
-                <Route path="candidates" element={<CandidatesPage />} />
-                <Route path="candidates/new" element={<CandidateRegistrationPage />} />
-                <Route path="candidates/:passportId" element={<CandidateDeploymentPage />} />
+                <Route element={<ClassicArea />}>
+                    <Route path="candidates" element={<CandidatesPage />} />
+                    <Route path="candidates/new" element={<CandidateRegistrationPage />} />
+                    <Route path="candidates/:passportId" element={<CandidateDeploymentPage />} />
+                </Route>
                 {/* No longer in the sidebar (Candidates replaces it); kept for the
                     Overview completeness links and the client-details breadcrumb. */}
                 <Route path="clients" element={<ClientsPage />} />
@@ -53,6 +72,7 @@ export function AppRoutes() {
                 <Route path="police" element={<PoliceWorkflowPage />} />
                 <Route path="reports/daily" element={<DailyReportPage />} />
                 <Route path="invitations" element={<InvitationsPage />} />
+                <Route path="roles" element={<AdminRolesPage />} />
                 <Route path="*" element={<NotFoundPage />} />
             </Route>
         </Routes>

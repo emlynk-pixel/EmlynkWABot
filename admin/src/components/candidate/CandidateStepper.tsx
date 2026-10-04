@@ -18,7 +18,7 @@ export function stepTones(stages: { completed: boolean }[]): StepTone[] {
 const CIRCLE: Record<StepTone, string> = {
     incomplete: "border-2 border-critical bg-stepper-white text-critical",
     complete: "border-2 border-verified bg-stepper-white text-verified",
-    "complete-out-of-order": "border border-verified bg-verified-bg text-verified",
+    "complete-out-of-order": "border-2 border-verified bg-stepper-white text-verified",
 };
 
 // The selected stage is filled in (colours inverted), so it stands out from the others.
