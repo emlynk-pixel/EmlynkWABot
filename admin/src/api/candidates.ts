@@ -22,21 +22,17 @@ export const STAGE_LABELS: Record<CandidateStageKey, string> = {
     FINALIZING_JOB: "Finalizing the job",
 };
 
-export type CandidateDocumentType = "PASSPORT" | "NIC" | "SKILL_VIDEO" | "MEDICAL" | "POLICE_SLIP" | "POLICE_REPORT" | "AGREEMENT" | "AFFIDAVIT";
+export type CandidateDocumentType = "PASSPORT" | "NIC" | "SKILL_VIDEO" | "MEDICAL" | "POLICE_SLIP" | "POLICE_REPORT" | "SCAN";
 
 export const POLICE_REPORT_VARIANTS = [
     { value: "SL_VERIFIED", label: "SL Verified" },
     { value: "ROMANIA", label: "Romania" },
     { value: "SL_NORMAL", label: "SL Normal" },
 ] as const;
-export const AFFIDAVIT_VARIANTS = [
-    { value: "ENGLISH", label: "English Affidavit" },
-    { value: "SINHALA", label: "Sinhala Affidavit" },
-] as const;
 
 export function variantLabel(variant: string | null): string | null {
     if (!variant) return null;
-    return [...POLICE_REPORT_VARIANTS, ...AFFIDAVIT_VARIANTS].find((v) => v.value === variant)?.label ?? variant;
+    return [...POLICE_REPORT_VARIANTS].find((v) => v.value === variant)?.label ?? variant;
 }
 
 export type StageProgress = { stage: CandidateStageKey; completed: boolean };
@@ -111,17 +107,17 @@ export type CandidateDetails = {
     requiredDocuments: { documentType: CandidateDocumentType; included: boolean }[];
 };
 
-export type VariantDocumentType = "POLICE_REPORT" | "AFFIDAVIT";
+export type VariantDocumentType = "POLICE_REPORT";
 export type VariantDocuments = { byVariant: Record<string, CandidateDocument | null>; untyped: CandidateDocument | null };
 
-const isVariantType = (type: CandidateDocumentType): type is VariantDocumentType => type === "POLICE_REPORT" || type === "AFFIDAVIT";
+const isVariantType = (type: CandidateDocumentType): type is VariantDocumentType => type === "POLICE_REPORT";
 
 // Every current document of a type: one for most types; for a police report
 // or an affidavit, each stored variant (in their usual order), then an untyped one.
 export function storedDocuments(details: CandidateDetails, type: CandidateDocumentType): CandidateDocument[] {
     if (!isVariantType(type)) return details.documents[type] ? [details.documents[type]] : [];
     const stored = details.variantDocuments[type];
-    const order = type === "POLICE_REPORT" ? POLICE_REPORT_VARIANTS : AFFIDAVIT_VARIANTS;
+    const order = POLICE_REPORT_VARIANTS;
     return [...order.map((v) => stored.byVariant[v.value] ?? null), stored.untyped].filter((d): d is CandidateDocument => d !== null);
 }
 

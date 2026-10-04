@@ -425,7 +425,7 @@ describe("independent stages", () => {
         assert.deepEqual(stageOf(result, "CANDIDATE_DETAILS").missing, []);
         assert.deepEqual(await listed(), [false, true, false, false, false, false]);
 
-        const uploads = [["MEDICAL", null], ["POLICE_REPORT", "SL_VERIFIED"], ["POLICE_REPORT", "ROMANIA"], ["AGREEMENT", null], ["AFFIDAVIT", "SINHALA"]];
+        const uploads = [["MEDICAL", null], ["POLICE_REPORT", "SL_VERIFIED"], ["POLICE_REPORT", "ROMANIA"], ["SCAN", null]];
         for (const [index, [documentType, variant]] of uploads.entries()) {
             const buffer = Buffer.concat([PDF, Buffer.from([index])]);
             result = await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType, variant, mimeType: "application/pdf", buffer });
@@ -433,7 +433,7 @@ describe("independent stages", () => {
         assert.equal(stageOf(result, "DOCUMENT_SUBMISSION").completed, true);
         assert.deepEqual(await listed(), [false, true, true, false, false, false]);
         assert.deepEqual(result.requiredDocuments.map((r) => r.documentType), [...REQUIRED_SUBMISSION_DOCUMENTS]);
-        assert.equal(result.documents.AFFIDAVIT.variant, "SINHALA");
+        assert.ok(result.documents.SCAN);
 
         // Notes can still be saved; completion can't be set by hand.
         result = await updateStage({ db, passportId: "N1023757", stage: "DOCUMENT_SUBMISSION", values: { notes: "All checked" } });
@@ -565,7 +565,7 @@ describe("document uploads", () => {
     test("type and variant rules", () => {
         assert.deepEqual(parseUploadQuery({ type: "POLICE_REPORT", variant: "ROMANIA" }).values, { documentType: "POLICE_REPORT", variant: "ROMANIA" });
         assert.ok(parseUploadQuery({ type: "POLICE_REPORT" }).errors, "variant required");
-        assert.ok(parseUploadQuery({ type: "AFFIDAVIT", variant: "TAMIL" }).errors);
+        assert.ok(parseUploadQuery({ type: "POLICE_REPORT", variant: "TAMIL" }).errors);
         assert.ok(parseUploadQuery({ type: "MEDICAL", variant: "ENGLISH" }).errors, "no variant for medical");
         assert.ok(parseUploadQuery({ type: "UNKNOWN_DOC" }).errors, "only candidate document types");
     });
@@ -636,14 +636,11 @@ describe("document uploads", () => {
         });
         await upload("POLICE_REPORT", "SL_VERIFIED");
         await upload("POLICE_REPORT", "ROMANIA");
-        await upload("POLICE_REPORT", "SL_NORMAL");
-        await upload("AFFIDAVIT", "ENGLISH");
-        let result = await upload("AFFIDAVIT", "SINHALA");
+        let result = await upload("POLICE_REPORT", "SL_NORMAL");
 
         const names = (type) => Object.fromEntries(Object.entries(result.variantDocuments[type].byVariant).map(([v, d]) => [v, d?.originalFilename ?? null]));
         assert.deepEqual(names("POLICE_REPORT"), { SL_VERIFIED: "POLICE_REPORT-SL_VERIFIED.pdf", ROMANIA: "POLICE_REPORT-ROMANIA.pdf", SL_NORMAL: "POLICE_REPORT-SL_NORMAL.pdf" });
-        assert.deepEqual(names("AFFIDAVIT"), { ENGLISH: "AFFIDAVIT-ENGLISH.pdf", SINHALA: "AFFIDAVIT-SINHALA.pdf" });
-        assert.equal(db.state.documents.filter((d) => d.verificationStatus === "VERIFIED").length, 5, "nothing superseded");
+        assert.equal(db.state.documents.filter((d) => d.verificationStatus === "VERIFIED").length, 3, "nothing superseded");
         assert.equal(result.variantDocuments.POLICE_REPORT.untyped, null);
         assert.ok(result.requiredDocuments.find((r) => r.documentType === "POLICE_REPORT").included);
 
@@ -695,7 +692,7 @@ describe("document uploads", () => {
         const bucket = createFakeBucket();
         await registered(db);
         db.document.create = async () => { throw new Error("database down"); };
-        await assert.rejects(uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "AGREEMENT", variant: null, mimeType: "application/pdf", buffer: PDF }), /upload removed/);
+        await assert.rejects(uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "SCAN", variant: null, mimeType: "application/pdf", buffer: PDF }), /upload removed/);
         assert.equal(bucket.objects.size, 0);
     });
 
@@ -916,7 +913,7 @@ describe("candidate routes: roles", () => {
             const refused = [
                 [{ type: "UNKNOWN_TYPE_XYZ", mimeType: "application/pdf", fileSize: 10 }, 400],
                 [{ type: "POLICE_REPORT", mimeType: "application/pdf", fileSize: 10 }, 400],
-                [{ type: "AFFIDAVIT", variant: "TAMIL", mimeType: "application/pdf", fileSize: 10 }, 400],
+                [{ type: "POLICE_REPORT", variant: "TAMIL", mimeType: "application/pdf", fileSize: 10 }, 400],
                 [{ type: "MEDICAL", variant: "ENGLISH", mimeType: "application/pdf", fileSize: 10 }, 400],
                 [{ type: "MEDICAL", mimeType: "application/pdf", fileSize: "big" }, 400],
                 [{ type: "MEDICAL", mimeType: "application/zip", fileSize: 10 }, 422],
@@ -979,19 +976,19 @@ describe("candidate routes: roles", () => {
 
         test("replacing a document: the new file becomes current, the old one of that variant is superseded, no extra rows", async () => {
             const { db, bucket } = await withCandidate();
-            await directUpload("ADMIN", "N1023757", db, bucket, { type: "AFFIDAVIT", variant: "ENGLISH" });
-            const replaced = await directUpload("ADMIN", "N1023757", db, bucket, { type: "AFFIDAVIT", variant: "ENGLISH", buffer: Buffer.concat([PDF, Buffer.from("v2")]) });
+            await directUpload("ADMIN", "N1023757", db, bucket, { type: "POLICE_REPORT", variant: "ROMANIA" });
+            const replaced = await directUpload("ADMIN", "N1023757", db, bucket, { type: "POLICE_REPORT", variant: "ROMANIA", buffer: Buffer.concat([PDF, Buffer.from("v2")]) });
             assert.equal(replaced.status, 200);
-            assert.equal(replaced.body.variantDocuments.AFFIDAVIT.byVariant.ENGLISH.variant, "ENGLISH");
-            assert.deepEqual(db.state.documents.map((d) => [d.storedFilename, d.verificationStatus]), [["affidavit.pdf", "SUPERSEDED"], ["affidavit_v2.pdf", "VERIFIED"]]);
+            assert.equal(replaced.body.variantDocuments.POLICE_REPORT.byVariant.ROMANIA.variant, "ROMANIA");
+            assert.deepEqual(db.state.documents.map((d) => [d.storedFilename, d.verificationStatus]), [["police_report.pdf", "SUPERSEDED"], ["police_report_v2.pdf", "VERIFIED"]]);
             assert.deepEqual(db.state.auditLogs.map((a) => a.previousStatus), ["NONE", "VERIFIED"]);
 
             // The other variant is kept alongside, not a replacement.
-            const sinhala = await directUpload("ADMIN", "N1023757", db, bucket, { type: "AFFIDAVIT", variant: "SINHALA", buffer: Buffer.concat([PDF, Buffer.from("v3")]) });
-            assert.equal(sinhala.status, 200);
-            assert.deepEqual(db.state.documents.map((d) => [d.documentVariant, d.verificationStatus]), [["ENGLISH", "SUPERSEDED"], ["ENGLISH", "VERIFIED"], ["SINHALA", "VERIFIED"]]);
-            assert.ok(sinhala.body.variantDocuments.AFFIDAVIT.byVariant.ENGLISH);
-            assert.ok(sinhala.body.variantDocuments.AFFIDAVIT.byVariant.SINHALA);
+            const sl_verified = await directUpload("ADMIN", "N1023757", db, bucket, { type: "POLICE_REPORT", variant: "SL_VERIFIED", buffer: Buffer.concat([PDF, Buffer.from("v3")]) });
+            assert.equal(sl_verified.status, 200);
+            assert.deepEqual(db.state.documents.map((d) => [d.documentVariant, d.verificationStatus]), [["ROMANIA", "SUPERSEDED"], ["ROMANIA", "VERIFIED"], ["SL_VERIFIED", "VERIFIED"]]);
+            assert.ok(sl_verified.body.variantDocuments.POLICE_REPORT.byVariant.ROMANIA);
+            assert.ok(sl_verified.body.variantDocuments.POLICE_REPORT.byVariant.SL_VERIFIED);
         });
 
         test("finalize without an upload, or for another candidate or type, records nothing", async () => {
@@ -1006,7 +1003,7 @@ describe("candidate routes: roles", () => {
 
             bucket.browserPut(bucket.signedUploads[0], PDF, "application/pdf");
             assert.equal((await finalize("P7654321", {})).status, 404, "candidate A's upload can't be finalized for candidate B");
-            assert.equal((await finalize("N1023757", { type: "AGREEMENT" })).status, 404, "nor as another document type");
+            assert.equal((await finalize("N1023757", { type: "SCAN" })).status, 404, "nor as another document type");
             assert.equal((await finalize("N1023757", { uploadId: "not-a-uuid" })).status, 400);
             assert.equal(db.state.documents.length, 0);
             assert.equal(bucket.objects.size, 1, "A's staged upload is untouched");
@@ -1107,9 +1104,9 @@ describe("removing a document", () => {
     test("only this candidate's current document: a superseded version, another candidate's, or one already removed is not found", async () => {
         const { db, bucket, upload } = await seed();
         await registered(db, { passportId: "P7654321", nic: "200012345678" });
-        const old = await upload("AGREEMENT", PDF);
-        await upload("AGREEMENT", Buffer.concat([PDF, Buffer.from("v2")]));
-        const superseded = old.documents.AGREEMENT.documentId;
+        const old = await upload("SCAN", PDF);
+        await upload("SCAN", Buffer.concat([PDF, Buffer.from("v2")]));
+        const superseded = old.documents.SCAN.documentId;
         await assert.rejects(remove(db, bucket, superseded), (error) => error.code === "DOCUMENT_NOT_FOUND" && error.status === 404);
 
         const current = db.state.documents.find((d) => d.verificationStatus === "VERIFIED").documentId;
@@ -1188,7 +1185,7 @@ describe("file size limits: 50 MB for a skill video, 10 MB for documents", () =>
         assert.equal(checkDeclaredFile({ documentType: "SKILL_VIDEO", mimeType: "video/mp4", fileSize: 10 * MB + 1 }), null);
         assert.equal(checkDeclaredFile({ documentType: "SKILL_VIDEO", mimeType: "video/webm", fileSize: 50 * MB }), null);
         assert.match(checkDeclaredFile({ documentType: "SKILL_VIDEO", mimeType: "video/mp4", fileSize: 50 * MB + 1 }), /larger than 50 MB/);
-        for (const documentType of ["PASSPORT", "NIC", "MEDICAL", "POLICE_REPORT", "AGREEMENT", "AFFIDAVIT"]) {
+        for (const documentType of ["PASSPORT", "NIC", "MEDICAL", "POLICE_REPORT", "SCAN"]) {
             assert.match(checkDeclaredFile({ documentType, mimeType: "application/pdf", fileSize: 10 * MB + 1 }), /larger than 10 MB/, documentType);
         }
     });
@@ -1252,10 +1249,10 @@ describe("direct uploads: storage handling", () => {
         const db = createFakeDb();
         const bucket = createFakeBucket();
         await registered(db);
-        const { uploadId } = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "AGREEMENT", mimeType: "application/pdf", fileSize: PDF.length });
+        const { uploadId } = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "SCAN", mimeType: "application/pdf", fileSize: PDF.length });
         bucket.browserPut(bucket.signedUploads[0], PDF, "application/pdf");
         db.document.create = async () => { throw new Error("database down"); };
-        await assert.rejects(finalizeUpload({ db, bucket, admin: ADMIN, passportId: "N1023757", uploadId, documentType: "AGREEMENT", variant: null, mimeType: "application/pdf", originalFileName: null }), /upload removed/);
+        await assert.rejects(finalizeUpload({ db, bucket, admin: ADMIN, passportId: "N1023757", uploadId, documentType: "SCAN", variant: null, mimeType: "application/pdf", originalFileName: null }), /upload removed/);
         assert.equal(bucket.objects.size, 0, "neither the staged nor the moved object is left");
         assert.equal(db.state.documents.length, 0);
     });
