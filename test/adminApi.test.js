@@ -22,6 +22,7 @@ Object.assign(process.env, {
     JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
+const { createAuthRouter } = await import("../src/routes/auth.js");
 
 // Synthetic people and documents only.
 const decimal = (value) => ({ valueOf: () => value, toString: () => value }); // like Prisma.Decimal
@@ -88,7 +89,11 @@ const ADMINS = [
 const tokenFor = (adminId, options = { expiresIn: "1h" }) => jwt.sign({ adminId, role: "ADMIN" }, process.env.JWT_SECRET, { algorithm: "HS256", ...options });
 
 async function startWith(db) {
-    const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db }) });
+    const noLimit = (req, res, next) => next();
+    const app = createApp({
+        authRouter: createAuthRouter({ db, loginLimiter: noLimit, resetLimiter: noLimit, apiLimiter: noLimit }),
+        adminApiRouter: createAdminRouter({ apiLimiter: noLimit, db })
+    });
     const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
     const base = `http://127.0.0.1:${server.address().port}`;
     const get = async (path, token = tokenFor("admin-active")) => {

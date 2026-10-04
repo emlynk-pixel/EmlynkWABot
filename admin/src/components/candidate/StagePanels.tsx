@@ -17,7 +17,7 @@ import {
 import { documentTypeLabel } from "../format";
 import { Icon } from "../Icon";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
-import { CandidateFields, detailsFrom, Field, fieldControl, textAreaControl, validateDetails } from "./CandidateFields";
+import { CandidateFields, completionGaps, detailsFrom, Field, fieldControl, textAreaControl, validateDetails } from "./CandidateFields";
 import { DocumentRow, VIDEO_ACCEPT } from "./DocumentRow";
 import { exportDocumentSubmissionPdf } from "./exportPdf";
 
@@ -192,8 +192,10 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
     const submit = async (event: FormEvent) => {
         event.preventDefault();
         if (!token) return;
-        const errors = validateDetails(form);
-        setFieldErrors(errors);
+        // Missing address / WhatsApp number don't block the save (the stage
+        // just stays incomplete); they are shown under their fields.
+        const errors = validateDetails(form, "details");
+        setFieldErrors({ ...completionGaps(form), ...errors });
         if (Object.keys(errors).length) return;
         setBusy(true);
         setError(null);
@@ -221,7 +223,7 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
             <form onSubmit={submit}>
                 <PanelHeading title="Candidate details" />
                 <div className="mt-4">
-                    <CandidateFields value={form} onChange={setForm} errors={fieldErrors} disabled={!canEdit || busy} passportId={{ value: passportId }} whatsappLocked={Boolean(details.candidate.whatsappNumber)} />
+                    <CandidateFields value={form} onChange={setForm} errors={fieldErrors} disabled={!canEdit || busy} passportId={{ value: passportId }} whatsappLocked={Boolean(details.candidate.whatsappNumber)} form="details" />
                 </div>
             </form>
             <div className="mt-6 space-y-2">

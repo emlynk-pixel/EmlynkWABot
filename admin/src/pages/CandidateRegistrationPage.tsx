@@ -176,7 +176,6 @@ export function CandidateRegistrationPage() {
 
         const found = validateDetails(details);
         if (!isPassportId(normalizedId)) found.passportId = "Enter the passport number (6 to 9 letters and digits).";
-        if (!files.PASSPORT) found.passportFile = "Choose the passport file.";
         setErrors(found);
         if (Object.keys(found).length) return;
 
@@ -269,14 +268,14 @@ export function CandidateRegistrationPage() {
                     </div>
                     {existing ? (
                         <div className="mt-6 space-y-2">
-                            <DocumentRow passportId={existing.candidate.passportId} documentType="PASSPORT" label="Passport" required document={existing.documents.PASSPORT} onUploaded={onUploaded} />
+                            <DocumentRow passportId={existing.candidate.passportId} documentType="PASSPORT" label="Passport" document={existing.documents.PASSPORT} onUploaded={onUploaded} />
                             <DocumentRow passportId={existing.candidate.passportId} documentType="NIC" label="NIC document" document={existing.documents.NIC} onUploaded={onUploaded} />
                             <DocumentRow passportId={existing.candidate.passportId} documentType="SKILL_VIDEO" label="Skill video" document={existing.documents.SKILL_VIDEO} accept={VIDEO_ACCEPT} onUploaded={onUploaded} />
                             {others.length > 0 && <p className="text-label-sm text-ink-subtle">Also on record: {others.join(", ")}</p>}
                         </div>
                     ) : (
                         <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-                            <FileInput id={`${id}-passport`} label="Passport" required accept={DOCUMENT_ACCEPT} file={files.PASSPORT} onChange={setFile("PASSPORT")} disabled={busy} error={errors.passportFile} />
+                            <FileInput id={`${id}-passport`} label="Passport" accept={DOCUMENT_ACCEPT} file={files.PASSPORT} onChange={setFile("PASSPORT")} disabled={busy} />
                             <FileInput id={`${id}-nic`} label="NIC document" accept={DOCUMENT_ACCEPT} file={files.NIC} onChange={setFile("NIC")} disabled={busy} />
                             <FileInput id={`${id}-video`} label="Skill video" accept={VIDEO_ACCEPT} file={files.SKILL_VIDEO} onChange={setFile("SKILL_VIDEO")} disabled={busy} />
                         </div>
