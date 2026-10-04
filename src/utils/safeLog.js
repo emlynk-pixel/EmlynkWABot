@@ -58,7 +58,9 @@ function isSafePrismaMetaValue(value) {
 // https://www.postgresql.org/docs/current/errcodes-appendix.html) - a
 // category label, never a value, so it's safe to log. `meta.message` is not:
 // for a raw query it can quote the failing SQL text or values, so it is
-// never read here.
+// passed through `safeErrorText` (the same redaction/truncation used
+// everywhere else in this file) before being kept, as `dbErrorMessage`,
+// rather than dropped outright.
 //
 // Confirmed shape: reproduced locally against this project's exact stack
 // (PrismaClient 6.19.3 + `@prisma/adapter-pg`, config/prisma.js) by forcing
@@ -79,10 +81,14 @@ function isSafePrismaMetaValue(value) {
 const SQLSTATE_PATTERN = /^[0-9A-Z]{5}$/;
 
 function safeRawQueryMeta(meta) {
-    if (meta && typeof meta.code === "string" && SQLSTATE_PATTERN.test(meta.code)) {
-        return { dbErrorCode: meta.code };
+    if (!meta || typeof meta.code !== "string" || !SQLSTATE_PATTERN.test(meta.code)) {
+        return null;
     }
-    return null;
+    const out = { dbErrorCode: meta.code };
+    if (typeof meta.message === "string") {
+        out.dbErrorMessage = safeErrorText(meta.message);
+    }
+    return out;
 }
 
 // Duck-typed on `.code` matching Prisma's "P" + 4 digits format, so this

@@ -76,30 +76,56 @@ describe("safePrismaErrorFields", () => {
                 });
                 assert.deepEqual(safePrismaErrorFields(error), {
                     prismaCode: "P2010",
-                    prismaMeta: { dbErrorCode: "42P01" },
+                    prismaMeta: { dbErrorCode: "42P01", dbErrorMessage: "relation [redacted] does not exist" },
                 });
             });
 
-            test("a SQLSTATE-shaped meta.code is kept as dbErrorCode", () => {
+            test("a SQLSTATE-shaped meta.code is kept as dbErrorCode, meta.message as redacted dbErrorMessage", () => {
                 const error = Object.assign(new Error("raw query failed"), {
                     code: "P2010",
                     meta: { code: "42501", message: "permission denied for table rate_limits" },
                 });
                 assert.deepEqual(safePrismaErrorFields(error), {
                     prismaCode: "P2010",
-                    prismaMeta: { dbErrorCode: "42501" },
+                    prismaMeta: { dbErrorCode: "42501", dbErrorMessage: "permission denied for table rate_limits" },
                 });
             });
 
-            test("meta.message (can quote the failing SQL/values) is never returned", () => {
+            test("dbErrorMessage is redacted and truncated the same way as every other logged message", () => {
+                // Postgres's own message format quotes identifiers/usernames
+                // (e.g. this exact wording for a failed auth attempt) - it never
+                // echoes a submitted password in plaintext. safeErrorText's
+                // quoted-value redaction covers that convention.
                 const error = Object.assign(new Error("raw query failed"), {
                     code: "P2010",
-                    meta: { code: "08006", message: "connection to server at \"db.internal\" failed: password=hunter2" },
+                    meta: { code: "28P01", message: "password authentication failed for user \"postgres.myproject\"" },
                 });
                 const result = safePrismaErrorFields(error);
-                assert.ok(!JSON.stringify(result).includes("hunter2"));
-                assert.ok(!JSON.stringify(result).includes("db.internal"));
-                assert.deepEqual(result, { prismaCode: "P2010", prismaMeta: { dbErrorCode: "08006" } });
+                assert.ok(!JSON.stringify(result).includes("myproject"));
+                assert.deepEqual(result, {
+                    prismaCode: "P2010",
+                    prismaMeta: { dbErrorCode: "28P01", dbErrorMessage: "password authentication failed for user [redacted]" },
+                });
+            });
+
+            test("dbErrorMessage is truncated to 200 characters, same cap as every other logged message", () => {
+                const error = Object.assign(new Error("raw query failed"), {
+                    code: "P2010",
+                    meta: { code: "08006", message: "connection failure: " + "x".repeat(300) },
+                });
+                const result = safePrismaErrorFields(error);
+                assert.equal(result.prismaMeta.dbErrorMessage.length, 200);
+            });
+
+            test("no meta.message -> dbErrorCode only, no dbErrorMessage key", () => {
+                const error = Object.assign(new Error("raw query failed"), {
+                    code: "P2010",
+                    meta: { code: "53300" },
+                });
+                assert.deepEqual(safePrismaErrorFields(error), {
+                    prismaCode: "P2010",
+                    prismaMeta: { dbErrorCode: "53300" },
+                });
             });
 
             test("a meta.code that isn't SQLSTATE-shaped is dropped, not passed through", () => {
