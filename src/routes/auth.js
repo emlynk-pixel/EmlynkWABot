@@ -144,10 +144,10 @@ export function createAuthRouter({
 
   // Current admin's profile, looked up from the token's adminId. The token
   // alone doesn't show a later deactivation, so the stored status is checked
-  // here; future admin endpoints need the same check. The token is checked
-  // before the rate limit: its counter lives in the database, and a request
-  // without a valid token is answered (401) without touching it.
-  router.get("/me", authenticateAdmin, apiLimiter, async (req, res) => {
+  // here; future admin endpoints need the same check. The rate limiter runs
+  // first so that brute-force requests are rejected before the auth middleware
+  // touches the database.
+  router.get("/me", apiLimiter, authenticateAdmin, async (req, res) => {
     try {
       const client = await resolveDb(db);
       const admin = await client.admin.findUnique({
