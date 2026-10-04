@@ -446,8 +446,8 @@ describe("Candidate deployment", () => {
     test("candidate details: optional fields are empty when not on record; a WhatsApp number on record is read-only", async () => {
         signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
-        expect(await screen.findByLabelText("WhatsApp number")).toHaveAttribute("readonly");
-        expect(screen.getByLabelText("WhatsApp number")).toHaveValue("94770000002");
+        expect(await screen.findByLabelText("WhatsApp number *")).toHaveAttribute("readonly");
+        expect(screen.getByLabelText("WhatsApp number *")).toHaveValue("94770000002");
         expect(screen.getByText("Registered WhatsApp numbers cannot be changed.")).toBeInTheDocument();
         expect(screen.getByLabelText("Contact number")).not.toHaveAttribute("readonly");
         expect(screen.getByLabelText("Nationality")).toHaveValue("");
@@ -455,6 +455,23 @@ describe("Candidate deployment", () => {
         expect(screen.getByLabelText("Passport issue date")).toHaveValue("");
         expect(screen.getByText("Missing: passport document")).toBeInTheDocument();
         expect(screen.queryByRole("checkbox", { name: "Stage completed" })).not.toBeInTheDocument();
+    });
+
+    test("candidate details: a missing address or WhatsApp number doesn't block saving, and is shown as needed to complete the stage", async () => {
+        const incomplete: CandidateDetails = { ...DETAILS, candidate: { ...DETAILS.candidate, address: null, whatsappNumber: null } };
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: incomplete },
+            "PUT /api/admin/candidates/N0000002": { status: 200, body: incomplete },
+        });
+        renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+        const user = userEvent.setup();
+        expect(await screen.findByLabelText("Address *")).toHaveValue("");
+        await user.type(screen.getByLabelText("Contact number"), "0112345678");
+        await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+        await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT" && c.path === "/api/admin/candidates/N0000002")).toBe(true));
+        expect(screen.getByLabelText("Address *")).toHaveAttribute("aria-invalid", "true");
+        expect(screen.getAllByText("Required to complete Candidate details.")).toHaveLength(2); // address and WhatsApp number
     });
 
     test("candidate details shows completed (stepper green) once the record has everything", async () => {
@@ -552,25 +569,51 @@ describe("Call log", () => {
 });
 
 describe("Candidate registration", () => {
-    test("required fields and the passport file are checked before anything is sent", async () => {
+    test("required fields (including the WhatsApp number) are checked before anything is sent; the address and passport file are not required", async () => {
         const { calls } = signedInBackend();
         renderApp("/candidates/new");
         await userEvent.setup().click(await screen.findByRole("button", { name: "Register candidate" }));
         expect(screen.getByText("Enter the surname.")).toBeInTheDocument();
-        expect(screen.getByText("Choose the passport file.")).toBeInTheDocument();
+        expect(screen.getByText("Enter the WhatsApp number.")).toBeInTheDocument();
+        expect(screen.queryByText("Choose the passport file.")).not.toBeInTheDocument();
+        expect(screen.queryByText("Enter the address.")).not.toBeInTheDocument();
+        expect(screen.getByLabelText("WhatsApp number *")).toBeInTheDocument();
+        expect(screen.getByLabelText("Address")).toBeInTheDocument(); // no required mark at registration
         expect(calls.some((c) => c.method === "POST")).toBe(false);
     });
 
-    async function fillRequired(user: ReturnType<typeof userEvent.setup>) {
+    // The fields registration requires, nothing else.
+    async function fillRegistrationMinimum(user: ReturnType<typeof userEvent.setup>) {
         await user.type(await screen.findByLabelText("Surname *"), "SILVA");
         await user.type(screen.getByLabelText("Other names *"), "SAMAN");
         await user.type(screen.getByLabelText("NIC *"), "901234567V");
         await user.type(screen.getByLabelText("Passport ID *"), "n0000002");
         await user.type(screen.getByLabelText("Job type *"), "Driver{Enter}");
         await user.type(screen.getByLabelText("Job experience *"), "5 years");
-        await user.type(screen.getByLabelText("Address *"), "1 Main Street");
-        await user.upload(screen.getByLabelText("Passport *"), new File(["%PDF-1.4"], "passport.pdf", { type: "application/pdf" }));
+        await user.type(screen.getByLabelText("WhatsApp number *"), "0771234567");
     }
+
+    async function fillRequired(user: ReturnType<typeof userEvent.setup>) {
+        await fillRegistrationMinimum(user);
+        await user.type(screen.getByLabelText("Address"), "1 Main Street");
+        await user.upload(screen.getByLabelText("Passport"), new File(["%PDF-1.4"], "passport.pdf", { type: "application/pdf" }));
+    }
+
+    test("registers with the WhatsApp number but no address and no passport file; nothing is uploaded", async () => {
+        let created = false;
+        const { calls } = signedInBackend({
+            "POST /api/admin/candidates": () => { created = true; return { status: 201, body: { passportId: "N0000002", uniqueId: "0002" } }; },
+            "GET /api/admin/candidates/N0000002": () => (created ? { status: 200, body: DETAILS } : { status: 404, body: { message: "Candidate not found" } }),
+        });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await fillRegistrationMinimum(user);
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+
+        expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
+        expect(calls.find((c) => c.method === "POST" && c.path === "/api/admin/candidates")!.body).toMatchObject({ address: "", whatsappNumber: "0771234567" });
+        expect(calls.some((c) => c.path.includes("/documents/"))).toBe(false);
+    });
 
     test("a file that failed at registration is reported until it's uploaded; the upload says Saved; form edits still save to the same records", async () => {
         const doc = (name: string) => ({ documentId: name, originalFilename: name, verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-01T00:00:00.000Z" });
@@ -613,7 +656,7 @@ describe("Candidate registration", () => {
         // Editing the form enables Save; saving updates the existing records (PUTs), never creates new ones.
         const postsBefore = calls.filter((c) => c.method === "POST").length;
         await user.type(screen.getByLabelText("Comment"), "Called back");
-        await user.type(screen.getByLabelText("Address *"), ", Kandy");
+        await user.type(screen.getByLabelText("Address *"), ", Kandy"); // required to complete Candidate details
         expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
         await user.click(screen.getByRole("button", { name: "Save changes" }));
         await vi.waitFor(() => expect(calls.filter((c) => c.method === "PUT" && c.path.startsWith("/api/"))).toHaveLength(2));
@@ -636,7 +679,8 @@ describe("Candidate registration", () => {
 
         expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
         expect(calls.find((c) => c.method === "POST" && c.path === "/api/admin/candidates")!.body).toMatchObject({
-            nationality: "", sex: "", dateOfBirth: "", placeOfBirth: "", passportIssueDate: "", passportExpiryDate: "", whatsappNumber: "", contactNumber: "",
+            nationality: "", sex: "", dateOfBirth: "", placeOfBirth: "", passportIssueDate: "", passportExpiryDate: "", contactNumber: "",
+            whatsappNumber: "0771234567",
         });
         // The passport file went to storage, then was finalized; never to the API.
         expect(calls.find((c) => c.path.endsWith("/documents/upload-target"))!.body).toMatchObject({ type: "PASSPORT", mimeType: "application/pdf", fileName: "passport.pdf" });
@@ -652,7 +696,8 @@ describe("Candidate registration", () => {
         await fillRequired(user);
         await user.type(screen.getByLabelText("Passport issue date"), "2031-01-01");
         await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-01");
-        await user.type(screen.getByLabelText("WhatsApp number"), "12");
+        await user.clear(screen.getByLabelText("WhatsApp number *"));
+        await user.type(screen.getByLabelText("WhatsApp number *"), "12");
         await user.click(screen.getByRole("button", { name: "Register candidate" }));
         expect(screen.getByText("Must be before the expiry date.")).toBeInTheDocument();
         expect(screen.getByText("Enter a phone number, e.g. 0771234567.")).toBeInTheDocument();
@@ -693,7 +738,7 @@ describe("Candidate registration", () => {
         await vi.waitFor(() => expect(calls.some((c) => c.path === "/api/admin/candidates/N7654321")).toBe(true));
         expect(screen.getByLabelText("Passport ID *")).not.toHaveAttribute("readonly");
         expect(screen.queryByText(/Existing candidate found/)).not.toBeInTheDocument();
-        expect(screen.getByLabelText("Passport *")).toHaveAttribute("type", "file");
+        expect(screen.getByLabelText("Passport")).toHaveAttribute("type", "file");
         expect(screen.getByRole("button", { name: "Register candidate" })).toBeInTheDocument();
         expect(calls.filter((c) => c.path.startsWith("/api/admin/candidates/")).length).toBe(1);
     });
@@ -710,7 +755,7 @@ describe("Candidate registration", () => {
         expect(screen.getByLabelText("Surname *")).toHaveValue("SILVA");
         expect(screen.getByLabelText("Other names *")).toHaveValue("SAMAN");
         expect(screen.getByLabelText("NIC *")).toHaveValue("901234567V");
-        expect(screen.getByLabelText("Address *")).toHaveValue("1 Main Street");
+        expect(screen.getByLabelText("Address")).toHaveValue("1 Main Street");
         expect(screen.getByLabelText("Job experience *")).toHaveValue("5 years");
         expect(screen.getByText("Driver")).toBeInTheDocument();
         expect(screen.getByLabelText("Nationality")).toHaveValue("Sri Lankan");
@@ -718,8 +763,8 @@ describe("Candidate registration", () => {
         expect(screen.getByLabelText("Date of birth")).toHaveValue("1990-03-12");
         expect(screen.getByLabelText("Passport expiry date")).toHaveValue("2030-05-11");
         expect(screen.getByLabelText("Passport issue date")).toHaveValue("");
-        expect(screen.getByLabelText("WhatsApp number")).toHaveAttribute("readonly");
-        expect(screen.getByLabelText("WhatsApp number")).toHaveValue("94770000002");
+        expect(screen.getByLabelText("WhatsApp number *")).toHaveAttribute("readonly");
+        expect(screen.getByLabelText("WhatsApp number *")).toHaveValue("94770000002");
         expect(screen.getByText("Registered WhatsApp numbers cannot be changed.")).toBeInTheDocument();
         expect(screen.getByLabelText("Contact number")).toHaveValue("");
         expect(screen.getByLabelText("Comment")).toHaveValue("Prefers morning calls");
@@ -742,8 +787,8 @@ describe("Candidate registration", () => {
         await user.type(await screen.findByLabelText("Passport ID *"), "N0000002");
         await user.tab();
         await screen.findByText("Existing candidate found — details loaded.");
-        await user.clear(screen.getByLabelText("Address *"));
-        await user.type(screen.getByLabelText("Address *"), "2 Lake Road");
+        await user.clear(screen.getByLabelText("Address"));
+        await user.type(screen.getByLabelText("Address"), "2 Lake Road");
         await user.click(screen.getByRole("button", { name: "Save changes" }));
 
         expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
@@ -767,8 +812,8 @@ describe("Candidate registration", () => {
         await user.type(await screen.findByLabelText("Passport ID *"), "N0000002");
         await user.tab();
         await screen.findByText("Existing candidate found — details loaded.");
-        await user.clear(screen.getByLabelText("Address *"));
-        await user.type(screen.getByLabelText("Address *"), "2 Lake Road");
+        await user.clear(screen.getByLabelText("Address"));
+        await user.type(screen.getByLabelText("Address"), "2 Lake Road");
         await user.click(screen.getByRole("button", { name: "Save changes" }));
 
         expect(await screen.findByText("The WhatsApp number is already set for this candidate and cannot be changed here.")).toBeInTheDocument();

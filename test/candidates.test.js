@@ -56,6 +56,7 @@ const VALID_BODY = Object.freeze({
     jobExperience: "5 years in overseas construction",
     dateOfBirth: "1996-02-23",
     comment: "Prefers morning calls",
+    whatsappNumber: "+94771234567",
 });
 
 // Just enough of Prisma for candidateService.js.
@@ -228,7 +229,7 @@ describe("candidate details validation", () => {
     test("required fields, NIC format, job types and dates are checked", () => {
         const { errors } = parseCandidateBody({ passportId: "x", nic: "123", jobTypes: [], dateOfBirth: "2026-02-30" }, { creating: true });
         const fields = errors.map((e) => e.field);
-        for (const field of ["passportId", "surname", "otherNames", "address", "jobExperience", "nic", "jobTypes", "dateOfBirth"]) {
+        for (const field of ["passportId", "surname", "otherNames", "whatsappNumber", "jobExperience", "nic", "jobTypes", "dateOfBirth"]) {
             assert.ok(fields.includes(field), `${field} reported`);
         }
         assert.ok(parseCandidateBody({ ...VALID_BODY, jobTypes: ["A, B"] }, { creating: true }).errors);
@@ -272,9 +273,9 @@ describe("registration", () => {
 describe("optional passport and contact details", () => {
     const REQUIRED_ONLY = Object.freeze({
         passportId: "N1023757", surname: "De Soysa", otherNames: "Anusha", nic: "965404378V",
-        address: "Negombo", jobTypes: ["Caregiver"], jobExperience: "2 years",
+        whatsappNumber: "+94771234567", jobTypes: ["Caregiver"], jobExperience: "2 years",
     });
-    const OPTIONAL_FIELDS = ["nationality", "sex", "dateOfBirth", "placeOfBirth", "passportIssueDate", "passportExpiryDate", "whatsappNumber", "contactNumber"];
+    const OPTIONAL_FIELDS = ["nationality", "sex", "dateOfBirth", "placeOfBirth", "passportIssueDate", "passportExpiryDate", "address", "contactNumber"];
 
     test("registration succeeds with every optional field empty or missing; they are stored as NULL", async () => {
         const db = createFakeDb();
@@ -282,7 +283,7 @@ describe("optional passport and contact details", () => {
         for (const body of [REQUIRED_ONLY, { ...REQUIRED_ONLY, ...empty }]) {
             const parsed = parseCandidateBody(body, { creating: true });
             assert.equal(parsed.errors, undefined, JSON.stringify(parsed.errors));
-            for (const column of ["nationality", "sex", "dateOfBirth", "placeOfBirth", "passportIssueDate", "passportExpiryDate", "whatsappNumber", "contactNumber"]) {
+            for (const column of ["nationality", "sex", "dateOfBirth", "placeOfBirth", "passportIssueDate", "passportExpiryDate", "address", "contactNumber"]) {
                 assert.equal(parsed.values[column], null, `${column} is NULL`);
             }
         }
@@ -292,7 +293,7 @@ describe("optional passport and contact details", () => {
     });
 
     test("the required fields are unchanged", () => {
-        for (const field of ["passportId", "surname", "otherNames", "nic", "address", "jobTypes", "jobExperience"]) {
+        for (const field of ["passportId", "surname", "otherNames", "nic", "whatsappNumber", "jobTypes", "jobExperience"]) {
             const body = { ...REQUIRED_ONLY };
             delete body[field];
             const { errors } = parseCandidateBody(body, { creating: true });
@@ -439,6 +440,57 @@ describe("independent stages", () => {
         result = await updateStage({ db, passportId: "N1023757", stage: "DOCUMENT_SUBMISSION", values: { notes: "All checked" } });
         assert.equal(stageOf(result, "DOCUMENT_SUBMISSION").notes, "All checked");
         await assert.rejects(updateStage({ db, passportId: "N1023757", stage: "CANDIDATE_DETAILS", values: { completed: false } }), (error) => error.code === "AUTOMATIC_STAGE");
+    });
+
+    describe("registration needs WhatsApp; completing Candidate Details also needs the address and the passport", () => {
+        const detailsStage = async (db) => (await getCandidate({ db, passportId: "N1023757" })).stages.find((s) => s.stage === "CANDIDATE_DETAILS");
+        const update = (db, body) => updateCandidateDetails({ db, passportId: "N1023757", values: parseCandidateBody({ ...VALID_BODY, ...body }, { creating: false }).values });
+
+        test("registration succeeds without an address or a passport document", async () => {
+            const db = createFakeDb();
+            for (const address of [undefined, ""]) {
+                const parsed = parseCandidateBody({ ...VALID_BODY, address }, { creating: true });
+                assert.equal(parsed.errors, undefined, JSON.stringify(parsed.errors));
+                assert.equal(parsed.values.address, null);
+            }
+            await registered(db, { address: "" });
+            assert.equal(db.state.users[0].address, null);
+            assert.deepEqual((await detailsStage(db)).missing, ["address", "passport document"]);
+        });
+
+        test("registration is refused without a WhatsApp number", () => {
+            for (const whatsappNumber of [undefined, "", "   "]) {
+                const { errors } = parseCandidateBody({ ...VALID_BODY, whatsappNumber }, { creating: true });
+                assert.deepEqual(errors?.map((e) => e.field), ["whatsappNumber"], `whatsappNumber: ${JSON.stringify(whatsappNumber)}`);
+            }
+        });
+
+        test("Candidate Details completes only once the address and the passport are both on record", async () => {
+            const db = createFakeDb();
+            const bucket = createFakeBucket();
+            await registered(db, { address: "" });
+            await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "PASSPORT", variant: null, mimeType: "application/pdf", buffer: PDF });
+            assert.equal((await detailsStage(db)).completed, false, "passport alone");
+            assert.deepEqual((await detailsStage(db)).missing, ["address"]);
+
+            // Details can still be saved while incomplete, then completed later.
+            await update(db, { address: "" });
+            assert.equal((await detailsStage(db)).completed, false);
+            await update(db, { address: "12 Temple Road, Negombo" });
+            assert.equal((await detailsStage(db)).completed, true);
+            assert.deepEqual((await detailsStage(db)).missing, []);
+        });
+
+        test("a legacy candidate without a WhatsApp number can still be updated, but can't complete until one is added", async () => {
+            const db = createFakeDb({ documents: [{ documentId: "d1", passportId: "N1023757", documentType: "PASSPORT", verificationStatus: "VERIFIED", receivedDate: new Date(), createdDate: new Date() }] });
+            await registered(db);
+            db.state.users[0].whatsappNumber = null; // registered before WhatsApp was required
+            assert.deepEqual((await detailsStage(db)).missing, ["WhatsApp number"]);
+            await update(db, { whatsappNumber: "" });
+            assert.equal((await detailsStage(db)).completed, false);
+            await update(db, { whatsappNumber: "0775551234" });
+            assert.equal((await detailsStage(db)).completed, true);
+        });
     });
 
     test("a document received on WhatsApp counts; clearing a required detail un-completes the stage", async () => {
@@ -993,7 +1045,7 @@ describe("candidate routes: roles", () => {
 
         test("finalize without an upload, or for another candidate or type, records nothing", async () => {
             const { db, bucket } = await withCandidate();
-            await registered(db, { passportId: "P7654321", nic: "200012345678" });
+            await registered(db, { passportId: "P7654321", nic: "200012345678", whatsappNumber: "+94771234568" });
             const issued = await target("ADMIN", db, bucket, { type: "MEDICAL", mimeType: "application/pdf", fileSize: PDF.length });
             const finalize = (passportId, body) => call("ADMIN", "POST", `/api/admin/candidates/${passportId}/documents/finalize`, { type: "MEDICAL", mimeType: "application/pdf", uploadId: issued.body.uploadId, ...body }, db, { bucket });
 
@@ -1103,7 +1155,7 @@ describe("removing a document", () => {
 
     test("only this candidate's current document: a superseded version, another candidate's, or one already removed is not found", async () => {
         const { db, bucket, upload } = await seed();
-        await registered(db, { passportId: "P7654321", nic: "200012345678" });
+        await registered(db, { passportId: "P7654321", nic: "200012345678", whatsappNumber: "+94771234568" });
         const old = await upload("SCAN", PDF);
         await upload("SCAN", Buffer.concat([PDF, Buffer.from("v2")]));
         const superseded = old.documents.SCAN.documentId;
