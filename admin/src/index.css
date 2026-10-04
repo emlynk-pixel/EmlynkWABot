@@ -18,6 +18,8 @@
     /* Text and icons on a solid primary / critical background */
     --color-on-primary: #ffffff;
     --color-on-critical: #ffffff;
+    /* Candidate stepper: white in both themes (not redefined for dark mode) */
+    --color-stepper-white: #ffffff;
 
     /* Canvas, surfaces, borders */
     --color-canvas: #f8fafc;
