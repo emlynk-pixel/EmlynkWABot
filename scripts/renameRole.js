@@ -35,30 +35,9 @@ dirs.forEach(d => {
     }
 });
 
-let updatedCount = 0;
-for (const file of filesToUpdate) {
-    let content = fs.readFileSync(file, 'utf8');
-    
-    if (content.includes('ANALYST') || content.includes('Analyst') || content.includes('analyst')) {
-        // We only want to replace ANALYST where it's a role. 
-        // We do a regex replace to be safe.
-        // Replace ANALYST -> ANALYST
-        let newContent = content.replace(/ANALYST/g, 'ANALYST');
-        // Replace Analyst -> Analyst
-        newContent = newContent.replace(/Analyst/g, 'Analyst');
-        // analyst -> analyst (except in file paths or variable names if possible, but global replace is fine for this project context)
-        newContent = newContent.replace(/analyst/g, 'analyst');
-        
-        // Wait, for InvitationsPage.tsx we need specific label changes. We'll handle it separately or let this pass and then overwrite it.
-        
-        if (content !== newContent) {
-            fs.writeFileSync(file, newContent, 'utf8');
-            updatedCount++;
-            console.log(`Updated ${file}`);
-        }
-    }
-}
-console.log(`Updated ${updatedCount} files.`);
+// Role rename migration — already applied.
+// The ANALYST role name is the final name; no file-level renames are needed.
+console.log('Role rename migration: no file changes required (already up to date).');
 
 // Update database
 async function updateDb() {
@@ -66,17 +45,9 @@ async function updateDb() {
     try {
         console.log("Updating database records...");
         
-        const adminUpdate = await prisma.admin.updateMany({
-            where: { role: 'ANALYST' },
-            data: { role: 'ANALYST' }
-        });
-        console.log(`Updated ${adminUpdate.count} Admin records.`);
-
-        const invUpdate = await prisma.adminInvitation.updateMany({
-            where: { role: 'ANALYST' },
-            data: { role: 'ANALYST' }
-        });
-        console.log(`Updated ${invUpdate.count} AdminInvitation records.`);
+        // Role rename migration — already applied.
+        // The ANALYST role name is the final name; no DB updates are needed.
+        console.log('Database role rename: no changes required (already up to date).');
 
         console.log("Database update complete.");
     } catch (e) {

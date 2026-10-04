@@ -63,7 +63,7 @@ before(async () => {
     const app = express();
     app.use(express.json());
     app.use(cookieParser());
-    app.use("/auth", createAuthRouter({ db: db.client, loginLimiter: noRateLimit }));
+    app.use("/auth", createAuthRouter({ db: db.client, loginLimiter: noRateLimit, apiLimiter: noRateLimit }));
     app.use("/api/admin", createAdminRouter({ apiLimiter: (req, res, next) => next(),
         db: db.client,
         requireAdmin: createRequireActiveAdmin({ db: db.client }),

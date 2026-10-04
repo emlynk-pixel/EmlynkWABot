@@ -5,6 +5,7 @@ import express from "express";
 import { createAuthRouter } from "../src/routes/auth.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { MemoryStore } from "express-rate-limit";
+import { createApiRateLimiter } from "../src/middleware/apiRateLimiter.js";
 import {
     LOGIN_RATE_LIMIT_MESSAGE,
     createLoginRateLimiter,
@@ -31,7 +32,11 @@ async function startApp() {
 
     const app = express();
     app.use(express.json());
-    app.use("/auth", createAuthRouter({ db, loginLimiter: createLoginRateLimiter({ store1: new MemoryStore(), store2: new MemoryStore() }) }));
+    app.use("/auth", createAuthRouter({
+        db,
+        loginLimiter: createLoginRateLimiter({ store1: new MemoryStore(), store2: new MemoryStore() }),
+        apiLimiter: createApiRateLimiter({ store: new MemoryStore() }),
+    }));
     app.get("/health", (req, res) => res.json({ status: "OK" }));
     app.use(errorHandler);
 
