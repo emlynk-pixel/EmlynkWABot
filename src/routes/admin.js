@@ -44,7 +44,7 @@ import {
     setDocumentType,
     setPoliceSubmittedDate,
 } from "../services/adminCorrectionService.js";
-import { getDailyReport, parseDailyReportQuery } from "../services/adminReportService.js";
+import { getDailyReport, getMonthlyOverview, parseDailyReportQuery, parseMonthlyOverviewQuery } from "../services/adminReportService.js";
 import { createInvitationRouter } from "./adminInvitations.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 import { deleteTemporaryDocument } from "../services/temporaryDataService.js";
@@ -159,6 +159,16 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return res.json(await getDailyReport({ db: client, date: parsed.params.date }));
+    });
+
+    // Monthly overview for one business month (Sri Lanka), default this month.
+    router.get("/reports/monthly", requireRole(ALL_ACTIVE), async (req, res) => {
+        const parsed = parseMonthlyOverviewQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await getMonthlyOverview({ db: client, month: parsed.params.month }));
     });
 
     router.get("/clients/:passportId", requireRole(ALL_ACTIVE), async (req, res) => {
