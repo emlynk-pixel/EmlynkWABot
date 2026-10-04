@@ -3,6 +3,9 @@ import { useSearchParams, useNavigate } from "react-router";
 import { Icon } from "../components/Icon";
 import { validateInvitation, setupPassword, type InvitationDetails } from "../api/auth";
 import { ApiError } from "../api/client";
+import { FormField } from "../components/Form";
+import { NewPasswordFields, hasNewPasswordErrors, validateNewPassword, type NewPasswordErrors } from "../components/NewPasswordFields";
+import { inputClass } from "../components/ui";
 
 export function SetupPasswordPage() {
     const [searchParams] = useSearchParams();
@@ -16,7 +19,7 @@ export function SetupPasswordPage() {
     // Form state
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
-    const [showPassword, setShowPassword] = useState(false);
+    const [fieldErrors, setFieldErrors] = useState<NewPasswordErrors>({});
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
@@ -58,13 +61,10 @@ export function SetupPasswordPage() {
         e.preventDefault();
         setSubmitError(null);
 
-        if (password.length < 8) {
-            setSubmitError("Password must be at least 8 characters long.");
-            return;
-        }
-
-        if (password !== confirmPassword) {
-            setSubmitError("Passwords do not match.");
+        const errors = validateNewPassword(password, confirmPassword);
+        setFieldErrors(errors);
+        if (hasNewPasswordErrors(errors)) {
+            document.getElementById(errors.password ? "setup-password" : "confirm-password")?.focus();
             return;
         }
 
@@ -78,9 +78,6 @@ export function SetupPasswordPage() {
             setSubmitting(false);
         }
     }
-
-    const inputClass =
-        "h-9 w-full rounded border border-border-strong bg-surface pl-9 pr-3 text-body-sm text-ink shadow-[inset_0_1px_1px_rgba(15,23,42,0.03)] placeholder:text-ink-subtle focus:border-primary focus:outline-none";
 
     return (
         <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
@@ -149,82 +146,34 @@ export function SetupPasswordPage() {
                             </div>
 
                             {submitError && (
-                                <div className="mb-4 flex items-start gap-2 rounded border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">
+                                <div role="alert" className="mb-4 flex items-start gap-2 rounded border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">
                                     <Icon name="error" className="size-4 shrink-0 mt-0.5" />
                                     <span>{submitError}</span>
                                 </div>
                             )}
 
-                            <form onSubmit={handleSubmit} className="space-y-4">
-                                <div>
-                                    <label htmlFor="setup-email" className="block text-label-md text-ink font-medium mb-1">
-                                        Email Address
-                                    </label>
-                                    <input
-                                        id="setup-email"
-                                        type="text"
-                                        value={invitation?.email ?? ""}
-                                        disabled
-                                        className="h-9 w-full rounded border border-border bg-canvas-muted px-3 text-body-sm text-ink-muted cursor-not-allowed"
-                                    />
-                                </div>
+                            <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+                                <FormField id="setup-email" label="Email Address" help="The address this invitation was sent to. It becomes your sign-in email and can't be changed here.">
+                                    <input id="setup-email" type="text" value={invitation?.email ?? ""} disabled className={inputClass()} />
+                                </FormField>
 
-                                <div>
-                                    <label htmlFor="setup-password" className="block text-label-md text-ink font-medium mb-1">
-                                        New Password
-                                    </label>
-                                    <div className="relative">
-                                        <Icon name="lock" className="pointer-events-none absolute left-3 top-2.5 size-4 text-ink-subtle" />
-                                        <input
-                                            id="setup-password"
-                                            type={showPassword ? "text" : "password"}
-                                            value={password}
-                                            onChange={(e) => setPassword(e.target.value)}
-                                            placeholder="At least 8 characters"
-                                            required
-                                            minLength={8}
-                                            maxLength={128}
-                                            autoComplete="new-password"
-                                            className={inputClass}
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowPassword(!showPassword)}
-                                            className="absolute right-2.5 top-2 text-ink-subtle hover:text-ink"
-                                            tabIndex={-1}
-                                        >
-                                            <Icon name={showPassword ? "visibility_off" : "visibility"} className="size-4" />
-                                            <span className="sr-only">{showPassword ? "Hide password" : "Show password"}</span>
-                                        </button>
-                                    </div>
-                                    <p className="mt-1 text-label-sm text-ink-subtle">Minimum 8 characters.</p>
-                                </div>
-
-                                <div>
-                                    <label htmlFor="confirm-password" className="block text-label-md text-ink font-medium mb-1">
-                                        Confirm Password
-                                    </label>
-                                    <div className="relative">
-                                        <Icon name="lock" className="pointer-events-none absolute left-3 top-2.5 size-4 text-ink-subtle" />
-                                        <input
-                                            id="confirm-password"
-                                            type={showPassword ? "text" : "password"}
-                                            value={confirmPassword}
-                                            onChange={(e) => setConfirmPassword(e.target.value)}
-                                            placeholder="Re-enter your password"
-                                            required
-                                            minLength={8}
-                                            maxLength={128}
-                                            autoComplete="new-password"
-                                            className={inputClass}
-                                        />
-                                    </div>
-                                </div>
+                                <NewPasswordFields
+                                    passwordId="setup-password"
+                                    password={password}
+                                    confirm={confirmPassword}
+                                    errors={fieldErrors}
+                                    confirmPlaceholder="Re-enter your password"
+                                    onChange={(next) => {
+                                        setPassword(next.password);
+                                        setConfirmPassword(next.confirm);
+                                        setFieldErrors(next.errors);
+                                    }}
+                                />
 
                                 <button
                                     type="submit"
                                     disabled={submitting}
-                                    className="w-full flex h-9 items-center justify-center gap-2 rounded bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60 shadow-sm"
+                                    className="w-full flex h-10 items-center justify-center gap-2 rounded-md bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                     <Icon
                                         name={submitting ? "progress_activity" : "check_circle"}

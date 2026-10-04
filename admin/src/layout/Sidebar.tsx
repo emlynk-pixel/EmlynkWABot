@@ -49,9 +49,9 @@ export function Sidebar({ collapsed, mobileOpen, onToggleCollapsed, onNavigate }
                                 title={railOnly ? item.label : undefined}
                                 className={({ isActive }) =>
                                     [
-                                        "relative flex h-9 items-center gap-3 rounded px-3 text-label-md transition-colors",
+                                        "relative flex h-10 items-center gap-3 rounded-md px-3 text-label-md transition-colors",
                                         isActive
-                                            ? "bg-sidebar-hover text-sidebar-text-active before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded before:bg-primary"
+                                            ? "bg-sidebar-hover font-semibold text-sidebar-text-active before:absolute before:inset-y-1.5 before:left-0 before:w-1 before:rounded-full before:bg-primary"
                                             : "hover:bg-sidebar-hover hover:text-sidebar-text-active",
                                         railOnly ? "justify-center px-0" : "",
                                     ].join(" ")

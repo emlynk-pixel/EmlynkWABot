@@ -9,6 +9,9 @@ import {
     type AdminInvitationSummary,
 } from "../api/admin";
 import { ApiError } from "../api/client";
+import { FormField, fieldA11y } from "../components/Form";
+import { inputClass } from "../components/ui";
+import { MAX_EMAIL_LENGTH, MAX_NAME_LENGTH, emailError, nameError } from "../components/validation";
 
 const dateFormat = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Colombo",
@@ -36,6 +39,8 @@ export function InvitationsPage() {
     const [submitting, setSubmitting] = useState(false);
     const [formSuccess, setFormSuccess] = useState<string | null>(null);
     const [formError, setFormError] = useState<string | null>(null);
+    const [fieldErrors, setFieldErrors] = useState<{ name?: string | null; email?: string | null }>({});
+    const [actionError, setActionError] = useState<string | null>(null);
 
     // Revoke & Delete action state
     const [revokingId, setRevokingId] = useState<string | null>(null);
@@ -68,8 +73,10 @@ export function InvitationsPage() {
         setFormError(null);
         setFormSuccess(null);
 
-        if (!name.trim() || !email.trim()) {
-            setFormError("Please enter both a name and an email address.");
+        const errors = { name: nameError(name), email: emailError(email, { required: "Enter the person's email address." }) };
+        setFieldErrors(errors);
+        if (errors.name || errors.email) {
+            document.getElementById(errors.name ? "invite-name" : "invite-email")?.focus();
             return;
         }
 
@@ -97,11 +104,12 @@ export function InvitationsPage() {
         }
 
         setRevokingId(invitationId);
+        setActionError(null);
         try {
             await revokeInvitation(invitationId, token ?? undefined);
             loadInvitations();
         } catch (err) {
-            alert(err instanceof ApiError ? err.message : "Failed to revoke invitation.");
+            setActionError(err instanceof ApiError ? err.message : "Failed to revoke invitation.");
         } finally {
             setRevokingId(null);
         }
@@ -113,11 +121,12 @@ export function InvitationsPage() {
         }
 
         setDeletingId(invitationId);
+        setActionError(null);
         try {
             await deleteInvitation(invitationId, token ?? undefined);
             loadInvitations();
         } catch (err) {
-            alert(err instanceof ApiError ? err.message : "Failed to remove invitation.");
+            setActionError(err instanceof ApiError ? err.message : "Failed to remove invitation.");
         } finally {
             setDeletingId(null);
         }
@@ -138,11 +147,11 @@ export function InvitationsPage() {
     }
 
     return (
-        <div className="space-y-8 p-4 md:p-6 max-w-6xl mx-auto">
+        <div className="mx-auto max-w-6xl space-y-6">
             {/* Page Header */}
             <div>
-                <h1 className="text-headline-lg text-ink font-bold">Admin Invitations</h1>
-                <p className="mt-1 text-body-md text-ink-muted">
+                <h1 className="text-headline-lg text-ink">Admin Invitations</h1>
+                <p className="mt-1 text-body-sm text-ink-muted">
                     Invite new administrators, analysts, and viewers. Invites are cryptographically signed, expire after 24 hours, and can only be used once.
                 </p>
             </div>
@@ -174,61 +183,69 @@ export function InvitationsPage() {
                     </div>
                 )}
 
-                <form onSubmit={handleInviteSubmit} className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div>
-                            <label htmlFor="invite-name" className="block text-label-md text-ink font-medium mb-1">
-                                Full Name <span className="text-critical">*</span>
-                            </label>
+                <form onSubmit={handleInviteSubmit} className="space-y-5" noValidate>
+                    <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-3">
+                        <FormField id="invite-name" label="Full Name" required error={fieldErrors.name}>
                             <input
-                                id="invite-name"
+                                {...fieldA11y("invite-name", fieldErrors.name)}
                                 type="text"
                                 value={name}
-                                onChange={(e) => setName(e.target.value)}
+                                onChange={(e) => {
+                                    setName(e.target.value);
+                                    if (fieldErrors.name) setFieldErrors((current) => ({ ...current, name: nameError(e.target.value) }));
+                                }}
                                 placeholder="e.g. Chaminda Silva"
                                 required
-                                maxLength={100}
-                                className="h-9 w-full rounded border border-border-strong bg-surface px-3 text-body-sm text-ink placeholder:text-ink-subtle focus:border-primary focus:outline-none"
+                                maxLength={MAX_NAME_LENGTH}
+                                className={inputClass(Boolean(fieldErrors.name))}
                             />
-                        </div>
+                        </FormField>
 
-                        <div>
-                            <label htmlFor="invite-email" className="block text-label-md text-ink font-medium mb-1">
-                                Email Address <span className="text-critical">*</span>
-                            </label>
+                        <FormField
+                            id="invite-email"
+                            label="Email Address"
+                            required
+                            help="The setup link is sent here, and it becomes the person's sign-in email."
+                            error={fieldErrors.email}
+                        >
                             <input
-                                id="invite-email"
+                                {...fieldA11y("invite-email", fieldErrors.email)}
                                 type="email"
                                 value={email}
-                                onChange={(e) => setEmail(e.target.value)}
+                                onChange={(e) => {
+                                    setEmail(e.target.value);
+                                    if (fieldErrors.email) setFieldErrors((current) => ({ ...current, email: emailError(e.target.value, { required: "Enter the person's email address." }) }));
+                                }}
                                 placeholder="e.g. chaminda@example.com"
                                 required
-                                maxLength={254}
-                                className="h-9 w-full rounded border border-border-strong bg-surface px-3 text-body-sm text-ink placeholder:text-ink-subtle focus:border-primary focus:outline-none"
+                                maxLength={MAX_EMAIL_LENGTH}
+                                className={inputClass(Boolean(fieldErrors.email))}
                             />
-                        </div>
+                        </FormField>
 
-                        <div>
-                            <label htmlFor="invite-role" className="block text-label-md text-ink font-medium mb-1">
-                                Assigned Role <span className="text-critical">*</span>
-                            </label>
+                        <FormField
+                            id="invite-role"
+                            label="Assigned Role"
+                            required
+                            help="Analysts review documents and take review actions. Admins can also correct police slip dates and invite staff."
+                        >
                             <select
                                 id="invite-role"
                                 value={role}
                                 onChange={(e) => setRole(e.target.value as "ANALYST" | "ADMIN")}
-                                className="h-9 w-full rounded border border-border-strong bg-surface px-3 text-body-sm text-ink focus:border-primary focus:outline-none"
+                                className={inputClass()}
                             >
                                 <option value="ANALYST">Analyst</option>
                                 <option value="ADMIN">Admin, Managers</option>
                             </select>
-                        </div>
+                        </FormField>
                     </div>
 
-                    <div className="flex justify-end pt-2">
+                    <div className="flex justify-end border-t border-border pt-4">
                         <button
                             type="submit"
                             disabled={submitting}
-                            className="flex h-9 items-center gap-2 rounded bg-primary px-4 text-label-md font-medium text-on-primary shadow-sm hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+                            className="flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-label-md font-medium text-on-primary hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             <Icon
                                 name={submitting ? "progress_activity" : "send"}
@@ -264,6 +281,12 @@ export function InvitationsPage() {
                         {fetchError}
                     </div>
                 )}
+                {actionError && (
+                    <div role="alert" className="mb-4 flex items-start gap-2 rounded border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">
+                        <Icon name="error" className="mt-0.5 size-4 shrink-0" />
+                        <span>{actionError}</span>
+                    </div>
+                )}
 
                 {loading ? (
                     <div className="py-12 text-center text-ink-muted">
@@ -279,7 +302,7 @@ export function InvitationsPage() {
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-body-sm">
-                            <thead className="border-b border-border bg-canvas text-label-sm text-ink-subtle uppercase">
+                            <thead className="border-b border-border bg-canvas text-label-caps uppercase text-ink-muted">
                                 <tr>
                                     <th className="py-3 px-4">Invitee</th>
                                     <th className="py-3 px-4">Role</th>

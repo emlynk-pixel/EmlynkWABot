@@ -5,6 +5,7 @@ import { useAdminResource } from "../api/useAdminResource";
 import { DocumentsTable } from "../components/DocumentsTable";
 import { formatNumber } from "../components/format";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
+import { filterControl } from "../components/ui";
 
 const PAGE_SIZE = 25;
 const FILTER_KEYS = ["search", "documentType", "verificationStatus", "receivedFrom", "receivedTo", "sort", "order", "page"] as const;
@@ -69,7 +70,7 @@ export function DocumentsPage() {
         ["REVIEW_REQUIRED", "Review required", summary?.byVerificationStatus.REVIEW_REQUIRED ?? 0],
     ];
 
-    const control = "h-9 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
+    const control = filterControl;
     const sortValue = `${params.sort ?? "receivedDate"}:${params.order ?? "desc"}`;
 
     return (
@@ -79,7 +80,7 @@ export function DocumentsPage() {
                 <p className="mt-1 text-body-sm text-ink-muted">Files stored in client folders, with their verification status.</p>
             </div>
 
-            <Card className="space-y-3 p-4">
+            <Card className="space-y-3 p-5">
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-12">
                     <form role="search" onSubmit={submitSearch} className="flex gap-2 md:col-span-5">
                         <label htmlFor="document-search" className="sr-only">Search documents</label>

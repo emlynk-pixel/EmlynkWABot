@@ -254,11 +254,11 @@ function DailySection({ report }: { report: DailyReport }) {
                         <Figure label="Temporary documents" value={daily.temporary} hint="Received this day, still waiting in pending storage" />
                     </div>
                     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                        <Card className="p-4">
+                        <Card className="p-5">
                             <SectionHeading title="By document type" />
                             <Counts label="Documents by type" entries={Object.entries(daily.byType).map(([type, count]) => [type, documentTypeLabel(type), count])} />
                         </Card>
-                        <Card className="p-4">
+                        <Card className="p-5">
                             <SectionHeading title="Admin actions this day" description="From the audit log" />
                             {actions.length
                                 ? <Counts label="Admin actions" entries={actions.map(([action, count]) => [action, AUDIT_ACTIONS[action]?.label ?? action, count])} />
