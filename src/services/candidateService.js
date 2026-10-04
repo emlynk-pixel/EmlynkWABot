@@ -351,7 +351,7 @@ function automaticStageMissing(user, documents) {
     if (!has("MEDICAL")) submissionMissing.push("medical");
     if (!hasVariant("POLICE_REPORT", "SL_VERIFIED")) submissionMissing.push("sl verified police report");
     if (!hasVariant("POLICE_REPORT", "ROMANIA")) submissionMissing.push("romania police report");
-    if (!has("AGREEMENT")) submissionMissing.push("agreement");
+    if (!has("AGREEMENT")) submissionMissing.push("scans");
 
     return {
         CANDIDATE_DETAILS: details,

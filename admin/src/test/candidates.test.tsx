@@ -31,7 +31,7 @@ const DETAILS: CandidateDetails = {
         testResult: null,
         testDate: null,
         automatic: s.stage === "CANDIDATE_DETAILS" || s.stage === "DOCUMENT_SUBMISSION",
-        missing: s.stage === "CANDIDATE_DETAILS" ? ["passport document"] : s.stage === "DOCUMENT_SUBMISSION" ? ["medical", "police report", "agreement", "affidavit"] : [],
+        missing: s.stage === "CANDIDATE_DETAILS" ? ["passport document"] : s.stage === "DOCUMENT_SUBMISSION" ? ["medical", "police report", "scans"] : [],
     })),
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, AGREEMENT: null, AFFIDAVIT: null },
     variantDocuments: {
@@ -140,10 +140,10 @@ describe("Candidate deployment", () => {
         expect(await screen.findByRole("heading", { name: "Document submission" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Export PDF" })).toBeInTheDocument();
         // Completed by the documents themselves: no checkbox, no Save.
-        expect(screen.getByText("Missing: medical, police report, agreement, affidavit")).toBeInTheDocument();
+        expect(screen.getByText("Missing: medical, police report, scans")).toBeInTheDocument();
         expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
-        for (const label of ["Medical", "Police report", "Scan - Agreement", "Scan - Affidavit"]) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+        for (const label of ["Medical", "Police report", "Scans"]) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     });
 
     describe("Test details: result and date", () => {
@@ -257,10 +257,7 @@ describe("Candidate deployment", () => {
             expect(police.getByText("Romania")).toBeInTheDocument();
             expect(police.getByText("SL Normal")).toBeInTheDocument();
             expect(police.getAllByRole("button", { name: "Upload" })).toHaveLength(3);
-            const affidavit = groupOf("Scan - Affidavit");
-            expect(affidavit.getByText("English Affidavit")).toBeInTheDocument();
-            expect(affidavit.getByText("Sinhala Affidavit")).toBeInTheDocument();
-            expect(affidavit.getAllByRole("button", { name: "Upload" })).toHaveLength(2);
+
 
             await user.upload(screen.getByLabelText("Police report (Romania) file"), pdf());
             await vi.waitFor(() => expect(uploads(calls)).toEqual(["ROMANIA"]));
