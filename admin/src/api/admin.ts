@@ -562,6 +562,6 @@ export async function updateAdminRole(token: string, adminId: string, role: stri
     return apiRequest<AdminAccount>(`/api/admin/admins/${encodeURIComponent(adminId)}/role`, {
         method: "PUT",
         token,
-        body: JSON.stringify({ role }),
+        body: { role },
     });
 }
