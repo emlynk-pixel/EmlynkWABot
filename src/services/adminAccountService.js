@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { ALL_ROLES } from "../middleware/requireRole.js";
 import { ACTIVE_ADMIN_STATUS } from "../middleware/requireActiveAdmin.js";
 
@@ -59,10 +60,14 @@ export async function updateAdminRole({ db, admin, targetAdminId, newRole }) {
 
     await db.auditLog.create({
         data: {
+            auditId: crypto.randomUUID(),
             adminId: admin.adminId,
             action: "UPDATE_ADMIN_ROLE",
-            targetId: targetAdminId,
-            details: { previousRole: targetAdmin.role, newRole },
+            previousStatus: targetAdmin.role,
+            newStatus: newRole,
+            reason: `Role changed for admin ${targetAdminId}`,
+            previousValue: targetAdmin.role,
+            newValue: newRole,
         },
     });
 
