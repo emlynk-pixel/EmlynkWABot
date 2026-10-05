@@ -144,10 +144,9 @@ export function createAuthRouter({
 
   // Current admin's profile, looked up from the token's adminId. The token
   // alone doesn't show a later deactivation, so the stored status is checked
-  // here; future admin endpoints need the same check. The rate limiter runs
-  // first so that brute-force requests are rejected before the auth middleware
-  // touches the database.
-  router.get("/me", apiLimiter, authenticateAdmin, async (req, res) => {
+  // here; future admin endpoints need the same check. The auth check runs
+  // first so unauthenticated requests fail fast without hitting the database.
+  router.get("/me", authenticateAdmin, apiLimiter, async (req, res) => {
     try {
       const client = await resolveDb(db);
       const admin = await client.admin.findUnique({
@@ -203,7 +202,7 @@ export function createAuthRouter({
   // of that (see middleware/csrf.js). Requires a valid session to prevent
   // logout-CSRF amplification (an attacker cannot force a sign-out of a
   // victim's session they cannot observe).
-  router.post("/logout", apiLimiter, doubleCsrfProtection, authenticateAdmin, (req, res) => {
+  router.post("/logout", authenticateAdmin, doubleCsrfProtection, apiLimiter, (req, res) => {
     res.clearCookie(AUTH_COOKIE_NAME, authCookieOptions());
     return res.status(200).json({ message: "Signed out" });
   });

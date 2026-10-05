@@ -17,7 +17,11 @@ type AuthContextValue = AuthState & {
 
 // Helpers for checking the current admin's role-based access.
 export function canReview(admin: Admin | null | undefined): boolean {
-    return admin?.role === "ADMIN" || admin?.role === "ANALYST";
+    return admin?.role === "ADMIN" || admin?.role === "MANAGER" || admin?.role === "ANALYST";
+}
+
+export function isManagerOrAdmin(admin: Admin | null | undefined): boolean {
+    return admin?.role === "ADMIN" || admin?.role === "MANAGER";
 }
 
 export function isAdmin(admin: Admin | null | undefined): boolean {

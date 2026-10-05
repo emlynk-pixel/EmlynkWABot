@@ -35,7 +35,7 @@ export function InvitationsPage() {
     // Form state
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
-    const [role, setRole] = useState<"ANALYST" | "ADMIN">("ANALYST");
+    const [role, setRole] = useState<"ADMIN" | "MANAGER" | "ANALYST" | "REGISTRATION_DESK">("ANALYST");
     const [submitting, setSubmitting] = useState(false);
     const [formSuccess, setFormSuccess] = useState<string | null>(null);
     const [formError, setFormError] = useState<string | null>(null);
@@ -227,16 +227,18 @@ export function InvitationsPage() {
                             id="invite-role"
                             label="Assigned Role"
                             required
-                            help="Analysts review documents and take review actions. Admins can also correct police slip dates and invite staff."
+                            help="Admins manage staff and system settings. Managers oversee workflows and date corrections. Analysts review documents. Registration Desk handles candidate intake."
                         >
                             <select
                                 id="invite-role"
                                 value={role}
-                                onChange={(e) => setRole(e.target.value as "ANALYST" | "ADMIN")}
+                                onChange={(e) => setRole(e.target.value as "ADMIN" | "MANAGER" | "ANALYST" | "REGISTRATION_DESK")}
                                 className={inputClass()}
                             >
                                 <option value="ANALYST">Analyst</option>
-                                <option value="ADMIN">Admin, Managers</option>
+                                <option value="MANAGER">Manager</option>
+                                <option value="ADMIN">Admin</option>
+                                <option value="REGISTRATION_DESK">Registration Desk</option>
                             </select>
                         </FormField>
                     </div>
