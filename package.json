@@ -51,7 +51,10 @@
     "pg": "^8.23.0",
     "prisma": "6.19.3"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "jpeg-js": "0.4.4",
+    "pngjs": "7.0.0"
+  },
   "overrides": {
     "deepmerge-ts": "^8.0.2"
   }
