@@ -112,8 +112,18 @@ function cleanPrintedPassportId(value) {
 function readVisualZone(text) {
     const raw = readLabelledValues(text);
 
+    // If the "passport no" label wasn't read by OCR, but a valid passport ID format
+    // exists in the text, extract it as a fallback.
+    let fallbackPassportId = null;
+    if (!raw.passportId) {
+        const match = text.match(/\b[A-Z]{1,2}[0-9]{6,8}\b/i);
+        if (match) {
+            fallbackPassportId = match[0];
+        }
+    }
+
     return {
-        passportId: cleanPrintedPassportId(raw.passportId),
+        passportId: cleanPrintedPassportId(raw.passportId) ?? cleanPrintedPassportId(fallbackPassportId),
         surname: cleanName(raw.surname),
         givenNames: cleanName(raw.givenNames),
         dateOfBirth: raw.dateOfBirth ? parseDocumentDate(raw.dateOfBirth) : null,

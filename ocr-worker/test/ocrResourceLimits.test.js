@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import {
     extractDocumentText,
@@ -14,14 +14,17 @@ import {
     MAX_WAITING_OCR_JOBS,
     OCR_JOB_TIMEOUT_MS,
     TEXT_EXTRACTION_METHODS,
-} from "../src/services/ocrService.js";
+} from "../src/ocrService.js";
 import { readImageDimensions } from "../src/utils/imageDimensions.js";
 import { createConcurrencyLimiter, LimiterBusyError } from "../src/utils/concurrencyLimiter.js";
-import { processDocument } from "../src/services/documentProcessingService.js";
-import { createFakePrisma } from "./helpers/fakePrisma.js";
-import { createFakeBucket } from "./helpers/fakeStorage.js";
 
-const loadFile = (name) => readFileSync(new URL(`./fixtures/files/${name}`, import.meta.url));
+// How a refusal is recorded by the backend's pipeline (FAILED at
+// TEXT_EXTRACTION with the reason only) is tested there: test/ocrPipeline.test.js.
+const loadFile = (name) => {
+    const local = new URL(`./fixtures/files/${name}`, import.meta.url);
+    if (existsSync(local)) return readFileSync(local);
+    return readFileSync(new URL(`../../test/fixtures/files/${name}`, import.meta.url));
+};
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Header-only images: enough for the size check, never decoded. A 30000 x
@@ -311,28 +314,5 @@ describe("9. resource-limit errors carry no document data", () => {
             assert.match(error.message, /^OCR resource limit: [A-Z_]+$/);
             assert.doesNotMatch(error.message, /Synthetic filler|page \d|\.pdf|\\|\//);
         }
-    });
-
-    test("processDocument records a refusal as FAILED at TEXT_EXTRACTION with the reason only", async () => {
-        const db = createFakePrisma([]);
-        const { summary } = await processDocument({
-            temporaryId: "tmp-limit",
-            whatsappNumber: "94770000000",
-            fileName: "Synthetic Person passport.png",
-            mimeType: "image/png",
-            fileBuffer: pngHeader(30_000, 30_000),
-            temporaryStoragePath: "temporary/tmp-limit.png",
-            deps: { db, bucket: createFakeBucket(["temporary/tmp-limit.png"]) },
-        });
-
-        assert.equal(summary.processingStatus, "FAILED");
-        assert.equal(summary.stage, "TEXT_EXTRACTION");
-        assert.equal(summary.error, "OCR resource limit: IMAGE_TOO_LARGE");
-        assert.ok(!JSON.stringify(summary).includes("Synthetic Person"));
-        const { processingSummary, reviewReason, ...status } = db.calls.at(-1).data;
-        assert.deepEqual(status, { processingStatus: "FAILED" });
-        assert.equal(reviewReason, "PROCESSING_FAILED");
-        assert.equal(processingSummary.error, "OCR resource limit: IMAGE_TOO_LARGE");
-        assert.ok(!JSON.stringify(processingSummary).includes("Synthetic Person"), "stored summary has no file name");
     });
 });

@@ -1,5 +1,6 @@
 import { normalizeForMatching } from "../utils/documentText.js";
 import { findPassportMrz } from "../utils/mrz.js";
+import { extractPassportFields } from "./passportExtractionService.js";
 
 // POLICE_SLIP: the receipt given when a police clearance is applied for; its
 // submitted date starts the 21-day wait for the final report (Phase 9).
@@ -10,6 +11,7 @@ export const DOCUMENT_TYPES = Object.freeze({
     POLICE_SLIP: "POLICE_SLIP",
     POLICE_REPORT: "POLICE_REPORT",
     MEDICAL: "MEDICAL",
+    SCAN: "SCAN",
     UNKNOWN: "UNKNOWN",
 });
 
@@ -100,8 +102,8 @@ const CONTENT_INDICATORS = {
 
 // MRZ lines are the strongest passport signal. Each line has its own strict
 // format, so both lines together are enough even when OCR lost the keywords.
-const MRZ_LINE_1_INDICATOR = { id: "mrz_line_1", weight: 2 };
-const MRZ_LINE_2_INDICATOR = { id: "mrz_line_2", weight: 2 };
+const MRZ_LINE_1_INDICATOR = { id: "mrz_line_1", weight: 5 };
+const MRZ_LINE_2_INDICATOR = { id: "mrz_line_2", weight: 5 };
 
 // A type must reach MIN_SCORE from at least MIN_INDICATORS different
 // indicators, and beat the runner-up by MIN_LEAD. Otherwise we don't guess.
@@ -183,8 +185,32 @@ function scoreDocumentType(documentType, normalizedText, rawText) {
 
     if (documentType === DOCUMENT_TYPES.PASSPORT) {
         const mrz = findPassportMrz(rawText);
-        if (mrz?.line1) matched.push(MRZ_LINE_1_INDICATOR);
-        if (mrz?.line2) matched.push(MRZ_LINE_2_INDICATOR);
+        
+        if (mrz?.line1) {
+            matched.push(MRZ_LINE_1_INDICATOR);
+        } else if (/^P<[A-Z<]{3,}/im.test(rawText)) {
+            matched.push({ id: "mrz_fragment_p", weight: 3 });
+        }
+
+        if (mrz?.line2) {
+            matched.push(MRZ_LINE_2_INDICATOR);
+        } else if (/\b[0-9]{6}[0-9][MF<][0-9]{6}[0-9]\b/im.test(rawText)) {
+            matched.push({ id: "mrz_fragment_dates", weight: 3 });
+        }
+
+        // To avoid double-counting the passport ID inside MRZ line 2 as an independent 
+        // visual-zone signal, we only search for it on lines that are NOT part of the MRZ.
+        const vizText = rawText.split(/\r?\n/).filter(line => {
+            // Filter out lines heavily utilizing MRZ filler characters
+            if (line.includes('<')) return false;
+            // Filter out the distinctive date block even if < is missing
+            if (/\b[0-9]{6}[0-9][MF<][0-9]{6}[0-9]\b/i.test(line)) return false;
+            return true;
+        }).join(" ");
+
+        if (/\b[A-Z]{1,2}[0-9]{6,8}\b/i.test(vizText)) {
+            matched.push({ id: "passport_id_format", weight: 3 });
+        }
     }
 
     return {

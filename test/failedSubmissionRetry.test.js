@@ -8,6 +8,7 @@ import jwt from "jsonwebtoken";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
+import "./helpers/localOcrService.js";
 
 // Placeholders so the modules load without real credentials.
 Object.assign(process.env, {
@@ -18,7 +19,7 @@ Object.assign(process.env, {
     JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createTemporaryDocumentRecord } = await import("../src/services/temporaryDataService.js");
-const { OcrResourceError } = await import("../src/services/ocrService.js");
+const { OcrResourceError } = await import("../src/services/ocrContract.js");
 const { claimNextSubmission, drainSubmissionQueue, processClaimedSubmission, QUEUE_DEFAULTS } = await import("../src/services/submissionQueue.js");
 const { retryFailedSubmission, REVIEW_ACTION } = await import("../src/services/adminReviewActionService.js");
 const { createAdminRouter } = await import("../src/routes/admin.js");
