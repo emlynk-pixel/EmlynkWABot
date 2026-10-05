@@ -37,6 +37,8 @@ import check from "@material-symbols/svg-400/outlined/check.svg?raw";
 import pictureAsPdf from "@material-symbols/svg-400/outlined/picture_as_pdf.svg?raw";
 import upload from "@material-symbols/svg-400/outlined/upload.svg?raw";
 import manageAccounts from "@material-symbols/svg-400/outlined/manage_accounts.svg?raw";
+import notifications from "@material-symbols/svg-400/outlined/notifications.svg?raw";
+import notificationsActive from "@material-symbols/svg-400/outlined/notifications_active.svg?raw";
 
 const ICONS = {
     assignment_late: assignmentLate,
@@ -74,6 +76,8 @@ const ICONS = {
     progress_activity: progressActivity,
     visibility,
     visibility_off: visibilityOff,
+    notifications,
+    notifications_active: notificationsActive,
 } as const;
 
 export type IconName = keyof typeof ICONS;

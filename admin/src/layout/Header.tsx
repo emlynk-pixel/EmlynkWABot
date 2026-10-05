@@ -4,6 +4,7 @@ import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
 import { useTheme } from "../theme/theme";
 import { NAV_ITEMS } from "./navigation";
+import { NotificationBell } from "../components/NotificationBell";
 
 const timeFormat = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Colombo", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
@@ -70,6 +71,7 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
                     <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} className="size-4" />
                     <span className="sr-only">Dark mode</span>
                 </button>
+                {admin && <NotificationBell />}
             </div>
 
             {admin && (
