@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Link } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
-import { getReviewQueue, type DocumentItem, type PendingItem } from "../api/admin";
+import { getReviewQueue } from "../api/admin";
 import { Icon } from "./Icon";
 import { reviewReasonLabel } from "./reviewLabels";
 
