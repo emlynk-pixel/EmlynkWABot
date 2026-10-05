@@ -11,6 +11,43 @@ describe("safePrismaErrorFields", () => {
         assert.equal(safePrismaErrorFields({ code: "ENOENT" }), null); // not Prisma's P#### shape
     });
 
+    describe("PrismaClientUnknownRequestError", () => {
+        test("unknown request error without cause", () => {
+            const error = Object.assign(new Error("\nInvalid `prisma.query()`\n\nUnknown driver error"), {
+                name: "PrismaClientUnknownRequestError",
+            });
+            assert.deepEqual(safePrismaErrorFields(error), {
+                prismaType: "UnknownRequestError",
+                prismaMessage: "Invalid `prisma.query()` Unknown driver error",
+            });
+        });
+
+        test("unknown request error with driver cause", () => {
+            const cause = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+            const error = Object.assign(new Error("Invalid invocation"), {
+                name: "PrismaClientUnknownRequestError",
+                cause
+            });
+            assert.deepEqual(safePrismaErrorFields(error), {
+                prismaType: "UnknownRequestError",
+                prismaMessage: "Invalid invocation",
+                causeName: "Error",
+                causeCode: "ECONNREFUSED",
+                causeMessage: "connect ECONNREFUSED"
+            });
+        });
+
+        test("redacts PrismaClientUnknownRequestError message lines", () => {
+            const error = Object.assign(new Error("\nInvalid query\n\nsecret@example.invalid N1234567"), {
+                name: "PrismaClientUnknownRequestError",
+            });
+            assert.deepEqual(safePrismaErrorFields(error), {
+                prismaType: "UnknownRequestError",
+                prismaMessage: "Invalid query [email] [id]",
+            });
+        });
+    });
+
     test("Prisma code only, no meta -> just the code", () => {
         const error = Object.assign(new Error("table missing"), { code: "P2021" });
         assert.deepEqual(safePrismaErrorFields(error), { prismaCode: "P2021" });

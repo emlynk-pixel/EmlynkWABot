@@ -101,8 +101,8 @@ const CONTENT_INDICATORS = {
 
 // MRZ lines are the strongest passport signal. Each line has its own strict
 // format, so both lines together are enough even when OCR lost the keywords.
-const MRZ_LINE_1_INDICATOR = { id: "mrz_line_1", weight: 2 };
-const MRZ_LINE_2_INDICATOR = { id: "mrz_line_2", weight: 2 };
+const MRZ_LINE_1_INDICATOR = { id: "mrz_line_1", weight: 5 };
+const MRZ_LINE_2_INDICATOR = { id: "mrz_line_2", weight: 5 };
 
 // A type must reach MIN_SCORE from at least MIN_INDICATORS different
 // indicators, and beat the runner-up by MIN_LEAD. Otherwise we don't guess.
