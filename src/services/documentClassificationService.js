@@ -77,12 +77,6 @@ const CONTENT_INDICATORS = {
         { id: "given_names", weight: 1, pattern: /\bgiven\s*names?\b/ },
         { id: "place_of_birth", weight: 1, pattern: /\bplace\s*of\s*birth\b/ },
         { id: "date_of_expiry", weight: 1, pattern: /\b(date\s*of\s*expiry|expiry\s*date)\b/ },
-        // Visual passport ID format (1-2 letters, 6-8 digits)
-        { id: "passport_id_format", weight: 3, pattern: /\b[A-Z]{1,2}[0-9]{6,8}\b/i },
-        // MRZ fragment: The distinctive 'P<' or 'P<LKA' at the start of a long line
-        { id: "mrz_fragment_p", weight: 3, pattern: /^P<[A-Z<]{3,}/im },
-        // MRZ fragment: The distinctive date/sex block in line 2 (e.g. 9001015M2501019)
-        { id: "mrz_fragment_dates", weight: 3, pattern: /\b[0-9]{6}[0-9][MF<][0-9]{6}[0-9]\b/im },
     ],
     [POLICE_FAMILY]: [
         { id: "police", weight: 1, pattern: /\bpolice\b/ },
@@ -191,8 +185,32 @@ function scoreDocumentType(documentType, normalizedText, rawText) {
 
     if (documentType === DOCUMENT_TYPES.PASSPORT) {
         const mrz = findPassportMrz(rawText);
-        if (mrz?.line1) matched.push(MRZ_LINE_1_INDICATOR);
-        if (mrz?.line2) matched.push(MRZ_LINE_2_INDICATOR);
+        
+        if (mrz?.line1) {
+            matched.push(MRZ_LINE_1_INDICATOR);
+        } else if (/^P<[A-Z<]{3,}/im.test(rawText)) {
+            matched.push({ id: "mrz_fragment_p", weight: 3 });
+        }
+
+        if (mrz?.line2) {
+            matched.push(MRZ_LINE_2_INDICATOR);
+        } else if (/\b[0-9]{6}[0-9][MF<][0-9]{6}[0-9]\b/im.test(rawText)) {
+            matched.push({ id: "mrz_fragment_dates", weight: 3 });
+        }
+
+        // To avoid double-counting the passport ID inside MRZ line 2 as an independent 
+        // visual-zone signal, we only search for it on lines that are NOT part of the MRZ.
+        const vizText = rawText.split(/\r?\n/).filter(line => {
+            // Filter out lines heavily utilizing MRZ filler characters
+            if (line.includes('<')) return false;
+            // Filter out the distinctive date block even if < is missing
+            if (/\b[0-9]{6}[0-9][MF<][0-9]{6}[0-9]\b/i.test(line)) return false;
+            return true;
+        }).join(" ");
+
+        if (/\b[A-Z]{1,2}[0-9]{6,8}\b/i.test(vizText)) {
+            matched.push({ id: "passport_id_format", weight: 3 });
+        }
     }
 
     return {

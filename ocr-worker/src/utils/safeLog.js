@@ -112,20 +112,37 @@ function safeRawQueryMeta(meta) {
     return out;
 }
 
-// Duck-typed on `.code` matching Prisma's "P" + 4 digits format, so this
-// doesn't need to import the generated client just to check `instanceof`.
+// Duck-typed on `.code` matching Prisma's "P" + 4 digits format, or
+// `.name` for unknown errors, so this doesn't need to import the generated client.
 // Returns null for anything else (including non-Prisma errors).
 export function safePrismaErrorFields(error) {
-    if (typeof error?.code !== "string" || !/^P\d{4}$/.test(error.code)) {
+    if (!error || typeof error !== "object") return null;
+
+    if (error.name === "PrismaClientUnknownRequestError") {
+        const out = { prismaType: "UnknownRequestError" };
+        
+        if (typeof error.message === "string") {
+            const lines = error.message.split("\n").map(l => l.trim()).filter(Boolean);
+            if (lines.length > 0) {
+                out.prismaMessage = safeErrorText(lines.join(" "));
+            }
+        }
+        
+        if (error.cause && typeof error.cause === "object") {
+            out.causeName = error.cause.name;
+            if (typeof error.cause.code === "string") out.causeCode = error.cause.code;
+            if (typeof error.cause.message === "string") out.causeMessage = safeErrorText(error.cause.message);
+        }
+        
+        return out;
+    }
+
+    if (typeof error.code !== "string" || !/^P\d{4}$/.test(error.code)) {
         return null;
     }
 
     const meta = {};
     if (error.code === "P2010") {
-        // Unlike every other code below, checked unconditionally (even when
-        // `error.meta` itself is missing/not an object) - that shape mismatch
-        // is exactly what production has been hitting, and is itself useful
-        // to see rather than silently producing no diagnostic fields at all.
         Object.assign(meta, safeRawQueryMeta(error.meta));
     } else if (error.meta && typeof error.meta === "object") {
         for (const key of SAFE_PRISMA_META_KEYS) {

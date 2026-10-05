@@ -40,7 +40,7 @@ describe("classifyDocumentContent", () => {
             const result = classifyDocumentContent(loadDocumentText("passport-mangled-mrz-noisy-medical"));
             assert.equal(result.documentType, PASSPORT);
             assert.ok(result.indicators.includes("passport_id_format"));
-            assert.ok(result.indicators.includes("mrz_fragment_p"));
+            assert.ok(result.indicators.includes("mrz_line_1"));
             assert.ok(result.scores.PASSPORT > result.scores.MEDICAL);
         });
 
