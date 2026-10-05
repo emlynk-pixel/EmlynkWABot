@@ -11,6 +11,7 @@ import {
 import { createFakePrisma } from "./helpers/fakePrisma.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
+import "./helpers/localOcrService.js";
 
 // Every run uses the fake bucket, so tests never reach real Supabase storage.
 const TEMP_PATH = "temporary/tmp-1.pdf";

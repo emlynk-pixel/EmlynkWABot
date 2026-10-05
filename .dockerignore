@@ -1,0 +1,35 @@
+# Secrets: never in the image. Runtime settings come from Cloud Run.
+.env
+.env.*
+**/*.key.json
+*-key.json
+Gmail.txt
+
+# Installed/generated on the build machine (the Windows Prisma engine in
+# generated/ must not reach the Linux image); rebuilt inside the image.
+node_modules
+**/node_modules
+generated
+
+# Separate deployments: the OCR service and the admin dashboard (Vercel).
+ocr-worker
+admin
+
+# Not needed at runtime.
+.git
+.gitignore
+test
+Docs
+UI
+logs
+*.log
+*.md
+*.pdf
+*.sql
+*.traineddata
+prisma/seed.js
+prisma7.config.ts
+docker-compose.yml
+Architecture.txt
+Dockerfile
+.dockerignore

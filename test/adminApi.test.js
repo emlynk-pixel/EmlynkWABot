@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import jwt from "jsonwebtoken";
 
 import { createAdminRouter } from "../src/routes/admin.js";
+import { createAuthRouter } from "../src/routes/auth.js";
 import {
     parseDocumentListQuery,
     buildDocumentListArgs,
@@ -88,7 +89,11 @@ const ADMINS = [
 const tokenFor = (adminId, options = { expiresIn: "1h" }) => jwt.sign({ adminId, role: "ADMIN" }, process.env.JWT_SECRET, { algorithm: "HS256", ...options });
 
 async function startWith(db) {
-    const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db }) });
+    const noop = (req, res, next) => next();
+    const app = createApp({ 
+        adminApiRouter: createAdminRouter({ apiLimiter: noop, db }),
+        authRouter: createAuthRouter({ apiLimiter: noop, loginLimiter: noop, resetLimiter: noop, db })
+    });
     const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
     const base = `http://127.0.0.1:${server.address().port}`;
     const get = async (path, token = tokenFor("admin-active")) => {

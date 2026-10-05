@@ -16,7 +16,8 @@ export const DEFAULT_ADMIN_DIST_DIR = fileURLToPath(new URL("../admin/dist", imp
 // Same origin as the API, so no CORS; helmet's headers (CSP etc.) apply.
 export function createAdminFrontendRouter({ 
     distDir = DEFAULT_ADMIN_DIST_DIR,
-    apiLimiter = createApiRateLimiter(),
+    // Its own count, separate from the admin API's (as before, in memory).
+    apiLimiter = createApiRateLimiter({ prefix: "admin-frontend:" }),
 } = {}) {
     const router = express.Router();
     router.use(apiLimiter);

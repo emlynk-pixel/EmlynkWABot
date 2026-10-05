@@ -92,6 +92,7 @@ describe("REQUIRED_DOCUMENT_TYPES configuration", () => {
         const valid = {
             DATABASE_URL: "postgresql://x", SUPABASE_URL: "https://x.example", SUPABASE_SERVICE_ROLE_KEY: "x", SUPABASE_BUCKET: "x",
             JWT_SECRET: "x".repeat(40), META_APP_SECRET: "x", WHATSAPP_VERIFY_TOKEN: "x", WHATSAPP_ACCESS_TOKEN: "x", WHATSAPP_API_VERSION: "v21.0",
+            OCR_SERVICE_URL: "http://127.0.0.1:8080",
         };
         assert.deepEqual(findEnvProblems(valid), []);
         assert.deepEqual(findEnvProblems({ ...valid, REQUIRED_DOCUMENT_TYPES: "PASSPORT,MEDICAL" }), []);
