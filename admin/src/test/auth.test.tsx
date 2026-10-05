@@ -186,7 +186,9 @@ describe("dashboard shell", () => {
         await signedIn();
         await screen.findByText("Total clients");
         const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
-        expect(calls).toEqual(["/auth/me", "/api/admin/overview"]);
+        expect(calls[0]).toBe("/auth/me");
+        expect(calls).toContain("/api/admin/overview");
+        expect(calls).toContain("/api/admin/review?page=1&pageSize=100&order=desc");
     });
 
     test("the sidebar collapses to an icon rail and remembers it", async () => {
