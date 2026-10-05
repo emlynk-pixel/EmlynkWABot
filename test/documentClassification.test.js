@@ -36,6 +36,14 @@ describe("classifyDocumentContent", () => {
             assert.ok(result.scores.PASSPORT > result.scores.MEDICAL);
         });
 
+        test("real passport where MRZ OCR is imperfect/unavailable but strong fields exist plus medical noise -> PASSPORT", () => {
+            const result = classifyDocumentContent(loadDocumentText("passport-mangled-mrz-noisy-medical"));
+            assert.equal(result.documentType, PASSPORT);
+            assert.ok(result.indicators.includes("passport_id_format"));
+            assert.ok(result.indicators.includes("mrz_fragment_p"));
+            assert.ok(result.scores.PASSPORT > result.scores.MEDICAL);
+        });
+
         test("passport keywords without MRZ", () => {
             const result = classifyDocumentContent(loadDocumentText("passport-keywords-no-mrz"));
             assert.equal(result.documentType, PASSPORT);
