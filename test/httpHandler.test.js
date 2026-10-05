@@ -80,7 +80,8 @@ describe("Step 5A: HTTP handler without a process lifecycle", () => {
             };
             const out = {
                 health: await call("/health"),
-                // No rate limiter on /auth/me: the login check answers first.
+                // The auth API's limiter counts in PostgreSQL (Step 5C); the
+                // placeholder database is unreachable, so it fails closed.
                 authWithoutLogin: await call("/auth/me"),
                 // The admin API's limiter counts in PostgreSQL (Step 5C); the
                 // placeholder database is unreachable, so it fails closed.
@@ -99,7 +100,7 @@ describe("Step 5A: HTTP handler without a process lifecycle", () => {
         const out = lastJsonLine(result.stdout);
         assert.equal(out.health.status, 200);
         assert.equal(JSON.parse(out.health.body).status, "OK");
-        assert.equal(out.authWithoutLogin.status, 401);
+        assert.deepEqual(out.authWithoutLogin, { status: 500, body: JSON.stringify({ message: "Internal server error" }) });
         assert.deepEqual(out.adminWithUnreachableStore, { status: 500, body: JSON.stringify({ message: "Internal server error" }) });
         assert.deepEqual(out.verifyGoodToken, { status: 200, body: "abc123" });
         assert.equal(out.verifyBadToken.status, 403);

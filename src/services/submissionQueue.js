@@ -38,7 +38,7 @@ import { OcrServiceUnavailableError } from "./ocrContract.js";
 import { RECEIVED_STATUS } from "./statusMapping.js";
 import { ClaimLostError } from "./temporaryDataService.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
-import { safeErrorText } from "../utils/safeLog.js";
+import { safeErrorText, safePrismaErrorFields } from "../utils/safeLog.js";
 import { STORAGE_TIMEOUT_MS, withStorageTimeout } from "../utils/storageTimeout.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 
@@ -296,7 +296,12 @@ export function startSubmissionWorker(options = {}) {
                     log.log("Submission processed in background:", { temporaryId: o.temporaryId, attempt: o.attempt, outcome: o.outcome, processingStatus: o.summary?.processingStatus ?? null });
                 }
             } catch (error) {
-                log.error("Background processing error:", { errorType: error?.name ?? "Error", error: safeErrorText(error) });
+                const prismaInfo = safePrismaErrorFields(error);
+                log.error("Background processing error:", {
+                    errorType: error?.name ?? "Error",
+                    error: safeErrorText(error),
+                    ...(prismaInfo || {})
+                });
             }
             if (!stopped) await sleep();
         }

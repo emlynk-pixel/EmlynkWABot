@@ -35,7 +35,6 @@
   },
   "homepage": "https://github.com/emlynk-pixel/EmlynkWABot#readme",
   "dependencies": {
-    "@napi-rs/canvas": "0.1.80",
     "@prisma/adapter-pg": "6.19.3",
     "@prisma/client": "6.19.3",
     "@supabase/supabase-js": "^2.117.1",
@@ -47,20 +46,16 @@
     "express-rate-limit": "^8.7.0",
     "google-auth-library": "^11.1.0",
     "helmet": "^8.3.0",
-    "jpeg-js": "0.4.4",
     "jsonwebtoken": "^9.0.3",
     "nodemailer": "^10.0.11",
-    "pdf-parse": "^2.4.5",
     "pg": "^8.23.0",
-    "pngjs": "7.0.0",
-    "prisma": "6.19.3",
-    "tesseract.js": "^7.0.0"
-  },
-  "devDependencies": {
-    "jpeg-js": "0.4.4",
-    "pngjs": "7.0.0"
+    "prisma": "6.19.3"
   },
   "overrides": {
     "deepmerge-ts": "^8.0.2"
+  },
+  "devDependencies": {
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0"
   }
 }

@@ -2,6 +2,8 @@
 // which (unless NODE_ENV=production) includes the stack trace, file paths and
 // the local user name. This handler answers the same way in every environment.
 
+import { safePrismaErrorFields } from "../utils/safeLog.js";
+
 const MESSAGES = {
     400: "Invalid request body",
     413: "Request payload too large",
@@ -28,12 +30,15 @@ export function errorHandler(error, req, res, next) {
     const status = statusFor(error);
 
     // Safe metadata only: no message, stack, body or query string (the
-    // webhook verification request carries its token in the query).
+    // webhook verification request carries its token in the query). A Prisma
+    // error additionally gets its `.code` and an allowlisted, value-free
+    // subset of `.meta` (e.g. P2021/table) - see safePrismaErrorFields.
     console.error("Request failed:", {
         method: req.method,
         path: `${req.baseUrl}${req.path}`,
         status,
         type: error?.type ?? error?.name ?? "Error",
+        ...safePrismaErrorFields(error),
     });
 
     return res.status(status).json({ message: MESSAGES[status] });

@@ -47,7 +47,7 @@ describe("admin dashboard static serving (/admin)", () => {
     let http;
     before(async () => {
         dist = fakeBuild();
-        http = await start(createApp({ adminDistDir: dist }));
+        http = await start(createApp({ adminDistDir: dist, authRouter: createAuthRouter({ loginLimiter: noRateLimit, apiLimiter: noRateLimit }) }));
     });
     after(() => {
         http.server.close();
@@ -142,7 +142,7 @@ describe("dashboard login flow against the real auth routes (same origin)", () =
         const db = createFakeAdminDb([
             { adminId: "admin-1", name: "Test Admin", email: "admin@example.invalid", passwordHash: await hashPassword(PASSWORD), role: "ADMIN", status: ACTIVE_ADMIN_STATUS },
         ]);
-        http = await start(createApp({ adminDistDir: dist, authRouter: createAuthRouter({ db, loginLimiter: noRateLimit }) }));
+        http = await start(createApp({ adminDistDir: dist, authRouter: createAuthRouter({ db, loginLimiter: noRateLimit, apiLimiter: noRateLimit }) }));
     });
     after(() => {
         http.server.close();

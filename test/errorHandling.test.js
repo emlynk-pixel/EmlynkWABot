@@ -15,13 +15,18 @@ process.env.JWT_SECRET = "test-jwt-secret-placeholder";
 
 const { createApp } = await import("../src/createApp.js");
 const { createAuthRouter } = await import("../src/routes/auth.js");
-const { createLoginRateLimiter } = await import("../src/middleware/loginRateLimiter.js");
+const { createLoginRateLimiter, createResetRateLimiter } = await import("../src/middleware/loginRateLimiter.js");
+const { createApiRateLimiter } = await import("../src/middleware/apiRateLimiter.js");
 const { MemoryStore } = await import("express-rate-limit");
 
 // The real auth routes and login limiter; the limiter counts in memory here
 // (its default store is PostgreSQL, which these tests don't have).
 const appWithMemoryLimiter = () => createApp({
-    authRouter: createAuthRouter({ loginLimiter: createLoginRateLimiter({ store: new MemoryStore() }) }),
+    authRouter: createAuthRouter({ 
+        loginLimiter: createLoginRateLimiter({ store: new MemoryStore() }),
+        resetLimiter: createResetRateLimiter({ store: new MemoryStore() }),
+        apiLimiter: createApiRateLimiter({ store: new MemoryStore() })
+    }),
 });
 
 // Anything that would reveal internals if it appeared in a response.
@@ -135,7 +140,7 @@ describe("error responses from the real app", () => {
     test("valid JSON still reaches the routes normally", async () => {
         const result = await post(baseUrl, "/auth/login", "{}");
 
-        assert.equal(result.status, 400);
+        assert.equal(result.status, 400, result.text);
         assert.deepEqual(JSON.parse(result.text), { message: "Email and password are required" });
     });
 
@@ -199,6 +204,46 @@ describe("errorHandler with other errors", () => {
         try {
             const response = await fetch(`${baseUrl}/boom`);
             assert.equal(response.status, 500);
+        } finally {
+            server.close();
+        }
+    });
+
+    // Mirrors how a real P2010 reaches this handler in production: the login
+    // and forgot-password rate limiters run as middleware, before the route
+    // handler's own try/catch, so a failing $queryRaw in
+    // postgresRateLimitStore.js surfaces here, not in src/routes/auth.js.
+    test("a raw-query Prisma error (P2010) from middleware -> still a generic 500, log gains the SQLSTATE", async () => {
+        const error = Object.assign(new Error("Raw query failed. Code: `42501`. Message: `permission denied for table \"rate_limits\"`"), {
+            name: "PrismaClientKnownRequestError",
+            code: "P2010",
+            meta: { code: "42501", message: 'permission denied for table "rate_limits"' },
+        });
+        const { server, baseUrl } = await startServer(appThatThrows(error));
+
+        try {
+            const response = await fetch(`${baseUrl}/boom`);
+            const text = await response.text();
+
+            assert.equal(response.status, 500);
+            assert.deepEqual(JSON.parse(text), { message: "Internal server error" });
+            assert.ok(!text.includes("permission denied"));
+
+            assert.equal(logged.length, 1);
+            const [label, details] = logged[0];
+            assert.equal(label, "Request failed:");
+            assert.equal(details.prismaCode, "P2010");
+            assert.deepEqual(details.prismaMeta, {
+                dbMetaKeys: ["code", "message"],
+                dbErrorCode: "42501",
+                dbErrorMessage: "permission denied for table [redacted]",
+            });
+
+            // The driver message is now intentionally logged (as dbErrorMessage,
+            // diagnostic-only), but redacted/truncated via safeErrorText: no
+            // quoted value from it survives.
+            const serialized = JSON.stringify(logged);
+            assert.ok(!serialized.includes('"rate_limits"'), "a quoted value from the driver message must be redacted");
         } finally {
             server.close();
         }
