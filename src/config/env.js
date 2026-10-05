@@ -37,8 +37,22 @@ export const MIN_JWT_SECRET_LENGTH = 32;
 // can't choose its own IP for the login rate limit with X-Forwarded-For.
 // Set it to the exact hop count only when deployed behind a known proxy
 // (e.g. 1 behind a single load balancer). Never "true" (SEC-015).
-export function trustProxyHops(value = process.env.TRUST_PROXY_HOPS) {
-    if (value === undefined || value === "") return null;
+//
+// On Vercel, "unset" is the wrong default: every request to a Vercel
+// serverless function passes through exactly one hop of Vercel's own edge
+// proxy, which always sets X-Forwarded-For to the real client IP (Vercel
+// docs, "Request headers") - Express's default "trust proxy: false" then
+// reads req.ip as Vercel's internal connecting address, the same for every
+// request, so the login/API rate limiters key every client into one shared
+// bucket. Vercel sets VERCEL=1 for every deployment (production, preview and
+// dev), so that - not an app-level guess - is what selects this default; an
+// explicit TRUST_PROXY_HOPS still always wins, and the value is a specific
+// known hop count, never `true` (which would trust an attacker-supplied
+// X-Forwarded-For from anywhere).
+export function trustProxyHops(value = process.env.TRUST_PROXY_HOPS, isVercel = process.env.VERCEL === "1") {
+    if (value === undefined || value === "") {
+        return isVercel ? 1 : null;
+    }
     const hops = Number(value);
     if (!Number.isInteger(hops) || hops < 0 || hops > 10) {
         throw new Error("TRUST_PROXY_HOPS must be a whole number from 0 to 10");
@@ -93,7 +107,7 @@ export function findEnvProblems(env = process.env, { required: requiredVars = RE
         problems.push("PORT must be a number");
     }
     try {
-        trustProxyHops(env.TRUST_PROXY_HOPS);
+        trustProxyHops(env.TRUST_PROXY_HOPS, env.VERCEL === "1");
     } catch (error) {
         problems.push(error.message);
     }

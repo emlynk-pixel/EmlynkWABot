@@ -210,4 +210,21 @@ describe("Step 5D: TRUST_PROXY_HOPS=1 on Vercel", () => {
             server.close();
         }
     });
+
+    test("createApp() trusts exactly one hop automatically when VERCEL=1 and TRUST_PROXY_HOPS is unset", async () => {
+        const originalVercel = process.env.VERCEL;
+        const originalHops = process.env.TRUST_PROXY_HOPS;
+        delete process.env.TRUST_PROXY_HOPS;
+        process.env.VERCEL = "1";
+        try {
+            const { createApp } = await import("../src/createApp.js");
+            const app = createApp();
+            assert.equal(app.get("trust proxy"), 1);
+        } finally {
+            if (originalVercel === undefined) delete process.env.VERCEL;
+            else process.env.VERCEL = originalVercel;
+            if (originalHops === undefined) delete process.env.TRUST_PROXY_HOPS;
+            else process.env.TRUST_PROXY_HOPS = originalHops;
+        }
+    });
 });
