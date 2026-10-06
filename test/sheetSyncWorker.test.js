@@ -61,11 +61,14 @@ function setup({ enabled = true, rows = [], header, env = {} } = {}) {
     const store = createSheetSyncStore({ db: prisma });
     const lines = [];
     const log = { log: (l) => lines.push(l), warn: (l) => lines.push(l), error: (l) => lines.push(l) };
-    const worker = createSheetSyncWorker({
-        store, engine, config, tuning, clock, log, random: () => 0.5, targetHint: "…id / tab",
+    // Another worker process on the same Sheet, clock and database; its store
+    // can be wrapped (e.g. to simulate a crash).
+    const newWorker = (workerStore = store) => createSheetSyncWorker({
+        store: workerStore, engine, config, tuning, clock, log, random: () => 0.5, targetHint: "…id / tab",
         healthCheck: () => runSheetHealthCheck({ env: configEnv, sheetsClient: sheet.client, clock }),
     });
-    return { sheet, store, worker, lines, advance: (ms) => { offsetMs += ms; }, tuning };
+    const worker = newWorker();
+    return { sheet, store, worker, newWorker, lines, advance: (ms) => { offsetMs += ms; }, tuning };
 }
 
 async function register(body = {}) {
@@ -151,6 +154,26 @@ describe("incremental sync", () => {
         assert.equal(rowFor(sheet, uniqueId).length, 1);
         assert.equal(rowFor(sheet, uniqueId)[0][C], "Anusha");
         assert.equal((await queueRows())[0].status, "COMPLETED");
+    });
+
+    test("Google write succeeds, the process dies before completing the item: the reclaim finds the row, UNCHANGED, not APPENDED", async () => {
+        const { sheet, store, worker, newWorker, advance } = setup();
+        const { uniqueId } = await register();
+        // The process dies right after Google accepted the append: nothing is
+        // settled and the leases are never released.
+        const died = () => Promise.reject(new Error("process died"));
+        const crashed = newWorker({ ...store, completeQueueItem: died, retryQueueItem: died, failQueueItem: died, releaseWriterLease: async () => {} });
+        await assert.rejects(crashed.tick(), /process died/);
+        assert.equal(rowFor(sheet, uniqueId).length, 1);
+        assert.equal((await queueRows())[0].status, "PROCESSING");
+        const appendsBefore = sheet.writes().filter((c) => c.method === "append").length;
+
+        advance(Math.max(WORKER_TIMINGS.queueLeaseMs, WORKER_TIMINGS.writerLeaseMs) + 5_000);
+        await worker.tick(); // reclaims the expired lease
+        assert.equal(rowFor(sheet, uniqueId).length, 1);
+        assert.equal(sheet.writes().filter((c) => c.method === "append").length, appendsBefore);
+        const [item] = await queueRows();
+        assert.deepEqual([item.status, item.lastResult], ["COMPLETED", "UNCHANGED"]);
     });
 
     test("a blank AN cell identifies nobody: the candidate is appended and the blank row is untouched", async () => {

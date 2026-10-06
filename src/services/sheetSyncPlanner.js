@@ -48,13 +48,15 @@ const IGNORED_FOR_COMPARISON = new Set(["lastMirroredAt"]);
 
 // [{ rowNumber, candidateId }] (column AN) -> Map(candidateId -> rowNumber).
 // Blank cells are skipped (counted); any repeated non-blank ID throws.
-// IDs are compared exactly as text: no trimming of real values, no numeric
+// IDs are trimmed of surrounding whitespace (so "0003 " is "0003", and the two
+// together are a duplicate), then compared exactly as text: no numeric
 // coercion, no other column consulted.
 export function buildCandidateRowIndex(candidateIds) {
     const rowsById = new Map();
     let blankRows = 0;
-    for (const { rowNumber, candidateId } of candidateIds) {
-        if (typeof candidateId !== "string" || candidateId.trim() === "") {
+    for (const { rowNumber, candidateId: cell } of candidateIds) {
+        const candidateId = typeof cell === "string" ? cell.trim() : "";
+        if (candidateId === "") {
             blankRows++;
             continue;
         }
