@@ -35,7 +35,7 @@ const PRELUDE = `
     CREATE TABLE "_prisma_migrations" ("id" VARCHAR(36) PRIMARY KEY);
 `;
 
-// { pg, prisma, url, close() }: pg runs raw SQL directly (PGlite), prisma is the
+// { pg, prisma, close() }: pg runs raw SQL directly (PGlite), prisma is the
 // real generated client. `upTo` stops after that migration (inclusive).
 export async function createTestDatabase({ upTo = null } = {}) {
     const pg = await PGlite.create();
@@ -57,7 +57,6 @@ export async function createTestDatabase({ upTo = null } = {}) {
     return {
         pg,
         prisma,
-        url,
         async close() {
             await prisma.$disconnect();
             await server.stop();

@@ -404,7 +404,7 @@ Notes:
 - **Target tab:** configured by `SHEET_TAB_NAME` (`Emlynk Candidate Operational Mirror`).
   - Row 1: the 40 headers `A1:AN1` (39 business headers + `_SYSTEM_CANDIDATE_ID`), frozen.
   - Rows 2+: mirrored candidates (`A2:AN`).
-- **Meta tab (proposed for the connection test only):** `Mirror_Meta`, holding the schema version and the non-destructive probe cell; never candidate data.
+- **Meta tab: not implemented (as built).** The earlier proposal of a `Mirror_Meta` tab with a probe cell was dropped: Test Connection is read-only (Sections 11.6 C and 24). The system never creates or writes any tab other than the candidate tab.
 
 #### Positional validation (critical)
 
@@ -1287,7 +1287,7 @@ The current logging utilities do **not** yet guarantee this for Google data (Sec
 | Manual edits by staff | Medium | Low | Viewer access; reconciliation restores authoritative values |
 | PII exposure through the Sheet | Low | High | Private sheet, named Viewers, least privilege, access review, no public link |
 | PII or secrets in logs | Medium | High | Allow-listed log fields; add and test Google credential redaction (current `safeLog` is insufficient) |
-| Concurrent reconciliations / writers | Medium | Medium | Named advisory lock on a dedicated connection; writer lease; max 1 instance |
+| Concurrent reconciliations / writers | Medium | Medium | As built: writer lease row (compare-and-swap) + one active run per kind (partial unique index); max 1 instance (Section 24.4). The advisory-lock design of 9.5 was not used |
 | Session-pooler lock behaviour | Medium | Medium | Dedicated connection; Phase 7 spike; lease-row fallback |
 | Trigger overhead or defect on hot tables | Low | Medium | Minimal trigger body; coalescing; verify under bulk writes; rollback by dropping triggers |
 | Real operational Sheet pollution by dev/test | Medium | Critical | Strict environment write-gating (`SHEET_SYNC_ENABLED=false` by default; requires explicit production flag); all tests mocked; Test Connection is read-only (no probe) |
@@ -1443,7 +1443,7 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 - **Tests:** none. **Rollback:** n/a. **Depends on:** nothing.
 
 ### Phase 1 — Google Cloud & Target Sheet Verification (Provisioned)
-- **Objective:** verify the already provisioned service account (`emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`) on target spreadsheet (`1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`). The first verification is the **read-only** connection/schema check (Section 11.6 C). Any write probe (`Mirror_Meta`, D-14) is a later, separate step.
+- **Objective:** verify the already provisioned service account (`emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`) on target spreadsheet (`1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`). The first verification is the **read-only** connection/schema check (Section 11.6 C). There is no write probe (D-14 resolved: Test Connection stays read-only); the first write is the controlled pilot of Section 24.10.
 - **Components:** infrastructure and throwaway verification script (no application code).
 - **Acceptance:** read-only check returns `CONNECTED` + `SCHEMA_VALID` on Cloud Run as the dedicated identity; no service account JSON keys used.
 - **Tests:** manual verification checklist. **Rollback:** revoke sharing. **Depends on:** Phase 0.
@@ -1481,7 +1481,7 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 ### Phase 7 — Reconciliation Engine
 - **Objective:** full-cell comparison (`A`–`AL` + key `AN`), repairs, deletion safety, locking.
 - **Components:** new `src/services/sheetReconciliationService.js`.
-- **Acceptance:** 9.3 and 9.4 behaviours; advisory lock on session pooler.
+- **Acceptance:** 9.3 and 9.4 behaviours; as built, single-writer safety comes from the writer lease row, not an advisory lock (Section 24.4).
 - **Tests:** integration (18.2), deletion-safety tests. **Rollback:** disable runs. **Depends on:** Phase 6.
 
 ### Phase 8 — Cloud Scheduler & Secure Trigger
@@ -1573,7 +1573,7 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 | Reconciliation repairs drift | Reconciliation engine, full-cell comparison | DB snapshot vs Sheet | Scheduler or Sync Now | Run `FAILED` retried next run; lock `SKIPPED` | 18.2 | Proposed |
 | Deleted/inactive handling | Event path + guarded reconciliation | Complete snapshot | Delete event / reconcile | Incomplete snapshot -> no marking | 18.2 | Proposed |
 | Settings sidebar item and page | Admin SPA navigation and `/admin/settings` | n/a | ADMIN opens Settings | Non-ADMIN sees no Settings data | 18.5 | **Confirmed requirement** |
-| Settings Test Connection | Durable `TEST_CONNECTION` run | `Mirror_Meta!B2` probe | ADMIN action | Probe failure flags `CONFIG_ERROR` | 18.2, 18.5 | Proposed |
+| Settings Test Connection | Durable `TEST_CONNECTION` run executed by the worker | Read-only check of `A1:AN1` (no probe) | ADMIN action | Failure flags `CONFIG_ERROR` | 24.12 | Implemented |
 | Candidate Pool unchanged | Scope contract | n/a | n/a | n/a | 18.4, 18.5 | **Confirmed requirement** |
 
 ---
