@@ -251,3 +251,46 @@ describe("SHEET_SYNC_ENABLED configuration", () => {
         assert.equal(isSheetSyncEnabled(), false, "SHEET_SYNC_ENABLED must not be true when tests run");
     });
 });
+
+describe("A1 ranges for real-world tab names (regression: Cloud Run HTTP 400)", () => {
+    const realTab = "Emlynk Candidate Operational Mirror";
+    const cases = [[realTab, `'${realTab}'`], ["Bob's tab", "'Bob''s tab'"], ["It''s", "'It''''s'"]];
+
+    for (const [tab, quoted] of cases) {
+        test(`every read range quotes ${JSON.stringify(tab)} and keeps the A:AN schema`, async () => {
+            const client = fakeSheets({ rows: [sheetRow("0042")] });
+            const adapter = createGoogleSheetsAdapter({ config: { enabled: false, spreadsheetId: SPREADSHEET, tabName: tab }, sheetsClient: client });
+            await adapter.readHeader();
+            await adapter.validateSchema();
+            await adapter.readCandidateIds();
+            await adapter.readRows();
+            await adapter.readRow(7);
+            assert.deepEqual(client.calls.map((c) => c.range), [
+                `${quoted}!A1:AN1`, `${quoted}!A1:AN1`, `${quoted}!AN2:AN`, `${quoted}!A2:AN`, `${quoted}!A7:AN7`,
+            ]);
+            assert.ok(client.calls.every((c) => c.method === "get" && c.spreadsheetId === SPREADSHEET));
+            assert.deepEqual(writes(client), []);
+        });
+
+        test(`write ranges quote ${JSON.stringify(tab)} too`, async () => {
+            const client = fakeSheets({ rows: [sheetRow("0042")] });
+            const adapter = createGoogleSheetsAdapter({ config: { enabled: true, spreadsheetId: SPREADSHEET, tabName: tab }, sheetsClient: client });
+            await adapter.appendRow(sheetRow("0043"));
+            await adapter.updateRow(7, sheetRow("0043"));
+            assert.deepEqual(writes(client).map((c) => c.range), [`${quoted}!A:AN`, `${quoted}!A7:AN7`]);
+        });
+    }
+
+    test("a Google 400 keeps its status enum and is a CONFIG class, without message text", () => {
+        const error = Object.assign(new Error("Unable to parse range: 'Secret Tab'!A1"), {
+            response: { status: 400, data: { error: { status: "INVALID_ARGUMENT", message: "Unable to parse range: 'Secret Tab'!A1", errors: [{ reason: "badRequest" }] } } },
+        });
+        const info = classifySheetsError(error);
+        assert.deepEqual(info, { errorClass: "CONFIG", status: 400, reason: "badRequest", googleStatus: "INVALID_ARGUMENT" });
+        assert.doesNotMatch(new SheetsAdapterError(info).message, /Secret Tab|parse range/);
+    });
+
+    test("the write gate stays off by default", () => {
+        assert.equal(isSheetSyncEnabled({}), false);
+    });
+});

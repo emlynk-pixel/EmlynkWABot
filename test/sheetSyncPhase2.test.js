@@ -336,7 +336,7 @@ describe("read-only connection/schema check", () => {
             [{ response: { status: 403 } }, HEALTH_STATUS.ACCESS_DENIED],
             [{ response: { status: 401 } }, HEALTH_STATUS.ACCESS_DENIED],
             [{ response: { status: 404 } }, HEALTH_STATUS.NOT_FOUND],
-            [{ response: { status: 400 } }, HEALTH_STATUS.NOT_FOUND],
+            [{ response: { status: 400 } }, HEALTH_STATUS.BAD_REQUEST],
             [{ response: { status: 503 } }, HEALTH_STATUS.UNAVAILABLE],
             [{ code: "ECONNRESET" }, HEALTH_STATUS.UNAVAILABLE],
         ];

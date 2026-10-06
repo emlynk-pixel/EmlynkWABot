@@ -34,7 +34,8 @@ export const HEALTH_STATUS = Object.freeze({
     NOT_CONFIGURED: "NOT_CONFIGURED",       // spreadsheet ID or tab name missing
     CONFIG_ERROR: "CONFIG_ERROR",           // e.g. a key file configured (not allowed)
     ACCESS_DENIED: "ACCESS_DENIED",         // 401/403: identity, sharing or API not enabled
-    NOT_FOUND: "NOT_FOUND",                 // 400/404: spreadsheet or tab not found
+    NOT_FOUND: "NOT_FOUND",                 // 404: spreadsheet not found
+    BAD_REQUEST: "BAD_REQUEST",             // 400: range/tab unparseable or document unsupported (see googleStatus)
     UNAVAILABLE: "UNAVAILABLE",             // rate limited / transient Google or network failure
     FAILED: "FAILED",                       // anything else (e.g. no credentials available)
 });
@@ -50,8 +51,9 @@ function failureStatus(error) {
     let status = HEALTH_STATUS.FAILED;
     if (error.errorClass === SHEETS_ERROR_CLASS.RETRYABLE) status = HEALTH_STATUS.UNAVAILABLE;
     else if (error.status === 401 || error.status === 403) status = HEALTH_STATUS.ACCESS_DENIED;
-    else if (error.status === 400 || error.status === 404) status = HEALTH_STATUS.NOT_FOUND;
-    return { status, httpStatus: error.status, reason: error.reason };
+    else if (error.status === 404) status = HEALTH_STATUS.NOT_FOUND;
+    else if (error.status === 400) status = HEALTH_STATUS.BAD_REQUEST;
+    return { status, httpStatus: error.status, reason: error.reason, googleStatus: error.googleStatus ?? null };
 }
 
 // env: the environment to read SHEET_SPREADSHEET_ID / SHEET_TAB_NAME from.
@@ -66,6 +68,7 @@ export async function runSheetHealthCheck({ env = process.env, sheetsClient, clo
         mismatchedColumns: [],
         httpStatus: null,
         reason: null,
+        googleStatus: null,
         // Informational: whether candidate writes are switched on. The check
         // itself never writes either way.
         writeGate: config.gate,

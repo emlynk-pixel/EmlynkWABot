@@ -65,12 +65,15 @@ export class SheetSchemaMismatchError extends Error {
 }
 
 export class SheetsAdapterError extends Error {
-    constructor({ errorClass, status = null, reason = null }) {
-        super(`Google Sheets request failed (${[status && `status ${status}`, reason && `reason ${reason}`].filter(Boolean).join(", ") || "no response"})`);
+    constructor({ errorClass, status = null, reason = null, googleStatus = null }) {
+        super(`Google Sheets request failed (${[status && `status ${status}`, reason && `reason ${reason}`, googleStatus && `google ${googleStatus}`].filter(Boolean).join(", ") || "no response"})`);
         this.name = "SheetsAdapterError";
         this.errorClass = errorClass;
         this.status = status;
         this.reason = reason;
+        // Google's canonical status enum (INVALID_ARGUMENT, FAILED_PRECONDITION,
+        // NOT_FOUND...), never message text.
+        this.googleStatus = googleStatus;
     }
 }
 
@@ -87,6 +90,8 @@ export function classifySheetsError(error) {
         ?? error?.response?.data?.error?.errors?.[0]?.reason
         ?? error?.response?.data?.error?.status
         ?? null;
+    const rawGoogleStatus = error?.response?.data?.error?.status;
+    const googleStatus = typeof rawGoogleStatus === "string" && /^[A-Z_]{1,40}$/.test(rawGoogleStatus) ? rawGoogleStatus : null;
     const code = typeof error?.code === "string" ? error.code : null;
     let errorClass = SHEETS_ERROR_CLASS.PERMANENT;
     if ((status && RETRYABLE_STATUS.has(status)) || (reason && RATE_LIMIT_REASONS.has(reason)) || (code && NETWORK_CODES.has(code))) {
@@ -94,7 +99,7 @@ export function classifySheetsError(error) {
     } else if (status && CONFIG_STATUS.has(status)) {
         errorClass = SHEETS_ERROR_CLASS.CONFIG;
     }
-    return { errorClass, status, reason: typeof reason === "string" ? reason : null };
+    return { errorClass, status, reason: typeof reason === "string" ? reason : null, googleStatus };
 }
 
 // The live client: Google's official Sheets library with Application
