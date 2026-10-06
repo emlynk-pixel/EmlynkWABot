@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node src/app.js",
     "worker": "node src/worker.js",
+    "sheet:check": "node src/sheetSyncCheck.js",
     "postinstall": "prisma generate",
     "test": "node --test \"test/**/*.test.js\"",
     "diagnose:document": "node scripts/diagnoseDocument.js",
@@ -35,6 +36,7 @@
   },
   "homepage": "https://github.com/emlynk-pixel/EmlynkWABot#readme",
   "dependencies": {
+    "@googleapis/sheets": "^18.1.0",
     "@napi-rs/canvas": "0.1.80",
     "@prisma/adapter-pg": "6.19.3",
     "@prisma/client": "6.19.3",

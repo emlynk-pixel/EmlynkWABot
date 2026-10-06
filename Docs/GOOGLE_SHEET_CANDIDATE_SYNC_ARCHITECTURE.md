@@ -2,8 +2,8 @@
 ## Architecture & Project-Scope Specification
 
 - **Feature Name:** Google Sheets Candidate Operational Mirror (operational fallback)
-- **Document Version:** 1.2.0
-- **Status:** DRAFT / PROPOSED — SCOPE FREEZE CANDIDATE (aligned with confirmed Google Sheet provisioning and 41-column legacy-compatible schema; awaiting business confirmation on legacy field mappings [D-18] and row identity [D-17] before implementation)
+- **Document Version:** 1.4.0
+- **Status:** DRAFT / PROPOSED — SCOPE FREEZE CANDIDATE (aligned with the manually finalized real Google Sheet: 39 business-visible columns + 1 technical identity column = 40 columns `A:AN`; D-17 and D-18 resolved; implementation Pass 1 (schema, mapper, adapter, safety gate) and Pass 2 (aggregate reader, read-only sync planner, read-only connection/schema check) on `dev`, with no live Sheet writes; Cloud Run ADC pending runtime verification)
 - **Author:** System Architecture Team
 - **Development Branch:** `dev` (this document and all development happen on `dev`)
 - **Feature Version Branch:** `version/google-sheet-sync` (preserves the completed feature; see Section 19)
@@ -50,7 +50,7 @@ The Google Sheets Candidate Operational Mirror is a **one-way, eventually consis
 - One-way candidate operational mirror (PostgreSQL -> Google Sheets).
 - Incremental candidate synchronization driven by a durable outbox.
 - Daily reconciliation (plus on-demand runs and guarded staging checks).
-- Candidate fields approved in Section 6: exactly 41 business-visible columns (A through AO) preserving the legacy Excel operational layout (columns 1 to 26) plus appended candidate details, stage statuses, and mirror metadata, plus a technical row identity key (recommended Column AP).
+- Candidate fields approved in Section 6: exactly 40 columns `A:AN` of the manually finalized real Sheet: 39 business-visible columns (`A` through `AM`, legacy operational headers first, then candidate details, stage statuses and mirror metadata) plus the technical row identity column `AN` (`_SYSTEM_CANDIDATE_ID`).
 - Document **statuses** only (never files).
 - Candidate stage statuses.
 - Preservation of rows for candidates that disappear from the application, marked `DELETED / INACTIVE`.
@@ -160,7 +160,7 @@ Registration and the Candidate Details stage are **different concepts** and must
 
 | Stage | Source | Sheet value |
 | :--- | :--- | :--- |
-| `TEST_DETAILS` | Stored (`candidate_stages.completed`) plus `job_id`, `test_result` (`PASS`/`FAIL`), `test_date` | `COMPLETED`/`INCOMPLETE` plus the three detail columns |
+| `TEST_DETAILS` | Stored (`candidate_stages.completed`) plus `job_id`, `test_result` (`PASS`/`FAIL`), `test_date` | `COMPLETED`/`INCOMPLETE` (`AE`) plus `TEST DATE` (`E`); job ID and test result are not mirrored |
 | `CANDIDATE_DETAILS` | **Derived** from `users` + `documents` (4.1 B) | `COMPLETED`/`INCOMPLETE` |
 | `DOCUMENT_SUBMISSION` | **Derived** from `documents` (medical, SL Verified and Romania police reports, scan) | `COMPLETED`/`INCOMPLETE` |
 | `IVS_INTERVIEW`, `VISA_APPROVAL`, `FINALIZING_JOB` | Stored | `COMPLETED`/`INCOMPLETE` |
@@ -287,209 +287,162 @@ flowchart LR
 
 ---
 
-## 6. Google Sheet Schema (41 Business-Visible Columns + Recommended Row Key Column)
+## 6. Google Sheet Schema (39 Business-Visible Columns + 1 Technical Column = 40 Columns, `A:AN`)
 
-The operational Sheet layout is based on an **existing Excel operational format** used by staff. Rather than forcing an artificial reorganization, the architecture **preserves the existing Excel format and order first (Columns 1–26)**, and appends necessary operational detail, stage status, and mirror metadata fields after it (Columns 27–41).
+The real operational Google Sheet has been **manually finalized** by the business. Its layout below is **authoritative** and replaces every earlier layout (including the 41-business-column + technical `AP` layout of v1.2.0).
 
-This produces **41 business-visible columns**, `A` through `AO`, in four logical groups:
+- **39 business-visible columns**, `A` through `AM`, preserving the legacy operational headers first.
+- **1 technical identity column**, `AN` (`_SYSTEM_CANDIDATE_ID`), already added manually to the real Sheet.
+- **Total: 40 columns. Every range is `A:AN`.**
+
+The schema is defined **once**, in the backend (`src/services/sheetSchema.js`), as an ordered immutable array. No other module may hard-code column letters or header strings.
 
 | Group | Name | Columns | Column Letters |
 | :-: | :--- | :-: | :-: |
-| 1 | Legacy Excel operational format (verbatim order & text) | 26 | `A` – `Z` |
-| 2 | Appended candidate identity / detail fields | 6 | `AA` – `AF` |
-| 3 | Candidate deployment stage statuses | 6 | `AG` – `AL` |
-| 4 | Operational mirror metadata | 3 | `AM` – `AO` |
-| | **Total Business-Visible Columns** | **41** | **`A` – `AO`** |
-| *(Tech)* | *Recommended immutable row identity key (Section 7)* | *1* | *`AP`* |
+| 1 | Legacy operational headers (verbatim order and text) | 24 | `A` – `X` |
+| 2 | Appended candidate detail fields | 6 | `Y` – `AD` |
+| 3 | Candidate deployment stage statuses | 6 | `AE` – `AJ` |
+| 4 | Operational mirror metadata | 3 | `AK` – `AM` |
+| | **Total business-visible columns** | **39** | **`A` – `AM`** |
+| Tech | Row identity key (`_SYSTEM_CANDIDATE_ID` = `User.unique_id`) | 1 | `AN` |
+| | **Total columns** | **40** | **`A` – `AN`** |
 
 > [!IMPORTANT]
 > **Strict Layout Invariants:**
-> 1. The first 26 legacy Excel columns are preserved in **exact order and verbatim header text**.
-> 2. No legacy header may be silently renamed or reordered.
-> 3. Duplicate header strings (`PASSPORT COPY`, `POLICE REP SRI LANKA`, `POLICE REP ROMANIA`) are **intentionally preserved** from the business spreadsheet; they must NOT be merged or removed.
-> 4. **There is only ONE `SCAN` (Column 17 / `Q`).** No separate agreements or affidavits.
+> 1. Exact header text and exact position for all 40 columns. No header may be renamed, reordered, merged or removed by the system.
+> 2. `POLICE REP SRI LANKA` **intentionally appears twice** (`N` and `V`). The two columns are distinguished only by **position**, never by header name.
+> 3. The legacy spelling `DRIVING LICIAN` is preserved exactly.
+> 4. **There is only ONE `SCAN` (`Q`).** No agreements, affidavits or other scan categories.
+> 5. `_SYSTEM_CANDIDATE_ID` (`AN`) is the row identity. Passport number and NIC are never used as the row identity.
 
-### 6.1 Complete 41-Column Operational Layout & Field Mapping Table
+### 6.1 Final 40-Column Layout & Field Mapping
 
-Kind legend: **Auth** = authoritative value copied verbatim from PostgreSQL; **Derived** = computed from authoritative database records (same logic as Admin UI); **Gen** = generated by the sync system.
+Kind legend: **Auth** = authoritative value copied from PostgreSQL; **Derived** = computed from authoritative records with the application's own logic (the same functions the Admin UI uses); **Gen** = generated by the sync system; **Blank** = intentionally emitted as `""` (no confirmed system mapping).
 
-| # | Col | Exact Header Text | Source (Database / Model Field) | Kind | Format | Blank / Missing Behavior | Audit Status | Technical Notes |
-| :-: | :-: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | **A** | `TEST NUMBER` | `CandidateStage.job_id` (`TEST_DETAILS`) *[Unconfirmed]* | Auth | text | Empty cell | **NEEDS BUSINESS CONFIRMATION** | Ambiguous: DB has `job_id` (e.g. `JOB-2026-014`) on `TEST_DETAILS`, but no `test_number` field. See Audit §6.2. |
-| 2 | **B** | `PASSPORT NUMBER` | `User.passport_id` | Auth | text | Never empty | **CONFIRMED** | Primary key in database; normalized uppercase string. |
-| 3 | **C** | `FIRST NAME` | `User.first_name` | Auth | text | Never empty | **CONFIRMED** | Given name(s) of candidate. |
-| 4 | **D** | `OTHER NAME` | `User.other_name` | Auth | text | Never empty | **CONFIRMED** | Surname / family name of candidate. |
-| 5 | **E** | `TEST DATE` | `CandidateStage.test_date` (`TEST_DETAILS`) | Auth | `YYYY-MM-DD` | Empty cell | **CONFIRMED** | Date the candidate sat the trade test; empty if not sat. |
-| 6 | **F** | `BIRTHDAY` | `User.date_of_birth` | Auth | `YYYY-MM-DD` | Empty cell | **CONFIRMED** | Candidate date of birth. |
-| 7 | **G** | `PP EX DATE` | `User.passport_expiry_date` | Auth | `YYYY-MM-DD` | Empty cell | **CONFIRMED** | Passport expiration date. |
-| 8 | **H** | `JOB` | `User.job` | Auth | text | Empty cell | **CONFIRMED** | Comma-separated job categories (e.g. `Construction Worker, Caregiver`). |
-| 9 | **I** | `ID NUMBER` | `User.nic` | Auth | text | Empty cell | **CONFIRMED** | National Identity Card number (9 digits + V/X or 12 digits). |
-| 10 | **J** | `ADDRESS` | `User.address` | Auth | text | Empty cell | **CONFIRMED** | Candidate residential / postal address. |
-| 11 | **K** | `WHATSAPP NUM` | `User.whatsapp_number` | Auth | digits (text) | Never empty | **CONFIRMED** | Stored normalized digits (no `+` prefix). |
-| 12 | **L** | `CONTACT NUM` | `User.contact_number` | Auth | digits (text) | Empty cell | **CONFIRMED** | Secondary contact phone digits (no `+` prefix). |
-| 13 | **M** | `PASSPORT COPY` | Current `PASSPORT` document status *[Unconfirmed]* | Derived | status | Empty / `MISSING` | **NEEDS BUSINESS CONFIRMATION** | Duplicate header with Col 18. Appears in submission checklist group (13–17). See Audit §6.2. |
-| 14 | **N** | `POLICE REP SRI LANKA` | `POLICE_REPORT` variant `SL_VERIFIED` *[Unconfirmed]* | Derived | status | Empty / `MISSING` | **NEEDS BUSINESS CONFIRMATION** | Duplicate header with Col 23. Appears in submission checklist group. See Audit §6.2. |
-| 15 | **O** | `POLICE REP ROMANIA` | `POLICE_REPORT` variant `ROMANIA` *[Unconfirmed]* | Derived | status | Empty / `MISSING` | **NEEDS BUSINESS CONFIRMATION** | Duplicate header with Col 24. Appears in submission checklist group. See Audit §6.2. |
-| 16 | **P** | `MEDICAL` | Current `MEDICAL` document status | Derived | status | `MISSING` | **CONFIRMED** | `VERIFIED` / `REVIEW_REQUIRED` / `MISSING`. |
-| 17 | **Q** | `SCAN` | Current `SCAN` document status | Derived | status | `MISSING` | **CONFIRMED** | **The one and only scan column.** `VERIFIED` / `REVIEW_REQUIRED` / `MISSING`. Combines agreement & affidavits. |
-| 18 | **R** | `PASSPORT COPY` | Current `PASSPORT` document status *[Unconfirmed]* | Derived | status | Empty / `MISSING` | **NEEDS BUSINESS CONFIRMATION** | Duplicate header with Col 13. Appears in document catalog group (18–26). See Audit §6.2. |
-| 19 | **S** | `DRIVING LICIAN` | *Unmapped / not stored in database* | n/a | text | Empty cell | **NEEDS BUSINESS CONFIRMATION** | Zero matches in repository. No driving license document or field exists. Must remain empty. See Audit §6.2. |
-| 20 | **T** | `NATIONAL ID` | Current `NIC` document status *[Unconfirmed]* | Derived | status | Empty / `MISSING` | **NEEDS BUSINESS CONFIRMATION** | Distinct from Col 9 (`ID NUMBER` = `User.nic`). Likely NIC document status. See Audit §6.2. |
-| 21 | **U** | `POLICE REPORT APPLIED` | Current `POLICE_SLIP` document status *[Unconfirmed]* | Derived | status | Empty / `MISSING` | **NEEDS BUSINESS CONFIRMATION** | Police clearance application slip status. See Audit §6.2. |
-| 22 | **V** | `SUBMIT DATE` | `Document.police_submitted_date` of current slip | Auth | `YYYY-MM-DD` | Empty cell | **CONFIRMED** | Date police clearance application was submitted. |
-| 23 | **W** | `POLICE REP SRI LANKA` | `POLICE_REPORT` variant `SL_NORMAL` *[Unconfirmed]* | Derived | status | Empty / `MISSING` | **NEEDS BUSINESS CONFIRMATION** | Duplicate header with Col 14. Likely general SL police report. See Audit §6.2. |
-| 24 | **X** | `POLICE REP ROMANIA` | `POLICE_REPORT` variant `ROMANIA` *[Unconfirmed]* | Derived | status | Empty / `MISSING` | **NEEDS BUSINESS CONFIRMATION** | Duplicate header with Col 15. See Audit §6.2. |
-| 25 | **Y** | `POLICE REP FM` | *Ambiguous / unmapped variant* | Derived | status | Empty cell | **NEEDS BUSINESS CONFIRMATION** | "FM" does not exist in code or DB. May mean Foreign Ministry / Foreign Mission. See Audit §6.2. |
-| 26 | **Z** | `VIDEOS` | Current `SKILL_VIDEO` document status *[Unconfirmed]* | Derived | status | `MISSING` | **NEEDS BUSINESS CONFIRMATION** | Verification status of `SKILL_VIDEO`. See Audit §6.2. |
-| 27 | **AA** | `PLACE OF BIRTH` | `User.place_of_birth` | Auth | text | Empty cell | **CONFIRMED** | Town / city of birth. |
-| 28 | **AB** | `SEX` | `User.sex` | Auth | `M` / `F` / `X` | Empty cell | **CONFIRMED** | Sex as recorded on passport. |
-| 29 | **AC** | `NATIONALITY` | `User.nationality` | Auth | text | Empty cell | **CONFIRMED** | Candidate nationality. |
-| 30 | **AD** | `PASSPORT ISSUE DATE` | `User.passport_issue_date` | Auth | `YYYY-MM-DD` | Empty cell | **CONFIRMED** | Date passport was issued. |
-| 31 | **AE** | `JOB EXPERIENCE` | `User.job_experience` | Auth | text | Empty cell | **CONFIRMED** | Free-text candidate work history. |
-| 32 | **AF** | `CANDIDATE DETAILS NOTE` | `CandidateStage.notes` (`CANDIDATE_DETAILS`) | Auth | text | Empty cell | **CONFIRMED** | Registration comment / Candidate Details stage note. Sensitive PII controls apply. |
-| 33 | **AG** | `TEST DETAILS STATUS` | `CandidateStage.completed` (`TEST_DETAILS`) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** | Stored stage completion flag. |
-| 34 | **AH** | `CANDIDATE DETAILS STATUS` | Derived stage logic (Section 4.1 B) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** | Automatic stage derived from required details and valid passport document. |
-| 35 | **AI** | `DOCUMENT SUBMISSION STATUS` | Derived stage logic (Section 4.2) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** | Automatic stage derived from medical, police reports (SL verified & Romania), and scan. |
-| 36 | **AJ** | `IVS INTERVIEW STATUS` | `CandidateStage.completed` (`IVS_INTERVIEW`) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** | Stored stage completion flag. |
-| 37 | **AK** | `VISA APPROVAL STATUS` | `CandidateStage.completed` (`VISA_APPROVAL`) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** | Stored stage completion flag. |
-| 38 | **AL** | `FINALIZING JOB STATUS` | `CandidateStage.completed` (`FINALIZING_JOB`) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** | Stored stage completion flag. |
-| 39 | **AM** | `RECORD STATUS` | Generated operational mirror status | Gen | `ACTIVE` / `DELETED / INACTIVE` / `DUPLICATE ROW` | Never empty | **CONFIRMED** | Mirror row state at a glance. |
-| 40 | **AN** | `REGISTERED AT` | `User.created_date` | Auth | ISO-8601 UTC (`YYYY-MM-DDTHH:mm:ssZ`) | Never empty | **CONFIRMED** | Exact timestamp candidate was registered. |
-| 41 | **AO** | `LAST MIRRORED AT` | Generated timestamp | Gen | ISO-8601 UTC (`YYYY-MM-DDTHH:mm:ssZ`) | Never empty | **CONFIRMED** | Timestamp row was mirrored to Sheet; excluded from drift comparison. |
+| # | Col | Exact Header Text | Source | Kind | Format | Blank / Missing | Status |
+| :-: | :-: | :--- | :--- | :-: | :--- | :--- | :--- |
+| 1 | **A** | `TEST NUMBER` | none (separate business field with no system mapping) | Blank | text | always `""` | **CONFIRMED BLANK** (D-18.1). `job_id` is **not** mapped here |
+| 2 | **B** | `PASSPORT NUMBER` | `User.passport_id` | Auth | text | never empty | **CONFIRMED** |
+| 3 | **C** | `FIRST NAME` | `User.first_name` | Auth | text | never empty | **CONFIRMED** (legacy first name = given names) |
+| 4 | **D** | `OTHER NAME` | `User.other_name` | Auth | text | `""` | **CONFIRMED** (legacy other name = surname) |
+| 5 | **E** | `TEST DATE` | `CandidateStage.test_date` (`TEST_DETAILS`) | Auth | `YYYY-MM-DD` | `""` | **CONFIRMED** |
+| 6 | **F** | `BIRTHDAY` | `User.date_of_birth` | Auth | `YYYY-MM-DD` | `""` | **CONFIRMED** |
+| 7 | **G** | `PP EX DATE` | `User.passport_expiry_date` | Auth | `YYYY-MM-DD` | `""` | **CONFIRMED** |
+| 8 | **H** | `JOB` | `User.job` (comma-separated job types, as stored) | Auth | text | `""` | **CONFIRMED** |
+| 9 | **I** | `ID NUMBER` | `User.nic` | Auth | text | `""` | **CONFIRMED** |
+| 10 | **J** | `ADDRESS` | `User.address` | Auth | text | `""` | **CONFIRMED** |
+| 11 | **K** | `WHATSAPP NUM` | `User.whatsapp_number` | Auth | digits (text) | `""` | **CONFIRMED** (stored digits, no `+`) |
+| 12 | **L** | `CONTACT NUM` | `User.contact_number` | Auth | digits (text) | `""` | **CONFIRMED** |
+| 13 | **M** | `PASSPORT COPY` | current `PASSPORT` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.2: the only Passport Copy column) |
+| 14 | **N** | `POLICE REP SRI LANKA` | current `POLICE_REPORT` variant `SL_VERIFIED` status | Derived | status | `MISSING` | **CONFIRMED** (D-18.3) |
+| 15 | **O** | `POLICE REP ROMANIA` | current `POLICE_REPORT` variant `ROMANIA` status | Derived | status | `MISSING` | **CONFIRMED** (D-18.4: the only Romania column) |
+| 16 | **P** | `MEDICAL` | current `MEDICAL` document status | Derived | status | `MISSING` | **CONFIRMED** |
+| 17 | **Q** | `SCAN` | current `SCAN` document status | Derived | status | `MISSING` | **CONFIRMED**. The one and only scan column |
+| 18 | **R** | `DRIVING LICIAN` | none (no driving-licence document type exists in the repository) | Blank | text | always `""` | **CONFIRMED BLANK** (D-18.5) |
+| 19 | **S** | `NATIONAL ID` | current `NIC` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.6; `ID NUMBER` holds the NIC value itself) |
+| 20 | **T** | `POLICE REPORT APPLIED` | current `POLICE_SLIP` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.7) |
+| 21 | **U** | `SUBMIT DATE` | `Document.police_submitted_date` of the current `POLICE_SLIP` | Auth | `YYYY-MM-DD` | `""` | **CONFIRMED** |
+| 22 | **V** | `POLICE REP SRI LANKA` | current `POLICE_REPORT` variant `SL_NORMAL` status | Derived | status | `MISSING` | **CONFIRMED** (D-18.3) |
+| 23 | **W** | `POLICE REP FM` | none (no "FM" variant exists; no Foreign Ministry/attestation logic is invented) | Blank | text | always `""` | **CONFIRMED BLANK** (D-18.8) |
+| 24 | **X** | `VIDEOS` | current `SKILL_VIDEO` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.9) |
+| 25 | **Y** | `PLACE OF BIRTH` | `User.place_of_birth` | Auth | text | `""` | **CONFIRMED** |
+| 26 | **Z** | `SEX` | `User.sex` | Auth | `M` / `F` / `X` | `""` | **CONFIRMED** |
+| 27 | **AA** | `NATIONALITY` | `User.nationality` | Auth | text | `""` | **CONFIRMED** |
+| 28 | **AB** | `PASSPORT ISSUE DATE` | `User.passport_issue_date` | Auth | `YYYY-MM-DD` | `""` | **CONFIRMED** |
+| 29 | **AC** | `JOB EXPERIENCE` | `User.job_experience` | Auth | text | `""` | **CONFIRMED** |
+| 30 | **AD** | `CANDIDATE DETAILS NOTE` | `CandidateStage.notes` (`CANDIDATE_DETAILS`) | Auth | text | `""` | **CONFIRMED** (D-5). Free text: PII controls apply, never logged |
+| 31 | **AE** | `TEST DETAILS STATUS` | `CandidateStage.completed` (`TEST_DETAILS`) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** |
+| 32 | **AF** | `CANDIDATE DETAILS STATUS` | automatic stage logic (Section 4.1 B) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** |
+| 33 | **AG** | `DOCUMENT SUBMISSION STATUS` | automatic stage logic (Section 4.2) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** |
+| 34 | **AH** | `IVS INTERVIEW STATUS` | `CandidateStage.completed` (`IVS_INTERVIEW`) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** |
+| 35 | **AI** | `VISA APPROVAL STATUS` | `CandidateStage.completed` (`VISA_APPROVAL`) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** |
+| 36 | **AJ** | `FINALIZING JOB STATUS` | `CandidateStage.completed` (`FINALIZING_JOB`) | Derived | `COMPLETED` / `INCOMPLETE` | `INCOMPLETE` | **CONFIRMED** |
+| 37 | **AK** | `RECORD STATUS` | generated mirror state | Gen | `ACTIVE` / `DELETED / INACTIVE` / `DUPLICATE ROW` | never empty | **CONFIRMED** |
+| 38 | **AL** | `REGISTERED AT` | `User.created_date` | Auth | ISO-8601 UTC (`YYYY-MM-DDTHH:mm:ssZ`) | never empty | **CONFIRMED** |
+| 39 | **AM** | `LAST MIRRORED AT` | generated write time | Gen | ISO-8601 UTC (`YYYY-MM-DDTHH:mm:ssZ`) | never empty | **CONFIRMED**; excluded from drift comparison |
+| 40 | **AN** | `_SYSTEM_CANDIDATE_ID` | `User.unique_id` | Auth | text (opaque, leading zeros kept) | never empty | **CONFIRMED** (D-17). Technical row key |
 
----
+### 6.2 Confirmed Business Mappings (D-18 Resolved)
 
-### 6.2 Critical Mapping Audit of the 12 Ambiguous / Duplicate Legacy Fields
+| Item | Decision | Repository evidence |
+| :--- | :--- | :--- |
+| `TEST NUMBER` (`A`) | Separate business field with no system mapping: always `""`. `CandidateStage.job_id` is **not** used | No `test_number` field exists |
+| `PASSPORT COPY` (`M`) | Only one column; current `PASSPORT` document status | Document type `PASSPORT` |
+| `POLICE REP SRI LANKA` (`N`) | Variant `SL_VERIFIED` | `POLICE_REPORT_VARIANTS` |
+| `POLICE REP ROMANIA` (`O`) | Only one column; variant `ROMANIA` | `POLICE_REPORT_VARIANTS` |
+| `DRIVING LICIAN` (`R`) | Always `""` (header spelling preserved) | No driving-licence type anywhere in the repository |
+| `NATIONAL ID` (`S`) | Current `NIC` document status | Document type `NIC` |
+| `POLICE REPORT APPLIED` (`T`) | Current `POLICE_SLIP` document status | Document type `POLICE_SLIP` (the application receipt that starts the 21-day wait) |
+| `SUBMIT DATE` (`U`) | `police_submitted_date` of the current `POLICE_SLIP`, `YYYY-MM-DD` | `Document.police_submitted_date` |
+| `POLICE REP SRI LANKA` (`V`) | Variant `SL_NORMAL` | `POLICE_REPORT_VARIANTS` |
+| `POLICE REP FM` (`W`) | Always `""`; no Foreign Ministry / attestation logic is invented | No "FM" variant exists |
+| `VIDEOS` (`X`) | Current `SKILL_VIDEO` document status | Document type `SKILL_VIDEO` |
 
-A comprehensive audit of the repository (`prisma/schema.prisma`, `candidateService.js`, `policeWorkflowService.js`, `policeCountdownService.js`, `adminReviewActionService.js`, `StagePanels.tsx`) was conducted for each ambiguous legacy column. None of these may be guessed during implementation. Each is classified below with its exact repository findings and required business decision:
+Notes:
 
-#### 1. `TEST NUMBER` (Column 1 / `A`)
-- **Repository Evidence:** The database table `candidate_stages` for `TEST_DETAILS` stores `job_id` (string, max 50, e.g. `JOB-2026-014`), `test_result` (`PASS` / `FAIL`), and `test_date` (`Date`). The UI label in `StagePanels.tsx` is "Job ID". There is **no field named `test_number`** anywhere in the schema, database, or application code.
-- **Ambiguity:** Does `TEST NUMBER` expect the trade test `job_id`, or is it an external physical test serial number not currently captured by Emlynk?
-- **Status:** **NEEDS BUSINESS CONFIRMATION (Decision D-18.1).** Default until decided: map to `CandidateStage.job_id` where `stage = 'TEST_DETAILS'`.
-
-#### 2 & 5. The Two `PASSPORT COPY` Columns (Column 13 / `M` vs Column 18 / `R`)
-- **Repository Evidence:** The system defines exactly one document type `PASSPORT` (`CANDIDATE_DOCUMENT_TYPES.PASSPORT`). It stores uploaded passport images/PDFs with verification status (`VERIFIED`, `REVIEW_REQUIRED`, `SUPERSEDED`).
-- **Context Analysis:**
-  - Column 13 (`M`) sits directly inside the **Document Submission checklist group** (Cols 13–17: `PASSPORT COPY`, `POLICE REP SRI LANKA`, `POLICE REP ROMANIA`, `MEDICAL`, `SCAN`), matching the required submission documents.
-  - Column 18 (`R`) sits at the head of the **general document intake group** (Cols 18–26: `PASSPORT COPY`, `DRIVING LICIAN`, `NATIONAL ID`, `POLICE REPORT APPLIED`, `SUBMIT DATE`, etc.).
-- **Ambiguity:** Why does the legacy spreadsheet hold two separate passport copy columns? Does Column 13 reflect whether a passport copy was attached for foreign submission, while Column 18 reflects the initial registration passport copy? Or should both mirror the current `PASSPORT` verification status?
-- **Status:** **NEEDS BUSINESS CONFIRMATION (Decision D-18.2).** Under no circumstances should code guess.
-
-#### 3 & 9. The Two `POLICE REP SRI LANKA` Columns (Column 14 / `N` vs Column 23 / `W`)
-- **Repository Evidence:** Document type `POLICE_REPORT` supports three variants (`POLICE_REPORT_VARIANTS`): `SL_VERIFIED`, `ROMANIA`, and `SL_NORMAL`.
-- **Context Analysis:**
-  - Column 14 (`N`) is in the Document Submission group. In `candidateService.js` (`automaticStageMissing`), the submission stage strictly requires variant `SL_VERIFIED`.
-  - Column 23 (`W`) is in the secondary document catalog group alongside `POLICE REP ROMANIA` (Col 24) and `POLICE REP FM` (Col 25).
-- **Ambiguity:** Is Column 14 strictly `POLICE_REPORT` variant `SL_VERIFIED`, and Column 23 `POLICE_REPORT` variant `SL_NORMAL`?
-- **Status:** **NEEDS BUSINESS CONFIRMATION (Decision D-18.3).**
-
-#### 4 & 10. The Two `POLICE REP ROMANIA` Columns (Column 15 / `O` vs Column 24 / `X`)
-- **Repository Evidence:** Only one `ROMANIA` variant exists for `POLICE_REPORT` (`variant === 'ROMANIA'`).
-- **Context Analysis:** Column 15 is in the submission group; Column 24 is in the document catalog group.
-- **Ambiguity:** What distinguishes Column 15 from Column 24? If both mirror the single `ROMANIA` police report, should both display identical status, or does one represent physical dispatch?
-- **Status:** **NEEDS BUSINESS CONFIRMATION (Decision D-18.4).**
-
-#### 6. `DRIVING LICIAN` (Column 19 / `S`)
-- **Repository Evidence:** Zero occurrences across the entire codebase, migrations, and documentation. The application does not collect, upload, verify, or store driving licenses.
-- **Status:** **NEEDS BUSINESS CONFIRMATION (Decision D-18.5).** Invariant: The system will **never invent a driving license field**. Column 19 will be mapped to emit an empty cell until the business either removes the column or defines a new data collection requirement.
-
-#### 7. `NATIONAL ID` (Column 20 / `T`)
-- **Repository Evidence:** Column 9 (`ID NUMBER`) maps to `User.nic` (the candidate's NIC string, e.g. `199012345678` or `123456789V`). In addition, `CANDIDATE_DOCUMENT_TYPES` defines document type `NIC`, representing the uploaded scan/copy of the identity card.
-- **Ambiguity:** Does Column 20 (`NATIONAL ID`) represent the **verification status of the `NIC` document** (`VERIFIED` / `REVIEW_REQUIRED` / `MISSING`), or is it a duplicate display of the NIC number?
-- **Status:** **NEEDS BUSINESS CONFIRMATION (Decision D-18.6).** Recommended default: Column 9 is `User.nic` (text value), Column 20 is `NIC` document verification status.
-
-#### 8. `POLICE REPORT APPLIED` (Column 21 / `U`)
-- **Repository Evidence:** When a candidate applies for police clearance in Sri Lanka, the police issue a receipt slip. The system models this as document type `POLICE_SLIP` (`Document.documentType === 'POLICE_SLIP'`). Column 22 (`SUBMIT DATE`) mirrors `Document.police_submitted_date`.
-- **Ambiguity:** Does `POLICE REPORT APPLIED` represent the document status of `POLICE_SLIP` (`VERIFIED` / `REVIEW_REQUIRED` / `MISSING`), or a boolean indicator (`YES` / `NO`) indicating whether an application slip exists?
-- **Status:** **NEEDS BUSINESS CONFIRMATION (Decision D-18.7).**
-
-#### 11. `POLICE REP FM` (Column 25 / `Y`)
-- **Repository Evidence:** `POLICE_REPORT_VARIANTS` in `candidateService.js` contains exactly `SL_VERIFIED`, `ROMANIA`, `SL_NORMAL`. No variant named "FM" exists anywhere in the repository or migration history.
-- **Ambiguity:** Does "FM" stand for "Foreign Ministry" (consular attestation), "Foreign Mission", or another external authority? Is it synonymous with `SL_VERIFIED` or an obsolete legacy category?
-- **Status:** **NEEDS BUSINESS CONFIRMATION (Decision D-18.8).** Must remain empty until clarified.
-
-#### 12. `VIDEOS` (Column 26 / `Z`)
-- **Repository Evidence:** Document type `SKILL_VIDEO` exists in `CANDIDATE_DOCUMENT_TYPES` (`{ video: true }`). It accepts video MIME types up to 50 MB.
-- **Ambiguity:** Does `VIDEOS` display the `SKILL_VIDEO` verification status (`VERIFIED` / `REVIEW_REQUIRED` / `MISSING`), a count of videos, or a link?
-- **Status:** **NEEDS BUSINESS CONFIRMATION (Decision D-18.9).** Recommended default: emit status (`VERIFIED` / `REVIEW_REQUIRED` / `MISSING`).
-
----
+- "Current document" uses the application's existing rule (`currentOf` in `candidateService.js`): the newest `VERIFIED`, else the newest non-`SUPERSEDED`; `SUPERSEDED` never counts. A police report stored without a variant does not appear in `N`, `O` or `V`, exactly as the stage logic ignores it.
+- `TEST_DETAILS` job ID and test result are **not** part of the final Sheet.
+- The two earlier duplicate columns (a second `PASSPORT COPY`, a second `POLICE REP ROMANIA`) no longer exist in the real Sheet.
 
 ### 6.3 Formatting Rules (Deterministic)
 
 | Concern | Rule |
 | :--- | :--- |
-| Dates (date-only) | `YYYY-MM-DD`, produced via `toISOString().slice(0, 10)` |
+| Dates (date-only) | `YYYY-MM-DD`, produced via `toISOString().slice(0, 10)` (same as the application) |
 | Timestamps | ISO-8601 UTC with `Z` suffix (`YYYY-MM-DDTHH:mm:ssZ`), whole seconds |
 | Phone numbers | Stored normalized digits only (`94700000001`); no `+` prefix is added |
-| Null / missing | An empty cell (`""`), never the text `null`, `undefined`, `N/A`, or `-` |
+| Null / missing | An empty cell (`""`), never `null`, `undefined`, `N/A` or `-` |
+| Intentionally blank columns | `TEST NUMBER`, `DRIVING LICIAN`, `POLICE REP FM`: always `""` |
 | Stage statuses | `COMPLETED` / `INCOMPLETE` |
-| Document status | `VERIFIED` / `REVIEW_REQUIRED` / `MISSING` |
-| Writing mode | Values are written with `valueInputOption=RAW` into columns formatted as **plain text** so Google Sheets never coerces phone numbers, NICs, or zero-padded IDs into scientific numbers or dates |
-| Comparing mode | Reconciliation reads values as displayed strings and compares them with freshly generated strings using the exact same normalization |
+| Document status | `VERIFIED` / `REVIEW_REQUIRED` (database values) / `MISSING` (generated: no current document) |
+| Writing mode | `valueInputOption=RAW` into columns formatted as **plain text**, so Sheets never coerces phone numbers, NICs or zero-padded IDs into numbers or dates |
+| Comparing mode | Reconciliation reads displayed strings and compares them with freshly generated strings using exactly the same mapper |
+
+### 6.4 Sheet Layout & Positional Validation
+
+- **Target spreadsheet:** configured by `SHEET_SPREADSHEET_ID` (the real operational Sheet, Section 11.6).
+- **Target tab:** configured by `SHEET_TAB_NAME` (`Emlynk Candidate Operational Mirror`).
+  - Row 1: the 40 headers `A1:AN1` (39 business headers + `_SYSTEM_CANDIDATE_ID`), frozen.
+  - Rows 2+: mirrored candidates (`A2:AN`).
+- **Meta tab (proposed for the connection test only):** `Mirror_Meta`, holding the schema version and the non-destructive probe cell; never candidate data.
+
+#### Positional validation (critical)
+
+Because `POLICE REP SRI LANKA` exists at two positions:
+
+1. Header validation **must not** use header-name dictionary lookups.
+2. Before every write batch or reconciliation run, row 1 (`A1:AN1`) is read as an ordered array and compared position by position: `expectedHeaders[i] === actualHeaders[i]` for every `i` in `0..39`, exact text.
+3. Any missing, renamed, reordered or unexpected header halts synchronization with `CONFIG_ERROR`, logs `sheet_sync.schema_mismatch`, and is surfaced in Settings.
+4. The system never modifies, rebuilds or deletes headers. Correcting the layout is an explicit administrative action.
 
 ---
 
-### 6.4 Sheet Layout, Schema Version & Positional Validation
+## 7. Row Identity & Duplicate Prevention
 
-- **Target Spreadsheet ID:** `1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`
-- **Target Worksheet Tab Name:** `Emlynk Candidate Operational Mirror`
-  - Row 1: The 41 operational headers (Columns `A` through `AO`) + technical key (Column `AP`), frozen.
-  - Rows 2+: Mirrored candidate records.
-- **Meta Tab:** `Mirror_Meta`
-  - Holds `schema_version` (e.g. `2.0.0-legacy-41col`) and the non-destructive write-probe cell for connection testing (`B2`).
-  - This tab is completely isolated from candidate operational data.
+### 7.1 Row Key: `_SYSTEM_CANDIDATE_ID` (Column `AN`) — D-17 Resolved
 
-#### Positional Validation Requirement (Critical)
-Because identical header strings exist at multiple column positions (`PASSPORT COPY` at Cols 13 & 18, `POLICE REP SRI LANKA` at Cols 14 & 23, `POLICE REP ROMANIA` at Cols 15 & 24):
-1. **Header validation MUST NOT use header-name dictionary lookups.** Looking up an index by header string is ambiguous and invalid.
-2. Before every batch write or reconciliation run, the worker reads row 1 (`A1:AP1`) as an **ordered array** and performs an exact positional comparison:
-   $$\text{expectedHeaders}[i] === \text{actualHeaders}[i] \quad \text{for } i \in [0, 41]$$
-3. Any missing header, reordered column, unexpected header, or renamed column immediately halts synchronization with **`CONFIG_ERROR`**, logs `sheet_sync.schema_mismatch`, and surfaces the mismatch in the Settings UI.
-4. The system **never** modifies or deletes headers automatically. Correcting a sheet layout is an explicit administrative action.
+The legacy business layout has no candidate ID column, so an appended technical column was required. **D-17 is resolved:** `_SYSTEM_CANDIDATE_ID` was approved and has been **manually added** to the real Sheet as column `AN` (column 40). It holds `User.unique_id` as plain text and should be protected (and may be hidden) in the Sheet UI.
 
----
+Why not a natural key:
 
-## 7. Row Identity, Key Conflict & Duplicate Prevention
+- **`PASSPORT NUMBER` (`B`):** `passport_id` is the database primary key, but child tables use `ON UPDATE CASCADE`, legacy IDs may differ in case, and a corrected passport number would orphan the row and create a duplicate. **Rejected.**
+- **`ID NUMBER` / NIC (`I`):** user-entered and correctable (9-digit+V/X vs 12-digit formats). **Rejected.**
+- **Developer metadata:** invisible, but lost or misaligned by manual row operations or exports. **Rejected.**
 
-### 7.1 The Row Key Conflict: Analysis & Decision
-
-In the v1.1.0 architecture, `Candidate ID` (`User.unique_id`) occupied Column A and served as the visible, immutable row key.
-However, the business-requested legacy Excel layout **does not contain a Candidate ID column**.
-
-#### Why Natural Keys Were Evaluated and Rejected:
-- **`PASSPORT NUMBER` (Column B) as Row Key? REJECTED.**
-  - `User.passport_id` is the database primary key, but child tables are configured with `ON UPDATE CASCADE`.
-  - Registration normalizes passport numbers, but admin manual corrections can update passport IDs to fix typos.
-  - If a passport number is corrected in the database, keying on passport number would orphan the existing Sheet row and append a duplicate row.
-- **`ID NUMBER` / `NIC` (Column I) as Row Key? REJECTED.**
-  - National Identity Cards are user-entered and subject to format changes (old 9-digit + V/X format vs new 12-digit format).
-  - NIC can be updated or corrected, making it unsuitable as an immutable key.
-
-#### Architectural Evaluation of Solutions:
-
-| Option | Architecture | Pros | Cons | Recommendation |
-| :--- | :--- | :--- | :--- | :--- |
-| **Option 1: Appended Technical Column `AP`** | Append `_SYSTEM_CANDIDATE_ID` at Column 42 (`AP`), formatted as plain text, protected and optionally hidden in the Sheet UI. | 1. 100% preserves the 41 business columns (`A`–`AO`) untouched.<br/>2. Uses the immutable, non-nullable, unique `User.unique_id`.<br/>3. Easily inspected, debugged, and audited.<br/>4. Immune to staff sorting or filtering. | Adds one technical column to the right of business data. | **RECOMMENDED (Proposed Decision D-17)** |
-| **Option 2: Google Sheets Developer Metadata API** | Store `User.unique_id` inside row-level Developer Metadata via Sheets API. | Invisible in the sheet grid. | **Extremely fragile:** manual row insertions, row sorting, copy-pasting, or Excel downloads by operational staff strip or misalign Developer Metadata without warning. | **REJECTED** |
-| **Option 3: Switch key to `PASSPORT NUMBER`** | Use Column B (`PASSPORT NUMBER`) as the Sheet row key. | No extra column needed. | Breaks row identity on passport correction; risks creating duplicate rows. | **REJECTED** |
-
-> [!CAUTION]
-> **BLOCKING IMPLEMENTATION DECISION (D-17):**
-> Implementation **must not begin** until stakeholders approve Option 1: appending Column 42 (`AP`) with header `_SYSTEM_CANDIDATE_ID` (or `Candidate ID (System Key)`). This column holds `User.unique_id` as plain text, is protected against manual editing, and may be hidden in the Google Sheet view so operational staff see only Columns 1–41 (`A` through `AO`).
+`User.unique_id` is non-nullable, unique, and never updated by application code (Section 3, row 2); it is treated as an opaque string so leading zeros are preserved. A candidate without a `unique_id` is never mapped (the mapper refuses rather than falling back to the passport number).
 
 ### 7.2 How Duplicates Are Prevented
 
-| Scenario | Architectural Protection |
+| Scenario | Protection |
 | :--- | :--- |
-| Retry of failed batch | Every sync reads the key column (Column `AP`), builds `unique_id -> rowNumber`, and updates in place. Appends happen only if the key is absent. |
+| Retry of a failed batch | Every sync reads the key column `AN`, builds `unique_id -> rowNumber`, and updates in place; it appends only if the key is absent. |
 | Duplicate delivery / worker restart | Queue claims use compare-and-swap leases (Section 8.5); updates are idempotent. |
 | Concurrent candidate events | Coalesced into a single pending queue row per candidate. |
-| Concurrent workers | **Single-writer rule:** Cloud Run deployment enforces `max-instances = 1` plus an exclusive PostgreSQL writer lease (Section 9.5). Racing appends cannot occur. |
-| Passport or NIC correction | Because the key is `User.unique_id` in Column `AP`, the row is located and the Passport Number / NIC cells are updated in place without duplicate creation. |
-| Duplicate keys detected | Reconciliation reads all keys in Column `AP`. If duplicate keys are found, `sheet_sync.duplicate_key_detected` is logged, the first row is maintained as canonical, and later copies are labeled `DUPLICATE ROW` in Column `AM` (`RECORD STATUS`) without deletion. |
-| Staff sorting or filtering | Row numbers are **never stored permanently**; keys are re-read from Column `AP` on every write batch. |
+| Concurrent workers | **Single-writer rule:** `max-instances = 1` plus an exclusive PostgreSQL writer lease (Section 9.5). |
+| Passport or NIC correction | The row is found by `AN`; the `PASSPORT NUMBER` / `ID NUMBER` cells are updated in place. |
+| Duplicate keys detected | Reconciliation reads all keys in `AN`; duplicates are logged (`sheet_sync.duplicate_key_detected`), the first row stays canonical, later copies are labelled `DUPLICATE ROW` in `AK` (`RECORD STATUS`) and never deleted. |
+| Staff sorting or filtering | Row numbers are never stored; keys are re-read from `AN` on every write batch. |
+
 ---
 
 ## 8. Incremental Sync Architecture
@@ -558,12 +511,12 @@ Guarantee (eventual latest state): the worker marks only the row it claimed as `
 
 For each batch of claimed candidates:
 
-1. **Read once:** the header row (`A1:AP1`) and the key column (Column `AP`) in a single batch read. Validate the header by exact positional match (Section 6.4); on mismatch stop with `CONFIG_ERROR`.
-2. **Build an in-memory map** `candidate key (unique_id from Col AP) -> current row number` for this batch only. No persistent row mapping is kept: staff may sort or insert rows, so stored row numbers would go stale, and the key column is cheap to re-read.
-3. **Read the current candidates** from the database (batched queries, not one `getCandidate` per candidate) and map each to a row of 41 business values + 1 technical key value with the shared mapper.
-4. **Existing key -> update** that row's cells (`A{row}:AP{row}`) in a single `batchUpdate`. **Missing key -> append** the row exactly once. Writes use `RAW` input into plain-text columns.
-5. **Append-race protection:** only one sync instance writes at a time (Section 9.5), so two appends for one key cannot race. A crash between append and queue completion is harmless: the retry finds the key in Column `AP` and updates.
-6. **Candidate absent from the database** (the event carried a delete hint and the targeted read succeeded and returned no row) -> set Column `AM` (`RECORD STATUS`) to `DELETED / INACTIVE`, stamp Column `AO` (`LAST MIRRORED AT`), keep every other cell.
+1. **Read once:** the header row (`A1:AN1`) and the key column (Column `AN`) in a single batch read. Validate the header by exact positional match (Section 6.4); on mismatch stop with `CONFIG_ERROR`.
+2. **Build an in-memory map** `candidate key (unique_id from Col AN) -> current row number` for this batch only. No persistent row mapping is kept: staff may sort or insert rows, so stored row numbers would go stale, and the key column is cheap to re-read.
+3. **Read the current candidates** from the database (batched queries, not one `getCandidate` per candidate) and map each to a row of 39 business values + 1 technical key value (40 cells) with the shared mapper.
+4. **Existing key -> update** that row's cells (`A{row}:AN{row}`) in a single `batchUpdate`. **Missing key -> append** the row exactly once. Writes use `RAW` input into plain-text columns.
+5. **Append-race protection:** only one sync instance writes at a time (Section 9.5), so two appends for one key cannot race. A crash between append and queue completion is harmless: the retry finds the key in Column `AN` and updates.
+6. **Candidate absent from the database** (the event carried a delete hint and the targeted read succeeded and returned no row) -> set Column `AK` (`RECORD STATUS`) to `DELETED / INACTIVE`, stamp Column `AM` (`LAST MIRRORED AT`), keep every other cell.
 7. **Mark the queue rows `COMPLETED`** only after Google confirms the write; otherwise schedule a retry (8.7).
 8. Reconciliation detects duplicate keys and repairs or reports them (Section 9.3).
 
@@ -600,10 +553,10 @@ sequenceDiagram
         Worker->>DB: Claim due pending rows (lease, compare-and-swap)
         DB-->>Worker: Claimed candidate keys
         Worker->>DB: Read CURRENT aggregate (users, stages, documents)
-        Worker->>G: Read header row (A1:AP1) and key column (AP)
+        Worker->>G: Read header row (A1:AN1) and key column (AN)
         Worker->>Worker: Positional header validation, build key to row map, map aggregate to row
         alt Key exists
-            Worker->>G: batchUpdate that row (A{row}:AP{row})
+            Worker->>G: batchUpdate that row (A{row}:AN{row})
         else Key missing
             Worker->>G: append one row
         end
@@ -627,7 +580,7 @@ sequenceDiagram
 flowchart TD
     A([Candidate change committed]) --> B["Pending queue row coalesced by trigger"]
     B --> C["Worker claims row with lease"]
-    C --> D["Read current aggregate and validate Sheet header (A1:AP1)"]
+    C --> D["Read current aggregate and validate Sheet header (A1:AN1)"]
     D --> E{"Google result"}
 
     E -->|"Success"| F["Mark COMPLETED and clear lease"]
@@ -673,20 +626,20 @@ All three create a durable `sheet_sync_runs` record and use the same engine.
 | **B. Full-cell comparison (Selected)** | Generate every row fresh from the database and compare each mirrored cell with the Sheet's cell | Detects every kind of drift (stale data, manual edits, missing rows, missing events) with no extra stored state and no dependency on any timestamp. Cost is O(candidates x columns) per run, acceptable for an operational candidate list |
 | **C. Aggregate version/updated timestamp** | A column bumped whenever any component changes | Needs schema changes and a change in every writer (the problem of 4.4), and still misses manual Sheet edits. Rejected |
 
-**Selected: Option B.** `users.updated_date` is not used. Column `AO` (`LAST MIRRORED AT`) is excluded from the comparison. **Needs confirmation:** the current candidate count; if it grows very large the same comparison can be run in key-ordered chunks without changing the design.
+**Selected: Option B.** `users.updated_date` is not used. Column `AM` (`LAST MIRRORED AT`) is excluded from the comparison. **Needs confirmation:** the current candidate count; if it grows very large the same comparison can be run in key-ordered chunks without changing the design.
 
 ### 9.3 Reconciliation Algorithm
 
 1. **Create/claim the run** (`sheet_sync_runs`), acquire the reconciliation lock (9.5). If it is held, record the run as `SKIPPED` and log `sheet_sync.reconcile_skipped`.
-2. **Validate the Sheet:** tab `Emlynk Candidate Operational Mirror` exists, header row `A1:AP1` matches exact positional schema (6.4). On mismatch -> `CONFIG_ERROR`, stop, no writes.
-3. **Read the Sheet** completely (`A2:AP`) as displayed strings; build `unique_id (from Col AP) -> row`, noting duplicate keys, blank keys and unknown rows.
+2. **Validate the Sheet:** tab `Emlynk Candidate Operational Mirror` exists, header row `A1:AN1` matches exact positional schema (6.4). On mismatch -> `CONFIG_ERROR`, stop, no writes.
+3. **Read the Sheet** completely (`A2:AN`) as displayed strings; build `unique_id (from Col AN) -> row`, noting duplicate keys, blank keys and unknown rows.
 4. **Read the complete database snapshot** in one read-only `REPEATABLE READ` transaction (users with their stages and candidate documents), verifying the row count equals the count query. Any failure aborts the run (9.4).
-5. **Generate the expected row for every database candidate** with the shared mapper (41 business columns + Column AP).
+5. **Generate the expected row for every database candidate** with the shared mapper (39 business columns + Column AN).
 6. **Classify and repair:**
    - key missing from the Sheet -> **append**;
-   - key present and any compared cell (Cols 1–40 / `A`–`AN`, plus `AP`) differs -> **rewrite that row** (an unchanged row is not written, so a normal run writes almost nothing);
-   - duplicate key in Col `AP` -> keep the first row canonical, label later copies `DUPLICATE ROW` in Col `AM`, log `sheet_sync.duplicate_key_detected`;
-   - Sheet row `ACTIVE` whose key is absent from the **complete** snapshot -> mark `DELETED / INACTIVE` in Col `AM` (subject to 9.4);
+   - key present and any compared cell (`A`–`AL` plus the key `AN`; `AM` LAST MIRRORED AT is excluded) differs -> **rewrite that row** (an unchanged row is not written, so a normal run writes almost nothing);
+   - duplicate key in Col `AN` -> keep the first row canonical, label later copies `DUPLICATE ROW` in Col `AK`, log `sheet_sync.duplicate_key_detected`;
+   - Sheet row `ACTIVE` whose key is absent from the **complete** snapshot -> mark `DELETED / INACTIVE` in Col `AK` (subject to 9.4);
    - row already `DELETED / INACTIVE` whose key exists again in the database -> restore to `ACTIVE`, refresh data;
    - blank-key or unknown rows -> reported, not modified.
 7. **Write in chunks** (`batchUpdate`, configurable chunk size), classify errors as in 8.7.
@@ -736,8 +689,8 @@ sequenceDiagram
         DB-->>W: Not acquired
         W->>DB: Record run SKIPPED
     else Lock acquired
-        W->>G: Read header row (A1:AP1) and all data rows (A2:AP)
-        W->>W: Validate schema pos, index rows by key (AP), find duplicates
+        W->>G: Read header row (A1:AN1) and all data rows (A2:AN)
+        W->>W: Validate schema pos, index rows by key (AN), find duplicates
         W->>DB: Read COMPLETE snapshot (REPEATABLE READ, count verified)
         W->>W: Generate expected rows, compare every mirrored cell
         W->>G: batchUpdate changed rows and append missing rows (chunked)
@@ -910,16 +863,17 @@ The backend sync worker requires the following exact configuration:
 SHEET_SPREADSHEET_ID=1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE
 SHEET_TAB_NAME=Emlynk Candidate Operational Mirror
 
-# Dedicated service account (runtime identity on Cloud Run via keyless ADC)
-SHEET_SYNC_SERVICE_ACCOUNT=emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com
-
-# Feature enablement & operational tunables
+# Candidate WRITE enablement: production only, at Phase 13. Missing/false = disabled.
 SHEET_SYNC_ENABLED=true
+
+# Operational tunables for later phases (not read by any code yet)
 SHEET_SYNC_POLL_INTERVAL_MS=10000
 SHEET_SYNC_BATCH_SIZE=25
 SHEET_SYNC_MAX_RETRIES=5
 SHEET_SYNC_DELETION_GUARD_MAX=10
 ```
+
+**Runtime identity is not an environment variable.** The Google identity is the service account attached to the Cloud Run service/job (`--service-account=emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`), which Application Default Credentials resolve automatically. An earlier revision listed `SHEET_SYNC_SERVICE_ACCOUNT`; no runtime code reads it, so it is not a setting. The email is a deployment parameter only. `GOOGLE_APPLICATION_CREDENTIALS` must not be set (the code refuses it). Access to the spreadsheet comes from sharing the Sheet directly with that service account (Editor); no project-level Sheets IAM role is required for that. **Needs confirmation:** the Google Sheets API is enabled in the GCP project.
 
 #### B. Explicit Safeguards for the Single Real Operational Sheet
 > [!CAUTION]
@@ -934,7 +888,20 @@ SHEET_SYNC_DELETION_GUARD_MAX=10
    - The "Test Connection" button in Admin Settings writes ONLY to cell `Mirror_Meta!B2` on the meta tab. It is architecturally forbidden from modifying cell ranges on `Emlynk Candidate Operational Mirror`.
 4. **No Destructive Mass Operations:**
    - The sync worker never issues `Clear`, `DeleteDimension`, or `DeleteSheet` requests.
-   - Rows absent from PostgreSQL are marked `DELETED / INACTIVE` in Column `AM` (subject to the Section 9.4 deletion guard), retaining all historical candidate data.
+   - Rows absent from PostgreSQL are marked `DELETED / INACTIVE` in Column `AK` (subject to the Section 9.4 deletion guard), retaining all historical candidate data.
+
+#### C. Read-Only Connection / Schema Check (implemented, Pass 2; not yet run on Cloud Run)
+
+A separate, strictly read-only check proves runtime identity, sharing and header before any write path exists:
+
+- **Entry:** `node src/sheetSyncCheck.js` (`npm run sheet:check`), using `src/services/sheetHealthCheck.js`.
+- **Reads only `A1:AN1`** of the configured tab and validates the exact 40-column header by position. It never appends, updates, clears, deletes, formats, creates tabs or edits metadata.
+- **Defence in depth:** the token is requested with the `spreadsheets.readonly` scope; its adapter is built with writes forced off and reduced to read methods.
+- **Independent of `SHEET_SYNC_ENABLED`:** verifying access never requires enabling candidate writes. Write enablement remains a separate switch.
+- **Needs only** `SHEET_SPREADSHEET_ID` and `SHEET_TAB_NAME` (no database, no Supabase).
+- **Output:** one sanitized JSON line (`sheet_sync.health_check`): `status` (`CONNECTED`, `NOT_CONFIGURED`, `CONFIG_ERROR`, `ACCESS_DENIED`, `NOT_FOUND`, `UNAVAILABLE`, `FAILED`), `schema` (`SCHEMA_VALID`, `SCHEMA_INVALID`, `NOT_CHECKED`), mismatched column letters, HTTP status / Google reason code. Never tokens, credentials, Google message text, header text or Sheet data. Exit code 0 only for `CONNECTED` + `SCHEMA_VALID`.
+- **Intended run (not yet performed):** a one-off Cloud Run Job from the same image, command `node src/sheetSyncCheck.js`, running as `emlynk-sheet-sync@…`. It is kept independent of the existing submission and OCR workers so that it moves unchanged into the dedicated `emlynk-sheet-sync-worker`.
+- **Status:** Cloud Run ADC is **pending runtime verification**. Mocked and local tests prove the code paths, not the identity. ADC counts as verified only when this check returns `CONNECTED` + `SCHEMA_VALID` on Cloud Run.
 
 ### 11.7 Diagram 7 — Deployment Architecture
 
@@ -1208,7 +1175,7 @@ Returns `status` (`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `SKIPPED`), timest
 
 ### 14.3 PII and Privacy
 
-The Sheet holds significant candidate PII: **passport number, NIC, date of birth, names, address, WhatsApp number, contact number** (plus personal data such as place of birth, sex, nationality, passport dates, job experience, test date, and the free-text Candidate Details note in Column `AF`). It must be treated as sensitive operational information.
+The Sheet holds significant candidate PII: **passport number, NIC, date of birth, names, address, WhatsApp number, contact number** (plus personal data such as place of birth, sex, nationality, passport dates, job experience, test date, and the free-text Candidate Details note in Column `AD`). It must be treated as sensitive operational information.
 
 Mandatory controls:
 
@@ -1297,7 +1264,7 @@ The current logging utilities do **not** yet guarantee this for Google data (Sec
 | 001 | PostgreSQL is the single source of truth; the Sheet is an operational mirror, not DR | Frozen requirement |
 | 002 | Synchronization is strictly one-way; Sheet edits never reach the database | Frozen requirement |
 | 003 | Candidate writes never wait for Google; a durable outbox decouples them | Frozen requirement |
-| 004 | Row identity is `unique_id`, retained via appended technical Column `AP` (`_SYSTEM_CANDIDATE_ID`); natural keys (Passport/NIC) rejected | Proposed, **Blocking Decision (D-17)** |
+| 004 | Row identity is `unique_id`, retained via technical Column `AN` (`_SYSTEM_CANDIDATE_ID`, manually added to the real Sheet); natural keys (Passport/NIC) rejected | **Confirmed (D-17 resolved)** |
 | 005 | Rows are never deleted from the Sheet; absent candidates become `DELETED / INACTIVE`, only from a complete snapshot | Frozen requirement |
 | 006 | Two mechanisms: incremental sync plus daily reconciliation | Proposed |
 | 007 | Scheduling is external (Cloud Scheduler -> private Cloud Run); the app has no internal cron | Proposed |
@@ -1309,7 +1276,7 @@ The current logging utilities do **not** yet guarantee this for Google data (Sec
 | 013 | A dedicated `emlynk-sheet-sync-worker` Cloud Run service | Proposed, decision D-3 |
 | 014 | "Sync Now" and "Test Connection" are durable run requests, never unawaited promises | Proposed |
 | 015 | The Google Sheet UI is a section of one visible **Settings** sidebar item at `/admin/settings` | **Confirmed requirement** |
-| 016 | Target layout preserves 26 legacy Excel columns verbatim first + 15 appended operational/stage fields (41 business-visible cols) | **Confirmed requirement** |
+| 016 | Target layout = the manually finalized real Sheet: 24 legacy operational headers first (`A`–`X`) + 15 appended detail/stage/metadata columns (`Y`–`AM`) = 39 business-visible columns, plus technical `AN` = 40 columns | **Confirmed requirement** |
 | 017 | Dedicated service account `emlynk-sheet-sync@...` authenticated via keyless ADC on Cloud Run (zero JSON keys) | **Confirmed (D-4)** |
 | 018 | Real operational Sheet (`1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`) with strict environment write-gating; no separate test sheet | **Confirmed (D-9)** |
 
@@ -1321,10 +1288,10 @@ The current logging utilities do **not** yet guarantee this for Google data (Sec
 | :--- | :---: | :---: | :--- |
 | Google outage or rate limiting | Medium | Low | Candidate writes unaffected; bounded retries with backoff; coalesced queue stays bounded; daily reconciliation catches up |
 | Revoked credentials / lost permission | Low | Medium | `CONFIG_ERROR` stops retries; shown in Settings; admin Test Connection |
-| Duplicate rows | Low | Medium | Immutable `unique_id` in Column `AP`, key re-read per batch, single writer, duplicate detection and labelling |
+| Duplicate rows | Low | Medium | Immutable `unique_id` in Column `AN`, key re-read per batch, single writer, duplicate detection and labelling |
 | Missed change (a writer path not captured) | Low (triggers) / Medium (app-level) | Low | Trigger capture; daily full comparison repairs anything missed |
 | Mass false "inactive" marking | Low | High | Complete-snapshot requirement, row-count verification, deletion guard (9.4) |
-| Schema/tab tampering in the Sheet | Medium | Medium | Positional header validation before writes (`A1:AP1`); `CONFIG_ERROR`; no auto-rebuild |
+| Schema/tab tampering in the Sheet | Medium | Medium | Positional header validation before writes (`A1:AN1`); `CONFIG_ERROR`; no auto-rebuild |
 | Duplicate header collision in validation | Medium | Medium | Positional index-based validation instead of dictionary name lookup (6.4) |
 | Manual edits by staff | Medium | Low | Viewer access; reconciliation restores authoritative values |
 | PII exposure through the Sheet | Low | High | Private sheet, named Viewers, least privilege, access review, no public link |
@@ -1344,22 +1311,22 @@ The implementation is **not complete** until every group below passes. Existing 
 
 ### 18.1 Unit Tests
 
-- **Mapper** (`candidateSheetMapper`): all 41 operational columns in exact legacy order + technical column `AP`; formatting rules (6.3); null -> empty; phone digits unchanged; dates; `COMPLETED`/`INCOMPLETE`; document status vocabulary (`VERIFIED`/`REVIEW_REQUIRED`/`MISSING`); **exactly one `SCAN` column and no agreement/affidavit columns**; parity with the Admin UI's `getCandidate` output for the same fixtures.
-- **Positional header validation:** exact 42-element array match; tolerates duplicate header strings at distinct positions (`PASSPORT COPY` at 13 and 18, `POLICE REP SRI LANKA` at 14 and 23, `POLICE REP ROMANIA` at 15 and 24); detects missing, swapped or unexpected headers.
+- **Mapper** (`candidateSheetMapper`): all 39 business columns in exact order + technical column `AN` (exactly 40 cells); formatting rules (6.3); null -> empty; phone digits unchanged; dates; `COMPLETED`/`INCOMPLETE`; document status vocabulary (`VERIFIED`/`REVIEW_REQUIRED`/`MISSING`); **exactly one `SCAN` column and no agreement/affidavit columns**; parity with the Admin UI's `getCandidate` output for the same fixtures.
+- **Positional header validation:** exact 40-element array match; the intentionally duplicated `POLICE REP SRI LANKA` header is distinguished by position (14 / `N` = `SL_VERIFIED`, 22 / `V` = `SL_NORMAL`); detects missing, swapped or unexpected headers.
 - **Normalization and aggregate comparison:** identical input -> identical row; comparison ignores `LAST MIRRORED AT`; whitespace/format edge cases.
 - **Retry classification:** 429, 408, 5xx, network errors -> retryable; 401, 403 (non-rate-limit), 404, invalid ID, schema mismatch -> config/permanent.
 - **Backoff:** exponential growth, jitter bounds, cap, attempt bound.
 - **Event coalescing:** many changes for one candidate -> one pending row; a change during processing -> a new pending row.
-- **Row identity:** key is `unique_id` in Column `AP` as an opaque string; leading zeros preserved; passport/NIC change keeps the row.
+- **Row identity:** key is `unique_id` in Column `AN` as an opaque string; leading zeros preserved; passport/NIC change keeps the row.
 
 ### 18.2 Integration Tests
 
 - **Outbox transaction behaviour** (real PostgreSQL): every writer in 4.4 (including `updateCandidateDetails`, `updateStage`, `fieldReconciliationService`, document supersede/remove, review actions, police date correction) produces or coalesces a queue row **in the same transaction**; a rolled-back change leaves no event; cascades and bulk writes behave as designed; queue size stays bounded.
 - **Queue claiming:** compare-and-swap lease, expiry recovery, fenced completion, `SIGTERM` release.
-- **Google client (mocked):** header read, key-column read (Col `AP`), `batchUpdate`, `append`, 429/5xx/network, 401/403/404, malformed responses.
-- **Row update vs append:** existing key in Col `AP` updates; missing key appends once; retry after a simulated crash between append and completion does not duplicate.
+- **Google client (mocked):** header read, key-column read (Col `AN`), `batchUpdate`, `append`, 429/5xx/network, 401/403/404, malformed responses.
+- **Row update vs append:** existing key in Col `AN` updates; missing key appends once; retry after a simulated crash between append and completion does not duplicate.
 - **Duplicate prevention:** concurrent events, two workers (writer lease), reconciliation with duplicate keys.
-- **Schema mismatch:** tab renamed/deleted, header missing/reordered, blank/duplicate keys in Col `AP`, manually inserted rows -> `CONFIG_ERROR`, no writes.
+- **Schema mismatch:** tab renamed/deleted, header missing/reordered, blank/duplicate keys in Col `AN`, manually inserted rows -> `CONFIG_ERROR`, no writes.
 - **Auth failure and quota/rate limit** behaviour.
 - **Reconciliation:** missing rows, stale candidate fields, stale stage fields, stale document statuses and variants, manually edited cells, missing events, absent candidates; unchanged rows are not rewritten; chunking; lock held -> `SKIPPED`; lock released on error; connection loss.
 - **Deletion safety:** complete snapshot -> marks inactive; failed/partial/timed-out snapshot, count mismatch or guard exceeded -> **no** inactive marking.
@@ -1433,7 +1400,7 @@ flowchart TD
 
 - `feat(sheets): add sheet sync queue and run tables with change-capture triggers`
 - `feat(sheets): add Google Sheets client with keyless ADC configuration`
-- `feat(sheets): add candidate aggregate to 41-column legacy-compatible mapper`
+- `feat(sheets): add candidate aggregate to 40-column (A:AN) mapper`
 - `feat(sheets): add sheet sync worker with leases, coalescing and retries`
 - `feat(sheets): add reconciliation engine with lock and deletion guard`
 - `feat(sheets): add secure scheduler trigger endpoint`
@@ -1446,7 +1413,7 @@ flowchart TD
 
 - [ ] No candidate database write waits on Google; no Google call inside a transaction or trigger.
 - [ ] No credentials, keys or tokens committed, logged or present in Vercel; redaction tests pass.
-- [ ] Exactly 41 business-visible columns (`A` to `AO`) preserving legacy Excel format (Cols 1–26) + technical key column `AP` mapped exactly; one `SCAN` only.
+- [ ] Exactly 40 columns `A:AN` (39 business-visible `A`–`AM` + technical key `AN`) mapped exactly; one `SCAN` only.
 - [ ] Positional schema validation handles duplicate header names correctly.
 - [ ] Capture covers every writer in 4.4 (test enumerates them).
 - [ ] Reconciliation never marks inactive from an incomplete snapshot.
@@ -1467,16 +1434,26 @@ flowchart TD
 
 **No phase may start until Phase 0 is accepted.** Each phase ends with its acceptance criteria and tests green before the next begins.
 
-### Phase 0 — Architecture Scope Freeze & Blocking Decisions
-- **Objective:** approve this document, resolve **Decision D-17** (Row Identity technical column `AP`), and resolve **Decision D-18** (Business sign-off on 12 ambiguous/duplicate legacy fields).
+### Implementation Status (on `dev`, not committed, not deployed)
+
+| Pass | Built | Files | Live Sheet writes |
+| :--- | :--- | :--- | :--- |
+| **Pass 1** | 40-column positional schema (`A:AN`), pure candidate -> row mapper, Google Sheets adapter (ADC, `@googleapis/sheets`), `SHEET_SYNC_ENABLED` write gate (default off) | `src/services/sheetSchema.js`, `candidateSheetMapper.js`, `googleSheetsAdapter.js`, `src/config/sheetSync.js` | None |
+| **Pass 2** | Candidate aggregate reader (by `unique_id`; keyset batches ordered by `unique_id`, one query per batch), read-only sync planner (`APPEND` / `UPDATE` / `UNCHANGED` / `NOT_IN_DATABASE`, AN row identity, duplicate-AN hard failure), read-only connection/schema check and its entry point | `src/services/candidateAggregateReader.js`, `sheetSyncPlanner.js`, `sheetHealthCheck.js`, `src/sheetSyncCheck.js` | None |
+| Pending | Runtime ADC verification on Cloud Run (Section 11.6 C); then the write executor, outbox (Phase 3) and worker | | |
+
+The planner cannot write: it only ever holds a read-only view of the adapter (`readOnlySheetsView`). Plans contain the action, the unique ID, the row number and changed column letters, never cell values.
+
+### Phase 0 — Architecture Scope Freeze & Decisions (D-17, D-18 resolved)
+- **Objective:** approve this document. **Decision D-17** (technical column `AN`) and **Decision D-18** (legacy field mappings) are resolved.
 - **Components:** this document only.
 - **Acceptance:** approved column mapping, confirmed row key approach, scope contract accepted.
 - **Tests:** none. **Rollback:** n/a. **Depends on:** nothing.
 
 ### Phase 1 — Google Cloud & Target Sheet Verification (Provisioned)
-- **Objective:** verify the already provisioned service account (`emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`) on target spreadsheet (`1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`), setup `Mirror_Meta` tab with `schema_version`, and verify keyless ADC connectivity via probe cell `B2`.
+- **Objective:** verify the already provisioned service account (`emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`) on target spreadsheet (`1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`). The first verification is the **read-only** connection/schema check (Section 11.6 C). Any write probe (`Mirror_Meta`, D-14) is a later, separate step.
 - **Components:** infrastructure and throwaway verification script (no application code).
-- **Acceptance:** probe cell writable on `Mirror_Meta`; `Emlynk Candidate Operational Mirror` read successfully; no service account JSON keys used.
+- **Acceptance:** read-only check returns `CONNECTED` + `SCHEMA_VALID` on Cloud Run as the dedicated identity; no service account JSON keys used.
 - **Tests:** manual verification checklist. **Rollback:** revoke sharing. **Depends on:** Phase 0.
 
 ### Phase 2 — Google Sheets Client & Secure Configuration
@@ -1491,10 +1468,10 @@ flowchart TD
 - **Acceptance:** applies on throwaway database and through `prisma migrate deploy`; capture proven for all writers in 4.4; coalescing verified.
 - **Tests:** real-PostgreSQL integration tests. **Rollback:** drop triggers and tables. **Depends on:** Phase 0.
 
-### Phase 4 — Candidate Aggregate 41-Column Mapper
-- **Objective:** shared candidate-to-row mapper (41 business values + Column `AP` key) and batched aggregate reader.
+### Phase 4 — Candidate Aggregate 40-Column Mapper
+- **Objective:** shared candidate-to-row mapper (39 business values + Column `AN` key) and batched aggregate reader.
 - **Components:** new `src/services/candidateSheetMapper.js`.
-- **Acceptance:** parity with Admin UI view; 41 legacy-aligned columns; one `SCAN`; deterministic formatting rules.
+- **Acceptance:** parity with Admin UI view; 40 columns `A:AN`; one `SCAN`; deterministic formatting rules.
 - **Tests:** unit tests (18.1). **Rollback:** revert. **Depends on:** Phase 2.
 
 ### Phase 5 — Incremental Enqueue Integration
@@ -1504,13 +1481,13 @@ flowchart TD
 - **Tests:** 18.2 outbox tests + 18.4. **Rollback:** disable capture triggers. **Depends on:** Phases 3, 4.
 
 ### Phase 6 — Background Sheet Worker
-- **Objective:** `emlynk-sheet-sync-worker` process: claim/lease, coalescing, upsert via Column `AP`, retry, `CONFIG_ERROR`, graceful shutdown, environment write-gating.
+- **Objective:** `emlynk-sheet-sync-worker` process: claim/lease, coalescing, upsert via Column `AN`, retry, `CONFIG_ERROR`, graceful shutdown, environment write-gating.
 - **Components:** new worker entry file and `src/services/sheetSyncQueue.js`.
 - **Acceptance:** incremental sync scenarios pass; no duplicate rows; Google failure never affects candidate writes.
 - **Tests:** unit + mocked integration. **Rollback:** scale service to zero / flag off. **Depends on:** Phases 2–5.
 
 ### Phase 7 — Reconciliation Engine
-- **Objective:** full-cell comparison (Cols 1–40 + Col `AP`), repairs, deletion safety, locking.
+- **Objective:** full-cell comparison (`A`–`AL` + key `AN`), repairs, deletion safety, locking.
 - **Components:** new `src/services/sheetReconciliationService.js`.
 - **Acceptance:** 9.3 and 9.4 behaviours; advisory lock on session pooler.
 - **Tests:** integration (18.2), deletion-safety tests. **Rollback:** disable runs. **Depends on:** Phase 6.
@@ -1557,12 +1534,12 @@ flowchart TD
 
 ## 21. Definition of Done
 
-- [ ] Architecture approved with Blocking Decisions D-17 and D-18 resolved (Phase 0).
-- [ ] Exact 41-column operational mapping + technical key column `AP` approved.
+- [ ] Architecture approved; Decisions D-17 and D-18 resolved (Phase 0).
+- [ ] Exact 40-column `A:AN` mapping (39 business + technical key `AN`) approved.
 - [ ] Sheet schema validated (exact positional headers, versioning, plain-text formatting).
 - [ ] Credentials secure (keyless ADC runtime identity on Cloud Run; zero JSON keys; redaction verified).
 - [ ] Database migration applied safely.
-- [ ] Incremental sync works using Column `AP` row identity.
+- [ ] Incremental sync works using Column `AN` row identity.
 - [ ] Stage sync works (including derived stages).
 - [ ] Document status sync works (including variants).
 - [ ] Positional schema validation handles duplicate header names without ambiguity.
@@ -1592,13 +1569,13 @@ flowchart TD
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | Candidate registration sync | Change capture -> queue -> worker -> mapper -> Sheets client | `users`, `candidate_stages` | Registration transaction | Retry/backoff; reconciliation repairs | 18.2 outbox, 18.3 | Proposed |
 | Candidate update sync | Same | `users` (and OCR field fills) | Update / reconciliation fill | Same | 18.2, 18.3 | Proposed |
-| Legacy Excel 1–26 order preservation | Mapper Columns `A` through `Z` | Database aggregate | Any sync write | Schema validation fails if reordered | 18.1 positional test | **Confirmed requirement** |
-| Candidate Details Note mirrored | Mapper column `AF` (Col 32) | `candidate_stages.notes` (`CANDIDATE_DETAILS`) | Note edit / registration | Normal sync; sensitive PII controls apply | 18.1 (Col AF) | **Confirmed requirement** |
-| Stage sync (incl. derived stages) | Mapper Columns `AG` through `AL` | `candidate_stages`, `users`, `documents` | Component change | Same | 18.1 parity | Proposed |
+| Legacy operational header order preservation | Mapper Columns `A` through `X` | Database aggregate | Any sync write | Schema validation fails if reordered | 18.1 positional test | **Confirmed requirement** |
+| Candidate Details Note mirrored | Mapper column `AD` (Col 30) | `candidate_stages.notes` (`CANDIDATE_DETAILS`) | Note edit / registration | Normal sync; sensitive PII controls apply | 18.1 (Col AD) | **Confirmed requirement** |
+| Stage sync (incl. derived stages) | Mapper Columns `AE` through `AJ` | `candidate_stages`, `users`, `documents` | Component change | Same | 18.1 parity | Proposed |
 | One SCAN rule | Mapper Column `Q` (Col 17) | `documents` (`SCAN`) | n/a | Only one scan column mirrored | 18.1 (no affidavits) | **Confirmed requirement** |
-| Immutable row identity without visible ID | Technical Column `AP` (`_SYSTEM_CANDIDATE_ID`) | `User.unique_id` | Every write / reconcile | Key re-read per batch; updates in place | 18.1, 18.2 duplicate | Proposed (D-17) |
-| Duplicate header handling | Positional array validation (6.4) | `A1:AP1` | Before every write batch | Positional mismatch flags `CONFIG_ERROR` | 18.1 positional test | Proposed |
-| Keyless authentication | Cloud Run ADC runtime identity | GCP metadata server | Continuous | 401/403 flags `CONFIG_ERROR` | Phase 1 checklist | **Confirmed (D-4)** |
+| Immutable row identity without visible ID | Technical Column `AN` (`_SYSTEM_CANDIDATE_ID`) | `User.unique_id` | Every write / reconcile | Key re-read per batch; updates in place | 18.1, 18.2 duplicate | **Confirmed (D-17 resolved)** |
+| Duplicate header handling | Positional array validation (6.4) | `A1:AN1` | Before every write batch | Positional mismatch flags `CONFIG_ERROR` | 18.1 positional test | Proposed |
+| Keyless authentication | Cloud Run ADC runtime identity | GCP metadata server | Continuous | 401/403 flags `CONFIG_ERROR` | Read-only check (11.6 C); mocked tests | **Design confirmed (D-4); runtime verification pending** |
 | Real operational sheet safeguard | Environment write gate (`SHEET_SYNC_ENABLED`) | `process.env` | Worker start & sync | Non-prod writes blocked | 18.2 gate test | **Confirmed (D-9)** |
 | Google outage never blocks DB writes | Outbox decoupling | n/a | Google error | Candidate write unaffected; `FAILED`/retry | 18.3 | **Confirmed requirement** |
 | Reconciliation repairs drift | Reconciliation engine, full-cell comparison | DB snapshot vs Sheet | Scheduler or Sync Now | Run `FAILED` retried next run; lock `SKIPPED` | 18.2 | Proposed |
@@ -1614,7 +1591,7 @@ flowchart TD
 ### Assumptions
 
 1. The Google Workspace organization maintains Sheets API access for `emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`.
-2. At 42 columns (41 operational + 1 technical), spreadsheet capacity easily exceeds current candidate volume.
+2. At 40 columns (39 business + 1 technical), spreadsheet capacity easily exceeds current candidate volume.
 3. The Cloud Run platform can host the private `emlynk-sheet-sync-worker` service using the dedicated service account identity.
 
 ### Decisions and Facts Requiring Confirmation
@@ -1624,20 +1601,20 @@ flowchart TD
 | **D-1** | Settings role policy: may MANAGER get a read-only status view? | ADMIN only (Section 12.6) until approved |
 | **D-2** | Change capture: database triggers vs application-level enqueue | Triggers (Section 8.1) |
 | **D-3** | Hosting: dedicated `emlynk-sheet-sync-worker` vs existing submission worker | Dedicated Cloud Run service (Section 11.2) |
-| **D-4** | Google authentication method on Cloud Run | **CONFIRMED / RESOLVED:** Dedicated service account `emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com` using **keyless ADC**. No long-lived JSON keys. |
-| **D-5** | Candidate Details Note inclusion | **CONFIRMED / RESOLVED:** Included at Column 32 (`AF`). |
+| **D-4** | Google authentication method on Cloud Run | **CONFIRMED / RESOLVED:** Dedicated service account `emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com` using **keyless ADC**. No long-lived JSON keys. **Runtime verification pending:** counts as verified only when the read-only check (Section 11.6 C) returns `CONNECTED` + `SCHEMA_VALID` on Cloud Run as this identity. |
+| **D-5** | Candidate Details Note inclusion | **CONFIRMED / RESOLVED:** Included at Column 30 (`AD`). |
 | **D-6** | Timestamp zone: UTC vs Asia/Colombo | UTC (`Z` suffix) |
 | **D-7** | Deletion guard threshold | Enabled; default 10 rows or 5% of candidate base |
 | **D-8** | PR target branch for `version/google-sheet-sync` | Precedent: merge into `dev` |
 | **D-9** | Environment isolation for Google Sheet | **CONFIRMED / RESOLVED:** Single real operational spreadsheet (`1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`, tab `Emlynk Candidate Operational Mirror`). Guarded by `SHEET_SYNC_ENABLED` and mock test suites (Section 11.6). |
 | **D-10** | Production data checks: `unique_id` formats, lowercase passport IDs | Audit before Phase 3 |
-| **D-11** | Duplicate-row policy | Label `DUPLICATE ROW` in Col `AM`, never delete |
+| **D-11** | Duplicate-row policy | Label `DUPLICATE ROW` in Col `AK`, never delete |
 | **D-13** | Log `unique_id` as `candidateRef` | Allowed |
 | **D-14** | Connection-test write probe location | Cell `Mirror_Meta!B2` on the meta tab |
 | **D-15** | Production reconciliation time of day | Off-peak (e.g. 02:00 UTC / 07:30 Sri Lanka time) |
 | **D-16** | Spreadsheet access review cadence | Quarterly |
-| **D-17** | **BLOCKING DECISION: Row Identity Implementation** | **Proposed Decision:** Approve Option 1 (appended technical Column 42 / `AP` labeled `_SYSTEM_CANDIDATE_ID` storing `User.unique_id`, protected and hidden in UI) to enable immutable keying without breaking the 41-column layout (Section 7.1). |
-| **D-18** | **BLOCKING DECISION: Business Sign-Off on Ambiguous Legacy Fields** | Stakeholder sign-off required for the 12 audited legacy fields (Section 6.2):<br/>- **D-18.1:** `TEST NUMBER` -> confirm mapping to `CandidateStage.job_id` or leave blank.<br/>- **D-18.2:** Two `PASSPORT COPY` cols (13 vs 18) -> confirm business distinction.<br/>- **D-18.3:** Two `POLICE REP SRI LANKA` cols (14 vs 23) -> confirm variant mappings (`SL_VERIFIED` vs `SL_NORMAL`).<br/>- **D-18.4:** Two `POLICE REP ROMANIA` cols (15 vs 24) -> confirm business distinction.<br/>- **D-18.5:** `DRIVING LICIAN` (Col 19) -> confirm emitting empty cell (not captured in DB).<br/>- **D-18.6:** `NATIONAL ID` (Col 20) -> confirm mapping to `NIC` document verification status (vs Col 9 `ID NUMBER` = `User.nic`).<br/>- **D-18.7:** `POLICE REPORT APPLIED` (Col 21) -> confirm mapping to `POLICE_SLIP` status.<br/>- **D-18.8:** `POLICE REP FM` (Col 25) -> clarify "FM" or confirm emitting empty cell.<br/>- **D-18.9:** `VIDEOS` (Col 26) -> confirm mapping to `SKILL_VIDEO` document status. |
+| **D-17** | Row identity implementation | **CONFIRMED / RESOLVED:** technical column `AN` (column 40) with header `_SYSTEM_CANDIDATE_ID`, storing `User.unique_id`, approved and manually added to the real Sheet (Section 7.1). Passport number and NIC are never the row identity. |
+| **D-18** | Legacy field mappings | **CONFIRMED / RESOLVED** (Section 6.2):<br/>- **D-18.1:** `TEST NUMBER` (`A`) -> always blank; `job_id` is not mapped.<br/>- **D-18.2:** one `PASSPORT COPY` column (`M`) -> current `PASSPORT` document status.<br/>- **D-18.3:** `POLICE REP SRI LANKA` `N` -> `SL_VERIFIED`; `POLICE REP SRI LANKA` `V` -> `SL_NORMAL`.<br/>- **D-18.4:** one `POLICE REP ROMANIA` column (`O`) -> `ROMANIA`.<br/>- **D-18.5:** `DRIVING LICIAN` (`R`) -> always blank (no repository mapping).<br/>- **D-18.6:** `NATIONAL ID` (`S`) -> current `NIC` document status.<br/>- **D-18.7:** `POLICE REPORT APPLIED` (`T`) -> current `POLICE_SLIP` document status; `SUBMIT DATE` (`U`) -> its `police_submitted_date`.<br/>- **D-18.8:** `POLICE REP FM` (`W`) -> always blank (no repository mapping).<br/>- **D-18.9:** `VIDEOS` (`X`) -> current `SKILL_VIDEO` document status. |
 
 ### Non-Goals
 
