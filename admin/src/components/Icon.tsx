@@ -37,6 +37,7 @@ import check from "@material-symbols/svg-400/outlined/check.svg?raw";
 import pictureAsPdf from "@material-symbols/svg-400/outlined/picture_as_pdf.svg?raw";
 import upload from "@material-symbols/svg-400/outlined/upload.svg?raw";
 import manageAccounts from "@material-symbols/svg-400/outlined/manage_accounts.svg?raw";
+import settings from "@material-symbols/svg-400/outlined/settings.svg?raw";
 
 const ICONS = {
     assignment_late: assignmentLate,
@@ -72,6 +73,7 @@ const ICONS = {
     mail,
     menu,
     progress_activity: progressActivity,
+    settings,
     visibility,
     visibility_off: visibilityOff,
 } as const;

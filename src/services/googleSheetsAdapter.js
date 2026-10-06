@@ -7,13 +7,15 @@
 //   readCandidateIds()  column AN with each row number
 //   readRows()          every data row (A2:AN), 40 cells each
 //   readRow(n)          one data row (An:ANn), 40 cells
+//   readRowsByNumber(ns) several data rows, one batchGet
 //   appendRow(cells)    one new row
 //   updateRow(n, cells) one existing row
+//   writeRows({ updates, appends }) several rows: one batchUpdate + one append
 // There is no clear, delete or "reset" operation of any kind: the target is
 // the real operational Sheet and rows are never removed.
 //
 // Safety:
-//   - appendRow/updateRow refuse (SheetSyncDisabledError) unless the write
+//   - appendRow/updateRow/writeRows refuse (SheetSyncDisabledError) unless the write
 //     gate is enabled (config/sheetSync.js), before any Google client exists;
 //   - every write checks the 40-cell row and validates row 1 first;
 //   - authentication is Application Default Credentials (the Cloud Run
@@ -77,6 +79,9 @@ export class SheetsAdapterError extends Error {
     }
 }
 
+// Row ranges per values.batchGet request.
+const BATCH_GET_CHUNK = 100;
+
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 const CONFIG_STATUS = new Set([400, 401, 403, 404]);
 const RATE_LIMIT_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED", "RESOURCE_EXHAUSTED"]);
@@ -117,7 +122,7 @@ export async function createLiveSheetsClient({ env = process.env, scopes = [SHEE
 
 // config: readSheetSyncConfig() result (enabled, spreadsheetId, tabName).
 // sheetsClient: an object shaped like the official client
-//   (spreadsheets.values.get/append/update), or a factory returning one;
+//   (spreadsheets.values.get/batchGet/append/update/batchUpdate), or a factory returning one;
 //   defaults to the live client, created on first use.
 export function createGoogleSheetsAdapter({ config, sheetsClient = createLiveSheetsClient } = {}) {
     if (!config || typeof config !== "object") throw new Error("Sheet sync configuration is required");
@@ -182,6 +187,58 @@ export function createGoogleSheetsAdapter({ config, sheetsClient = createLiveShe
             return rows.map((row, offset) => ({ rowNumber: SHEET_FIRST_DATA_ROW + offset, cells: pad(row) }));
         },
 
+        // Map(rowNumber -> 40 string cells) for the given data rows, one
+        // batchGet per chunk of rows.
+        async readRowsByNumber(rowNumbers) {
+            const numbers = [...new Set(rowNumbers)];
+            const cellsByRow = new Map();
+            for (let i = 0; i < numbers.length; i += BATCH_GET_CHUNK) {
+                const chunk = numbers.slice(i, i + BATCH_GET_CHUNK);
+                const ranges = chunk.map((n) => rowRange(tabName, n));
+                const valueRanges = await call(async (values) => {
+                    const response = await values.batchGet({ spreadsheetId, ranges, majorDimension: "ROWS", valueRenderOption: "FORMATTED_VALUE" });
+                    return response?.data?.valueRanges ?? [];
+                });
+                chunk.forEach((n, index) => cellsByRow.set(n, pad(valueRanges[index]?.values?.[0] ?? [])));
+            }
+            return cellsByRow;
+        },
+
+        // Rewrites existing rows (by row number) and appends new ones, after
+        // the gate, the 40-cell check and ONE header validation. Updates go in
+        // one values.batchUpdate, appends in one values.append (INSERT_ROWS:
+        // nothing below is overwritten). Never clears or deletes anything.
+        async writeRows({ updates = [], appends = [] } = {}) {
+            if (config.enabled !== true) throw new SheetSyncDisabledError();
+            requireTarget();
+            for (const update of updates) rowRange(tabName, update.rowNumber);
+            [...updates.map((u) => u.cells), ...appends].forEach((cells) => assertSheetRow(cells));
+            if (!updates.length && !appends.length) return { updated: 0, appended: 0 };
+            const schema = await validateSchema();
+            if (!schema.valid) throw new SheetSchemaMismatchError(schema.mismatches);
+            await call(async (values) => {
+                if (updates.length) {
+                    await values.batchUpdate({
+                        spreadsheetId,
+                        requestBody: {
+                            valueInputOption: "RAW",
+                            data: updates.map((u) => ({ range: rowRange(tabName, u.rowNumber), majorDimension: "ROWS", values: [u.cells] })),
+                        },
+                    });
+                }
+                if (appends.length) {
+                    await values.append({
+                        spreadsheetId,
+                        range: operationalRange(tabName),
+                        valueInputOption: "RAW",
+                        insertDataOption: "INSERT_ROWS",
+                        requestBody: { majorDimension: "ROWS", values: appends },
+                    });
+                }
+            });
+            return { updated: updates.length, appended: appends.length };
+        },
+
         async appendRow(cells) {
             await assertWritable(cells);
             return call(async (values) => {
@@ -218,7 +275,7 @@ export function createGoogleSheetsAdapter({ config, sheetsClient = createLiveShe
 // be able to write (sync planning, the connection check).
 export function readOnlySheetsView(adapter) {
     const view = {};
-    for (const name of ["readHeader", "validateSchema", "readCandidateIds", "readRows", "readRow"]) {
+    for (const name of ["readHeader", "validateSchema", "readCandidateIds", "readRows", "readRow", "readRowsByNumber"]) {
         if (typeof adapter?.[name] !== "function") throw new Error(`The Sheets adapter has no ${name}()`);
         view[name] = (...args) => adapter[name](...args);
     }

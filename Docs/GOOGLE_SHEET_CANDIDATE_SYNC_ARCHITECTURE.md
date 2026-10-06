@@ -2,8 +2,8 @@
 ## Architecture & Project-Scope Specification
 
 - **Feature Name:** Google Sheets Candidate Operational Mirror (operational fallback)
-- **Document Version:** 1.4.0
-- **Status:** DRAFT / PROPOSED — SCOPE FREEZE CANDIDATE (aligned with the manually finalized real Google Sheet: 39 business-visible columns + 1 technical identity column = 40 columns `A:AN`; D-17 and D-18 resolved; implementation Pass 1 (schema, mapper, adapter, safety gate) and Pass 2 (aggregate reader, read-only sync planner, read-only connection/schema check) on `dev`, with no live Sheet writes; Cloud Run ADC pending runtime verification)
+- **Document Version:** 1.5.0
+- **Status:** IMPLEMENTED ON `dev` (Phases 1–7 code complete and locally verified; NOT deployed; `SHEET_SYNC_ENABLED=false`; no live Sheet write has ever been made). Cloud Run ADC verified with the read-only check (`CONNECTED` + `SCHEMA_VALID`, write gate `DISABLED`). **Section 24 is the as-built reference and operational runbook; where an earlier section disagrees, Section 24 wins** (earlier sections are kept as the design record and are annotated where superseded).
 - **Author:** System Architecture Team
 - **Development Branch:** `dev` (this document and all development happen on `dev`)
 - **Feature Version Branch:** `version/google-sheet-sync` (preserves the completed feature; see Section 19)
@@ -440,7 +440,7 @@ Why not a natural key:
 | Concurrent candidate events | Coalesced into a single pending queue row per candidate. |
 | Concurrent workers | **Single-writer rule:** `max-instances = 1` plus an exclusive PostgreSQL writer lease (Section 9.5). |
 | Passport or NIC correction | The row is found by `AN`; the `PASSPORT NUMBER` / `ID NUMBER` cells are updated in place. |
-| Duplicate keys detected | Reconciliation reads all keys in `AN`; duplicates are logged (`sheet_sync.duplicate_key_detected`), the first row stays canonical, later copies are labelled `DUPLICATE ROW` in `AK` (`RECORD STATUS`) and never deleted. |
+| Duplicate keys detected | **As built (supersedes the earlier labelling design; D-11):** a unique ID present in more than one `AN` cell is a hard data-integrity error. Every sync and reconciliation stops **before any write**; none of the duplicate rows is modified, labelled or deleted; the integration enters `DATA_INTEGRITY` (Settings, log `sheet_sync.duplicate_key_detected`) until a person fixes the Sheet. Nothing guesses which row is canonical. |
 | Staff sorting or filtering | Row numbers are never stored; keys are re-read from `AN` on every write batch. |
 
 ---
@@ -638,7 +638,7 @@ All three create a durable `sheet_sync_runs` record and use the same engine.
 6. **Classify and repair:**
    - key missing from the Sheet -> **append**;
    - key present and any compared cell (`A`–`AL` plus the key `AN`; `AM` LAST MIRRORED AT is excluded) differs -> **rewrite that row** (an unchanged row is not written, so a normal run writes almost nothing);
-   - duplicate key in Col `AN` -> keep the first row canonical, label later copies `DUPLICATE ROW` in Col `AK`, log `sheet_sync.duplicate_key_detected`;
+   - duplicate key in Col `AN` -> **as built: the whole run stops before any write; no row is touched** (Sections 7.2, 24.5);
    - Sheet row `ACTIVE` whose key is absent from the **complete** snapshot -> mark `DELETED / INACTIVE` in Col `AK` (subject to 9.4);
    - row already `DELETED / INACTIVE` whose key exists again in the database -> restore to `ACTIVE`, refresh data;
    - blank-key or unknown rows -> reported, not modified.
@@ -660,6 +660,7 @@ A failed, partial or timed-out database query can therefore never mark candidate
 ### 9.5 Locking and Concurrency
 
 - **Writer exclusivity.** One sync instance writes to the Sheet at a time: deployment keeps `max-instances = 1` and the worker also holds an exclusive database writer lease while writing, so scaling mistakes cannot create racing appends.
+- **As built (Section 24.4):** no advisory lock. A **writer lease row** in `sheet_sync_state` (compare-and-swap, renewed before every write chunk) keeps one writer per Sheet, and a partial unique index allows one active run per kind. This sidesteps the session-pooler connection-pinning question. The bullets below are the original design record.
 - **Reconciliation lock.** Overlapping reconciliations are prevented with a PostgreSQL advisory lock whose identity is a **deterministic named key** (for example the name `emlynk:sheet-sync:reconcile`) converted to the integer key PostgreSQL requires (for example `hashtextextended(name, 0)`), or an equivalent documented, configurable, stable ID. No magic constant is part of the architecture.
 - **Acquisition:** `pg_try_advisory_lock` on a **dedicated database connection** held for the run. This matters because production uses the Supavisor *session-mode* pooler and Prisma's pool may use different connections for consecutive queries, which would make a session-level lock unreliable. **Needs confirmation (Phase 7 spike):** behaviour and idle timeouts of a held session-pooler connection; the fallback is a lease row in `sheet_sync_runs`.
 - **If the lock is held:** the new run is recorded as `SKIPPED`; nothing else happens.
@@ -748,22 +749,12 @@ stateDiagram-v2
 | `emlynk-ocr-worker` on Cloud Run (asia-south1, private, IAM invoker) | **Existing** | `Docs/08-cloud-deployment.md` |
 | Existing GCP service account `emlynk-backend@<GCP_PROJECT>` for the workers; no key files | **Existing** | `Docs/08-cloud-deployment.md` |
 | Supabase PostgreSQL via Supavisor session-mode pooler; Supabase Storage | **Existing** | `Docs/08-cloud-deployment.md` |
-| `emlynk-sheet-sync-worker` Cloud Run service | **Proposed** | not created |
-| Cloud Scheduler jobs | **Proposed** | not created; no usage in the repo |
-### 11.1 Existing Infrastructure vs Proposed Infrastructure
-
-| Component | Status | Evidence / note |
-| :--- | :--- | :--- |
-| Admin SPA + Admin API + WhatsApp webhook on Vercel (`api/index.js -> src/httpHandler.js`, region `hnd1`, `maxDuration` 60 s) | **Existing** | `vercel.json`, `Docs/08-cloud-deployment.md` |
-| `emlynk-submission-worker` on Cloud Run (`node src/worker.js`, asia-northeast1, private, min and max 1, CPU not throttled, `GET /health` only) | **Existing** | `Docs/08-cloud-deployment.md`, `src/workerProcess.js` |
-| `emlynk-ocr-worker` on Cloud Run (asia-south1, private, IAM invoker) | **Existing** | `Docs/08-cloud-deployment.md` |
-| Existing GCP service account `emlynk-backend@<GCP_PROJECT>` for the workers; no key files | **Existing** | `Docs/08-cloud-deployment.md` |
-| Supabase PostgreSQL via Supavisor session-mode pooler; Supabase Storage | **Existing** | `Docs/08-cloud-deployment.md` |
 | Target Google Spreadsheet (`1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`) | **Confirmed / Provisioned** | Real operational spreadsheet |
 | Dedicated Google service account (`emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`) | **Confirmed / Provisioned** | Has Editor access to the target operational spreadsheet |
 | `emlynk-sheet-sync-worker` Cloud Run service | **Proposed** | not created |
 | Cloud Scheduler jobs | **Proposed** | not created; no usage in the repo |
-| Tables `sheet_sync_queue`, `sheet_sync_runs`, change-capture triggers | **Proposed** | not created |
+| Tables `sheet_sync_queue`, `sheet_sync_runs`, `sheet_sync_state`, change-capture triggers | **Implemented in code** (migration `20261006120000_sheet_sync_outbox`) | not yet applied to any shared database |
+| `emlynk-sheet-sync-worker` code (`src/sheetSyncWorker.js`) and scheduler trigger | **Implemented in code** | not deployed (Section 24.9) |
 
 ### 11.2 Where the Sheet Sync Runs (Future Deployment Target)
 
@@ -884,13 +875,13 @@ SHEET_SYNC_DELETION_GUARD_MAX=10
    - The sync worker must actively verify that `process.env.SHEET_SYNC_ENABLED === 'true'` before issuing any mutating Sheets API request. If disabled, candidate writes remain in PostgreSQL, and the worker logs an operational skip.
 2. **Local & CI Tests Strictly Mocked:**
    - Unit tests (`18.1`) and integration tests (`18.2`) MUST use in-memory fakes or mocked HTTP clients for Google Sheets API. Under no circumstances may `npm test` or Vitest communicate with `1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`.
-3. **Non-Destructive Test Connection:**
-   - The "Test Connection" button in Admin Settings writes ONLY to cell `Mirror_Meta!B2` on the meta tab. It is architecturally forbidden from modifying cell ranges on `Emlynk Candidate Operational Mirror`.
+3. **Non-Destructive Test Connection (as built: READ-ONLY; supersedes the `Mirror_Meta` probe, D-14):**
+   - The "Test Connection" button runs exactly the read-only connection/schema check of Section 11.6 C (`spreadsheets.readonly` scope, reads `A1:AN1` only). It writes nothing anywhere: no meta tab, no probe cell.
 4. **No Destructive Mass Operations:**
    - The sync worker never issues `Clear`, `DeleteDimension`, or `DeleteSheet` requests.
    - Rows absent from PostgreSQL are marked `DELETED / INACTIVE` in Column `AK` (subject to the Section 9.4 deletion guard), retaining all historical candidate data.
 
-#### C. Read-Only Connection / Schema Check (implemented, Pass 2; not yet run on Cloud Run)
+#### C. Read-Only Connection / Schema Check (implemented; VERIFIED on Cloud Run)
 
 A separate, strictly read-only check proves runtime identity, sharing and header before any write path exists:
 
@@ -899,9 +890,9 @@ A separate, strictly read-only check proves runtime identity, sharing and header
 - **Defence in depth:** the token is requested with the `spreadsheets.readonly` scope; its adapter is built with writes forced off and reduced to read methods.
 - **Independent of `SHEET_SYNC_ENABLED`:** verifying access never requires enabling candidate writes. Write enablement remains a separate switch.
 - **Needs only** `SHEET_SPREADSHEET_ID` and `SHEET_TAB_NAME` (no database, no Supabase).
-- **Output:** one sanitized JSON line (`sheet_sync.health_check`): `status` (`CONNECTED`, `NOT_CONFIGURED`, `CONFIG_ERROR`, `ACCESS_DENIED`, `NOT_FOUND`, `UNAVAILABLE`, `FAILED`), `schema` (`SCHEMA_VALID`, `SCHEMA_INVALID`, `NOT_CHECKED`), mismatched column letters, HTTP status / Google reason code. Never tokens, credentials, Google message text, header text or Sheet data. Exit code 0 only for `CONNECTED` + `SCHEMA_VALID`.
-- **Intended run (not yet performed):** a one-off Cloud Run Job from the same image, command `node src/sheetSyncCheck.js`, running as `emlynk-sheet-sync@…`. It is kept independent of the existing submission and OCR workers so that it moves unchanged into the dedicated `emlynk-sheet-sync-worker`.
-- **Status:** Cloud Run ADC is **pending runtime verification**. Mocked and local tests prove the code paths, not the identity. ADC counts as verified only when this check returns `CONNECTED` + `SCHEMA_VALID` on Cloud Run.
+- **Output:** one sanitized JSON line (`sheet_sync.health_check`): `status` (`CONNECTED`, `NOT_CONFIGURED`, `CONFIG_ERROR`, `ACCESS_DENIED`, `NOT_FOUND` (404), `BAD_REQUEST` (400; with Google's canonical `googleStatus` such as `INVALID_ARGUMENT` / `FAILED_PRECONDITION`), `UNAVAILABLE`, `FAILED`), `schema` (`SCHEMA_VALID`, `SCHEMA_INVALID`, `NOT_CHECKED`), mismatched column letters, HTTP status / Google reason code. Never tokens, credentials, Google message text, header text or Sheet data. Exit code 0 only for `CONNECTED` + `SCHEMA_VALID`.
+- **Run (performed):** a one-off Cloud Run Job (`emlynk-sheet-sync-check`) from the same image, command `node src/sheetSyncCheck.js`, running as `emlynk-sheet-sync@…`. It is kept independent of the existing submission and OCR workers so that it moves unchanged into the dedicated `emlynk-sheet-sync-worker`.
+- **Status: VERIFIED.** The Cloud Run Job returned `ok: true`, `status: CONNECTED`, `schema: SCHEMA_VALID`, `writeGate: DISABLED`, no mismatched columns, running as `emlynk-sheet-sync@…`. (An earlier run returned HTTP 400 `badRequest` because the worksheet was still named `Sheet1`; the tab was renamed to `Emlynk Candidate Operational Mirror`. That case is now reported as `BAD_REQUEST` with `googleStatus` instead of `NOT_FOUND`.)
 
 ### 11.7 Diagram 7 — Deployment Architecture
 
@@ -1129,7 +1120,7 @@ Creates a `TEST_CONNECTION` run. The sheet-sync worker performs, **without modif
 2. Read spreadsheet metadata (the spreadsheet exists and is reachable).
 3. Confirm the configured tab exists.
 4. Confirm the service account can read the tab and that the header row `A1:AN1` matches the expected schema and version (Section 6.8).
-5. Confirm write permission with a **non-destructive write probe** limited to a single cell on the **meta tab** (never the candidate tab); an alternative that adds a narrow Drive read-only scope to check the account's edit capability is possible. **Needs confirmation (decision D-14).**
+5. **As built: no write probe.** Test Connection is strictly read-only (steps 1–4 via the Section 11.6 C check). Write permission is proven only by the controlled first-write procedure (Section 24.10), never automatically.
 
 Response: `202 { "runId": "...", "status": "QUEUED" }`. The result appears on the run record and in `GET /status`. A successful test also clears a previous `CONFIG_ERROR`.
 
@@ -1299,7 +1290,7 @@ The current logging utilities do **not** yet guarantee this for Google data (Sec
 | Concurrent reconciliations / writers | Medium | Medium | Named advisory lock on a dedicated connection; writer lease; max 1 instance |
 | Session-pooler lock behaviour | Medium | Medium | Dedicated connection; Phase 7 spike; lease-row fallback |
 | Trigger overhead or defect on hot tables | Low | Medium | Minimal trigger body; coalescing; verify under bulk writes; rollback by dropping triggers |
-| Real operational Sheet pollution by dev/test | Medium | Critical | Strict environment write-gating (`SHEET_SYNC_ENABLED=false` by default; requires explicit production flag); all tests mocked; probe restricted to meta tab |
+| Real operational Sheet pollution by dev/test | Medium | Critical | Strict environment write-gating (`SHEET_SYNC_ENABLED=false` by default; requires explicit production flag); all tests mocked; Test Connection is read-only (no probe) |
 | Settings exposed to non-admins | Low | Medium | `adminOnly` entry, page guard, backend `requireRole`, tests (18.5) |
 | Candidate Pool regression | Low | High | Scope contract; regression tests; no Candidate Pool code changes |
 
@@ -1339,7 +1330,7 @@ The implementation is **not complete** until every group below passes. Existing 
 > [!WARNING]
 > Because there is no dummy spreadsheet, E2E validation against `1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE` must follow these guard rules:
 > 1. Local tests and CI use mock adapters exclusively.
-> 2. Initial connection verification executes ONLY the non-destructive write probe against `Mirror_Meta!B2`.
+> 2. Initial connection verification is the READ-ONLY check (Section 11.6 C); there is no write probe.
 > 3. Initial candidate sync is verified on pre-agreed synthetic test candidate records (`unique_id` range specified in runbook).
 > 4. Reconciliation dry-run verifies row mapping and cell comparison without issuing `batchUpdate` until signed off.
 
@@ -1440,7 +1431,8 @@ flowchart TD
 | :--- | :--- | :--- | :--- |
 | **Pass 1** | 40-column positional schema (`A:AN`), pure candidate -> row mapper, Google Sheets adapter (ADC, `@googleapis/sheets`), `SHEET_SYNC_ENABLED` write gate (default off) | `src/services/sheetSchema.js`, `candidateSheetMapper.js`, `googleSheetsAdapter.js`, `src/config/sheetSync.js` | None |
 | **Pass 2** | Candidate aggregate reader (by `unique_id`; keyset batches ordered by `unique_id`, one query per batch), read-only sync planner (`APPEND` / `UPDATE` / `UNCHANGED` / `NOT_IN_DATABASE`, AN row identity, duplicate-AN hard failure), read-only connection/schema check and its entry point | `src/services/candidateAggregateReader.js`, `sheetSyncPlanner.js`, `sheetHealthCheck.js`, `src/sheetSyncCheck.js` | None |
-| Pending | Runtime ADC verification on Cloud Run (Section 11.6 C); then the write executor, outbox (Phase 3) and worker | | |
+| ADC | Runtime ADC verified on Cloud Run (Section 11.6 C) | Cloud Run Job `emlynk-sheet-sync-check` | None |
+| **Phases 3–7** | Outbox migration + triggers; durable store (queue / runs / state, leases); sync engine (incremental + reconciliation, deletion guard); worker, Cloud Run entry and scheduler trigger; Settings API and UI; docs | Section 24.1 | None (all tests use an in-memory fake Sheet) |
 
 The planner cannot write: it only ever holds a read-only view of the adapter (`readOnlySheetsView`). Plans contain the action, the unique ID, the row number and changed column letters, never cell values.
 
@@ -1598,8 +1590,8 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 
 | ID | Item | Status / Decision |
 | :-: | :--- | :--- |
-| **D-1** | Settings role policy: may MANAGER get a read-only status view? | ADMIN only (Section 12.6) until approved |
-| **D-2** | Change capture: database triggers vs application-level enqueue | Triggers (Section 8.1) |
+| **D-1** | Settings role policy: may MANAGER get a read-only status view? | **Implemented as ADMIN only** (UI and backend). MANAGER read-only view still Needs confirmation |
+| **D-2** | Change capture: database triggers vs application-level enqueue | **RESOLVED / IMPLEMENTED: triggers** (Section 24.2) |
 | **D-3** | Hosting: dedicated `emlynk-sheet-sync-worker` vs existing submission worker | Dedicated Cloud Run service (Section 11.2) |
 | **D-4** | Google authentication method on Cloud Run | **CONFIRMED / RESOLVED:** Dedicated service account `emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com` using **keyless ADC**. No long-lived JSON keys. **Runtime verification pending:** counts as verified only when the read-only check (Section 11.6 C) returns `CONNECTED` + `SCHEMA_VALID` on Cloud Run as this identity. |
 | **D-5** | Candidate Details Note inclusion | **CONFIRMED / RESOLVED:** Included at Column 30 (`AD`). |
@@ -1608,9 +1600,9 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 | **D-8** | PR target branch for `version/google-sheet-sync` | Precedent: merge into `dev` |
 | **D-9** | Environment isolation for Google Sheet | **CONFIRMED / RESOLVED:** Single real operational spreadsheet (`1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`, tab `Emlynk Candidate Operational Mirror`). Guarded by `SHEET_SYNC_ENABLED` and mock test suites (Section 11.6). |
 | **D-10** | Production data checks: `unique_id` formats, lowercase passport IDs | Audit before Phase 3 |
-| **D-11** | Duplicate-row policy | Label `DUPLICATE ROW` in Col `AK`, never delete |
+| **D-11** | Duplicate-row policy | **RESOLVED (business rule): hard data-integrity stop; no duplicate row is modified, labelled or deleted** (Section 24.5) |
 | **D-13** | Log `unique_id` as `candidateRef` | Allowed |
-| **D-14** | Connection-test write probe location | Cell `Mirror_Meta!B2` on the meta tab |
+| **D-14** | Connection-test write probe location | **RESOLVED: no write probe; Test Connection is the read-only check** |
 | **D-15** | Production reconciliation time of day | Off-peak (e.g. 02:00 UTC / 07:30 Sri Lanka time) |
 | **D-16** | Spreadsheet access review cadence | Quarterly |
 | **D-17** | Row identity implementation | **CONFIRMED / RESOLVED:** technical column `AN` (column 40) with header `_SYSTEM_CANDIDATE_ID`, storing `User.unique_id`, approved and manually added to the real Sheet (Section 7.1). Passport number and NIC are never the row identity. |
@@ -1622,3 +1614,249 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 2. **Binary media mirroring:** no documents, PDFs, or videos in Google Drive or Sheets.
 3. **Disaster recovery replacement:** the mirror does not replace PostgreSQL backups or point-in-time recovery.
 4. **Any redesign** of the Candidate Pool, OCR, WhatsApp workflow, candidate matching or Manual Review.
+
+---
+
+## 24. As Built — Phases 3–7 (Implementation Reference & Runbook)
+
+This section describes what the code on `dev` actually does. It supersedes earlier sections where they differ (each such place is annotated). Nothing here is deployed yet; `SHEET_SYNC_ENABLED` is `false` by default everywhere and no test or verification has ever written to the real Sheet.
+
+### 24.1 Components
+
+| File | Role |
+| :--- | :--- |
+| `prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql` | Additive migration: tables `sheet_sync_queue`, `sheet_sync_runs`, `sheet_sync_state` (+ seed row), partial unique indexes, RLS/revokes, change-capture triggers |
+| `prisma/schema.prisma` | Models `SheetSyncQueue`, `SheetSyncRun`, `SheetSyncState` |
+| `src/services/sheetSyncStore.js` | PostgreSQL side: queue claims/leases/retries/dead letter, durable runs, state row, writer lease, backoff |
+| `src/services/sheetSyncEngine.js` | Incremental sync and full reconciliation (one mapper, one comparison), deletion guard |
+| `src/services/sheetSyncWorker.js` | The worker loop: heartbeat, runs, incremental batches, error classification, halting/resume |
+| `src/sheetSyncWorker.js`, `src/sheetSyncWorkerProcess.js` | Cloud Run entry (`npm run sheet:worker`): env validation, keyless ADC client, `/health`, OIDC-verified `POST /tasks/reconcile`, graceful shutdown |
+| `src/sheetSyncRequest.js` | Operator command `npm run sheet:request -- reconcile|test` (records a run; never calls Google) |
+| `src/services/sheetSyncStatusService.js`, `src/routes/sheetSyncSettings.js` | Settings API (Vercel; PostgreSQL only) |
+| `src/services/googleSheetsAdapter.js` | + `readRowsByNumber` (batchGet), `writeRows` (one `batchUpdate` + one `append`, gated and header-validated) |
+| `src/services/candidateAggregateReader.js` | + `findByUniqueIds`, `readSnapshot` (REPEATABLE READ, count-verified) |
+| `src/config/sheetSync.js`, `src/config/env.js` | Worker tunables, pilot list, target hint; worker env subset |
+| `admin/src/pages/SettingsPage.tsx`, `admin/src/api/sheetSync.ts`, `navigation.ts`, `Icon.tsx`, `App.tsx` | Settings sidebar item (last, ADMIN only), `/admin/settings`, Google Sheet Sync section |
+| `deploy/sheet-sync-worker.env.yaml` | Non-secret Cloud Run environment (writes disabled) |
+
+### 24.2 Change capture: database triggers (D-2 resolved)
+
+Chosen after auditing every mirrored-data writer: 16 write call sites in 5 services (`candidateService`, `clientDocumentService`, `adminReviewActionService`, `adminCorrectionService`, `fieldReconciliationService`), three of them single statements without a transaction. Application-level enqueue would have meant editing the WhatsApp intake, OCR field reconciliation and Manual Review code. Triggers cover every writer (including scripts, manual SQL and `ON UPDATE CASCADE`) **without touching any of that code**, and are atomic with the change by construction.
+
+- `AFTER INSERT/UPDATE/DELETE FOR EACH ROW` on `users`, `candidate_stages`, `documents`. Child rows resolve the candidate's `unique_id` through `passport_id` (old and new row).
+- `sheet_sync_enqueue(unique_id, deleted)`: `INSERT … ON CONFLICT (unique_id) WHERE status = 'PENDING' DO UPDATE`, so **one pending row per candidate** (coalescing). A pending row keeps its retry time (bursts don't bypass backoff). `candidate_deleted` is sticky (OR).
+- A users `DELETE` (or a `unique_id` change, which the app never does) sets `candidate_deleted`.
+- The trigger never calls Google. A Google outage cannot fail or roll back a candidate write. (A trigger error would roll back the change like any constraint; the trigger body is a single indexed insert-or-update.)
+- Verified on real PostgreSQL (PGlite, all migrations applied) through the real candidate service: registration, details edit, stage saves, document insert / supersede / date correction / delete, OCR-style `updateMany`, candidate delete with cascade, passport-ID cascade, rollback (no event), change during processing (new event).
+
+### 24.3 Queue model and retry semantics
+
+`sheet_sync_queue`: `unique_id`, `status` (`PENDING`/`PROCESSING`/`COMPLETED`/`FAILED`), `candidate_deleted`, `attempts`, `next_attempt_at`, lease (`lease_owner`, `lease_expires_at`), `last_result`, `last_error_class`/`last_error_code`. No candidate data.
+
+- **Claim:** due `PENDING` rows, or `PROCESSING` rows whose lease expired, compare-and-swap to `PROCESSING` with a 2-minute lease; `attempts` increments at claim (a crash-looping item still reaches the bound).
+- **Settle (fenced on owner + attempt):** `COMPLETED` with the action (`APPENDED`/`UPDATED`/`UNCHANGED`/`MARKED_INACTIVE`/`NOT_IN_DATABASE`); a success also resolves the candidate's older `FAILED` rows.
+- **Retryable** (429, 408, 5xx, network, snapshot incomplete, internal): back to `PENDING` with exponential backoff `15 s × 4^(attempt-1)`, capped at 15 min, ±20 % jitter. After `SHEET_SYNC_MAX_RETRIES + 1` attempts (default 6) the row is `FAILED` (dead letter); reconciliation heals it.
+- **Configuration / data integrity** (schema mismatch, 400/401/403/404, no usable credentials, duplicate AN): the batch is given back **without using an attempt**, the integration is **halted** (`CONFIG_ERROR` / `DATA_INTEGRITY`), and the worker re-checks the Sheet read-only every 5 minutes, resuming automatically when it is fine (or after a successful Test Connection / reconciliation). No retry loop against Google.
+- If a newer `PENDING` row exists when an item goes back to pending, the item is settled `SUPERSEDED` and the pending row inherits the later retry time and the higher attempt count.
+- `COMPLETED` rows are pruned after 7 days. The queue is bounded by the number of candidates.
+- While `SHEET_SYNC_ENABLED` is not `true`, the worker claims nothing: items wait `PENDING`.
+
+### 24.4 Runs, state and concurrency
+
+- `sheet_sync_runs` (`RECONCILE` / `TEST_CONNECTION`; trigger `ADMIN` / `SCHEDULER` / `OPERATOR`; status `QUEUED` → `RUNNING` → `SUCCEEDED` / `FAILED` / `SKIPPED`; `summary` = counts and codes only). A partial unique index allows **one active run per kind**: overlapping Sync Now / scheduler requests return the active run. A run whose worker died (lease expired) is taken over; after 3 abandoned attempts it is `FAILED` (`RUN_ABANDONED`).
+- `sheet_sync_state` (one row): integration state, last error class/code/time, last successful sync, the worker's reported write gate / configured flag / target hint, heartbeat, and the **writer lease**. Every Google write happens while holding the writer lease (compare-and-swap, renewed before each write chunk; a lost lease aborts before writing). Together with `max-instances = 1` this guarantees one writer per Sheet. This replaces the advisory-lock design of 9.5.
+- The worker is one sequential loop per process: heartbeat → at most one run → one incremental batch.
+
+### 24.5 Row identity, upsert, duplicates, deletion
+
+- Identity is **only** `AN` (`_SYSTEM_CANDIDATE_ID`) = `users.unique_id`, compared as exact text. Blank `AN` identifies nobody (such rows are counted, never modified). Passport number, NIC, WhatsApp number and row number are never identity.
+- **Duplicate `AN`** anywhere in the Sheet: hard `DATA_INTEGRITY` error before any write; none of the duplicate rows is modified, labelled or deleted; no guess is made (business rule, supersedes D-11 labelling).
+- Incremental upsert: validate header (`A1:AN1`) → read `AN2:AN` → read the claimed candidates in one query → `batchGet` only their existing rows → compare (all columns except `AM` LAST MIRRORED AT) → `batchUpdate` changed rows + one `append` (`INSERT_ROWS`, `RAW`) for missing candidates. Unchanged rows are not written, so `AM` changes only on a real write. A retry after a crash between append and completion finds the row by `AN` and updates it (no duplicate).
+- **Deleted candidate:** the row is **never deleted**. Only when the trigger flagged the users row as deleted **and** a fresh read confirms the candidate is gone, `AK` becomes `DELETED / INACTIVE` and `AM` is stamped; every other cell is kept. If the same `unique_id` returns, the next sync restores `ACTIVE` and refreshes the row.
+- The adapter never clears, deletes rows, formats or touches other tabs.
+
+### 24.6 Reconciliation and deletion guard
+
+Validate header → read the whole Sheet (`A2:AN`) → duplicate check (stop) → **complete snapshot** (one `REPEATABLE READ` transaction; number of aggregates must equal the `count()` taken in the same transaction, no repeated `unique_id`; otherwise the run fails) → map every candidate → append missing, rewrite rows with any differing cell (except `AM`), leave matching rows unwritten → Sheet rows whose `AN` is not in the snapshot:
+
+- already `DELETED / INACTIVE`: counted, untouched;
+- otherwise marked `DELETED / INACTIVE` **only if** the number to mark is ≤ `SHEET_SYNC_DELETION_GUARD_MAX` (default 10) **and** ≤ `SHEET_SYNC_DELETION_GUARD_FRACTION` (default 5 %) of identified Sheet rows, **and** the snapshot is non-empty. Otherwise nothing is marked, the rows are reported `NOT_IN_DATABASE`, `deletionGuardTriggered` is recorded and logged (`sheet_sync.reconcile_deletion_guard`). Rows are never deleted.
+
+Writes go in chunks of 200 rows, with the writer and run leases renewed before each chunk. **With `SHEET_SYNC_ENABLED` not `true` (or during the pilot) a reconciliation is a dry run**: full read and comparison, counts recorded, zero writes. A successful run clears a halted state; a successful write run resolves earlier dead-lettered items. The run summary contains counts only.
+
+### 24.7 Settings API and UI
+
+API (Vercel; reads PostgreSQL and inserts run requests; never calls Google; no Google credentials on Vercel):
+
+| Method | Path (`/api/admin/settings/sheet-sync`) | Effect |
+| :--- | :--- | :--- |
+| `GET` | `/status` | Worker online (heartbeat ≤ 2 min), write gate, target hint (`…<last 6 chars> / <tab>`), integration state + last failure category/code, queue counts, last successful sync, last / last successful reconciliation, last connection test, active runs |
+| `POST` | `/test` | Durable `TEST_CONNECTION` run → `202 { run, alreadyActive }` |
+| `POST` | `/run` | Durable `RECONCILE` run (Sync Now) → `202 { run, alreadyActive }` |
+| `GET` | `/runs/:runId` | One run (`400` malformed id, `404` unknown) |
+
+Authorization: mounted with `requireRole(ADMINS_ONLY)` (and again inside the router), behind the existing authentication (role re-read from the database every request), rate limiter and CSRF protection. MANAGER, ANALYST and REGISTRATION_DESK get `403` on every endpoint (tested, including a token that claims ADMIN for an account whose database role is MANAGER). The MANAGER read-only view (D-1) is not implemented.
+
+UI: one **Settings** sidebar item appended after Change Roles (`adminOnly`, same component, styling and active state as the other items; breadcrumb from `NAV_ITEMS`), route `/admin/settings`, a **Google Sheet Sync** card inside it (no separate sidebar item). Non-ADMIN users see "Access Restricted" and the page requests no Settings data. The card shows the status above, the dry-run notice when writes are disabled, an offline-worker warning, and **Test Connection** / **Sync Now** buttons (disabled while a run of that kind is active). Status refreshes every 5 s while a run is active. Leaving the page changes nothing: runs are executed by the worker. No other page was changed; the Candidate Pool is untouched.
+
+Test Connection = the read-only health check of 11.6 C, executed by the worker (the Vercel runtime has no ADC and none is added).
+
+### 24.8 Security, logging, failure categories
+
+- Keyless ADC only; `GOOGLE_APPLICATION_CREDENTIALS` set → the worker refuses to start. While writes are disabled the worker's Google token uses the **read-only** scope. No Google credential exists on Vercel, in the browser, in Git, in the database or in API responses.
+- Errors are stored and logged as codes: HTTP status, Google canonical status (`googleStatus`, validated `A–Z_`), Google reason code. Google message text, cell values and tokens are never stored or logged.
+- Structured one-line JSON logs, events `sheet_sync.*`: `worker_started`, `worker_config`, `incremental_paused`, `started`, `completed` (counts per action), `retry_scheduled`, `failed`, `config_error`, `duplicate_key_detected`, `resumed`, `reconcile_started`, `reconcile_completed` (counts), `reconcile_failed`, `reconcile_skipped`, `reconcile_deletion_guard`, `connection_test`, `run_requested`, `trigger_rejected`, `tick_failed`. Fields: run IDs, candidate `unique_id` (`candidateRef`, D-13), actions, counts, attempts, error class/code, durations. Never names, passport numbers, NICs, phone numbers, addresses, dates of birth, cell values or Google response bodies (tested).
+
+| Category (`errorClass`) | Kind | Behaviour |
+| :--- | :--- | :--- |
+| `GOOGLE_UNAVAILABLE` (429/408/5xx/network) | retryable | backoff, bounded, then `FAILED` |
+| `SNAPSHOT_INCOMPLETE`, `INTERNAL` | retryable | as above (runs: `FAILED`, next run repeats) |
+| `SCHEMA_INVALID` (column letters), `ACCESS_DENIED` (401/403), `NOT_FOUND` (404), `BAD_REQUEST` (400), `GOOGLE_REQUEST_FAILED` (no response, e.g. no credentials) | configuration | halt (`CONFIG_ERROR`), re-check every 5 min, no attempts used |
+| `DUPLICATE_CANDIDATE_ID` (count) | data integrity | halt (`DATA_INTEGRITY`) until fixed in the Sheet |
+| `MAPPING_FAILED`, `ATTEMPTS_EXHAUSTED` | item | that item `FAILED`; others continue |
+| `WRITER_BUSY` | run | `SKIPPED` (another process holds the writer lease) |
+| `NOT_CONFIGURED`, `RUN_ABANDONED` | run | `FAILED` |
+
+Monitoring: Settings page (operator view); Cloud Logging filter `jsonPayload.event=~"^sheet_sync\."` or `textPayload:"sheet_sync."`; alert on `sheet_sync.config_error`, `sheet_sync.duplicate_key_detected`, `sheet_sync.failed`, `sheet_sync.reconcile_failed`, `sheet_sync.reconcile_deletion_guard`, and on a missing `sheet_sync.worker_started`/stale heartbeat (Settings shows "worker not reporting" after 2 minutes).
+
+### 24.9 Cloud Run worker and Cloud Scheduler
+
+Service `emlynk-sheet-sync-worker`, region `asia-south1`, same image as the backend (root `Dockerfile`), command `node src/sheetSyncWorker.js`, runtime identity `emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`, private (`--no-allow-unauthenticated`), `min-instances = max-instances = 1`, CPU always allocated (it polls between requests).
+
+| Variable | Secret? | Value / default |
+| :--- | :-: | :--- |
+| `DATABASE_URL` | **Secret Manager** (`DATABASE_URL`, as for the other workers) | session-pooler URL |
+| `SHEET_SPREADSHEET_ID`, `SHEET_TAB_NAME` | no | `deploy/sheet-sync-worker.env.yaml` |
+| `SHEET_SYNC_ENABLED` | no | `false` (only the activation procedure changes it) |
+| `SHEET_SYNC_POLL_INTERVAL_MS` / `_BATCH_SIZE` / `_MAX_RETRIES` / `_DELETION_GUARD_MAX` / `_DELETION_GUARD_FRACTION` | no | 10000 / 25 / 5 / 10 / 0.05 |
+| `SHEET_SYNC_SCHEDULER_AUDIENCE`, `SHEET_SYNC_SCHEDULER_INVOKER` | no | worker URL; scheduler service-account e-mail (both required, else the trigger is disabled) |
+| `SHEET_SYNC_PILOT_CANDIDATE_IDS` | no | only during the first-write pilot (24.10) |
+| `DATABASE_POOL_MAX` | no | 2 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | — | **must not be set** |
+
+Scheduling lives only in Cloud Scheduler: `POST <worker-url>/tasks/reconcile` with an OIDC token of a dedicated scheduler service account that has only `roles/run.invoker` on this service. Cloud Run IAM rejects other callers; the worker verifies the token again (signature, audience, verified e-mail) and only records a durable `RECONCILE` run (`202`). Testing/staging: every 5 minutes; production: once a day.
+
+**Database question to settle before deploying (Needs confirmation):** whether the `stage` Vercel Preview uses the same Supabase database as production. The migration and the worker act on whichever database `DATABASE_URL` points to, and there is only one real Sheet: run exactly **one** worker per Sheet, against the database whose candidates are authoritative.
+
+Commands below use:
+
+```bash
+PROJECT=project-aa11e15e-a951-4e1b-a65
+REGION=asia-south1
+TAG=$(git rev-parse --short HEAD)
+IMAGE=asia-northeast1-docker.pkg.dev/$PROJECT/emlynk-backend/sheet-sync:$TAG
+SYNC_SA=emlynk-sheet-sync@$PROJECT.iam.gserviceaccount.com
+SCHED_SA=emlynk-sheet-sync-scheduler@$PROJECT.iam.gserviceaccount.com
+```
+
+**SAFE STAGE/TEST COMMANDS** (no Sheet write is possible: `SHEET_SYNC_ENABLED=false`, read-only token):
+
+```bash
+# 1. Build the image (same Dockerfile as the other backend images).
+gcloud builds submit --project=$PROJECT --tag=$IMAGE .
+
+# 2. Re-verify the read-only check with the new image (existing job).
+gcloud run jobs update emlynk-sheet-sync-check --project=$PROJECT --region=$REGION --image=$IMAGE
+gcloud run jobs execute emlynk-sheet-sync-check --project=$PROJECT --region=$REGION --wait
+#    expect: "status":"CONNECTED","schema":"SCHEMA_VALID","writeGate":"DISABLED"
+
+# 3. Worker identity may read the DATABASE_URL secret (IAM CHANGE: approve first).
+gcloud secrets add-iam-policy-binding DATABASE_URL --project=$PROJECT \
+  --member=serviceAccount:$SYNC_SA --role=roles/secretmanager.secretAccessor
+
+# 4. Deploy the worker with writes DISABLED.
+gcloud run deploy emlynk-sheet-sync-worker --project=$PROJECT --region=$REGION --image=$IMAGE \
+  --service-account=$SYNC_SA --command=node --args=src/sheetSyncWorker.js \
+  --no-allow-unauthenticated --min-instances=1 --max-instances=1 --no-cpu-throttling \
+  --cpu=1 --memory=512Mi --env-vars-file=deploy/sheet-sync-worker.env.yaml \
+  --set-secrets=DATABASE_URL=DATABASE_URL:latest
+gcloud run services logs read emlynk-sheet-sync-worker --project=$PROJECT --region=$REGION --limit=50
+#    expect: sheet_sync.worker_config {"writeGate":"DISABLED",...}, sheet_sync.incremental_paused
+# Then in Admin -> Settings: Test Connection (SUCCEEDED), Sync Now (dry run; review the counts).
+
+# 5. Scheduler identity and trigger (IAM CHANGES: approve first).
+gcloud iam service-accounts create emlynk-sheet-sync-scheduler --project=$PROJECT --display-name="Sheet sync scheduler"
+gcloud run services add-iam-policy-binding emlynk-sheet-sync-worker --project=$PROJECT --region=$REGION \
+  --member=serviceAccount:$SCHED_SA --role=roles/run.invoker
+URL=$(gcloud run services describe emlynk-sheet-sync-worker --project=$PROJECT --region=$REGION --format='value(status.url)')
+gcloud run services update emlynk-sheet-sync-worker --project=$PROJECT --region=$REGION \
+  --update-env-vars=SHEET_SYNC_SCHEDULER_AUDIENCE=$URL,SHEET_SYNC_SCHEDULER_INVOKER=$SCHED_SA
+
+# 6. Testing schedule, ~every 5 minutes (dry runs while writes are disabled).
+gcloud scheduler jobs create http emlynk-sheet-sync-reconcile-test --project=$PROJECT --location=$REGION \
+  --schedule="*/5 * * * *" --time-zone=Etc/UTC --uri="$URL/tasks/reconcile" --http-method=POST \
+  --oidc-service-account-email=$SCHED_SA --oidc-token-audience="$URL" --attempt-deadline=30s
+```
+
+**DATABASE MIGRATION — affects the database the application uses; approve first.** Additive only (Section 24.2); run once per database, from the same image, with the identity that already reads `DATABASE_URL`:
+
+```bash
+gcloud run jobs create emlynk-db-migrate --project=$PROJECT --region=$REGION --image=$IMAGE \
+  --service-account=emlynk-backend@$PROJECT.iam.gserviceaccount.com \
+  --command=npx --args=prisma,migrate,deploy --set-secrets=DATABASE_URL=DATABASE_URL:latest
+gcloud run jobs execute emlynk-db-migrate --project=$PROJECT --region=$REGION --wait
+```
+
+(The migration must be applied before step 4: the worker and the Settings API need the new tables. The Vercel deployment that includes this code also needs it, or the Settings API returns 500 for the new routes only.)
+
+**PRODUCTION COMMANDS — DO NOT RUN YET** (only after 24.10 is complete and signed off):
+
+```bash
+# Enable writes (new revision; reverts with the same command and =false).
+gcloud run services update emlynk-sheet-sync-worker --project=$PROJECT --region=$REGION \
+  --update-env-vars=SHEET_SYNC_ENABLED=true --remove-env-vars=SHEET_SYNC_PILOT_CANDIDATE_IDS
+# Daily reconciliation (02:00 UTC = 07:30 Sri Lanka), replacing the testing job.
+gcloud scheduler jobs pause emlynk-sheet-sync-reconcile-test --project=$PROJECT --location=$REGION
+gcloud scheduler jobs create http emlynk-sheet-sync-reconcile-daily --project=$PROJECT --location=$REGION \
+  --schedule="0 2 * * *" --time-zone=Etc/UTC --uri="$URL/tasks/reconcile" --http-method=POST \
+  --oidc-service-account-email=$SCHED_SA --oidc-token-audience="$URL" --attempt-deadline=30s
+```
+
+### 24.10 Controlled write activation (first live write)
+
+Prerequisites, all required and recorded:
+
+1. **Schema health passes:** Test Connection `SUCCEEDED` (`CONNECTED`, `SCHEMA_VALID`) on the deployed worker.
+2. **Correct spreadsheet/tab:** the Settings target hint is `…JirMpE / Emlynk Candidate Operational Mirror` and the Sheet URL contains `1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`.
+3. **Dedicated identity:** `gcloud run services describe emlynk-sheet-sync-worker --region=asia-south1 --format='value(spec.template.spec.serviceAccountName)'` prints `emlynk-sheet-sync@…`; the Sheet is shared (Editor) with that account only; staff are Viewers.
+4. **Database source of truth:** the worker's `DATABASE_URL` secret is the authoritative database; a dry-run Sync Now reports `databaseCandidates` equal to the known candidate count.
+5. **Duplicate AN scan passes:** the dry-run reconciliation `SUCCEEDED` (a duplicate makes it `FAILED` with `DUPLICATE_CANDIDATE_ID`); `blankIdRows`, `notInDatabase` and `deletionGuardTriggered` reviewed and understood.
+6. **Backup / rollback ready:** the Sheet owner makes a copy (File → Make a copy, dated) and downloads an `.xlsx`; the version-history timestamp before activation is noted. Rollback = restore that version (or the copy) after disabling writes (24.11).
+7. **One-candidate pilot plan agreed:** one `unique_id` chosen (a test candidate agreed with the business, or one real candidate whose data is verified), and the expected row values written down.
+
+Pilot:
+
+1. Deploy with `SHEET_SYNC_ENABLED=true` **and** `SHEET_SYNC_PILOT_CANDIDATE_IDS=<that unique_id>` (`gcloud run services update … --update-env-vars=SHEET_SYNC_ENABLED=true,SHEET_SYNC_PILOT_CANDIDATE_IDS=<id>`). During the pilot only that candidate can be written; every other queue item waits and every reconciliation stays a dry run.
+2. In the Admin Console open that candidate and save one stage without changing it (this queues the candidate without changing its data).
+3. Within one poll interval, verify: exactly one row has `AN = <id>`; its cells match the expected values; `AK = ACTIVE`; `AM` is set; the Sheet's version history shows one edit by `emlynk-sheet-sync@…` and no other row changed; logs show `sheet_sync.completed` with `APPENDED` or `UPDATED` and no errors.
+4. If anything is wrong: set `SHEET_SYNC_ENABLED=false` (24.11) and restore the version from prerequisite 6.
+5. If correct: remove the pilot variable (writes stay enabled), watch the queue drain in Settings, run Sync Now and review the counts, then create the daily scheduler job and pause the testing job (PRODUCTION COMMANDS above).
+
+### 24.11 Disable, rollback, emergency switch
+
+- **Emergency switch:** `gcloud run services update emlynk-sheet-sync-worker --region=asia-south1 --update-env-vars=SHEET_SYNC_ENABLED=false`. The new revision stops all Sheet writes (and requests a read-only token). Candidate database operations are unaffected: the triggers keep queueing (bounded, one row per candidate) and the backlog syncs when writes are re-enabled. Also `gcloud scheduler jobs pause …` for the scheduler jobs.
+- **Absolute stop on the Google side:** remove the service account's Editor sharing from the Sheet (business action in Google Sheets).
+- **Restore Sheet content:** Google Sheets version history, or the copy from 24.10.
+- **Stop change capture (last resort; no candidate data is changed):** `DROP TRIGGER "users_sheet_sync_capture" ON "users"; DROP TRIGGER "candidate_stages_sheet_sync_capture" ON "candidate_stages"; DROP TRIGGER "documents_sheet_sync_capture" ON "documents";` (a later reconciliation still repairs everything).
+- **Remove the feature's database objects completely:** the three `DROP TRIGGER`s, then `DROP FUNCTION "sheet_sync_capture_candidate_child"(), "sheet_sync_capture_users"(), "sheet_sync_enqueue"(TEXT, BOOLEAN); DROP TABLE "sheet_sync_queue", "sheet_sync_runs", "sheet_sync_state";` (only as a new, reviewed migration).
+
+### 24.12 Test coverage (local; no live Google call anywhere)
+
+| Suite | What it proves |
+| :--- | :--- |
+| `test/sheetSyncOutbox.test.js` (real PostgreSQL via PGlite, all migrations) | Migration additive and last; RLS; constraints; capture through the real candidate service for every write shape; coalescing; rollback; processing race; delete hint; passport cascade |
+| `test/sheetSyncWorker.test.js` (real PostgreSQL + real candidate service/store/reader/engine/adapter/worker; in-memory Sheet) | Registration → queue → append; coalesced updates; update in place by `AN`; unchanged not rewritten (`AM` kept); crash/lease recovery without duplicates; blank `AN`; duplicate `AN` hard stop with zero writes; deleted candidate kept + `DELETED / INACTIVE`; unknown ID; Google down → DB write succeeds, backoff, later sync; 429/5xx/network bounded then dead letter; schema error halts without attempts or retry loop, then resumes; 403 is configuration; writes disabled → nothing written; writer lease held elsewhere; pilot; PII-free JSON logs; reconciliation drift repair / no drift / sheet-only `AN` marked within guard / guard triggered / empty snapshot / dry run / duplicate stop / dead worker takeover / failed items resolved; Test Connection read-only; runs complete with no browser |
+| `test/sheetSyncSettingsApi.test.js` (real router, auth, PostgreSQL) | 403 for MANAGER/ANALYST/REGISTRATION_DESK on every endpoint, 401 without token / inactive, database role wins over token claim; status without secrets; 202 durable run; duplicates return the active run; 5 concurrent Sync Now → one run; run lookup; Candidate Pool list unchanged |
+| `test/sheetSyncEngine.test.js` | Adapter gate before any call, one header read + one `batchUpdate` + one `append`, quoted ranges incl. apostrophes, 40-cell and row checks, `batchGet` chunking, sanitized errors; deletion guard; backoff; error classification; tunables, pilot list, target hint |
+| `test/sheetSyncWorkerProcess.test.js` | `/health`; trigger disabled without config; OIDC audience/e-mail/verified checks; generic 500; operator command; worker env subset; shutdown |
+| `admin/src/test/settings.test.tsx` | Settings last in the sidebar, active state, breadcrumb, no Google sidebar item; MANAGER/ANALYST/REGISTRATION_DESK: no item, Access Restricted, no Settings request; status rendering; loading and error states; Sync Now / Test Connection requests and messages; backend 403 shown, no fake success; active run disables its button; offline worker and halted states; polling while active |
+| Existing suites | Phase 1/2 suites unchanged except the adapter method list (two read/write methods added; still no clear/delete) and the backend timer allow-list (sheet worker poll added, with a no-deletion assertion); Admin sidebar list (Settings appended) |
+
+### 24.13 Known limitations and open items
+
+- Not deployed; the migration is not applied to any shared database; writes have never been enabled.
+- The database time zone must be UTC (Supabase default): the Prisma pg adapter misreads `timestamptz` rendered with a non-UTC session offset (found and pinned in the test database).
+- Stage vs production database (24.9) and the PR target for `version/google-sheet-sync` (D-8) need confirmation.
+- MANAGER read-only Settings view (D-1) not implemented (ADMIN only).
+- Deletion-guard thresholds (D-7) use the documented defaults; the override procedure is: raise the two variables for one run after review, then restore them.
+- A 400 from Google during a write halts the integration (configuration) rather than isolating one candidate; current field limits (≤ 2000 characters) make an oversize cell impossible.

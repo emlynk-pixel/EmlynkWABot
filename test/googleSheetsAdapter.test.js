@@ -114,7 +114,7 @@ describe("write safety gate", () => {
 
     test("the adapter offers no clear, delete or reset operation", () => {
         const adapter = createGoogleSheetsAdapter({ config: enabledConfig(), sheetsClient: fakeSheets() });
-        assert.deepEqual(Object.keys(adapter).sort(), ["appendRow", "readCandidateIds", "readHeader", "readRow", "readRows", "updateRow", "validateSchema"]);
+        assert.deepEqual(Object.keys(adapter).sort(), ["appendRow", "readCandidateIds", "readHeader", "readRow", "readRows", "readRowsByNumber", "updateRow", "validateSchema", "writeRows"]);
     });
 });
 

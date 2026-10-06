@@ -8,6 +8,8 @@
     "start": "node src/app.js",
     "worker": "node src/worker.js",
     "sheet:check": "node src/sheetSyncCheck.js",
+    "sheet:worker": "node src/sheetSyncWorker.js",
+    "sheet:request": "node src/sheetSyncRequest.js",
     "postinstall": "prisma generate",
     "test": "node --test \"test/**/*.test.js\"",
     "diagnose:document": "node scripts/diagnoseDocument.js",
@@ -59,6 +61,8 @@
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-socket": "^0.2.11",
     "jpeg-js": "0.4.4",
     "pngjs": "7.0.0"
   },
