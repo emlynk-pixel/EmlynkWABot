@@ -4,6 +4,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
+import jwt from "jsonwebtoken";
 
 import {
     CANDIDATE_STAGES,
@@ -39,6 +40,8 @@ import { errorHandler } from "../src/middleware/errorHandler.js";
 import { noRateLimit } from "./helpers/fakeAdminDb.js";
 
 const ADMIN = { adminId: "admin-1", name: "Test Admin", role: "ADMIN", status: "ACTIVE" };
+// Signs the registration desk's upload grants (registrationUploadGrant.js).
+process.env.JWT_SECRET ??= "test-jwt-secret-placeholder-for-candidates-0123456789";
 const PDF = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(64, 0x20)]);
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
 const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypmp42"), Buffer.alloc(64)]);
@@ -813,17 +816,17 @@ describe("candidate list and call log", () => {
 });
 
 describe("candidate routes: roles", () => {
-    async function call(role, method, path, body, db = createFakeDb(), { bucket = createFakeBucket() } = {}) {
+    async function call(role, method, path, body, db = createFakeDb(), { bucket = createFakeBucket(), headers = {}, adminId = ADMIN.adminId } = {}) {
         const app = express();
         app.use(express.json());
-        const requireAdmin = (req, res, next) => { req.admin = { ...ADMIN, role }; next(); };
+        const requireAdmin = (req, res, next) => { req.admin = { ...ADMIN, adminId, role }; next(); };
         app.use("/api/admin", createAdminRouter({ db, bucket, requireAdmin, apiLimiter: noRateLimit }));
         app.use(errorHandler);
         const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
         try {
             const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, {
                 method,
-                headers: { "content-type": "application/json" },
+                headers: { "content-type": "application/json", ...headers },
                 body: body === undefined ? undefined : JSON.stringify(body),
             });
             return { status: response.status, body: await response.json() };
@@ -835,13 +838,145 @@ describe("candidate routes: roles", () => {
     // The admin's upload through the routes: target, the browser's PUT to
     // storage, finalize. Returns the finalize response (or the target's, when
     // that one is refused).
-    async function directUpload(role, passportIdInUrl, db, bucket, { type, variant, mimeType = "application/pdf", buffer = PDF, fileName = "scan.pdf" }) {
+    async function directUpload(role, passportIdInUrl, db, bucket, { type, variant, mimeType = "application/pdf", buffer = PDF, fileName = "scan.pdf", headers, adminId }) {
         const described = { type, ...(variant ? { variant } : {}), mimeType, fileName };
-        const target = await call(role, "POST", `/api/admin/candidates/${passportIdInUrl}/documents/upload-target`, { ...described, fileSize: buffer.length }, db, { bucket });
+        const target = await call(role, "POST", `/api/admin/candidates/${passportIdInUrl}/documents/upload-target`, { ...described, fileSize: buffer.length }, db, { bucket, headers, adminId });
         if (target.status !== 200) return target;
         bucket.browserPut(bucket.signedUploads.at(-1), buffer, mimeType);
-        return call(role, "POST", `/api/admin/candidates/${passportIdInUrl}/documents/finalize`, { ...described, uploadId: target.body.uploadId }, db, { bucket });
+        return call(role, "POST", `/api/admin/candidates/${passportIdInUrl}/documents/finalize`, { ...described, uploadId: target.body.uploadId }, db, { bucket, headers, adminId });
     }
+
+    // REGISTRATION_DESK registers new candidates and nothing else: create,
+    // then that candidate's registration documents with the grant the create
+    // returned. No list, read, edit, stage, call log or other document.
+    describe("REGISTRATION_DESK: register a new candidate only", () => {
+        const DESK = "REGISTRATION_DESK";
+        const grantHeader = (grant) => ({ "X-Registration-Upload": grant });
+        const register = async (db, bucket) => {
+            const created = await call(DESK, "POST", "/api/admin/candidates", VALID_BODY, db, { bucket });
+            assert.equal(created.status, 201);
+            return created.body;
+        };
+
+        test("registers a new candidate and gets an upload grant; other roles get no grant", async () => {
+            const db = createFakeDb();
+            const created = await register(db, createFakeBucket());
+            assert.deepEqual(Object.keys(created).sort(), ["passportId", "registrationUploadGrant", "uniqueId"]);
+            assert.equal(created.passportId, "N1023757");
+            assert.equal(db.state.users.length, 1);
+            assert.equal(db.state.stages[0].notes, "Prefers morning calls", "the comment is kept");
+
+            const byAnalyst = await call("ANALYST", "POST", "/api/admin/candidates", { ...VALID_BODY, passportId: "N7654321", nic: "200012345678", whatsappNumber: "+94770000001" });
+            assert.equal(byAnalyst.status, 201);
+            assert.equal(byAnalyst.body.registrationUploadGrant, undefined);
+        });
+
+        test("uploads the passport, NIC and skill video of the new candidate, and gets only an acknowledgement", async () => {
+            const db = createFakeDb();
+            const bucket = createFakeBucket();
+            const { passportId, registrationUploadGrant } = await register(db, bucket);
+            const headers = grantHeader(registrationUploadGrant);
+            for (const [type, mimeType, buffer] of [["PASSPORT", "application/pdf", PDF], ["NIC", "image/png", PNG], ["SKILL_VIDEO", "video/mp4", MP4]]) {
+                const upload = await directUpload(DESK, passportId, db, bucket, { type, mimeType, buffer, headers });
+                assert.equal(upload.status, 200, type);
+                assert.deepEqual(upload.body, { passportId, documentType: type, stored: true }, "no candidate record in the answer");
+            }
+            assert.deepEqual(db.state.documents.map((d) => d.documentType).sort(), ["NIC", "PASSPORT", "SKILL_VIDEO"]);
+        });
+
+        test("uploads are refused without a valid grant for this candidate and this admin", async () => {
+            const db = createFakeDb();
+            const bucket = createFakeBucket();
+            const { passportId, registrationUploadGrant } = await register(db, bucket);
+            const other = await call(DESK, "POST", "/api/admin/candidates", { ...VALID_BODY, passportId: "N7654321", nic: "200012345678", whatsappNumber: "+94770000001" }, db, { bucket });
+            const authToken = jwt.sign({ adminId: ADMIN.adminId, role: DESK }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
+            for (const [label, headers, adminId] of [
+                ["no grant", {}, undefined],
+                ["grant for another candidate", grantHeader(other.body.registrationUploadGrant), undefined],
+                ["grant issued to another admin", grantHeader(registrationUploadGrant), "desk-2"],
+                ["tampered grant", grantHeader(`${registrationUploadGrant}x`), undefined],
+                ["a sign-in token as the grant", grantHeader(authToken), undefined],
+            ]) {
+                const upload = await directUpload(DESK, passportId, db, bucket, { type: "PASSPORT", headers, adminId });
+                assert.equal(upload.status, 403, label);
+            }
+            // Finalize alone (a staged upload from elsewhere) is refused the same way.
+            const finalize = await call(DESK, "POST", `/api/admin/candidates/${passportId}/documents/finalize`, { type: "PASSPORT", mimeType: "application/pdf", uploadId: "3f2b8c1e-0000-4000-8000-000000000001" }, db, { bucket });
+            assert.equal(finalize.status, 403);
+            assert.equal(db.state.documents.length, 0);
+        });
+
+        test("with a grant: only registration documents, no variants, and never a replacement", async () => {
+            const db = createFakeDb();
+            const bucket = createFakeBucket();
+            const { passportId, registrationUploadGrant } = await register(db, bucket);
+            const headers = grantHeader(registrationUploadGrant);
+            assert.equal((await directUpload(DESK, passportId, db, bucket, { type: "MEDICAL", headers })).status, 403);
+            assert.equal((await directUpload(DESK, passportId, db, bucket, { type: "POLICE_REPORT", variant: "ROMANIA", headers })).status, 403);
+            assert.equal((await directUpload(DESK, passportId, db, bucket, { type: "PASSPORT", headers })).status, 200);
+            const again = await directUpload(DESK, passportId, db, bucket, { type: "PASSPORT", headers, buffer: Buffer.concat([PDF, Buffer.from("v2")]) });
+            assert.equal(again.status, 403, "the passport is on record: no replacement");
+            assert.equal(db.state.documents.length, 1);
+        });
+
+        test("an already-registered passport ID, NIC or WhatsApp number gets one generic answer, nothing more", async () => {
+            // Stored in lowercase: the desk must not even learn the stored form of the ID.
+            const EXISTING = { passportId: "n1023757", uniqueId: "0001", firstName: "Anusha", otherName: "De Soysa", nic: "965404378V", address: "Negombo", whatsappNumber: "+94771234567" };
+            for (const body of [
+                VALID_BODY,                                                          // same passport ID
+                { ...VALID_BODY, passportId: "N7654321" },                           // same NIC
+                { ...VALID_BODY, passportId: "N7654321", nic: "200012345678" },      // same WhatsApp number
+            ]) {
+                const db = createFakeDb({ users: [{ ...EXISTING }] });
+                const res = await call(DESK, "POST", "/api/admin/candidates", body, db);
+                assert.equal(res.status, 409, JSON.stringify(body));
+                assert.deepEqual(res.body, { message: "Candidate already exists.", code: "CANDIDATE_EXISTS" });
+                assert.deepEqual(db.state.users, [EXISTING], "the existing record is unchanged");
+            }
+        });
+
+        test("ANALYST still gets the specific duplicate message and the stored passport ID", async () => {
+            const db = createFakeDb({ users: [{ passportId: "n1023757", uniqueId: "0001", firstName: "Anusha", otherName: "De Soysa" }] });
+            const res = await call("ANALYST", "POST", "/api/admin/candidates", VALID_BODY, db);
+            assert.equal(res.status, 409);
+            assert.deepEqual(res.body, { message: "A candidate with this passport ID is already registered.", code: "CANDIDATE_EXISTS", passportId: "n1023757" });
+        });
+
+        test("cannot list, read, edit, change stages, use call logs or remove documents; existence is not revealed", async () => {
+            const db = createFakeDb({ users: [{ passportId: "N1023757", uniqueId: "0001", firstName: "Anusha", otherName: "De Soysa" }] });
+            const { passportId: _p, comment: _c, ...details } = VALID_BODY;
+            for (const [method, path, body] of [
+                ["GET", "/api/admin/candidates"],
+                ["GET", "/api/admin/candidates?search=Anusha"],
+                ["GET", "/api/admin/candidates/N1023757"],
+                ["GET", "/api/admin/candidates/N9999999"],
+                ["PUT", "/api/admin/candidates/N1023757", details],
+                ["PUT", "/api/admin/candidates/N1023757/stages/TEST_DETAILS", { completed: true }],
+                ["GET", "/api/admin/candidates/N1023757/call-logs"],
+                ["POST", "/api/admin/candidates/N1023757/call-logs", { note: "x" }],
+                ["POST", "/api/admin/candidates/N1023757/documents/3f2b8c1e-0000-4000-8000-000000000001/remove", { reason: "x" }],
+                ["POST", "/api/admin/candidates/N1023757/documents/upload-target", { type: "PASSPORT", mimeType: "application/pdf", fileName: "a.pdf", fileSize: 10 }],
+                ["POST", "/api/admin/candidates/N9999999/documents/upload-target", { type: "PASSPORT", mimeType: "application/pdf", fileName: "a.pdf", fileSize: 10 }],
+            ]) {
+                assert.equal((await call(DESK, method, path, body, db)).status, 403, `${method} ${path}`);
+            }
+            assert.equal(db.state.users[0].address, undefined, "not edited");
+        });
+
+        test("ANALYST, MANAGER and ADMIN keep list, read, edit and uploads without a grant", async () => {
+            for (const role of ["ANALYST", "MANAGER", "ADMIN"]) {
+                const db = createFakeDb({ users: [{ passportId: "N1023757", uniqueId: "0001", firstName: "Anusha", otherName: "De Soysa" }] });
+                const bucket = createFakeBucket();
+                const { passportId: _p, comment: _c, ...details } = VALID_BODY;
+                assert.equal((await call(role, "GET", "/api/admin/candidates", undefined, db)).status, 200, role);
+                assert.equal((await call(role, "GET", "/api/admin/candidates/N1023757", undefined, db)).status, 200, role);
+                assert.equal((await call(role, "PUT", "/api/admin/candidates/N1023757", details, db)).status, 200, role);
+                const upload = await directUpload(role, "N1023757", db, bucket, { type: "MEDICAL" });
+                assert.equal(upload.status, 200, role);
+                assert.ok(upload.body.candidate, `${role} still gets the candidate record`);
+            }
+        });
+    });
 
     test("an UNKNOWN role cannot list candidates or register, edit stages or add call notes", async () => {
         assert.equal((await call("UNKNOWN", "GET", "/api/admin/candidates")).status, 403);

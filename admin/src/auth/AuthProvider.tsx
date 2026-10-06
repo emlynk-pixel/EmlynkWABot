@@ -11,13 +11,26 @@ type AuthState =
 type AuthContextValue = AuthState & {
     // The session token for API calls (admin/src/api); null when signed out.
     token: string | null;
-    signIn: (email: string, password: string) => Promise<void>;
+    // Resolves to the signed-in admin, so the caller can route by role.
+    signIn: (email: string, password: string) => Promise<Admin>;
     signOut: () => Promise<void>;
 };
 
 // Helpers for checking the current admin's role-based access.
 export function canReview(admin: Admin | null | undefined): boolean {
     return admin?.role === "ADMIN" || admin?.role === "MANAGER" || admin?.role === "ANALYST";
+}
+
+// The registration desk only registers new candidates (see navigation.ts and
+// App.tsx); it has no review, candidate-pool or admin access.
+export function isRegistrationDesk(admin: Admin | null | undefined): boolean {
+    return admin?.role === "REGISTRATION_DESK";
+}
+
+// Who may open Add candidate: everyone who can review, plus the desk. Kept
+// separate from canReview so the desk never gains review permissions.
+export function canRegisterCandidate(admin: Admin | null | undefined): boolean {
+    return canReview(admin) || isRegistrationDesk(admin);
 }
 
 export function isManagerOrAdmin(admin: Admin | null | undefined): boolean {
@@ -95,6 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveToken(newToken);
         setToken(newToken);
         setState({ status: "authenticated", admin });
+        return admin;
     }, []);
 
     const value = useMemo<AuthContextValue>(

@@ -1,15 +1,15 @@
 import { useLocation, NavLink } from "react-router";
-import { useAuth } from "../auth/AuthProvider";
+import { isRegistrationDesk, useAuth } from "../auth/AuthProvider";
 import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
 import { useTheme } from "../theme/theme";
-import { NAV_ITEMS } from "./navigation";
+import { NAV_ITEMS, REGISTRATION_DESK_NAV_ITEMS } from "./navigation";
 import { NotificationBell } from "../components/NotificationBell";
 
 const timeFormat = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Colombo", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
-function currentSectionLabel(pathname: string): string {
-    const match = [...NAV_ITEMS]
+function currentSectionLabel(pathname: string, desk: boolean): string {
+    const match = [...(desk ? REGISTRATION_DESK_NAV_ITEMS : NAV_ITEMS)]
         .sort((a, b) => b.to.length - a.to.length)
         .find((item) => (item.end ? pathname === item.to : pathname.startsWith(item.to)));
     return match?.label ?? "Admin";
@@ -42,7 +42,7 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
                     <li className="hidden sm:block">Admin</li>
                     <li aria-hidden="true" className="hidden sm:block">/</li>
                     <li className="truncate font-medium text-ink" aria-current="page">
-                        {currentSectionLabel(pathname)}
+                        {currentSectionLabel(pathname, isRegistrationDesk(admin))}
                     </li>
                 </ol>
             </nav>
@@ -71,12 +71,14 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
                     <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} className="size-4" />
                     <span className="sr-only">Dark mode</span>
                 </button>
-                {admin && <NotificationBell />}
+                {/* Review-queue notifications: not for the registration desk. */}
+                {admin && !isRegistrationDesk(admin) && <NotificationBell />}
             </div>
 
             {admin && (
                 <div className="flex items-center gap-3 border-l border-border pl-3">
-                    <NavLink
+                    {/* The desk's only entry is Add Candidate in the sidebar. */}
+                    {!isRegistrationDesk(admin) && <NavLink
                         to="/candidates/new"
                         className={({ isActive }) =>
                             `flex h-9 items-center gap-1.5 rounded-md border border-border-strong px-2.5 text-label-md ${
@@ -87,7 +89,7 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
                     >
                         <Icon name="person_add" className="size-4" />
                         <span className="hidden lg:inline">Register Candidate</span>
-                    </NavLink>
+                    </NavLink>}
                     <div className="hidden text-right sm:block">
                         <p className="text-label-md text-ink" data-testid="admin-name">{admin.name}</p>
                         <p className="text-label-sm text-ink-subtle">{admin.role}</p>

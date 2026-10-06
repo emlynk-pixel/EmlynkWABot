@@ -25,6 +25,8 @@ type RequestOptions = {
     body?: unknown;
     signal?: AbortSignal;
     token?: string;
+    // Extra request headers (e.g. the registration upload grant).
+    headers?: Record<string, string>;
 };
 
 const FALLBACK_MESSAGE = "Something went wrong. Please try again.";
@@ -42,8 +44,8 @@ async function readErrorData(response: Response): Promise<ErrorData> {
     }
 }
 
-export async function apiRequest<T>(path: string, { method = "GET", body, signal, token }: RequestOptions = {}): Promise<T> {
-    const headers: Record<string, string> = { Accept: "application/json" };
+export async function apiRequest<T>(path: string, { method = "GET", body, signal, token, headers: extraHeaders }: RequestOptions = {}): Promise<T> {
+    const headers: Record<string, string> = { ...extraHeaders, Accept: "application/json" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
 
     const explicitToken = token && token !== "session" && token !== "cookie" ? token : null;

@@ -1,7 +1,7 @@
 import { NavLink } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
 import { Icon } from "../components/Icon";
-import { NAV_ITEMS } from "./navigation";
+import { navItemsFor } from "./navigation";
 
 type SidebarProps = {
     collapsed: boolean;
@@ -15,9 +15,10 @@ type SidebarProps = {
 export function Sidebar({ collapsed, mobileOpen, onToggleCollapsed, onNavigate }: SidebarProps) {
     const railOnly = collapsed && !mobileOpen;
     const { admin } = useAuth();
-    // AUDIT-003/AUDIT-004: hide ADMIN-only entries (e.g. Invitations) from
-    // VIEW_ONLY or any non-ADMIN role. Backend remains the authoritative gate.
-    const visibleItems = NAV_ITEMS.filter((item) => !item.adminOnly || admin?.role === "ADMIN");
+    // AUDIT-003/AUDIT-004: ADMIN-only entries (e.g. Invitations) only for
+    // ADMIN; the registration desk sees Register Candidate only. Backend
+    // remains the authoritative gate.
+    const visibleItems = navItemsFor(admin?.role);
 
     return (
         <aside

@@ -845,7 +845,7 @@ describe("Candidate registration", () => {
     test("a viewer sees no registration form", async () => {
         signedInBackend({ "GET /auth/me": { status: 200, body: { admin: VIEWER } } });
         renderApp("/candidates/new");
-        expect(await screen.findByText("Candidate registration needs an admin or analyst account.")).toBeInTheDocument();
+        expect(await screen.findByText("Candidate registration needs an admin, analyst or registration desk account.")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Register candidate" })).not.toBeInTheDocument();
     });
 });

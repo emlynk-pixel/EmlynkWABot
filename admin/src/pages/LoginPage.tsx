@@ -1,7 +1,9 @@
 import { useState, useEffect, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate, type Location } from "react-router";
 import { ApiError } from "../api/client";
-import { useAuth } from "../auth/AuthProvider";
+import type { Admin } from "../api/auth";
+import { isRegistrationDesk, useAuth } from "../auth/AuthProvider";
+import { REGISTRATION_DESK_HOME } from "../layout/navigation";
 import { Icon } from "../components/Icon";
 import { FormField, fieldA11y } from "../components/Form";
 import { inputClass } from "../components/ui";
@@ -13,7 +15,13 @@ function validateLogin(email: string, password: string): LoginErrors {
     return { email: emailError(email), password: password ? null : "Enter your password." };
 }
 
-// Only returns within the admin app are followed after sign-in.
+// Only returns within the admin app are followed after sign-in. The
+// registration desk always goes straight to Add candidate, its only page
+// (never through the dashboard).
+function landingPath(admin: Admin | null, state: unknown): string {
+    return isRegistrationDesk(admin) ? REGISTRATION_DESK_HOME : returnPath(state);
+}
+
 function returnPath(state: unknown): string {
     const from = (state as { from?: Location } | null)?.from;
     const path = from?.pathname;
@@ -27,7 +35,7 @@ const MAX_EMAIL_LENGTH = 254;
 const MAX_PASSWORD_LENGTH = 128;
 
 export function LoginPage() {
-    const { status, signIn } = useAuth();
+    const { status, admin, signIn } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
     const [email, setEmail] = useState("");
@@ -58,7 +66,7 @@ export function LoginPage() {
     }, [resetTime]);
 
     if (status === "authenticated") {
-        return <Navigate to={returnPath(location.state)} replace />;
+        return <Navigate to={landingPath(admin, location.state)} replace />;
     }
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -75,8 +83,8 @@ export function LoginPage() {
 
         setSubmitting(true);
         try {
-            await signIn(email.trim(), password);
-            navigate(returnPath(location.state), { replace: true });
+            const signedIn = await signIn(email.trim(), password);
+            navigate(landingPath(signedIn, location.state), { replace: true });
         } catch (caught) {
             setError(caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
             if (caught instanceof ApiError && caught.resetTime) {

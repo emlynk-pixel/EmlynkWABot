@@ -19,3 +19,16 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/invitations", label: "Invite Admin", icon: "person_add", adminOnly: true },
     { to: "/roles", label: "Change Roles", icon: "manage_accounts", adminOnly: true },
 ];
+
+// The registration desk's only page: it registers new candidates and
+// nothing else (App.tsx sends it here from any other route).
+export const REGISTRATION_DESK_HOME = "/candidates/new";
+export const REGISTRATION_DESK_NAV_ITEMS: NavItem[] = [
+    { to: REGISTRATION_DESK_HOME, label: "Add Candidate", icon: "person_add", end: true },
+];
+
+// The sidebar entries for a role. The backend remains the authoritative gate.
+export function navItemsFor(role: string | undefined): NavItem[] {
+    if (role === "REGISTRATION_DESK") return REGISTRATION_DESK_NAV_ITEMS;
+    return NAV_ITEMS.filter((item) => !item.adminOnly || role === "ADMIN");
+}

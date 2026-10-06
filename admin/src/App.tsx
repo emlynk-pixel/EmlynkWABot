@@ -1,6 +1,8 @@
-import { useEffect } from "react";
-import { Outlet, Route, Routes } from "react-router";
+import { useEffect, type ReactNode } from "react";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router";
+import { isRegistrationDesk, useAuth } from "./auth/AuthProvider";
 import { RequireAuth } from "./auth/RequireAuth";
+import { REGISTRATION_DESK_HOME } from "./layout/navigation";
 import { AdminLayout } from "./layout/AdminLayout";
 import { CandidateDeploymentPage } from "./pages/CandidateDeploymentPage";
 import { CandidateRegistrationPage } from "./pages/CandidateRegistrationPage";
@@ -37,6 +39,18 @@ function ClassicArea() {
     );
 }
 
+// The registration desk has one page, Add candidate: every other route (the
+// landing page after sign-in included) sends it there. The backend refuses
+// the desk everything else anyway.
+function RegistrationDeskGate({ children }: { children: ReactNode }) {
+    const { admin } = useAuth();
+    const { pathname } = useLocation();
+    if (isRegistrationDesk(admin) && pathname !== REGISTRATION_DESK_HOME) {
+        return <Navigate to={REGISTRATION_DESK_HOME} replace />;
+    }
+    return children;
+}
+
 // Routes are relative to the /admin base (see main.tsx). Overview,
 // Documents, Review Queue, Review Detail, Client Details and Police Workflow
 // follow their Stitch screens; Clients, Missing Documents and Daily Report
@@ -51,7 +65,9 @@ export function AppRoutes() {
             <Route
                 element={
                     <RequireAuth>
-                        <AdminLayout />
+                        <RegistrationDeskGate>
+                            <AdminLayout />
+                        </RegistrationDeskGate>
                     </RequireAuth>
                 }
             >

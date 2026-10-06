@@ -51,6 +51,12 @@ import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 import { deleteTemporaryDocument } from "../services/temporaryDataService.js";
 import { listAdmins, updateAdminRole, AdminAccountError } from "../services/adminAccountService.js";
 import {
+    REGISTRATION_UPLOAD_HEADER,
+    REGISTRATION_UPLOAD_TYPES,
+    isValidRegistrationUploadGrant,
+    issueRegistrationUploadGrant,
+} from "../services/registrationUploadGrant.js";
+import {
     addCallLog,
     CandidateError,
     createCandidate,
@@ -89,7 +95,9 @@ function contentDisposition(fileName) {
 const { ADMIN, MANAGER, ANALYST, REGISTRATION_DESK } = ADMIN_ROLES;
 // The set of roles allowed for each endpoint tier.
 const ALL_ACTIVE = [ADMIN, MANAGER, ANALYST];                   // overview, reports, etc
-const REGISTRATION_UP = [ADMIN, MANAGER, ANALYST, REGISTRATION_DESK]; // candidate basic routes
+// Registering a new candidate (and, with a registration upload grant, its
+// registration documents). REGISTRATION_DESK has nothing else.
+const REGISTRATION_UP = [ADMIN, MANAGER, ANALYST, REGISTRATION_DESK];
 const ANALYSTS_UP = [ADMIN, MANAGER, ANALYST];                  // analyst or above
 const MANAGERS_UP = [ADMIN, MANAGER];                           // manager or above
 const ADMINS_ONLY = [ADMIN];                                    // administrators only
@@ -341,8 +349,11 @@ export function createAdminRouter({
     });
 
     // ---------------------------------------------------------------- candidates (Admin > Candidates)
-    // Reads for every active admin; registration, details, stages, uploads
-    // and call notes for ANALYST and above. Audited where documents change.
+    // ANALYST and above: reads, details, stages, uploads and call notes.
+    // REGISTRATION_DESK: registering a new candidate (POST /candidates) and
+    // that candidate's registration documents, with the grant it returns;
+    // never a list, a read or an edit of a candidate. Audited where
+    // documents change.
 
     const invalidCandidateId = (res) => res.status(400).json({
         message: "Invalid passport ID",
@@ -368,7 +379,27 @@ export function createAdminRouter({
         return passportId;
     };
 
-    router.get("/candidates", requireRole(REGISTRATION_UP), async (req, res) => {
+    // REGISTRATION_DESK uploads only while registering: with the grant POST
+    // /candidates gave it for this candidate, only a registration document,
+    // and only into an empty slot (never a replacement or a variant). Checked
+    // before the candidate is looked up, so a refusal says nothing about
+    // whether a passport ID exists. Other roles are unaffected.
+    // The grant first, before the body is even read.
+    const deskHasNoGrant = (req) => req.admin.role === REGISTRATION_DESK
+        && !isValidRegistrationUploadGrant(req.get(REGISTRATION_UPLOAD_HEADER), { adminId: req.admin.adminId, passportId: req.params.passportId });
+    // Then the document: a registration type, no variant, an empty slot.
+    const refuseDeskUpload = async (req, client, values) => {
+        if (req.admin.role !== REGISTRATION_DESK) return false;
+        if (!REGISTRATION_UPLOAD_TYPES.includes(values.documentType) || values.variant) return true;
+        const stored = await client.document.findFirst({
+            where: { passportId: req.params.passportId, documentType: values.documentType },
+            select: { documentId: true },
+        });
+        return Boolean(stored);
+    };
+    const DESK_UPLOAD_REFUSED = { message: "Insufficient permissions" };
+
+    router.get("/candidates", requireRole(ANALYSTS_UP), async (req, res) => {
         const parsed = parseCandidateListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -383,10 +414,27 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const client = await resolveDb(db);
+        if (req.admin.role === REGISTRATION_DESK) {
+            // The desk learns only that the candidate exists: not which field
+            // matched (passport ID, NIC or WhatsApp number), nor the stored ID.
+            try {
+                const created = await createCandidate({ db: client, values: parsed.values });
+                return res.status(201).json({
+                    ...created,
+                    registrationUploadGrant: issueRegistrationUploadGrant({ adminId: req.admin.adminId, passportId: created.passportId }),
+                });
+            } catch (error) {
+                if (error instanceof CandidateError && error.status === 409) {
+                    return res.status(409).json({ message: "Candidate already exists.", code: "CANDIDATE_EXISTS" });
+                }
+                if (error instanceof CandidateError) return res.status(error.status).json({ message: error.message, code: error.code });
+                throw error;
+            }
+        }
         return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values: parsed.values })));
     });
 
-    router.get("/candidates/:passportId", requireRole(REGISTRATION_UP), async (req, res) => {
+    router.get("/candidates/:passportId", requireRole(ANALYSTS_UP), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         // Also the registration lookup: the response carries the stored passport ID.
@@ -396,7 +444,7 @@ export function createAdminRouter({
         return res.json(candidate);
     });
 
-    router.put("/candidates/:passportId", requireRole(REGISTRATION_UP), async (req, res) => {
+    router.put("/candidates/:passportId", requireRole(ANALYSTS_UP), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseCandidateBody(req.body, { creating: false });
         if (parsed.errors) {
@@ -425,13 +473,15 @@ export function createAdminRouter({
     // to this API (candidateService.js, "direct uploads"). Both requests are
     // small JSON bodies (express.json in createApp.js); no route here parses
     // a file body.
-    router.post("/candidates/:passportId/documents/upload-target", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.post("/candidates/:passportId/documents/upload-target", requireRole(REGISTRATION_UP), async (req, res) => {
+        if (deskHasNoGrant(req)) return res.status(403).json(DESK_UPLOAD_REFUSED);
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseUploadTargetBody(req.body);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        if (await refuseDeskUpload(req, client, parsed.values)) return res.status(403).json(DESK_UPLOAD_REFUSED);
         return candidateAction(res, async () => res.json(await createUploadTarget({
             db: client,
             bucket: storage,
@@ -442,20 +492,29 @@ export function createAdminRouter({
         })));
     });
 
-    router.post("/candidates/:passportId/documents/finalize", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.post("/candidates/:passportId/documents/finalize", requireRole(REGISTRATION_UP), async (req, res) => {
+        if (deskHasNoGrant(req)) return res.status(403).json(DESK_UPLOAD_REFUSED);
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseFinalizeUploadBody(req.body);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
-        return candidateAction(res, async () => res.json(await finalizeUpload({
-            db: client,
-            bucket: storage,
-            admin: req.admin,
-            passportId: await storedCandidateId(client, req.params.passportId),
-            ...parsed.values,
-        })));
+        if (await refuseDeskUpload(req, client, parsed.values)) return res.status(403).json(DESK_UPLOAD_REFUSED);
+        return candidateAction(res, async () => {
+            const details = await finalizeUpload({
+                db: client,
+                bucket: storage,
+                admin: req.admin,
+                passportId: await storedCandidateId(client, req.params.passportId),
+                ...parsed.values,
+            });
+            // The desk gets an acknowledgement, not the candidate's record.
+            if (req.admin.role === REGISTRATION_DESK) {
+                return res.json({ passportId: req.params.passportId, documentType: parsed.values.documentType, stored: true });
+            }
+            return res.json(details);
+        });
     });
 
     // Removes the candidate's current document of a type: record and file,

@@ -169,8 +169,25 @@ export function getCandidate(token: string, passportId: string, signal?: AbortSi
     return apiRequest<CandidateDetails>(base(passportId), { token, signal });
 }
 
-export function createCandidate(token: string, body: CandidateRegistration): Promise<{ passportId: string; uniqueId: string }> {
+// registrationUploadGrant: only for the registration desk, which may upload
+// this new candidate's registration documents with it and nothing else.
+export function createCandidate(token: string, body: CandidateRegistration): Promise<{ passportId: string; uniqueId: string; registrationUploadGrant?: string }> {
     return apiRequest(`/api/admin/candidates`, { method: "POST", token, body });
+}
+
+// The registration desk's upload of a document for the candidate it just
+// registered (PASSPORT, NIC or SKILL_VIDEO), with the grant from
+// createCandidate. The answer is an acknowledgement, not the candidate.
+export async function uploadRegistrationDocument(token: string, passportId: string, documentType: CandidateDocumentType, file: File, grant: string): Promise<void> {
+    const headers = { "X-Registration-Upload": grant };
+    const described = { type: documentType, mimeType: file.type, fileName: file.name };
+    const target = await apiRequest<{ uploadId: string; uploadUrl: string }>(`${base(passportId)}/documents/upload-target`, {
+        method: "POST", token, headers, body: { ...described, fileSize: file.size },
+    });
+    await uploadToSignedUrl(target.uploadUrl, file);
+    await apiRequest(`${base(passportId)}/documents/finalize`, {
+        method: "POST", token, headers, body: { ...described, uploadId: target.uploadId },
+    });
 }
 
 export function updateCandidate(token: string, passportId: string, body: CandidateDetailsInput): Promise<CandidateDetails> {
