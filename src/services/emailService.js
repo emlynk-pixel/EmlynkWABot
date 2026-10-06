@@ -9,6 +9,7 @@
 // or external dependencies, providing a reliable local test and dev harness.
 
 import nodemailer from "nodemailer";
+import { isLoopbackUrl } from "./ocrClient.js";
 
 const sentEmails = [];
 
@@ -30,18 +31,60 @@ export function getSmtpTransporter(env = process.env) {
     return null;
 }
 
+// The admin app is always served under this path: admin/vite.config.ts
+// (base), admin/src/main.tsx (router basename) and vercel.json (rewrites).
+export const ADMIN_BASE_PATH = "/admin";
+
+// Development fallback: the Vite admin dev server.
+const DEV_ADMIN_BASE_URL = "http://localhost:5173/admin";
+
+// A missing or unusable base URL for emailed admin links. The message names
+// the variable, never its value.
+export class AdminLinkConfigError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = "AdminLinkConfigError";
+    }
+}
+
+// A deployment (Vercel production/preview, or NODE_ENV=production), where a
+// localhost link can't be opened by the recipient.
+function isDeployed(env) {
+    return env.NODE_ENV === "production" || (env.VERCEL === "1" && env.VERCEL_ENV !== "development");
+}
+
 /**
- * Returns the configured base URL for the admin frontend setup link.
+ * Returns the base URL of the admin frontend for emailed links, ending in
+ * /admin exactly once. ADMIN_SETUP_URL_BASE wins over APP_BASE_URL; either
+ * may be the site root or already end in /admin, with or without a trailing
+ * slash. On a deployment a missing or localhost value throws
+ * AdminLinkConfigError instead of producing a link nobody can open.
  */
 export function getAdminBaseUrl(env = process.env) {
-    if (env.ADMIN_SETUP_URL_BASE) {
-        return env.ADMIN_SETUP_URL_BASE.replace(/\/+$/, "");
+    const name = ["ADMIN_SETUP_URL_BASE", "APP_BASE_URL"].find((key) => typeof env[key] === "string" && env[key].trim() !== "");
+
+    if (!name) {
+        if (isDeployed(env)) {
+            throw new AdminLinkConfigError("ADMIN_SETUP_URL_BASE (or APP_BASE_URL) must be set for this deployment");
+        }
+        return DEV_ADMIN_BASE_URL;
     }
-    if (env.APP_BASE_URL) {
-        return `${env.APP_BASE_URL.replace(/\/+$/, "")}/admin`;
+
+    let url;
+    try {
+        url = new URL(env[name].trim());
+    } catch {
+        throw new AdminLinkConfigError(`${name} is not a valid URL`);
     }
-    // Default development fallback pointing to Vite admin dev server or local backend
-    return "http://localhost:5173/admin";
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+        throw new AdminLinkConfigError(`${name} must be an http(s) URL`);
+    }
+    if (isDeployed(env) && isLoopbackUrl(url.href)) {
+        throw new AdminLinkConfigError(`${name} points to localhost; set it to this deployment's public URL`);
+    }
+
+    const path = url.pathname.replace(/\/+$/, "").replace(/\/admin$/i, "");
+    return `${url.origin}${path}${ADMIN_BASE_PATH}`;
 }
 
 /**

@@ -535,3 +535,86 @@ describe("Admin Invitation System (Phase 12 Checkpoint 2)", () => {
     });
 });
 
+// Runs fn with these environment variables set (undefined = unset), then
+// restores them. The test server reads process.env per request.
+async function withEnv(vars, fn) {
+    const saved = Object.fromEntries(Object.keys(vars).map((key) => [key, process.env[key]]));
+    const apply = (values) => {
+        for (const [key, value] of Object.entries(values)) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+        }
+    };
+    apply(vars);
+    try {
+        return await fn();
+    } finally {
+        apply(saved);
+    }
+}
+
+describe("Invitation link on a deployment", () => {
+    function invite(email) {
+        const adminToken = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
+        return fetch(`${baseUrl}/api/admin/invitations`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+            body: JSON.stringify({ name: "Deployed Invitee", email, role: "ANALYST" }),
+        });
+    }
+
+    test("emailed link opens /admin/setup-password on the public domain, and the invitee can activate and log in", async () => {
+        await withEnv({ VERCEL: "1", VERCEL_ENV: "preview", ADMIN_SETUP_URL_BASE: "https://app.example.invalid/", APP_BASE_URL: "http://localhost:3000" }, async () => {
+            assert.equal((await invite("deployed@example.invalid")).status, 201);
+        });
+
+        const link = new URL(getLastSentEmail().setupUrl);
+        assert.equal(link.origin, "https://app.example.invalid");
+        // The admin router's basename is /admin and the page route /setup-password.
+        assert.equal(link.pathname, "/admin/setup-password");
+        const rawToken = link.searchParams.get("token");
+        assert.match(rawToken, /^[0-9a-f]{64}$/);
+
+        // What the setup page does with the token from the link.
+        assert.equal((await fetch(`${baseUrl}/auth/invitation?token=${encodeURIComponent(rawToken)}`)).status, 200);
+        const password = "Deployed-Invitee-Password-2026";
+        const setupRes = await fetch(`${baseUrl}/auth/setup-password`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: rawToken, password }),
+        });
+        assert.equal(setupRes.status, 200);
+
+        const loginRes = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: "deployed@example.invalid", password }),
+        });
+        assert.equal(loginRes.status, 200);
+        const me = await fetch(`${baseUrl}/auth/me`, { headers: { Authorization: `Bearer ${(await loginRes.json()).token}` } });
+        assert.equal(me.status, 200);
+        assert.equal((await me.json()).admin.role, "ANALYST");
+    });
+
+    test("a deployment with only a localhost base refuses to invite and stores nothing", async () => {
+        const res = await withEnv({ VERCEL: "1", VERCEL_ENV: "preview", ADMIN_SETUP_URL_BASE: undefined, APP_BASE_URL: "http://localhost:3000" }, () =>
+            invite("misconfigured@example.invalid")
+        );
+        assert.equal(res.status, 500);
+        const data = await res.json();
+        assert.equal(data.code, "LINK_BASE_NOT_CONFIGURED");
+        assert.match(data.message, /ADMIN_SETUP_URL_BASE/);
+        assert.equal(getLastSentEmail(), null);
+        assert.equal(db.invitationRows.find((r) => r.email === "misconfigured@example.invalid"), undefined);
+    });
+
+    test("the existing admin can still log in", async () => {
+        const loginRes = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: "admin@example.invalid", password: ADMIN_PASSWORD }),
+        });
+        assert.equal(loginRes.status, 200);
+    });
+});
+

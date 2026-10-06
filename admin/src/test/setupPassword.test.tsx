@@ -1,6 +1,9 @@
-import { screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { describe, expect, test } from "vitest";
+import { AppRoutes } from "../App";
+import { AuthProvider } from "../auth/AuthProvider";
 import { renderApp, stubBackend } from "./helpers";
 
 const INVITATION = {
@@ -78,5 +81,25 @@ describe("Setup Password Page", () => {
         await user.click(screen.getByRole("button", { name: /Activate Account/i }));
 
         expect(await screen.findByText("Passwords do not match.")).toBeInTheDocument();
+    });
+
+    // The emailed link opened in a fresh tab: the full /admin/... path through
+    // the same basename as main.tsx, with nobody signed in.
+    test("the emailed /admin/setup-password link opens the setup page for a signed-out visitor", async () => {
+        const { calls } = stubBackend({
+            "GET /auth/me": { status: 401, body: { message: "Authentication Token is required!" } },
+            "GET /auth/invitation": { status: 200, body: { message: "Invitation valid", invitation: INVITATION } },
+        });
+
+        render(
+            <MemoryRouter basename="/admin" initialEntries={[`/admin/setup-password?token=${"f".repeat(64)}`]}>
+                <AuthProvider>
+                    <AppRoutes />
+                </AuthProvider>
+            </MemoryRouter>
+        );
+
+        expect(await screen.findByRole("heading", { name: "Set Your Password" })).toBeInTheDocument();
+        expect(calls.some((c) => c.path === `/auth/invitation?token=${"f".repeat(64)}`)).toBe(true);
     });
 });

@@ -114,6 +114,17 @@ export async function createInvitation({
         throw new InvitationError("An active admin with this email already exists", 409, "DUPLICATE_ACTIVE_ADMIN");
     }
 
+    // Check the setup-link base before anything is stored, so a misconfigured
+    // deployment fails clearly instead of emailing a link nobody can open.
+    if (typeof emailService.getAdminBaseUrl === "function") {
+        try {
+            emailService.getAdminBaseUrl();
+        } catch (error) {
+            console.error("Invitation link configuration error:", { errorType: error?.name ?? "Error", message: error?.message });
+            throw new InvitationError("Invitation links are not configured on this server. Set ADMIN_SETUP_URL_BASE and redeploy.", 500, "LINK_BASE_NOT_CONFIGURED");
+        }
+    }
+
     const rawToken = generateInvitationToken();
     const tokenHash = hashInvitationToken(rawToken);
     const expiresAt = new Date(Date.now() + INVITATION_EXPIRATION_HOURS * 60 * 60 * 1000);
