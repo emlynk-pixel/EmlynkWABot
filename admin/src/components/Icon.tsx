@@ -34,17 +34,23 @@ import visibility from "@material-symbols/svg-400/outlined/visibility.svg?raw";
 import visibilityOff from "@material-symbols/svg-400/outlined/visibility_off.svg?raw";
 import call from "@material-symbols/svg-400/outlined/call.svg?raw";
 import check from "@material-symbols/svg-400/outlined/check.svg?raw";
+import close from "@material-symbols/svg-400/outlined/close.svg?raw";
 import pictureAsPdf from "@material-symbols/svg-400/outlined/picture_as_pdf.svg?raw";
 import upload from "@material-symbols/svg-400/outlined/upload.svg?raw";
 import manageAccounts from "@material-symbols/svg-400/outlined/manage_accounts.svg?raw";
+<<<<<<< HEAD
 import notifications from "@material-symbols/svg-400/outlined/notifications.svg?raw";
 import notificationsActive from "@material-symbols/svg-400/outlined/notifications_active.svg?raw";
+=======
+import settings from "@material-symbols/svg-400/outlined/settings.svg?raw";
+>>>>>>> dev
 
 const ICONS = {
     assignment_late: assignmentLate,
     call,
     cancel,
     check,
+    close,
     picture_as_pdf: pictureAsPdf,
     upload,
     check_circle: checkCircle,
@@ -74,6 +80,7 @@ const ICONS = {
     mail,
     menu,
     progress_activity: progressActivity,
+    settings,
     visibility,
     visibility_off: visibilityOff,
     notifications,
