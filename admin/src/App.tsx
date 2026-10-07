@@ -22,6 +22,7 @@ import { PoliceWorkflowPage } from "./pages/PoliceWorkflowPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { SetupPasswordPage } from "./pages/SetupPasswordPage";
 
 // The Candidates screens keep their original look; .ui-classic (index.css)
@@ -89,6 +90,7 @@ export function AppRoutes() {
                 <Route path="reports/daily" element={<DailyReportPage />} />
                 <Route path="invitations" element={<InvitationsPage />} />
                 <Route path="roles" element={<AdminRolesPage />} />
+                <Route path="settings" element={<SettingsPage />} />
                 <Route path="*" element={<NotFoundPage />} />
             </Route>
         </Routes>

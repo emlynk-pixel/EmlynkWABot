@@ -26,6 +26,16 @@ export const WORKER_REQUIRED_ENV_VARS = Object.freeze([
     "OCR_SERVICE_URL",
 ]);
 
+// The Google Sheet sync worker (src/sheetSyncWorker.js, Cloud Run
+// emlynk-sheet-sync-worker): the database and the Sheet target only. No
+// Supabase storage, WhatsApp, OCR or JWT secret; no Google key either (keyless
+// ADC: GOOGLE_APPLICATION_CREDENTIALS must NOT be set, see config/sheetSync.js).
+export const SHEET_SYNC_WORKER_REQUIRED_ENV_VARS = Object.freeze([
+    "DATABASE_URL",
+    "SHEET_SPREADSHEET_ID",
+    "SHEET_TAB_NAME",
+]);
+
 import { parseRequiredDocumentTypes } from "./requiredDocuments.js";
 import { isLoopbackUrl } from "../services/ocrClient.js";
 

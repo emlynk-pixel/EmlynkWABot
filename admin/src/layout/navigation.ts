@@ -1,8 +1,9 @@
 import type { IconName } from "../components/Icon";
 
 // Sidebar entries, in the order of the Stitch design, plus Missing Documents
-// and Daily Report (Phase 10 scope, same design language). There is no
-// Settings page.
+// and Daily Report (Phase 10 scope, same design language), and Settings
+// (ADMIN only) last. Settings holds sections such as Google Sheet Sync; new
+// system settings become sections of that page, never new sidebar entries.
 export type NavItem = { to: string; label: string; icon: IconName; end?: boolean; adminOnly?: boolean };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -18,6 +19,7 @@ export const NAV_ITEMS: NavItem[] = [
     // adminOnly: true hides this entry from VIEW_ONLY-role users.
     { to: "/invitations", label: "Invite Admin", icon: "person_add", adminOnly: true },
     { to: "/roles", label: "Change Roles", icon: "manage_accounts", adminOnly: true },
+    { to: "/settings", label: "Settings", icon: "settings", adminOnly: true },
 ];
 
 // The registration desk's only page: it registers new candidates and

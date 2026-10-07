@@ -47,6 +47,7 @@ import {
 } from "../services/adminCorrectionService.js";
 import { getDailyReport, getMonthlyOverview, parseDailyReportQuery, parseMonthlyOverviewQuery } from "../services/adminReportService.js";
 import { createInvitationRouter } from "./adminInvitations.js";
+import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 import { deleteTemporaryDocument } from "../services/temporaryDataService.js";
 import { listAdmins, updateAdminRole, AdminAccountError } from "../services/adminAccountService.js";
@@ -581,6 +582,10 @@ export function createAdminRouter({
             return res.status(500).json({ message: "Internal server error" });
         }
     });
+
+    // ---------------------------------------------------------------- settings: Google Sheet Sync (ADMIN only)
+    // Reads PostgreSQL and records run requests; never calls Google.
+    router.use("/settings/sheet-sync", requireRole(ADMINS_ONLY), createSheetSyncSettingsRouter({ db }));
 
     // Anything else under /api/admin (only reached by an authenticated admin).
     router.use((req, res) => res.status(404).json({ message: "Not found" }));

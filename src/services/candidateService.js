@@ -339,7 +339,9 @@ export const AUTOMATIC_STAGES = Object.freeze(["CANDIDATE_DETAILS", "DOCUMENT_SU
 
 // documents: rows with documentType and verificationStatus. Returns
 // { CANDIDATE_DETAILS: [missing…], DOCUMENT_SUBMISSION: [missing…] }.
-function automaticStageMissing(user, documents) {
+// Exported (with stageList and currentOf) for the Google Sheet mirror
+// (candidateSheetMapper.js), so the Sheet shows exactly what this page shows.
+export function automaticStageMissing(user, documents) {
     const has = (type) => documents.some((d) => d.documentType === type && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
     const hasVariant = (type, variant) => documents.some((d) => d.documentType === type && d.documentVariant === variant && d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED);
     const details = [];
@@ -366,7 +368,7 @@ function automaticStageMissing(user, documents) {
 
 // Every stage in order: saved notes, and completion (automatic stages from
 // their data, with what is still missing; the others as an admin saved it).
-function stageList(rows, missingByStage) {
+export function stageList(rows, missingByStage) {
     const byStage = new Map(rows.map((row) => [row.stage, row]));
     return CANDIDATE_STAGES.map((stage) => {
         const row = byStage.get(stage);
@@ -381,7 +383,7 @@ function stageList(rows, missingByStage) {
 
 // Of some documents, the current one: the newest VERIFIED, otherwise the
 // newest waiting for review. SUPERSEDED never counts.
-function currentOf(documents) {
+export function currentOf(documents) {
     const live = documents
         .filter((d) => d.verificationStatus !== VERIFICATION_STATUS.SUPERSEDED)
         .sort((a, b) => b.receivedDate - a.receivedDate || b.createdDate - a.createdDate);

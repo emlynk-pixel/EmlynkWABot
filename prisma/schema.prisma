@@ -303,3 +303,96 @@ model RateLimit {
   @@index([resetAt])
   @@map("rate_limits")
 }
+
+// Google Sheet operational mirror (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md,
+// Section 8): the durable outbox. A row means "candidate <unique_id> needs to
+// be mirrored", never a data snapshot (no PII): the worker re-reads the
+// candidate when it processes the row. Rows are written by database triggers
+// on users, candidate_stages and documents (migration
+// 20261006120000_sheet_sync_outbox), in the same transaction as the change.
+// A partial unique index (not expressible here, defined in that migration's
+// SQL) keeps at most ONE PENDING row per candidate, so changes coalesce. Do not
+// add @unique on uniqueId: there may be one PENDING row plus older
+// PROCESSING/COMPLETED/FAILED rows for the same candidate.
+// status: PENDING | PROCESSING | COMPLETED | FAILED (dead letter).
+model SheetSyncQueue {
+  queueId          String    @id @default(dbgenerated("(gen_random_uuid())::text")) @map("queue_id")
+  uniqueId         String    @map("unique_id")
+  status           String    @default("PENDING")
+  // Set when the candidate's users row was deleted (or its unique ID
+  // changed): only then may a missing candidate mark its row inactive.
+  candidateDeleted Boolean   @default(false) @map("candidate_deleted")
+  // Claims so far (incremented when claimed, so a crash counts too).
+  attempts         Int       @default(0)
+  nextAttemptAt    DateTime  @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  leaseOwner       String?   @map("lease_owner")
+  leaseExpiresAt   DateTime? @map("lease_expires_at") @db.Timestamptz(3)
+  // APPENDED | UPDATED | UNCHANGED | MARKED_INACTIVE | NOT_IN_DATABASE
+  // | SUPERSEDED | RESOLVED (codes only, never values).
+  lastResult       String?   @map("last_result")
+  lastErrorClass   String?   @map("last_error_class")
+  lastErrorCode    String?   @map("last_error_code")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+  completedAt      DateTime? @map("completed_at") @db.Timestamptz(3)
+
+  @@index([status, nextAttemptAt])
+  @@index([uniqueId])
+  @@map("sheet_sync_queue")
+}
+
+// Durable run requests (Section 8.3): reconciliation (Sync Now, Cloud
+// Scheduler) and Test Connection. The Admin API only inserts QUEUED rows; the
+// sheet-sync worker claims and executes them. A partial unique index (in the
+// migration's SQL) allows at most one QUEUED/RUNNING run per kind.
+// kind: RECONCILE | TEST_CONNECTION; triggerSource: ADMIN | SCHEDULER | OPERATOR;
+// status: QUEUED | RUNNING | SUCCEEDED | FAILED | SKIPPED.
+// summary: counts and codes only, never candidate data.
+model SheetSyncRun {
+  runId          String    @id @map("run_id")
+  kind           String
+  triggerSource  String    @map("trigger_source")
+  requestedBy    String?   @map("requested_by")
+  status         String    @default("QUEUED")
+  dryRun         Boolean?  @map("dry_run")
+  attempts       Int       @default(0)
+  leaseOwner     String?   @map("lease_owner")
+  leaseExpiresAt DateTime? @map("lease_expires_at") @db.Timestamptz(3)
+  summary        Json?
+  errorClass     String?   @map("error_class")
+  errorCode      String?   @map("error_code")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt      DateTime? @map("started_at") @db.Timestamptz(3)
+  finishedAt     DateTime? @map("finished_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  @@index([kind, createdAt])
+  @@index([status])
+  @@map("sheet_sync_runs")
+}
+
+// One row ("sheet-sync", created by the migration): the integration's
+// operational state as reported by the sheet-sync worker (the Admin API on
+// Vercel has no Google access and reads it from here), and the writer lease
+// that keeps a single process writing to the Sheet at a time.
+// integrationState: UNKNOWN | OK | CONFIG_ERROR | DATA_INTEGRITY.
+model SheetSyncState {
+  stateId              String    @id @map("state_id")
+  integrationState     String    @default("UNKNOWN") @map("integration_state")
+  lastErrorClass       String?   @map("last_error_class")
+  lastErrorCode        String?   @map("last_error_code")
+  lastErrorAt          DateTime? @map("last_error_at") @db.Timestamptz(3)
+  lastSyncSuccessAt    DateTime? @map("last_sync_success_at") @db.Timestamptz(3)
+  // ENABLED | DISABLED, as the worker last read SHEET_SYNC_ENABLED.
+  writeGate            String?   @map("write_gate")
+  configured           Boolean?
+  // Last characters of the spreadsheet ID and the tab name: enough to tell
+  // which Sheet is targeted, never the full identifier.
+  targetHint           String?   @map("target_hint")
+  workerHeartbeatAt    DateTime? @map("worker_heartbeat_at") @db.Timestamptz(3)
+  writerLeaseOwner     String?   @map("writer_lease_owner")
+  writerLeaseExpiresAt DateTime? @map("writer_lease_expires_at") @db.Timestamptz(3)
+  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  @@map("sheet_sync_state")
+}
