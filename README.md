@@ -24,6 +24,12 @@
 - [Database Architecture](#database-architecture)
   - [Core Database Schema & ER Diagram](#core-database-schema--er-diagram)
   - [Critical Identifier Distinction](#critical-identifier-distinction)
+  - [User Roles](#user-roles)
+  - [WhatsApp Number Format](#whatsapp-number-format)
+- [Planned / Target Architecture](#planned--target-architecture)
+  - [Singular Table Naming](#singular-table-naming)
+  - [Supabase Auth Integration](#supabase-auth-integration)
+  - [Planned Authentication & Invitation Flow](#planned-authentication--invitation-flow)
 - [Technology Stack](#technology-stack)
 - [Project Structure](#project-structure)
 - [Current Implementation Status](#current-implementation-status)
@@ -84,7 +90,7 @@ The Emlynk backend eliminates operational bottlenecks by establishing an automat
 - 📊 **Multi-Level Confidence Matrix**: Applies 5-tier confidence rules (>95%, 90-95%, 60-89%, 40-59%, <40%) for auto-renaming vs. warning flags vs. manual review routing.
 - ⏱️ **Police Slip 21-Day Countdown**: Tracks police report slip submission dates; automatically suppresses reminder alerts once an administrator marks the final police report as `COMPLETED`.
 - 📁 **Dual Storage Architecture**: Isolates pending/unclear uploads in `temporary_data` while routing verified files to structured client folders.
-- 🔐 **Secure Admin Portal API**: Protected REST endpoints using `bcrypt` password hashing and JWT Bearer authentication (`/auth/login`, `/auth/me`).
+- 🔐 **Secure Admin Portal API**: Protected REST endpoints using `bcrypt` password hashing and a JWT in an httpOnly cookie (`/auth/login`, `/auth/me`), with per-endpoint role-based authorization — see [User Roles](#user-roles).
 
 ---
 
@@ -160,7 +166,10 @@ flowchart TD
 
 ## Database Architecture
 
-The backend database is intentionally structured into four core relational models managed via **Prisma ORM**:
+> [!NOTE]
+> This section documents the **Currently Implemented (Development / Stage)** schema — the reality of the `dev` branch, which is ahead of `main`'s older production baseline. The [Planned / Target Architecture](#planned--target-architecture) section below covers the singular table-naming direction and Supabase Auth integration the project is moving toward; neither is implemented yet.
+
+The backend database started from four core relational models managed via **Prisma ORM**:
 
 ```
 +------------------+         +------------------+
@@ -183,6 +192,19 @@ The backend database is intentionally structured into four core relational model
                              | ocr_confidence   |  | document_type    |
                              +------------------+  +------------------+
 ```
+
+Since then, an admin-governance layer and a candidate workflow layer have been added:
+
+| Table | Purpose |
+|---|---|
+| `admin_invitations` | Self-service staff invitation tokens (SHA-256 hashed, 24h expiry) |
+| `admin_password_resets` | Self-service password-reset tokens (SHA-256 hashed, 1h expiry) |
+| `candidate_stages` | Per-candidate progress across the deployment pipeline (test details, candidate details, document submission, IVS interview, visa approval, finalizing job) |
+| `candidate_call_logs` | Notes logged by staff for calls made to a candidate |
+| `rate_limits` | Shared rate-limit counters (operational state, not business data) |
+
+> [!NOTE]
+> These tables are not yet renamed to the singular target convention (see [Singular Table Naming](#singular-table-naming)). The Google Sheet sync tables (`sheet_sync_queue`, `sheet_sync_runs`, `sheet_sync_state`) also exist as part of the separate, unchanged Google Sheet sync feature and are listed here only for completeness.
 
 ### Core Database Schema & ER Diagram
 
@@ -269,10 +291,55 @@ erDiagram
         datetime created_date
     }
 
+    ADMIN_INVITATIONS {
+        string invitation_id PK
+        string email
+        string name
+        string role
+        string token_hash UK
+        string invited_by FK
+        string status
+        datetime expires_at
+        datetime created_at
+        datetime accepted_at
+        datetime revoked_at
+    }
+
+    ADMIN_PASSWORD_RESETS {
+        string reset_id PK
+        string admin_id FK
+        string token_hash UK
+        datetime expires_at
+        datetime used_at
+        datetime created_at
+    }
+
+    CANDIDATE_STAGES {
+        string passport_id PK "Part of composite PK; FK to USERS"
+        string stage PK "TEST_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION | IVS_INTERVIEW | VISA_APPROVAL | FINALIZING_JOB"
+        boolean completed
+        datetime completed_at
+        string notes
+        datetime updated_at
+    }
+
+    CANDIDATE_CALL_LOGS {
+        string call_log_id PK
+        string passport_id FK
+        string admin_id FK
+        string note
+        datetime created_date
+    }
+
     USERS ||--o{ DOCUMENTS : "owns"
     USERS ||--o{ TEMPORARY_DATA : "has pending"
     TEMPORARY_DATA |o--o{ DOCUMENTS : "stored from"
     ADMINS ||--o{ AUDIT_LOGS : "records (append-only)"
+    ADMINS ||--o{ ADMIN_INVITATIONS : "invites"
+    ADMINS ||--o{ ADMIN_PASSWORD_RESETS : "resets"
+    USERS ||--o{ CANDIDATE_STAGES : "progresses through"
+    USERS ||--o{ CANDIDATE_CALL_LOGS : "has calls logged"
+    ADMINS ||--o{ CANDIDATE_CALL_LOGS : "logs"
 ```
 
 ### Critical Identifier Distinction
@@ -282,6 +349,115 @@ erDiagram
 > - **`users.passport_id`** is the primary client identifier and primary key throughout the application.
 > - **`users.unique_id`** is a separate unique reference number used for client legacy mapping and backload tracking.
 > - These two identifiers **must NOT** be treated as interchangeable in codebase logic, route parameters, or database queries.
+
+---
+
+### User Roles
+
+Staff users are not uniformly "admins" — the `role` column on `admins` (target: `user`) holds one of four roles, enforced per-endpoint via the `requireRole` middleware:
+
+| Role | Access |
+|---|---|
+| `ADMIN` | Full access, including staff/user management (invitations, role changes) |
+| `MANAGER` | Full access except staff/user management |
+| `ANALYST` | Reads, plus review actions and candidate workflow updates (stages, call logs, document review) |
+| `REGISTRATION_DESK` | Candidate registration routes only |
+
+Use "staff user", "admin", or the specific role name (e.g. "an ANALYST") rather than describing every system user as "an admin".
+
+---
+
+### WhatsApp Number Format
+
+**Currently implemented**: candidate WhatsApp/contact number fields accept digits, spaces, `()`  and `+`, 8–15 digits total (`isPhoneNumber` in `admin/src/components/candidate/CandidateFields.tsx`). For matching incoming WhatsApp messages, bare local-format Sri Lankan numbers (e.g. `0771234567` or `771234567`) are normalized by assuming the `+94` country code (`src/utils/phoneNumber.js`); numbers that already carry a country code are left as-is.
+
+**Planned / target**: the field is **not** hardcoded to `+94`. The rule is:
+- the field always starts with a fixed, non-removable `+`
+- the user enters their own country code and number after it
+- any valid international number is supported, e.g. `+94771234567`, `+447911123456`, `+61412345678`
+
+---
+
+## Planned / Target Architecture
+
+> [!IMPORTANT]
+> Nothing in this section is implemented yet on `main` or `dev`. It documents the direction the project is moving toward — the Supabase Auth restructure and the singular table-naming convention — so it is not mistaken for current behavior.
+
+### Singular Table Naming
+
+Application tables are moving from plural to singular names. No legacy/compatibility tables or parallel schemas are planned — this system is pre-production and current data is test data only.
+
+| Current (plural) | Planned (singular) | Holds |
+|---|---|---|
+| `users` | `candidate` | Candidate / business process data |
+| `admins` | `user` | System staff/profile data |
+| `documents` | `document` | Candidate documents |
+| `candidate_stages` | `candidate_stage` | Candidate pipeline progress |
+| `candidate_call_logs` | `call_log` | Staff call notes |
+
+Other application tables follow the same singular convention where relevant. Supabase's own `auth.users` table is managed by Supabase and is **not** renamed.
+
+### Supabase Auth Integration
+
+Authentication and the application profile are planned to split into two responsibilities:
+
+```mermaid
+flowchart TD
+    AuthUsers["Supabase-managed: auth.users<br/>(authentication identity, password handling, sessions, JWTs,<br/>invitation/auth flows, password recovery)"]
+    PublicUser["Application-managed: public.user<br/>(profile, role, name, email/reference data, account/app status)"]
+
+    AuthUsers -->|"public.user.auth_user_id -> auth.users.id"| PublicUser
+```
+
+`public.user.auth_user_id` references `auth.users.id`. Supabase Auth never stores application-specific profile or role data, and `public.user` never stores passwords or session state.
+
+#### Authorization Model (Planned)
+
+Authentication (who you are) and authorization (what you can do) stay separate:
+
+```
+Supabase Auth
+    |
+    v
+Authenticated identity / JWT
+    |
+    v
+Backend
+    |
+    v
+public.user lookup
+    |
+    v
+Role-based authorization (RBAC)
+```
+
+Backend RBAC remains the application's security boundary for protected functionality — the same role-check model `requireRole` already enforces today (see [User Roles](#user-roles)), just resolved from `public.user` instead of `admins` and fed by a Supabase-issued identity instead of this app's own JWT. Custom JWT claims and full Supabase RLS-based RBAC are **not** implemented and are not assumed by this plan unless a future change proves otherwise.
+
+### Planned Authentication & Invitation Flow
+
+**Currently implemented**: an ADMIN creates an invitation (name, email, role); a one-time, SHA-256-hashed token is emailed with a 24-hour expiry; the invitee sets a password (bcrypt) on the setup page, which activates the account (`src/services/adminInvitationService.js`). Login issues a 1-hour JWT, set as an httpOnly, `SameSite=Strict` cookie (`AUTH_COOKIE_NAME`), with CSRF double-submit protection on state-changing requests; an `Authorization: Bearer` header is still accepted for backward-compatible tests and CLI tooling, but the frontend no longer reads it.
+
+**Planned / target direction**, replacing the custom token system above with Supabase Auth:
+
+```
+Admin invites a user
+    ->
+select email + role
+    ->
+trusted backend uses Supabase Auth admin functionality
+    ->
+Supabase sends invite/setup email
+    ->
+user opens link
+    ->
+user sets/creates password
+    ->
+Supabase Auth handles authentication
+    ->
+application resolves profile/role from public.user
+```
+
+No service-role keys or other secret configuration are documented here. This flow is **planned**, not completed — do not treat it as implemented until the codebase proves it.
 
 ---
 
@@ -309,6 +485,7 @@ erDiagram
 |---|---|---|
 | **Messaging Channel** | Meta WhatsApp Business API | Official cloud API webhook integration |
 | **Background Processing** | Redis + BullMQ / Async Queue | Asynchronous long-running OCR and storage tasks |
+| **Authentication (Planned)** | Supabase Auth (`auth.users`) | Replaces the custom invitation/JWT system; see [Supabase Auth Integration](#supabase-auth-integration) |
 
 ---
 
@@ -373,11 +550,14 @@ EmlynkWABot/
 
 ## Current Implementation Status
 
+> [!NOTE]
+> This table tracks the original document-processing baseline. Newer admin-governance (invitations, password resets, RBAC) and candidate-workflow (stages, call logs) tables are current on `dev`/stage — see [Database Architecture](#database-architecture) and [User Roles](#user-roles) — but are not re-listed row by row here.
+
 | Feature / Module | Status | Verification & Notes |
 |---|:---:|---|
 | **Node.js & Express Setup** | ✅ Completed | Server initialized with ES modules & health endpoint (`GET /health`) |
 | **Docker PostgreSQL Container** | ✅ Completed | Running PostgreSQL 16 container (`emlynk-postgres`) on port `5432` |
-| **Prisma Schema & Models** | ✅ Completed | 4 core models defined (`admins`, `users`, `documents`, `temporary_data`) |
+| **Prisma Schema & Models** | ✅ Completed | Started from 4 core models (`admins`, `users`, `documents`, `temporary_data`); see [Database Architecture](#database-architecture) for the full current schema |
 | **Initial Migration** | ✅ Completed | Initial migration executed via `prisma migrate dev` |
 | **Database Seeding** | ✅ Completed | Idempotent seed script (`prisma/seed.js`) populating sample records |
 | **Bcrypt Password Hashing** | ✅ Completed | Passwords hashed securely using `bcrypt` |
@@ -415,7 +595,7 @@ EmlynkWABot/
 | **Phase 9** | Police Report Countdown | 🚧 Partly | Done in Phase 10: slip submitted date stored (or set by an admin), calculated 21-day status (stops when a verified police report exists), dashboard views. Not done: reminders/warnings (Phase 11) |
 | **Phase 10** | Admin Dashboard | ✅ Completed (migrations not yet applied to the live database) | Admin frontend and API; review actions (Approve, Keep Pending, Remove from Review; no reject) and corrections with an append-only audit log; Clients, Missing Documents, configurable required documents, Police Workflow, Daily Report (moved from Phase 11), Sync, Dark Mode |
 | **Phase 11** | Reporting and Alerts | ⏳ Planned | Police-report reminders and warnings, alert notifications (the daily report is done in Phase 10) |
-| **Phase 12** | Security, QA & Deployment | ⏳ Planned | Role-based authorization, load testing, production Docker container |
+| **Phase 12** | Security, QA & Deployment | 🚧 Partly | Role-based authorization (`ADMIN`/`MANAGER`/`ANALYST`/`REGISTRATION_DESK` via `requireRole`), self-service staff invitations and password resets, httpOnly-cookie JWT with CSRF protection — all completed (dev/stage). Load testing, production Docker container, and the Supabase Auth migration ([Planned / Target Architecture](#planned--target-architecture)) remain planned |
 
 ---
 
@@ -585,7 +765,10 @@ All routes need `Authorization: Bearer <token>` of an **ACTIVE** admin (checked 
 
 ## Authentication Flow
 
-Administrator access to sensitive client data and dashboard management is protected using a stateless JWT authentication strategy:
+> [!NOTE]
+> This is the **currently implemented** flow (dev/stage). It is replaced by Supabase Auth in the [Planned / Target Architecture](#planned--target-architecture); see [Planned Authentication & Invitation Flow](#planned-authentication--invitation-flow) for that direction and how the two differ.
+
+Administrator access to sensitive client data and dashboard management is protected using a JWT, carried as an httpOnly, `SameSite=Strict` cookie (`emlynk_admin_token`) set on login, with CSRF double-submit protection on state-changing requests. An `Authorization: Bearer` header is still accepted for backward-compatible tests and CLI tooling, but the admin frontend no longer reads the token itself — it relies on the cookie plus `GET /auth/me`.
 
 ```
 [ Client Application / Postman ]
@@ -602,27 +785,33 @@ Administrator access to sensitive client data and dashboard management is protec
                v
 [ Bcrypt Password Verification ]
                |
-               +---> (Hash Mismatch) ---> Return HTTP 401 "Invalid email or password"
+               +---> (Hash Mismatch, or not ACTIVE) ---> Return HTTP 401 "Invalid email or password"
                |
-               +---> (Hash Valid)
+               +---> (Hash Valid & ACTIVE)
                        |
                        | 4. Sign JWT Payload (adminId, email, role) - Exp: 1h
                        v
-               [ Return HTTP 200 { token: "eyJhbGci..." } ]
+               [ Set httpOnly cookie; also return { token } for Bearer-based callers ]
 
 --------------------------------------------------------------------------------
 
 [ Protected Route Request ]
                |
                | 1. GET /auth/me
-               |    Header: Authorization: Bearer eyJhbGci...
+               |    Cookie: emlynk_admin_token=... (or Header: Authorization: Bearer eyJhbGci...)
                v
 [ Auth Middleware: authenticateAdmin ]
                |
                | 2. Verify JWT signature via JWT_SECRET
                v
-[ Attach req.admin Payload & Proceed ] ---> [ Return HTTP 200 Admin Profile ]
+[ Attach req.admin Payload ]
+               |
+               | 3. requireRole(allowedRoles) checks req.admin.role
+               v
+[ Proceed ] ---> [ Return HTTP 200 Admin Profile ]
 ```
+
+See [User Roles](#user-roles) for the roles `requireRole` checks against.
 
 ---
 
