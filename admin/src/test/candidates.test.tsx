@@ -495,7 +495,7 @@ describe("Call log", () => {
     };
     const openCallLog = async () => {
         await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
-        return screen.findByRole("dialog", { name: "Call log" });
+        return screen.findByRole("dialog", { name: "Call Logs" });
     };
 
     test("shows each call's date, time (Sri Lanka) and note, newest first", async () => {
@@ -552,6 +552,130 @@ describe("Call log", () => {
         await userEvent.setup().click(within(dialog).getByRole("button", { name: "Add call" }));
         expect(within(dialog).getByText("The call can't be in the future.")).toBeInTheDocument();
         expect(calls.some((c) => c.method === "POST")).toBe(false);
+    });
+
+    test("opens as a drawer on the candidate page with the candidate summary and call count", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        expect(dialog).toHaveAttribute("aria-modal", "true");
+        expect(dialog).toHaveAccessibleDescription("View and add call history for this candidate.");
+        // The candidate page stays underneath; no navigation.
+        expect(screen.getByRole("heading", { level: 1, name: "SAMAN SILVA" })).toBeInTheDocument();
+        const summary = within(dialog).getByLabelText("Candidate");
+        expect(within(summary).getByText("SAMAN SILVA")).toBeInTheDocument();
+        expect(within(summary).getByText("N0000002")).toBeInTheDocument();
+        expect(within(summary).getByText("94770000002")).toBeInTheDocument();
+        expect(within(dialog).getByRole("heading", { name: "Call History" })).toBeInTheDocument();
+        expect(await within(dialog).findByText("2 calls")).toBeInTheDocument();
+        expect(within(dialog).getByRole("heading", { name: "Add New Call Log" })).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Close call logs" })).toHaveFocus();
+    });
+
+    test("long notes wrap inside the drawer instead of scrolling sideways", async () => {
+        const long = "x".repeat(400);
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [{ callLogId: "c3", note: long, calledAt: "2026-10-01T11:15:00.000Z", adminName: "Test Admin" }] } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        const note = await within(dialog).findByText(long);
+        // jsdom has no layout, so check the wrapping rules are applied.
+        expect(note.className).toContain("whitespace-pre-wrap");
+        expect(note.className).toContain("break-words");
+        expect(note.className).toContain("[overflow-wrap:anywhere]");
+        expect(dialog.className).toContain("overflow-x-hidden");
+    });
+
+    test("shows a loading state, then an error with a retry that reloads the calls", async () => {
+        let release!: () => void;
+        let attempt = 0;
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": () => {
+                attempt += 1;
+                if (attempt > 1) return { status: 200, body: CALLS };
+                return new Promise((resolve) => {
+                    release = () => resolve({ status: 403, body: { message: "Calls could not be loaded." } });
+                });
+            },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        expect(await within(dialog).findByText("Loading calls…")).toBeInTheDocument();
+        release();
+        expect(await within(dialog).findByText("Calls could not be loaded.")).toBeInTheDocument();
+        await userEvent.setup().click(within(dialog).getByRole("button", { name: "Try again" }));
+        expect(await within(dialog).findByText("Asked about the medical")).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "GET" && c.path.endsWith("/call-logs"))).toHaveLength(2);
+    });
+
+    test("the note, date and time are required before anything is sent", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No calls logged yet.");
+        const note = within(dialog).getByLabelText("What the candidate said *");
+        await user.type(note, "   ");
+        expect(within(dialog).getByRole("button", { name: "Add call" })).toBeDisabled();
+        fireEvent.change(within(dialog).getByLabelText("Time *"), { target: { value: "" } });
+        await user.type(note, "ok");
+        await user.click(within(dialog).getByRole("button", { name: "Add call" }));
+        expect(within(dialog).getByText("Enter the date and time of the call.")).toBeInTheDocument();
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+    });
+
+    test("a call is sent once even if the form is submitted again while saving", async () => {
+        let release!: () => void;
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": () => new Promise((resolve) => {
+                release = () => resolve({ status: 201, body: CALLS });
+            }),
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No calls logged yet.");
+        fireEvent.change(within(dialog).getByLabelText("Date *"), { target: { value: "2026-10-01" } });
+        fireEvent.change(within(dialog).getByLabelText("Time *"), { target: { value: "16:45" } });
+        await userEvent.setup().type(within(dialog).getByLabelText("What the candidate said *"), "Said the police report is ready");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+        fireEvent.submit(form);
+        fireEvent.submit(form);
+        expect(await within(dialog).findByRole("button", { name: "Saving…" })).toBeDisabled();
+        expect(within(dialog).getByRole("button", { name: "Close call logs" })).toBeDisabled();
+        release();
+        expect(await within(dialog).findByText("2 calls")).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+        expect(calls.find((c) => c.method === "POST")!.body).toEqual({ note: "Said the police report is ready", calledAt: "2026-10-01T16:45:00+05:30" });
+    });
+
+    test("the close button and Escape close the drawer, staying on the page and returning focus to Call log", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        let dialog = await openCallLog();
+        await user.click(within(dialog).getByRole("button", { name: "Close call logs" }));
+        await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(screen.getByRole("button", { name: "Call log" })).toHaveFocus();
+
+        dialog = await openCallLog();
+        await within(dialog).findByText("Asked about the medical");
+        await user.keyboard("{Escape}");
+        await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(screen.getByRole("heading", { level: 1, name: "SAMAN SILVA" })).toBeInTheDocument();
     });
 
     test("a viewer sees the calls but can't add one", async () => {

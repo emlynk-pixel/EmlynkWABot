@@ -80,7 +80,7 @@ export function CandidateDeploymentPage() {
                 {current !== "CANDIDATE_DETAILS" && current !== "DOCUMENT_SUBMISSION" && <NotesStage key={current} stage={current} {...panelProps} />}
             </Card>
 
-            {callLogOpen && <CallLogDialog passportId={c.passportId} canEdit={canEdit} onClose={() => setCallLogOpen(false)} />}
+            {callLogOpen && <CallLogDialog passportId={c.passportId} candidate={c} canEdit={canEdit} onClose={() => setCallLogOpen(false)} />}
         </section>
     );
 }
