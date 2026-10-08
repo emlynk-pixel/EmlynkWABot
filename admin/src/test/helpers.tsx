@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { vi } from "vitest";
 import type { ClientDetails, DocumentItem, DocumentList, Overview } from "../api/admin";
@@ -38,6 +38,25 @@ export function stubBackend(routes: FetchRoutes) {
     });
     vi.stubGlobal("fetch", fetchMock);
     return { calls, fetchMock };
+}
+
+// A wait budget for ONE render step in a test that holds a request open and
+// then releases it. The default 1 s is shared by a whole chain of steps
+// (session restore, GET /auth/me, shell, page fetch, page render) and
+// leaves almost no margin when 14 jsdom workers compete for 8 CPUs: the same
+// steps take ~100 ms on an idle machine. A missing element still fails, only
+// after this budget instead of 1 s. Used only where a test waits on a step
+// that follows a held request.
+export const RENDER_STEP = { timeout: 5000 } as const;
+
+// Renders the app and waits until the Supabase session is restored and the
+// console shell is up. Loading-state tests call this first, so "auth is
+// ready" and "the page shows its loading state" are separate steps with
+// their own waits instead of one chain racing a single 1 s budget.
+export async function renderAppSignedIn(path: string) {
+    const result = renderApp(path);
+    await screen.findByTestId("admin-name", {}, RENDER_STEP);
+    return result;
 }
 
 export function renderApp(initialPath = "/") {

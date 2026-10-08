@@ -1,7 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
-import { CLIENT_DETAILS, OVERVIEW, documentList, makeDocument, renderApp, signedInBackend, stubBackend, SESSION_TOKEN, fakeAuth } from "./helpers";
+import { CLIENT_DETAILS, OVERVIEW, documentList, makeDocument, renderApp, signedInBackend, stubBackend, SESSION_TOKEN, fakeAuth, renderAppSignedIn, RENDER_STEP } from "./helpers";
 
 const lastRequest = (calls: { path: string }[], prefix: string) => [...calls].reverse().find((c) => c.path.startsWith(prefix));
 
@@ -34,10 +34,10 @@ describe("Overview", () => {
     test("shows a loading state first", async () => {
         let release: (value: { status: number; body: unknown }) => void = () => {};
         signedInBackend({ "GET /api/admin/overview": () => new Promise((resolve) => { release = resolve; }) });
-        renderApp("/");
-        expect(await screen.findByText("Loading overview…")).toBeInTheDocument();
+        await renderAppSignedIn("/");
+        expect(await screen.findByText("Loading overview…", {}, RENDER_STEP)).toBeInTheDocument();
         release({ status: 200, body: OVERVIEW });
-        expect(await screen.findByText("1,428")).toBeInTheDocument();
+        expect(await screen.findByText("1,428", {}, RENDER_STEP)).toBeInTheDocument();
     });
 
     test("server error -> error state with a retry that reloads", async () => {

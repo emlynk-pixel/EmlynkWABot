@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ApproveResult, AuditEntry, ReviewItem, ReviewQueue, ReviewQueueItem } from "../api/admin";
-import { ADMIN, CLIENT_REF, OVERVIEW as OVERVIEW_FIXTURE, renderApp, signedInBackend, stubBackend, type FetchRoutes, SESSION_TOKEN } from "./helpers";
+import { ADMIN, CLIENT_REF, OVERVIEW as OVERVIEW_FIXTURE, renderApp, signedInBackend, stubBackend, type FetchRoutes, SESSION_TOKEN, renderAppSignedIn, RENDER_STEP } from "./helpers";
 
 // Synthetic review data only.
 const TEMP_ID = "11111111-1111-4111-8111-111111111111";
@@ -107,10 +107,10 @@ describe("Review Queue", () => {
     test("loading, then data", async () => {
         let release: (value: { status: number; body: unknown }) => void = () => {};
         signedInBackend({ "GET /api/admin/review": () => new Promise((resolve) => { release = resolve; }) });
-        renderApp("/review");
-        expect(await screen.findByText("Loading review queue…")).toBeInTheDocument();
+        await renderAppSignedIn("/review");
+        expect(await screen.findByText("Loading review queue…", {}, RENDER_STEP)).toBeInTheDocument();
         release({ status: 200, body: queue(TWO_ITEMS) });
-        expect(await screen.findByRole("table", { name: "Review queue" })).toBeInTheDocument();
+        expect(await screen.findByRole("table", { name: "Review queue" }, RENDER_STEP)).toBeInTheDocument();
     });
 
     test("error -> retry reloads", async () => {
