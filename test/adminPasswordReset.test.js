@@ -38,6 +38,14 @@ describe("password recovery is Supabase's", () => {
         }
     });
 
+    test("no reset-token model or table remains in the final schema", () => {
+        const schema = fs.readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
+        assert.doesNotMatch(schema, /AdminPasswordReset|admin_password_resets|passwordHash|password_hash/);
+        const cutover = fs.readFileSync(new URL("../prisma/migrations/20261009120000_supabase_auth_cutover/migration.sql", import.meta.url), "utf8");
+        assert.match(cutover, /DROP TABLE "admin_password_resets";/);
+        assert.match(cutover, /DROP COLUMN "password_hash";/);
+    });
+
     test("no live application code references the old reset service, its table or the custom email sender", () => {
         const files = ["src/routes/auth.js", "src/routes/admin.js", "src/routes/users.js", "src/createApp.js", "src/services/userAccountService.js"];
         for (const file of files) {

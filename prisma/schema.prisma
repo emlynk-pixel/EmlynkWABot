@@ -13,70 +13,25 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-//Staff/application-user table (formerly "admins"; target architecture:
-//public."user", eventually linked to Supabase auth.users via authUserId).
-
+// Application users (staff). Supabase Auth (auth.users) owns the credentials
+// and sessions; this row owns the application profile, role and status.
+// auth_user_id = auth.users.id (a foreign key to auth.users where that schema
+// exists, i.e. on Supabase; see migration 20261009120000_supabase_auth_cutover).
+// status: INVITED | ACTIVE | INACTIVE (middleware/requireActiveUser.js).
+// role:   ADMIN | MANAGER | ANALYST | REGISTRATION_DESK (middleware/requireRole.js).
 model User {
-  adminId         String               @id @map("admin_id")
-  // Supabase auth.users.id, once Phase 2 links this row to a Supabase Auth
-  // identity. Nullable and unenforced in Phase 1: no Supabase Auth
-  // integration exists yet, so no row has a real value here.
-  authUserId      String?              @unique @map("auth_user_id")
-  name            String
-  email           String               @unique
-  passwordHash    String?              @map("password_hash")
-  role            String
-  status          String               @default("ACTIVE")
-  createdDate     DateTime             @default(now()) @map("created_date")
-  updatedDate     DateTime             @updatedAt @map("updated_date")
-  auditLogs       AuditLog[]
-  invitationsSent AdminInvitation[]    @relation("AdminInvitations")
-  passwordResets  AdminPasswordReset[]
-  callLogs        CandidateCallLog[]
+  adminId     String             @id @map("admin_id")
+  authUserId  String             @unique @map("auth_user_id") @db.Uuid
+  name        String
+  email       String             @unique
+  role        String
+  status      String             @default("ACTIVE")
+  createdDate DateTime           @default(now()) @map("created_date")
+  updatedDate DateTime           @updatedAt @map("updated_date")
+  auditLogs   AuditLog[]
+  callLogs    CandidateCallLog[]
 
   @@map("user")
-}
-
-// Admin password resets (Self-service password recovery).
-// One-time reset tokens with 1-hour expiration. Only the SHA-256 hash
-// of the token is stored in the database.
-model AdminPasswordReset {
-  resetId   String    @id @map("reset_id")
-  adminId   String    @map("admin_id")
-  tokenHash String    @unique @map("token_hash")
-  expiresAt DateTime  @map("expires_at")
-  usedAt    DateTime? @map("used_at")
-  createdAt DateTime  @default(now()) @map("created_at")
-
-  admin User @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
-
-  // @@index([tokenHash]) is omitted: the @unique on tokenHash already creates
-  // an index; a second explicit index would be redundant (AUDIT-005).
-  @@index([adminId, expiresAt])
-  @@map("admin_password_resets")
-}
-
-// Admin invitations (Phase 12, Checkpoint 2). One-time self-service invitation
-// tokens with 24-hour expiration. Only the SHA-256 hash of the token is stored.
-model AdminInvitation {
-  invitationId String    @id @map("invitation_id")
-  email        String    @map("email")
-  name         String    @map("name")
-  role         String    @map("role")
-  tokenHash    String    @unique @map("token_hash")
-  invitedBy    String    @map("invited_by")
-  status       String    @default("PENDING") @map("status")
-  expiresAt    DateTime  @map("expires_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  acceptedAt   DateTime? @map("accepted_at")
-  revokedAt    DateTime? @map("revoked_at")
-
-  inviter User @relation("AdminInvitations", fields: [invitedBy], references: [adminId], onDelete: Restrict)
-
-  @@index([email])
-  // @@index([tokenHash]) omitted: @unique on tokenHash already provides an index (AUDIT-005).
-  @@index([status, expiresAt])
-  @@map("admin_invitations")
 }
 
 // Review actions taken by admins (Phase 10). Append-only: rows are never
