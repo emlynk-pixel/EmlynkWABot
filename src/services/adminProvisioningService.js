@@ -63,7 +63,7 @@ export async function createAdminAccount(input, { db, hash = hashPassword, newId
     const admin = validateAdminInput(input);
     const client = db ?? (await import("../config/prisma.js")).default;
 
-    const existing = await client.admin.findUnique({ where: { email: admin.email }, select: { adminId: true } });
+    const existing = await client.user.findUnique({ where: { email: admin.email }, select: { adminId: true } });
     if (existing) {
         throw new AdminProvisioningError("ADMIN_EXISTS", "An admin with this email already exists; nothing was changed");
     }
@@ -71,7 +71,7 @@ export async function createAdminAccount(input, { db, hash = hashPassword, newId
     const passwordHash = await hash(admin.password);
 
     try {
-        const created = await client.admin.create({
+        const created = await client.user.create({
             data: {
                 adminId: newId(),
                 name: admin.name,

@@ -98,7 +98,7 @@ const clientSelect = { passportId: true, uniqueId: true, firstName: true, otherN
 // documents counted per client/type/status, the waiting files per client/type.
 export async function loadClientCompleteness({ db, where = {}, requiredTypes = REQUIRED_DOCUMENT_TYPES }) {
     const [users, documentGroups, pendingGroups] = await Promise.all([
-        db.user.findMany({ where, select: clientSelect, orderBy: [{ uniqueId: "asc" }, { passportId: "asc" }] }),
+        db.candidate.findMany({ where, select: clientSelect, orderBy: [{ uniqueId: "asc" }, { passportId: "asc" }] }),
         db.document.groupBy({
             by: ["passportId", "documentType", "verificationStatus"],
             where: { documentType: { in: [...requiredTypes] } },

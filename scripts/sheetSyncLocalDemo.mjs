@@ -54,8 +54,8 @@ const prisma = database.prisma;
 
 // ---- seed: two admins and three candidates (synthetic)
 const passwordHash = await hashPassword(PASSWORD);
-await prisma.admin.create({ data: { adminId: "local-admin", name: "Local Admin", email: "admin@example.invalid", passwordHash, role: "ADMIN", status: "ACTIVE" } });
-await prisma.admin.create({ data: { adminId: "local-manager", name: "Local Manager", email: "manager@example.invalid", passwordHash, role: "MANAGER", status: "ACTIVE" } });
+await prisma.user.create({ data: { adminId: "local-admin", name: "Local Admin", email: "admin@example.invalid", passwordHash, role: "ADMIN", status: "ACTIVE" } });
+await prisma.user.create({ data: { adminId: "local-manager", name: "Local Manager", email: "manager@example.invalid", passwordHash, role: "MANAGER", status: "ACTIVE" } });
 const SEED = [
     { passportId: "N1000001", surname: "Perera", otherNames: "Kamal", nic: "199012345678", whatsappNumber: "+94770000001", jobTypes: ["Caregiver"], jobExperience: "3 years" },
     { passportId: "N1000002", surname: "Silva", otherNames: "Nimal", nic: "198512345678", whatsappNumber: "+94770000002", jobTypes: ["Electrician"], jobExperience: "5 years" },

@@ -17,7 +17,7 @@ const INVALID_TOKEN = { message: "Invalid or Expired Token" };
 export function createRequireActiveAdmin({ db } = {}) {
     const checkActive = async (req, res, next) => {
         const client = await resolveDb(db);
-        const admin = await client.admin.findUnique({
+        const admin = await client.user.findUnique({
             where: { adminId: req.admin.adminId },
             select: { adminId: true, email: true, name: true, role: true, status: true },
         });

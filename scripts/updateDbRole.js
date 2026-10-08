@@ -4,7 +4,7 @@ async function updateDb() {
     try {
         console.log("Updating database records...");
         
-        const adminUpdate = await prisma.admin.updateMany({
+        const adminUpdate = await prisma.user.updateMany({
             where: { role: 'REVIEWER' },
             data: { role: 'ANALYST' }
         });

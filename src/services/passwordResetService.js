@@ -79,7 +79,7 @@ export async function requestPasswordReset({
     }
 
     // Lookup admin account
-    const admin = await db.admin.findUnique({
+    const admin = await db.user.findUnique({
         where: { email: cleanEmail },
     });
 
@@ -207,7 +207,7 @@ export async function resetPassword({ db, token, password }) {
         throw new PasswordResetError("Password reset link has expired", 400, "EXPIRED");
     }
 
-    const admin = await db.admin.findUnique({
+    const admin = await db.user.findUnique({
         where: { adminId: reset.adminId },
     });
 
@@ -227,7 +227,7 @@ export async function resetPassword({ db, token, password }) {
 
         // Update password hash. NOTE: admin status is intentionally NOT changed.
         // Inactive/disabled accounts remain inactive/disabled.
-        await tx.admin.update({
+        await tx.user.update({
             where: { adminId: admin.adminId },
             data: { passwordHash },
         });

@@ -12,7 +12,7 @@ export class AdminAccountError extends Error {
 }
 
 export async function listAdmins({ db }) {
-    const admins = await db.admin.findMany({
+    const admins = await db.user.findMany({
         select: {
             adminId: true,
             name: true,
@@ -44,7 +44,7 @@ export async function updateAdminRole({ db, admin, targetAdminId, newRole }) {
         throw new AdminAccountError("Cannot change your own role");
     }
 
-    const targetAdmin = await db.admin.findUnique({
+    const targetAdmin = await db.user.findUnique({
         where: { adminId: targetAdminId },
     });
 
@@ -52,7 +52,7 @@ export async function updateAdminRole({ db, admin, targetAdminId, newRole }) {
         throw new AdminAccountError("Admin not found", 404, "NOT_FOUND");
     }
 
-    const updated = await db.admin.update({
+    const updated = await db.user.update({
         where: { adminId: targetAdminId },
         data: { role: newRole },
         select: { adminId: true, name: true, email: true, role: true, status: true },

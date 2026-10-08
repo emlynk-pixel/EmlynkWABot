@@ -82,7 +82,7 @@ export function createAuthRouter({
       const email = req.body.email.trim().toLowerCase();
 
       const client = await resolveDb(db);
-      const admin = await client.admin.findUnique({
+      const admin = await client.user.findUnique({
         where: { email },
       });
 
@@ -150,7 +150,7 @@ export function createAuthRouter({
   router.get("/me", apiLimiter, authenticateAdmin, async (req, res) => {
     try {
       const client = await resolveDb(db);
-      const admin = await client.admin.findUnique({
+      const admin = await client.user.findUnique({
         where: {
           adminId: req.admin.adminId,
         },

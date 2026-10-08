@@ -107,7 +107,7 @@ export async function createInvitation({
     }
 
     // Prevent duplicate active accounts for the same email
-    const existingAdmin = await db.admin.findUnique({
+    const existingAdmin = await db.user.findUnique({
         where: { email: cleanEmail },
     });
     if (existingAdmin && existingAdmin.status === ACTIVE_ADMIN_STATUS) {
@@ -250,7 +250,7 @@ export async function setupPasswordFromInvitation({ db, token, password }) {
     }
 
     // Check duplicate active account before completing
-    const existingAdmin = await db.admin.findUnique({
+    const existingAdmin = await db.user.findUnique({
         where: { email: invitation.email },
     });
     if (existingAdmin && existingAdmin.status === ACTIVE_ADMIN_STATUS) {
@@ -273,7 +273,7 @@ export async function setupPasswordFromInvitation({ db, token, password }) {
         let activeAdminId;
         if (existingAdmin) {
             activeAdminId = existingAdmin.adminId;
-            await tx.admin.update({
+            await tx.user.update({
                 where: { adminId: activeAdminId },
                 data: {
                     name: invitation.name,
@@ -284,7 +284,7 @@ export async function setupPasswordFromInvitation({ db, token, password }) {
             });
         } else {
             activeAdminId = crypto.randomUUID();
-            await tx.admin.create({
+            await tx.user.create({
                 data: {
                     adminId: activeAdminId,
                     name: invitation.name,
