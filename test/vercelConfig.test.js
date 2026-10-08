@@ -67,7 +67,6 @@ describe("Step 5D: Vercel entry point", () => {
                 SUPABASE_URL: "http://127.0.0.1:1",
                 SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
                 SUPABASE_BUCKET: "test-bucket",
-                JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
                 META_APP_SECRET: "test-app-secret-placeholder",
                 WHATSAPP_VERIFY_TOKEN: "test-verify-token-placeholder",
                 WHATSAPP_ACCESS_TOKEN: "test-access-token-placeholder",
@@ -171,7 +170,6 @@ describe("Step 5D: headers", () => {
         Object.assign(process.env, {
             SUPABASE_URL: "http://127.0.0.1:1", SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
             DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test", META_APP_SECRET: "test-app-secret-placeholder",
-            JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
         });
         const { createApp } = await import("../src/createApp.js");
         const server = await new Promise((resolve) => { const s = createApp().listen(0, "127.0.0.1", () => resolve(s)); });

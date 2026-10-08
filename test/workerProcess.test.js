@@ -203,7 +203,7 @@ describe("Step 5B: the worker entry point (node src/worker.js)", () => {
         const result = spawnSync(process.execPath, [workerPath], { env, encoding: "utf8", timeout: 30_000 });
         assert.equal(result.status, 1);
         assert.match(result.stderr, /DATABASE_URL is missing/);
-        assert.ok(!/JWT_SECRET|META_APP_SECRET|WHATSAPP/.test(result.stderr), "server-only settings are not required");
+        assert.ok(!/META_APP_SECRET|WHATSAPP/.test(result.stderr), "server-only settings are not required");
         assert.ok(!result.stderr.includes(PLACEHOLDERS.SUPABASE_SERVICE_ROLE_KEY));
         assert.ok(!result.stdout.includes("Submission worker running"));
     });
