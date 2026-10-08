@@ -8,9 +8,10 @@
 // from the BOOTSTRAP_PASSWORD environment variable, never a command-line
 // argument), and its ACTIVE public."user" row. The default role is ADMIN.
 //
-// With --link: links an existing Supabase Auth identity (found by email) to a
-// new or existing public."user" row, e.g. rows created before Supabase Auth.
-// An existing row keeps its role unless --role is given.
+// With --link: creates the public."user" row for an existing Supabase Auth
+// identity (found by email) that does not have one yet. An email whose row
+// already exists (every row is linked to Supabase Auth) is refused, and
+// nothing changes.
 //
 // The password goes to Supabase only. Only the user ID and status are printed.
 // Needs SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY and DATABASE_URL (server only).

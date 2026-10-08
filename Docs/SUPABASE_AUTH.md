@@ -75,8 +75,10 @@ session is cleared even if Supabase can't be reached.
 
 **Bootstrap**: `npm run user:create -- --name "…" --email … [--role ADMIN]`
 creates the Supabase identity (password at a hidden prompt, or
-`BOOTSTRAP_PASSWORD`) and its `ACTIVE` row; `--link` links an existing Supabase
-identity to a new or existing row (no password). Server-only credentials.
+`BOOTSTRAP_PASSWORD`) and its `ACTIVE` row. `--link` creates the application
+row for an existing Supabase Auth identity that does not yet have a
+`public."user"` row (found by email; no password). An email whose row already
+exists is refused and nothing changes. Server-only credentials.
 
 ## Security decisions
 
@@ -133,21 +135,70 @@ identity to a new or existing row (no password). Server-only credentials.
 5. CSP: `connect-src` already allows `https://*.supabase.co`
    (`src/createApp.js`, `vercel.json`); a custom Supabase domain must be added to both.
 
-## Database deployment order
+## Database deployment
 
-Migrations `20261008120000_rename_candidate_user_tables` (rename) and
-`20261009120000_supabase_auth_cutover` (drop legacy auth tables and
-`password_hash`; `auth_user_id` NOT NULL UUID + FK). The cutover **refuses to
-run** while any `"user"` row has no `auth_user_id`; it never invents one.
+Two migrations make the restructure:
 
-1. `prisma migrate deploy` up to the rename migration (the cutover stops with
-   the "Link each one first" error if users exist; nothing is changed).
-2. For each existing user: create their Supabase identity (dashboard, or
-   `npm run user:create -- --email … --name …`), then
-   `npm run user:create -- --email … --link`.
-3. If step 1 recorded the cutover as failed:
-   `prisma migrate resolve --rolled-back 20261009120000_supabase_auth_cutover`.
-4. `prisma migrate deploy` again.
+- `20261008120000_rename_candidate_user_tables`: `users` → `candidate`,
+  `admins` → `"user"`, adds a nullable `auth_user_id`, and repoints the Sheet
+  Sync trigger and functions to `candidate`.
+- `20261009120000_supabase_auth_cutover`: drops `admin_invitations`,
+  `admin_password_resets` and `password_hash`; makes `auth_user_id` a required,
+  unique UUID with a foreign key to `auth.users` (Supabase only). It **refuses to
+  run** while any `"user"` row has no `auth_user_id`, and never invents one.
 
-Since all current data is test data, an alternative is to provision fresh
-users after the rename migration and link them, then deploy the cutover.
+### A. New or empty database
+
+1. `npx prisma migrate deploy` (with no staff rows the cutover's check passes).
+2. `npm run user:create -- --name "…" --email … --role ADMIN` for the first
+   ADMIN (password at the hidden prompt).
+3. Everyone else is invited from the app (*Invite User*).
+
+### B. Existing database from before the restructure
+
+The application code from before the restructure stops working once step 1
+runs, so deploy the new code with it.
+
+1. Apply the rename migration only. `prisma migrate deploy` cannot stop before
+   the cutover, so run its SQL directly:
+   `npx prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20261008120000_rename_candidate_user_tables/migration.sql`
+2. Record it as applied:
+   `npx prisma migrate resolve --applied 20261008120000_rename_candidate_user_tables`
+3. Create a Supabase Auth identity for every existing staff row, with the same
+   email (Supabase dashboard, Authentication > Users > Add user, auto-confirm).
+   Old password hashes are not migrated; each person sets a new password (or
+   uses *Forgot password*).
+4. Link the existing rows (IDs, roles, statuses and audit history are kept).
+   `npm run user:create` cannot do this in this in-between state: the generated
+   Prisma client already expects `auth_user_id` to be required, so reading an
+   unlinked row fails (`P2032`). Use one guarded SQL transaction instead:
+   check that every staff email matches exactly one `auth.users` email
+   (case-insensitive), then
+   `UPDATE "user" u SET auth_user_id = a.id::text FROM auth.users a WHERE lower(a.email) = lower(u.email) AND u.auth_user_id IS NULL`,
+   and commit only if the number of updated rows equals the number of staff
+   rows. Never delete a staff row: `audit_logs` and `candidate_call_logs`
+   reference it.
+5. `npx prisma migrate deploy` applies the cutover.
+
+The shared test database was migrated this way.
+
+### Prisma tooling limitation (P4002)
+
+`public."user".auth_user_id` has a foreign key into Supabase's `auth` schema,
+which is not part of the Prisma datasource. Commands that introspect the live
+Supabase database (`prisma db pull`, `prisma migrate diff --from-schema-datasource`
+or `--from-url`) therefore fail with `P4002` ("Cross schema references are only
+allowed when the target schema is listed in the schemas property").
+
+This is accepted. Do **not** add `auth` to the Prisma `schemas` or model
+`auth.users`: Prisma would then treat Supabase-managed tables as
+application-owned, and migrations could try to create, change or drop them.
+Never run `prisma migrate dev` against the shared database.
+
+Still supported: `prisma migrate deploy`, `prisma migrate status`,
+`prisma validate`, `prisma generate` and all application queries. To compare
+the migrations with `schema.prisma`, diff against a throwaway local database
+(it has no `auth` schema, so the cutover skips the foreign key):
+`npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url <local postgres URL>`.
+To check the live database, use `prisma migrate status` plus read-only catalog
+queries.

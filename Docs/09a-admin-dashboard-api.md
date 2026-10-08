@@ -141,7 +141,7 @@ Responses never contain storage paths, checksums or the sender numbers of submis
 | Field | Meaning |
 |---|---|
 | `businessDate` | Today in Sri Lanka (`YYYY-MM-DD`) |
-| `kpis.totalClients` | `users` count |
+| `kpis.totalClients` | `candidate` count |
 | `kpis.totalDocuments` | `documents` count (stored files) |
 | `kpis.pendingReview` | files waiting in `pending/` + stored documents marked `REVIEW_REQUIRED` |
 | `kpis.receivedToday` | submissions (`temporary_data`) since midnight Sri Lanka time |
@@ -312,7 +312,7 @@ A manual admin decision after inspecting a waiting file. Distinct from rejection
 
 ### Consistency and duplicate protection
 
-- Each action runs in one database transaction that first locks the reviewed row (`SELECT … FOR UPDATE`), re-reads its state and only then changes it. Approve also locks the client's `users` row, so two items of the same type for one client can't both become verified. Lock order is always reviewed row, then client.
+- Each action runs in one database transaction that first locks the reviewed row (`SELECT … FOR UPDATE`), re-reads its state and only then changes it. Approve also locks the client's `candidate` row, so two items of the same type for one client can't both become verified. Lock order is always reviewed row, then client.
 - Storage can't join the transaction. Approve copies the file inside the transaction; if anything fails before the commit, the database rolls back and the copy is removed again. The pending original is removed only after the commit. The possible leftovers are a stray object (a copy in the client folder if the process dies before the commit, or the pending original if its removal fails, which is logged); the database is never left saying something the files don't match.
 - A second Approve of the same item gets 409 `ALREADY_RESOLVED` (or 404 once the item is no longer a review item). An identical Keep Pending (same admin, item and reason) within 60 seconds gets 409 `DUPLICATE_ACTION`; a different reason or another admin is a new decision.
 - The page disables both buttons and the dialog while a request runs; the server does not rely on that.
@@ -337,7 +337,7 @@ Purpose: a permanent record of every review decision — who decided what, about
 | Column | Meaning |
 |---|---|
 | `audit_id` | Primary key (UUID) |
-| `admin_id` | The admin who acted (from the token, never from the request body). Foreign key to `admins`, `ON DELETE RESTRICT`: an admin with entries can't be deleted (deactivate instead). |
+| `admin_id` | The admin who acted (from the token, never from the request body). Foreign key to `public."user"` (staff; the table was named `admins` when this section was written), `ON DELETE RESTRICT`: a user with entries can't be deleted (deactivate instead). |
 | `action` | `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT` or `SET_POLICE_DATE` |
 | `temporary_id` | The submission, when there is one |
 | `document_id` | The document created (approve of a waiting file) or reviewed (stored document); for actions on an M4 duplicate, the existing document it copies (never changed, §4k) |
@@ -781,7 +781,7 @@ Bugs found in the product: none. Observed limitations (not changed): a photo rot
 - **Versioning:** the pipeline stores a newer file of a type under the next version name (`passport_v2.pdf`, …; each row keeps its own status, so a client can have two `VERIFIED` rows of a type). An admin's Approve never adds a second verified document of a type (409 `VERIFIED_DOCUMENT_EXISTS`). A rule for replacing a verified document is not part of Phase 10.
 - **Stray storage objects:** if the process stops between the copy and the commit, or removing the pending original fails, an unreferenced object can remain (logged in the second case); records stay correct. No clean-up job exists yet.
 - **Duplicate Keep Pending** is detected as the same admin, item and reason within 60 seconds.
-- **403 is never returned:** inactive admins get 401 (existing authentication rule); there are no roles.
+- **Authorization (superseded):** at this phase there were no roles and an inactive admin got 401. Now a user who is not `ACTIVE` gets 403 `ACCOUNT_NOT_ACTIVE`, and a role that is not allowed gets 403 (§12).
 - OCR boxes, zoom, rotation and the manual field confirmation from the Stitch design depend on stored OCR geometry and are not built.
 - **Queue paging window:** 1000 items per filtered view (the two sources are merged in memory).
 - **PDF preview:** shown in a frame from a `blob:` URL (plus "Open PDF in a new tab"); verified without CSP violations in headless Chrome, where the PDF viewer itself cannot be inspected.

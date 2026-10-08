@@ -17,6 +17,8 @@
 - **Operational Sheet Constraint:** The target spreadsheet is the **real operational Sheet** (no separate dev/test spreadsheet exists by business decision); strict environment write-gating is mandatory
 - **Settings Requirement (confirmed):** a visible **Settings** item after Change Roles in the existing Admin Console sidebar, route `/admin/settings`, with **Google Sheet Sync** as a section of that page (Section 12). This overrides any older recommendation to hide the page or make it direct-URL-only.
 
+> **Table names (Database & Authentication Restructure).** Migration `20261008120000_rename_candidate_user_tables` renamed the candidate table `users` to `candidate` (trigger `candidate_sheet_sync_capture`, function `sheet_sync_capture_candidate`) and the staff table `admins` to `public."user"`. Current-state references below use the new names. Repository findings quoted from the original audit (e.g. the `/invitations` and `/admins` endpoints and CSRF protection) describe the code at that time; those endpoints and the CSRF middleware no longer exist (Supabase Auth, `SUPABASE_AUTH.md`).
+
 ### How to read this document
 
 | Label | Meaning |
@@ -93,7 +95,7 @@ Evidence column names the file inspected. Business/infrastructure items that the
 
 | # | Topic | v1.0.0 claim | Finding | Evidence |
 | :-: | :--- | :--- | :--- | :--- |
-| 1 | Stale-row test | `users.updated_date > sheet.last_synced_at` detects change | **Corrected.** `updated_date` is Prisma `@updatedAt` and changes only on writes to the `users` row itself. Stage, document and document-variant changes do not touch it, yet they change the Sheet row (and automatic stages are derived from documents). Not usable for drift detection. | `prisma/schema.prisma` (`User`), `candidateService.js` (`updateStage`, `storeCandidateDocument`) |
+| 1 | Stale-row test | `candidate.updated_date > sheet.last_synced_at` detects change | **Corrected.** `updated_date` is Prisma `@updatedAt` and changes only on writes to the `candidate` row itself. Stage, document and document-variant changes do not touch it, yet they change the Sheet row (and automatic stages are derived from documents). Not usable for drift detection. | `prisma/schema.prisma` (`User`), `candidateService.js` (`updateStage`, `storeCandidateDocument`) |
 | 2 | `unique_id` | unique, immutable, monotonic | **Confirmed unique and NOT NULL** (`@unique`, non-optional). **Confirmed never updated** by application code. **Corrected "monotonic"**: it is generated as highest numeric existing value + 1 (4-digit zero-padded, growing past 9999), retried on a unique-constraint conflict; non-numeric legacy values are ignored by the generator. | `schema.prisma`, `candidateService.js` (`nextUniqueId`, `createCandidate`) |
 | 3 | Passport ID rule | `/^[A-Za-z0-9]{1,20}$/` | **Corrected.** That pattern is only the URL-parameter check. Registration normalizes with `normalizePassportId`: uppercase, spaces/hyphens/MRZ filler removed, 6-9 `A-Z0-9` with at least one digit. Update requests do not accept a passport ID. The database key is `passport_id` (primary key, `ON UPDATE CASCADE` on child tables), so it is application-immutable but not database-immutable. | `utils/passportId.js`, `candidateService.js`, migrations |
 | 4 | Document statuses | `VERIFIED, REVIEW_REQUIRED, SUPERSEDED, NOT_UPLOADED/MISSING, REMOVED` | **Corrected.** Stored `verification_status` values are only `VERIFIED`, `REVIEW_REQUIRED`, `SUPERSEDED`. `MISSING` is a generated mirror value. `REMOVED` exists only as an audit-log value (removed documents' rows are deleted). `NOT_UPLOADED` is a Police Workflow computed status, not a document status. | `clientDocumentService.js` (`VERIFICATION_STATUS`), `candidateService.js`, `policeCountdownService.js` |
@@ -106,7 +108,7 @@ Evidence column names the file inspected. Business/infrastructure items that the
 | 11 | Cloud Scheduler | assumed | **Not present.** No Cloud Scheduler job or internal HTTP endpoint exists. The worker process serves only `/health`; Vercel rewrites only `/auth`, `/api`, `/whatsapp`, `/health`. Everything scheduler-related is **Proposed**. | repo-wide search, `workerProcess.js`, `vercel.json` |
 | 12 | Log redaction | `safeLog` redacts private keys, spreadsheet IDs | **Corrected.** `safeLog` redacts quoted values, storage paths, e-mail addresses, passport-like IDs and long digit runs only. It does not recognise PEM private keys, bearer tokens or spreadsheet IDs. Google credential redaction **must be added and verified during implementation**. | `src/utils/safeLog.js` |
 | 13 | Google quota | "300 requests per minute per project" | **Removed.** Not verified; the design relies on batching, backoff and configurable batch sizes. | n/a |
-| 14 | Candidate deletion | none exists | **Confirmed.** No candidate-delete path in `src/`. `documents` -> `users` is `ON DELETE RESTRICT`; `candidate_stages` and `candidate_call_logs` cascade. Only `scripts/e2e-supabase-storage.mjs` deletes (test data). | `candidateService.js`, migrations, `scripts/` |
+| 14 | Candidate deletion | none exists | **Confirmed.** No candidate-delete path in `src/`. `documents` -> `candidate` is `ON DELETE RESTRICT`; `candidate_stages` and `candidate_call_logs` cascade. Only `scripts/e2e-supabase-storage.mjs` deletes (test data). | `candidateService.js`, migrations, `scripts/` |
 | 15 | Settings page | hidden / standalone | **Superseded** by the confirmed requirement (Section 12). | n/a |
 | 16 | Branch base | develop from `stage` | **Corrected** (Section 19): development is on `dev`; `stage` is integration/Preview only. | team workflow |
 | 17 | Reconcile schedule | in-app `SHEET_SYNC_RECONCILE_SCHEDULE` cron | **Corrected.** The application must not schedule itself; the schedule belongs to Cloud Scheduler job configuration. | Section 11 |
@@ -129,7 +131,7 @@ Registration and the Candidate Details stage are **different concepts** and must
 | Other names (`first_name`) | Required, at most 100 characters |
 | NIC | Required, at most 12; uppercase, spaces removed; `9 digits + V/X` or `12 digits`; unique across candidates |
 | WhatsApp number | Required at registration; normalized digits (8-15); unique among candidates (partial unique index); locked once set |
-| Job type(s) | Required, 1-10 items, each at most 60 characters, no commas; stored comma-separated in `users.job` |
+| Job type(s) | Required, 1-10 items, each at most 60 characters, no commas; stored comma-separated in `candidate.job` |
 | Job experience | Required, at most 2000 characters |
 | Address | **Optional** at registration (at most 500) |
 | Date of birth, place of birth, nationality, sex (`M`/`F`/`X`), passport issue and expiry dates, contact number | Optional; issue date must precede expiry date; contact number normalized |
@@ -161,31 +163,31 @@ Registration and the Candidate Details stage are **different concepts** and must
 | Stage | Source | Sheet value |
 | :--- | :--- | :--- |
 | `TEST_DETAILS` | Stored (`candidate_stages.completed`) plus `job_id`, `test_result` (`PASS`/`FAIL`), `test_date` | `COMPLETED`/`INCOMPLETE` (`AE`) plus `TEST DATE` (`E`); job ID and test result are not mirrored |
-| `CANDIDATE_DETAILS` | **Derived** from `users` + `documents` (4.1 B) | `COMPLETED`/`INCOMPLETE` |
+| `CANDIDATE_DETAILS` | **Derived** from `candidate` + `documents` (4.1 B) | `COMPLETED`/`INCOMPLETE` |
 | `DOCUMENT_SUBMISSION` | **Derived** from `documents` (medical, SL Verified and Romania police reports, scan) | `COMPLETED`/`INCOMPLETE` |
 | `IVS_INTERVIEW`, `VISA_APPROVAL`, `FINALIZING_JOB` | Stored | `COMPLETED`/`INCOMPLETE` |
 
-`COMPLETED`/`INCOMPLETE` are **generated presentation values** of a boolean. Because two stages are derived from `users` and `documents`, a document upload can change a stage without any `candidate_stages` or `users` write. The mapper must reuse the application's own derivation functions (`stageList`, `automaticStageMissing`, `currentOf`) so the Sheet can never disagree with the Admin UI.
+`COMPLETED`/`INCOMPLETE` are **generated presentation values** of a boolean. Because two stages are derived from `candidate` and `documents`, a document upload can change a stage without any `candidate_stages` or `candidate` write. The mapper must reuse the application's own derivation functions (`stageList`, `automaticStageMissing`, `currentOf`) so the Sheet can never disagree with the Admin UI.
 
 ### 4.4 Every Write Path That Changes Mirrored Data (Confirmed)
 
 | # | Path | File | Tables written | In a transaction? |
 | :-: | :--- | :--- | :--- | :--- |
-| 1 | Register candidate | `candidateService.createCandidate` | `users`, `candidate_stages` (comment) | Yes |
-| 2 | Edit candidate details | `candidateService.updateCandidateDetails` | `users` | **No** (single statement) |
+| 1 | Register candidate | `candidateService.createCandidate` | `candidate`, `candidate_stages` (comment) | Yes |
+| 2 | Edit candidate details | `candidateService.updateCandidateDetails` | `candidate` | **No** (single statement) |
 | 3 | Save a stage | `candidateService.updateStage` | `candidate_stages` | **No** (single statement) |
 | 4 | Admin document upload | `candidateService.finalizeUpload` / `storeCandidateDocument` | `documents` (supersede + create), `audit_logs` | Yes |
 | 5 | Remove candidate document | `candidateService.removeCandidateDocument` | `documents` (delete), `audit_logs` | Yes |
 | 6 | WhatsApp document stored | `clientDocumentService.storeClientDocument` | `documents` | Insert accepts a transaction handle |
 | 7 | Review actions (approve, replace, keep as version, remove) | `adminReviewActionService` | `documents`, `audit_logs` | Yes |
 | 8 | Police date correction | `adminCorrectionService.setPoliceSubmittedDate` | `documents` | Yes |
-| 9 | OCR field reconciliation (fills empty `users` columns from a passport) | `fieldReconciliationService` | `users` (`updateMany` per column) | **No** |
+| 9 | OCR field reconciliation (fills empty `candidate` columns from a passport) | `fieldReconciliationService` | `candidate` (`updateMany` per column) | **No** |
 
 (`candidate_call_logs` is written by `addCallLog` but is out of scope.) Nine writer paths across five services, three of them single non-transactional statements. This directly shapes the change-capture decision in Section 8.
 
 ### 4.5 Candidate Aggregate
 
-The unit of synchronization is the **candidate aggregate**: the `users` row, all its `candidate_stages` rows, and its `documents` rows of the seven candidate document types. Everything the Sheet shows is a pure function of that aggregate. Call logs, `temporary_data`, audit logs are not part of it.
+The unit of synchronization is the **candidate aggregate**: the `candidate` row, all its `candidate_stages` rows, and its `documents` rows of the seven candidate document types. Everything the Sheet shows is a pure function of that aggregate. Call logs, `temporary_data`, audit logs are not part of it.
 
 ---
 
@@ -252,7 +254,7 @@ flowchart LR
     end
 
     subgraph DBLayer ["PostgreSQL (Supabase)"]
-        Tables[("users / candidate_stages / documents")]
+        Tables[("candidate / candidate_stages / documents")]
         Capture["Change capture<br/>(DB triggers, PROPOSED)"]
         Queue[("sheet_sync_queue (PROPOSED)")]
         Runs[("sheet_sync_runs (PROPOSED)<br/>durable run and test requests")]
@@ -454,14 +456,14 @@ Section 4.4 shows nine write paths across five services, three of them single no
 | Option | Description | Assessment |
 | :--- | :--- | :--- |
 | **A. Application-level enqueue** | Call an enqueue helper from each of the nine writer paths; wrap #2, #3 and #9 in transactions so the enqueue is atomic with the write | Matches the repo's test style (in-memory fakes). But it edits WhatsApp intake, OCR reconciliation and Manual Review code (high regression surface), and any new or forgotten writer silently skips the Sheet until the next reconciliation |
-| **T. Database triggers (Proposed)** | Row-level triggers on `users`, `candidate_stages`, `documents` insert or coalesce a queue row in the same transaction/statement as the change | Catches every writer (application, scripts, manual SQL, cascades) by construction; atomic by construction; touches none of the WhatsApp/OCR/Manual Review code. Costs: logic lives in a SQL migration; verification needs a real PostgreSQL (not the in-memory fakes). Precedent: the repo already ships a trigger migration (`audit_logs_reject_change`) |
+| **T. Database triggers (Proposed)** | Row-level triggers on `candidate`, `candidate_stages`, `documents` insert or coalesce a queue row in the same transaction/statement as the change | Catches every writer (application, scripts, manual SQL, cascades) by construction; atomic by construction; touches none of the WhatsApp/OCR/Manual Review code. Costs: logic lives in a SQL migration; verification needs a real PostgreSQL (not the in-memory fakes). Precedent: the repo already ships a trigger migration (`audit_logs_reject_change`) |
 | **P. Polling** | Periodically scan for changes | Cannot see stage/document changes cheaply; it is just reconciliation run more often. Rejected for incremental sync |
 | **W. Supabase database webhooks** | Trigger an external HTTP call | Needs a public ingress endpoint with signature handling and has no coalescing. Rejected |
 | **Rejected from v1.0.0** | Calling Google inside the request; unawaited promises on Vercel; in-memory emitters | A serverless function freezes after the response; events would be lost |
 
 **Recommendation (Proposed, decision D-2 in Section 23): Option T.** If the team prefers application-level code, Option A is an acceptable fallback provided the three non-transactional writers are wrapped and a test enumerates every writer. Either way the daily reconciliation remains the safety net.
 
-Trigger scope (conceptual): `users` (insert, update, delete -> `unique_id` of the new/old row), `candidate_stages` and `documents` (insert, update, delete -> `unique_id` looked up from `passport_id`; documents of types outside the seven candidate types are ignored). Behaviour of triggers during `ON UPDATE CASCADE` and bulk operations must be verified in the Phase 3 spike.
+Trigger scope (conceptual): `candidate` (insert, update, delete -> `unique_id` of the new/old row), `candidate_stages` and `documents` (insert, update, delete -> `unique_id` looked up from `passport_id`; documents of types outside the seven candidate types are ignored). Behaviour of triggers during `ON UPDATE CASCADE` and bulk operations must be verified in the Phase 3 spike.
 
 ### 8.2 The Queue: `sheet_sync_queue` (Proposed)
 
@@ -544,7 +546,7 @@ sequenceDiagram
     participant G as Google Sheets API
 
     Admin->>App: Update candidate details
-    App->>DB: UPDATE users (one transaction)
+    App->>DB: UPDATE candidate (one transaction)
     Note over DB: Trigger coalesces ONE pending queue row for this candidate in the same transaction
     DB-->>App: Committed
     App-->>Admin: 200 OK (Google is never called here)
@@ -552,7 +554,7 @@ sequenceDiagram
     loop Worker poll (configurable interval)
         Worker->>DB: Claim due pending rows (lease, compare-and-swap)
         DB-->>Worker: Claimed candidate keys
-        Worker->>DB: Read CURRENT aggregate (users, stages, documents)
+        Worker->>DB: Read CURRENT aggregate (candidate, stages, documents)
         Worker->>G: Read header row (A1:AN1) and key column (AN)
         Worker->>Worker: Positional header validation, build key to row map, map aggregate to row
         alt Key exists
@@ -626,14 +628,14 @@ All three create a durable `sheet_sync_runs` record and use the same engine.
 | **B. Full-cell comparison (Selected)** | Generate every row fresh from the database and compare each mirrored cell with the Sheet's cell | Detects every kind of drift (stale data, manual edits, missing rows, missing events) with no extra stored state and no dependency on any timestamp. Cost is O(candidates x columns) per run, acceptable for an operational candidate list |
 | **C. Aggregate version/updated timestamp** | A column bumped whenever any component changes | Needs schema changes and a change in every writer (the problem of 4.4), and still misses manual Sheet edits. Rejected |
 
-**Selected: Option B.** `users.updated_date` is not used. Column `AM` (`LAST MIRRORED AT`) is excluded from the comparison. **Needs confirmation:** the current candidate count; if it grows very large the same comparison can be run in key-ordered chunks without changing the design.
+**Selected: Option B.** `candidate.updated_date` is not used. Column `AM` (`LAST MIRRORED AT`) is excluded from the comparison. **Needs confirmation:** the current candidate count; if it grows very large the same comparison can be run in key-ordered chunks without changing the design.
 
 ### 9.3 Reconciliation Algorithm
 
 1. **Create/claim the run** (`sheet_sync_runs`), acquire the reconciliation lock (9.5). If it is held, record the run as `SKIPPED` and log `sheet_sync.reconcile_skipped`.
 2. **Validate the Sheet:** tab `Emlynk Candidate Operational Mirror` exists, header row `A1:AN1` matches exact positional schema (6.4). On mismatch -> `CONFIG_ERROR`, stop, no writes.
 3. **Read the Sheet** completely (`A2:AN`) as displayed strings; build `unique_id (from Col AN) -> row`, noting duplicate keys, blank keys and unknown rows.
-4. **Read the complete database snapshot** in one read-only `REPEATABLE READ` transaction (users with their stages and candidate documents), verifying the row count equals the count query. Any failure aborts the run (9.4).
+4. **Read the complete database snapshot** in one read-only `REPEATABLE READ` transaction (candidates with their stages and candidate documents), verifying the row count equals the count query. Any failure aborts the run (9.4).
 5. **Generate the expected row for every database candidate** with the shared mapper (39 business columns + Column AN).
 6. **Classify and repair:**
    - key missing from the Sheet -> **append**;
@@ -711,8 +713,8 @@ sequenceDiagram
 
 ### 10.1 Current Deletion Behaviour (Confirmed)
 
-- The application has **no candidate deletion** (no endpoint, no service function, no soft-delete column on `users`).
-- `documents.passport_id` references `users` with `ON DELETE RESTRICT`, so a candidate with documents cannot be deleted; `candidate_stages` and `candidate_call_logs` cascade. A candidate with no documents could only be removed by hand in SQL or by a script.
+- The application has **no candidate deletion** (no endpoint, no service function, no soft-delete column on `candidate`).
+- `documents.passport_id` references `candidate` with `ON DELETE RESTRICT`, so a candidate with documents cannot be deleted; `candidate_stages` and `candidate_call_logs` cascade. A candidate with no documents could only be removed by hand in SQL or by a script.
 - The architecture therefore does **not** invent a delete endpoint. It handles deletion safely if it ever happens.
 
 ### 10.2 Rules
@@ -1559,11 +1561,11 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 
 | Requirement | Architecture component | Data source | Trigger | Failure behavior | Test coverage | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| Candidate registration sync | Change capture -> queue -> worker -> mapper -> Sheets client | `users`, `candidate_stages` | Registration transaction | Retry/backoff; reconciliation repairs | 18.2 outbox, 18.3 | Proposed |
-| Candidate update sync | Same | `users` (and OCR field fills) | Update / reconciliation fill | Same | 18.2, 18.3 | Proposed |
+| Candidate registration sync | Change capture -> queue -> worker -> mapper -> Sheets client | `candidate`, `candidate_stages` | Registration transaction | Retry/backoff; reconciliation repairs | 18.2 outbox, 18.3 | Proposed |
+| Candidate update sync | Same | `candidate` (and OCR field fills) | Update / reconciliation fill | Same | 18.2, 18.3 | Proposed |
 | Legacy operational header order preservation | Mapper Columns `A` through `X` | Database aggregate | Any sync write | Schema validation fails if reordered | 18.1 positional test | **Confirmed requirement** |
 | Candidate Details Note mirrored | Mapper column `AD` (Col 30) | `candidate_stages.notes` (`CANDIDATE_DETAILS`) | Note edit / registration | Normal sync; sensitive PII controls apply | 18.1 (Col AD) | **Confirmed requirement** |
-| Stage sync (incl. derived stages) | Mapper Columns `AE` through `AJ` | `candidate_stages`, `users`, `documents` | Component change | Same | 18.1 parity | Proposed |
+| Stage sync (incl. derived stages) | Mapper Columns `AE` through `AJ` | `candidate_stages`, `candidate`, `documents` | Component change | Same | 18.1 parity | Proposed |
 | One SCAN rule | Mapper Column `Q` (Col 17) | `documents` (`SCAN`) | n/a | Only one scan column mirrored | 18.1 (no affidavits) | **Confirmed requirement** |
 | Immutable row identity without visible ID | Technical Column `AN` (`_SYSTEM_CANDIDATE_ID`) | `User.unique_id` | Every write / reconcile | Key re-read per batch; updates in place | 18.1, 18.2 duplicate | **Confirmed (D-17 resolved)** |
 | Duplicate header handling | Positional array validation (6.4) | `A1:AN1` | Before every write batch | Positional mismatch flags `CONFIG_ERROR` | 18.1 positional test | Proposed |
@@ -1643,9 +1645,9 @@ This section describes what the code on `dev` actually does. It supersedes earli
 
 Chosen after auditing every mirrored-data writer: 16 write call sites in 5 services (`candidateService`, `clientDocumentService`, `adminReviewActionService`, `adminCorrectionService`, `fieldReconciliationService`), three of them single statements without a transaction. Application-level enqueue would have meant editing the WhatsApp intake, OCR field reconciliation and Manual Review code. Triggers cover every writer (including scripts, manual SQL and `ON UPDATE CASCADE`) **without touching any of that code**, and are atomic with the change by construction.
 
-- `AFTER INSERT/UPDATE/DELETE FOR EACH ROW` on `users`, `candidate_stages`, `documents`. Child rows resolve the candidate's `unique_id` through `passport_id` (old and new row).
+- `AFTER INSERT/UPDATE/DELETE FOR EACH ROW` on `candidate`, `candidate_stages`, `documents`. Child rows resolve the candidate's `unique_id` through `passport_id` (old and new row).
 - `sheet_sync_enqueue(unique_id, deleted)`: `INSERT … ON CONFLICT (unique_id) WHERE status = 'PENDING' DO UPDATE`, so **one pending row per candidate** (coalescing). A pending row keeps its retry time (bursts don't bypass backoff). `candidate_deleted` is sticky (OR).
-- A users `DELETE` (or a `unique_id` change, which the app never does) sets `candidate_deleted`.
+- A candidate `DELETE` (or a `unique_id` change, which the app never does) sets `candidate_deleted`.
 - The trigger never calls Google. A Google outage cannot fail or roll back a candidate write. (A trigger error would roll back the change like any constraint; the trigger body is a single indexed insert-or-update.)
 - Verified on real PostgreSQL (PGlite, all migrations applied) through the real candidate service: registration, details edit, stage saves, document insert / supersede / date correction / delete, OCR-style `updateMany`, candidate delete with cascade, passport-ID cascade, rollback (no event), change during processing (new event).
 
@@ -1669,10 +1671,10 @@ Chosen after auditing every mirrored-data writer: 16 write call sites in 5 servi
 
 ### 24.5 Row identity, upsert, duplicates, deletion
 
-- Identity is **only** `AN` (`_SYSTEM_CANDIDATE_ID`) = `users.unique_id`, compared as exact text. Blank `AN` identifies nobody (such rows are counted, never modified). Passport number, NIC, WhatsApp number and row number are never identity.
+- Identity is **only** `AN` (`_SYSTEM_CANDIDATE_ID`) = `candidate.unique_id`, compared as exact text. Blank `AN` identifies nobody (such rows are counted, never modified). Passport number, NIC, WhatsApp number and row number are never identity.
 - **Duplicate `AN`** anywhere in the Sheet: hard `DATA_INTEGRITY` error before any write; none of the duplicate rows is modified, labelled or deleted; no guess is made (business rule, supersedes D-11 labelling).
 - Incremental upsert: validate header (`A1:AN1`) → read `AN2:AN` → read the claimed candidates in one query → `batchGet` only their existing rows → compare (all columns except `AM` LAST MIRRORED AT) → `batchUpdate` changed rows + one `append` (`INSERT_ROWS`, `RAW`) for missing candidates. Unchanged rows are not written, so `AM` changes only on a real write. A retry after a crash between append and completion finds the row by `AN` and updates it (no duplicate).
-- **Deleted candidate:** the row is **never deleted**. Only when the trigger flagged the users row as deleted **and** a fresh read confirms the candidate is gone, `AK` becomes `DELETED / INACTIVE` and `AM` is stamped; every other cell is kept. If the same `unique_id` returns, the next sync restores `ACTIVE` and refreshes the row.
+- **Deleted candidate:** the row is **never deleted**. Only when the trigger flagged the candidate row as deleted **and** a fresh read confirms the candidate is gone, `AK` becomes `DELETED / INACTIVE` and `AM` is stamped; every other cell is kept. If the same `unique_id` returns, the next sync restores `ACTIVE` and refreshes the row.
 - The adapter never clears, deletes rows, formats or touches other tabs.
 
 ### 24.6 Reconciliation and deletion guard
@@ -1837,8 +1839,8 @@ Pilot:
 - **Emergency switch:** `gcloud run services update emlynk-sheet-sync-worker --region=asia-south1 --update-env-vars=SHEET_SYNC_ENABLED=false`. The new revision stops all Sheet writes (and requests a read-only token). Candidate database operations are unaffected: the triggers keep queueing (bounded, one row per candidate) and the backlog syncs when writes are re-enabled. Also `gcloud scheduler jobs pause …` for the scheduler jobs.
 - **Absolute stop on the Google side:** remove the service account's Editor sharing from the Sheet (business action in Google Sheets).
 - **Restore Sheet content:** Google Sheets version history, or the copy from 24.10.
-- **Stop change capture (last resort; no candidate data is changed):** `DROP TRIGGER "users_sheet_sync_capture" ON "users"; DROP TRIGGER "candidate_stages_sheet_sync_capture" ON "candidate_stages"; DROP TRIGGER "documents_sheet_sync_capture" ON "documents";` (a later reconciliation still repairs everything).
-- **Remove the feature's database objects completely:** the three `DROP TRIGGER`s, then `DROP FUNCTION "sheet_sync_capture_candidate_child"(), "sheet_sync_capture_users"(), "sheet_sync_enqueue"(TEXT, BOOLEAN); DROP TABLE "sheet_sync_queue", "sheet_sync_runs", "sheet_sync_state";` (only as a new, reviewed migration).
+- **Stop change capture (last resort; no candidate data is changed):** `DROP TRIGGER "candidate_sheet_sync_capture" ON "candidate"; DROP TRIGGER "candidate_stages_sheet_sync_capture" ON "candidate_stages"; DROP TRIGGER "documents_sheet_sync_capture" ON "documents";` (a later reconciliation still repairs everything).
+- **Remove the feature's database objects completely:** the three `DROP TRIGGER`s, then `DROP FUNCTION "sheet_sync_capture_candidate_child"(), "sheet_sync_capture_candidate"(), "sheet_sync_enqueue"(TEXT, BOOLEAN); DROP TABLE "sheet_sync_queue", "sheet_sync_runs", "sheet_sync_state";` (only as a new, reviewed migration).
 
 ### 24.12 Test coverage (local; no live Google call anywhere)
 
