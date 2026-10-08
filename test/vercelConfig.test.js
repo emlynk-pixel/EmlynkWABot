@@ -71,6 +71,7 @@ describe("Step 5D: Vercel entry point", () => {
                 WHATSAPP_VERIFY_TOKEN: "test-verify-token-placeholder",
                 WHATSAPP_ACCESS_TOKEN: "test-access-token-placeholder",
                 WHATSAPP_API_VERSION: "v21.0",
+                APP_BASE_URL: "http://localhost:5173",
                 OCR_SERVICE_URL: "http://127.0.0.1:1",
             },
             encoding: "utf8",

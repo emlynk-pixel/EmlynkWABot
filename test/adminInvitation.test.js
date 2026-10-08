@@ -164,9 +164,39 @@ describe("POST /api/admin/users/invite", () => {
         assert.equal(db.rows.filter((r) => r.email === "race@example.invalid").length, 1);
     });
 
-    test("redirect URL: APP_BASE_URL/admin/setup-password, or Supabase's Site URL when unset", () => {
+    test("redirect URL is ${APP_BASE_URL}/admin/setup-password (trailing slash tolerated)", () => {
         assert.equal(inviteRedirectUrl({ APP_BASE_URL: "https://x.example/" }), "https://x.example/admin/setup-password");
-        assert.equal(inviteRedirectUrl({}), undefined);
+        assert.equal(inviteRedirectUrl({ APP_BASE_URL: "http://localhost:5173" }), "http://localhost:5173/admin/setup-password");
+    });
+
+    test("APP_BASE_URL missing or invalid -> the invite is refused (503) and nothing is sent or stored", async () => {
+        for (const value of [undefined, "", "   ", "not a url", "ftp://host.example", "https://host.example/admin", "https://host.example/?x=1", "https://user:pw@host.example"]) {
+            if (value === undefined) delete process.env.APP_BASE_URL;
+            else process.env.APP_BASE_URL = value;
+            const result = await invite({ email: "cfg@example.invalid", name: "Cfg", role: "ANALYST" });
+            assert.equal(result.status, 503, String(value));
+            assert.equal(result.body.code, "INVITE_NOT_CONFIGURED");
+            assert.match(result.body.message, /^Invitations are not configured: APP_BASE_URL/);
+            assert.ok(!JSON.stringify(result.body).includes("pw@"), "the configured value is never echoed");
+        }
+        assert.equal(authAdmin.calls.length, 0, "Supabase is never asked to send an email");
+        assert.equal(rowOf("cfg@example.invalid"), undefined);
+        assert.equal(db.auditLogRows.length, 0);
+    });
+
+    test("the redirect cannot be influenced by the request (body, query or headers)", async () => {
+        const response = await fetch(`${baseUrl}/api/admin/users/invite?redirectTo=https://evil.example&APP_BASE_URL=https://evil.example`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${tokenFor(ADMIN.adminId)}`, "Content-Type": "application/json", Host: "evil.example", "X-Forwarded-Host": "evil.example", Origin: "https://evil.example", Referer: "https://evil.example/" },
+            body: JSON.stringify({ email: "safe@example.invalid", name: "Safe", role: "ANALYST", redirectTo: "https://evil.example/x", redirect_to: "https://evil.example/y", appBaseUrl: "https://evil.example" }),
+        });
+        assert.equal(response.status, 201);
+        assert.equal(authAdmin.calls.at(-1).options.redirectTo, REDIRECT);
+    });
+
+    test("a missing redirect is refused by the service and the Supabase wrapper too (no Site URL fallback)", async () => {
+        await assert.rejects(inviteUser({ db, authAdmin, actor: ADMIN, values: { email: "x@example.invalid", name: "X", role: "ANALYST" } }), { code: "INVITE_NOT_CONFIGURED" });
+        assert.equal(authAdmin.calls.length, 0);
     });
 });
 

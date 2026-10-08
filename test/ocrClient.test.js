@@ -118,7 +118,7 @@ describe("authentication (Cloud Run IAM)", () => {
     test("startup check: OCR_SERVICE_URL required; plain http only to a loopback address", () => {
         const valid = {
             DATABASE_URL: "postgresql://x", SUPABASE_URL: "https://x.example", SUPABASE_SERVICE_ROLE_KEY: "x", SUPABASE_BUCKET: "x",
-            META_APP_SECRET: "x", WHATSAPP_VERIFY_TOKEN: "x", WHATSAPP_ACCESS_TOKEN: "x", WHATSAPP_API_VERSION: "v21.0",
+            META_APP_SECRET: "x", WHATSAPP_VERIFY_TOKEN: "x", WHATSAPP_ACCESS_TOKEN: "x", WHATSAPP_API_VERSION: "v21.0", APP_BASE_URL: "http://localhost:5173",
         };
         for (const url of ["https://ocr-worker-abc123-el.a.run.app", "http://127.0.0.1:8080", "http://localhost:8080"]) {
             assert.deepEqual(findEnvProblems({ ...valid, OCR_SERVICE_URL: url }), [], url);

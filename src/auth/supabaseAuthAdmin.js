@@ -49,8 +49,11 @@ export function createSupabaseAuthAdmin({ client }) {
     if (!admin) throw new Error("A Supabase service-role client is required");
 
     return Object.freeze({
+        // redirectTo is required: without it Supabase would use the project's
+        // Site URL, which may not be this environment's setup page.
         async inviteUserByEmail(email, { redirectTo } = {}) {
-            const { data, error } = await admin.inviteUserByEmail(email, redirectTo ? { redirectTo } : undefined);
+            if (typeof redirectTo !== "string" || redirectTo === "") throw new AuthAdminError("FAILED", "An invitation needs a redirect address");
+            const { data, error } = await admin.inviteUserByEmail(email, { redirectTo });
             if (error) throw toAuthAdminError(error);
             return { authUserId: data.user.id };
         },

@@ -23,6 +23,7 @@ const PLACEHOLDER_ENV = Object.freeze({
     WHATSAPP_ACCESS_TOKEN: "test-access-token-placeholder",
     WHATSAPP_API_VERSION: "v21.0",
     OCR_SERVICE_URL: "http://127.0.0.1:1",
+    APP_BASE_URL: "http://localhost:5173",
 });
 
 // Runs `script` (an ES module) in a fresh Node process. DOTENV_CONFIG_PATH

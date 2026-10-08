@@ -19,17 +19,15 @@ import {
     updateUserRole,
     UserAccountError,
 } from "../services/userAccountService.js";
+import { InviteConfigError, inviteRedirectUrl } from "../config/appBaseUrl.js";
 import { resolveDb } from "../utils/resolveClients.js";
 
 const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-// Where Supabase sends the invitee: the admin app's setup page. Unset, the
-// Supabase project's Site URL is used. Must be in the project's allowed
-// redirect URLs.
-export function inviteRedirectUrl(env = process.env) {
-    const base = env.APP_BASE_URL?.trim().replace(/\/+$/, "");
-    return base ? `${base}/admin/setup-password` : undefined;
-}
+// The invitation redirect (${APP_BASE_URL}/admin/setup-password) comes only
+// from the server's APP_BASE_URL (config/appBaseUrl.js), never from the
+// request. Re-exported for the tests.
+export { inviteRedirectUrl };
 
 export function createUsersRouter({ db, authAdmin, env = process.env } = {}) {
     const router = express.Router();
@@ -56,12 +54,22 @@ export function createUsersRouter({ db, authAdmin, env = process.env } = {}) {
     router.post("/invite", handle(async (req, res, client) => {
         const parsed = parseInviteBody(req.body);
         if (parsed.errors) return res.status(400).json({ message: "Invalid invitation", errors: parsed.errors });
+        // Before anything is sent: a missing or invalid APP_BASE_URL must not
+        // produce an email with a link to the wrong place.
+        let redirectTo;
+        try {
+            redirectTo = inviteRedirectUrl(env);
+        } catch (error) {
+            if (!(error instanceof InviteConfigError)) throw error;
+            console.error("Invitation refused: APP_BASE_URL is not usable.");
+            return res.status(503).json({ message: error.message, code: "INVITE_NOT_CONFIGURED" });
+        }
         const result = await inviteUser({
             db: client,
             authAdmin: authAdmin ?? (await getSupabaseAuthAdmin()),
             actor: req.user,
             values: parsed.values,
-            redirectTo: inviteRedirectUrl(env),
+            redirectTo,
         });
         return res.status(result.outcome === "INVITED" ? 201 : 200).json(result);
     }));

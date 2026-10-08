@@ -89,6 +89,15 @@ describe("createSupabaseAuthAdmin", () => {
         assert.deepEqual(calls[0].args, ["a@example.invalid", { redirectTo: "https://app.example/admin/setup-password" }]);
     });
 
+    test("invite without a redirect address is refused before Supabase is called (no Site URL fallback)", async () => {
+        const { calls, client } = fakeAdminClient({ inviteUserByEmail: () => ({ data: { user: { id: USER_ID } }, error: null }) });
+        const authAdmin = createSupabaseAuthAdmin({ client });
+        for (const options of [undefined, {}, { redirectTo: "" }, { redirectTo: undefined }]) {
+            await assert.rejects(authAdmin.inviteUserByEmail("a@example.invalid", options), (error) => error instanceof AuthAdminError);
+        }
+        assert.equal(calls.length, 0);
+    });
+
     test("Supabase errors are mapped to codes; messages never carry the email or password", async () => {
         const cases = [
             [{ code: "email_exists", status: 422 }, "EMAIL_EXISTS"],

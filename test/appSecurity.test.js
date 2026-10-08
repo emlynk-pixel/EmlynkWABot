@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { findEnvProblems, assertValidEnv, trustProxyHops, REQUIRED_ENV_VARS } from "../src/config/env.js";
+import { findEnvProblems, assertValidEnv, trustProxyHops, REQUIRED_ENV_VARS, WORKER_REQUIRED_ENV_VARS, SHEET_SYNC_WORKER_REQUIRED_ENV_VARS } from "../src/config/env.js";
 
 // Synthetic placeholders only.
 const VALID_ENV = Object.freeze({
@@ -16,6 +16,7 @@ const VALID_ENV = Object.freeze({
     WHATSAPP_ACCESS_TOKEN: "test-access-token-placeholder",
     WHATSAPP_API_VERSION: "v21.0",
     OCR_SERVICE_URL: "http://127.0.0.1:1",
+    APP_BASE_URL: "http://localhost:5173",
 });
 
 Object.assign(process.env, VALID_ENV);
@@ -34,6 +35,26 @@ describe("startup environment check (SEC-019)", () => {
             assert.deepEqual(findEnvProblems(env), [`${name} is missing`]);
             assert.deepEqual(findEnvProblems({ ...VALID_ENV, [name]: "   " }), [`${name} is missing`]);
         }
+    });
+
+    test("APP_BASE_URL is required, and must be a bare http(s) site address", () => {
+        assert.ok(REQUIRED_ENV_VARS.includes("APP_BASE_URL"));
+        assert.deepEqual(findEnvProblems({ ...VALID_ENV, APP_BASE_URL: "" }), ["APP_BASE_URL is missing"]);
+        const { APP_BASE_URL: _removed, ...without } = VALID_ENV;
+        assert.deepEqual(findEnvProblems(without), ["APP_BASE_URL is missing"]);
+        for (const good of ["http://localhost:5173", "https://emlynk-wa-bot-git-stage-emlynk-pixel.vercel.app", "https://admin.example.com/"]) {
+            assert.deepEqual(findEnvProblems({ ...VALID_ENV, APP_BASE_URL: good }), [], good);
+        }
+        for (const bad of ["localhost:5173", "ftp://host.example", "https://host.example/admin", "https://host.example?x=1", "https://host.example/#a", "https://user:secret-pw@host.example"]) {
+            const problems = findEnvProblems({ ...VALID_ENV, APP_BASE_URL: bad });
+            assert.equal(problems.length, 1, bad);
+            assert.match(problems[0], /^APP_BASE_URL /);
+            assert.ok(!problems[0].includes("secret-pw"), "the value is never repeated");
+        }
+    });
+
+    test("workers do not need APP_BASE_URL (only the server sends invitations)", () => {
+        assert.ok(!["APP_BASE_URL"].some((name) => WORKER_REQUIRED_ENV_VARS.includes(name) || SHEET_SYNC_WORKER_REQUIRED_ENV_VARS.includes(name)));
     });
 
     test("malformed values are reported without their contents", () => {

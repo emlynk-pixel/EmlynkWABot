@@ -12,6 +12,9 @@ export const REQUIRED_ENV_VARS = Object.freeze([
     "WHATSAPP_ACCESS_TOKEN",
     "WHATSAPP_API_VERSION",
     "OCR_SERVICE_URL",
+    // This environment's public admin address; the only source of invitation
+    // redirects (config/appBaseUrl.js). Environment-specific.
+    "APP_BASE_URL",
 ]);
 
 // The worker-only process (src/worker.js, Step 5B) reads only these: the
@@ -36,6 +39,7 @@ export const SHEET_SYNC_WORKER_REQUIRED_ENV_VARS = Object.freeze([
 ]);
 
 import { parseRequiredDocumentTypes } from "./requiredDocuments.js";
+import { parseAppBaseUrl } from "./appBaseUrl.js";
 import { isLoopbackUrl } from "../services/ocrClient.js";
 
 // Number of reverse proxies in front of the app, from TRUST_PROXY_HOPS.
@@ -75,9 +79,11 @@ export function findEnvProblems(env = process.env, { required: requiredVars = RE
     }
 
     // Format checks only for values that are set; missing ones are reported above.
-    // Base of the invitation redirect (routes/users.js); optional.
-    if (isSet(env.APP_BASE_URL) && !isUrl(env.APP_BASE_URL, ["https:", "http:"])) {
-        problems.push("APP_BASE_URL is not a valid URL");
+    // Base of the invitation redirect (config/appBaseUrl.js): the site
+    // address only, http(s), no path/query/credentials.
+    if (isSet(env.APP_BASE_URL)) {
+        const { problem } = parseAppBaseUrl(env.APP_BASE_URL);
+        if (problem) problems.push(problem);
     }
     if (isSet(env.SUPABASE_URL) && !isUrl(env.SUPABASE_URL, ["https:", "http:"])) {
         problems.push("SUPABASE_URL is not a valid URL");

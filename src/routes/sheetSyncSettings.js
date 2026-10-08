@@ -8,8 +8,9 @@
 //
 // ADMIN only, enforced here by requireRole (the role is re-read from the
 // database for every request by requireActiveUser), on top of the admin
-// router's authentication, rate limiting and CSRF protection. Hiding the
-// sidebar item is not the security boundary; this is.
+// router's Supabase-session authentication and rate limiting (no cookie
+// authenticates a request, so CSRF does not apply; Docs/SUPABASE_AUTH.md).
+// Hiding the sidebar item is not the security boundary; this is.
 //
 // This runs on Vercel and never calls Google: POST only records a request
 // that the sheet-sync worker (Cloud Run) executes, and returns at once, so no

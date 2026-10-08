@@ -112,9 +112,24 @@ identity to a new or existing row (no password). Server-only credentials.
    asks for at least 8) and review the auth rate limits.
 4. **Environment variables**
    - Backend (Vercel functions / server): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
-     (existing), optional `APP_BASE_URL`. `JWT_SECRET` and `SMTP_*` / `EMAIL_FROM`
-     are no longer used.
+     (server-side only) and **`APP_BASE_URL` (required)**. `JWT_SECRET`, `SMTP_*`,
+     `EMAIL_FROM` and `ADMIN_SETUP_URL_BASE` are not used.
    - Admin build (Vercel build env): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+   - Local admin development: `admin/.env.local` with
+     `VITE_SUPABASE_URL=<project URL>` and `VITE_SUPABASE_ANON_KEY=<browser-safe anon key>`
+     (copy `admin/.env.example`; never committed).
+   - **`APP_BASE_URL`** is the environment's public admin address: the site origin
+     only (no path). It is environment-specific: local
+     `APP_BASE_URL=http://localhost:5173`; stage
+     `APP_BASE_URL=https://emlynk-wa-bot-git-stage-emlynk-pixel.vercel.app`. The
+     server refuses to start without a valid http(s) value. The invitation redirect
+     is always `${APP_BASE_URL}/admin/setup-password`, never taken from a request;
+     if the value is unusable the invite endpoint answers 503 `INVITE_NOT_CONFIGURED`
+     and sends nothing. There is no fallback to the Supabase Site URL. Password
+     recovery is requested by the browser, which uses its own origin plus
+     `/admin/reset-password` (the same site when configured correctly).
+   - Outgoing auth email uses the SMTP server set in the Supabase dashboard
+     (Authentication > SMTP Settings), not application settings.
 5. CSP: `connect-src` already allows `https://*.supabase.co`
    (`src/createApp.js`, `vercel.json`); a custom Supabase domain must be added to both.
 

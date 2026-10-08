@@ -90,6 +90,10 @@ export async function listUsers({ db }) {
 
 export async function inviteUser({ db, authAdmin, actor, values, redirectTo }) {
     assertAdmin(actor);
+    // Never let Supabase fall back to its Site URL for the invitation link.
+    if (typeof redirectTo !== "string" || redirectTo === "") {
+        throw new UserAccountError(503, "INVITE_NOT_CONFIGURED", "Invitations are not configured: no redirect address.");
+    }
     const { email, name, role } = values;
 
     const existing = await db.user.findUnique({ where: { email } });
