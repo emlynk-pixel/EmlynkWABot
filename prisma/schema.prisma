@@ -13,23 +13,28 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-//Added admin table
+//Staff/application-user table (formerly "admins"; target architecture:
+//public."user", eventually linked to Supabase auth.users via authUserId).
 
-model Admin {
-  adminId         String            @id @map("admin_id")
+model User {
+  adminId         String               @id @map("admin_id")
+  // Supabase auth.users.id, once Phase 2 links this row to a Supabase Auth
+  // identity. Nullable and unenforced in Phase 1: no Supabase Auth
+  // integration exists yet, so no row has a real value here.
+  authUserId      String?              @unique @map("auth_user_id")
   name            String
-  email           String            @unique
-  passwordHash    String?           @map("password_hash")
+  email           String               @unique
+  passwordHash    String?              @map("password_hash")
   role            String
-  status          String            @default("ACTIVE")
-  createdDate     DateTime          @default(now()) @map("created_date")
-  updatedDate     DateTime          @updatedAt @map("updated_date")
+  status          String               @default("ACTIVE")
+  createdDate     DateTime             @default(now()) @map("created_date")
+  updatedDate     DateTime             @updatedAt @map("updated_date")
   auditLogs       AuditLog[]
-  invitationsSent AdminInvitation[] @relation("AdminInvitations")
+  invitationsSent AdminInvitation[]    @relation("AdminInvitations")
   passwordResets  AdminPasswordReset[]
   callLogs        CandidateCallLog[]
 
-  @@map("admins")
+  @@map("user")
 }
 
 // Admin password resets (Self-service password recovery).
@@ -43,7 +48,7 @@ model AdminPasswordReset {
   usedAt    DateTime? @map("used_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
-  admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+  admin User @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
 
   // @@index([tokenHash]) is omitted: the @unique on tokenHash already creates
   // an index; a second explicit index would be redundant (AUDIT-005).
@@ -66,7 +71,7 @@ model AdminInvitation {
   acceptedAt   DateTime? @map("accepted_at")
   revokedAt    DateTime? @map("revoked_at")
 
-  inviter Admin @relation("AdminInvitations", fields: [invitedBy], references: [adminId], onDelete: Restrict)
+  inviter User @relation("AdminInvitations", fields: [invitedBy], references: [adminId], onDelete: Restrict)
 
   @@index([email])
   // @@index([tokenHash]) omitted: @unique on tokenHash already provides an index (AUDIT-005).
@@ -104,7 +109,7 @@ model AuditLog {
   newValue            String?   @map("new_value")
   createdDate         DateTime  @default(now()) @map("created_date")
 
-  admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Restrict)
+  admin User @relation(fields: [adminId], references: [adminId], onDelete: Restrict)
 
   @@index([temporaryId, createdDate])
   @@index([documentId, createdDate])
@@ -112,9 +117,9 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-//added user table
+//Candidate table (formerly "users"; target architecture: public.candidate).
 
-model User {
+model Candidate {
   passportId         String          @id @map("passport_id")
   uniqueId           String          @unique @map("unique_id")
   firstName          String          @map("first_name")
@@ -142,17 +147,17 @@ model User {
 
   // Candidate deployment (candidateService.js). NIC is unique, so the same
   // person can't be registered twice under two passport records.
-  nic                String?            @unique
-  jobExperience      String?            @map("job_experience")
+  nic               String?            @unique
+  jobExperience     String?            @map("job_experience")
   // Optional passport details with no earlier column (the passport OCR reads
   // date of birth, place of birth and expiry only). sex: M, F or X.
-  nationality        String?
-  sex                String?
-  passportIssueDate  DateTime?          @map("passport_issue_date")
-  stages             CandidateStage[]
-  callLogs           CandidateCallLog[]
+  nationality       String?
+  sex               String?
+  passportIssueDate DateTime?          @map("passport_issue_date")
+  stages            CandidateStage[]
+  callLogs          CandidateCallLog[]
 
-  @@map("users")
+  @@map("candidate")
 }
 
 //added document table
@@ -173,8 +178,8 @@ model Document {
   createdDate        DateTime @default(now()) @map("created_date")
   updatedDate        DateTime @updatedAt @map("updated_date")
 
-  user       User    @relation(fields: [passportId], references: [passportId])
-  fileSha256 String? @map("file_sha256") @db.Char(64)
+  user       Candidate @relation(fields: [passportId], references: [passportId])
+  fileSha256 String?   @map("file_sha256") @db.Char(64)
 
   // Submission (temporary_data row) this file was stored from (Phase 10):
   // its processing summary and review reason explain a REVIEW_REQUIRED
@@ -210,10 +215,10 @@ model TemporaryData {
   processingStatus     String   @map("processing_status")
   createdDate          DateTime @default(now()) @map("created_date")
 
-  user               User?   @relation(fields: [passportId], references: [passportId])
-  fileSha256         String? @map("file_sha256") @db.Char(64)
+  user               Candidate? @relation(fields: [passportId], references: [passportId])
+  fileSha256         String?    @map("file_sha256") @db.Char(64)
   // Exact object path of the copy placed in pending/ (Phase 7), if any.
-  pendingStoragePath String? @map("pending_storage_path")
+  pendingStoragePath String?    @map("pending_storage_path")
 
   // Phase 10 review data, written when processing finishes (or fails).
   // processing_summary: the PII-free processing summary (confidences, band,
@@ -272,7 +277,7 @@ model CandidateStage {
   testResult  String?   @map("test_result")
   testDate    DateTime? @map("test_date") @db.Date
 
-  user User @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
+  user Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
 
   @@id([passportId, stage])
   @@map("candidate_stages")
@@ -288,8 +293,8 @@ model CandidateCallLog {
   // When the call took place: the date and time the admin entered, or now.
   createdDate DateTime @default(now()) @map("created_date")
 
-  user  User  @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
-  admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Restrict)
+  user  Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
+  admin User      @relation(fields: [adminId], references: [adminId], onDelete: Restrict)
 
   @@index([passportId, createdDate])
   @@map("candidate_call_logs")
@@ -308,8 +313,10 @@ model RateLimit {
 // Section 8): the durable outbox. A row means "candidate <unique_id> needs to
 // be mirrored", never a data snapshot (no PII): the worker re-reads the
 // candidate when it processes the row. Rows are written by database triggers
-// on users, candidate_stages and documents (migration
-// 20261006120000_sheet_sync_outbox), in the same transaction as the change.
+// on candidate, candidate_stages and documents (migration
+// 20261006120000_sheet_sync_outbox; repointed from "users" by migration
+// 20261008120000_rename_candidate_user_tables), in the same transaction as
+// the change.
 // A partial unique index (not expressible here, defined in that migration's
 // SQL) keeps at most ONE PENDING row per candidate, so changes coalesce. Do not
 // add @unique on uniqueId: there may be one PENDING row plus older
@@ -319,7 +326,7 @@ model SheetSyncQueue {
   queueId          String    @id @default(dbgenerated("(gen_random_uuid())::text")) @map("queue_id")
   uniqueId         String    @map("unique_id")
   status           String    @default("PENDING")
-  // Set when the candidate's users row was deleted (or its unique ID
+  // Set when the candidate's row was deleted (or its unique ID
   // changed): only then may a missing candidate mark its row inactive.
   candidateDeleted Boolean   @default(false) @map("candidate_deleted")
   // Claims so far (incremented when claimed, so a crash counts too).
