@@ -1,10 +1,9 @@
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import jwt from "jsonwebtoken";
 
 import { createAdminRouter } from "../src/routes/admin.js";
-import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.js";
+import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js";
 import {
     POLICE_STATUS,
     POLICE_STATUS_ORDER,
@@ -19,13 +18,13 @@ import { parseReviewActionBody } from "../src/services/adminReviewActionService.
 import { sha256Hex } from "../src/utils/fileChecksum.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
+import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 Object.assign(process.env, {
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
 
@@ -132,7 +131,6 @@ const doc = (n, passportId, documentType, extra = {}) => ({
     storagePath: `clients/${passportId}/x/f${n}.pdf`, mimeType: "application/pdf", fileSize: 10n, receivedDate: new Date("2026-09-10T03:00:00Z"),
     processingStatus: "STORED", verificationStatus: "VERIFIED", ocrConfidence: 90, fileSha256: String(n).repeat(64), temporaryId: null, policeSubmittedDate: null, ...extra,
 });
-const tokenFor = (adminId) => jwt.sign({ adminId }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
 
 // One client per status (all relative to the real "today" so the API's clock can be used).
 function policeFixture() {
@@ -159,7 +157,7 @@ function policeFixture() {
 }
 
 async function start(db, bucket = createFakeBucket([])) {
-    const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: db.client, bucket, requireAdmin: createRequireActiveAdmin({ db: db.client }) }) });
+    const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: db.client, bucket, requireAdmin: createRequireActiveUser({ db: db.client, verifyAccessToken: fakeVerifyAccessToken }) }) });
     const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
     const base = `http://127.0.0.1:${server.address().port}/api/admin`;
     const call = async (method, path, { body, token = tokenFor("admin-active") } = {}) => {
@@ -215,7 +213,7 @@ describe("GET /api/admin/police", () => {
 
     test("needs an ACTIVE admin", async () => {
         assert.equal((await http.call("GET", "/police", { token: null })).status, 401);
-        assert.equal((await http.call("GET", "/police", { token: tokenFor("admin-inactive") })).status, 401);
+        assert.equal((await http.call("GET", "/police", { token: tokenFor("admin-inactive") })).status, 403);
     });
 
     test("read-only: no writes, three queries whatever the number of clients", async () => {

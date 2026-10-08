@@ -1,9 +1,8 @@
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import jwt from "jsonwebtoken";
 
 import { createAdminRouter } from "../src/routes/admin.js";
-import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.js";
+import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js";
 import {
     DEFAULT_REQUIRED_DOCUMENT_TYPES,
     loadRequiredDocumentTypes,
@@ -22,13 +21,13 @@ import {
 } from "../src/services/adminClientService.js";
 import { getClientDetails, getOverview } from "../src/services/adminDashboardService.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
+import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 Object.assign(process.env, {
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
 
@@ -175,12 +174,11 @@ describe("client search", () => {
     });
 });
 
-const tokenFor = (adminId) => jwt.sign({ adminId }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
 let server;
 let base;
 let db;
 before(async () => {
-    const app = createApp({ adminApiRouter: (req, res, next) => createAdminRouter({ apiLimiter: (req, res, next) => next(), db: db.client, requireAdmin: createRequireActiveAdmin({ db: db.client }) })(req, res, next) });
+    const app = createApp({ adminApiRouter: (req, res, next) => createAdminRouter({ apiLimiter: (req, res, next) => next(), db: db.client, requireAdmin: createRequireActiveUser({ db: db.client, verifyAccessToken: fakeVerifyAccessToken }) })(req, res, next) });
     server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
     base = `http://127.0.0.1:${server.address().port}/api/admin`;
 });
@@ -247,7 +245,7 @@ describe("GET /api/admin/clients", () => {
     test("needs an ACTIVE admin", async () => {
         db = fixture();
         assert.equal((await get("/clients", null)).status, 401);
-        assert.equal((await get("/clients", tokenFor("admin-inactive"))).status, 401);
+        assert.equal((await get("/clients", tokenFor("admin-inactive"))).status, 403);
         assert.equal((await get("/documents/missing", null)).status, 401);
     });
 });

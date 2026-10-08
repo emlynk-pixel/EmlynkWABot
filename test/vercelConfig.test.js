@@ -157,7 +157,8 @@ describe("Step 5D: routing", () => {
         assert.match(config.buildCommand, /npm --prefix admin run build -- --outDir \.\.\/public\/admin --emptyOutDir/);
         assert.match(config.installCommand, /npm ci && npm --prefix admin (ci|install)/);
         assert.match(read("admin/vite.config.ts"), /base: "\/admin\/"/);
-        assert.match(read("admin/src/main.tsx"), /basename="\/admin"/);
+        assert.match(read("admin/src/basePath.ts"), /APP_BASE_PATH = "\/admin"/);
+        assert.match(read("admin/src/main.tsx"), /basename=\{APP_BASE_PATH\}/);
         assert.match(read(".gitignore"), /^\/public\/$/m);
     });
 });

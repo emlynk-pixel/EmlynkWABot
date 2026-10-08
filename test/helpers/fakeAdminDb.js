@@ -1,206 +1,78 @@
-// In-memory stand-in for prisma.user (staff/application users, formerly
-// prisma.admin), prisma.adminInvitation, prisma.adminPasswordReset, and
-// prisma.auditLog. Used across auth, RBAC, provisioning, and invitation tests.
-export function createFakeAdminDb(admins = [], { invitations = [], passwordResets = [], auditLogs = [] } = {}) {
-    const rows = admins.map((admin) => ({ ...admin }));
-    const invitationRows = invitations.map((inv) => ({ ...inv }));
-    const passwordResetRows = passwordResets.map((r) => ({ ...r }));
+// In-memory stand-in for prisma.user (application users) and prisma.auditLog.
+// Used across auth, RBAC, user-management and provisioning tests.
+// A fixture row without authUserId gets the one authIdFor(adminId) gives, so
+// tokenFor(adminId) (fakeSupabaseAuth.js) signs it in.
+import { authIdFor } from "./fakeSupabaseAuth.js";
+
+const KEYS = ["adminId", "email", "authUserId"];
+
+export function createFakeAdminDb(users = [], { auditLogs = [] } = {}) {
+    const rows = users.map((user) => ({
+        createdDate: new Date("2026-10-01T00:00:00Z"),
+        status: "ACTIVE",
+        ...user,
+        authUserId: user.authUserId === undefined ? authIdFor(user.adminId) : user.authUserId,
+    }));
     const auditLogRows = auditLogs.map((log) => ({ ...log }));
 
-    const pick = (row, select) =>
-        select ? Object.fromEntries(Object.keys(select).map((key) => [key, row[key]])) : { ...row };
+    const pick = (row, select) => (select ? Object.fromEntries(Object.keys(select).map((key) => [key, row[key]])) : { ...row });
+    const matches = (row, where = {}) => Object.entries(where).every(([key, value]) => row[key] === value);
+    const uniqueViolation = (field) => Object.assign(new Error(`Unique constraint failed on the fields: (\`${field}\`)`), { code: "P2002", meta: { target: [field] } });
+    const assertUnique = (candidate, except = null) => {
+        for (const field of KEYS) {
+            if (candidate[field] == null) continue;
+            if (rows.some((r) => r !== except && r[field] === candidate[field])) throw uniqueViolation(field);
+        }
+    };
+    const findOne = (where) => {
+        const keys = Object.keys(where);
+        if (!keys.length || keys.some((key) => !KEYS.includes(key))) throw new Error(`fakeAdminDb: unsupported unique lookup ${keys}`);
+        return rows.find((r) => matches(r, where)) ?? null;
+    };
 
     const db = {
         rows,
-        invitationRows,
-        passwordResetRows,
         auditLogRows,
         user: {
             async findUnique({ where, select }) {
-                const row = rows.find((r) =>
-                    ("email" in where ? r.email === where.email : true) &&
-                    ("adminId" in where ? r.adminId === where.adminId : true)
-                );
+                const row = findOne(where);
                 return row ? pick(row, select) : null;
             },
-            // Mirrors the unique index on email (Prisma error P2002).
+            async findMany({ where = {}, select } = {}) {
+                return rows.filter((r) => matches(r, where)).map((r) => pick(r, select));
+            },
             async create({ data, select }) {
-                if (rows.some((r) => r.email === data.email)) {
-                    throw Object.assign(new Error("Unique constraint failed on the fields: (`email`)"), { code: "P2002" });
-                }
-                const row = { ...data };
+                const row = { createdDate: new Date(), status: "ACTIVE", ...data };
+                assertUnique(row);
                 rows.push(row);
                 return pick(row, select);
             },
             async update({ where, data, select }) {
-                const index = rows.findIndex((r) =>
-                    ("adminId" in where ? r.adminId === where.adminId : true) &&
-                    ("email" in where ? r.email === where.email : true)
-                );
-                if (index === -1) {
-                    throw new Error("Record to update not found.");
-                }
-                rows[index] = { ...rows[index], ...data, updatedDate: new Date() };
-                return pick(rows[index], select);
+                const row = findOne(where);
+                if (!row) throw Object.assign(new Error("Record to update not found."), { code: "P2025" });
+                assertUnique({ ...row, ...data }, row);
+                Object.assign(row, data, { updatedDate: new Date() });
+                return pick(row, select);
             },
-            async findMany({ where = {} } = {}) {
-                return rows.filter((r) =>
-                    ("status" in where ? r.status === where.status : true) &&
-                    ("role" in where ? r.role === where.role : true)
-                ).map((r) => ({ ...r }));
+            async updateMany({ where = {}, data }) {
+                const targets = rows.filter((r) => matches(r, where));
+                targets.forEach((row) => Object.assign(row, data, { updatedDate: new Date() }));
+                return { count: targets.length };
             },
-        },
-        adminInvitation: {
-            async findUnique({ where }) {
-                const row = invitationRows.find((r) =>
-                    ("tokenHash" in where ? r.tokenHash === where.tokenHash : true) &&
-                    ("invitationId" in where ? r.invitationId === where.invitationId : true)
-                );
-                return row ? { ...row } : null;
-            },
-            async findFirst({ where }) {
-                const row = invitationRows.find((r) =>
-                    ("email" in where ? r.email === where.email : true) &&
-                    ("status" in where ? r.status === where.status : true)
-                );
-                return row ? { ...row } : null;
-            },
-            async findMany({ where = {}, orderBy } = {}) {
-                let result = invitationRows.filter((r) =>
-                    ("email" in where ? r.email === where.email : true) &&
-                    ("status" in where ? r.status === where.status : true)
-                ).map((r) => ({ ...r }));
-
-                if (Array.isArray(orderBy) && orderBy.length > 0) {
-                    const [sortKey, sortDir] = Object.entries(orderBy[0])[0];
-                    result.sort((a, b) => {
-                        const aVal = a[sortKey];
-                        const bVal = b[sortKey];
-                        return sortDir === "desc" ? (aVal < bVal ? 1 : -1) : (aVal > bVal ? 1 : -1);
-                    });
-                }
-                return result;
-            },
-            async create({ data }) {
-                if (invitationRows.some((r) => r.tokenHash === data.tokenHash)) {
-                    throw Object.assign(new Error("Unique constraint failed on token_hash"), { code: "P2002" });
-                }
-                const row = {
-                    createdAt: new Date(),
-                    status: "PENDING",
-                    acceptedAt: null,
-                    revokedAt: null,
-                    ...data,
-                };
-                invitationRows.push(row);
-                return { ...row };
-            },
-            async update({ where, data }) {
-                const index = invitationRows.findIndex((r) => r.invitationId === where.invitationId);
-                if (index === -1) {
-                    throw new Error("Record to update not found.");
-                }
-                invitationRows[index] = { ...invitationRows[index], ...data };
-                return { ...invitationRows[index] };
-            },
-            async updateMany({ where, data }) {
-                let count = 0;
-                for (let i = 0; i < invitationRows.length; i++) {
-                    const matchesEmail = !("email" in where) || invitationRows[i].email === where.email;
-                    const matchesStatus = !("status" in where) || invitationRows[i].status === where.status;
-                    if (matchesEmail && matchesStatus) {
-                        invitationRows[i] = { ...invitationRows[i], ...data };
-                        count++;
-                    }
-                }
-                return { count };
-            },
-            async delete({ where }) {
-                const index = invitationRows.findIndex((r) => r.invitationId === where.invitationId);
-                if (index === -1) {
-                    throw new Error("Record to delete not found.");
-                }
-                const [deleted] = invitationRows.splice(index, 1);
-                return deleted;
-            },
-        },
-        adminPasswordReset: {
-            async findUnique({ where, include }) {
-                const found = passwordResetRows.find((r) =>
-                    ("tokenHash" in where ? r.tokenHash === where.tokenHash : false) ||
-                    ("resetId" in where ? r.resetId === where.resetId : false)
-                );
-                if (!found) return null;
-                const result = { ...found };
-                if (include?.admin) {
-                    const admin = rows.find((a) => a.adminId === found.adminId);
-                    result.admin = admin ? { ...admin } : null;
-                }
-                return result;
-            },
-            async create({ data }) {
-                if (passwordResetRows.some((r) => r.tokenHash === data.tokenHash)) {
-                    throw Object.assign(new Error("Unique constraint failed on token_hash"), { code: "P2002" });
-                }
-                const row = {
-                    createdAt: new Date(),
-                    usedAt: null,
-                    ...data,
-                };
-                passwordResetRows.push(row);
-                return { ...row };
-            },
-            async update({ where, data }) {
-                const index = passwordResetRows.findIndex((r) =>
-                    ("resetId" in where ? r.resetId === where.resetId : false) ||
-                    ("tokenHash" in where ? r.tokenHash === where.tokenHash : false)
-                );
-                if (index === -1) {
-                    throw new Error("Record to update not found.");
-                }
-                passwordResetRows[index] = { ...passwordResetRows[index], ...data };
-                return { ...passwordResetRows[index] };
-            },
-            async updateMany({ where, data }) {
-                let count = 0;
-                for (let i = 0; i < passwordResetRows.length; i++) {
-                    const matchesAdmin = !("adminId" in where) || passwordResetRows[i].adminId === where.adminId;
-                    const matchesUsedAt = !("usedAt" in where) || passwordResetRows[i].usedAt === where.usedAt;
-                    if (matchesAdmin && matchesUsedAt) {
-                        passwordResetRows[i] = { ...passwordResetRows[i], ...data };
-                        count++;
-                    }
-                }
-                return { count };
-            },
-            async findMany({ where = {} } = {}) {
-                return passwordResetRows.filter((r) =>
-                    (!("adminId" in where) || r.adminId === where.adminId) &&
-                    (!("tokenHash" in where) || r.tokenHash === where.tokenHash)
-                ).map((r) => ({ ...r }));
+            async upsert({ where, create, update }) {
+                const row = findOne(where);
+                if (row) return db.user.update({ where, data: update });
+                return db.user.create({ data: create });
             },
         },
         auditLog: {
             async create({ data }) {
-                const row = {
-                    auditId: data.auditId,
-                    adminId: data.adminId,
-                    action: data.action,
-                    previousStatus: data.previousStatus,
-                    newStatus: data.newStatus,
-                    reason: data.reason ?? null,
-                    newValue: data.newValue ?? null,
-                    previousValue: data.previousValue ?? null,
-                    createdDate: new Date(),
-                };
+                const row = { reason: null, previousValue: null, newValue: null, ...data, createdDate: new Date() };
                 auditLogRows.push(row);
                 return { ...row };
             },
             async findMany({ where = {} } = {}) {
-                return auditLogRows.filter((r) =>
-                    ("action" in where ? r.action === where.action : true) &&
-                    ("adminId" in where ? r.adminId === where.adminId : true)
-                ).map((r) => ({ ...r }));
+                return auditLogRows.filter((r) => matches(r, where)).map((r) => ({ ...r }));
             },
         },
         async $transaction(fn) {
@@ -211,5 +83,5 @@ export function createFakeAdminDb(admins = [], { invitations = [], passwordReset
     return db;
 }
 
-// For tests about login logic rather than rate limiting.
+// For tests about authentication rather than rate limiting.
 export const noRateLimit = (req, res, next) => next();

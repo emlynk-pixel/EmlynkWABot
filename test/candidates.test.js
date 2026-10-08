@@ -581,7 +581,7 @@ describe("independent stages", () => {
             app.use(express.json());
             const db = createFakeDb();
             await registered(db);
-            app.use("/api/admin", createAdminRouter({ db, bucket: createFakeBucket(), requireAdmin: (req, res, next) => { req.admin = { ...ADMIN, role: "ANALYST" }; next(); }, apiLimiter: noRateLimit }));
+            app.use("/api/admin", createAdminRouter({ db, bucket: createFakeBucket(), requireAdmin: (req, res, next) => { req.user = { ...ADMIN, role: "ANALYST" }; next(); }, apiLimiter: noRateLimit }));
             app.use(errorHandler);
             const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
             const put = (stage, body) => fetch(`http://127.0.0.1:${server.address().port}/api/admin/candidates/N1023757/stages/${stage}`, {
@@ -816,7 +816,7 @@ describe("candidate routes: roles", () => {
     async function call(role, method, path, body, db = createFakeDb(), { bucket = createFakeBucket() } = {}) {
         const app = express();
         app.use(express.json());
-        const requireAdmin = (req, res, next) => { req.admin = { ...ADMIN, role }; next(); };
+        const requireAdmin = (req, res, next) => { req.user = { ...ADMIN, role }; next(); };
         app.use("/api/admin", createAdminRouter({ db, bucket, requireAdmin, apiLimiter: noRateLimit }));
         app.use(errorHandler);
         const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
@@ -1084,7 +1084,7 @@ describe("candidate routes: roles", () => {
             const { db, bucket } = await withCandidate();
             const app = express();
             app.use(express.json());
-            app.use("/api/admin", createAdminRouter({ db, bucket, requireAdmin: (req, res, next) => { req.admin = ADMIN; next(); }, apiLimiter: noRateLimit }));
+            app.use("/api/admin", createAdminRouter({ db, bucket, requireAdmin: (req, res, next) => { req.user = ADMIN; next(); }, apiLimiter: noRateLimit }));
             app.use(errorHandler);
             const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
             try {
@@ -1205,7 +1205,7 @@ describe("removing a document", () => {
         const request = async (role, path, body) => {
             const app = express();
             app.use(express.json());
-            app.use("/api/admin", createAdminRouter({ db, bucket, requireAdmin: (req, res, next) => { req.admin = { ...ADMIN, role }; next(); }, apiLimiter: noRateLimit }));
+            app.use("/api/admin", createAdminRouter({ db, bucket, requireAdmin: (req, res, next) => { req.user = { ...ADMIN, role }; next(); }, apiLimiter: noRateLimit }));
             app.use(errorHandler);
             const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
             try {

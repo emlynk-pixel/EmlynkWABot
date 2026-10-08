@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ApiError } from "../api/client";
 import { getSheetSyncStatus, requestConnectionTest, requestSyncNow, type SheetSyncRun, type SheetSyncStatus } from "../api/sheetSync";
 import { useAdminResource } from "../api/useAdminResource";
-import { useAuth } from "../auth/AuthProvider";
+import { isAdmin, useAuth } from "../auth/AuthProvider";
 import { primaryButton, secondaryButton } from "../components/Dialog";
 import { formatDateTime, formatNumber, humanize } from "../components/format";
 import { Icon } from "../components/Icon";
@@ -17,8 +17,8 @@ export const ACTIVE_RUN_POLL_MS = 5_000;
 // the same rule on every Settings API route (requireRole); this page only
 // mirrors it. Future system settings are added as further sections here.
 export function SettingsPage() {
-    const { admin } = useAuth();
-    if (admin?.role !== "ADMIN") {
+    const { user } = useAuth();
+    if (!isAdmin(user)) {
         return (
             <div className="mx-auto max-w-4xl p-6">
                 <div className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">

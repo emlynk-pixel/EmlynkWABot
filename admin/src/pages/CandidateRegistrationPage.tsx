@@ -61,7 +61,7 @@ function FileInput({ id, label, required, accept, file, onChange, disabled, erro
 // existing candidate is loaded into the same form and saved to their record,
 // with their stored documents shown (Replace uses the normal versioning).
 export function CandidateRegistrationPage() {
-    const { admin, token } = useAuth();
+    const { user, token } = useAuth();
     const navigate = useNavigate();
     const id = useId();
     const [passportId, setPassportId] = useState("");
@@ -76,8 +76,8 @@ export function CandidateRegistrationPage() {
     // the same ID is fetched once.
     const pending = useRef<{ passportId: string; promise: Promise<CandidateDetails | null> } | null>(null);
 
-    if (!canReview(admin)) {
-        return <Card><EmptyState title="Candidate registration needs an admin or analyst account." /></Card>;
+    if (!canReview(user)) {
+        return <Card><EmptyState title="Candidate registration needs an admin, manager or analyst account." /></Card>;
     }
 
     const existing = lookup.status === "found" ? lookup.details : null;

@@ -11,7 +11,6 @@ const VALID_ENV = Object.freeze({
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     SUPABASE_BUCKET: "test-bucket",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
     META_APP_SECRET: "test-app-secret-placeholder",
     WHATSAPP_VERIFY_TOKEN: "test-verify-token-placeholder",
     WHATSAPP_ACCESS_TOKEN: "test-access-token-placeholder",
@@ -40,7 +39,7 @@ describe("startup environment check (SEC-019)", () => {
     test("malformed values are reported without their contents", () => {
         const env = {
             ...VALID_ENV,
-            JWT_SECRET: "short-secret-value",
+            APP_BASE_URL: "short-secret-value",
             DATABASE_URL: "mysql://secret-db-password@host/db",
             SUPABASE_URL: "not a url secret-value",
             WHATSAPP_API_VERSION: "latest",
@@ -69,7 +68,7 @@ describe("startup environment check (SEC-019)", () => {
     test("the server exits at startup, naming only the missing variables", () => {
         const appPath = fileURLToPath(new URL("../src/app.js", import.meta.url));
         const env = { ...process.env, ...VALID_ENV, DOTENV_CONFIG_PATH: "does-not-exist.env", DOTENV_CONFIG_QUIET: "true" };
-        delete env.JWT_SECRET;
+        delete env.WHATSAPP_VERIFY_TOKEN;
         delete env.META_APP_SECRET;
 
         // DOTENV_CONFIG_PATH points dotenv away from the real .env.
@@ -80,7 +79,7 @@ describe("startup environment check (SEC-019)", () => {
         });
 
         assert.equal(result.status, 1);
-        assert.match(result.stderr, /JWT_SECRET is missing/);
+        assert.match(result.stderr, /WHATSAPP_VERIFY_TOKEN is missing/);
         assert.match(result.stderr, /META_APP_SECRET is missing/);
         assert.ok(!result.stderr.includes(VALID_ENV.SUPABASE_SERVICE_ROLE_KEY));
         assert.ok(!result.stdout.includes("Server is running"));

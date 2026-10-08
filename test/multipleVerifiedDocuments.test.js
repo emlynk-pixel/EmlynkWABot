@@ -2,7 +2,6 @@ import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
-import jwt from "jsonwebtoken";
 
 import { processDocument, PROCESSING_STATUS } from "../src/services/documentProcessingService.js";
 import { decidePlacement, PLACEMENT, CLIENT_BANDS } from "../src/services/storagePlacementService.js";
@@ -10,19 +9,19 @@ import { VERIFICATION_STATUS } from "../src/services/clientDocumentService.js";
 import { REVIEW_REASON, deriveReviewReason } from "../src/services/reviewReason.js";
 import { REVIEW_ACTION, replaceVerifiedDocument, keepDocumentAsVersion, reviewActionAvailability, ReviewActionError } from "../src/services/adminReviewActionService.js";
 import { createAdminRouter } from "../src/routes/admin.js";
-import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.js";
+import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js";
 import { sha256Hex } from "../src/utils/fileChecksum.js";
 import { createFakePrisma } from "./helpers/fakePrisma.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
+import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 Object.assign(process.env, {
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
 
@@ -178,7 +177,6 @@ function setup({ documents = [verifiedRow], temporaryData = [pendingRow()], buck
     bucket.download = async (path) => (bucket.has(path) ? { data: contents[path] ?? Buffer.from(`bytes of ${path}`), error: null } : { data: null, error: { message: "Object not found" } });
     return { db, bucket };
 }
-const tokenFor = (adminId) => jwt.sign({ adminId }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
 const token = tokenFor("admin-active");
 let server;
 let base;
@@ -190,7 +188,7 @@ before(async () => {
 });
 after(() => server.close());
 function use(fixture) {
-    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveAdmin({ db: fixture.db.client }) }) };
+    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveUser({ db: fixture.db.client, verifyAccessToken: fakeVerifyAccessToken }) }) };
     return fixture;
 }
 async function call(method, path, body, { authToken = token } = {}) {
@@ -308,7 +306,7 @@ describe("M4 Policy B: admin review", () => {
     // Item 13.
     test("unauthorized: no token, a garbage token, or the wrong secret cannot Replace or Keep as Version; nothing changes", async () => {
         use(setup());
-        for (const authToken of [null, "not-a-jwt", jwt.sign({ adminId: "admin-active" }, "wrong-secret")]) {
+        for (const authToken of [null, "not-a-jwt", "forged.signature.token"]) {
             const r1 = await replace(`pending-${T}`, { documentId: V }, { authToken });
             const r2 = await keepVersion(`pending-${T}`, {}, { authToken });
             assert.equal(r1.status, 401, String(authToken));
@@ -322,8 +320,8 @@ describe("M4 Policy B: admin review", () => {
     test("a deactivated admin cannot Replace or Keep as Version; nothing changes", async () => {
         use(setup());
         const disabledToken = tokenFor("admin-disabled");
-        assert.equal((await replace(`pending-${T}`, { documentId: V }, { authToken: disabledToken })).status, 401);
-        assert.equal((await keepVersion(`pending-${T}`, {}, { authToken: disabledToken })).status, 401);
+        assert.equal((await replace(`pending-${T}`, { documentId: V }, { authToken: disabledToken })).status, 403);
+        assert.equal((await keepVersion(`pending-${T}`, {}, { authToken: disabledToken })).status, 403);
         assert.equal(current.db.tables.document.length, 1);
         assert.equal(current.db.tables.auditLog.length, 0);
     });

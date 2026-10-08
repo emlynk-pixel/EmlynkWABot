@@ -7,7 +7,6 @@ export const REQUIRED_ENV_VARS = Object.freeze([
     "SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
     "SUPABASE_BUCKET",
-    "JWT_SECRET",
     "META_APP_SECRET",
     "WHATSAPP_VERIFY_TOKEN",
     "WHATSAPP_ACCESS_TOKEN",
@@ -16,7 +15,7 @@ export const REQUIRED_ENV_VARS = Object.freeze([
 ]);
 
 // The worker-only process (src/worker.js, Step 5B) reads only these: the
-// database, storage and the OCR service. It needs no JWT, Meta or WhatsApp
+// database, storage and the OCR service. It needs no Meta or WhatsApp
 // secret, so its deployment doesn't have to hold them.
 export const WORKER_REQUIRED_ENV_VARS = Object.freeze([
     "DATABASE_URL",
@@ -28,7 +27,7 @@ export const WORKER_REQUIRED_ENV_VARS = Object.freeze([
 
 // The Google Sheet sync worker (src/sheetSyncWorker.js, Cloud Run
 // emlynk-sheet-sync-worker): the database and the Sheet target only. No
-// Supabase storage, WhatsApp, OCR or JWT secret; no Google key either (keyless
+// Supabase storage, WhatsApp or OCR secret; no Google key either (keyless
 // ADC: GOOGLE_APPLICATION_CREDENTIALS must NOT be set, see config/sheetSync.js).
 export const SHEET_SYNC_WORKER_REQUIRED_ENV_VARS = Object.freeze([
     "DATABASE_URL",
@@ -38,9 +37,6 @@ export const SHEET_SYNC_WORKER_REQUIRED_ENV_VARS = Object.freeze([
 
 import { parseRequiredDocumentTypes } from "./requiredDocuments.js";
 import { isLoopbackUrl } from "../services/ocrClient.js";
-
-// HS256 key: shorter secrets can be brute-forced from a single token.
-export const MIN_JWT_SECRET_LENGTH = 32;
 
 // Number of reverse proxies in front of the app, from TRUST_PROXY_HOPS.
 // Unset (the default) trusts none: req.ip is the direct peer, and a client
@@ -79,8 +75,9 @@ export function findEnvProblems(env = process.env, { required: requiredVars = RE
     }
 
     // Format checks only for values that are set; missing ones are reported above.
-    if (isSet(env.JWT_SECRET) && env.JWT_SECRET.length < MIN_JWT_SECRET_LENGTH) {
-        problems.push(`JWT_SECRET must be at least ${MIN_JWT_SECRET_LENGTH} characters`);
+    // Base of the invitation redirect (routes/users.js); optional.
+    if (isSet(env.APP_BASE_URL) && !isUrl(env.APP_BASE_URL, ["https:", "http:"])) {
+        problems.push("APP_BASE_URL is not a valid URL");
     }
     if (isSet(env.SUPABASE_URL) && !isUrl(env.SUPABASE_URL, ["https:", "http:"])) {
         problems.push("SUPABASE_URL is not a valid URL");

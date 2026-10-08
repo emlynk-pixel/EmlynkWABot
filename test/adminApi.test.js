@@ -1,6 +1,5 @@
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import jwt from "jsonwebtoken";
 
 import { createAdminRouter } from "../src/routes/admin.js";
 import {
@@ -12,6 +11,7 @@ import {
 } from "../src/services/adminDashboardService.js";
 import { businessDayRange, businessDateOf, isValidBusinessDate } from "../src/utils/businessDay.js";
 import { createFakeAdminDb } from "./helpers/fakeAdminDb.js";
+import { authIdFor, createFakeVerifier, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 // Placeholders so the app's modules load without real credentials.
 Object.assign(process.env, {
@@ -19,7 +19,6 @@ Object.assign(process.env, {
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
 const { createAuthRouter } = await import("../src/routes/auth.js");
@@ -83,16 +82,19 @@ function createFakeDashboardDb({ admins, documents = [docRow()], user = null, pe
 }
 
 const ADMINS = [
-    { adminId: "admin-active", name: "Active Admin", email: "active@example.invalid", passwordHash: "x", role: "ADMIN", status: "ACTIVE" },
-    { adminId: "admin-inactive", name: "Inactive Admin", email: "inactive@example.invalid", passwordHash: "x", role: "ADMIN", status: "INACTIVE" },
+    { adminId: "admin-active", name: "Active Admin", email: "active@example.invalid", role: "ADMIN", status: "ACTIVE" },
+    { adminId: "admin-inactive", name: "Inactive Admin", email: "inactive@example.invalid", role: "ADMIN", status: "INACTIVE" },
 ];
-const tokenFor = (adminId, options = { expiresIn: "1h" }) => jwt.sign({ adminId, role: "ADMIN" }, process.env.JWT_SECRET, { algorithm: "HS256", ...options });
+const verifyAccessToken = createFakeVerifier();
+// A signed-out (or expired) Supabase session: Supabase no longer accepts it.
+const SIGNED_OUT = tokenFor("admin-active-signed-out");
+verifyAccessToken.revoke(SIGNED_OUT);
 
 async function startWith(db) {
     const noLimit = (req, res, next) => next();
     const app = createApp({
-        authRouter: createAuthRouter({ db, loginLimiter: noLimit, resetLimiter: noLimit, apiLimiter: noLimit }),
-        adminApiRouter: createAdminRouter({ apiLimiter: noLimit, db })
+        authRouter: createAuthRouter({ db, verifyAccessToken, apiLimiter: noLimit }),
+        adminApiRouter: createAdminRouter({ apiLimiter: noLimit, db, verifyAccessToken })
     });
     const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
     const base = `http://127.0.0.1:${server.address().port}`;
@@ -103,7 +105,7 @@ async function startWith(db) {
     return { server, get };
 }
 
-describe("/api/admin authentication (shared ACTIVE-admin middleware)", () => {
+describe("/api/admin authentication (shared ACTIVE-user middleware, Supabase session)", () => {
     let http;
     let db;
     before(async () => { db = createFakeDashboardDb({ admins: ADMINS }); http = await startWith(db); });
@@ -121,25 +123,27 @@ describe("/api/admin authentication (shared ACTIVE-admin middleware)", () => {
         assert.equal(db.calls.length, before);
     });
 
-    test("malformed, wrongly signed or expired token -> 401", async () => {
-        for (const token of ["not-a-jwt", jwt.sign({ adminId: "admin-active" }, "another-secret-value-0123456789"), tokenFor("admin-active", { expiresIn: -10 })]) {
+    test("malformed, forged, expired or signed-out Supabase token -> 401, no user lookup", async () => {
+        const before = db.calls.length;
+        for (const token of ["not-a-jwt", "forged.signature.token", SIGNED_OUT]) {
             const result = await http.get("/api/admin/overview", token);
             assert.equal(result.status, 401);
             assert.deepEqual(result.body, { message: "Invalid or Expired Token" });
         }
+        assert.equal(db.calls.length, before);
     });
 
-    test("valid token of an admin that no longer exists -> 401 (same message)", async () => {
+    test("valid Supabase session without an application user -> 403, fails closed", async () => {
         const result = await http.get("/api/admin/overview", tokenFor("admin-deleted"));
-        assert.equal(result.status, 401);
-        assert.deepEqual(result.body, { message: "Invalid or Expired Token" });
+        assert.equal(result.status, 403);
+        assert.deepEqual(result.body, { message: "Your account is not active. Contact an administrator.", code: "ACCOUNT_NOT_ACTIVE" });
     });
 
-    test("valid token of an INACTIVE admin -> 401 (same message), no dashboard query", async () => {
+    test("valid Supabase session of an INACTIVE user -> 403, no dashboard query", async () => {
         const before = db.calls.filter((c) => !c.method.startsWith("user.")).length;
         const result = await http.get("/api/admin/documents", tokenFor("admin-inactive"));
-        assert.equal(result.status, 401);
-        assert.deepEqual(result.body, { message: "Invalid or Expired Token" });
+        assert.equal(result.status, 403);
+        assert.equal(result.body.code, "ACCOUNT_NOT_ACTIVE");
         assert.equal(db.calls.filter((c) => !c.method.startsWith("user.")).length, before);
     });
 
@@ -147,8 +151,8 @@ describe("/api/admin authentication (shared ACTIVE-admin middleware)", () => {
         const result = await http.get("/api/admin/overview");
         assert.equal(result.status, 200);
         const lookup = db.calls.filter((c) => c.method === "user.findUnique").at(-1);
-        assert.deepEqual(lookup.args.where, { adminId: "admin-active" });
-        assert.equal(lookup.args.select.passwordHash, undefined, "password hash never loaded");
+        assert.deepEqual(lookup.args.where, { authUserId: authIdFor("admin-active") }, "looked up by the Supabase identity");
+        assert.ok(!Object.keys(lookup.args.select).some((k) => /password|token|secret/i.test(k)), "no credential is ever loaded");
     });
 
     test("responses are never cached", async () => {
@@ -173,8 +177,12 @@ describe("/api/admin authentication (shared ACTIVE-admin middleware)", () => {
         }
     });
 
-    test("existing /auth/me is unchanged (deleted admin still 404, inactive 401)", async () => {
+    test("/auth/me: 401 without a session, 403 for an inactive user, the profile for an active one", async () => {
         assert.equal((await http.get("/auth/me", null)).status, 401);
+        assert.equal((await http.get("/auth/me", tokenFor("admin-inactive"))).status, 403);
+        const me = await http.get("/auth/me");
+        assert.equal(me.status, 200);
+        assert.deepEqual(me.body, { user: { userId: "admin-active", name: "Active Admin", email: "active@example.invalid", role: "ADMIN", status: "ACTIVE" } });
     });
 });
 

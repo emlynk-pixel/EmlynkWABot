@@ -1,192 +1,62 @@
+// Rate limiting after the Supabase Auth cutover. Sign-in, password recovery
+// and invitation emails are Supabase Auth's, which applies its own per-IP and
+// per-email limits (configured in the Supabase project); the backend has no
+// login endpoint left to limit. The application's own session endpoints
+// (/auth/me, /auth/complete-invite) stay behind the shared API limiter.
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
+import { MemoryStore } from "express-rate-limit";
 
 import { createAuthRouter } from "../src/routes/auth.js";
+import { createApiRateLimiter, API_RATE_LIMIT_MESSAGE } from "../src/middleware/apiRateLimiter.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
-import { MemoryStore } from "express-rate-limit";
-import { createApiRateLimiter } from "../src/middleware/apiRateLimiter.js";
-import {
-    LOGIN_RATE_LIMIT_MESSAGE,
-    createLoginRateLimiter,
-} from "../src/middleware/loginRateLimiter.js";
-import { hashPassword } from "../src/utils/password.js";
 import { createFakeAdminDb } from "./helpers/fakeAdminDb.js";
+import { createFakeVerifier, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
-// Synthetic account and secret only.
-process.env.JWT_SECRET = "test-jwt-secret-placeholder";
-const EMAIL = "admin@example.invalid";
-const PASSWORD = "Correct-Horse-7";
-const WRONG_PASSWORD = "wrong-password";
-const PASSWORD_HASH = await hashPassword(PASSWORD);
-
-// Every test gets a new app and therefore a new limiter with a clean count.
-// It's the real login limiter with its default policy (limit, window,
-// counting, response, headers), not a stub; only its counts are kept in
-// memory here instead of PostgreSQL (the shared store is tested against a
-// real database in postgresRateLimitStore.test.js).
-async function startApp() {
-    const db = createFakeAdminDb([
-        { adminId: "admin-1", name: "Test Admin", email: EMAIL, passwordHash: PASSWORD_HASH, role: "ADMIN", status: "ACTIVE" },
-    ]);
-
-    const app = express();
-    app.use(express.json());
-    app.use("/auth", createAuthRouter({
-        db,
-        loginLimiter: createLoginRateLimiter({ store1: new MemoryStore(), store2: new MemoryStore() }),
-        apiLimiter: createApiRateLimiter({ store: new MemoryStore() }),
-    }));
-    app.get("/health", (req, res) => res.json({ status: "OK" }));
-    app.use(errorHandler);
-
-    const server = await new Promise((resolve) => {
-        const s = app.listen(0, "127.0.0.1", () => resolve(s));
-    });
-    const baseUrl = `http://127.0.0.1:${server.address().port}`;
-
-    const login = async (password) => {
-        const response = await fetch(`${baseUrl}/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: EMAIL, password }),
-        });
-        return { status: response.status, headers: response.headers, text: await response.text() };
-    };
-
-    return { server, baseUrl, login };
-}
-
-let app;
-let logs;
-let realError;
-let realWarn;
+let server;
+let baseUrl;
+let verifyAccessToken;
 
 beforeEach(async () => {
-    app = await startApp();
-    // Record anything the limiter (or anything else) logs.
-    logs = [];
-    realError = console.error;
-    realWarn = console.warn;
-    console.error = (...args) => logs.push(args);
-    console.warn = (...args) => logs.push(args);
+    const db = createFakeAdminDb([{ adminId: "u1", name: "U", email: "u@example.invalid", role: "ADMIN", status: "ACTIVE" }]);
+    verifyAccessToken = createFakeVerifier();
+    const app = express();
+    app.use(express.json());
+    app.use("/auth", createAuthRouter({ db, verifyAccessToken, apiLimiter: createApiRateLimiter({ limit: 3, store: new MemoryStore() }) }));
+    app.use((req, res) => res.status(404).json({ message: "Not found" }));
+    app.use(errorHandler);
+    await new Promise((resolve) => { server = app.listen(0, "127.0.0.1", resolve); });
+    baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
+afterEach(() => server?.close());
 
-afterEach(() => {
-    console.error = realError;
-    console.warn = realWarn;
-    app.server.close();
-});
+const me = (token) => fetch(`${baseUrl}/auth/me`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
 
-async function failLogins(count) {
-    const statuses = [];
-    for (let i = 0; i < count; i++) {
-        statuses.push((await app.login(WRONG_PASSWORD)).status);
-    }
-    return statuses;
-}
-
-describe("login rate limit configuration", () => {
-    test("9. 5 failed attempts per 5-minute window", () => {
-        // We now use a tiered setup instead of exported constants,
-        // so we just check if it's successfully configured.
+describe("session endpoints are rate limited", () => {
+    test("GET /auth/me: the limit applies before any Supabase verification", async () => {
+        for (let i = 0; i < 3; i++) assert.equal((await me("forged.token.value")).status, 401);
+        const limited = await me(tokenFor("u1"));
+        assert.equal(limited.status, 429);
+        assert.deepEqual(await limited.json(), { message: API_RATE_LIMIT_MESSAGE });
+        assert.equal(verifyAccessToken.calls.length, 3, "the limited request never reached Supabase");
     });
 
-    test("9b. the running limiter advertises the same policy in standard headers", async () => {
-        const result = await app.login(WRONG_PASSWORD);
-        const policy = result.headers.get("ratelimit-policy");
+    test("POST /auth/complete-invite is limited too", async () => {
+        for (let i = 0; i < 3; i++) await fetch(`${baseUrl}/auth/complete-invite`, { method: "POST" });
+        assert.equal((await fetch(`${baseUrl}/auth/complete-invite`, { method: "POST" })).status, 429);
+    });
 
-        assert.match(policy, /q=5\b/, `policy header: ${policy}`);
-        assert.match(policy, /w=300\b/, `policy header: ${policy}`);
-        assert.ok(result.headers.get("ratelimit"), "standard RateLimit header present");
-        assert.equal(result.headers.get("x-ratelimit-limit"), null, "legacy X-RateLimit-* headers are off");
+    test("the 429 reveals no token, email or limiter internals", async () => {
+        for (let i = 0; i < 3; i++) await me(tokenFor("u1"));
+        const text = await (await me(tokenFor("u1"))).text();
+        assert.doesNotMatch(text, /u@example|test-access-token|generic-api|store/);
     });
 });
 
-describe("POST /auth/login is rate limited", () => {
-    test("1. a normal login before any failures is not limited", async () => {
-        const result = await app.login(PASSWORD);
-
-        assert.equal(result.status, 200);
-        assert.ok(JSON.parse(result.text).token);
-    });
-
-    test("3. exactly 5 failed attempts are allowed (each a normal 401)", async () => {
-        assert.deepEqual(await failLogins(5), [401, 401, 401, 401, 401]);
-    });
-
-    test("2 + 4. the attempt after the 5th failure gets 429, and so do the next ones", async () => {
-        await failLogins(5);
-
-        assert.deepEqual(await failLogins(3), [429, 429, 429]);
-    });
-
-    test("once limited, even the correct password is refused until the window ends", async () => {
-        await failLogins(5);
-        const result = await app.login(PASSWORD);
-
-        assert.equal(result.status, 429);
-        assert.doesNotMatch(result.text, /eyJ/, "no token issued while limited");
-    });
-
-    test("successful logins don't count towards the limit", async () => {
-        await failLogins(4);
-        assert.equal((await app.login(PASSWORD)).status, 200);
-
-        assert.deepEqual(await failLogins(2), [401, 429]); // 5th failure allowed, 6th limited
-    });
-
-    test("5. the 429 body includes the generic message and resetTime", async () => {
-        await failLogins(5);
-        const result = await app.login(WRONG_PASSWORD);
-
-        assert.equal(result.status, 429);
-        assert.match(result.headers.get("content-type"), /application\/json/);
-        const body = JSON.parse(result.text);
-        assert.equal(body.message, LOGIN_RATE_LIMIT_MESSAGE);
-        assert.ok(typeof body.resetTime === "string", "resetTime is provided");
-        assert.equal(LOGIN_RATE_LIMIT_MESSAGE, "Too many login attempts. Please try again later.");
-    });
-
-    test("6. the 429 response reveals no password, token, email, status or limiter internals", async () => {
-        await failLogins(5);
-        const { text } = await app.login(PASSWORD);
-
-        for (const secret of [PASSWORD, EMAIL, "ACTIVE", "admin-1", "$2b$", "eyJ", "127.0.0.1", "windowMs", "remaining"]) {
-            assert.ok(!text.includes(secret), `429 body leaks ${secret}`);
-        }
-    });
-
-    test("nothing is logged while limiting (no emails, passwords or IPs)", async () => {
-        await failLogins(5 + 2);
-        assert.deepEqual(logs, []);
-    });
-});
-
-describe("other routes are not affected by the login limiter", () => {
-    test("7. /auth/me keeps working after login is limited", async () => {
-        const { text } = await app.login(PASSWORD);
-        const { token } = JSON.parse(text);
-        await failLogins(5 + 1);
-
-        for (let i = 0; i < 10; i++) {
-            const bad = await fetch(`${app.baseUrl}/auth/me`, { headers: { Authorization: "Bearer not-a-jwt" } });
-            assert.equal(bad.status, 401, "invalid tokens get 401, never 429");
-        }
-
-        const good = await fetch(`${app.baseUrl}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
-        assert.equal(good.status, 200);
-        // /auth/me has its own generic API rate limit (CodeQL: missing rate
-        // limiting), separate from and much higher than the login limiter -
-        // confirms login being limited doesn't also limit /auth/me.
-        assert.match(good.headers.get("ratelimit-policy") ?? "", /^"generic-api"/);
-    });
-
-    test("8. /health is unaffected", async () => {
-        await failLogins(5 + 1);
-
-        const response = await fetch(`${app.baseUrl}/health`);
-        assert.equal(response.status, 200);
-        assert.equal(response.headers.get("ratelimit-policy"), null);
+describe("no backend login endpoint remains", () => {
+    test("POST /auth/login -> 404 (sign-in is Supabase's)", async () => {
+        const response = await fetch(`${baseUrl}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "u@example.invalid", password: "x" }) });
+        assert.equal(response.status, 404);
     });
 });

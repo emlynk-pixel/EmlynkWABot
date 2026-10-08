@@ -1,22 +1,28 @@
-import { useState, useEffect, type FormEvent } from "react";
-import { useSearchParams, useNavigate } from "react-router";
+import { useEffect, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router";
 import { Icon } from "../components/Icon";
-import { validateInvitation, setupPassword, type InvitationDetails } from "../api/auth";
+import { completeInvitation } from "../api/auth";
 import { ApiError } from "../api/client";
+import { useAuth } from "../auth/AuthProvider";
+import { authLinkError, getAuthClient } from "../auth/supabaseClient";
 import { FormField } from "../components/Form";
 import { NewPasswordFields, hasNewPasswordErrors, validateNewPassword, type NewPasswordErrors } from "../components/NewPasswordFields";
 import { inputClass } from "../components/ui";
 
-export function SetupPasswordPage() {
-    const [searchParams] = useSearchParams();
-    const navigate = useNavigate();
-    const token = searchParams.get("token");
+const INVALID_LINK = "This invitation link is invalid or has expired. Ask an administrator to send a new invitation.";
 
+// Invited user setup. The Supabase invite link signs the invitee in (the
+// session arrives in the URL); here they choose a password (Supabase Auth
+// stores it), then the backend activates their account. The role was set by
+// the administrator who invited them and is shown, never chosen, here.
+export function SetupPasswordPage() {
+    const navigate = useNavigate();
+    const { refreshUser } = useAuth();
+    const [linkError] = useState(() => authLinkError());
     const [loading, setLoading] = useState(true);
-    const [invitation, setInvitation] = useState<InvitationDetails | null>(null);
+    const [email, setEmail] = useState<string | null>(null);
     const [validationError, setValidationError] = useState<string | null>(null);
 
-    // Form state
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
     const [fieldErrors, setFieldErrors] = useState<NewPasswordErrors>({});
@@ -25,42 +31,28 @@ export function SetupPasswordPage() {
     const [success, setSuccess] = useState(false);
 
     useEffect(() => {
-        if (!token) {
-            setValidationError("No invitation token provided. Please check the link in your invitation email.");
+        if (linkError) {
+            setValidationError(INVALID_LINK);
             setLoading(false);
             return;
         }
-
         let cancelled = false;
-        async function checkToken() {
-            try {
-                const details = await validateInvitation(token!);
-                if (!cancelled) {
-                    setInvitation(details);
-                    setLoading(false);
-                }
-            } catch (err) {
-                if (!cancelled) {
-                    setValidationError(
-                        err instanceof ApiError
-                            ? err.message
-                            : "Invalid or expired invitation link. Please request a new invitation."
-                    );
-                    setLoading(false);
-                }
-            }
-        }
-
-        checkToken();
+        getAuthClient().getSession()
+            .then(({ data }) => {
+                if (cancelled) return;
+                if (data.session?.user.email) setEmail(data.session.user.email);
+                else setValidationError(INVALID_LINK);
+            })
+            .catch(() => { if (!cancelled) setValidationError(INVALID_LINK); })
+            .finally(() => { if (!cancelled) setLoading(false); });
         return () => {
             cancelled = true;
         };
-    }, [token]);
+    }, [linkError]);
 
-    async function handleSubmit(e: FormEvent) {
-        e.preventDefault();
+    async function handleSubmit(event: FormEvent) {
+        event.preventDefault();
         setSubmitError(null);
-
         const errors = validateNewPassword(password, confirmPassword);
         setFieldErrors(errors);
         if (hasNewPasswordErrors(errors)) {
@@ -70,10 +62,24 @@ export function SetupPasswordPage() {
 
         setSubmitting(true);
         try {
-            await setupPassword(token!, password);
+            const auth = getAuthClient();
+            const { error } = await auth.updateUser({ password });
+            if (error) {
+                setSubmitError(error.code === "weak_password" ? "Choose a stronger password." : "Your password could not be set. Please try again.");
+                return;
+            }
+            const { data } = await auth.getSession();
+            if (!data.session) {
+                setSubmitError(INVALID_LINK);
+                return;
+            }
+            await completeInvitation(data.session.access_token);
+            await refreshUser();
             setSuccess(true);
         } catch (err) {
-            setSubmitError(err instanceof ApiError ? err.message : "Failed to set password. Please try again.");
+            setSubmitError(err instanceof ApiError && err.status === 403
+                ? "This invitation is no longer valid. Ask an administrator to invite you again."
+                : err instanceof ApiError ? err.message : "Your account could not be activated. Please try again.");
         } finally {
             setSubmitting(false);
         }
@@ -82,11 +88,8 @@ export function SetupPasswordPage() {
     return (
         <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
             <div className="w-full max-w-md">
-                {/* Brand / Logo */}
                 <div className="mb-6 flex items-center justify-center gap-3">
-                    <span className="flex size-10 items-center justify-center rounded bg-primary font-semibold text-on-primary text-headline-sm">
-                        E
-                    </span>
+                    <span className="flex size-10 items-center justify-center rounded bg-primary text-headline-sm font-semibold text-on-primary">E</span>
                     <div>
                         <p className="text-headline-sm font-bold text-ink">EmlynkWABot</p>
                         <p className="text-label-caps uppercase text-ink-subtle">Admin Console</p>
@@ -95,66 +98,49 @@ export function SetupPasswordPage() {
 
                 <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
                     {loading ? (
-                        <div className="py-8 text-center text-ink-muted">
-                            <Icon name="progress_activity" className="mx-auto size-7 animate-spin text-primary mb-3" />
+                        <div className="py-8 text-center text-ink-muted" role="status">
+                            <Icon name="progress_activity" className="mx-auto mb-3 size-7 animate-spin text-primary" />
                             <p className="text-body-sm">Verifying invitation link…</p>
                         </div>
                     ) : validationError ? (
-                        <div className="text-center py-4">
+                        <div className="py-4 text-center">
                             <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-critical-bg text-critical">
                                 <Icon name="error" className="size-6" />
                             </div>
                             <h2 className="text-headline-sm font-semibold text-ink">Invitation Problem</h2>
                             <p className="mt-2 text-body-sm text-ink-muted">{validationError}</p>
-                            <div className="mt-6">
-                                <button
-                                    type="button"
-                                    onClick={() => navigate("/login")}
-                                    className="w-full rounded bg-primary py-2 text-label-md font-medium text-on-primary hover:bg-primary-hover"
-                                >
-                                    Return to Sign In
-                                </button>
-                            </div>
+                            <button type="button" onClick={() => navigate("/login")} className="mt-6 w-full rounded bg-primary py-2 text-label-md font-medium text-on-primary hover:bg-primary-hover">
+                                Return to Sign In
+                            </button>
                         </div>
                     ) : success ? (
-                        <div className="text-center py-4">
+                        <div className="py-4 text-center">
                             <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-verified-bg text-verified">
                                 <Icon name="check_circle" className="size-7" />
                             </div>
                             <h2 className="text-headline-sm font-semibold text-ink">Account Activated!</h2>
-                            <p className="mt-2 text-body-sm text-ink-muted">
-                                Your password has been successfully configured. Your account is now active and ready to use.
-                            </p>
-                            <div className="mt-6">
-                                <button
-                                    type="button"
-                                    onClick={() => navigate("/login")}
-                                    className="w-full rounded bg-primary py-2 text-label-md font-medium text-on-primary hover:bg-primary-hover"
-                                >
-                                    Continue to Sign In
-                                </button>
-                            </div>
+                            <p className="mt-2 text-body-sm text-ink-muted">Your password is set and your account is active.</p>
+                            <button type="button" onClick={() => navigate("/", { replace: true })} className="mt-6 w-full rounded bg-primary py-2 text-label-md font-medium text-on-primary hover:bg-primary-hover">
+                                Continue to the console
+                            </button>
                         </div>
                     ) : (
                         <div>
                             <div className="mb-5 text-center">
                                 <h1 className="text-headline-md font-bold text-ink">Set Your Password</h1>
-                                <p className="mt-1 text-body-sm text-ink-muted">
-                                    Welcome, <strong className="text-ink">{invitation?.name}</strong>. Create your password to activate your{" "}
-                                    <span className="font-semibold text-primary">{invitation?.role}</span> account.
-                                </p>
+                                <p className="mt-1 text-body-sm text-ink-muted">Choose a password to finish setting up your account.</p>
                             </div>
 
                             {submitError && (
                                 <div role="alert" className="mb-4 flex items-start gap-2 rounded border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">
-                                    <Icon name="error" className="size-4 shrink-0 mt-0.5" />
+                                    <Icon name="error" className="mt-0.5 size-4 shrink-0" />
                                     <span>{submitError}</span>
                                 </div>
                             )}
 
                             <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-                                <FormField id="setup-email" label="Email Address" help="The address this invitation was sent to. It becomes your sign-in email and can't be changed here.">
-                                    <input id="setup-email" type="text" value={invitation?.email ?? ""} disabled className={inputClass()} />
+                                <FormField id="setup-email" label="Email Address" help="The address this invitation was sent to. It is your sign-in email.">
+                                    <input id="setup-email" type="text" value={email ?? ""} disabled className={inputClass()} />
                                 </FormField>
 
                                 <NewPasswordFields
@@ -173,12 +159,9 @@ export function SetupPasswordPage() {
                                 <button
                                     type="submit"
                                     disabled={submitting}
-                                    className="w-full flex h-10 items-center justify-center gap-2 rounded-md bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+                                    className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
                                 >
-                                    <Icon
-                                        name={submitting ? "progress_activity" : "check_circle"}
-                                        className={`size-4 ${submitting ? "animate-spin" : ""}`}
-                                    />
+                                    <Icon name={submitting ? "progress_activity" : "check_circle"} className={`size-4 ${submitting ? "animate-spin" : ""}`} />
                                     <span>{submitting ? "Activating Account…" : "Activate Account"}</span>
                                 </button>
                             </form>

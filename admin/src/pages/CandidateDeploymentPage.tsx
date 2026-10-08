@@ -17,7 +17,7 @@ const isStage = (value: string | null): value is CandidateStageKey => CANDIDATE_
 // selected stage (?stage=…, default the first incomplete one).
 export function CandidateDeploymentPage() {
     const { passportId = "" } = useParams();
-    const { admin } = useAuth();
+    const { user } = useAuth();
     const location = useLocation();
     const [searchParams, setSearchParams] = useSearchParams();
     const resource = useAdminResource(`candidate:${passportId}`, (token, signal) => getCandidate(token, passportId, signal));
@@ -44,7 +44,7 @@ export function CandidateDeploymentPage() {
     const requested = searchParams.get("stage");
     const current: CandidateStageKey = isStage(requested) ? requested : (details.stages.find((s) => !s.completed)?.stage ?? CANDIDATE_STAGES[0]);
     const select = (stage: CandidateStageKey) => setSearchParams({ stage }, { replace: true });
-    const canEdit = canReview(admin);
+    const canEdit = canReview(user);
     const c = details.candidate;
     const panelProps = { details, canEdit, onChange: setUpdated };
     // Files registration couldn't upload, as long as they're still missing:

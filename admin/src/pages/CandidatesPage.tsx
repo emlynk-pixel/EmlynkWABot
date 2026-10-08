@@ -17,7 +17,7 @@ const td = "h-11 border-b border-canvas-muted px-4 py-2 text-body-sm";
 // Admin > Candidates: every candidate (users), newest first. Search and page
 // live in the URL. A row opens the candidate's deployment process.
 export function CandidatesPage() {
-    const { admin } = useAuth();
+    const { user } = useAuth();
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const pageNumber = Number(searchParams.get("page"));
@@ -47,7 +47,7 @@ export function CandidatesPage() {
         <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <h1 id="page-title" className="text-headline-lg text-ink">Candidates</h1>
-                {canReview(admin) && (
+                {canReview(user) && (
                     <Link to="/candidates/new" className={`${primaryButton} inline-flex items-center gap-1.5`}>
                         <Icon name="person_add" className="size-4" />Add candidate
                     </Link>

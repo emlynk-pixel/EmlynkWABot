@@ -4,17 +4,21 @@ import { vi } from "vitest";
 import type { ClientDetails, DocumentItem, DocumentList, Overview } from "../api/admin";
 import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth/AuthProvider";
+import { fakeAuth } from "./fakeSupabase";
 
-// Synthetic admin, tokens, clients and documents only.
-export const ADMIN = { adminId: "admin-1", email: "admin@example.invalid", name: "Test Admin", role: "ADMIN", status: "ACTIVE" };
-export const TOKEN_KEY = "emlynk.admin.token";
+export { fakeAuth };
 
-// A JWT-shaped string with the given expiry (signature not checked here).
-export function fakeJwt(expiresInSeconds = 3600): string {
-    const encode = (value: object) => btoa(JSON.stringify(value)).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
-    const now = Math.floor(Date.now() / 1000);
-    return `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ adminId: ADMIN.adminId, iat: now, exp: now + expiresInSeconds })}.signature`;
-}
+// Synthetic users, tokens, clients and documents only.
+// ADMIN: the application profile GET /auth/me returns for the session.
+export const ADMIN = { userId: "admin-1", email: "admin@example.invalid", name: "Test Admin", role: "ADMIN", status: "ACTIVE" };
+
+// Access tokens of test sessions (Supabase-style JWT shape; never checked).
+export const SESSION_TOKEN = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJzZXNzaW9uIn0.c2Vzc2lvbg";
+let tokenCounter = 0;
+export const newToken = () => `eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJuZXcifQ.t${++tokenCounter}`;
+
+// The profile a role would get from GET /auth/me.
+export const userWithRole = (role: string) => ({ ...ADMIN, role });
 
 type Route = { status: number; body?: unknown };
 type RouteHandler = Route | ((url: URL) => Route | Promise<Route>);
@@ -46,10 +50,11 @@ export function renderApp(initialPath = "/") {
     );
 }
 
-// Signed-in session: stored token + GET /auth/me, plus any other routes.
+// Signed-in session: a Supabase session already in storage (as after a page
+// reload) + GET /auth/me, plus any other routes.
 export function signedInBackend(routes: FetchRoutes = {}) {
-    window.sessionStorage.setItem(TOKEN_KEY, fakeJwt());
-    return stubBackend({ "GET /auth/me": { status: 200, body: { admin: ADMIN } }, "GET /api/admin/overview": { status: 200, body: OVERVIEW }, ...routes });
+    fakeAuth.setSession(SESSION_TOKEN, ADMIN.email);
+    return stubBackend({ "GET /auth/me": { status: 200, body: { user: ADMIN } }, "GET /api/admin/overview": { status: 200, body: OVERVIEW }, ...routes });
 }
 
 export const CLIENT_REF = { passportId: "N1234567", uniqueId: "0001", name: "KAMAL NIMAL PERERA" };

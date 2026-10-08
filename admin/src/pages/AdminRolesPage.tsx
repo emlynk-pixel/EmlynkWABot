@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { useAuth } from "../auth/AuthProvider";
+import { isAdmin as hasAdminRole, useAuth } from "../auth/AuthProvider";
+import { ALL_ROLES, ROLE_LABELS, type Role } from "../auth/roles";
 import { Icon } from "../components/Icon";
-import { listAdmins, updateAdminRole, type AdminAccount } from "../api/admin";
+import { listUsers, updateUserRole, type UserSummary } from "../api/admin";
 import { ApiError } from "../api/client";
 import { inputClass } from "../components/ui";
 
@@ -16,10 +17,10 @@ const dateFormat = new Intl.DateTimeFormat("en-GB", {
 });
 
 export function AdminRolesPage() {
-    const { admin, token } = useAuth();
-    const isAdmin = admin?.role === "ADMIN";
+    const { user, token } = useAuth();
+    const isAdmin = hasAdminRole(user);
 
-    const [admins, setAdmins] = useState<AdminAccount[]>([]);
+    const [admins, setAdmins] = useState<UserSummary[]>([]);
     const [loading, setLoading] = useState(false);
     const [fetchError, setFetchError] = useState<string | null>(null);
     const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -30,10 +31,10 @@ export function AdminRolesPage() {
         if (!isAdmin) return;
         setFetchError(null);
         try {
-            const data = await listAdmins(token as string);
-            setAdmins(data);
+            const data = await listUsers(token as string);
+            setAdmins(data.users);
         } catch (err) {
-            setFetchError(err instanceof ApiError ? err.message : "Failed to load admins.");
+            setFetchError(err instanceof ApiError ? err.message : "Failed to load users.");
         } finally {
             setLoading(false);
         }
@@ -47,7 +48,7 @@ export function AdminRolesPage() {
     }, [isAdmin]);
 
     async function handleRoleChange(adminId: string, newRole: string) {
-        if (!confirm(`Are you sure you want to change this user's role to ${newRole}?`)) {
+        if (!confirm(`Are you sure you want to change this user's role to ${ROLE_LABELS[newRole as Role] ?? newRole}?`)) {
             return;
         }
 
@@ -55,7 +56,7 @@ export function AdminRolesPage() {
         setActionError(null);
         setActionSuccess(null);
         try {
-            await updateAdminRole(token as string, adminId, newRole);
+            await updateUserRole(token as string, adminId, newRole);
             setActionSuccess("Role updated successfully.");
             loadAdmins();
         } catch (err) {
@@ -72,7 +73,7 @@ export function AdminRolesPage() {
                     <Icon name="lock" className="mx-auto size-8 text-critical mb-2" />
                     <h2 className="text-headline-sm font-semibold">Access Restricted</h2>
                     <p className="mt-1 text-body-sm text-ink-muted">
-                        Only administrators with the <strong>ADMIN</strong> role can change user roles.
+                        Only users with the <strong>Admin</strong> role can change user roles.
                     </p>
                 </div>
             </div>
@@ -85,7 +86,7 @@ export function AdminRolesPage() {
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Change Roles</h1>
                     <p className="mt-1 text-body-md text-ink-subtle">
-                        Manage roles for active system users.
+                        Manage the roles of console users. A change applies to their very next request.
                     </p>
                 </div>
             </header>
@@ -141,7 +142,7 @@ export function AdminRolesPage() {
                                     </tr>
                                 )}
                                 {!loading && !fetchError && admins.map((account) => (
-                                    <tr key={account.adminId} className="hover:bg-surface-hover">
+                                    <tr key={account.userId} className="hover:bg-surface-hover">
                                         <td className="px-4 py-3 align-top">
                                             <div className="font-medium">{account.name}</div>
                                             <div className="text-ink-subtle">{account.email}</div>
@@ -159,13 +160,10 @@ export function AdminRolesPage() {
                                                 aria-label={`Change role for ${account.name}`}
                                                 className={inputClass(false, { extra: "w-auto" })}
                                                 value={account.role}
-                                                disabled={updatingId === account.adminId || account.adminId === admin?.adminId}
-                                                onChange={(e) => handleRoleChange(account.adminId, e.target.value)}
+                                                disabled={updatingId === account.userId || account.userId === user?.userId}
+                                                onChange={(e) => handleRoleChange(account.userId, e.target.value)}
                                             >
-                                                <option value="ADMIN">Admin</option>
-                                                <option value="MANAGER">Manager</option>
-                                                <option value="ANALYST">Analyst</option>
-                                                <option value="REGISTRATION_DESK">Registration Desk</option>
+                                                {ALL_ROLES.map((role) => <option key={role} value={role}>{ROLE_LABELS[role]}</option>)}
                                             </select>
                                         </td>
                                     </tr>

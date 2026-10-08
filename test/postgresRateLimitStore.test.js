@@ -20,7 +20,6 @@ import fs from "node:fs";
 import express from "express";
 
 import { createPostgresRateLimitStore } from "../src/middleware/postgresRateLimitStore.js";
-import { createLoginRateLimiter, LOGIN_RATE_LIMIT_MESSAGE } from "../src/middleware/loginRateLimiter.js";
 import { createApiRateLimiter, API_RATE_LIMIT_MESSAGE } from "../src/middleware/apiRateLimiter.js";
 
 const TEST_DB_URL = process.env.RATE_LIMIT_TEST_DATABASE_URL;
@@ -167,58 +166,6 @@ describe("PostgreSQL rate-limit store (real database)", { skip: !TEST_DB_URL && 
             const [row] = await db.$queryRaw`SELECT "key" FROM "rate_limits"`;
             assert.ok(!row.key.includes("127.0.0.1"));
             assert.match(row.key, /^login:[0-9a-f]{64}$/);
-        });
-    });
-
-    describe("login limiter (5 failures / window) across two instances", () => {
-        // A login handler that always fails (401), like a wrong password.
-        const failingLogin = (limiter) => (app) => app.post("/login", limiter, (req, res) => res.status(401).json({ message: "Invalid email or password" }));
-
-        test("20 concurrent failed attempts: exactly 5 reach the login, 15 are limited with the same response as before", async () => {
-            const one = await startInstance(failingLogin(createLoginRateLimiter({ store: createPostgresRateLimitStore({ prefix: "login:", db }) })));
-            const two = await startInstance(failingLogin(createLoginRateLimiter({ store: createPostgresRateLimitStore({ prefix: "login:", db }) })));
-            try {
-                const responses = await Promise.all(Array.from({ length: 20 }, (_, i) => fetch(`${(i % 2 ? one : two).url}/login`, { method: "POST" })));
-                const statuses = responses.map((r) => r.status);
-                assert.equal(statuses.filter((s) => s === 401).length, 5);
-                assert.equal(statuses.filter((s) => s === 429).length, 15);
-                const limited = responses.find((r) => r.status === 429);
-                const body = await limited.json();
-                assert.equal(body.message, LOGIN_RATE_LIMIT_MESSAGE);
-                assert.match(limited.headers.get("ratelimit-policy"), /q=5\b/);
-                assert.match(limited.headers.get("ratelimit-policy"), /w=300\b/);
-            } finally {
-                await one.close();
-                await two.close();
-            }
-        });
-
-        test("successful logins are not counted (skipSuccessfulRequests), across instances", async () => {
-            const ok = (limiter) => (app) => app.post("/login", limiter, (req, res) => res.status(200).json({ ok: true }));
-            const one = await startInstance(ok(createLoginRateLimiter({ store: createPostgresRateLimitStore({ prefix: "login:", db }) })));
-            const two = await startInstance(ok(createLoginRateLimiter({ store: createPostgresRateLimitStore({ prefix: "login:", db }) })));
-            try {
-                for (let i = 0; i < 12; i++) {
-                    const response = await fetch(`${(i % 2 ? one : two).url}/login`, { method: "POST" });
-                    assert.equal(response.status, 200);
-                }
-            } finally {
-                await one.close();
-                await two.close();
-            }
-        });
-
-        test("the window resets", async () => {
-            const limiter = createLoginRateLimiter({ windowMs1: 1_000, windowMs2: 1_000, store1: createPostgresRateLimitStore({ prefix: "login:t1:", db }), store2: createPostgresRateLimitStore({ prefix: "login:t2:", db }) });
-            const one = await startInstance(failingLogin(limiter));
-            try {
-                for (let i = 0; i < 5; i++) assert.equal((await fetch(`${one.url}/login`, { method: "POST" })).status, 401);
-                assert.equal((await fetch(`${one.url}/login`, { method: "POST" })).status, 429);
-                await sleep(1_200);
-                assert.equal((await fetch(`${one.url}/login`, { method: "POST" })).status, 401);
-            } finally {
-                await one.close();
-            }
         });
     });
 

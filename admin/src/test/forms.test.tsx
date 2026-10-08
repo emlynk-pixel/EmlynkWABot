@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import { HelpTip } from "../components/Form";
-import { renderApp, signedInBackend, stubBackend } from "./helpers";
+import { SESSION_TOKEN, fakeAuth, renderApp, signedInBackend, stubBackend } from "./helpers";
 
 describe("help tip (!)", () => {
     test("opens on hover and closes on mouse leave", async () => {
@@ -45,11 +45,12 @@ describe("help tip (!)", () => {
 });
 
 describe("inline validation", () => {
-    const validToken = { "GET /auth/reset-password": { status: 200, body: { valid: true, message: "ok" } } };
 
     test("reset password: each error sits on its field, nothing is sent, and errors clear once fixed", async () => {
-        const { calls } = stubBackend(validToken);
-        renderApp("/reset-password?token=valid-token-xyz");
+        // A recovery session from the Supabase reset link.
+        fakeAuth.setSession(SESSION_TOKEN);
+        const { calls } = stubBackend({});
+        renderApp("/reset-password");
         await screen.findByRole("heading", { name: "Set New Password" });
         const user = userEvent.setup();
         const password = screen.getByLabelText("New Password");
@@ -62,6 +63,7 @@ describe("inline validation", () => {
         expect(confirm).toHaveAccessibleDescription("Enter the password again.");
         expect(password).toHaveFocus();
         expect(calls.some((c) => c.method === "POST")).toBe(false);
+        expect(fakeAuth.calls.some((c) => c.method === "updateUser")).toBe(false);
 
         await user.type(password, "-but-long-now");
         expect(password).not.toHaveAttribute("aria-invalid");
@@ -70,7 +72,7 @@ describe("inline validation", () => {
     });
 
     test("invitations: an invalid email is caught on the field before any request", async () => {
-        const { calls } = signedInBackend({ "GET /api/admin/invitations": { status: 200, body: { invitations: [] } } });
+        const { calls } = signedInBackend({ "GET /api/admin/users": { status: 200, body: { users: [] } } });
         renderApp("/invitations");
         const user = userEvent.setup();
         await user.type(await screen.findByLabelText("Full Name"), "New Colleague");

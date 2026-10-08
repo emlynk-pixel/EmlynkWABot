@@ -1,17 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
-import {
-    CLIENT_DETAILS,
-    OVERVIEW,
-    TOKEN_KEY,
-    documentList,
-    fakeJwt,
-    makeDocument,
-    renderApp,
-    signedInBackend,
-    stubBackend,
-} from "./helpers";
+import { CLIENT_DETAILS, OVERVIEW, documentList, makeDocument, renderApp, signedInBackend, stubBackend, SESSION_TOKEN, fakeAuth } from "./helpers";
 
 const lastRequest = (calls: { path: string }[], prefix: string) => [...calls].reverse().find((c) => c.path.startsWith(prefix));
 
@@ -38,7 +28,7 @@ describe("Overview", () => {
         expect(within(queue).getByText("Manual review")).toBeInTheDocument();
 
         const request = lastRequest(calls, "/api/admin/overview")!;
-        expect((request as unknown as { headers: Record<string, string> }).headers.Authorization).toBe(`Bearer ${window.sessionStorage.getItem(TOKEN_KEY)}`);
+        expect((request as unknown as { headers: Record<string, string> }).headers.Authorization).toBe(`Bearer ${SESSION_TOKEN}`);
     });
 
     test("shows a loading state first", async () => {
@@ -79,7 +69,7 @@ describe("Overview", () => {
         signedInBackend({ "GET /api/admin/overview": { status: 401, body: { message: "Invalid or Expired Token" } } });
         renderApp("/");
         expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
-        expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+        expect(fakeAuth.currentSession).toBeNull();
     });
 });
 
@@ -214,11 +204,12 @@ describe("protected routes stay protected", () => {
         });
     }
 
-    test("an expired stored token never reaches the admin API", async () => {
-        window.sessionStorage.setItem(TOKEN_KEY, fakeJwt(-5));
-        const { calls } = stubBackend({});
+    test("a stored session the backend no longer accepts never reaches the admin API", async () => {
+        fakeAuth.setSession(SESSION_TOKEN);
+        const { calls } = stubBackend({ "GET /auth/me": { status: 401, body: { message: "Invalid or Expired Token" } } });
         renderApp("/clients/N1234567");
         expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
-        expect(calls).toHaveLength(0);
+        expect(calls.map((c) => c.path)).toEqual(["/auth/me"]);
+        expect(fakeAuth.currentSession).toBeNull();
     });
 });

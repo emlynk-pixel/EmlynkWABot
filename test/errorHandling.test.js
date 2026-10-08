@@ -11,17 +11,16 @@ process.env.SUPABASE_URL = "http://127.0.0.1:1";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role-placeholder";
 process.env.DATABASE_URL = "postgresql://test:test@127.0.0.1:1/test";
 process.env.META_APP_SECRET = "test-app-secret-placeholder";
-process.env.JWT_SECRET = "test-jwt-secret-placeholder";
 
 const { createApp } = await import("../src/createApp.js");
 const { createAuthRouter } = await import("../src/routes/auth.js");
-const { createLoginRateLimiter } = await import("../src/middleware/loginRateLimiter.js");
+const { createApiRateLimiter } = await import("../src/middleware/apiRateLimiter.js");
 const { MemoryStore } = await import("express-rate-limit");
 
-// The real auth routes and login limiter; the limiter counts in memory here
+// The real auth routes and their limiter; the limiter counts in memory here
 // (its default store is PostgreSQL, which these tests don't have).
 const appWithMemoryLimiter = () => createApp({
-    authRouter: createAuthRouter({ loginLimiter: createLoginRateLimiter({ store1: new MemoryStore(), store2: new MemoryStore() }) }),
+    authRouter: createAuthRouter({ apiLimiter: createApiRateLimiter({ store: new MemoryStore() }) }),
 });
 
 // Anything that would reveal internals if it appeared in a response.
@@ -87,8 +86,8 @@ describe("error responses from the real app", () => {
         process.env.NODE_ENV = savedNodeEnv;
     });
 
-    test("1. malformed JSON to /auth/login -> 400 JSON, nothing leaked", async () => {
-        const result = await post(baseUrl, "/auth/login", '{"email": "a", bad json');
+    test("1. malformed JSON to /auth/complete-invite -> 400 JSON, nothing leaked", async () => {
+        const result = await post(baseUrl, "/auth/complete-invite", '{"email": "a", bad json');
 
         assert.equal(result.status, 400);
         assert.match(result.contentType, /application\/json/);
@@ -109,7 +108,7 @@ describe("error responses from the real app", () => {
     test("3. oversized JSON body -> 413 JSON, nothing leaked", async () => {
         const oversized = JSON.stringify({ padding: "a".repeat(200_000) }); // default limit is 100 kB
 
-        for (const path of ["/whatsapp/webhook", "/auth/login"]) {
+        for (const path of ["/whatsapp/webhook", "/auth/complete-invite"]) {
             const result = await post(baseUrl, path, oversized);
 
             assert.equal(result.status, 413, path);
@@ -119,12 +118,12 @@ describe("error responses from the real app", () => {
     });
 
     test("4. the log line has safe metadata only: no body, message or stack", async () => {
-        await post(baseUrl, "/auth/login", '{"email": "person@example.invalid", "password": "hunter2", broken');
+        await post(baseUrl, "/auth/complete-invite", '{"email": "person@example.invalid", "password": "hunter2", broken');
 
         assert.equal(logged.length, 1);
         const [label, details] = logged[0];
         assert.equal(label, "Request failed:");
-        assert.deepEqual(details, { method: "POST", path: "/auth/login", status: 400, type: "entity.parse.failed" });
+        assert.deepEqual(details, { method: "POST", path: "/auth/complete-invite", status: 400, type: "entity.parse.failed" });
 
         const serialized = JSON.stringify(logged);
         assert.ok(!serialized.includes("person@example.invalid"));
@@ -133,10 +132,11 @@ describe("error responses from the real app", () => {
     });
 
     test("valid JSON still reaches the routes normally", async () => {
-        const result = await post(baseUrl, "/auth/login", "{}");
+        const result = await post(baseUrl, "/auth/complete-invite", "{}");
 
-        assert.equal(result.status, 400);
-        assert.deepEqual(JSON.parse(result.text), { message: "Email and password are required" });
+        // Reaches the route's own checks: no Supabase session -> 401.
+        assert.equal(result.status, 401);
+        assert.deepEqual(JSON.parse(result.text), { message: "Authentication Token is required!" });
     });
 
     test("health check unchanged", async () => {

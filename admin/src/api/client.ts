@@ -1,12 +1,19 @@
 // Minimal JSON client for the EmlynkWABot backend. Requests are same-origin:
 // in production Express serves this app, in development Vite proxies /auth and /api.
 //
-// Phase 12: authentication is via an httpOnly cookie set by the server.
-// All requests send credentials: "include" so the browser attaches the cookie.
-// When an explicit token or stored test token is present, Authorization: Bearer
-// is also included for backward compatibility with existing tests and CLI tools.
+// Authentication: the current Supabase access token as Authorization: Bearer
+// (no cookie is used or sent). AuthProvider keeps the token current, including
+// after Supabase refreshes it; a page may also pass one explicitly.
 
-import { readToken } from "../auth/tokenStorage";
+let currentAccessToken: string | null = null;
+
+export function setApiAccessToken(token: string | null): void {
+    currentAccessToken = token;
+}
+
+function authorizationToken(token?: string): string | null {
+    return token || currentAccessToken;
+}
 
 export class ApiError extends Error {
     readonly status: number;
@@ -46,8 +53,7 @@ export async function apiRequest<T>(path: string, { method = "GET", body, signal
     const headers: Record<string, string> = { Accept: "application/json" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
 
-    const explicitToken = token && token !== "session" && token !== "cookie" ? token : null;
-    const effectiveToken = explicitToken ?? readToken();
+    const effectiveToken = authorizationToken(token);
     if (effectiveToken) {
         headers["Authorization"] = `Bearer ${effectiveToken}`;
     }
@@ -58,7 +64,7 @@ export async function apiRequest<T>(path: string, { method = "GET", body, signal
             method,
             headers,
             body: body === undefined ? undefined : JSON.stringify(body),
-            credentials: "include",
+            credentials: "omit",
             cache: "no-store",
             signal,
         });
@@ -99,8 +105,7 @@ export async function uploadToSignedUrl(url: string, file: File): Promise<void> 
 // Same rules as apiRequest, for a binary response (the review file preview).
 export async function apiRequestBlob(path: string, { signal, token }: Pick<RequestOptions, "signal" | "token"> = {}): Promise<Blob> {
     const headers: Record<string, string> = {};
-    const explicitToken = token && token !== "session" && token !== "cookie" ? token : null;
-    const effectiveToken = explicitToken ?? readToken();
+    const effectiveToken = authorizationToken(token);
     if (effectiveToken) {
         headers["Authorization"] = `Bearer ${effectiveToken}`;
     }
@@ -109,7 +114,7 @@ export async function apiRequestBlob(path: string, { signal, token }: Pick<Reque
     try {
         response = await fetch(path, {
             headers,
-            credentials: "include",
+            credentials: "omit",
             cache: "no-store",
             signal,
         });

@@ -17,7 +17,6 @@ Object.assign(process.env, {
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createWhatsappRouter, DUPLICATE_WAIT_MS } = await import("../src/routes/whatsapp.js");
 const { createTemporaryDocumentRecord } = await import("../src/services/temporaryDataService.js");
@@ -278,7 +277,7 @@ describe("M1 fix 2: a stale worker attempt can't write after losing its claim", 
         assert.ok(w.db.calls[i].options.timeout < LEASE);
         // The client record (passport reconciliation) is written the same way.
         const r = w.db.calls.findIndex((c) => c.method === "candidate.updateMany") - 2;
-        assert.deepEqual(w.db.calls.slice(r, r + 3).map((c) => c.method), ["$transaction", "temporaryData.updateMany", "user.updateMany"]);
+        assert.deepEqual(w.db.calls.slice(r, r + 3).map((c) => c.method), ["$transaction", "temporaryData.updateMany", "candidate.updateMany"]);
     });
 
     test("Test 4: the job was given up (FAILED) while A was still running -> FAILED stays FAILED, never VERIFIED", async () => {

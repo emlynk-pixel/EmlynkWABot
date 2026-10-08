@@ -1,14 +1,17 @@
 import { useState, useEffect, type FormEvent } from "react";
-import { useSearchParams, useNavigate, Link } from "react-router";
+import { useNavigate, Link } from "react-router";
 import { Icon } from "../components/Icon";
-import { validateResetToken, resetPassword } from "../api/auth";
-import { ApiError } from "../api/client";
+import { authLinkError, getAuthClient } from "../auth/supabaseClient";
 import { NewPasswordFields, hasNewPasswordErrors, validateNewPassword, type NewPasswordErrors } from "../components/NewPasswordFields";
 
+const INVALID_LINK = "This password reset link is invalid or has expired. Please request a new link.";
+
+// The Supabase recovery link signs the user in with a recovery session (the
+// session arrives in the URL); the new password goes to Supabase Auth
+// (updateUser). Afterwards the session is ended and the user signs in again.
 export function ResetPasswordPage() {
-    const [searchParams] = useSearchParams();
     const navigate = useNavigate();
-    const token = searchParams.get("token");
+    const [linkError] = useState(() => authLinkError());
 
     const [loading, setLoading] = useState(true);
     const [validationError, setValidationError] = useState<string | null>(null);
@@ -22,36 +25,20 @@ export function ResetPasswordPage() {
     const [success, setSuccess] = useState(false);
 
     useEffect(() => {
-        if (!token) {
-            setValidationError("No password reset token provided. Please check the link in your email.");
+        if (linkError) {
+            setValidationError(INVALID_LINK);
             setLoading(false);
             return;
         }
-
         let cancelled = false;
-        async function checkToken() {
-            try {
-                await validateResetToken(token!);
-                if (!cancelled) {
-                    setLoading(false);
-                }
-            } catch (err) {
-                if (!cancelled) {
-                    setValidationError(
-                        err instanceof ApiError
-                            ? err.message
-                            : "Invalid or expired password reset link. Please request a new link."
-                    );
-                    setLoading(false);
-                }
-            }
-        }
-
-        checkToken();
+        getAuthClient().getSession()
+            .then(({ data }) => { if (!cancelled && !data.session) setValidationError(INVALID_LINK); })
+            .catch(() => { if (!cancelled) setValidationError(INVALID_LINK); })
+            .finally(() => { if (!cancelled) setLoading(false); });
         return () => {
             cancelled = true;
         };
-    }, [token]);
+    }, [linkError]);
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
@@ -66,12 +53,20 @@ export function ResetPasswordPage() {
 
         setSubmitting(true);
         try {
-            await resetPassword(token!, password);
+            const auth = getAuthClient();
+            const { error } = await auth.updateUser({ password });
+            if (error) {
+                setSubmitError(error.code === "weak_password" ? "Choose a stronger password."
+                    : error.code === "same_password" ? "Choose a password different from your current one."
+                    : error.status === 401 || error.status === 403 ? INVALID_LINK
+                    : "Failed to reset password. Please try again.");
+                return;
+            }
+            // Sign in again with the new password (ends the recovery session everywhere).
+            await auth.signOut().catch(() => {});
             setSuccess(true);
-        } catch (err) {
-            setSubmitError(
-                err instanceof ApiError ? err.message : "Failed to reset password. Please try again."
-            );
+        } catch {
+            setSubmitError("Failed to reset password. Please try again.");
         } finally {
             setSubmitting(false);
         }
@@ -143,7 +138,7 @@ export function ResetPasswordPage() {
                             <div className="mb-5">
                                 <h1 className="text-headline-lg text-ink">Set New Password</h1>
                                 <p className="mt-1 text-body-sm text-ink-muted">
-                                    Choose a strong password for your administrator account.
+                                    Choose a strong password for your account.
                                 </p>
                             </div>
 
