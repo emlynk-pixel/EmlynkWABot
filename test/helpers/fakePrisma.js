@@ -1,6 +1,6 @@
 // Minimal in-memory stand-in for the Prisma calls the services make.
 // Supports only the query shapes the code uses, and records every call.
-//   users:          array of user rows
+//   users:          array of candidate rows
 //   documents:      array of documents rows (unique per passportId + fileSha256, like the real index)
 //   temporaryData:  array of temporary_data rows (only needed for lookups)
 export function createFakePrisma(users = [], { documents = [], temporaryData = [] } = {}) {
@@ -51,14 +51,14 @@ export function createFakePrisma(users = [], { documents = [], temporaryData = [
         async $transaction(callback) {
             return callback(this);
         },
-        user: {
+        candidate: {
             async findMany({ where = {}, select, take } = {}) {
-                calls.push({ method: "user.findMany", where });
+                calls.push({ method: "candidate.findMany", where });
                 const found = rows.filter((row) => matches(row, where)).map((row) => pick(row, select));
                 return take ? found.slice(0, take) : found;
             },
             async updateMany({ where = {}, data }) {
-                calls.push({ method: "user.updateMany", where, data });
+                calls.push({ method: "candidate.updateMany", where, data });
                 const targets = rows.filter((row) => matches(row, where));
                 targets.forEach((row) => Object.assign(row, data));
                 return { count: targets.length };

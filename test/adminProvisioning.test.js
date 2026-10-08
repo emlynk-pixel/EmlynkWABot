@@ -51,9 +51,9 @@ describe("createAdminAccount (SEC-023)", () => {
     test("a unique-index race is reported as ADMIN_EXISTS", async () => {
         const db = createFakeAdminDb([]);
         const racingDb = {
-            admin: {
+            user: {
                 findUnique: async () => null, // looked free…
-                create: async (args) => { await db.admin.create(args); return db.admin.create(args); }, // …but taken meanwhile
+                create: async (args) => { await db.user.create(args); return db.user.create(args); }, // …but taken meanwhile
             },
         };
         await rejectsWith(createAdminAccount(input(), { db: racingDb }), "ADMIN_EXISTS");

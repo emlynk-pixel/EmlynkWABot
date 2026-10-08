@@ -41,7 +41,7 @@ before(async () => {
 after(async () => database?.close());
 beforeEach(async () => {
     await pg.exec(`
-        DELETE FROM "documents"; DELETE FROM "candidate_stages"; DELETE FROM "users";
+        DELETE FROM "documents"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
         DELETE FROM "sheet_sync_queue"; DELETE FROM "sheet_sync_runs";
         UPDATE "sheet_sync_state" SET "integration_state" = 'UNKNOWN', "writer_lease_owner" = NULL, "writer_lease_expires_at" = NULL,
             "last_error_class" = NULL, "last_error_code" = NULL, "last_sync_success_at" = NULL;
@@ -186,7 +186,7 @@ describe("incremental sync", () => {
         const { passportId, uniqueId } = await register();
         await worker.tick();
         const before = rowFor(sheet, uniqueId)[0];
-        await prisma.user.delete({ where: { passportId } });
+        await prisma.candidate.delete({ where: { passportId } });
         await worker.tick();
         const after = rowFor(sheet, uniqueId);
         assert.equal(after.length, 1, "never deleted");
@@ -211,7 +211,7 @@ describe("failures: the database stays authoritative and unaffected", () => {
         const { sheet, worker, advance } = setup();
         sheet.failNext("*", googleError(503, { reason: "backendError", googleStatus: "UNAVAILABLE" }), 100);
         const { uniqueId } = await register();
-        assert.ok(await prisma.user.findUnique({ where: { uniqueId } }), "the candidate is in the database");
+        assert.ok(await prisma.candidate.findUnique({ where: { uniqueId } }), "the candidate is in the database");
 
         await worker.tick();
         let [item] = await queueRows();

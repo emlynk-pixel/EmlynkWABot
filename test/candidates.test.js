@@ -84,7 +84,7 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
 
     const db = {
         state,
-        user: {
+        candidate: {
             findUnique: async ({ where }) => {
                 const user = state.users.find((u) => matches(u, where));
                 return user ? withRelations(user) : null;

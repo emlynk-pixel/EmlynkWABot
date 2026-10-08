@@ -160,8 +160,8 @@ describe("POST /review/:reviewId/assign-client", () => {
         assert.equal(row.whatsappNumber, "94770000009");
         assert.equal(row.processingSummary.identity.status, "UNIDENTIFIED");
         assert.equal(row.pendingStoragePath, PENDING_PATH);
-        assert.equal(db.tables.user.find((u) => u.passportId === "N7654321").whatsappNumber, null, "client record untouched");
-        assert.equal(db.tables.user.length, 2, "no client created");
+        assert.equal(db.tables.candidate.find((u) => u.passportId === "N7654321").whatsappNumber, null, "client record untouched");
+        assert.equal(db.tables.candidate.length, 2, "no client created");
         const [entry] = db.tables.auditLog;
         assert.deepEqual([entry.action, entry.previousValue, entry.newValue, entry.passportId], ["ASSIGN_CLIENT", null, "N7654321", "N7654321"]);
 
@@ -191,7 +191,7 @@ describe("POST /review/:reviewId/assign-client", () => {
             assert.equal((await call("POST", `/review/pending-${TEMP}/assign-client`, { body })).status, 400);
         }
         assert.equal(db.tables.temporaryData[0].passportId, "N1234567");
-        assert.equal(db.tables.user.length, 2);
+        assert.equal(db.tables.candidate.length, 2);
         assert.equal(db.tables.auditLog.length, 0);
     });
 

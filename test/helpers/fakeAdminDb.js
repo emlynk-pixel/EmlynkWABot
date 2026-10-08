@@ -1,5 +1,6 @@
-// In-memory stand-in for prisma.admin, prisma.adminInvitation, prisma.adminPasswordReset, and prisma.auditLog.
-// Used across auth, RBAC, provisioning, and invitation tests.
+// In-memory stand-in for prisma.user (staff/application users, formerly
+// prisma.admin), prisma.adminInvitation, prisma.adminPasswordReset, and
+// prisma.auditLog. Used across auth, RBAC, provisioning, and invitation tests.
 export function createFakeAdminDb(admins = [], { invitations = [], passwordResets = [], auditLogs = [] } = {}) {
     const rows = admins.map((admin) => ({ ...admin }));
     const invitationRows = invitations.map((inv) => ({ ...inv }));
@@ -14,7 +15,7 @@ export function createFakeAdminDb(admins = [], { invitations = [], passwordReset
         invitationRows,
         passwordResetRows,
         auditLogRows,
-        admin: {
+        user: {
             async findUnique({ where, select }) {
                 const row = rows.find((r) =>
                     ("email" in where ? r.email === where.email : true) &&

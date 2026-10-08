@@ -48,16 +48,16 @@ function createFakeDashboardDb({ admins, documents = [docRow()], user = null, pe
     const record = (method, args, result) => { calls.push({ method, args }); return result; };
     return {
         calls,
-        admin: {
+        user: {
             findUnique: async (args) => {
                 if (failAdminLookup) throw new Error("connection refused");
-                return record("admin.findUnique", args, await adminDb.admin.findUnique(args));
+                return record("user.findUnique", args, await adminDb.user.findUnique(args));
             },
         },
-        user: {
-            count: async (args) => record("user.count", args, 12),
-            findMany: async (args) => record("user.findMany", args, [CLIENT]), // Police Workflow counts
-            findUnique: async (args) => record("user.findUnique", args, user && args.where.passportId === user.passportId ? user : null),
+        candidate: {
+            count: async (args) => record("candidate.count", args, 12),
+            findMany: async (args) => record("candidate.findMany", args, [CLIENT]), // Police Workflow counts
+            findUnique: async (args) => record("candidate.findUnique", args, user && args.where.passportId === user.passportId ? user : null),
         },
         document: {
             count: async (args) => record("document.count", args, args?.where?.verificationStatus === "REVIEW_REQUIRED" && !args.where.documentType ? 3 : documents.length),
@@ -136,17 +136,17 @@ describe("/api/admin authentication (shared ACTIVE-admin middleware)", () => {
     });
 
     test("valid token of an INACTIVE admin -> 401 (same message), no dashboard query", async () => {
-        const before = db.calls.filter((c) => !c.method.startsWith("admin.")).length;
+        const before = db.calls.filter((c) => !c.method.startsWith("user.")).length;
         const result = await http.get("/api/admin/documents", tokenFor("admin-inactive"));
         assert.equal(result.status, 401);
         assert.deepEqual(result.body, { message: "Invalid or Expired Token" });
-        assert.equal(db.calls.filter((c) => !c.method.startsWith("admin.")).length, before);
+        assert.equal(db.calls.filter((c) => !c.method.startsWith("user.")).length, before);
     });
 
     test("ACTIVE admin -> 200; the status is read from the database on each request", async () => {
         const result = await http.get("/api/admin/overview");
         assert.equal(result.status, 200);
-        const lookup = db.calls.filter((c) => c.method === "admin.findUnique").at(-1);
+        const lookup = db.calls.filter((c) => c.method === "user.findUnique").at(-1);
         assert.deepEqual(lookup.args.where, { adminId: "admin-active" });
         assert.equal(lookup.args.select.passwordHash, undefined, "password hash never loaded");
     });
@@ -232,7 +232,7 @@ describe("GET /api/admin/overview", () => {
     test("uses a fixed number of queries (no per-row lookups)", async () => {
         const before = db.calls.length;
         await http.get("/api/admin/overview");
-        const dashboardCalls = db.calls.slice(before).filter((c) => !c.method.startsWith("admin."));
+        const dashboardCalls = db.calls.slice(before).filter((c) => !c.method.startsWith("user."));
         assert.equal(dashboardCalls.length, 17); // 10 + 3 police due counts + 3 client completeness + 1 failed submissions (H3)
         const recent = dashboardCalls.find((c) => c.method === "document.findMany");
         assert.ok(recent.args.select.user, "client joined in the same query");
@@ -372,8 +372,8 @@ describe("GET /api/admin/clients/:passportId", () => {
     test("passport ID is matched case-insensitively; documents, pending items and police date changes in three queries", async () => {
         const before = db.calls.length;
         assert.equal((await http.get("/api/admin/clients/n1234567")).status, 200);
-        const calls = db.calls.slice(before).filter((c) => !c.method.startsWith("admin."));
-        assert.deepEqual(calls.map((c) => c.method), ["user.findUnique", "temporaryData.findMany", "auditLog.findMany"]);
+        const calls = db.calls.slice(before).filter((c) => !c.method.startsWith("user."));
+        assert.deepEqual(calls.map((c) => c.method), ["candidate.findUnique", "temporaryData.findMany", "auditLog.findMany"]);
         assert.deepEqual(calls[2].args.where, { passportId: "N1234567", action: "SET_POLICE_DATE" });
         assert.deepEqual(calls[0].args.where, { passportId: "N1234567" });
         assert.ok(calls[0].args.select.documents, "documents loaded with the client");
@@ -386,13 +386,13 @@ describe("GET /api/admin/clients/:passportId", () => {
     });
 
     test("malformed passport ID -> 400, nothing queried", async () => {
-        const before = db.calls.filter((c) => c.method === "user.findUnique").length;
+        const before = db.calls.filter((c) => c.method === "candidate.findUnique").length;
         for (const id of ["N123-4567", "A".repeat(21), "%20"]) {
             const { status, body } = await http.get(`/api/admin/clients/${id}`);
             assert.equal(status, 400, id);
             assert.equal(body.message, "Invalid passport ID");
         }
-        assert.equal(db.calls.filter((c) => c.method === "user.findUnique").length, before);
+        assert.equal(db.calls.filter((c) => c.method === "candidate.findUnique").length, before);
     });
 });
 

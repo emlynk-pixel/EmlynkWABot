@@ -277,7 +277,7 @@ describe("M1 fix 2: a stale worker attempt can't write after losing its claim", 
         assert.deepEqual(w.db.calls.slice(i, i + 3).map((c) => c.method), ["$transaction", "temporaryData.updateMany", "document.create"]);
         assert.ok(w.db.calls[i].options.timeout < LEASE);
         // The client record (passport reconciliation) is written the same way.
-        const r = w.db.calls.findIndex((c) => c.method === "user.updateMany") - 2;
+        const r = w.db.calls.findIndex((c) => c.method === "candidate.updateMany") - 2;
         assert.deepEqual(w.db.calls.slice(r, r + 3).map((c) => c.method), ["$transaction", "temporaryData.updateMany", "user.updateMany"]);
     });
 
@@ -321,7 +321,7 @@ describe("M1 fix 2: a stale worker attempt can't write after losing its claim", 
         await recordJob(w, "rec", PASSPORT_PDF, "passport.pdf");
         const rowA = await claimNextSubmission({ db: w.db.client });
         await claimNextSubmission({ db: w.db.client, now: afterLease()() }); // B took it over (and crashed)
-        const updates = () => w.db.calls.filter((c) => c.method.startsWith("user.update")).length;
+        const updates = () => w.db.calls.filter((c) => c.method.startsWith("candidate.update")).length;
         const before = updates();
         assert.equal((await processClaimedSubmission(rowA, { db: w.db.client, bucket: w.bucket })).outcome, "STALE_DISCARDED");
         assert.equal(updates(), before);

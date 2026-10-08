@@ -26,11 +26,11 @@ before(async () => {
     database = await createTestDatabase();
     prisma = database.prisma;
     for (const role of ROLES) {
-        await prisma.admin.create({ data: { adminId: `admin-${role}`, name: role, email: `${role.toLowerCase()}@example.invalid`, role, status: "ACTIVE" } });
+        await prisma.user.create({ data: { adminId: `admin-${role}`, name: role, email: `${role.toLowerCase()}@example.invalid`, role, status: "ACTIVE" } });
     }
-    await prisma.admin.create({ data: { adminId: "admin-inactive", name: "x", email: "inactive@example.invalid", role: "ADMIN", status: "INACTIVE" } });
+    await prisma.user.create({ data: { adminId: "admin-inactive", name: "x", email: "inactive@example.invalid", role: "ADMIN", status: "INACTIVE" } });
     // A demoted admin whose token still says ADMIN: the database role decides.
-    await prisma.admin.create({ data: { adminId: "admin-demoted", name: "y", email: "demoted@example.invalid", role: "MANAGER", status: "ACTIVE" } });
+    await prisma.user.create({ data: { adminId: "admin-demoted", name: "y", email: "demoted@example.invalid", role: "MANAGER", status: "ACTIVE" } });
 
     const app = express();
     app.use(express.json());

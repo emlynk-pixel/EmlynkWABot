@@ -100,7 +100,7 @@ describe("low-quality passport accepted by MRZ + identity", () => {
 
     test("positive: placeOfBirth (printed zone at 34%) is not filled into the client record", async () => {
         const { db } = await run();
-        const writes = db.calls.filter((c) => c.method === "user.updateMany");
+        const writes = db.calls.filter((c) => c.method === "candidate.updateMany");
         assert.ok(writes.every((c) => !("placeOfBirth" in c.data)));
         assert.equal(db.rows.find((u) => u.passportId === "N1234567").placeOfBirth, null);
     });

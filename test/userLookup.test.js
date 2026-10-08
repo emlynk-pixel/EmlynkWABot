@@ -138,6 +138,6 @@ describe("findUsersByWhatsappNumber", () => {
         await findUsersByWhatsappNumber("94771234567", { db });
 
         assert.equal(db.rows[0].whatsappNumber, "+94 77 123 4567");
-        assert.ok(db.calls.every((call) => call.method === "user.findMany"));
+        assert.ok(db.calls.every((call) => call.method === "candidate.findMany"));
     });
 });

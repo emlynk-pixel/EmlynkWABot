@@ -63,7 +63,7 @@ function fakeReviewDb({ pending = [pendingRow()], documents = [documentRow()] } 
     const record = (method, args, value) => { calls.push({ method, args }); return value; };
     return {
         calls,
-        admin: admins.admin,
+        user: admins.user,
         temporaryData: {
             count: async (args) => record("temporaryData.count", args, pending.length),
             findMany: async (args) => record("temporaryData.findMany", args, pending.slice(0, args.take)),

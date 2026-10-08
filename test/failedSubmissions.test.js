@@ -62,7 +62,7 @@ describe("H3 pipeline: failures stay recorded, nothing is stored", () => {
         assert.equal(update.passportId, undefined, "failed before identity: no client, none invented");
         assert.equal(update.documentType, undefined, "failed before classification: type stays as received");
         assert.equal(update.pendingStoragePath, undefined);
-        assert.ok(!db.calls.some((c) => c.method === "document.create" || c.method === "user.updateMany"));
+        assert.ok(!db.calls.some((c) => c.method === "document.create" || c.method === "candidate.updateMany"));
         assert.deepEqual([...bucket.objects.keys()], [`temporary/${T_PAGES}.pdf`], "only the temporary original");
         assert.equal(describeFailure(update.processingSummary).code, "PDF_TOO_MANY_PAGES");
     });
@@ -144,7 +144,7 @@ describe("H3 admin API", () => {
         assert.deepEqual(storage.failure, { code: "STORAGE_FAILED", stage: "STORAGE" });
         const text = JSON.stringify(body);
         assert.ok(!/OCR resource limit|Storage copy failed|temporary\/|fileSha256|error"/.test(text), "no raw error text, paths or checksums");
-        assert.equal(fixture.db.tables.user.length, 1, "no client created");
+        assert.equal(fixture.db.tables.candidate.length, 1, "no client created");
     });
 
     test("the normal queue and Pending review are unchanged; failed submissions are counted on their own", async () => {

@@ -68,7 +68,7 @@ describe("M4 pipeline", () => {
         assert.ok(objects.includes(VERIFIED_PATH));
         assert.equal(objects.filter((p) => p.startsWith("clients/")).length, 1);
         assert.ok(!db.calls.some((c) => c.method === "document.create"));
-        assert.ok(!db.calls.some((c) => c.method === "user.updateMany"), "no client record writes");
+        assert.ok(!db.calls.some((c) => c.method === "candidate.updateMany"), "no client record writes");
     });
 
     test("TEST 2: exact duplicate of a NON-verified document -> existing policy (DUPLICATE, nothing stored, no review)", async () => {

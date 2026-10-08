@@ -221,8 +221,8 @@ describe("GET /api/admin/police", () => {
     test("read-only: no writes, three queries whatever the number of clients", async () => {
         const before = db.calls.length;
         await http.call("GET", "/police");
-        const calls = db.calls.slice(before).filter((c) => !c.method.startsWith("admin"));
-        assert.deepEqual(calls.map((c) => c.method).sort(), ["document.findMany", "temporaryData.groupBy", "user.findMany"]);
+        const calls = db.calls.slice(before).filter((c) => !c.method.startsWith("user"));
+        assert.deepEqual(calls.map((c) => c.method).sort(), ["candidate.findMany", "document.findMany", "temporaryData.groupBy"]);
     });
 
     test("overview counts police reports due soon, due today and overdue", async () => {

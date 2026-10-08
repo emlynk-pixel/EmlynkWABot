@@ -338,7 +338,7 @@ describe("POST /review/:reviewId/approve (waiting file)", () => {
         assert.equal(bucket.calls.filter((c) => c.method === "copy").length, 1);
         // The row locks were taken inside the transaction.
         assert.ok(db.calls.some((c) => c.method === "$queryRaw" && /FROM "temporary_data".*FOR UPDATE/s.test(c.sql)));
-        assert.ok(db.calls.some((c) => c.method === "$queryRaw" && /FROM "users".*FOR UPDATE/s.test(c.sql)));
+        assert.ok(db.calls.some((c) => c.method === "$queryRaw" && /FROM "candidate".*FOR UPDATE/s.test(c.sql)));
     });
 
     test("two different files of the same type for one client at the same time: only one becomes VERIFIED", async () => {
