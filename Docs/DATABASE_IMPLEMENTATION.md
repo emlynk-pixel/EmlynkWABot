@@ -306,10 +306,10 @@ Authentication is fully delegated to **Supabase Auth**.
 Migrations 6.1 and 6.2 are applied and active on the shared database.
 
 ### 6.3 `20261009150000_candidate_additional_details`
-- **Status**: committed, **not yet applied** to the shared database. Apply it through the normal migration deploy (`prisma migrate deploy`), never by hand.
+- **Status**: applied to the database configured in the development `.env` (checked read-only on 2026-10-09: `_prisma_migrations` shows it finished at 06:23 UTC, 23 of 23 migrations applied and none unfinished; the table exists with RLS on and no `anon` / `authenticated` access). For any other environment, apply it through the normal migration deploy (`prisma migrate deploy`), never by hand.
 - Additive only: creates `public.candidate_additional_details` and its foreign key to `candidate`. No existing table, column or row changes; existing candidates have no details row until one is saved.
 - Enables RLS and revokes all privileges from `anon` and `authenticated` (SEC-001), like every other application table.
-- Until it is applied, the Additional Details endpoints fail on that database (the table does not exist); everything else is unaffected.
+- Until it is applied, the Additional Details endpoints fail on that database (the table does not exist). The candidate page loads them with the candidate, so apply the migration **before** deploying this version of the admin app; everything else keeps working in the meantime.
 
 ---
 

@@ -658,6 +658,7 @@ Extra details of a candidate (Admin > Candidates > **Additional Details** tab), 
 The body holds the fields `nameAsInPassport, permanentAddress, birthday, tshirtSize, pantSize, shoeSize, fatherAlive, fatherFullName, fatherBirthday, motherAlive, motherFullName, motherBirthday, maritalStatus, wifeFullName, wifeBirthday, child1Name, child2Name, child3Name, otherJobSkills`. It responds with the same shape as GET.
 
 - **Full replacement**: a field left out or blank is cleared. Unknown fields, including a `passportId` in the body, are ignored; the candidate is the one in the URL.
+- **Version check**: the body may carry `expectedUpdatedDate`, the `updatedDate` the form was loaded with (`null` when nothing was saved yet). If the stored version is different, the save is refused with **409** `{ code: "DETAILS_CHANGED" }` and nothing is written, so one person's save never silently undoes another's. A stale form whose values already equal the stored ones is accepted as a no-op. Omitting the field skips the check. The write is compare-and-swap on that version, so two saves at the same moment can't both win.
 - **Never creates a candidate** (404 for an unknown passport ID) and **never changes the candidate's own record**.
 - **400** `{ message, errors: [{ field, message }] }` for invalid values (rules in `Docs/20-candidate-management.md` §8.1). Nothing is written.
 - **Audit**: the first save that stores anything writes `CREATE_ADDITIONAL_DETAILS` (`NONE` → `CREATED`); later changes write `UPDATE_ADDITIONAL_DETAILS` (`CREATED` → `UPDATED`).

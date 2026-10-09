@@ -13,9 +13,17 @@
 // Every save is a full replacement of the details (a field left out is
 // cleared). A save that changes nothing writes nothing, and every real
 // change is written to audit_logs with only the changed fields.
+//
+// Two people can have the form open at once, so a replacement must not
+// silently undo the other's save: the form sends the updatedDate it loaded
+// (expectedUpdatedDate; null when nothing was saved yet) and a save on a
+// different version is refused with 409 DETAILS_CHANGED. The write itself is
+// compare-and-swap on that version, so even two saves at the same moment
+// can't both win.
 
 import crypto from "node:crypto";
 
+import { businessDateOf } from "../utils/businessDay.js";
 import { clientName } from "../utils/clientName.js";
 import { CandidateError } from "./candidateService.js";
 
@@ -64,9 +72,13 @@ const EARLIEST_DATE = "1900-01-01";
 const MAX_AUDIT_VALUE_LENGTH = 300;
 
 const isoDate = (value) => (value ? value.toISOString().slice(0, 10) : null);
-const todayUtc = (now) => now.toISOString().slice(0, 10);
+// Today in the business time zone (Sri Lanka), like the form: not the UTC day.
+const today = (now) => businessDateOf(now);
 
-// { values } (every field, null when not given) or { errors: [{ field, message }] }.
+// { values, expectedUpdatedDate } or { errors: [{ field, message }] }. values:
+// every field, null when not given. expectedUpdatedDate: undefined when the
+// caller doesn't say (no version check), null (the form had nothing saved) or
+// the updatedDate the form was loaded with.
 export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
         return { errors: [{ field: "body", message: "must be a JSON object" }] };
@@ -99,7 +111,7 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
                 const parsed = new Date(`${value}T00:00:00.000Z`);
                 if (Number.isNaN(parsed.getTime()) || isoDate(parsed) !== value) { values[field] = fail(field, "must be a real date"); break; }
                 if (value < EARLIEST_DATE) { values[field] = fail(field, "must not be before 1900"); break; }
-                if (value > todayUtc(now)) { values[field] = fail(field, "must not be in the future"); break; }
+                if (value > today(now)) { values[field] = fail(field, "must not be in the future"); break; }
                 values[field] = parsed;
                 break;
             }
@@ -146,7 +158,18 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
     if (values.child2Name !== null && values.child1Name === null) errors.push({ field: "child2Name", message: "needs the 1st child's name first" });
     if (values.child3Name !== null && values.child2Name === null) errors.push({ field: "child3Name", message: "needs the 2nd child's name first" });
 
-    return errors.length ? { errors } : { values };
+    let expectedUpdatedDate;
+    if (body.expectedUpdatedDate !== undefined && body.expectedUpdatedDate !== null) {
+        if (typeof body.expectedUpdatedDate !== "string" || Number.isNaN(Date.parse(body.expectedUpdatedDate))) {
+            errors.push({ field: "expectedUpdatedDate", message: "must be the updatedDate of the details, or null" });
+        } else {
+            expectedUpdatedDate = body.expectedUpdatedDate;
+        }
+    } else if (body.expectedUpdatedDate === null) {
+        expectedUpdatedDate = null;
+    }
+
+    return errors.length ? { errors } : { values, expectedUpdatedDate };
 }
 
 // As the API returns it: dates as YYYY-MM-DD.
@@ -211,38 +234,55 @@ export async function getAdditionalDetails({ db, passportId }) {
     return view(candidate, row);
 }
 
-// PUT /api/admin/candidates/:passportId/additional-details. values: from
-// parseAdditionalDetailsBody. actor: the signed-in user (req.user).
-export async function saveAdditionalDetails({ db, passportId, values, actor }) {
-    const candidate = await requireCandidate(db, passportId);
-    const row = await db.$transaction(async (tx) => {
-        const existing = await tx.candidateAdditionalDetails.findUnique({ where: { passportId }, select: selectAll });
-        const changes = changedFields(existing, values);
-        // Nothing changed (including an empty form with nothing saved): no write, no audit.
-        if (!changes) return existing;
+const detailsChanged = () => new CandidateError(409, "DETAILS_CHANGED", "These details were changed by someone else after you opened them. Use Sync to load their changes, then try again.");
 
-        const saved = await tx.candidateAdditionalDetails.upsert({
-            where: { passportId },
-            create: { passportId, ...values },
-            update: values,
-            select: selectAll,
+// Is the stored version the one the form was loaded with? (null: nothing stored.)
+const sameVersion = (stored, expected) => (stored === null ? expected === null : expected !== null && stored.getTime() === new Date(expected).getTime());
+
+// PUT /api/admin/candidates/:passportId/additional-details. values and
+// expectedUpdatedDate: from parseAdditionalDetailsBody. actor: the signed-in
+// user (req.user).
+export async function saveAdditionalDetails({ db, passportId, values, actor, expectedUpdatedDate }) {
+    const candidate = await requireCandidate(db, passportId);
+    let row;
+    try {
+        row = await db.$transaction(async (tx) => {
+            const existing = await tx.candidateAdditionalDetails.findUnique({ where: { passportId }, select: selectAll });
+            const changes = changedFields(existing, values);
+            // Nothing changed (including an empty form with nothing saved): no write, no audit.
+            if (!changes) return existing;
+            if (expectedUpdatedDate !== undefined && !sameVersion(existing?.updatedDate ?? null, expectedUpdatedDate)) throw detailsChanged();
+
+            let saved;
+            if (existing) {
+                // Only the version that was read: a save that got in between matches nothing.
+                const { count } = await tx.candidateAdditionalDetails.updateMany({ where: { passportId, updatedDate: existing.updatedDate }, data: values });
+                if (count !== 1) throw detailsChanged();
+                saved = await tx.candidateAdditionalDetails.findUnique({ where: { passportId }, select: selectAll });
+            } else {
+                saved = await tx.candidateAdditionalDetails.create({ data: { passportId, ...values }, select: selectAll });
+            }
+            if (actor) {
+                await tx.auditLog.create({
+                    data: {
+                        auditId: crypto.randomUUID(),
+                        adminId: actor.adminId,
+                        action: existing ? ADDITIONAL_DETAILS_AUDIT_ACTION.UPDATE : ADDITIONAL_DETAILS_AUDIT_ACTION.CREATE,
+                        passportId,
+                        previousStatus: existing ? "CREATED" : "NONE",
+                        newStatus: existing ? "UPDATED" : "CREATED",
+                        reason: `Additional details: ${Object.keys(changes.after).join(", ")}`,
+                        previousValue: JSON.stringify(changes.before),
+                        newValue: JSON.stringify(changes.after),
+                    },
+                });
+            }
+            return saved;
         });
-        if (actor) {
-            await tx.auditLog.create({
-                data: {
-                    auditId: crypto.randomUUID(),
-                    adminId: actor.adminId,
-                    action: existing ? ADDITIONAL_DETAILS_AUDIT_ACTION.UPDATE : ADDITIONAL_DETAILS_AUDIT_ACTION.CREATE,
-                    passportId,
-                    previousStatus: existing ? "CREATED" : "NONE",
-                    newStatus: existing ? "UPDATED" : "CREATED",
-                    reason: `Additional details: ${Object.keys(changes.after).join(", ")}`,
-                    previousValue: JSON.stringify(changes.before),
-                    newValue: JSON.stringify(changes.after),
-                },
-            });
-        }
-        return saved;
-    });
+    } catch (error) {
+        // Two first saves at the same moment: the other one got the row.
+        if (error?.code === "P2002") throw detailsChanged();
+        throw error;
+    }
     return view(candidate, row);
 }

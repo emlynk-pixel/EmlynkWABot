@@ -11,7 +11,7 @@ import { CANDIDATE_AGGREGATE_SELECT, mapCandidateToSheetRow } from "../src/servi
 import { createCandidateAggregateReader, MAX_AGGREGATE_BATCH_SIZE } from "../src/services/candidateAggregateReader.js";
 import { SYNC_ACTION, SheetDuplicateCandidateIdError, buildCandidateRowIndex, createSheetSyncPlanner } from "../src/services/sheetSyncPlanner.js";
 import { HEALTH_STATUS, SCHEMA_STATUS, runSheetHealthCheck } from "../src/services/sheetHealthCheck.js";
-import { SheetSchemaMismatchError, createGoogleSheetsAdapter, readOnlySheetsView } from "../src/services/googleSheetsAdapter.js";
+import { SheetSchemaMismatchError, createGoogleSheetsAdapter, createLiveSheetsClient, readOnlySheetsView } from "../src/services/googleSheetsAdapter.js";
 import { isSheetSyncEnabled, readSheetSyncConfig } from "../src/config/sheetSync.js";
 import { runCheckCommand } from "../src/sheetSyncCheck.js";
 
@@ -363,6 +363,12 @@ describe("read-only connection/schema check", () => {
         const result = await runSheetHealthCheck({ env, sheetsClient: fakeSheets({ rows: [expectedRow(1)] }), clock: () => NOW });
         const text = JSON.stringify(result);
         for (const value of PII) assert.equal(text.includes(value), false, value);
+    });
+
+    test("the live client is refused under the test runner whatever env a caller passes (it is about this process)", async () => {
+        assert.ok(process.env.NODE_TEST_CONTEXT, "this suite runs under node --test");
+        await assert.rejects(createLiveSheetsClient({ env: {} }), /not available under the test runner/);
+        await assert.rejects(createLiveSheetsClient({ env }), /not available under the test runner/);
     });
 
     test("under the test runner the default (live) client is refused: no Google contact possible", async () => {

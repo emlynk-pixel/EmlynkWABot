@@ -514,7 +514,8 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await saveAdditionalDetails({
-            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId),
+            values: parsed.values, expectedUpdatedDate: parsed.expectedUpdatedDate,
         })));
     });
 

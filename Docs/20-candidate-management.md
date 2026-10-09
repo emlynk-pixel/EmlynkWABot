@@ -46,7 +46,7 @@ A candidate is stored as a row in the `candidate` table (named `users` before mi
 | `admin/src/components/candidate/DocumentRow.tsx` | Per-document upload row (used in both registration and stage 2) |
 | `admin/src/components/candidate/CandidateStepper.tsx` | Progress stepper shown across the top of the deployment page |
 | `admin/src/components/candidate/CallLogDialog.tsx` | Admin call log dialog |
-| `admin/src/components/candidate/AdditionalDetailsPanel.tsx` | Additional Details tab: sections, conditional fields, sizes, save |
+| `admin/src/components/candidate/AdditionalDetailsPanel.tsx` | Additional details form: sections, conditional fields, sizes, save |
 | `admin/src/api/candidates.ts` | Typed frontend API wrappers for all candidate endpoints |
 
 ### Database
@@ -56,7 +56,7 @@ A candidate is stored as a row in the `candidate` table (named `users` before mi
 | `candidate` | One row per candidate (same table used for WhatsApp clients) |
 | `candidate_stages` | One row per stage per candidate: completion, notes, timestamps |
 | `documents` | All uploaded files (passport, NIC, skill video, medical, police report, scan) |
-| `candidate_additional_details` | At most one row per candidate: the Additional Details tab (primary key and foreign key `passport_id`) |
+| `candidate_additional_details` | At most one row per candidate: the Additional details form (primary key and foreign key `passport_id`) |
 | `audit_logs` | Candidate, stage, document and additional-details changes are appended here |
 
 ---
@@ -179,9 +179,13 @@ Each has a free-text **Notes** field and a **Stage completed** checkbox. Changes
 
 Every candidate page has a **Call log** button (top right). The dialog shows a chronological log of admin call notes and allows adding new ones (`POST /api/admin/candidates/:passportId/call-logs`).
 
-### 4.4 Additional Details tab
+### 4.4 Additional details (a progress step)
 
-Every candidate page has two tabs: **Deployment** (the six stages) and **Additional Details** (`?tab=additional`). Every role that manages candidates can edit it, REGISTRATION_DESK included.
+The candidate page's progress stepper shows five circles: Test details, Candidate details, **Additional details**, Document submission, Visa approval. Selecting *Additional details* shows its form (`?tab=additional`); selecting any other circle shows that stage (`?stage=…`). There is no separate tab bar. The circle is completed once additional details have been saved.
+
+**IVS interview and Finalizing the job have no circle.** They are still stages (their data, panels and `?stage=IVS_INTERVIEW` / `?stage=FINALIZING_JOB` links are unchanged); only the circles are hidden. The candidate list's "current stage" and `x/6` still count all six stages.
+
+Every role that manages candidates can edit the form, REGISTRATION_DESK included.
 
 | Section | Fields |
 |---|---|
@@ -196,6 +200,7 @@ Every candidate page has two tabs: **Deployment** (the six stages) and **Additio
 - **Auto-fill**: a form with nothing saved yet is pre-filled from the candidate's record (name, address, date of birth), with a note saying so. Those values are stored only when **Save additional details** is pressed.
 - **The candidate's own record is never changed** from this tab; the details live in `candidate_additional_details`.
 - Hidden details are cleared on save: father details when he is not alive, and the same for the mother and for the wife when not married.
+- **Two people editing**: the form sends the `updatedDate` it loaded, and a save on a different version is refused with `409 DETAILS_CHANGED` ("changed by someone else… use Sync"). The typed values stay in the form. The page loads the details once and shares them with the stepper and the form.
 - Every change appears in Audit Logs (`CREATE_ADDITIONAL_DETAILS` / `UPDATE_ADDITIONAL_DETAILS`) with only the changed fields. Saving without changes writes nothing.
 
 ---
