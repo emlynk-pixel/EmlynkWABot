@@ -13,6 +13,7 @@ import { DocumentsPage } from "./pages/DocumentsPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { InvitationsPage } from "./pages/InvitationsPage";
 import { AdminRolesPage } from "./pages/AdminRolesPage";
+import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MissingDocumentsPage } from "./pages/MissingDocumentsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -82,6 +83,7 @@ export function AppRoutes() {
                 <Route path="reports/daily" element={<DailyReportPage />} />
                 <Route path="invitations" element={<InvitationsPage />} />
                 <Route path="roles" element={<AdminRolesPage />} />
+                <Route path="audit-logs" element={<AuditLogsPage />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="*" element={<NotFoundPage />} />
             </Route>

@@ -2,7 +2,8 @@ import type { IconName } from "../components/Icon";
 import { ADMIN_ONLY, CANDIDATE_ROLES, DASHBOARD_ROLES, type Role } from "../auth/roles";
 
 // Sidebar entries, in the order of the Stitch design, plus Missing Documents
-// and Daily Report (Phase 10 scope, same design language), and Settings
+// and Daily Report (Phase 10 scope, same design language), Audit Logs
+// (ADMIN only, read-only), and Settings
 // (ADMIN only) last. Settings holds sections such as Google Sheet Sync; new
 // system settings become sections of that page, never new sidebar entries.
 // `roles`: who sees the entry, the same tiers the backend enforces
@@ -19,5 +20,6 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/reports/daily", label: "Daily Report", icon: "summarize", roles: DASHBOARD_ROLES },
     { to: "/invitations", label: "Invite User", icon: "person_add", roles: ADMIN_ONLY },
     { to: "/roles", label: "Change Roles", icon: "manage_accounts", roles: ADMIN_ONLY },
+    { to: "/audit-logs", label: "Audit Logs", icon: "history", roles: ADMIN_ONLY },
     { to: "/settings", label: "Settings", icon: "settings", roles: ADMIN_ONLY },
 ];

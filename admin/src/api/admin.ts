@@ -527,3 +527,54 @@ export function updateUserRole(token: string, userId: string, role: string): Pro
 export function deactivateUser(token: string, userId: string): Promise<{ user: UserSummary }> {
     return apiRequest<{ user: UserSummary }>(`/api/admin/users/${encodeURIComponent(userId)}/deactivate`, { method: "POST", token });
 }
+
+// ---------------------------------------------------------------- audit logs (ADMIN only, read-only)
+
+export type AuditCategory = "CANDIDATE" | "STAGE" | "DOCUMENT" | "REVIEW" | "USER" | "OTHER";
+export type AuditChange = { field: string; from: string | boolean | null; to: string | boolean | null };
+
+export type AuditLogItem = {
+    auditId: string;
+    createdDate: string;
+    action: string;
+    category: AuditCategory;
+    actor: { userId: string; name: string | null; role: string | null };
+    candidate: { passportId: string; uniqueId: string | null; name: string | null } | null;
+    documentType: string | null;
+    stage: string | null;
+    previousStatus: string;
+    newStatus: string;
+    previousValue: string | null;
+    newValue: string | null;
+    changes: AuditChange[] | null;
+    details: Record<string, unknown> | null;
+    policeSubmittedDate: string | null;
+    reason: string | null;
+};
+
+export type AuditLogParams = {
+    page?: number;
+    pageSize?: number;
+    adminId?: string;
+    passportId?: string;
+    candidate?: string;
+    action?: string;
+    category?: AuditCategory;
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+};
+
+export type AuditLogList = {
+    items: AuditLogItem[];
+    pagination: { page: number; pageSize: number; total: number; totalPages: number };
+    filters: {
+        users: { userId: string; name: string; role: string; status: string }[];
+        categories: { category: AuditCategory; actions: string[] }[];
+        actions: string[];
+    };
+};
+
+export function listAuditLogs(token: string, params: AuditLogParams, signal?: AbortSignal): Promise<AuditLogList> {
+    return apiRequest<AuditLogList>(`/api/admin/audit-logs${queryString(params)}`, { token, signal });
+}
