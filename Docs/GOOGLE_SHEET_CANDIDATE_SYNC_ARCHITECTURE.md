@@ -55,7 +55,7 @@ The Google Sheets Candidate Operational Mirror is a **one-way, eventually consis
 - Change capture into a durable outbox (`sheet_sync_queue`), tracking changes waiting for the next run (no real-time Sheet writes).
 - Scheduled reconciliation at 06:00, 12:00 and 18:00 Asia/Colombo, plus on-demand Sync Now.
 - Candidate fields approved in Section 6: exactly 41 columns `A:AO`: 40 business-visible columns (`A` through `AN`, legacy operational headers first, then candidate details, stage statuses and mirror metadata) plus the technical row identity column `AO` (`_SYSTEM_CANDIDATE_ID`). `VISA SUBMISSION STATUS` (`AI`) was added to the manually finalized 40-column Sheet with the Visa submission stage (Section 6, amendment).
-- Document **statuses** only (never files).
+- Document **submission dates** only (never files): each document column shows the current document's submission date, or `Not Submitted`.
 - Candidate stage statuses.
 - Preservation of rows for candidates that disappear from the application, marked `DELETED / INACTIVE`.
 - Google authentication for the backend sync service using keyless ADC / Cloud Run service identity.
@@ -153,13 +153,12 @@ Registration and the Candidate Details stage are **different concepts** and must
 - Documents waiting in `temporary_data` (unmatched or pending) are not part of a candidate and are not mirrored.
 - `police_submitted_date` (on the `POLICE_SLIP` document) is mirrored; derived countdown statuses (`PENDING`, `DUE_SOON`, ...) are not (Needs confirmation if wanted).
 
-**Sheet document status vocabulary**
+**Sheet document column values** (current; the earlier `VERIFIED` / `REVIEW_REQUIRED` / `MISSING` status values are superseded)
 
 | Sheet value | Origin | Meaning |
 | :--- | :--- | :--- |
-| `VERIFIED` | Database value | Current document is verified |
-| `REVIEW_REQUIRED` | Database value | Current document waits for admin review |
-| `MISSING` | **Generated** | No current (non-superseded) document of that type/variant |
+| `YYYY-MM-DD` | `documents.received_date` of the current document | When the current document was submitted, as the Sri Lanka (`Asia/Colombo`) calendar date. A replacement or re-upload is a new document row (the old one becomes `SUPERSEDED`), so this is the latest submission. The current document follows the application's own rule (`currentOf`): the newest `VERIFIED` one, otherwise the newest waiting for review |
+| `Not Submitted` | **Generated** | No current (non-superseded) document of that type/variant. Display only: it is never read back and never deletes anything |
 
 ### 4.3 Candidate Stages
 
@@ -351,18 +350,18 @@ Kind legend: **Auth** = authoritative value copied from PostgreSQL; **Derived** 
 | 10 | **J** | `ADDRESS` | `User.address` | Auth | text | `""` | **CONFIRMED** |
 | 11 | **K** | `WHATSAPP NUM` | `User.whatsapp_number` | Auth | digits (text) | `""` | **CONFIRMED** (stored digits, no `+`) |
 | 12 | **L** | `CONTACT NUM` | `User.contact_number` | Auth | digits (text) | `""` | **CONFIRMED** |
-| 13 | **M** | `PASSPORT COPY` | current `PASSPORT` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.2: the only Passport Copy column) |
-| 14 | **N** | `POLICE REP SRI LANKA` | current `POLICE_REPORT` variant `SL_VERIFIED` status | Derived | status | `MISSING` | **CONFIRMED** (D-18.3) |
-| 15 | **O** | `POLICE REP ROMANIA` | current `POLICE_REPORT` variant `ROMANIA` status | Derived | status | `MISSING` | **CONFIRMED** (D-18.4: the only Romania column) |
-| 16 | **P** | `MEDICAL` | current `MEDICAL` document status | Derived | status | `MISSING` | **CONFIRMED** |
-| 17 | **Q** | `SCAN` | current `SCAN` document status | Derived | status | `MISSING` | **CONFIRMED**. The one and only scan column |
+| 13 | **M** | `PASSPORT COPY` | current `PASSPORT` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.2: the only Passport Copy column) |
+| 14 | **N** | `POLICE REP SRI LANKA` | current `POLICE_REPORT` variant `SL_VERIFIED` submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.3) |
+| 15 | **O** | `POLICE REP ROMANIA` | current `POLICE_REPORT` variant `ROMANIA` submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.4: the only Romania column) |
+| 16 | **P** | `MEDICAL` | current `MEDICAL` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** |
+| 17 | **Q** | `SCAN` | current `SCAN` document submission date | Derived | date | `Not Submitted` | **CONFIRMED**. The one and only scan column |
 | 18 | **R** | `DRIVING LICIAN` | none (no driving-licence document type exists in the repository) | Blank | text | always `""` | **CONFIRMED BLANK** (D-18.5) |
-| 19 | **S** | `NATIONAL ID` | current `NIC` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.6; `ID NUMBER` holds the NIC value itself) |
-| 20 | **T** | `POLICE REPORT APPLIED` | current `POLICE_SLIP` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.7) |
+| 19 | **S** | `NATIONAL ID` | current `NIC` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.6; `ID NUMBER` holds the NIC value itself) |
+| 20 | **T** | `POLICE REPORT APPLIED` | current `POLICE_SLIP` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.7) |
 | 21 | **U** | `SUBMIT DATE` | `Document.police_submitted_date` of the current `POLICE_SLIP` | Auth | `YYYY-MM-DD` | `""` | **CONFIRMED** |
-| 22 | **V** | `POLICE REP SRI LANKA` | current `POLICE_REPORT` variant `SL_NORMAL` status | Derived | status | `MISSING` | **CONFIRMED** (D-18.3) |
+| 22 | **V** | `POLICE REP SRI LANKA` | current `POLICE_REPORT` variant `SL_NORMAL` submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.3) |
 | 23 | **W** | `POLICE REP FM` | none (no "FM" variant exists; no Foreign Ministry/attestation logic is invented) | Blank | text | always `""` | **CONFIRMED BLANK** (D-18.8) |
-| 24 | **X** | `VIDEOS` | current `SKILL_VIDEO` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.9) |
+| 24 | **X** | `VIDEOS` | current `SKILL_VIDEO` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.9) |
 | 25 | **Y** | `PLACE OF BIRTH` | `User.place_of_birth` | Auth | text | `""` | **CONFIRMED** |
 | 26 | **Z** | `SEX` | `User.sex` | Auth | `M` / `F` / `X` | `""` | **CONFIRMED** |
 | 27 | **AA** | `NATIONALITY` | `User.nationality` | Auth | text | `""` | **CONFIRMED** |
@@ -386,16 +385,16 @@ Kind legend: **Auth** = authoritative value copied from PostgreSQL; **Derived** 
 | Item | Decision | Repository evidence |
 | :--- | :--- | :--- |
 | `TEST NUMBER` (`A`) | Separate business field with no system mapping: always `""`. `CandidateStage.job_id` is **not** used | No `test_number` field exists |
-| `PASSPORT COPY` (`M`) | Only one column; current `PASSPORT` document status | Document type `PASSPORT` |
+| `PASSPORT COPY` (`M`) | Only one column; current `PASSPORT` document's submission date | Document type `PASSPORT` |
 | `POLICE REP SRI LANKA` (`N`) | Variant `SL_VERIFIED` | `POLICE_REPORT_VARIANTS` |
 | `POLICE REP ROMANIA` (`O`) | Only one column; variant `ROMANIA` | `POLICE_REPORT_VARIANTS` |
 | `DRIVING LICIAN` (`R`) | Always `""` (header spelling preserved) | No driving-licence type anywhere in the repository |
-| `NATIONAL ID` (`S`) | Current `NIC` document status | Document type `NIC` |
-| `POLICE REPORT APPLIED` (`T`) | Current `POLICE_SLIP` document status | Document type `POLICE_SLIP` (the application receipt that starts the 21-day wait) |
+| `NATIONAL ID` (`S`) | Current `NIC` document's submission date | Document type `NIC` |
+| `POLICE REPORT APPLIED` (`T`) | Current `POLICE_SLIP` document's submission date | Document type `POLICE_SLIP` (the application receipt that starts the 21-day wait) |
 | `SUBMIT DATE` (`U`) | `police_submitted_date` of the current `POLICE_SLIP`, `YYYY-MM-DD` | `Document.police_submitted_date` |
 | `POLICE REP SRI LANKA` (`V`) | Variant `SL_NORMAL` | `POLICE_REPORT_VARIANTS` |
 | `POLICE REP FM` (`W`) | Always `""`; no Foreign Ministry / attestation logic is invented | No "FM" variant exists |
-| `VIDEOS` (`X`) | Current `SKILL_VIDEO` document status | Document type `SKILL_VIDEO` |
+| `VIDEOS` (`X`) | Current `SKILL_VIDEO` document's submission date | Document type `SKILL_VIDEO` |
 
 Notes:
 
@@ -413,7 +412,7 @@ Notes:
 | Null / missing | An empty cell (`""`), never `null`, `undefined`, `N/A` or `-` |
 | Intentionally blank columns | `TEST NUMBER`, `DRIVING LICIAN`, `POLICE REP FM`: always `""` |
 | Stage statuses | `COMPLETED` / `INCOMPLETE` |
-| Document status | `VERIFIED` / `REVIEW_REQUIRED` (database values) / `MISSING` (generated: no current document) |
+| Document columns | the current document's **submission date** (`received_date`, as the Sri Lanka calendar date `YYYY-MM-DD`), or exactly `Not Submitted` when there is no current (non-superseded) document of that type/variant. One format for all nine document columns. `DRIVING LICIAN` and `POLICE REP FM` have no document type in the system and stay `""` |
 | Writing mode | `valueInputOption=RAW` into columns formatted as **plain text**, so Sheets never coerces phone numbers, NICs or zero-padded IDs into numbers or dates |
 | Comparing mode | Reconciliation reads displayed strings and compares them with freshly generated strings using exactly the same mapper |
 

@@ -46,7 +46,7 @@ Google Sheet (`Emlynk Candidate Operational Mirror`)
 
 > **Current synchronization model:** there is **no real-time synchronization**. Database changes are only recorded in `sheet_sync_queue`; the Sheet is written by a full reconciliation of the current database at **06:00, 12:00 and 18:00 Asia/Colombo** (one Cloud Scheduler job, Section 12) and by an ADMIN's **Sync Now**. Statements below about incremental / near-real-time sync, queue claims and per-item retries describe the original design and are kept as history.
 
-1. **Database is the single source of truth:** PostgreSQL (Supabase) is authoritative for all candidate data, stages, and document statuses.
+1. **Database is the single source of truth:** PostgreSQL (Supabase) is authoritative for all candidate data, stages, and documents. Document columns show each current document's submission date (`documents.received_date`, Sri Lanka calendar date `YYYY-MM-DD`) or exactly `Not Submitted`; nothing in the Sheet is read back, and `Not Submitted` never deletes anything.
 2. **Google Sheet is an operational mirror / fallback view:** The Sheet is purely a downstream representation for human viewing and operational fallback.
 3. **Strictly one-way synchronization:** Changes in the Google Sheet are **NEVER** read back or synchronized into PostgreSQL. Any manual edit made inside the Sheet will be overwritten by the next scheduled or manual reconciliation.
 4. **Asynchronous background processing:** Candidate registrations, document uploads, review actions, and stage updates trigger database triggers that record a queue row atomically. Nothing is written to the Sheet at that moment; the next scheduled (06:00, 12:00, 18:00 Asia/Colombo) or manual reconciliation mirrors the change. Neither candidate users nor admin users wait for Google API responses.
@@ -204,18 +204,18 @@ The operational mirror implements an exact **40-column contract** (`A` through `
 | **J** | `ADDRESS` | `users.address` | Residential address string. |
 | **K** | `WHATSAPP NUM` | `users.whatsapp_number` | WhatsApp contact phone number. |
 | **L** | `CONTACT NUM` | `users.contact_number` | Alternate contact phone number. |
-| **M** | `PASSPORT COPY` | `documents` type `PASSPORT` | Document verification status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
-| **N** | `POLICE REP SRI LANKA` | `documents` type `POLICE_REPORT`, variant `SL_VERIFIED` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. (Identified positionally; distinct from Column V). |
-| **O** | `POLICE REP ROMANIA` | `documents` type `POLICE_REPORT`, variant `ROMANIA` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
-| **P** | `MEDICAL` | `documents` type `MEDICAL` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
-| **Q** | `SCAN` | `documents` type `SCAN` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. **Exactly one SCAN column** exists. |
+| **M** | `PASSPORT COPY` | `documents` type `PASSPORT` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
+| **N** | `POLICE REP SRI LANKA` | `documents` type `POLICE_REPORT`, variant `SL_VERIFIED` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. (Identified positionally; distinct from Column V). |
+| **O** | `POLICE REP ROMANIA` | `documents` type `POLICE_REPORT`, variant `ROMANIA` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
+| **P** | `MEDICAL` | `documents` type `MEDICAL` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
+| **Q** | `SCAN` | `documents` type `SCAN` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. **Exactly one SCAN column** exists. |
 | **R** | `DRIVING LICIAN` | Unmapped / Empty (`""`) | Legacy spelling preserved intentionally from manual Sheet; always empty string. |
-| **S** | `NATIONAL ID` | `documents` type `NIC` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
-| **T** | `POLICE REPORT APPLIED` | `documents` type `POLICE_SLIP` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
+| **S** | `NATIONAL ID` | `documents` type `NIC` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
+| **T** | `POLICE REPORT APPLIED` | `documents` type `POLICE_SLIP` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
 | **U** | `SUBMIT DATE` | `policeSlip.policeSubmittedDate` | Submission date of active `POLICE_SLIP`: `YYYY-MM-DD`. |
-| **V** | `POLICE REP SRI LANKA` | `documents` type `POLICE_REPORT`, variant `SL_NORMAL` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. Standard unverified Sri Lankan report. |
+| **V** | `POLICE REP SRI LANKA` | `documents` type `POLICE_REPORT`, variant `SL_NORMAL` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. Standard unverified Sri Lankan report. |
 | **W** | `POLICE REP FM` | Unmapped / Empty (`""`) | Foreign Ministry police report column; always empty string. |
-| **X** | `VIDEOS` | `documents` type `SKILL_VIDEO` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
+| **X** | `VIDEOS` | `documents` type `SKILL_VIDEO` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
 | **Y** | `PLACE OF BIRTH` | `users.place_of_birth` | String text. |
 | **Z** | `SEX` | `users.sex` | Candidate sex / gender string. |
 | **AA** | `NATIONALITY` | `users.nationality` | Nationality string. |

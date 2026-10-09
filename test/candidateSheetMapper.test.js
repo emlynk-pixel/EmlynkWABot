@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import { SHEET_COLUMNS } from "../src/services/sheetSchema.js";
 import {
-    DOCUMENT_STATUS_MISSING,
+    DOCUMENT_NOT_SUBMITTED,
     RECORD_STATUS,
     SheetMappingError,
     mapCandidateToSheetRow,
@@ -95,52 +95,108 @@ describe("candidate -> Sheet row", () => {
         assert.equal(row[22], "", "POLICE REP FM (W)");
     });
 
-    test("police reports: N = SL_VERIFIED, V = SL_NORMAL, O = ROMANIA", () => {
+    test("police reports: N = SL_VERIFIED, V = SL_NORMAL, O = ROMANIA, each with its own submission date", () => {
         const documents = [
-            doc("POLICE_REPORT", "VERIFIED", { documentVariant: "SL_VERIFIED" }),
-            doc("POLICE_REPORT", "REVIEW_REQUIRED", { documentVariant: "SL_NORMAL" }),
+            doc("POLICE_REPORT", "VERIFIED", { documentVariant: "SL_VERIFIED", receivedDate: new Date("2026-10-07T04:00:00.000Z") }),
+            doc("POLICE_REPORT", "REVIEW_REQUIRED", { documentVariant: "SL_NORMAL", receivedDate: new Date("2026-10-05T04:00:00.000Z") }),
         ];
         const row = map({ user: user(), documents });
-        assert.equal(row[13], "VERIFIED", "first POLICE REP SRI LANKA (N) is SL_VERIFIED");
-        assert.equal(row[21], "REVIEW_REQUIRED", "second POLICE REP SRI LANKA (V) is SL_NORMAL");
-        assert.equal(row[14], DOCUMENT_STATUS_MISSING, "POLICE REP ROMANIA (O): none yet");
+        assert.equal(row[13], "2026-10-07", "first POLICE REP SRI LANKA (N) is SL_VERIFIED");
+        assert.equal(row[21], "2026-10-05", "second POLICE REP SRI LANKA (V) is SL_NORMAL");
+        assert.equal(row[14], DOCUMENT_NOT_SUBMITTED, "POLICE REP ROMANIA (O): none yet");
 
-        const withRomania = map({ user: user(), documents: [doc("POLICE_REPORT", "VERIFIED", { documentVariant: "ROMANIA" })] });
-        assert.equal(withRomania[14], "VERIFIED");
-        assert.equal(withRomania[13], DOCUMENT_STATUS_MISSING);
-        assert.equal(withRomania[21], DOCUMENT_STATUS_MISSING);
+        const withRomania = map({ user: user(), documents: [doc("POLICE_REPORT", "VERIFIED", { documentVariant: "ROMANIA", receivedDate: new Date("2026-10-01T04:00:00.000Z") })] });
+        assert.equal(withRomania[14], "2026-10-01");
+        assert.equal(withRomania[13], DOCUMENT_NOT_SUBMITTED);
+        assert.equal(withRomania[21], DOCUMENT_NOT_SUBMITTED);
     });
 
     test("a police report without a variant fills none of the variant columns", () => {
         const row = map({ user: user(), documents: [doc("POLICE_REPORT", "VERIFIED")] });
-        assert.deepEqual([row[13], row[14], row[21]], [DOCUMENT_STATUS_MISSING, DOCUMENT_STATUS_MISSING, DOCUMENT_STATUS_MISSING]);
+        assert.deepEqual([row[13], row[14], row[21]], [DOCUMENT_NOT_SUBMITTED, DOCUMENT_NOT_SUBMITTED, DOCUMENT_NOT_SUBMITTED]);
     });
 
-    test("document columns use the stored statuses and MISSING, with the app's current-document rule", () => {
-        const documents = [
-            doc("PASSPORT", "SUPERSEDED"),
-            doc("PASSPORT", "VERIFIED"),
-            doc("MEDICAL", "REVIEW_REQUIRED"),
-            doc("NIC", "SUPERSEDED"),
-            doc("SKILL_VIDEO", "VERIFIED"),
-            doc("POLICE_SLIP", "VERIFIED", { policeSubmittedDate: new Date("2026-09-15T00:00:00.000Z") }),
+    test("every document column: the current document's submission date, otherwise exactly \"Not Submitted\"", () => {
+        assert.equal(DOCUMENT_NOT_SUBMITTED, "Not Submitted");
+        const columns = [
+            ["passportCopy", "M", { documentType: "PASSPORT" }],
+            ["policeReportSriLankaVerified", "N", { documentType: "POLICE_REPORT", documentVariant: "SL_VERIFIED" }],
+            ["policeReportRomania", "O", { documentType: "POLICE_REPORT", documentVariant: "ROMANIA" }],
+            ["medical", "P", { documentType: "MEDICAL" }],
+            ["scan", "Q", { documentType: "SCAN" }],
+            ["nationalId", "S", { documentType: "NIC" }],
+            ["policeReportApplied", "T", { documentType: "POLICE_SLIP" }],
+            ["policeReportSriLankaNormal", "V", { documentType: "POLICE_REPORT", documentVariant: "SL_NORMAL" }],
+            ["videos", "X", { documentType: "SKILL_VIDEO" }],
         ];
-        const row = map({ user: user(), documents });
-        assert.equal(cell(row, "passportCopy"), "VERIFIED", "PASSPORT COPY (M)");
-        assert.equal(cell(row, "medical"), "REVIEW_REQUIRED", "MEDICAL (P)");
-        assert.equal(cell(row, "nationalId"), DOCUMENT_STATUS_MISSING, "NATIONAL ID (S): only a superseded NIC");
-        assert.equal(cell(row, "videos"), "VERIFIED", "VIDEOS (X) = SKILL_VIDEO");
-        assert.equal(cell(row, "policeReportApplied"), "VERIFIED", "POLICE REPORT APPLIED (T) = POLICE_SLIP");
+        const empty = map({ user: user() });
+        for (const [field, column] of columns) {
+            assert.equal(cell(empty, field), "Not Submitted", `${column} (${field}) without a document`);
+        }
+        columns.forEach(([field, column, { documentType, documentVariant = null }], i) => {
+            const day = String(i + 1).padStart(2, "0");
+            const row = map({ user: user(), documents: [doc(documentType, "VERIFIED", { documentVariant, receivedDate: new Date(`2026-09-${day}T06:00:00.000Z`) })] });
+            assert.equal(cell(row, field), `2026-09-${day}`, `${column} (${field}) with a document`);
+            assert.equal(atColumn(row, column), `2026-09-${day}`);
+        });
+    });
+
+    test("one date format everywhere: YYYY-MM-DD, the Sri Lanka calendar date of the submission", () => {
+        // 20:00 UTC on 8 October is 01:30 on 9 October in Sri Lanka.
+        const late = map({ user: user(), documents: [doc("MEDICAL", "VERIFIED", { receivedDate: new Date("2026-10-08T20:00:00.000Z") })] });
+        assert.equal(cell(late, "medical"), "2026-10-09");
+        const early = map({ user: user(), documents: [doc("MEDICAL", "VERIFIED", { receivedDate: new Date("2026-10-08T18:00:00.000Z") })] });
+        assert.equal(cell(early, "medical"), "2026-10-08", "23:30 in Sri Lanka is still the 8th");
+        assert.match(cell(late, "medical"), /^\d{4}-\d{2}-\d{2}$/);
+    });
+
+    test("replaced document: the latest submission's date (the old one is SUPERSEDED), by the app's current-document rule", () => {
+        const replaced = map({ user: user(), documents: [
+            doc("PASSPORT", "SUPERSEDED", { receivedDate: new Date("2026-09-01T05:00:00.000Z") }),
+            doc("PASSPORT", "VERIFIED", { receivedDate: new Date("2026-10-08T05:00:00.000Z") }),
+        ] });
+        assert.equal(cell(replaced, "passportCopy"), "2026-10-08");
+        // Only a superseded document left: not submitted.
+        const onlySuperseded = map({ user: user(), documents: [doc("NIC", "SUPERSEDED", { receivedDate: new Date("2026-09-01T05:00:00.000Z") })] });
+        assert.equal(cell(onlySuperseded, "nationalId"), "Not Submitted");
+        // A newer file still waiting for review does not displace the VERIFIED
+        // one (the candidate page shows the same document).
+        const pendingNewer = map({ user: user(), documents: [
+            doc("MEDICAL", "VERIFIED", { receivedDate: new Date("2026-10-01T05:00:00.000Z") }),
+            doc("MEDICAL", "REVIEW_REQUIRED", { receivedDate: new Date("2026-10-06T05:00:00.000Z") }),
+        ] });
+        assert.equal(cell(pendingNewer, "medical"), "2026-10-01");
+        // With no VERIFIED one, the newest waiting file is current.
+        const onlyPending = map({ user: user(), documents: [
+            doc("SKILL_VIDEO", "REVIEW_REQUIRED", { receivedDate: new Date("2026-10-02T05:00:00.000Z") }),
+            doc("SKILL_VIDEO", "REVIEW_REQUIRED", { receivedDate: new Date("2026-10-04T05:00:00.000Z") }),
+        ] });
+        assert.equal(cell(onlyPending, "videos"), "2026-10-04");
+    });
+
+    test("SUBMIT DATE (U) is unchanged: the police slip's submitted date, not its upload date", () => {
+        const row = map({ user: user(), documents: [doc("POLICE_SLIP", "VERIFIED", { receivedDate: new Date("2026-09-20T05:00:00.000Z"), policeSubmittedDate: new Date("2026-09-15T00:00:00.000Z") })] });
+        assert.equal(cell(row, "policeReportApplied"), "2026-09-20", "POLICE REPORT APPLIED (T): the slip's submission date");
         assert.equal(cell(row, "submitDate"), "2026-09-15", "SUBMIT DATE (U)");
-        assert.equal(cell(row, "scan"), DOCUMENT_STATUS_MISSING, "SCAN (Q)");
+    });
+
+    test("a current document without a submission date is never shown with an invented date", () => {
+        assert.throws(() => map({ user: user(), documents: [doc("MEDICAL", "VERIFIED", { receivedDate: null })] }), SheetMappingError);
     });
 
     test("one SCAN: a SCAN document fills Q, and only Q", () => {
         const without = map({ user: user() });
-        const withScan = map({ user: user(), documents: [doc("SCAN", "VERIFIED")] });
-        assert.equal(withScan[16], "VERIFIED");
+        const withScan = map({ user: user(), documents: [doc("SCAN", "VERIFIED", { receivedDate: new Date("2026-10-08T05:00:00.000Z") })] });
+        assert.equal(withScan[16], "2026-10-08");
+        assert.equal(without[16], "Not Submitted");
         const changed = withScan.map((value, i) => (value === without[i] ? null : SHEET_COLUMNS[i].column)).filter(Boolean);
         assert.deepEqual(changed, ["Q"], "the scan changes the SCAN column only (not the Document Submission stage, which needs more)");
+        assert.equal(SHEET_COLUMNS.filter((c) => /SCAN/i.test(c.header)).length, 1, "exactly one SCAN column");
+    });
+
+    test("no Agreement, Affidavit or Contract columns exist", () => {
+        assert.equal(SHEET_COLUMNS.length, 41);
+        assert.deepEqual(SHEET_COLUMNS.filter((c) => /AGREEMENT|AFFIDAVIT|CONTRACT/i.test(`${c.header} ${c.field}`)), []);
     });
 
     test("documents of types the candidate pages don't know are ignored", () => {

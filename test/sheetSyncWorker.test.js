@@ -70,7 +70,7 @@ function setup({ enabled = true, rows = [], header, env = {} } = {}) {
         healthCheck: () => runSheetHealthCheck({ env: configEnv, sheetsClient: sheet.client, clock }),
     });
     const worker = newWorker();
-    return { sheet, store, worker, newWorker, lines, advance: (ms) => { offsetMs += ms; }, tuning };
+    return { sheet, store, worker, newWorker, engine, lines, advance: (ms) => { offsetMs += ms; }, tuning };
 }
 
 async function register(body = {}) {
@@ -517,5 +517,77 @@ describe("reconciliation and durable runs", () => {
         assert.equal((await store.getRun(run.runId)).status, "SUCCEEDED");
         assert.equal(result.finished, true);
         assert.equal((await state()).writerLeaseOwner, null, "the writer lease is released on stop");
+    });
+});
+
+describe("document columns: submission date or \"Not Submitted\"", () => {
+    const DOCUMENT_FIELDS = ["passportCopy", "policeReportSriLankaVerified", "policeReportRomania", "medical", "scan", "nationalId", "policeReportApplied", "policeReportSriLankaNormal", "videos"];
+
+    test("a scheduled run writes each document's submission date, and exactly \"Not Submitted\" where there is none", async () => {
+        const { sheet, store, worker } = setup();
+        const { passportId, uniqueId } = await register();
+        await addDocument(passportId, "PASSPORT", { receivedDate: new Date("2026-10-09T03:00:00.000Z") });
+        await addDocument(passportId, "POLICE_REPORT", { variant: "SL_VERIFIED", receivedDate: new Date("2026-10-07T03:00:00.000Z") });
+        await addDocument(passportId, "SCAN", { receivedDate: new Date("2026-10-08T03:00:00.000Z") });
+        await sync(store, worker);
+        const [row] = rowFor(sheet, uniqueId);
+        assert.equal(row[col("passportCopy")], "2026-10-09");
+        assert.equal(row[col("policeReportSriLankaVerified")], "2026-10-07");
+        assert.equal(row[col("scan")], "2026-10-08");
+        for (const field of ["policeReportRomania", "medical", "nationalId", "policeReportApplied", "policeReportSriLankaNormal", "videos"]) {
+            assert.equal(row[col(field)], "Not Submitted", field);
+        }
+        assert.equal(row[col("drivingLicence")], "", "no document type exists for DRIVING LICIAN");
+        assert.equal(row[col("policeReportFm")], "", "no document type exists for POLICE REP FM");
+    });
+
+    test("a replaced document shows the replacement's date after the next run", async () => {
+        const { sheet, store, worker } = setup();
+        const { passportId, uniqueId } = await register();
+        const old = await addDocument(passportId, "MEDICAL", { receivedDate: new Date("2026-09-01T03:00:00.000Z") });
+        await sync(store, worker);
+        assert.equal(rowFor(sheet, uniqueId)[0][col("medical")], "2026-09-01");
+        // Replacement, as the application stores it: the old row SUPERSEDED, a new current row.
+        await prisma.document.update({ where: { documentId: old.documentId }, data: { verificationStatus: "SUPERSEDED" } });
+        await addDocument(passportId, "MEDICAL", { receivedDate: new Date("2026-10-08T03:00:00.000Z") });
+        assert.equal(rowFor(sheet, uniqueId)[0][col("medical")], "2026-09-01", "not before the next run");
+        await sync(store, worker);
+        assert.equal(rowFor(sheet, uniqueId)[0][col("medical")], "2026-10-08");
+    });
+
+    test("reconciliation and the per-candidate comparison produce identical document cells (one mapper)", async () => {
+        const { sheet, store, worker, engine } = setup();
+        const { passportId, uniqueId } = await register();
+        await addDocument(passportId, "NIC", { receivedDate: new Date("2026-10-03T03:00:00.000Z") });
+        await addDocument(passportId, "SKILL_VIDEO", { receivedDate: new Date("2026-10-04T20:00:00.000Z") });
+        await sync(store, worker);
+        const [row] = rowFor(sheet, uniqueId);
+        assert.deepEqual([row[col("nationalId")], row[col("videos")]], ["2026-10-03", "2026-10-05"]);
+        const results = await engine.syncCandidates([{ uniqueId, candidateDeleted: false }], { dryRun: true });
+        assert.deepEqual([results.get(uniqueId).action, results.get(uniqueId).changedColumns], ["UNCHANGED", []]);
+    });
+
+    test("manual edits to document cells are restored from the database; Sheet values never reach the database", async () => {
+        const { sheet, store, worker } = setup();
+        const { passportId, uniqueId } = await register();
+        await addDocument(passportId, "SCAN", { receivedDate: new Date("2026-10-08T03:00:00.000Z") });
+        await sync(store, worker);
+        const rowNumber = sheet.dataRows().findIndex((r) => r[SYSTEM_CANDIDATE_ID_INDEX] === uniqueId) + 2;
+        const documentsBefore = await prisma.document.findMany({ where: { passportId }, orderBy: { documentId: "asc" } });
+        sheet.setCell(rowNumber, col("scan"), "Not Submitted");
+        sheet.setCell(rowNumber, col("medical"), "2026-01-01");
+        sheet.setCell(rowNumber, col("passportCopy"), "VERIFIED");
+        await sync(store, worker);
+        const restored = sheet.row(rowNumber);
+        assert.deepEqual([restored[col("scan")], restored[col("medical")], restored[col("passportCopy")]], ["2026-10-08", "Not Submitted", "Not Submitted"]);
+        assert.deepEqual(await prisma.document.findMany({ where: { passportId }, orderBy: { documentId: "asc" } }), documentsBefore, "\"Not Submitted\" in the Sheet deleted nothing");
+    });
+
+    test("every document column follows the rule for a candidate with no documents", async () => {
+        const { sheet, store, worker } = setup();
+        const { uniqueId } = await register();
+        await sync(store, worker);
+        const [row] = rowFor(sheet, uniqueId);
+        assert.deepEqual(DOCUMENT_FIELDS.map((field) => row[col(field)]), DOCUMENT_FIELDS.map(() => "Not Submitted"));
     });
 });
