@@ -5,11 +5,13 @@
 // It is the `sheetsClient` given to the REAL adapter (googleSheetsAdapter.js),
 // so tests exercise the real range construction, gate and validation while
 // nothing can reach Google.
-import { SHEET_COLUMN_COUNT, SHEET_HEADERS, SHEET_LAST_COLUMN } from "../../src/services/sheetSchema.js";
+import { SHEET_COLUMN_COUNT, SHEET_HEADERS, columnLetter } from "../../src/services/sheetSchema.js";
 
 const letterIndex = (letters) => [...letters].reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
 
 function parseRange(range) {
+    const rows = /^'((?:[^']|'')+)'!(\d+):(\d+)$/.exec(range);
+    if (rows) return { tab: rows[1].replace(/''/g, "'"), firstCol: 0, lastCol: Infinity, firstRow: Number(rows[2]), lastRow: Number(rows[3]) };
     const match = /^'((?:[^']|'')+)'!([A-Z]+)(\d*)(?::([A-Z]+)(\d*))?$/.exec(range);
     if (!match) throw Object.assign(new Error(`Unable to parse range: ${range}`), { response: { status: 400, data: { error: { status: "INVALID_ARGUMENT", errors: [{ reason: "badRequest" }] } } } });
     const [, tab, c1, r1, c2, r2] = match;
@@ -33,6 +35,7 @@ export function createFakeGoogleSheet({ tabName = "Fake Tab", header = [...SHEET
         while (out.length && (out.at(-1) === "" || out.at(-1) === undefined || out.at(-1) === null)) out.pop();
         return out;
     };
+    const width = () => Math.max(SHEET_COLUMN_COUNT, trimRow(grid[0] ?? []).length);
     const lastNonEmptyRow = () => {
         for (let i = grid.length - 1; i >= 0; i--) if (trimRow(grid[i] ?? []).length) return i + 1;
         return 0;
@@ -95,7 +98,8 @@ export function createFakeGoogleSheet({ tabName = "Fake Tab", header = [...SHEET
             check("append", params.range);
             const start = lastNonEmptyRow() + 1;
             params.requestBody.values.forEach((cells, i) => { grid[start - 1 + i] = cells.map(String); });
-            return { data: { updates: { updatedRange: `'${tabName}'!A${start}:${SHEET_LAST_COLUMN}${start + params.requestBody.values.length - 1}` } } };
+            const width = Math.max(...params.requestBody.values.map((cells) => cells.length));
+            return { data: { updates: { updatedRange: `'${tabName}'!A${start}:${columnLetter(width - 1)}${start + params.requestBody.values.length - 1}` } } };
         },
         async clear() { throw new Error("clear must never be called"); },
     };
@@ -108,9 +112,11 @@ export function createFakeGoogleSheet({ tabName = "Fake Tab", header = [...SHEET
         failNext(method, error, times = 1) { failures.push({ method, error, times }); },
         clearFailures() { failures.length = 0; },
         writes: () => calls.filter((c) => ["batchUpdate", "update", "append"].includes(c.method)),
-        // Data rows (row 2 onwards) as stored, padded to the schema's column count.
-        dataRows: () => grid.slice(1, lastNonEmptyRow()).map((row) => Array.from({ length: SHEET_COLUMN_COUNT }, (_, i) => row?.[i] ?? "")),
-        row: (n) => Array.from({ length: SHEET_COLUMN_COUNT }, (_, i) => grid[n - 1]?.[i] ?? ""),
+        // Data rows (row 2 onwards) as stored, padded to the live header's
+        // width (at least the system column count): positions as in the Sheet.
+        dataRows: () => grid.slice(1, lastNonEmptyRow()).map((row) => Array.from({ length: width() }, (_, i) => row?.[i] ?? "")),
+        row: (n) => Array.from({ length: width() }, (_, i) => grid[n - 1]?.[i] ?? ""),
+        header: () => trimRow(grid[0] ?? []),
         setCell(rowNumber, columnIndex, value) { (grid[rowNumber - 1] ??= [])[columnIndex] = value; },
         setHeader(cells) { grid[0] = [...cells]; },
     };

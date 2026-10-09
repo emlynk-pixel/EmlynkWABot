@@ -283,7 +283,7 @@ describe("failures: the database stays authoritative and unaffected", () => {
         await worker.tick();
         assert.deepEqual(sheet.writes(), []);
         let [item] = await queueRows();
-        assert.deepEqual([item.status, item.attempts, item.lastErrorClass, item.lastErrorCode], ["PENDING", 0, "SCHEMA_INVALID", "F"]);
+        assert.deepEqual([item.status, item.attempts, item.lastErrorClass, item.lastErrorCode], ["PENDING", 0, "SCHEMA_INVALID", "MISSING:BIRTHDAY"]);
         assert.equal((await state()).integrationState, "CONFIG_ERROR");
 
         const calls = sheet.calls.length;

@@ -1,8 +1,8 @@
 // Candidate -> Google Sheet row (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md,
 // Sections 6.1-6.3). Pure: no database, no Google API, no clock, no logging.
-// The same input always gives the same 41 strings, in Sheet order
-// (sheetSchema.js), so incremental sync and reconciliation compare like with
-// like.
+// The same input always gives the same 41 field-ordered strings (canonical
+// order, sheetSchema.js; the adapter places them by header name), so
+// incremental sync and reconciliation compare like with like.
 //
 // Input, the candidate aggregate (CANDIDATE_AGGREGATE_SELECT below):
 //   user      - the users row
@@ -84,7 +84,7 @@ function currentDocument(documents, documentType, variant) {
 const documentStatus = (documents, documentType, variant) =>
     currentDocument(documents, documentType, variant)?.verificationStatus ?? DOCUMENT_STATUS_MISSING;
 
-// The 41 cells for one candidate, in Sheet order.
+// The 41 field-ordered cells for one candidate (canonical order).
 // options.mirroredAt (required): the LAST MIRRORED AT time, passed in so
 //   the result is deterministic.
 // options.recordStatus: ACTIVE unless the caller marks the row otherwise.

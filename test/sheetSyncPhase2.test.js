@@ -63,18 +63,25 @@ function fakeSheets({ header = [...SHEET_HEADERS], rows = [], fail = null } = {}
         if (fail) return Promise.reject(fail);
         return Promise.resolve({ data });
     };
-    const rowFor = (range) => Number(range.match(/!A(\d+):AO\d+$/)?.[1]);
+    const letterIndex = (letters) => [...letters].reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
+    const rowFor = (range) => Number(range.match(/!A(\d+):[A-Z]+\d+$/)?.[1]);
     return {
         calls,
         spreadsheets: {
             values: {
                 get: (params) => {
                     const { range } = params;
-                    if (range.endsWith("!A1:AO1")) return respond("get", params, { values: [header] });
+                    if (range.endsWith("!1:1") || range.endsWith("!A1:AO1")) return respond("get", params, { values: [header] });
+                    const colMatch = /!([A-Z]+)2:([A-Z]+)$/.exec(range);
+                    if (colMatch && colMatch[1] === colMatch[2]) {
+                        const colIdx = letterIndex(colMatch[1]);
+                        return respond("get", params, { values: rows.map((r) => [r[colIdx] ?? ""]) });
+                    }
                     if (range.endsWith("!AO2:AO")) return respond("get", params, { values: rows.map((r) => [r[40] ?? ""]) });
-                    if (range.endsWith("!A2:AO")) return respond("get", params, { values: rows });
+                    if (range.endsWith("!A2:AO") || /!A2:[A-Z]+$/.test(range)) return respond("get", params, { values: rows });
                     const n = rowFor(range);
-                    return respond("get", params, { values: rows[n - 2] ? [rows[n - 2]] : [] });
+                    if (!Number.isNaN(n) && n >= 2) return respond("get", params, { values: rows[n - 2] ? [rows[n - 2]] : [] });
+                    return respond("get", params, { values: [] });
                 },
                 append: (params) => respond("append", params, {}),
                 update: (params) => respond("update", params, {}),
@@ -258,7 +265,7 @@ describe("sync planner (read-only)", () => {
         const p = createSheetSyncPlanner({ reader: createCandidateAggregateReader({ db }), sheets: sheetAdapter(client, true), clock: () => NOW });
         const error = await p.planCandidate("0001").catch((e) => e);
         assert.ok(error instanceof SheetSchemaMismatchError);
-        assert.deepEqual(error.mismatches.map((m) => m.column), ["V"]);
+        assert.deepEqual(error.mismatches.map((m) => [m.problem, m.header]), [["MISSING", "POLICE REP SRI LANKA"]]);
         assert.equal(db.queries.length, 0);
     });
 
@@ -274,7 +281,7 @@ describe("sync planner (read-only)", () => {
         ]);
         assert.equal(nextCursor, null);
         assert.equal(blankSheetRows, 1);
-        assert.deepEqual(client.calls.map((c) => c.range.split("!")[1]), ["A1:AO1", "A2:AO"]);
+        assert.deepEqual(client.calls.map((c) => c.range.split("!")[1]), ["1:1", "A2:AO"]);
     });
 
     test("the planner cannot write, even when handed a write-enabled adapter", async () => {
@@ -296,25 +303,25 @@ describe("sync planner (read-only)", () => {
 describe("read-only connection/schema check", () => {
     const env = { SHEET_SPREADSHEET_ID: "fake-id", SHEET_TAB_NAME: TAB };
 
-    test("exact header: CONNECTED and SCHEMA_VALID, reading A1:AO1 only", async () => {
+    test("exact header: CONNECTED and SCHEMA_VALID, reading 1:1 only", async () => {
         const client = fakeSheets({ rows: [expectedRow(1)] });
         const result = await runSheetHealthCheck({ env, sheetsClient: client, clock: () => NOW });
         assert.equal(result.ok, true);
         assert.equal(result.status, HEALTH_STATUS.CONNECTED);
         assert.equal(result.schema, SCHEMA_STATUS.VALID);
-        assert.deepEqual(client.calls.map((c) => [c.method, c.range]), [["get", `'${TAB}'!A1:AO1`]]);
+        assert.deepEqual(client.calls.map((c) => [c.method, c.range]), [["get", `'${TAB}'!1:1`]]);
         assert.equal(client.calls[0].spreadsheetId, "fake-id");
     });
 
-    test("wrong header: CONNECTED but SCHEMA_INVALID, with column letters only", async () => {
+    test("wrong header: CONNECTED but SCHEMA_INVALID, with missing headers", async () => {
         const header = [...SHEET_HEADERS];
         header[0] = "TEST NO";
         header[40] = "";
         const result = await runSheetHealthCheck({ env, sheetsClient: fakeSheets({ header }), clock: () => NOW });
         assert.equal(result.ok, false);
         assert.equal(result.schema, SCHEMA_STATUS.INVALID);
-        assert.deepEqual(result.mismatchedColumns, ["A", "AO"]);
-        assert.doesNotMatch(JSON.stringify(result), /TEST NO|_SYSTEM_CANDIDATE_ID/);
+        assert.deepEqual(result.missingHeaders.sort(), ["TEST NUMBER", "_SYSTEM_CANDIDATE_ID"].sort());
+        assert.doesNotMatch(JSON.stringify(result), /TEST NO/);
     });
 
     test("never calls append/update/clear/batchUpdate, and works with writes disabled", async () => {

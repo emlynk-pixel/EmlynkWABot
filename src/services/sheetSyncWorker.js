@@ -26,7 +26,7 @@
 //                   worker re-checks the Sheet read-only every
 //                   CONFIG_RECHECK_MS and resumes when it is fine (or after a
 //                   successful Test Connection / reconciliation).
-//   DATA_INTEGRITY  duplicate candidate IDs in column AO: halted the same way;
+//   DATA_INTEGRITY  duplicate candidate IDs in the _SYSTEM_CANDIDATE_ID column: halted the same way;
 //                   nothing is written until a person fixes the Sheet.
 //   RETRYABLE       429, 5xx, network: bounded exponential backoff, then the
 //   / other         item is dead-lettered (FAILED); reconciliation heals it.
@@ -41,7 +41,7 @@
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 
-import { SheetSchemaMismatchError, SheetSyncDisabledError, SheetsAdapterError, SHEETS_ERROR_CLASS } from "./googleSheetsAdapter.js";
+import { SheetLayoutChangedError, SheetSchemaMismatchError, SheetSyncDisabledError, SheetsAdapterError, SHEETS_ERROR_CLASS } from "./googleSheetsAdapter.js";
 import { SheetDuplicateCandidateIdError } from "./sheetSyncPlanner.js";
 import { IncompleteSnapshotError } from "./candidateAggregateReader.js";
 import { ENGINE_ACTION } from "./sheetSyncEngine.js";
@@ -75,12 +75,19 @@ function googleCode(error) {
     return parts.join("/") || null;
 }
 
+// "MISSING:VISA SUBMISSION STATUS,DUPLICATE:_SYSTEM_CANDIDATE_ID": which
+// system headers are wrong (our own header names), for Settings.
+export const schemaProblemCode = (mismatches) => (mismatches ?? []).map((m) => `${m.problem}:${m.header}`).join(",").slice(0, 120) || null;
+
 // An error -> { kind, errorClass, errorCode }: codes only, never messages.
 //   kind: CONFIG | DATA_INTEGRITY | RETRYABLE | PERMANENT | DISABLED | INTERNAL
 export function classifySyncError(error) {
     if (error instanceof SheetSchemaMismatchError) {
-        return { kind: "CONFIG", errorClass: "SCHEMA_INVALID", errorCode: (error.mismatches ?? []).map((m) => m.column).join(",").slice(0, 120) || null };
+        return { kind: "CONFIG", errorClass: "SCHEMA_INVALID", errorCode: schemaProblemCode(error.mismatches) };
     }
+    // Row 1 changed during the run (columns moved/added): nothing was written;
+    // the retry reads the new layout.
+    if (error instanceof SheetLayoutChangedError) return { kind: "RETRYABLE", errorClass: "SHEET_LAYOUT_CHANGED", errorCode: null };
     if (error instanceof SheetDuplicateCandidateIdError) {
         return { kind: "DATA_INTEGRITY", errorClass: "DUPLICATE_CANDIDATE_ID", errorCode: String(error.duplicates?.length ?? 0) };
     }
@@ -154,6 +161,7 @@ export function createSheetSyncWorker({
         const result = await healthCheck();
         const summary = {
             status: result.status, schema: result.schema, mismatchedColumns: result.mismatchedColumns ?? [],
+            missingHeaders: result.missingHeaders ?? [], duplicateHeaders: result.duplicateHeaders ?? [],
             httpStatus: result.httpStatus ?? null, reason: result.reason ?? null, googleStatus: result.googleStatus ?? null, writeGate: config.gate,
         };
         const now = clock();
@@ -162,7 +170,11 @@ export function createSheetSyncWorker({
         if (result.ok && state?.integrationState !== INTEGRATION_STATE.DATA_INTEGRITY) {
             await store.setIntegrationState({ state: INTEGRATION_STATE.OK, now });
         } else if (!result.ok && result.status !== "UNAVAILABLE") {
-            await store.setIntegrationState({ state: INTEGRATION_STATE.CONFIG_ERROR, errorClass: result.schema === "SCHEMA_INVALID" ? "SCHEMA_INVALID" : result.status, errorCode: result.httpStatus ? String(result.httpStatus) : null, now });
+            const schemaInvalid = result.schema === "SCHEMA_INVALID";
+            const errorCode = schemaInvalid
+                ? schemaProblemCode([...(result.missingHeaders ?? []).map((header) => ({ problem: "MISSING", header })), ...(result.duplicateHeaders ?? []).map((header) => ({ problem: "DUPLICATE", header }))])
+                : (result.httpStatus ? String(result.httpStatus) : null);
+            await store.setIntegrationState({ state: INTEGRATION_STATE.CONFIG_ERROR, errorClass: schemaInvalid ? "SCHEMA_INVALID" : result.status, errorCode, now });
         }
         emit(result.ok ? "info" : "warn", "sheet_sync.connection_test", { runId: run.runId, status: result.status, schema: result.schema, httpStatus: summary.httpStatus, googleStatus: summary.googleStatus });
     }

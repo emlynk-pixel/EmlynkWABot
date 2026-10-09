@@ -297,31 +297,39 @@ flowchart LR
 >
 > **The live Sheet must be changed at the same deploy:** right-click column `AI` (`VISA APPROVAL STATUS`) → *Insert 1 column left*, then type `VISA SUBMISSION STATUS` in `AI1`. Inserting (not typing over a column) moves the existing data together with its headers, so every row stays aligned. Until this is done, the header check reports `SCHEMA_INVALID` from `AI` on and the sync writes nothing (it never writes into shifted columns); the Admin dashboard is unaffected.
 
-The real operational Google Sheet has been **manually finalized** by the business. Its layout below is **authoritative** and replaces every earlier layout (including the 41-business-column + technical `AP` layout of v1.2.0).
+The Google Sheet Candidate Operational Mirror resolves columns **dynamically by HEADER NAME** (`src/services/sheetSchema.js` `readSheetLayout()`). The live Sheet is completely decoupled from fixed physical column positions or strict sequence.
 
-- **40 business-visible columns**, `A` through `AN`, preserving the legacy operational headers first.
-- **1 technical identity column**, `AO` (`_SYSTEM_CANDIDATE_ID`).
-- **Total: 41 columns. Every range is `A:AO`.**
+- **40 required business columns**, matching the canonical system headers.
+- **1 technical identity column**, `_SYSTEM_CANDIDATE_ID`, matched dynamically wherever it is placed.
+- **Operator columns allowed:** Operators may insert arbitrary custom columns (e.g., notes, audit flags, calculations) anywhere in the Sheet; the sync engine preserves them without overwriting or clearing their contents.
+- **Dynamic ranges:** The sync engine reads row 1 (`1:1`) to build the live column map. Existing rows are updated only across contiguous runs of system columns (`writeRangesFor`), leaving operator columns untouched.
 
-The schema is defined **once**, in the backend (`src/services/sheetSchema.js`), as an ordered immutable array. No other module may hard-code column letters or header strings.
+### Safe vs. Unsafe Operator Actions
 
-| Group | Name | Columns | Column Letters |
-| :-: | :--- | :-: | :-: |
-| 1 | Legacy operational headers (verbatim order and text) | 24 | `A` – `X` |
-| 2 | Appended candidate detail fields | 6 | `Y` – `AD` |
-| 3 | Candidate deployment stage statuses | 7 | `AE` – `AK` |
-| 4 | Operational mirror metadata | 3 | `AL` – `AN` |
-| | **Total business-visible columns** | **40** | **`A` – `AN`** |
-| Tech | Row identity key (`_SYSTEM_CANDIDATE_ID` = `User.unique_id`) | 1 | `AO` |
-| | **Total columns** | **41** | **`A` – `AO`** |
+> [!NOTE]
+> **SAFE ACTIONS (Allowed at any time without breaking sync):**
+> - **Reorder system columns:** Move any system column to any position (e.g. move `_SYSTEM_CANDIDATE_ID` to Column A, to the middle, or last).
+> - **Move `VISA SUBMISSION STATUS`:** Place it anywhere in the Sheet; it does not need to be at `AI`.
+> - **Move `VISA APPROVAL STATUS`:** Place it anywhere in the Sheet.
+> - **Add custom / operator columns:** Insert internal notes, supervisor signoffs, review checkboxes, or formula columns anywhere. Their values are completely preserved during updates.
+> - **Formatting & Display:** Adjust column widths, row heights, fonts, colors, text alignment, number formatting, filters, and freeze panes.
+> - **Hide columns:** Hide technical or unused columns (e.g., hiding `_SYSTEM_CANDIDATE_ID`).
+
+> [!CAUTION]
+> **NOT SAFE ACTIONS (Will halt sync with `SCHEMA_INVALID` or data integrity error):**
+> - **Rename required system headers:** Header text matching is strict and exact (e.g., changing `PASSPORT NUMBER` to `PASSPORT NO` causes `SCHEMA_INVALID`).
+> - **Delete / remove required system headers:** All 41 system headers must be present in row 1.
+> - **Duplicate required system headers:** Having multiple columns with the same required header (except the intentional pair `POLICE REP SRI LANKA`) is ambiguous and causes `SCHEMA_INVALID`.
+> - **Modify `_SYSTEM_CANDIDATE_ID` cell values:** Manually editing or clearing system candidate IDs breaks candidate tracking.
+> - **Duplicate candidate IDs in the Sheet:** Having the same `_SYSTEM_CANDIDATE_ID` in more than one row triggers an immediate hard data-integrity halt (`DUPLICATE_CANDIDATE_ID`).
 
 > [!IMPORTANT]
-> **Strict Layout Invariants:**
-> 1. Exact header text and exact position for all 41 columns. No header may be renamed, reordered, merged or removed by the system.
-> 2. `POLICE REP SRI LANKA` **intentionally appears twice** (`N` and `V`). The two columns are distinguished only by **position**, never by header name.
+> **Schema Invariants:**
+> 1. Header names remain strict: exact text matching (no trimming, no case folding).
+> 2. `POLICE REP SRI LANKA` **intentionally appears twice** (SL Verified and SL Normal). The two columns preserve their order **relative to each other** (the leftmost one is SL Verified; the second is SL Normal), though both may move anywhere in the Sheet.
 > 3. The legacy spelling `DRIVING LICIAN` is preserved exactly.
-> 4. **There is only ONE `SCAN` (`Q`).** No agreements, affidavits or other scan categories.
-> 5. `_SYSTEM_CANDIDATE_ID` (`AO`) is the row identity. Passport number and NIC are never used as the row identity.
+> 4. **There is only ONE `SCAN` column.**
+> 5. `_SYSTEM_CANDIDATE_ID` is the immutable row identity key. Passport number and NIC are never used as identity. Moving `_SYSTEM_CANDIDATE_ID` to Column A is fully supported and safe.
 
 ### 6.1 Final 41-Column Layout & Field Mapping
 
@@ -407,30 +415,38 @@ Notes:
 | Writing mode | `valueInputOption=RAW` into columns formatted as **plain text**, so Sheets never coerces phone numbers, NICs or zero-padded IDs into numbers or dates |
 | Comparing mode | Reconciliation reads displayed strings and compares them with freshly generated strings using exactly the same mapper |
 
-### 6.4 Sheet Layout & Positional Validation
+### 6.4 Sheet Layout & Dynamic Header Validation
 
 - **Target spreadsheet:** configured by `SHEET_SPREADSHEET_ID` (the real operational Sheet, Section 11.6).
 - **Target tab:** configured by `SHEET_TAB_NAME` (`Emlynk Candidate Operational Mirror`).
-  - Row 1: the 41 headers `A1:AO1` (40 business headers + `_SYSTEM_CANDIDATE_ID`), frozen.
-  - Rows 2+: mirrored candidates (`A2:AN`).
-- **Meta tab: not implemented (as built).** The earlier proposal of a `Mirror_Meta` tab with a probe cell was dropped: Test Connection is read-only (Sections 11.6 C and 24). The system never creates or writes any tab other than the candidate tab.
+  - Row 1: the header row, read dynamically across its full width (`1:1`).
+  - Rows 2+: mirrored candidates and operator columns.
+- **Meta tab: not implemented (as built).** Test Connection is read-only (Sections 11.6 C and 24). The system never creates or writes any tab other than the configured candidate tab.
 
-#### Positional validation (critical)
+#### Dynamic Header Mapping (as built)
 
-Because `POLICE REP SRI LANKA` exists at two positions:
+Columns are found dynamically by HEADER NAME (`src/services/sheetSchema.js` `readSheetLayout()`):
 
-1. Header validation **must not** use header-name dictionary lookups.
-2. Before every write batch or reconciliation run, row 1 (`A1:AO1`) is read as an ordered array and compared position by position: `expectedHeaders[i] === actualHeaders[i]` for every `i` in `0..40`, exact text.
-3. Any missing, renamed, reordered or unexpected header halts synchronization with `CONFIG_ERROR`, logs `sheet_sync.schema_mismatch`, and is surfaced in Settings.
-4. The system never modifies, rebuilds or deletes headers. Correcting the layout is an explicit administrative action.
+1. **Order Independence:** The 41 system headers may appear in **any physical column order**. Operators can move `_SYSTEM_CANDIDATE_ID`, `VISA SUBMISSION STATUS`, `VISA APPROVAL STATUS`, or any other column freely.
+2. **Relative Order for Dual Header:** Because `POLICE REP SRI LANKA` appears twice, the two columns maintain their order **relative to each other** (the leftmost occurrence is SL Verified; the second occurrence is SL Normal), but both may move anywhere relative to other columns.
+3. **Operator Columns:** Custom columns (not matching any system header name) are allowed anywhere. They are never overwritten or cleared by DB -> Sheet updates (`writeRangesFor` writes only contiguous runs of system columns).
+4. **Header Lifetime & Caching:** Row 1 is read once per sync operation and reused for all reads and writes within that operation. A later sync operation reads the layout fresh, automatically detecting any column moves made in the interim.
+5. **Mid-Run Concurrency Protection:** Before writing, the adapter confirms row 1 has not changed since the layout was read. If an operator modified headers mid-run, it throws `SheetLayoutChangedError` without writing; the next run reads the new layout.
 
 ---
 
 ## 7. Row Identity & Duplicate Prevention
 
-### 7.1 Row Key: `_SYSTEM_CANDIDATE_ID` (Column `AO`) — D-17 Resolved
+### 7.1 Row Key: `_SYSTEM_CANDIDATE_ID` — D-17 Resolved & Position-Independent
 
-The legacy business layout has no candidate ID column, so an appended technical column was required. **D-17 is resolved:** `_SYSTEM_CANDIDATE_ID` was approved and has been **manually added** to the real Sheet as column `AN` (column 40); it is now `AO` (column 41) after the Visa submission amendment (Section 6). It holds `User.unique_id` as plain text and should be protected (and may be hidden) in the Sheet UI.
+The legacy business layout had no candidate ID column, so an appended technical column was introduced. **D-17 is resolved:** `_SYSTEM_CANDIDATE_ID` was approved and added to the Sheet.
+
+**Position Independence:** `_SYSTEM_CANDIDATE_ID` is no longer required to be at column `AO` or `AN` or at the end of the Sheet. It functions identically whether it is:
+- in **Column A** (recommended for easy viewing/locking)
+- in the **middle** of the Sheet
+- at the **end** of the Sheet
+
+It holds `User.unique_id` as plain text and should be protected (and may be hidden) in the Sheet UI.
 
 Why not a natural key:
 
@@ -444,7 +460,7 @@ Why not a natural key:
 
 | Scenario | Protection |
 | :--- | :--- |
-| Retry of a failed batch | Every sync reads the key column `AO`, builds `unique_id -> rowNumber`, and updates in place; it appends only if the key is absent. |
+| Retry of a failed batch | Every sync reads the key column wherever it is, builds `unique_id -> rowNumber`, and updates in place; it appends only if the key is absent. |
 | Duplicate delivery / worker restart | Queue claims use compare-and-swap leases (Section 8.5); updates are idempotent. |
 | Concurrent candidate events | Coalesced into a single pending queue row per candidate. |
 | Concurrent workers | **Single-writer rule:** `max-instances = 1` plus an exclusive PostgreSQL writer lease (Section 9.5). |

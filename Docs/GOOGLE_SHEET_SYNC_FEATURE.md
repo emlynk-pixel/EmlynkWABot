@@ -142,22 +142,22 @@ flowchart TD
 
 ## 3. Candidate Row Identity
 
-### Technical Identity: Column `AN` (`_SYSTEM_CANDIDATE_ID`)
+### Technical Identity: `_SYSTEM_CANDIDATE_ID` (Position-Independent)
 
 The operational mirror links database candidates to Sheet rows exclusively through an immutable technical key:
 
-- **Sheet Column:** Column `AN` (Column 40, index 39)
 - **Header Text:** `_SYSTEM_CANDIDATE_ID`
-- **Database Source Field:** `users.unique_id` (e.g., `"0001"`, `"0002"`, `"0003"`)
+- **Position Independence:** Resolved dynamically by header name. May be placed in Column A, in the middle, or at the end of the Sheet.
+- **Database Source Field:** `candidate.unique_id` (e.g., `"0001"`, `"0002"`, `"0003"`)
 
 ```
-+---+-------------------+-----+-----------------------+
-| A | TEST NUMBER       | ... | AN                    |
-+---+-------------------+-----+-----------------------+
-| 1 | TEST NUMBER       | ... | _SYSTEM_CANDIDATE_ID  |
-| 2 |                   | ... | 0001                  |
-| 3 |                   | ... | 0003                  |
-+---+-------------------+-----+-----------------------+
++---+-----------------------+-----+-------------------+
+| A | _SYSTEM_CANDIDATE_ID  | ... | ANY OTHER COLUMN  |
++---+-----------------------+-----+-------------------+
+| 1 | _SYSTEM_CANDIDATE_ID  | ... | PASSPORT NUMBER   |
+| 2 | 0001                  | ... | N1000001          |
+| 3 | 0003                  | ... | N1000003          |
++---+-----------------------+-----+-------------------+
 ```
 
 ### Why Other Identifiers Must NOT Be Used as Row Keys

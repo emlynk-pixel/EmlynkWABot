@@ -44,7 +44,7 @@ const { createSheetSyncStore } = await import("../src/services/sheetSyncStore.js
 const { createSheetSyncWorker } = await import("../src/services/sheetSyncWorker.js");
 const { runSheetHealthCheck } = await import("../src/services/sheetHealthCheck.js");
 const { readSheetSyncConfig, readSheetSyncTuning, sheetTargetHint } = await import("../src/config/sheetSync.js");
-const { SHEET_HEADERS, SHEET_COLUMNS, SYSTEM_CANDIDATE_ID_INDEX } = await import("../src/services/sheetSchema.js");
+const { SHEET_HEADERS, SHEET_COLUMNS, SYSTEM_CANDIDATE_ID_INDEX, validateHeaderRow } = await import("../src/services/sheetSchema.js");
 
 console.log("Starting a throwaway PostgreSQL (PGlite) and applying the migrations...");
 const database = await createTestDatabase();
@@ -151,7 +151,7 @@ const sheetServer = http.createServer(async (req, res) => {
 <h2>Fake Google Sheet <small>(in memory, local demo)</small></h2>
 <p class="warn">Writes are <b>${writesEnabled ? "ENABLED (fake Sheet only)" : "DISABLED"}</b>. Nothing here touches Google or any real database.</p>
 <p>Integration: <b>${state?.integrationState}</b> &middot; queue pending ${queue.pending}, failed ${queue.failed} &middot; Sheet rows: <b>${rows.length}</b>
-&middot; header: <b>${sheet.row(1).join("|") === SHEET_HEADERS.join("|") ? "valid" : "BROKEN"}</b></p>
+&middot; header: <b>${validateHeaderRow(sheet.row(1)).valid ? "valid" : "BROKEN"}</b></p>
 <p>Try: <a href="/tamper?row=2">edit a cell by hand</a> (Sync Now repairs it) &middot; <a href="/outage?on=1">Google outage ON</a> / <a href="/outage?on=0">OFF</a>
 &middot; <a href="/header?broken=1">break header</a> / <a href="/header?broken=0">fix</a> &middot; <a href="/duplicate">duplicate row 2's ID</a>
 &middot; <a href="/run?kind=reconcile">queue reconcile</a> &middot; <a href="/run?kind=test">queue test</a> &middot; <a href="/">refresh</a></p>

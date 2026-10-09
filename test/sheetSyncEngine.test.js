@@ -29,7 +29,7 @@ describe("adapter: batch reads and writes", () => {
         const result = await adapterFor(sheet).writeRows({ updates: [{ rowNumber: 2, cells: row("0001") }, { rowNumber: 3, cells: row("0002") }], appends: [row("0003")] });
         assert.deepEqual(result, { updated: 2, appended: 1 });
         assert.deepEqual(sheet.calls.map((c) => c.method), ["get", "batchUpdate", "append"]);
-        assert.equal(sheet.calls[0].range, "'Bob''s Candidate Mirror'!A1:AO1");
+        assert.equal(sheet.calls[0].range, "'Bob''s Candidate Mirror'!1:1");
         assert.deepEqual(sheet.calls[1].ranges, ["'Bob''s Candidate Mirror'!A2:AO2", "'Bob''s Candidate Mirror'!A3:AO3"]);
         assert.equal(sheet.calls[1].valueInputOption, "RAW");
         assert.deepEqual([sheet.calls[2].range, sheet.calls[2].insertDataOption], ["'Bob''s Candidate Mirror'!A:AO", "INSERT_ROWS"]);
