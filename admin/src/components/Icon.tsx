@@ -38,12 +38,9 @@ import close from "@material-symbols/svg-400/outlined/close.svg?raw";
 import pictureAsPdf from "@material-symbols/svg-400/outlined/picture_as_pdf.svg?raw";
 import upload from "@material-symbols/svg-400/outlined/upload.svg?raw";
 import manageAccounts from "@material-symbols/svg-400/outlined/manage_accounts.svg?raw";
-<<<<<<< HEAD
 import notifications from "@material-symbols/svg-400/outlined/notifications.svg?raw";
 import notificationsActive from "@material-symbols/svg-400/outlined/notifications_active.svg?raw";
-=======
 import settings from "@material-symbols/svg-400/outlined/settings.svg?raw";
->>>>>>> dev
 
 const ICONS = {
     assignment_late: assignmentLate,
