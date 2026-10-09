@@ -150,13 +150,14 @@ The primary interface for managing candidate registrations and deployment workfl
   - Captures: Passport ID, NIC, First Name, Other Name, Date of Birth, Place of Birth, Passport Issue Date, Passport Expiry Date, Nationality, Sex, WhatsApp Number, Contact Number, Address, Job Experience, and initial stage notes.
   - Prevents duplicates on Passport ID, NIC, and WhatsApp number.
 - **Candidate Deployment & Stage Tracking (`/admin/candidates/:passportId`)**:
-  - Independent six-stage workflow for each candidate:
+  - Independent seven-stage workflow for each candidate:
     1. **TEST_DETAILS**: Job ID, test result (`PASS`, `FAIL`), and test date.
     2. **CANDIDATE_DETAILS**: Bio and contact details. WhatsApp number is locked once set to maintain inbound document matching.
     3. **DOCUMENT_SUBMISSION**: Checklist of 5 required candidate documents (`PASSPORT`, `POLICE_REPORT` [SL Verified + Romania], `MEDICAL`, `AFFIDAVIT`, `SKILL_VIDEO`).
     4. **IVS_INTERVIEW**: Interview completion status and notes.
-    5. **VISA_APPROVAL**: Visa processing completion status and notes.
-    6. **FINALIZING_JOB**: Final deployment readiness completion status and notes.
+    5. **VISA_SUBMISSION**: Visa submission completion status and notes (completed by staff, like Visa approval).
+    6. **VISA_APPROVAL**: Visa processing completion status and notes.
+    7. **FINALIZING_JOB**: Final deployment readiness completion status and notes.
 - **Candidate Document Uploads & Removals**:
   - Direct browser-to-storage uploads via signed URLs (`POST /candidates/:passportId/documents/upload-target` and `POST /candidates/:passportId/documents/finalize`).
   - Stored documents can be removed with a mandatory reason via `POST /candidates/:passportId/documents/:documentId/remove`.

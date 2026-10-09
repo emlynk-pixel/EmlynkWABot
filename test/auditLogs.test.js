@@ -34,7 +34,7 @@ const profile = (role) => {
 
 const REGISTRATION = {
     passportId: "N1023757", surname: "De Soysa", otherNames: "Anusha", nic: "965404378V",
-    whatsappNumber: "+94771234567", jobTypes: ["Caregiver"], jobExperience: "2 years",
+    whatsappNumber: "+94771234567", jobTypes: ["Caregiver"], jobExperience: "2 years", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14",
 };
 
 let database;

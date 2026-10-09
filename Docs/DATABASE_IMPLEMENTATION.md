@@ -75,7 +75,7 @@ All core application tables reside in the `public` schema.
 - **Primary Key**: Composite `(passport_id, stage)`.
 - **Important Columns**:
   - `passport_id` (`TEXT`, FK -> `candidate.passport_id` `ON DELETE CASCADE`).
-  - `stage` (`TEXT`): Stage code (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_APPROVAL`, `FINALIZING_JOB`).
+  - `stage` (`TEXT`): Stage code (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`). A plain text column with no database constraint: a new stage needs no migration.
   - `completed` (`BOOLEAN`, default `false`).
   - `completed_at` (`TIMESTAMPTZ`, nullable).
   - `notes` (`TEXT`, nullable).
@@ -211,7 +211,7 @@ The candidate table represents job applicants and client records.
 
 ### 3.3 Relationships
 - `documents`: Stored and verified files belonging to this candidate.
-- `candidate_stages`: Six deployment tracking stages (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_APPROVAL`, `FINALIZING_JOB`).
+- `candidate_stages`: Seven deployment tracking stages (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`).
 - `candidate_call_logs`: Telephone call notes recorded by staff.
 - `candidate_additional_details`: At most one row of extra details (passport name, sizes, family, other skills); see §2.12.
 - `temporary_data`: Unprocessed or pending review items matched to this candidate.

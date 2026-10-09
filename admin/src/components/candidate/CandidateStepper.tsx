@@ -72,7 +72,7 @@ export function CandidateStepper({ steps, current, onSelect }: { steps: StepperS
 }
 
 // Candidate list: the stage the candidate is at (the first one not completed)
-// and how many of the six are completed.
+// and how many of its stages are completed.
 export function StageSummary({ stages }: { stages: StageProgress[] }) {
     const done = stages.filter((s) => s.completed).length;
     const current = stages.find((s) => !s.completed);

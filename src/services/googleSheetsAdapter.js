@@ -2,11 +2,11 @@
 // (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 6.4, 8.6, 11.6).
 //
 // The only module that talks to Google. Narrow on purpose:
-//   readHeader()        row 1 (A1:AN1)
+//   readHeader()        row 1 (A1:AO1)
 //   validateSchema()    row 1 against the expected headers, by position
-//   readCandidateIds()  column AN with each row number
-//   readRows()          every data row (A2:AN), 40 cells each
-//   readRow(n)          one data row (An:ANn), 40 cells
+//   readCandidateIds()  column AO with each row number
+//   readRows()          every data row (A2:AO), 41 cells each
+//   readRow(n)          one data row (An:AOn), 41 cells
 //   readRowsByNumber(ns) several data rows, one batchGet
 //   appendRow(cells)    one new row
 //   updateRow(n, cells) one existing row
@@ -17,7 +17,7 @@
 // Safety:
 //   - appendRow/updateRow/writeRows refuse (SheetSyncDisabledError) unless the write
 //     gate is enabled (config/sheetSync.js), before any Google client exists;
-//   - every write checks the 40-cell row and validates row 1 first;
+//   - every write checks the 41-cell row and validates row 1 first;
 //   - authentication is Application Default Credentials (the Cloud Run
 //     runtime identity); no key file, no private key;
 //   - the live client is never created under the Node test runner, so a
@@ -175,19 +175,19 @@ export function createGoogleSheetsAdapter({ config, sheetsClient = createLiveShe
             return rows.map((row, offset) => ({ rowNumber: SHEET_FIRST_DATA_ROW + offset, candidateId: row?.[0] === undefined ? "" : String(row[0]) }));
         },
 
-        // { rowNumber, cells } with 40 string cells, for one data row.
+        // { rowNumber, cells } with 41 string cells, for one data row.
         async readRow(rowNumber) {
             const rows = await readRange((tab) => rowRange(tab, rowNumber));
             return { rowNumber, cells: pad(rows[0] ?? []) };
         },
 
-        // [{ rowNumber, cells }] with 40 string cells each.
+        // [{ rowNumber, cells }] with 41 string cells each.
         async readRows() {
             const rows = await readRange(dataRange);
             return rows.map((row, offset) => ({ rowNumber: SHEET_FIRST_DATA_ROW + offset, cells: pad(row) }));
         },
 
-        // Map(rowNumber -> 40 string cells) for the given data rows, one
+        // Map(rowNumber -> 41 string cells) for the given data rows, one
         // batchGet per chunk of rows.
         async readRowsByNumber(rowNumbers) {
             const numbers = [...new Set(rowNumbers)];
@@ -205,7 +205,7 @@ export function createGoogleSheetsAdapter({ config, sheetsClient = createLiveShe
         },
 
         // Rewrites existing rows (by row number) and appends new ones, after
-        // the gate, the 40-cell check and ONE header validation. Updates go in
+        // the gate, the 41-cell check and ONE header validation. Updates go in
         // one values.batchUpdate, appends in one values.append (INSERT_ROWS:
         // nothing below is overwritten). Never clears or deletes anything.
         async writeRows({ updates = [], appends = [] } = {}) {

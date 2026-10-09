@@ -8,6 +8,7 @@ export const CANDIDATE_STAGES = [
     "CANDIDATE_DETAILS",
     "DOCUMENT_SUBMISSION",
     "IVS_INTERVIEW",
+    "VISA_SUBMISSION",
     "VISA_APPROVAL",
     "FINALIZING_JOB",
 ] as const;
@@ -18,11 +19,12 @@ export const STAGE_LABELS: Record<CandidateStageKey, string> = {
     CANDIDATE_DETAILS: "Candidate details",
     DOCUMENT_SUBMISSION: "Document submission",
     IVS_INTERVIEW: "IVS interview",
+    VISA_SUBMISSION: "Visa submission",
     VISA_APPROVAL: "Visa approval",
     FINALIZING_JOB: "Finalizing the job",
 };
 
-export type CandidateDocumentType = "PASSPORT" | "NIC" | "SKILL_VIDEO" | "MEDICAL" | "POLICE_SLIP" | "POLICE_REPORT" | "SCAN";
+export type CandidateDocumentType = "PASSPORT" | "NIC" | "SKILL_VIDEO" | "MEDICAL" | "POLICE_SLIP" | "POLICE_REPORT" | "SCAN" | "VISA_SUBMISSION";
 
 export const POLICE_REPORT_VARIANTS = [
     { value: "SL_VERIFIED", label: "SL Verified" },

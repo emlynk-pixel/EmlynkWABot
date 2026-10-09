@@ -23,7 +23,7 @@ const USERS = {
 };
 const REGISTRATION = {
     passportId: "N1023757", surname: "De Soysa", otherNames: "Anusha", nic: "965404378V", address: "Negombo, Sri Lanka",
-    dateOfBirth: "1996-02-23", whatsappNumber: "+94771234567", jobTypes: ["Caregiver"], jobExperience: "2 years",
+    dateOfBirth: "1996-02-23", whatsappNumber: "+94771234567", jobTypes: ["Caregiver"], jobExperience: "2 years", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14",
 };
 const FULL = {
     nameAsInPassport: "ANUSHA DE SOYSA",

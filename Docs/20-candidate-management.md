@@ -98,20 +98,20 @@ flowchart TD
 
 | Field | Required | Notes |
 |---|---|---|
-| Passport ID | ✓ | Normalized to uppercase, 6–9 alphanumeric |
+| Passport ID | ✓ | Normalized to uppercase, 6–9 letters and digits with at least one digit (hint `!` beside the label) |
 | Surname | ✓ | |
 | Other names | ✓ | |
 | NIC | ✓ | 9 digits + V/X, or 12 digits |
-| Address | ✓ | |
+| Address | | Optional everywhere (registration, saving details, completing Candidate details) |
 | Job types | ✓ | Up to 10 chips; Enter or comma to add |
 | Job experience | ✓ | |
 | Nationality | | |
 | Sex | | M / F / X (as on ICAO passports) |
 | Date of birth | | |
 | Place of birth | | |
-| Passport issue date | | |
-| Passport expiry date | | |
-| WhatsApp number | | Stored and locked once saved (see §5.1) |
+| Passport issue date | ✓ | Before the expiry date (hint `!`) |
+| Passport expiry date | ✓ | After the issue date (hint `!`) |
+| WhatsApp number | ✓ | Fixed `+94` prefix; the user types the 9-digit mobile number (e.g. `771234567`). Stored as `94771234567`. Locked once saved (see §5.1) (hint `!`) |
 | Contact number | | |
 | Comment | | Internal note, saved to `CANDIDATE_DETAILS` stage |
 
@@ -127,22 +127,23 @@ On save, the form calls `PUT /api/admin/candidates/:passportId` and, if the comm
 
 ---
 
-## 4. Six-Stage Deployment Process
+## 4. Seven-Stage Deployment Process
 
-Each candidate has exactly **six stages**, always in this order:
+Each candidate has exactly **seven stages**, always in this order:
 
 ```mermaid
 flowchart LR
     S1[1. Test Details\n(Admin)] --> S2[2. Candidate Details\n(Automatic)]
     S2 --> S3[3. Document Submission\n(Automatic)]
     S3 --> S4[4. IVS Interview\n(Admin)]
-    S4 --> S5[5. Visa Approval\n(Admin)]
-    S5 --> S6[6. Finalizing Job\n(Admin)]
+    S4 --> S5[5. Visa Submission\n(Admin)]
+    S5 --> S6[6. Visa Approval\n(Admin)]
+    S6 --> S7[7. Finalizing Job\n(Admin)]
     
     classDef auto fill:#e1bee7,stroke:#8e24aa,stroke-width:2px,color:#000;
     classDef manual fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000;
     
-    class S1,S4,S5,S6 manual;
+    class S1,S4,S5,S6,S7 manual;
     class S2,S3 auto;
 ```
 
@@ -152,8 +153,11 @@ flowchart LR
 | 2 | `CANDIDATE_DETAILS` | Candidate details | Automatically — when required fields and passport are present |
 | 3 | `DOCUMENT_SUBMISSION` | Document submission | Automatically — when all 5 required documents are present |
 | 4 | `IVS_INTERVIEW` | IVS interview | Admin (checkbox) |
-| 5 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
-| 6 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
+| 5 | `VISA_SUBMISSION` | Visa submission | Admin (checkbox) |
+| 6 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
+| 7 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
+
+The progress stepper on the candidate page shows Test details, Candidate details, Additional details, Document submission, Visa submission and Visa approval. IVS interview and Finalizing the job have no circle (their data and `?stage=` links are unchanged). The candidate list's progress counts all seven stages (`x/7`).
 
 Stages are independent: any stage can be opened and edited in any order. The URL uses `?stage=<key>` to select which panel is shown; the default is the first incomplete stage.
 
@@ -161,7 +165,9 @@ Stages are independent: any stage can be opened and edited in any order. The URL
 
 **Stage 2 — Candidate details** is marked complete when the following required fields are filled **and** a `PASSPORT` document is uploaded:
 
-- Surname, other names, NIC, address, one or more job types, job experience.
+- Surname, other names, NIC, passport issue date, passport expiry date, one or more job types, job experience, WhatsApp number. The address is **not** needed.
+
+Candidates saved before the passport dates were required still load; their Candidate details shows the dates as missing until they are filled in (they must be, to save the details again).
 
 The panel shows what is still missing (`Missing: …`) until complete.
 
@@ -171,7 +177,7 @@ The panel shows what is still missing (`Missing: …`) until complete.
 
 A checklist of the five documents is shown at the top of the panel.
 
-### 4.2 Notes stages (1, 4, 5, 6)
+### 4.2 Notes stages (1, 4, 5, 6, 7)
 
 Each has a free-text **Notes** field and a **Stage completed** checkbox. Changes are saved with **Save changes** / discarded with **Cancel**. The `PUT /api/admin/candidates/:passportId/stages/:stage` endpoint accepts `{ notes, completed }`.
 
@@ -290,7 +296,7 @@ Normal pagination is unaffected: rows from the previous page remain visible whil
 
 | Document type | Accepted MIME types |
 |---|---|
-| Passport, NIC, Medical, Police Report, Scan | `image/jpeg`, `image/png`, `application/pdf` |
+| Passport, NIC, Medical, Police Report, Scan, Visa submission | `image/jpeg`, `image/png`, `application/pdf` |
 | Skill video | `video/mp4`, `video/quicktime`, `video/webm` |
 
 Size limits: **50 MB** for a skill video, **10 MB** for every other document. They are checked when the upload is requested, again on the stored file, and by the Supabase bucket (its file size limit must be at least 50 MB).
@@ -418,13 +424,14 @@ These are enforced by `parseCandidateBody` in `candidateService.js` (server) and
 | Passport ID | `/^[A-Z0-9]{6,9}$/` with at least one digit |
 | Surname, other names | Required, <= 100 characters |
 | NIC | `/^(\d{9}[VX]|\d{12})$/` |
-| Address | Optional at registration, <= 500 characters; required to complete Candidate Details |
+| Address | Optional everywhere, <= 500 characters |
 | Job types | At least 1, at most 10; each <= 60 characters |
 | Job experience | Required, <= 2000 characters |
 | Nationality | Optional, <= 60 characters |
 | Sex | `M`, `F`, or `X` (ICAO) |
-| Dates | `YYYY-MM-DD`; passport issue date must be before expiry date |
-| WhatsApp / Contact | If given: 8–15 digits (after removing spaces, dashes, `+`, leading `00`) |
+| Dates | `YYYY-MM-DD`; passport issue and expiry dates **required** (registration and every save), issue date before expiry date |
+| WhatsApp | Required. Form: fixed `+94` prefix plus 9 digits starting with 7 (a leading `0` or a pasted `+94…` / `0094…` is taken off). Stored as international digits without `+` (`94771234567`), the server's existing format (`normalizePhoneNumber`). A number already on record is read-only and kept as stored |
+| Contact | If given: 8–15 digits (after removing spaces, dashes, `+`, leading `00`) |
 | Comment | Optional, <= 2000 characters |
 
 ### 8.1 Additional details

@@ -4,7 +4,7 @@
 // everywhere else); registration creates that row, it never makes a second
 // record for the same person (passport ID and NIC are both unique).
 //
-// The deployment process has six stages. They are independent: any stage can
+// The deployment process has seven stages. They are independent: any stage can
 // be opened, edited and completed at any time, in any order. Two stages are
 // completed by their data (CANDIDATE_DETAILS: the required details and a
 // passport; DOCUMENT_SUBMISSION: the five required documents); the others by
@@ -41,6 +41,8 @@ export const CANDIDATE_STAGES = Object.freeze([
     "CANDIDATE_DETAILS",
     "DOCUMENT_SUBMISSION",
     "IVS_INTERVIEW",
+    // Completed by an admin, like VISA_APPROVAL (notes + completion).
+    "VISA_SUBMISSION",
     "VISA_APPROVAL",
     "FINALIZING_JOB",
 ]);
@@ -58,6 +60,9 @@ export const CANDIDATE_DOCUMENT_TYPES = Object.freeze({
     POLICE_SLIP: {},
     POLICE_REPORT: { variants: POLICE_REPORT_VARIANTS },
     SCAN: {},
+    // Uploaded in the Visa submission stage (a document type of its own, so
+    // the single SCAN stays the scan). Not part of the required submission.
+    VISA_SUBMISSION: {},
 });
 
 // The five documents a candidate's submission must include (Document
@@ -137,9 +142,12 @@ function text(body, field, errors, { required = false, max = MAX_TEXT_LENGTH } =
     return trimmed;
 }
 
-function date(body, field, errors) {
+function date(body, field, errors, { required = false } = {}) {
     const value = body[field];
-    if (value === undefined || value === null || value === "") return null;
+    if (value === undefined || value === null || value === "") {
+        if (required) errors.push({ field, message: "is required" });
+        return null;
+    }
     if (typeof value !== "string" || !DATE_PATTERN.test(value)) {
         errors.push({ field, message: "must be a date (YYYY-MM-DD)" });
         return null;
@@ -207,15 +215,16 @@ export function parseCandidateBody(body, { creating }) {
 
     values.otherName = text(body, "surname", errors, { required: true, max: MAX_NAME_LENGTH });
     values.firstName = text(body, "otherNames", errors, { required: true, max: MAX_NAME_LENGTH });
-    // Optional here (registration and saving details); required to complete
-    // Candidate Details (automaticStageMissing), like the passport document.
+    // Optional, everywhere (registration, saving details, completing Candidate Details).
     values.address = text(body, "address", errors, { max: MAX_ADDRESS_LENGTH });
     values.jobExperience = text(body, "jobExperience", errors, { required: true });
-    // Optional passport and contact details: empty is stored as NULL.
+    // Optional passport and contact details: empty is stored as NULL. The
+    // passport's issue and expiry dates are required (and count toward
+    // completing Candidate Details); older records without them still load.
     values.placeOfBirth = text(body, "placeOfBirth", errors, { max: MAX_NAME_LENGTH });
     values.dateOfBirth = date(body, "dateOfBirth", errors);
-    values.passportExpiryDate = date(body, "passportExpiryDate", errors);
-    values.passportIssueDate = date(body, "passportIssueDate", errors);
+    values.passportExpiryDate = date(body, "passportExpiryDate", errors, { required: true });
+    values.passportIssueDate = date(body, "passportIssueDate", errors, { required: true });
     if (values.passportIssueDate && values.passportExpiryDate && values.passportIssueDate >= values.passportExpiryDate) {
         errors.push({ field: "passportIssueDate", message: "must be before the passport expiry date" });
     }
@@ -347,8 +356,9 @@ export function automaticStageMissing(user, documents) {
     const details = [];
     if (isBlank(user.otherName)) details.push("surname");
     if (isBlank(user.firstName)) details.push("other names");
-    if (isBlank(user.address)) details.push("address");
     if (isBlank(user.nic)) details.push("NIC");
+    if (!user.passportIssueDate) details.push("passport issue date");
+    if (!user.passportExpiryDate) details.push("passport expiry date");
     if (!parseJobTypes(user.job).length) details.push("job type");
     if (isBlank(user.jobExperience)) details.push("job experience");
     if (isBlank(user.whatsappNumber)) details.push("WhatsApp number");

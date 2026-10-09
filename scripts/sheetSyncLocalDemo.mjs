@@ -59,9 +59,9 @@ for (const user of Object.values(DEMO_USERS)) await prisma.user.create({ data: {
 // Stands in for Supabase's token verification: only the two demo tokens.
 const verifyAccessToken = async (token) => (DEMO_USERS[token] ? { authUserId: DEMO_USERS[token].authUserId, email: DEMO_USERS[token].email } : null);
 const SEED = [
-    { passportId: "N1000001", surname: "Perera", otherNames: "Kamal", nic: "199012345678", whatsappNumber: "+94770000001", jobTypes: ["Caregiver"], jobExperience: "3 years" },
-    { passportId: "N1000002", surname: "Silva", otherNames: "Nimal", nic: "198512345678", whatsappNumber: "+94770000002", jobTypes: ["Electrician"], jobExperience: "5 years" },
-    { passportId: "N1000003", surname: "Fernando", otherNames: "Anusha", nic: "965404378V", whatsappNumber: "+94770000003", jobTypes: ["Construction Worker"], jobExperience: "1 year" },
+    { passportId: "N1000001", surname: "Perera", otherNames: "Kamal", nic: "199012345678", whatsappNumber: "+94770000001", jobTypes: ["Caregiver"], jobExperience: "3 years", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14" },
+    { passportId: "N1000002", surname: "Silva", otherNames: "Nimal", nic: "198512345678", whatsappNumber: "+94770000002", jobTypes: ["Electrician"], jobExperience: "5 years", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14" },
+    { passportId: "N1000003", surname: "Fernando", otherNames: "Anusha", nic: "965404378V", whatsappNumber: "+94770000003", jobTypes: ["Construction Worker"], jobExperience: "1 year", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14" },
 ];
 for (const body of SEED) await createCandidate({ db: prisma, values: parseCandidateBody(body, { creating: true }).values });
 

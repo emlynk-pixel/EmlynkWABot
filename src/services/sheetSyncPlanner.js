@@ -12,8 +12,8 @@
 // methods (readOnlySheetsView) before anything else happens, so append/update
 // are not reachable from here. A later phase adds a separate executor.
 //
-// Row identity is column AN (_SYSTEM_CANDIDATE_ID) = users.unique_id, and
-// nothing else: blank AN cells identify no one, a duplicate AN value stops
+// Row identity is column AO (_SYSTEM_CANDIDATE_ID) = users.unique_id, and
+// nothing else: blank AO cells identify no one, a duplicate AO value stops
 // planning (never a guess which row is "right"), and the passport number or
 // NIC is never used as a fallback key.
 //
@@ -46,7 +46,7 @@ export class SheetDuplicateCandidateIdError extends Error {
 // LAST MIRRORED AT changes on every write, so it never makes a row "different".
 const IGNORED_FOR_COMPARISON = new Set(["lastMirroredAt"]);
 
-// [{ rowNumber, candidateId }] (column AN) -> Map(candidateId -> rowNumber).
+// [{ rowNumber, candidateId }] (column AO) -> Map(candidateId -> rowNumber).
 // Blank cells are skipped (counted); any repeated non-blank ID throws.
 // IDs are compared exactly as text: no trimming of real values, no numeric
 // coercion, no other column consulted.
@@ -80,7 +80,7 @@ export function createSheetSyncPlanner({ reader, sheets, clock = () => new Date(
     if (!reader?.findByUniqueId) throw new Error("A candidate aggregate reader is required");
     const sheet = readOnlySheetsView(sheets);
 
-    // The Sheet must have the exact 40-column header before anything is planned.
+    // The Sheet must have the exact 41-column header before anything is planned.
     async function requireValidSchema() {
         const schema = await sheet.validateSchema();
         if (!schema.valid) throw new SheetSchemaMismatchError(schema.mismatches);

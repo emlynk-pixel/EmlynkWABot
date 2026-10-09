@@ -63,16 +63,16 @@ function fakeSheets({ header = [...SHEET_HEADERS], rows = [], fail = null } = {}
         if (fail) return Promise.reject(fail);
         return Promise.resolve({ data });
     };
-    const rowFor = (range) => Number(range.match(/!A(\d+):AN\d+$/)?.[1]);
+    const rowFor = (range) => Number(range.match(/!A(\d+):AO\d+$/)?.[1]);
     return {
         calls,
         spreadsheets: {
             values: {
                 get: (params) => {
                     const { range } = params;
-                    if (range.endsWith("!A1:AN1")) return respond("get", params, { values: [header] });
-                    if (range.endsWith("!AN2:AN")) return respond("get", params, { values: rows.map((r) => [r[39] ?? ""]) });
-                    if (range.endsWith("!A2:AN")) return respond("get", params, { values: rows });
+                    if (range.endsWith("!A1:AO1")) return respond("get", params, { values: [header] });
+                    if (range.endsWith("!AO2:AO")) return respond("get", params, { values: rows.map((r) => [r[40] ?? ""]) });
+                    if (range.endsWith("!A2:AO")) return respond("get", params, { values: rows });
                     const n = rowFor(range);
                     return respond("get", params, { values: rows[n - 2] ? [rows[n - 2]] : [] });
                 },
@@ -91,7 +91,7 @@ const expectedRow = (n, overrides) => {
     const { stages, documents, ...user } = candidateRow(n, overrides);
     return mapCandidateToSheetRow({ user, stages, documents }, { mirroredAt: NOW });
 };
-const blankRow = (id = "") => Array.from({ length: 40 }, (_, i) => (i === 39 ? id : ""));
+const blankRow = (id = "") => Array.from({ length: 41 }, (_, i) => (i === 40 ? id : ""));
 
 // ---------------------------------------------------------------- reader
 
@@ -151,19 +151,19 @@ describe("candidate aggregate reader", () => {
         assert.ok(db.queries.every((q) => q.method === "findUnique" || q.method === "findMany"));
     });
 
-    test("reader output maps to exactly 40 cells with AN = unique_id", async () => {
+    test("reader output maps to exactly 41 cells with AO = unique_id", async () => {
         const reader = createCandidateAggregateReader({ db: fakeDb([candidateRow(1)]) });
         const row = mapCandidateToSheetRow(await reader.findByUniqueId("0001"), { mirroredAt: NOW });
-        assert.equal(row.length, 40);
-        assert.equal(row[39], "0001");
+        assert.equal(row.length, 41);
+        assert.equal(row[40], "0001");
         assert.equal(row[1], "SYNPASS01");
     });
 });
 
 // ---------------------------------------------------------------- row identity
 
-describe("AN row identity", () => {
-    test("builds unique_id -> row from AN; blank AN cells identify no one", () => {
+describe("AO row identity", () => {
+    test("builds unique_id -> row from AO; blank AO cells identify no one", () => {
         const { index, blankRows } = buildCandidateRowIndex([
             { rowNumber: 2, candidateId: "0001" },
             { rowNumber: 3, candidateId: "" },
@@ -175,7 +175,7 @@ describe("AN row identity", () => {
         assert.equal(index.has(""), false);
     });
 
-    test("a duplicate non-empty AN ID is a hard data-integrity error, reported with rows, no guess", () => {
+    test("a duplicate non-empty AO ID is a hard data-integrity error, reported with rows, no guess", () => {
         const error = (() => {
             try {
                 buildCandidateRowIndex([{ rowNumber: 2, candidateId: "0001" }, { rowNumber: 3, candidateId: "0002" }, { rowNumber: 9, candidateId: "0001" }]);
@@ -210,7 +210,7 @@ describe("sync planner (read-only)", () => {
 
     test("a matching row is UNCHANGED (LAST MIRRORED AT ignored); a different row is UPDATE with column letters only", async () => {
         const sheetRows = [expectedRow(2), expectedRow(1)];
-        sheetRows[1][38] = "2020-01-01T00:00:00Z";
+        sheetRows[1][SHEET_COLUMNS.findIndex((c) => c.field === "lastMirroredAt")] = "2020-01-01T00:00:00Z";
         const { planner: p } = planner([candidateRow(1)], sheetRows);
         assert.deepEqual(await p.planCandidate("0001"), { action: SYNC_ACTION.UNCHANGED, candidateId: "0001", rowNumber: 3, changedColumns: [] });
 
@@ -229,7 +229,7 @@ describe("sync planner (read-only)", () => {
         assert.equal((await p.planCandidate("0001")).action, SYNC_ACTION.NOT_IN_DATABASE);
     });
 
-    test("duplicate AN IDs stop planning", async () => {
+    test("duplicate AO IDs stop planning", async () => {
         const { planner: p, client } = planner([candidateRow(1)], [expectedRow(1), expectedRow(2), expectedRow(1)]);
         await assert.rejects(p.planCandidate("0001"), SheetDuplicateCandidateIdError);
         await assert.rejects(p.planBatch({ limit: 10 }), SheetDuplicateCandidateIdError);
@@ -237,16 +237,16 @@ describe("sync planner (read-only)", () => {
     });
 
     test("passport number and NIC are never a fallback identity", async () => {
-        // The Sheet has this candidate's passport number and NIC, but no AN ID.
+        // The Sheet has this candidate's passport number and NIC, but no AO ID.
         const unkeyed = expectedRow(1);
-        unkeyed[39] = "";
+        unkeyed[40] = "";
         const { planner: p } = planner([candidateRow(1)], [unkeyed]);
         const plan = await p.planCandidate("0001");
         assert.equal(plan.action, SYNC_ACTION.APPEND, "the unkeyed row is not adopted");
         assert.equal(plan.rowNumber, null);
-        // Same when the passport number is in AN: it is not this candidate's unique ID.
+        // Same when the passport number is in AO: it is not this candidate's unique ID.
         const passportKeyed = expectedRow(1);
-        passportKeyed[39] = "SYNPASS01";
+        passportKeyed[40] = "SYNPASS01";
         assert.equal((await planner([candidateRow(1)], [passportKeyed]).planner.planCandidate("0001")).action, SYNC_ACTION.APPEND);
     });
 
@@ -274,7 +274,7 @@ describe("sync planner (read-only)", () => {
         ]);
         assert.equal(nextCursor, null);
         assert.equal(blankSheetRows, 1);
-        assert.deepEqual(client.calls.map((c) => c.range.split("!")[1]), ["A1:AN1", "A2:AN"]);
+        assert.deepEqual(client.calls.map((c) => c.range.split("!")[1]), ["A1:AO1", "A2:AO"]);
     });
 
     test("the planner cannot write, even when handed a write-enabled adapter", async () => {
@@ -296,24 +296,24 @@ describe("sync planner (read-only)", () => {
 describe("read-only connection/schema check", () => {
     const env = { SHEET_SPREADSHEET_ID: "fake-id", SHEET_TAB_NAME: TAB };
 
-    test("exact header: CONNECTED and SCHEMA_VALID, reading A1:AN1 only", async () => {
+    test("exact header: CONNECTED and SCHEMA_VALID, reading A1:AO1 only", async () => {
         const client = fakeSheets({ rows: [expectedRow(1)] });
         const result = await runSheetHealthCheck({ env, sheetsClient: client, clock: () => NOW });
         assert.equal(result.ok, true);
         assert.equal(result.status, HEALTH_STATUS.CONNECTED);
         assert.equal(result.schema, SCHEMA_STATUS.VALID);
-        assert.deepEqual(client.calls.map((c) => [c.method, c.range]), [["get", `'${TAB}'!A1:AN1`]]);
+        assert.deepEqual(client.calls.map((c) => [c.method, c.range]), [["get", `'${TAB}'!A1:AO1`]]);
         assert.equal(client.calls[0].spreadsheetId, "fake-id");
     });
 
     test("wrong header: CONNECTED but SCHEMA_INVALID, with column letters only", async () => {
         const header = [...SHEET_HEADERS];
         header[0] = "TEST NO";
-        header[39] = "";
+        header[40] = "";
         const result = await runSheetHealthCheck({ env, sheetsClient: fakeSheets({ header }), clock: () => NOW });
         assert.equal(result.ok, false);
         assert.equal(result.schema, SCHEMA_STATUS.INVALID);
-        assert.deepEqual(result.mismatchedColumns, ["A", "AN"]);
+        assert.deepEqual(result.mismatchedColumns, ["A", "AO"]);
         assert.doesNotMatch(JSON.stringify(result), /TEST NO|_SYSTEM_CANDIDATE_ID/);
     });
 
@@ -397,8 +397,8 @@ describe("write gate stays off by default", () => {
         assert.deepEqual(client.calls, []);
     });
 
-    test("the schema still has exactly 40 columns with AN as the system candidate ID", () => {
-        assert.equal(SHEET_COLUMNS.length, 40);
-        assert.equal(SHEET_COLUMNS[39].header, "_SYSTEM_CANDIDATE_ID");
+    test("the schema still has exactly 41 columns with AO as the system candidate ID", () => {
+        assert.equal(SHEET_COLUMNS.length, 41);
+        assert.equal(SHEET_COLUMNS[40].header, "_SYSTEM_CANDIDATE_ID");
     });
 });

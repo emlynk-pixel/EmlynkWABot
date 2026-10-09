@@ -3,7 +3,7 @@
 //   npm run sheet:check        (locally; reads .env)
 //   node src/sheetSyncCheck.js (container / Cloud Run Job)
 //
-// Reads A1:AN1 of the configured tab with the runtime identity (Application
+// Reads A1:AO1 of the configured tab with the runtime identity (Application
 // Default Credentials, spreadsheets.readonly scope) and prints one sanitized
 // JSON line (sheetHealthCheck.js). Exit code 0 when CONNECTED and
 // SCHEMA_VALID, 1 otherwise. Needs only SHEET_SPREADSHEET_ID and

@@ -140,7 +140,7 @@ export function CandidateRegistrationPage() {
 
     const saveExisting = async (current: CandidateDetails) => {
         if (!token) return;
-        const found = validateDetails(details);
+        const found = validateDetails(details, "registration", { whatsappLocked: Boolean(current.candidate.whatsappNumber) });
         setErrors(found);
         if (Object.keys(found).length) return;
         setBusy(true);

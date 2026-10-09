@@ -16,7 +16,7 @@ const DETAILS: CandidateDetails = {
         stage, completed: false, completedAt: null, notes: null, jobId: null, testResult: null, testDate: null,
         automatic: stage === "CANDIDATE_DETAILS" || stage === "DOCUMENT_SUBMISSION", missing: [],
     })),
-    documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null },
+    documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null, VISA_SUBMISSION: null },
     variantDocuments: { POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null } },
     requiredDocuments: [],
 };
@@ -198,7 +198,7 @@ describe("progress stepper", () => {
     const stepper = () => within(screen.getByRole("navigation", { name: "Deployment stages" }));
     const labels = () => stepper().getAllByRole("button").map((b) => b.getAttribute("aria-label"));
 
-    test("Additional details follows Candidate details; IVS interview and Finalizing the job have no circle", async () => {
+    test("Additional details follows Candidate details; Visa submission and Visa approval follow Document submission; IVS interview and Finalizing the job have no circle", async () => {
         backend(NEW_VIEW);
         renderApp("/candidates/N0000002");
         await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
@@ -207,7 +207,8 @@ describe("progress stepper", () => {
             "2. Candidate details (incomplete)",
             "3. Additional details (incomplete)",
             "4. Document submission (incomplete)",
-            "5. Visa approval (incomplete)",
+            "5. Visa submission (incomplete)",
+            "6. Visa approval (incomplete)",
         ]);
     });
 
@@ -247,5 +248,91 @@ describe("progress stepper", () => {
         renderApp("/candidates/N0000002?stage=FINALIZING_JOB");
         expect(await screen.findByRole("heading", { name: "Finalizing the job" }, RENDER_STEP)).toBeInTheDocument();
         expect(stepper().queryByRole("button", { current: "step" })).toBeNull();
+    });
+});
+
+describe("progress steps: one shared step UI", () => {
+    const stepper = () => within(screen.getByRole("navigation", { name: "Deployment stages" }));
+    const step = (name: RegExp) => stepper().getByRole("button", { name });
+    const circleOf = (button: HTMLElement) => (button.querySelector(":scope > span") as HTMLElement).className;
+    const labelOf = (button: HTMLElement) => (button.querySelector(":scope > span:last-child") as HTMLElement).className;
+    // The step markup as it is today (CandidateStepper.tsx): locked here so a
+    // new step, or Additional details, can't get its own styling.
+    const BUTTON = "group relative z-10 flex flex-col items-center gap-2 px-1 focus:outline-none";
+    const CIRCLE_BASE = "flex size-8 items-center justify-center rounded-full text-label-md tabular-nums";
+    const INCOMPLETE = "border-2 border-critical bg-stepper-white text-critical";
+    const INCOMPLETE_CURRENT = "border-2 border-critical bg-critical text-stepper-white";
+
+    test("Visa submission and Visa approval are visible; IVS interview and Finalizing the job are not", async () => {
+        backend(NEW_VIEW);
+        renderApp("/candidates/N0000002");
+        await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
+        expect(step(/^5\. Visa submission/)).toBeInTheDocument();
+        expect(step(/^6\. Visa approval/)).toBeInTheDocument();
+        expect(stepper().queryByRole("button", { name: /IVS interview/ })).toBeNull();
+        expect(stepper().queryByRole("button", { name: /Finalizing the job/ })).toBeNull();
+        expect(stepper().getAllByRole("button")).toHaveLength(6);
+    });
+
+    test("every step, Additional details and Visa submission included, is the same button with the same circle and label markup", async () => {
+        backend(NEW_VIEW);
+        renderApp("/candidates/N0000002");
+        await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
+        const buttons = stepper().getAllByRole("button");
+        for (const button of buttons) {
+            expect(button.tagName).toBe("BUTTON");
+            expect(button).toHaveAttribute("type", "button");
+            expect(button.className).toBe(BUTTON);
+            expect(circleOf(button).startsWith(CIRCLE_BASE)).toBe(true);
+            expect(circleOf(button).endsWith("group-focus-visible:shadow-focus")).toBe(true);
+        }
+        // Not current and incomplete: Additional details, Document submission and Visa submission look exactly alike.
+        const additional = step(/^3\. Additional details/);
+        const documents = step(/^4\. Document submission/);
+        const visaSubmission = step(/^5\. Visa submission/);
+        expect(circleOf(additional)).toBe(`${CIRCLE_BASE} ${INCOMPLETE} group-focus-visible:shadow-focus`);
+        expect(circleOf(documents)).toBe(circleOf(additional));
+        expect(circleOf(visaSubmission)).toBe(circleOf(additional));
+        expect(labelOf(visaSubmission)).toBe(labelOf(additional));
+        expect(labelOf(additional)).toBe("text-center text-label-sm text-ink-muted");
+    });
+
+    test("clicking Additional details gives it the same current-step feedback as any other step", async () => {
+        backend(NEW_VIEW);
+        renderApp("/candidates/N0000002");
+        await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
+        const first = step(/^1\. Test details/);
+        expect(first).toHaveAttribute("aria-current", "step");
+        const currentCircle = circleOf(first);
+        const currentLabel = labelOf(first);
+        expect(currentCircle).toBe(`${CIRCLE_BASE} ${INCOMPLETE_CURRENT} group-focus-visible:shadow-focus`);
+
+        const user = userEvent.setup();
+        await user.click(step(/^3\. Additional details/));
+        await screen.findByRole("form", { name: "Additional details" });
+        expect(step(/^3\. Additional details/)).toHaveAttribute("aria-current", "step");
+        expect(circleOf(step(/^3\. Additional details/))).toBe(currentCircle);
+        expect(labelOf(step(/^3\. Additional details/))).toBe(currentLabel);
+        expect(step(/^1\. Test details/)).not.toHaveAttribute("aria-current");
+
+        // Then a stage: the same change, the other way round.
+        await user.click(step(/^5\. Visa submission/));
+        expect(await screen.findByRole("heading", { name: "Visa submission" })).toBeInTheDocument();
+        expect(circleOf(step(/^5\. Visa submission/))).toBe(currentCircle);
+        expect(circleOf(step(/^3\. Additional details/))).toBe(circleOf(step(/^4\. Document submission/)));
+    });
+
+    test("Visa submission is completed by hand, like Visa approval: notes and Stage completed, saved to its own stage", async () => {
+        const { calls } = backend(NEW_VIEW, {
+            "PUT /api/admin/candidates/N0000002/stages/VISA_SUBMISSION": { status: 200, body: { ...DETAILS, stages: DETAILS.stages.map((s) => (s.stage === "VISA_SUBMISSION" ? { ...s, completed: true } : s)) } },
+        });
+        renderApp("/candidates/N0000002?stage=VISA_SUBMISSION");
+        expect(await screen.findByRole("heading", { name: "Visa submission" }, RENDER_STEP)).toBeInTheDocument();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("checkbox", { name: "Stage completed" }));
+        await user.click(screen.getByRole("button", { name: "Save changes" }));
+        await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT" && c.path === "/api/admin/candidates/N0000002/stages/VISA_SUBMISSION")).toBe(true));
+        expect(calls.find((c) => c.path.endsWith("/stages/VISA_SUBMISSION"))!.body).toEqual({ notes: null, completed: true });
+        await vi.waitFor(() => expect(step(/^5\. Visa submission/)).toHaveAccessibleName(/\(completed/));
     });
 });
