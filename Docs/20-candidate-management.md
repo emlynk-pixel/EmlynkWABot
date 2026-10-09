@@ -31,7 +31,8 @@ A candidate is stored as a row in the `candidate` table (named `users` before mi
 | File | Purpose |
 |---|---|
 | `src/services/candidateService.js` | All candidate business logic: registration, stage updates, document uploads, validation, uniqueness checks |
-| `src/routes/admin.js` (lines 319–454) | Express routes for `/api/admin/candidates/*` |
+| `src/services/candidateAdditionalDetailsService.js` | Additional details: validation, read with suggestions, save with audit |
+| `src/routes/admin.js` | Express routes for `/api/admin/candidates/*` |
 
 ### Frontend (admin/)
 
@@ -45,6 +46,7 @@ A candidate is stored as a row in the `candidate` table (named `users` before mi
 | `admin/src/components/candidate/DocumentRow.tsx` | Per-document upload row (used in both registration and stage 2) |
 | `admin/src/components/candidate/CandidateStepper.tsx` | Progress stepper shown across the top of the deployment page |
 | `admin/src/components/candidate/CallLogDialog.tsx` | Admin call log dialog |
+| `admin/src/components/candidate/AdditionalDetailsPanel.tsx` | Additional Details tab: sections, conditional fields, sizes, save |
 | `admin/src/api/candidates.ts` | Typed frontend API wrappers for all candidate endpoints |
 
 ### Database
@@ -54,7 +56,8 @@ A candidate is stored as a row in the `candidate` table (named `users` before mi
 | `candidate` | One row per candidate (same table used for WhatsApp clients) |
 | `candidate_stages` | One row per stage per candidate: completion, notes, timestamps |
 | `documents` | All uploaded files (passport, NIC, skill video, medical, police report, scan) |
-| `audit_logs` | Every document upload is appended here |
+| `candidate_additional_details` | At most one row per candidate: the Additional Details tab (primary key and foreign key `passport_id`) |
+| `audit_logs` | Candidate, stage, document and additional-details changes are appended here |
 
 ---
 
@@ -175,6 +178,25 @@ Each has a free-text **Notes** field and a **Stage completed** checkbox. Changes
 ### 4.3 Call log
 
 Every candidate page has a **Call log** button (top right). The dialog shows a chronological log of admin call notes and allows adding new ones (`POST /api/admin/candidates/:passportId/call-logs`).
+
+### 4.4 Additional Details tab
+
+Every candidate page has two tabs: **Deployment** (the six stages) and **Additional Details** (`?tab=additional`). Every role that manages candidates can edit it, REGISTRATION_DESK included.
+
+| Section | Fields |
+|---|---|
+| Passport & Personal Details | Passport number (read-only: the candidate's passport ID), name according to passport, permanent address, birthday |
+| Clothing & Sizes | T-shirt size (XS–XXL), pant size (28–46 or custom), shoe size (UK 5–13 or custom) |
+| Father Details | Is father alive? If Yes: full name (required), birthday |
+| Mother Details | Is mother alive? If Yes: full name (required), birthday |
+| Marital & Family Details | Marital status; if Married: wife full name (required), wife birthday; 1st–3rd child names |
+| Employment / Skills | Other job skills |
+
+- **Always the existing candidate**: the passport number is the candidate's own passport ID and can't be edited, so a duplicate candidate can't be created from here. The API resolves the passport ID to the existing record and returns 404 for an unknown one.
+- **Auto-fill**: a form with nothing saved yet is pre-filled from the candidate's record (name, address, date of birth), with a note saying so. Those values are stored only when **Save additional details** is pressed.
+- **The candidate's own record is never changed** from this tab; the details live in `candidate_additional_details`.
+- Hidden details are cleared on save: father details when he is not alive, and the same for the mother and for the wife when not married.
+- Every change appears in Audit Logs (`CREATE_ADDITIONAL_DETAILS` / `UPDATE_ADDITIONAL_DETAILS`) with only the changed fields. Saving without changes writes nothing.
 
 ---
 
@@ -330,16 +352,22 @@ All routes are mounted under `/api/admin/candidates` by `src/routes/admin.js`.
 
 | Method | Path | Role | Description |
 |---|---|---|---|
-| `GET` | `/candidates` | All active admins | List candidates (paginated, searchable) |
-| `POST` | `/candidates` | Reviewer+ | Register a new candidate |
-| `GET` | `/candidates/:passportId` | All active admins | Get a single candidate (also used for the registration lookup) |
-| `PUT` | `/candidates/:passportId` | Reviewer+ | Update candidate details |
-| `PUT` | `/candidates/:passportId/stages/:stage` | Reviewer+ | Update a stage (notes, completed) |
-| `POST` | `/candidates/:passportId/documents/upload-target` | Reviewer+ | Check a file's description; returns a signed upload URL (JSON only) |
-| `POST` | `/candidates/:passportId/documents/finalize` | Reviewer+ | Check the uploaded file and record it (JSON only) |
-| `POST` | `/candidates/:passportId/documents/:documentId/remove` | Reviewer+ | Delete the current document and its file; `{ reason }` required |
-| `GET` | `/candidates/:passportId/call-logs` | All active admins | List call log entries |
-| `POST` | `/candidates/:passportId/call-logs` | Reviewer+ | Add a call log entry |
+Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANALYST, REGISTRATION_DESK. Any other role gets 403.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/candidates` | List candidates (paginated, searchable) |
+| `POST` | `/candidates` | Register a new candidate |
+| `GET` | `/candidates/:passportId` | Get a single candidate (also used for the registration lookup) |
+| `PUT` | `/candidates/:passportId` | Update candidate details |
+| `PUT` | `/candidates/:passportId/stages/:stage` | Update a stage (notes, completed) |
+| `POST` | `/candidates/:passportId/documents/upload-target` | Check a file's description; returns a signed upload URL (JSON only) |
+| `POST` | `/candidates/:passportId/documents/finalize` | Check the uploaded file and record it (JSON only) |
+| `POST` | `/candidates/:passportId/documents/:documentId/remove` | Delete the current document and its file; `{ reason }` required |
+| `GET` | `/candidates/:passportId/call-logs` | List call log entries |
+| `POST` | `/candidates/:passportId/call-logs` | Add a call log entry |
+| `GET` | `/candidates/:passportId/additional-details` | Additional details, or suggestions from the candidate record when none are saved |
+| `PUT` | `/candidates/:passportId/additional-details` | Save additional details (full replacement; audited; never creates a candidate) |
 
 ### Error codes
 
@@ -390,7 +418,7 @@ These are enforced by `parseCandidateBody` in `candidateService.js` (server) and
 | Passport ID | `/^[A-Z0-9]{6,9}$/` with at least one digit |
 | Surname, other names | Required, <= 100 characters |
 | NIC | `/^(\d{9}[VX]|\d{12})$/` |
-| Address | Required, <= 500 characters |
+| Address | Optional at registration, <= 500 characters; required to complete Candidate Details |
 | Job types | At least 1, at most 10; each <= 60 characters |
 | Job experience | Required, <= 2000 characters |
 | Nationality | Optional, <= 60 characters |
@@ -398,6 +426,22 @@ These are enforced by `parseCandidateBody` in `candidateService.js` (server) and
 | Dates | `YYYY-MM-DD`; passport issue date must be before expiry date |
 | WhatsApp / Contact | If given: 8–15 digits (after removing spaces, dashes, `+`, leading `00`) |
 | Comment | Optional, <= 2000 characters |
+
+### 8.1 Additional details
+
+Enforced by `parseAdditionalDetailsBody` in `candidateAdditionalDetailsService.js` (server) and `validateAdditionalDetails` in `AdditionalDetailsPanel.tsx` (client). Every field is optional unless stated.
+
+| Field | Rule |
+|---|---|
+| Name according to passport, parent / wife / child names | <= 150 characters |
+| Permanent address | <= 500 characters |
+| Other job skills | <= 1000 characters |
+| Birthdays | `YYYY-MM-DD`, a real date, from 1900-01-01, not in the future |
+| T-shirt size | `XS`, `S`, `M`, `L`, `XL`, `XXL` |
+| Pant / shoe size | A preset or a custom value: up to 10 letters, digits, spaces, `.`, `/`, `-` |
+| Father / mother alive | `true` / `false` / not recorded; full name required when `true`; name and birthday refused otherwise |
+| Marital status | `SINGLE`, `MARRIED`, `DIVORCED`, `WIDOWED`, `SEPARATED`; wife full name required when `MARRIED`; wife details refused otherwise |
+| Children | In order: no 2nd without a 1st, no 3rd without a 2nd |
 
 ---
 

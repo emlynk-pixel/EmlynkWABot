@@ -634,6 +634,36 @@ Measured (throwaway PostgreSQL, synthetic files): webhook acknowledgement 65 ms 
 
 Full-stack confirmation (throwaway PostgreSQL, real Express server, real headless Chrome): E2E 34/34 (per-message acknowledgement 4–55 ms even for deliveries whose full processing took 0.1–8.2 s, including a photo requiring an OCR rotation retry), API regression 77/77, browser 41/41, H3 browser 14/14. No code changes were needed for this task: `src/routes/whatsapp.js` and `src/services/submissionQueue.js` already implement the required behaviour (introduced in M1, 23404f1, hardened in the M1 critical fixes, f59cffe); this work adds the explicit regression coverage and full-stack verification.
 
+## 4o. Candidate additional details
+
+Extra details of a candidate (Admin > Candidates > **Additional Details** tab), stored in `candidate_additional_details` (migration `20261009150000_candidate_additional_details`; see `Docs/DATABASE_IMPLEMENTATION.md` §2.12). Service: `src/services/candidateAdditionalDetailsService.js`. Roles: ADMIN, MANAGER, ANALYST, REGISTRATION_DESK.
+
+### `GET /api/admin/candidates/:passportId/additional-details`
+
+```json
+{
+  "passportId": "N1023757",
+  "details": null,
+  "suggested": { "nameAsInPassport": "Anusha De Soysa", "permanentAddress": "Negombo", "birthday": "1996-02-23" },
+  "updatedDate": null
+}
+```
+
+- The passport ID resolves to the **existing** candidate, case-insensitively, like every candidate route. An unknown one is 404 `NOT_FOUND`.
+- `details` is null until something is saved. Once saved, it holds every field (dates as `YYYY-MM-DD`, `fatherAlive` / `motherAlive` as booleans).
+- `suggested`: the candidate's own name, address and date of birth, to pre-fill a new form. It is never stored unless the form is saved.
+
+### `PUT /api/admin/candidates/:passportId/additional-details`
+
+The body holds the fields `nameAsInPassport, permanentAddress, birthday, tshirtSize, pantSize, shoeSize, fatherAlive, fatherFullName, fatherBirthday, motherAlive, motherFullName, motherBirthday, maritalStatus, wifeFullName, wifeBirthday, child1Name, child2Name, child3Name, otherJobSkills`. It responds with the same shape as GET.
+
+- **Full replacement**: a field left out or blank is cleared. Unknown fields, including a `passportId` in the body, are ignored; the candidate is the one in the URL.
+- **Never creates a candidate** (404 for an unknown passport ID) and **never changes the candidate's own record**.
+- **400** `{ message, errors: [{ field, message }] }` for invalid values (rules in `Docs/20-candidate-management.md` §8.1). Nothing is written.
+- **Audit**: the first save that stores anything writes `CREATE_ADDITIONAL_DETAILS` (`NONE` → `CREATED`); later changes write `UPDATE_ADDITIONAL_DETAILS` (`CREATED` → `UPDATED`).
+  - `previous_value` / `new_value` hold only the changed fields as JSON, and the actor is `req.user`.
+  - A save that changes nothing (or an empty form with nothing saved) writes no row and no audit entry.
+
 ## 5. Pages and data
 
 | Page | API | Shows |
@@ -812,11 +842,11 @@ Endpoint tiers (`src/routes/admin.js`):
 
 | Tier | Roles | Routes |
 |---|---|---|
-| Dashboard reads | ADMIN, MANAGER, ANALYST | overview, documents, clients, police, reports, review (read), candidate call logs |
-| Candidates | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | candidate list, registration, details |
-| Review, corrections, candidate work | ADMIN, MANAGER, ANALYST | review actions, temporary document delete, candidate stages and documents, call logs |
+| Dashboard reads | ADMIN, MANAGER, ANALYST | overview, documents, clients, police, reports, review (read) |
+| Candidates (`CANDIDATE_STAFF`) | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | the whole Candidates area: list, registration, details, stages, candidate documents, call logs, additional details |
+| Review and corrections | ADMIN, MANAGER, ANALYST | review actions, temporary document delete |
 | Police date correction | ADMIN, MANAGER | `POST /documents/:id/police-date` |
-| Users and Settings | ADMIN | `/api/admin/users/*`, `/api/admin/settings/sheet-sync/*` |
+| Users, Audit Logs and Settings | ADMIN | `/api/admin/users/*`, `/api/admin/audit-logs`, `/api/admin/settings/sheet-sync/*` |
 
 `GET /auth/me` and `POST /auth/complete-invite` need a Supabase session but not a particular role.
 
