@@ -1,106 +1,145 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { fetchCurrentAdmin, login as loginRequest, logout as logoutRequest, type Admin } from "../api/auth";
-import { clearToken, readToken, saveToken, tokenExpiresAt } from "./tokenStorage";
+import type { Session } from "@supabase/supabase-js";
+import { fetchCurrentUser, type AppUser } from "../api/auth";
+import { ApiError, setApiAccessToken } from "../api/client";
+import { getAuthClient, SupabaseConfigError } from "./supabaseClient";
 
-// "checking": a stored token is being validated with GET /auth/me.
+export { canCorrectPoliceDates, canCorrectPoliceDates as isManagerOrAdmin, canReview, canViewDashboard, isAdmin } from "./roles";
+
+// Supabase Auth owns the session; the backend owns the application user.
+//   checking       the stored Supabase session (if any) is being checked
+//   authenticated  a Supabase session whose application user is ACTIVE
+//   anonymous      no usable session; `notice` says why when it isn't obvious
 type AuthState =
-    | { status: "checking"; admin: null }
-    | { status: "authenticated"; admin: Admin }
-    | { status: "anonymous"; admin: null };
+    | { status: "checking"; user: null; token: null; notice: null }
+    | { status: "authenticated"; user: AppUser; token: string; notice: null }
+    | { status: "anonymous"; user: null; token: null; notice: string | null };
 
 type AuthContextValue = AuthState & {
-    // The session token for API calls (admin/src/api); null when signed out.
-    token: string | null;
     signIn: (email: string, password: string) => Promise<void>;
     signOut: () => Promise<void>;
+    // Re-reads the application profile for the current session (after
+    // completing an invitation, or a role change).
+    refreshUser: () => Promise<void>;
 };
 
-// Helpers for checking the current admin's role-based access.
-export function canReview(admin: Admin | null | undefined): boolean {
-    return admin?.role === "ADMIN" || admin?.role === "MANAGER" || admin?.role === "ANALYST";
-}
+export const ACCOUNT_NOT_ACTIVE_MESSAGE = "Your account is not active. Contact an administrator.";
+const INVALID_LOGIN_MESSAGE = "Invalid email or password";
+const RATE_LIMITED_MESSAGE = "Too many sign-in attempts. Please try again later.";
+const FALLBACK_MESSAGE = "Something went wrong. Please try again.";
 
-export function isManagerOrAdmin(admin: Admin | null | undefined): boolean {
-    return admin?.role === "ADMIN" || admin?.role === "MANAGER";
-}
-
-export function isAdmin(admin: Admin | null | undefined): boolean {
-    return admin?.role === "ADMIN";
-}
+const CHECKING: AuthState = { status: "checking", user: null, token: null, notice: null };
+const anonymous = (notice: string | null = null): AuthState => ({ status: "anonymous", user: null, token: null, notice });
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-// A token that is expired or has an unreadable expiry is not worth sending.
-function isUsable(token: string | null): token is string {
-    if (!token) return false;
-    const expiresAt = tokenExpiresAt(token);
-    return expiresAt === null || expiresAt > Date.now();
+// A Supabase sign-in error as the message the login page shows. Supabase
+// answers invalid credentials and unknown emails alike, so nothing tells
+// which one it was.
+function signInError(error: { status?: number; code?: string }): ApiError {
+    if (error.status === 429 || error.code === "over_request_rate_limit") return new ApiError(429, RATE_LIMITED_MESSAGE);
+    if (error.status === 400 || error.code === "invalid_credentials") return new ApiError(401, INVALID_LOGIN_MESSAGE);
+    return new ApiError(error.status ?? 0, FALLBACK_MESSAGE);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-    // A stored token from an earlier load of this tab, if still usable.
-    const [token, setToken] = useState<string | null>(() => {
-        const stored = readToken();
-        if (isUsable(stored)) return stored;
-        clearToken();
-        return null;
-    });
-    const [state, setState] = useState<AuthState>(() =>
-        token ? { status: "checking", admin: null } : { status: "anonymous", admin: null }
-    );
-    const expiryTimer = useRef<number | undefined>(undefined);
+    const [state, setState] = useState<AuthState>(CHECKING);
+    const stateRef = useRef(state);
+    stateRef.current = state;
 
-    const signOut = useCallback(async () => {
-        try {
-            await logoutRequest();
-        } catch {
-            // best-effort
-        }
-        clearToken();
-        setToken(null);
-        setState({ status: "anonymous", admin: null });
+    const apply = useCallback((next: AuthState) => {
+        setApiAccessToken(next.token);
+        setState(next);
     }, []);
 
-    // Validate a token from an earlier page load: the admin may have been
-    // deactivated or the token may have expired in the meantime.
-    useEffect(() => {
-        if (state.status !== "checking" || !token) return;
-        const controller = new AbortController();
-        fetchCurrentAdmin(token, controller.signal)
-            .then((admin) => setState({ status: "authenticated", admin }))
-            .catch((error: unknown) => {
-                if ((error as Error)?.name === "AbortError") return;
-                // 401/404 (token no longer valid) or server unreachable: never
-                // leave the app half-authenticated; the admin signs in again.
-                signOut();
-            });
-        return () => controller.abort();
-    }, [state.status, token, signOut]);
+    // The application user behind a Supabase session. 401: Supabase no longer
+    // accepts the session -> drop it here too. 403: a genuine session without
+    // an ACTIVE application user (e.g. an invitation not completed yet) ->
+    // not signed in to the app; the Supabase session is kept for the setup
+    // page. Anything else (backend unreachable): not signed in, try again.
+    const loadUser = useCallback(async (session: Session | null, signal?: AbortSignal): Promise<AuthState> => {
+        if (!session) return anonymous();
+        try {
+            const user = await fetchCurrentUser(session.access_token, signal);
+            return { status: "authenticated", user, token: session.access_token, notice: null };
+        } catch (error) {
+            if ((error as Error)?.name === "AbortError") throw error;
+            if (error instanceof ApiError && error.status === 401) {
+                await getAuthClient().signOut({ scope: "local" }).catch(() => {});
+                return anonymous();
+            }
+            if (error instanceof ApiError && error.status === 403) return anonymous(ACCOUNT_NOT_ACTIVE_MESSAGE);
+            return anonymous(error instanceof ApiError ? error.message : FALLBACK_MESSAGE);
+        }
+    }, []);
 
-    // Sign out when the token expires, without waiting for a failed request.
+    // Restore the session on load (also one set up from an invite or recovery
+    // link), and follow Supabase's session events afterwards.
     useEffect(() => {
-        window.clearTimeout(expiryTimer.current);
-        if (!token || state.status !== "authenticated") return;
-        const expiresAt = tokenExpiresAt(token);
-        if (expiresAt === null) return;
-        const delay = Math.max(0, expiresAt - Date.now());
-        // setTimeout overflows above ~24.8 days; tokens here last 1 hour.
-        expiryTimer.current = window.setTimeout(signOut, Math.min(delay, 2_147_000_000));
-        return () => window.clearTimeout(expiryTimer.current);
-    }, [token, state.status, signOut]);
+        let auth;
+        try {
+            auth = getAuthClient();
+        } catch (error) {
+            apply(anonymous(error instanceof SupabaseConfigError ? error.message : FALLBACK_MESSAGE));
+            return;
+        }
+        const controller = new AbortController();
+        auth.getSession()
+            .then(({ data }) => loadUser(data.session, controller.signal))
+            .then((next) => { if (!controller.signal.aborted) apply(next); })
+            .catch((error: unknown) => { if ((error as Error)?.name !== "AbortError") apply(anonymous(FALLBACK_MESSAGE)); });
+
+        const { data } = auth.onAuthStateChange((event, session) => {
+            if (event === "SIGNED_OUT" || !session) {
+                if (stateRef.current.status === "authenticated") apply(anonymous());
+                return;
+            }
+            // A refreshed access token: same user, new token for API calls.
+            const current = stateRef.current;
+            if ((event === "TOKEN_REFRESHED" || event === "USER_UPDATED") && current.status === "authenticated") {
+                apply({ ...current, token: session.access_token });
+            }
+        });
+        return () => {
+            controller.abort();
+            data.subscription.unsubscribe();
+        };
+    }, [apply, loadUser]);
 
     const signIn = useCallback(async (email: string, password: string) => {
-        const newToken = await loginRequest(email, password);
-        const admin = await fetchCurrentAdmin(newToken);
-        saveToken(newToken);
-        setToken(newToken);
-        setState({ status: "authenticated", admin });
-    }, []);
+        const auth = getAuthClient();
+        const { data, error } = await auth.signInWithPassword({ email, password });
+        if (error || !data.session) throw signInError(error ?? {});
+        const next = await loadUser(data.session);
+        if (next.status !== "authenticated") {
+            // Valid credentials but no usable application account: sign the
+            // Supabase session out again and say why.
+            await auth.signOut({ scope: "local" }).catch(() => {});
+            apply(anonymous());
+            throw new ApiError(403, next.notice ?? ACCOUNT_NOT_ACTIVE_MESSAGE);
+        }
+        apply(next);
+    }, [apply, loadUser]);
 
-    const value = useMemo<AuthContextValue>(
-        () => ({ ...state, token: state.status === "authenticated" ? token : null, signIn, signOut }),
-        [state, token, signIn, signOut]
-    );
+    // Ends the Supabase session everywhere (refresh tokens revoked); the
+    // local session is always cleared, even if Supabase can't be reached.
+    const signOut = useCallback(async () => {
+        try {
+            const auth = getAuthClient();
+            const { error } = await auth.signOut();
+            if (error) await auth.signOut({ scope: "local" });
+        } catch {
+            // best-effort: the local state is cleared below regardless
+        }
+        apply(anonymous());
+    }, [apply]);
+
+    const refreshUser = useCallback(async () => {
+        const { data } = await getAuthClient().getSession();
+        apply(await loadUser(data.session));
+    }, [apply, loadUser]);
+
+    const value = useMemo<AuthContextValue>(() => ({ ...state, signIn, signOut, refreshUser }), [state, signIn, signOut, refreshUser]);
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

@@ -70,7 +70,7 @@ Medical document storage follows the same placement rules as the others: `VERIFI
 - Calculated once in `src/routes/whatsapp.js` after validation: lowercase hex SHA-256 of the downloaded bytes (`src/utils/fileChecksum.js`). Stored in `temporary_data.file_sha256`, passed to `processDocument()`, stored in `documents.file_sha256`. Never logged.
 - `documents`: unique on `(passport_id, file_sha256)` and indexed on `file_sha256` alone. Not globally unique, so a cross-client match is flagged instead of rejected.
 - `temporary_data`: indexed on `(whatsapp_number, file_sha256)` for pending duplicates.
-- The checksum check runs **after identity and before reconciliation**. A duplicate or cross-client file never fills fields on the client's `users` record.
+- The checksum check runs **after identity and before reconciliation**. A duplicate or cross-client file never fills fields on the client's `candidate` record.
 - A new photo of the same paper has different bytes, so it is a new version, not a duplicate.
 - A parallel request storing the same file first is caught by the unique constraint (P2002): the copy just made is removed and the result is `DUPLICATE`.
 

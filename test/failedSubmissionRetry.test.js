@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import express from "express";
-import jwt from "jsonwebtoken";
 
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
+import { authFailureStatus, fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 import "./helpers/localOcrService.js";
 
 // Placeholders so the modules load without real credentials.
@@ -16,14 +16,13 @@ Object.assign(process.env, {
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createTemporaryDocumentRecord } = await import("../src/services/temporaryDataService.js");
 const { OcrResourceError } = await import("../src/services/ocrContract.js");
 const { claimNextSubmission, drainSubmissionQueue, processClaimedSubmission, QUEUE_DEFAULTS } = await import("../src/services/submissionQueue.js");
 const { retryFailedSubmission, REVIEW_ACTION } = await import("../src/services/adminReviewActionService.js");
 const { createAdminRouter } = await import("../src/routes/admin.js");
-const { createRequireActiveAdmin } = await import("../src/middleware/requireActiveAdmin.js");
+const { createRequireActiveUser } = await import("../src/middleware/requireActiveUser.js");
 
 // H3 — failed submissions: FAILED state, admin retry, safety. Synthetic data
 // only. text-passport.pdf belongs to N1234567 (unique ID 0001, WhatsApp 0771234567).
@@ -85,12 +84,11 @@ async function failedSubmission(w, label = "m1") {
     return job;
 }
 
-const tokenFor = (adminId) => jwt.sign({ adminId }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
 
 async function api(w, method, path, { body, token = tokenFor(ADMIN.adminId) } = {}) {
     const app = express();
     app.use(express.json());
-    app.use("/api/admin", createAdminRouter({ apiLimiter: (req, res, next) => next(), db: w.db.client, bucket: w.bucket, requireAdmin: createRequireActiveAdmin({ db: w.db.client }) }));
+    app.use("/api/admin", createAdminRouter({ apiLimiter: (req, res, next) => next(), db: w.db.client, bucket: w.bucket, requireAdmin: createRequireActiveUser({ db: w.db.client, verifyAccessToken: fakeVerifyAccessToken }) }));
     app.use(errorHandler);
     const server = await new Promise((r) => { const s = app.listen(0, "127.0.0.1", () => r(s)); });
     try {
@@ -314,9 +312,9 @@ describe("H3: Retry processing (admin)", () => {
     test("authorization: no token, a bad token or a deactivated admin can't retry (401), nothing changed", async () => {
         const w = world();
         const job = await failedSubmission(w);
-        for (const token of [null, "not-a-jwt", jwt.sign({ adminId: ADMIN.adminId }, "wrong-secret"), tokenFor(DISABLED.adminId), tokenFor("no-such-admin")]) {
+        for (const token of [null, "not-a-jwt", "forged.signature.token", tokenFor(DISABLED.adminId), tokenFor("no-such-admin")]) {
             const response = await retry(w, job.temporaryId, { token });
-            assert.equal(response.status, 401, String(token));
+            assert.equal(response.status, authFailureStatus(token), String(token));
         }
         assert.equal(rowOf(w, job.temporaryId).processingStatus, "FAILED");
         assert.equal(w.db.tables.auditLog.length, 0);

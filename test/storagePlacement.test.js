@@ -172,7 +172,7 @@ describe("processDocument: duplicates and checksum conflicts", () => {
         assert.equal(summary.storage.placement, "NONE");
         assert.deepEqual(objects, [TEMP_PATH]);
         assert.equal(db.documentRows.length, 1);
-        assert.ok(!db.calls.some((c) => c.method === "user.updateMany"), "duplicate must not fill client fields again");
+        assert.ok(!db.calls.some((c) => c.method === "candidate.updateMany"), "duplicate must not fill client fields again");
         assert.equal(recordUpdate.data.processingStatus, "DUPLICATE");
     });
 
@@ -187,7 +187,7 @@ describe("processDocument: duplicates and checksum conflicts", () => {
         assert.ok(objects.includes(recordUpdate.data.pendingStoragePath));
         assert.equal(db.documentRows.length, 1, "no documents row for the wrong client");
         assert.equal(recordUpdate.data.passportId, undefined);
-        assert.ok(!db.calls.some((c) => c.method === "user.updateMany"));
+        assert.ok(!db.calls.some((c) => c.method === "candidate.updateMany"));
     });
 
     test("same sender re-sends a file already waiting in pending/ -> DUPLICATE, no second copy", async () => {
@@ -243,7 +243,7 @@ describe("processDocument: pending storage", () => {
         assert.equal(recordUpdate.data.passportId, "N1234567", "still associated with the passport");
         assert.equal(db.documentRows.length, 0);
         assert.ok(!objects.some((path) => path.startsWith("clients/")));
-        assert.ok(!db.calls.some((c) => c.method === "user.updateMany"), "client record (incl. WhatsApp) is not changed");
+        assert.ok(!db.calls.some((c) => c.method === "candidate.updateMany"), "client record (incl. WhatsApp) is not changed");
     });
 
     test("pending file name uses the WhatsApp message time when given", async () => {

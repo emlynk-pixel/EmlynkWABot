@@ -22,12 +22,12 @@ function returnPath(state: unknown): string {
         : "/";
 }
 
-// Same limits the backend enforces (src/routes/auth.js).
+// Input caps (an email address is at most 254 characters).
 const MAX_EMAIL_LENGTH = 254;
 const MAX_PASSWORD_LENGTH = 128;
 
 export function LoginPage() {
-    const { status, signIn } = useAuth();
+    const { status, signIn, notice } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
     const [email, setEmail] = useState("");
@@ -108,7 +108,14 @@ export function LoginPage() {
 
                 <div className="rounded-lg border border-border bg-surface p-6 shadow-surface">
                     <h1 className="text-headline-lg text-ink">Sign in</h1>
-                    <p className="mt-1 text-body-sm text-ink-muted">Use your administrator account.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Use your console account.</p>
+
+                    {!error && notice && (
+                        <div role="alert" className="mt-4 flex items-start gap-2 rounded border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
+                            <Icon name="error" className="mt-px size-4 shrink-0" />
+                            <span>{notice}</span>
+                        </div>
+                    )}
 
                     {error && (
                         <div role="alert" className="mt-4 flex flex-col gap-1 rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">

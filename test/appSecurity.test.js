@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { findEnvProblems, assertValidEnv, trustProxyHops, REQUIRED_ENV_VARS } from "../src/config/env.js";
+import { findEnvProblems, assertValidEnv, trustProxyHops, REQUIRED_ENV_VARS, WORKER_REQUIRED_ENV_VARS, SHEET_SYNC_WORKER_REQUIRED_ENV_VARS } from "../src/config/env.js";
 
 // Synthetic placeholders only.
 const VALID_ENV = Object.freeze({
@@ -11,12 +11,12 @@ const VALID_ENV = Object.freeze({
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     SUPABASE_BUCKET: "test-bucket",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
     META_APP_SECRET: "test-app-secret-placeholder",
     WHATSAPP_VERIFY_TOKEN: "test-verify-token-placeholder",
     WHATSAPP_ACCESS_TOKEN: "test-access-token-placeholder",
     WHATSAPP_API_VERSION: "v21.0",
     OCR_SERVICE_URL: "http://127.0.0.1:1",
+    APP_BASE_URL: "http://localhost:5173",
 });
 
 Object.assign(process.env, VALID_ENV);
@@ -37,10 +37,30 @@ describe("startup environment check (SEC-019)", () => {
         }
     });
 
+    test("APP_BASE_URL is required, and must be a bare http(s) site address", () => {
+        assert.ok(REQUIRED_ENV_VARS.includes("APP_BASE_URL"));
+        assert.deepEqual(findEnvProblems({ ...VALID_ENV, APP_BASE_URL: "" }), ["APP_BASE_URL is missing"]);
+        const { APP_BASE_URL: _removed, ...without } = VALID_ENV;
+        assert.deepEqual(findEnvProblems(without), ["APP_BASE_URL is missing"]);
+        for (const good of ["http://localhost:5173", "https://emlynk-wa-bot-git-stage-emlynk-pixel.vercel.app", "https://admin.example.com/"]) {
+            assert.deepEqual(findEnvProblems({ ...VALID_ENV, APP_BASE_URL: good }), [], good);
+        }
+        for (const bad of ["localhost:5173", "ftp://host.example", "https://host.example/admin", "https://host.example?x=1", "https://host.example/#a", "https://user:secret-pw@host.example"]) {
+            const problems = findEnvProblems({ ...VALID_ENV, APP_BASE_URL: bad });
+            assert.equal(problems.length, 1, bad);
+            assert.match(problems[0], /^APP_BASE_URL /);
+            assert.ok(!problems[0].includes("secret-pw"), "the value is never repeated");
+        }
+    });
+
+    test("workers do not need APP_BASE_URL (only the server sends invitations)", () => {
+        assert.ok(!["APP_BASE_URL"].some((name) => WORKER_REQUIRED_ENV_VARS.includes(name) || SHEET_SYNC_WORKER_REQUIRED_ENV_VARS.includes(name)));
+    });
+
     test("malformed values are reported without their contents", () => {
         const env = {
             ...VALID_ENV,
-            JWT_SECRET: "short-secret-value",
+            APP_BASE_URL: "short-secret-value",
             DATABASE_URL: "mysql://secret-db-password@host/db",
             SUPABASE_URL: "not a url secret-value",
             WHATSAPP_API_VERSION: "latest",
@@ -77,7 +97,7 @@ describe("startup environment check (SEC-019)", () => {
     test("the server exits at startup, naming only the missing variables", () => {
         const appPath = fileURLToPath(new URL("../src/app.js", import.meta.url));
         const env = { ...process.env, ...VALID_ENV, DOTENV_CONFIG_PATH: "does-not-exist.env", DOTENV_CONFIG_QUIET: "true" };
-        delete env.JWT_SECRET;
+        delete env.WHATSAPP_VERIFY_TOKEN;
         delete env.META_APP_SECRET;
 
         // DOTENV_CONFIG_PATH points dotenv away from the real .env.
@@ -88,7 +108,7 @@ describe("startup environment check (SEC-019)", () => {
         });
 
         assert.equal(result.status, 1);
-        assert.match(result.stderr, /JWT_SECRET is missing/);
+        assert.match(result.stderr, /WHATSAPP_VERIFY_TOKEN is missing/);
         assert.match(result.stderr, /META_APP_SECRET is missing/);
         assert.ok(!result.stderr.includes(VALID_ENV.SUPABASE_SERVICE_ROLE_KEY));
         assert.ok(!result.stdout.includes("Server is running"));

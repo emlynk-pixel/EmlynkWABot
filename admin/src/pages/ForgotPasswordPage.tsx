@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
-import { ApiError } from "../api/client";
-import { forgotPassword } from "../api/auth";
+import { appUrl, getAuthClient } from "../auth/supabaseClient";
 import { Icon } from "../components/Icon";
 import { FormField, fieldA11y } from "../components/Form";
 import { inputClass } from "../components/ui";
@@ -27,12 +26,17 @@ export function ForgotPasswordPage() {
         }
         const cleanEmail = email.trim();
 
+        // Supabase Auth sends the recovery email. Its answer is the same
+        // whether or not the address has an account, and so is this page's:
+        // only a rate limit or an unreachable service is reported.
         setSubmitting(true);
         try {
-            await forgotPassword(cleanEmail);
-            setSubmitted(true);
-        } catch (caught) {
-            setError(caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
+            const { error: sendError } = await getAuthClient().resetPasswordForEmail(cleanEmail, { redirectTo: appUrl("reset-password") });
+            if (sendError?.status === 429) setError("Too many password reset requests. Please try again later.");
+            else if (sendError && !sendError.status) setError("Cannot reach the server. Check your connection and try again.");
+            else setSubmitted(true);
+        } catch {
+            setError("Something went wrong. Please try again.");
         } finally {
             setSubmitting(false);
         }
@@ -59,10 +63,10 @@ export function ForgotPasswordPage() {
                             </div>
                             <h1 className="text-headline-sm font-semibold text-ink">Check your email</h1>
                             <p className="mt-2 text-body-sm text-ink-muted leading-relaxed">
-                                If an active account matches that email address, a password reset link has been dispatched. Please check your inbox and spam folder.
+                                If an account matches that email address, a password reset link has been sent. Please check your inbox and spam folder.
                             </p>
                             <p className="mt-2 text-label-sm text-ink-subtle">
-                                Reset links expire in 1 hour and can only be used once.
+                                Reset links expire and can only be used once.
                             </p>
                             <div className="mt-6">
                                 <Link
@@ -77,7 +81,7 @@ export function ForgotPasswordPage() {
                         <>
                             <h1 className="text-headline-lg text-ink">Reset password</h1>
                             <p className="mt-1 text-body-sm text-ink-muted">
-                                Enter your administrator email address and we'll send you a link to reset your password.
+                                Enter your account's email address and we'll send you a link to reset your password.
                             </p>
 
                             {error && (
@@ -91,7 +95,7 @@ export function ForgotPasswordPage() {
                             )}
 
                             <form className="mt-6 space-y-5" onSubmit={handleSubmit} noValidate>
-                                <FormField id="email" label="Email" required help="Use the email address of your administrator account." error={fieldError}>
+                                <FormField id="email" label="Email" required help="The email address you sign in with." error={fieldError}>
                                     <div className="relative">
                                         <Icon name="mail" className="pointer-events-none absolute left-3 top-3 size-4 text-ink-subtle" />
                                         <input

@@ -4,8 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { createAuthRouter, ACTIVE_ADMIN_STATUS } from "../src/routes/auth.js";
-import { hashPassword } from "../src/utils/password.js";
+import { createAuthRouter } from "../src/routes/auth.js";
+import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 import { createFakeAdminDb, noRateLimit } from "./helpers/fakeAdminDb.js";
 
 // Placeholders so the app's modules load without real credentials.
@@ -14,7 +14,6 @@ Object.assign(process.env, {
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp: createAppWithDefaults } = await import("../src/createApp.js");
 const { createApiRateLimiter } = await import("../src/middleware/apiRateLimiter.js");
@@ -47,7 +46,7 @@ describe("admin dashboard static serving (/admin)", () => {
     let http;
     before(async () => {
         dist = fakeBuild();
-        http = await start(createApp({ adminDistDir: dist }));
+        http = await start(createApp({ adminDistDir: dist, authRouter: createAuthRouter({ db: createFakeAdminDb([]), verifyAccessToken: fakeVerifyAccessToken, apiLimiter: noRateLimit }) }));
     });
     after(() => {
         http.server.close();
@@ -132,49 +131,33 @@ describe("admin dashboard not built", () => {
     });
 });
 
-describe("dashboard login flow against the real auth routes (same origin)", () => {
+describe("dashboard session against the real auth routes (same origin)", () => {
     let dist;
     let http;
-    const PASSWORD = "Correct-Horse-7";
 
     before(async () => {
         dist = fakeBuild();
-        const db = createFakeAdminDb([
-            { adminId: "admin-1", name: "Test Admin", email: "admin@example.invalid", passwordHash: await hashPassword(PASSWORD), role: "ADMIN", status: ACTIVE_ADMIN_STATUS },
-        ]);
-        http = await start(createApp({ adminDistDir: dist, authRouter: createAuthRouter({ db, loginLimiter: noRateLimit, apiLimiter: noRateLimit }) }));
+        const db = createFakeAdminDb([{ adminId: "admin-1", name: "Test Admin", email: "admin@example.invalid", role: "ADMIN", status: "ACTIVE" }]);
+        http = await start(createApp({ adminDistDir: dist, authRouter: createAuthRouter({ db, verifyAccessToken: fakeVerifyAccessToken, apiLimiter: noRateLimit }) }));
     });
     after(() => {
         http.server.close();
         fs.rmSync(dist, { recursive: true, force: true });
     });
 
-    test("page -> POST /auth/login -> GET /auth/me with the Bearer token", async () => {
+    test("page -> (Supabase sign-in in the browser) -> GET /auth/me with the Supabase access token", async () => {
         assert.equal((await fetch(http.url("/admin/login"))).status, 200);
-
-        const login = await fetch(http.url("/auth/login"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify({ email: "admin@example.invalid", password: PASSWORD }),
-        });
-        assert.equal(login.status, 200);
-        const { token } = await login.json();
-        assert.equal(typeof token, "string");
-
-        const me = await fetch(http.url("/auth/me"), { headers: { Authorization: `Bearer ${token}` } });
+        const me = await fetch(http.url("/auth/me"), { headers: { Authorization: `Bearer ${tokenFor("admin-1")}` } });
         assert.equal(me.status, 200);
-        const { admin } = await me.json();
-        assert.equal(admin.name, "Test Admin");
-        assert.equal(admin.passwordHash, undefined);
+        const { user } = await me.json();
+        assert.deepEqual(user, { userId: "admin-1", email: "admin@example.invalid", name: "Test Admin", role: "ADMIN", status: "ACTIVE" });
     });
 
-    test("wrong password -> the generic 401 the login page shows", async () => {
-        const login = await fetch(http.url("/auth/login"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "admin@example.invalid", password: "wrong-password" }),
-        });
-        assert.equal(login.status, 401);
-        assert.deepEqual(await login.json(), { message: "Invalid email or password" });
+    test("the backend no longer signs anyone in: the old login and recovery endpoints are gone", async () => {
+        for (const path of ["/auth/login", "/auth/logout", "/auth/forgot-password", "/auth/reset-password", "/auth/setup-password"]) {
+            const response = await fetch(http.url(path), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+            assert.equal(response.status, 404, path);
+        }
+        assert.equal((await fetch(http.url("/auth/csrf-token"))).status, 404);
     });
 });

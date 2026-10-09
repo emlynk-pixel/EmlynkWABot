@@ -71,7 +71,7 @@ export async function getMonthlyOverview({ db, month, now = new Date() }) {
     const inMonth = { gte: start, lt: end };
 
     const [candidatesRegistered, statusGroups, adminUploads, waitingFiles, reviewRequiredDocuments, rejected] = await Promise.all([
-        db.user.count({ where: { createdDate: inMonth } }),
+        db.candidate.count({ where: { createdDate: inMonth } }),
         db.temporaryData.groupBy({ by: ["processingStatus"], where: { createdDate: inMonth }, _count: { _all: true } }),
         db.auditLog.count({ where: { action: ADMIN_UPLOAD_ACTION, createdDate: inMonth } }),
         db.temporaryData.count({ where: { AND: [{ createdDate: inMonth }, REVIEW_PENDING_WHERE] } }),

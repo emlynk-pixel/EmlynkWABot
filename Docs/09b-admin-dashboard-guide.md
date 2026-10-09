@@ -9,8 +9,8 @@ The development history, per-checkpoint tests and migrations are in [`09a-admin-
 | | |
 |---|---|
 | Address | `/admin` on the backend server (e.g. `http://localhost:3000/admin/`) |
-| Sign in | Admin email and password; the session lasts 1 hour |
-| Who can use it | Any admin account with status `ACTIVE`. There are no roles yet (Phase 12). |
+| Sign in | Email and password (Supabase Auth); the session is refreshed automatically and ends when you sign out |
+| Who can use it | Any staff user with status `ACTIVE`. What each person can do depends on their role: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK` (section 6). |
 | Screens | Overview, Documents, Review Queue, Review Detail, Clients, Client Details, Missing Documents, Police Workflow, Daily Report |
 | Actions | Approve, Keep Pending, Remove from Review, Set Document Type, Assign Client, Set Police Slip Date |
 | Never | Reject, automatic removal of pending documents, creating clients, changing a client's WhatsApp number |
@@ -20,10 +20,14 @@ The development history, per-checkpoint tests and migrations are in [`09a-admin-
 ## 1. Signing in
 
 1. Open `/admin`. Without a session you are sent to the sign-in page.
-2. Sign in with your admin email and password. After too many failed attempts the login is rate-limited for a while.
-3. The session ends after 1 hour, when you sign out, or when you close the browser tab. If your account is deactivated, your next request signs you out.
+2. Sign in with your email and password. Sign-in is handled by Supabase Auth, which also limits repeated failed attempts.
+3. The session ends when you sign out or close the browser tab. If your account is deactivated, your next request signs you out.
 
-The first admin account is created on the server with `npm run admin:create` ([`13-security-overview.md`](13-security-overview.md)).
+**Forgot your password?** Use *Forgot password* on the sign-in page and enter your email. Supabase Auth sends a reset link (the page gives the same answer whether or not the email has an account); it opens `/admin/reset-password`, where you choose a new password and sign in again. If the link has expired or was already used, request a new one.
+
+**First sign-in (invited users).** An `ADMIN` invites you from *Invite User*. Supabase Auth emails you an invitation link that opens `/admin/setup-password`, where you set your password and your account becomes `ACTIVE`. Outgoing auth emails use the SMTP server configured in the Supabase dashboard, not the application.
+
+The first ADMIN is created on the server with `npm run user:create` (a Supabase Auth identity plus the application profile); everyone else is invited from the dashboard ([`SUPABASE_AUTH.md`](SUPABASE_AUTH.md)).
 
 ## 2. Screens
 
@@ -239,41 +243,43 @@ WhatsApp documents are processed in the background. When a document arrives, the
 
 ## 6. API
 
-All endpoints are under `/api/admin` and require an ACTIVE admin session via `emlynk_admin_token` httpOnly cookie (preferred) or `Authorization: Bearer <token>`. Role-based access control (RBAC) enforces endpoint permissions based on `admin.role` (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`). Responses are never cached.
+All endpoints are under `/api/admin` and require a Supabase session (`Authorization: Bearer <access token>`) of an `ACTIVE` user. Role-based access control (RBAC) enforces endpoint permissions from `public."user".role` (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`), always read from the database. Responses are never cached.
 
 | Method | Path | Allowed Roles | Purpose |
 |---|---|---|---|
 | GET | `/overview` | ADMIN, MANAGER, ANALYST | Overview figures |
 | GET | `/documents` | ADMIN, MANAGER, ANALYST | Stored documents (search, filters, sort, paging) |
 | GET | `/documents/missing` | ADMIN, MANAGER, ANALYST | Incomplete clients and missing types (`documentType`, `search`, paging) |
-| POST | `/documents/:documentId/police-date` | ADMIN | Set or correct a police slip date `{ policeSubmittedDate, reason }` |
-| GET | `/clients` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Clients directory (`search`, `completion`, `missingType`, paging) |
-| GET | `/clients/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Client details |
+| POST | `/documents/:documentId/police-date` | ADMIN, MANAGER | Set or correct a police slip date `{ policeSubmittedDate, reason }` |
+| GET | `/clients` | ADMIN, MANAGER, ANALYST | Clients directory (`search`, `completion`, `missingType`, paging) |
+| GET | `/clients/:passportId` | ADMIN, MANAGER, ANALYST | Client details |
 | GET | `/review`, `/review/:reviewId`, `/review/:reviewId/file` | ADMIN, MANAGER, ANALYST | Review Queue, one item, its file |
-| POST | `/review/:reviewId/approve` | ADMIN, MANAGER | Approve `{ reason?, policeSubmittedDate? }` |
-| POST | `/review/:reviewId/keep-pending` | ADMIN, MANAGER | Keep Pending `{ reason }` |
-| POST | `/review/:reviewId/remove` | ADMIN, MANAGER | Remove from Review `{ reason }` |
-| POST | `/review/:reviewId/document-type` | ADMIN, MANAGER | Set Document Type `{ documentType, reason }` |
-| POST | `/review/:reviewId/assign-client` | ADMIN, MANAGER | Assign Client `{ passportId, reason }` |
-| POST | `/review/:reviewId/retry` | ADMIN, MANAGER | Retry processing `{ reason? }` |
-| POST | `/review/:reviewId/replace-verified` | ADMIN, MANAGER | Replace verified document `{ existingDocumentId, reason?, policeSubmittedDate? }` |
-| POST | `/review/:reviewId/keep-as-version` | ADMIN, MANAGER | Keep document as version `{ reason? }` |
+| POST | `/review/:reviewId/approve` | ADMIN, MANAGER, ANALYST | Approve `{ reason?, policeSubmittedDate? }` |
+| POST | `/review/:reviewId/keep-pending` | ADMIN, MANAGER, ANALYST | Keep Pending `{ reason }` |
+| POST | `/review/:reviewId/remove` | ADMIN, MANAGER, ANALYST | Remove from Review `{ reason }` |
+| POST | `/review/:reviewId/document-type` | ADMIN, MANAGER, ANALYST | Set Document Type `{ documentType, reason }` |
+| POST | `/review/:reviewId/assign-client` | ADMIN, MANAGER, ANALYST | Assign Client `{ passportId, reason }` |
+| POST | `/review/:reviewId/retry` | ADMIN, MANAGER, ANALYST | Retry processing `{ reason? }` |
+| POST | `/review/:reviewId/replace-verified` | ADMIN, MANAGER, ANALYST | Replace verified document `{ existingDocumentId, reason?, policeSubmittedDate? }` |
+| POST | `/review/:reviewId/keep-as-version` | ADMIN, MANAGER, ANALYST | Keep document as version `{ reason? }` |
 | GET | `/police` | ADMIN, MANAGER, ANALYST | Police Workflow (`status`, `search`, `passportId`, paging) |
 | GET | `/reports/daily` | ADMIN, MANAGER, ANALYST | Daily Report (`date=YYYY-MM-DD`, default today) |
-| POST | `/invitations` | ADMIN | Issue new admin invitation `{ name, email, role }` (Phase 12, Checkpoint 2) |
-| GET | `/invitations` | ADMIN | List admin invitations with status (Phase 12, Checkpoint 2) |
-| POST | `/invitations/:id/revoke` | ADMIN | Revoke a pending invitation (Phase 12, Checkpoint 2) |
-| GET | `/auth/invitation?token=...` | Public | Validate setup token without consuming |
-| POST | `/auth/setup-password` | Public | Set password from invitation `{ token, password }` |
+| GET | `/candidates`, `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate list and details (registration and edits use the same roles) |
+| GET | `/users` | ADMIN | List staff users (under `/api/admin/users`) |
+| POST | `/users/invite` | ADMIN | Invite a user `{ name, email, role }`; the backend asks Supabase Auth to send the invitation |
+| PUT | `/users/:userId/role` | ADMIN | Change a user's role |
+| POST | `/users/:userId/deactivate` | ADMIN | Deactivate a user |
+
+Sign-in, sign-out, password recovery and setting a password from an invitation are Supabase Auth's, called by the dashboard directly; the backend only offers `GET /auth/me` and `POST /auth/complete-invite` (activates an invited user after they set a password).
 
 Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, message }]`, refused actions (409) add a `code` such as `ALREADY_RESOLVED`, `VERIFIED_DOCUMENT_EXISTS`, `CLIENT_NOT_FOUND`, `DUPLICATE_ACTIVE_ADMIN` or `NOT_CORRECTABLE`, and insufficient permissions (403) return `{ "message": "Insufficient permissions" }`. 401 means no or an invalid session, 404 an unknown item, 502 a storage failure, and 500 an unexpected error (no details are shown).
 
 ## 7. Security
 
 - Documents are in a **private** storage bucket. The dashboard never receives a storage link or credential: files are streamed through the server to signed-in admins only and shown from a local browser copy.
-- The session authentication token is transported via a secure `httpOnly; SameSite=Strict; Secure (in production)` cookie (`emlynk_admin_token`) set on login and cleared on logout. The frontend never accesses raw JWT secrets. The server verifies on every request that the admin exists and is ACTIVE.
+- Authentication is Supabase Auth's. The dashboard sends the Supabase access token as a bearer header; no cookie authenticates a request, so CSRF protection does not apply. The server verifies the token with Supabase and that the user exists and is `ACTIVE` on every request. Only the browser-safe Supabase URL and anon key reach the browser; the service-role key stays on the server.
 - Role-based authorization (`requireRole` middleware) enforces the principle of least privilege across all endpoints.
-- Admin Invitation System (Phase 12, Checkpoint 2): 256-bit cryptographically secure random invitation tokens, stored exclusively as SHA-256 hashes, with 24-hour expiration, single-use enforcement, bcrypt password hashing, and immutable audit logging (`INVITE_ADMIN`, `COMPLETE_INVITATION`, `REVOKE_INVITATION`).
+- Invitations (ADMIN only): the backend calls the Supabase Auth Admin invite API and Supabase sends the email, with the link returning to `${APP_BASE_URL}/admin/setup-password` (a required, per-environment setting that is never taken from a request). Invitations, completions, role changes and deactivations are written to the audit log (`INVITE_USER`, `REACTIVATE_USER`, `COMPLETE_INVITATION`, `UPDATE_USER_ROLE`, `DEACTIVATE_USER`).
 - The server's Content Security Policy allows scripts only from the dashboard itself; the dashboard loads no external fonts or scripts.
 - Responses contain no storage paths or checksums.
 
@@ -285,7 +291,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 | 2 | Remove from Review | Manual, after inspection, with a required reason and confirmation; permanently deletes the waiting file (with its original and record) or the stored *Review required* document (with its file); the audit entry stays; no undo; never a verified document. |
 | 3 | Automatic removal | Pending documents are never removed automatically. |
 | 4 | Audit log | Every admin action is recorded in an append-only table (`audit_logs`, protected by a database trigger). |
-| 5 | Roles | Implemented in Phase 12 Checkpoint 1 per Proposal §33: four roles (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`) using the existing `Admin.role` column, enforced via `requireRole` middleware with safe 403 responses. |
+| 5 | Roles | Four roles (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`) stored in `public."user".role`, enforced by `requireRole` middleware with safe 403 responses. |
 | 6 | Identity assignment | Admins may link a waiting file to an existing client only; no client is created; the sender's number and the original identity result are kept. |
 | 7 | Police report completion | A verified police report completes the workflow, whenever it arrived. Admins enter or confirm the slip's submitted date when approving, and can set or correct it later. There is no admin upload of the police report. |
 | 8 | Required documents | Configured with `REQUIRED_DOCUMENT_TYPES` (environment, validated at startup); no document-type table and no Settings page. |
@@ -297,8 +303,8 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 | 14 | Daily reporting | Moved from Phase 11 into Phase 10. Daily and current figures are kept apart; figures without a data source are not estimated. |
 | 15 | Sync | Means an explicit reload of the dashboard data only. |
 | 16 | Dark mode | Added on top of the Stitch design through its colour tokens; light mode unchanged. |
-| 17 | Admin Invitations | Self-service onboarding via one-time 24-hour setup links, hashed token storage, bcrypt password encryption, and immutable audit logging (Phase 12, Checkpoint 2). |
-| 18 | Password Reset | Self-service password recovery via 1-hour single-use reset links, SHA-256 token hashing, zero account enumeration, scoped rate limiting, bcrypt encryption, and audit logging. |
+| 17 | User invitations | An ADMIN invites a user; Supabase Auth sends the invitation email and the user sets their password on `/admin/setup-password`. Dashboard SMTP is configured in Supabase, and every step is audit-logged. |
+| 18 | Password recovery | Handled by Supabase Auth: the reset link opens `/admin/reset-password`, and the forgot-password page never reveals whether an email has an account. |
 
 ## 9. Known limitations
 

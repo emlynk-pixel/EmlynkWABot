@@ -106,7 +106,7 @@ export async function getOverview({ db, now = new Date() }) {
         clients,
         failedSubmissions,
     ] = await Promise.all([
-        db.user.count(),
+        db.candidate.count(),
         db.document.count(),
         db.temporaryData.count({ where: { createdDate: { gte: todayStart } } }),
         db.temporaryData.count({ where: PENDING_FILE_WHERE }),
@@ -337,7 +337,7 @@ function latestOfType(documents, documentType) {
 export async function getClientDetails({ db, passportId, now = new Date() }) {
     const id = passportId.toUpperCase();
     const [user, pendingRows, policeDateChanges] = await Promise.all([
-        db.user.findUnique({
+        db.candidate.findUnique({
             where: { passportId: id },
             select: {
                 passportId: true,

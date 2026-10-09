@@ -484,8 +484,8 @@ export function candidateSearchWhere(search) {
 export async function listCandidates({ db, params }) {
     const where = params.search ? candidateSearchWhere(params.search) : {};
     const [total, users] = await Promise.all([
-        db.user.count({ where }),
-        db.user.findMany({
+        db.candidate.count({ where }),
+        db.candidate.findMany({
             where,
             select: {
                 ...userSelect,
@@ -519,9 +519,9 @@ export async function listCandidates({ db, params }) {
 // one row that matches ignoring case (legacy rows may be lowercase; registration
 // compares the same way). Null when there is none, or more than one.
 export async function resolveCandidatePassportId({ db, passportId }) {
-    const exact = await db.user.findUnique({ where: { passportId }, select: { passportId: true } });
+    const exact = await db.candidate.findUnique({ where: { passportId }, select: { passportId: true } });
     if (exact) return exact.passportId;
-    const rows = await db.user.findMany({
+    const rows = await db.candidate.findMany({
         where: { passportId: { equals: passportId, mode: "insensitive" } },
         select: { passportId: true },
         take: 2,
@@ -531,7 +531,7 @@ export async function resolveCandidatePassportId({ db, passportId }) {
 
 // GET /api/admin/candidates/:passportId — null when there is no such candidate.
 export async function getCandidate({ db, passportId }) {
-    const user = await db.user.findUnique({
+    const user = await db.candidate.findUnique({
         where: { passportId },
         select: {
             ...userSelect,
@@ -589,13 +589,13 @@ const uniqueTarget = (error) => [].concat(error?.meta?.target ?? []).join(",");
 // Next free business reference: one more than the highest numeric unique ID,
 // four digits at least (0001, 0002, …), like the existing records.
 async function nextUniqueId(db) {
-    const rows = await db.user.findMany({ select: { uniqueId: true } });
+    const rows = await db.candidate.findMany({ select: { uniqueId: true } });
     const highest = rows.reduce((max, { uniqueId }) => (/^\d+$/.test(uniqueId) ? Math.max(max, Number(uniqueId)) : max), 0);
     return String(highest + 1).padStart(4, "0");
 }
 
 async function assertNicFree(db, nic, exceptPassportId) {
-    const holder = await db.user.findUnique({ where: { nic }, select: { passportId: true } });
+    const holder = await db.candidate.findUnique({ where: { nic }, select: { passportId: true } });
     if (holder && holder.passportId !== exceptPassportId) {
         throw new CandidateError(409, "NIC_EXISTS", "Another candidate is already registered with this NIC.");
     }
@@ -616,7 +616,7 @@ async function assertWhatsappFree(db, whatsappNumber, exceptPassportId) {
 // again (409 with the existing record's passport ID, so the admin can open it).
 export async function createCandidate({ db, values }) {
     // Case-insensitive, like the passport lookup (legacy rows may be lowercase).
-    const existing = await db.user.findFirst({
+    const existing = await db.candidate.findFirst({
         where: { passportId: { equals: values.passportId, mode: "insensitive" } },
         select: { passportId: true },
     });
@@ -634,7 +634,7 @@ export async function createCandidate({ db, values }) {
         const uniqueId = await nextUniqueId(db);
         try {
             await db.$transaction(async (tx) => {
-                await tx.user.create({ data: { ...details, uniqueId } });
+                await tx.candidate.create({ data: { ...details, uniqueId } });
                 if (comment) {
                     await tx.candidateStage.create({ data: { passportId: values.passportId, stage: "CANDIDATE_DETAILS", notes: comment } });
                 }
@@ -653,7 +653,7 @@ export async function createCandidate({ db, values }) {
 }
 
 async function requireCandidate(db, passportId) {
-    const user = await db.user.findUnique({ where: { passportId }, select: userSelect });
+    const user = await db.candidate.findUnique({ where: { passportId }, select: userSelect });
     if (!user) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
     return user;
 }
@@ -679,7 +679,7 @@ export async function updateCandidateDetails({ db, passportId, values }) {
         data.whatsappNumber = whatsappNumber;
     }
     try {
-        await db.user.update({ where: { passportId }, data });
+        await db.candidate.update({ where: { passportId }, data });
     } catch (error) {
         if (isUniqueViolation(error)) {
             const target = uniqueTarget(error);

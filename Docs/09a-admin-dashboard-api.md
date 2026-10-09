@@ -34,13 +34,14 @@ admin/
     ├── index.css             # Tailwind + Stitch design tokens (@theme)
     ├── api/
     │   ├── client.ts         # fetch wrapper, ApiError, safe error messages
-    │   ├── auth.ts           # POST /auth/login, GET /auth/me
+    │   ├── auth.ts           # GET /auth/me, POST /auth/complete-invite (sign-in itself is Supabase Auth)
     │   ├── admin.ts          # typed /api/admin calls and response types
     │   └── useAdminResource.ts  # loading/error/retry; 401 -> sign out
     ├── auth/
-    │   ├── AuthProvider.tsx  # session state, sign in/out, expiry timer
+    │   ├── AuthProvider.tsx  # Supabase session state, sign in/out, token refresh
     │   ├── RequireAuth.tsx   # route guard
-    │   └── tokenStorage.ts   # JWT in sessionStorage (+ memory fallback)
+    │   ├── supabaseClient.ts # browser Supabase client (VITE_SUPABASE_URL + anon key only)
+    │   └── roles.ts          # the four roles and what the UI shows each
     ├── layout/
     │   ├── AdminLayout.tsx   # shell: sidebar + header + content
     │   ├── Sidebar.tsx       # dark sidebar, 240px, collapsible to 64px rail, mobile drawer
@@ -59,7 +60,7 @@ Backend files for the dashboard:
 | File | Purpose |
 |---|---|
 | `src/adminFrontend.js` | Serves `admin/dist` under `/admin` (Checkpoint 1) |
-| `src/middleware/requireActiveAdmin.js` | Shared check for `/api/admin`: valid JWT + admin exists and is ACTIVE |
+| `src/middleware/requireActiveUser.js` | Shared check for `/api/admin`: valid Supabase session + `public."user"` exists and is ACTIVE |
 | `src/routes/admin.js` | `/api/admin` routes, parameter validation, JSON errors |
 | `src/services/adminDashboardService.js` | Prisma queries and response shaping |
 | `src/utils/businessDay.js` | Sri Lanka business-day boundaries (`Asia/Colombo`) |
@@ -75,7 +76,7 @@ Backend files for the dashboard:
 | `src/utils/clientName.js` | Client display name (shared) |
 | `src/createApp.js` | Mounts `/admin` and `/api/admin` (injectable routers for tests) |
 
-`/auth/login`, `/auth/me`, the WhatsApp webhook and document processing are unchanged. The `ACTIVE_ADMIN_STATUS` constant now lives in the shared middleware and is re-exported by `src/routes/auth.js`, so existing imports keep working.
+The WhatsApp webhook and document processing are unaffected by authentication. Sign-in, sign-out, password recovery and invitation email are Supabase Auth's; the backend only exposes `/auth/me` and `/auth/complete-invite` (see `SUPABASE_AUTH.md`).
 
 ## 2. Routes
 
@@ -96,31 +97,31 @@ Every route except `/admin/login` is behind the route guard. No page is a placeh
 
 ## 3. Authentication flow
 
-Uses the existing backend endpoints unchanged (`src/routes/auth.js`).
+Supabase Auth owns credentials and sessions; the backend maps the Supabase session to an application user. Details and security decisions: `SUPABASE_AUTH.md`.
 
-1. **Sign in:** the login form sends `POST /auth/login` `{ email, password }`. On success the backend returns a JWT (HS256, 1 hour).
-2. **Validate:** the app immediately calls `GET /auth/me` with `Authorization: Bearer <token>`. Only then is the admin signed in; the token is stored and the admin's name and role are shown in the header.
-3. **Reload / new visit in the same tab:** a stored token is checked again with `GET /auth/me`. If the backend rejects it (expired, admin deactivated, bad token) or cannot be reached, the token is removed and the login page is shown.
-4. **Expiry:** the app reads the token's `exp` and signs out when it passes. An already-expired stored token is dropped without calling the backend.
-5. **Sign out:** removes the token and returns to the login page. (The backend has no logout endpoint; the token simply expires.)
-6. **Route guard:** while a stored token is being checked, a "Checking your session" screen is shown; without a valid session every protected route redirects to `/admin/login`, which returns to the requested page after sign-in (only paths inside the app are followed).
+1. **Sign in:** the login form calls `supabase.auth.signInWithPassword()` in the browser (public URL and anon key only). The backend never sees the password.
+2. **Validate:** the app immediately calls `GET /auth/me` with `Authorization: Bearer <Supabase access token>`. The backend verifies the token with Supabase, loads `public."user"` by `auth_user_id` and requires `status = ACTIVE`; only then is the user signed in, and the name and role are shown in the header. A session without an ACTIVE application user (403) is signed out again with "Your account is not active."
+3. **Reload / new visit in the same tab:** Supabase restores its stored session and the app checks it again with `GET /auth/me`. If the backend rejects it (signed out, user deactivated) or cannot be reached, the user is shown the login page.
+4. **Refresh:** Supabase refreshes the access token automatically; the app uses the new token for the next request. If the session cannot be refreshed, the app signs out.
+5. **Sign out:** `supabase.auth.signOut()` ends the session (refresh tokens revoked); the access token stops being accepted by the backend at once. The local session is cleared even if Supabase cannot be reached.
+6. **Route guard:** while the session is being restored, a "Checking your session" screen is shown; without a valid session every protected route redirects to `/admin/login`, which returns to the requested page after sign-in (only paths inside the app are followed). A role without dashboard access (REGISTRATION_DESK) lands on Candidates instead of the Overview.
 
-Error messages: the backend's own short messages are shown for 4xx responses ("Invalid email or password", the rate-limit message); 5xx and network errors show a fixed generic text, never backend details.
+Error messages: Supabase's sign-in failures are shown as one generic message ("Invalid email or password"), whether or not the email exists; rate limiting and service errors get short fixed texts, never provider details.
 
-**Token storage:** `sessionStorage` — survives reloads of the tab, is removed when the tab closes, is not shared between tabs and is never sent automatically. If storage is blocked, an in-memory copy keeps the current tab working. Because JavaScript can read it, it relies on the Content Security Policy (scripts from the same origin only) against XSS. Moving to an httpOnly cookie is planned for **Phase 12**.
+**Session storage:** Supabase keeps the session in `sessionStorage` (per tab, cleared when the tab closes). Because JavaScript can read it, the app relies on the Content Security Policy (scripts from the same origin only) against XSS. No cookie authenticates a request, so CSRF protection does not apply.
 
-The first admin account is created with `npm run admin:create` (see `10-security.md`).
+The first user account is created with `npm run user:create` (see `SUPABASE_AUTH.md`). Further users are invited from **Invite User** (ADMIN only).
 
 ## 4. Admin API (`/api/admin`)
 
 ### Authentication middleware
 
-`createRequireActiveAdmin()` (`src/middleware/requireActiveAdmin.js`) runs before every `/api/admin` route:
+`createRequireActiveUser()` (`src/middleware/requireActiveUser.js`) runs before every `/api/admin` route:
 
-1. the existing `authenticateAdmin` checks the Bearer JWT (HS256 only; missing → 401 "Authentication Token is required!", invalid/expired → 401 "Invalid or Expired Token");
-2. the admin named in the token is loaded (profile fields only, never the password hash). If it no longer exists **or** its status is not `ACTIVE`, the answer is the same 401 "Invalid or Expired Token" — a deactivation takes effect on the next request, without saying why.
+1. the Bearer token is verified with Supabase (missing → 401 "Authentication Token is required!"; invalid, expired or signed-out → 401 "Invalid or Expired Token");
+2. `public."user"` is loaded by the verified Supabase user ID. If it does not exist **or** its status is not `ACTIVE`, the answer is 403 `ACCOUNT_NOT_ACTIVE`. The row is read on every request, so a deactivation or role change applies to the next request.
 
-This is the same rule `GET /auth/me` applies; `/auth/me` itself is unchanged (a deleted admin still gets its existing 404 there). A database error is passed to the error handler (generic 500). Every `/api/admin` response has `Cache-Control: no-store`.
+`req.user` is that row (profile fields only). The role is never taken from the token. A Supabase or database error is passed to the error handler (generic 500). Every `/api/admin` response has `Cache-Control: no-store`.
 
 Errors are JSON: `{ "message": "…" }`, with `errors: [{ field, message }]` for invalid parameters (400). Review-action conflicts also carry a `code` (§4c). Unknown paths under `/api/admin` return 404 `{ "message": "Not found" }` (after authentication).
 
@@ -140,7 +141,7 @@ Responses never contain storage paths, checksums or the sender numbers of submis
 | Field | Meaning |
 |---|---|
 | `businessDate` | Today in Sri Lanka (`YYYY-MM-DD`) |
-| `kpis.totalClients` | `users` count |
+| `kpis.totalClients` | `candidate` count |
 | `kpis.totalDocuments` | `documents` count (stored files) |
 | `kpis.pendingReview` | files waiting in `pending/` + stored documents marked `REVIEW_REQUIRED` |
 | `kpis.receivedToday` | submissions (`temporary_data`) since midnight Sri Lanka time |
@@ -311,7 +312,7 @@ A manual admin decision after inspecting a waiting file. Distinct from rejection
 
 ### Consistency and duplicate protection
 
-- Each action runs in one database transaction that first locks the reviewed row (`SELECT … FOR UPDATE`), re-reads its state and only then changes it. Approve also locks the client's `users` row, so two items of the same type for one client can't both become verified. Lock order is always reviewed row, then client.
+- Each action runs in one database transaction that first locks the reviewed row (`SELECT … FOR UPDATE`), re-reads its state and only then changes it. Approve also locks the client's `candidate` row, so two items of the same type for one client can't both become verified. Lock order is always reviewed row, then client.
 - Storage can't join the transaction. Approve copies the file inside the transaction; if anything fails before the commit, the database rolls back and the copy is removed again. The pending original is removed only after the commit. The possible leftovers are a stray object (a copy in the client folder if the process dies before the commit, or the pending original if its removal fails, which is logged); the database is never left saying something the files don't match.
 - A second Approve of the same item gets 409 `ALREADY_RESOLVED` (or 404 once the item is no longer a review item). An identical Keep Pending (same admin, item and reason) within 60 seconds gets 409 `DUPLICATE_ACTION`; a different reason or another admin is a new decision.
 - The page disables both buttons and the dialog while a request runs; the server does not rely on that.
@@ -336,7 +337,7 @@ Purpose: a permanent record of every review decision — who decided what, about
 | Column | Meaning |
 |---|---|
 | `audit_id` | Primary key (UUID) |
-| `admin_id` | The admin who acted (from the token, never from the request body). Foreign key to `admins`, `ON DELETE RESTRICT`: an admin with entries can't be deleted (deactivate instead). |
+| `admin_id` | The admin who acted (from the token, never from the request body). Foreign key to `public."user"` (staff; the table was named `admins` when this section was written), `ON DELETE RESTRICT`: a user with entries can't be deleted (deactivate instead). |
 | `action` | `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT` or `SET_POLICE_DATE` |
 | `temporary_id` | The submission, when there is one |
 | `document_id` | The document created (approve of a waiting file) or reviewed (stored document); for actions on an M4 duplicate, the existing document it copies (never changed, §4k) |
@@ -780,7 +781,7 @@ Bugs found in the product: none. Observed limitations (not changed): a photo rot
 - **Versioning:** the pipeline stores a newer file of a type under the next version name (`passport_v2.pdf`, …; each row keeps its own status, so a client can have two `VERIFIED` rows of a type). An admin's Approve never adds a second verified document of a type (409 `VERIFIED_DOCUMENT_EXISTS`). A rule for replacing a verified document is not part of Phase 10.
 - **Stray storage objects:** if the process stops between the copy and the commit, or removing the pending original fails, an unreferenced object can remain (logged in the second case); records stay correct. No clean-up job exists yet.
 - **Duplicate Keep Pending** is detected as the same admin, item and reason within 60 seconds.
-- **403 is never returned:** inactive admins get 401 (existing authentication rule); there are no roles.
+- **Authorization (superseded):** at this phase there were no roles and an inactive admin got 401. Now a user who is not `ACTIVE` gets 403 `ACCOUNT_NOT_ACTIVE`, and a role that is not allowed gets 403 (§12).
 - OCR boxes, zoom, rotation and the manual field confirmation from the Stitch design depend on stored OCR geometry and are not built.
 - **Queue paging window:** 1000 items per filtered view (the two sources are merged in memory).
 - **PDF preview:** shown in a frame from a `blob:` URL (plus "Open PDF in a new tab"); verified without CSP violations in headless Chrome, where the PDF viewer itself cannot be inspected.
@@ -789,169 +790,68 @@ Bugs found in the product: none. Observed limitations (not changed): a photo rot
 
 Phase 10 is complete in code, tests and documentation; the remaining step is deployment (apply the five migrations, then deploy). Later phases: Phase 11 reminders and warnings for police reports (not built here), Phase 12 roles and the move of the admin token to an httpOnly cookie. Open, undecided items: a view for failed submissions, a rule for replacing a verified document, daily snapshots for historical completeness figures.
 
-## 12. Phase 12 — Checkpoint 1: Authentication & Role-Based Access Control (RBAC)
+## 12. Authentication and role-based access control (RBAC)
 
-Implemented on 2026-09-27 per Proposal §33 and Phase 12 Checkpoint 1 requirements.
+Authentication is Supabase Auth; authorization is the application's. The full description, flows and security decisions are in `SUPABASE_AUTH.md`. This section lists what the dashboard API enforces.
 
-### 12.1 Role Model Architecture
-The three-tier role model recommended in Proposal §33 is implemented directly using the existing `Admin.role` column (no new migrations):
-- **`ADMIN`** (Administrator): Full access. Can do anything, including changing roles.
-- **`MANAGER`** (Manager): Full access across all sections and actions, but cannot change roles.
-- **`ANALYST`** (Analyst): Can review, add candidates, and do basic system works. Cannot access admin and manager specific powers.
-- **`REGISTRATION_DESK`** (Registration Desk): Can only add candidates.
+### 12.1 Roles
 
-### 12.2 Authorization & Security Middleware
-- **`requireRole(allowedRoles)`** middleware (`src/middleware/requireRole.js`):
-  - Applied to every admin endpoint after `createRequireActiveAdmin` (which enforces `status === "ACTIVE"`).
-  - Validates `req.admin.role` against permitted roles.
-  - Rejection response: HTTP 403 `{ "message": "Insufficient permissions" }` (constant safe error message; never leaks role or user details).
-- **Endpoint Permissions Map**:
-  - `ALL_ACTIVE` (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`):
-    - `GET /api/admin/overview`
-    - `GET /api/admin/documents`
-    - `GET /api/admin/documents/:id`
-    - `GET /api/admin/documents/missing`
-    - `GET /api/admin/clients`
-    - `GET /api/admin/clients/:passportId`
-    - `GET /api/admin/police`
-    - `GET /api/admin/reports/daily`
-    - `GET /api/admin/review`
-    - `GET /api/admin/review/:id`
-    - `GET /api/admin/review/:id/file`
-    - `GET /auth/me`
-  - `MANAGERS_UP` (`ADMIN`, `MANAGER`):
-    - `POST /api/admin/review/:id/approve`
-    - `POST /api/admin/review/:id/keep-pending`
-    - `POST /api/admin/review/:id/remove`
-    - `POST /api/admin/review/:id/retry`
-    - `POST /api/admin/review/:id/replace-verified`
-    - `POST /api/admin/review/:id/keep-as-version`
-    - `POST /api/admin/review/:id/document-type`
-    - `POST /api/admin/review/:id/assign-client`
-  - `ADMINS_ONLY` (`ADMIN`):
-    - `POST /api/admin/documents/:id/police-date`
+The role is `public."user".role`, read from the database on every request (never from the token):
 
-### 12.3 Cookie Authentication & Session Architecture
-- Replaced frontend-only token storage with secure cookie-based session transport:
-  - Cookie name: `emlynk_admin_token`
-  - Flags: `HttpOnly: true`, `SameSite: strict`, `Secure: isSecureContext()` (true in production, skipped in dev/test).
-  - Set automatically on successful `POST /auth/login`.
-  - Cleared on `POST /auth/logout` via `res.clearCookie`.
-- Frontend JavaScript (`admin/src`):
-  - Requests include `credentials: "include"`.
-  - Frontend never reads or exposes the raw JWT.
-  - Sign-out is an authenticated server-side action via `POST /auth/logout`.
-- Dual compatibility:
-  - `authenticateAdmin` accepts either `emlynk_admin_token` cookie or `Authorization: Bearer <token>` header, preserving backward compatibility for CLI scripts, testing, and legacy automation.
-  - CSRF defense in depth: `SameSite=Strict` cookie policy prevents cross-site request forgery by default.
+- **`ADMIN`**: everything, including user management (`/api/admin/users`) and Settings.
+- **`MANAGER`**: dashboard, review, corrections and candidates, including police slip date corrections; no user management or Settings.
+- **`ANALYST`**: dashboard reads, review actions, corrections and candidate work; cannot correct police slip dates.
+- **`REGISTRATION_DESK`**: candidate list, lookup, registration and details only.
 
-## 13. Phase 12 — Checkpoint 2: Admin Invitation System
+### 12.2 Authorization middleware
 
-Implemented on 2026-09-28 per Phase 12 Checkpoint 2 requirements.
+- `createRequireActiveUser()` (`src/middleware/requireActiveUser.js`) authenticates the Supabase session and requires an `ACTIVE` application user (see "Authentication middleware" in section 3).
+- `requireRole(allowedRoles)` (`src/middleware/requireRole.js`) is applied to every admin route after it. It checks `req.user.role` and refuses with HTTP 403 and a constant message that never reveals the role or user.
 
-### 13.1 Overview & Architecture
-The Admin Invitation System provides a secure, self-service onboarding flow for administrative users (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`) without exposing credentials, shared secrets, or raw token data:
-1. An active administrator (`role: "ADMIN"`) issues an invitation through the dashboard or API.
-2. The server generates a high-entropy 256-bit cryptographically secure random token (`crypto.randomBytes(32).toString("hex")`).
-3. Only the SHA-256 hash of the token (`crypto.createHash("sha256").update(token).digest("hex")`) is persisted in the database (`admin_invitations.token_hash`). Raw tokens are never stored, logged, or returned in API responses.
-4. The invitation is configured with a strict 24-hour expiration window.
-5. An invitation email is formatted (HTML and plain text) and dispatched containing the setup link (`/admin/setup-password?token=<rawToken>`).
-6. The invitee opens the link, previews their assigned role and email, and sets their password.
-7. The password is encrypted using the existing bcrypt implementation (`hashPassword`, minimum 8 characters).
-8. The account status becomes `ACTIVE` only upon successful password creation.
-9. The invitation token is marked `ACCEPTED` and becomes permanently unusable (one-time use).
-10. All lifecycle events (`INVITE_ADMIN`, `COMPLETE_INVITATION`, `REVOKE_INVITATION`) are recorded in the append-only `audit_logs` table.
+Endpoint tiers (`src/routes/admin.js`):
 
-### 13.2 Database Schema & Migration
-A dedicated, minimal table `admin_invitations` was created via migration `20260928090000_phase12_admin_invitations`:
-- `invitation_id`: UUID primary key.
-- `email`: lowercased recipient email address (indexed).
-- `name`: invitee full name.
-- `role`: assigned role (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`).
-- `token_hash`: unique SHA-256 hash of the invitation token (indexed).
-- `invited_by`: foreign key to `admins.admin_id` (`ON DELETE RESTRICT`).
-- `status`: plain text lifecycle status (`PENDING`, `ACCEPTED`, `REVOKED`, `EXPIRED`, default `PENDING`).
-- `expires_at`: timestamp marking the 24-hour validity limit.
-- `created_at`: creation timestamp.
-- `accepted_at`: timestamp of successful password configuration.
-- `revoked_at`: timestamp of administrative revocation.
+| Tier | Roles | Routes |
+|---|---|---|
+| Dashboard reads | ADMIN, MANAGER, ANALYST | overview, documents, clients, police, reports, review (read), candidate call logs |
+| Candidates | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | candidate list, registration, details |
+| Review, corrections, candidate work | ADMIN, MANAGER, ANALYST | review actions, temporary document delete, candidate stages and documents, call logs |
+| Police date correction | ADMIN, MANAGER | `POST /documents/:id/police-date` |
+| Users and Settings | ADMIN | `/api/admin/users/*`, `/api/admin/settings/sheet-sync/*` |
 
-### 13.3 Endpoints & Authorization Rules
-| Method | Endpoint | Allowed Role | Description |
-|---|---|---|---|
-| `POST` | `/api/admin/invitations` | `ADMIN` | Issue a new admin invitation (name, email, role). Dispatches email, writes audit log. |
-| `GET` | `/api/admin/invitations` | `ADMIN` | List all invitations with computed status (`PENDING`, `ACCEPTED`, `REVOKED`, `EXPIRED`). |
-| `POST` | `/api/admin/invitations/:id/revoke` | `ADMIN` | Revoke a pending invitation. Writes audit log. |
-| `GET` | `/auth/invitation?token=...` | Public | Validate invitation token before password setup; returns safe profile details without consuming the token. |
-| `POST` | `/auth/setup-password` | Public | Set password from token, hash with bcrypt, activate admin account, mark token accepted, write audit log. |
+`GET /auth/me` and `POST /auth/complete-invite` need a Supabase session but not a particular role.
 
-### 13.4 Security Controls & Hardening
-- **High-Entropy Tokens:** 256 bits of cryptographic randomness prevent brute-force or guessing attacks.
-- **Hashed Storage:** Storing only SHA-256 hashes ensures database compromises do not leak valid invitation setup tokens.
-- **Single-Use Enforcement:** Tokens transition to `ACCEPTED` in a transaction and reject subsequent uses with `ALREADY_USED`.
-- **24-Hour Expiration:** Expired tokens are rejected with `EXPIRED` status code.
-- **Duplicate Prevention:** Active admin accounts cannot be re-invited; attempting to invite an existing active email returns HTTP 409 `DUPLICATE_ACTIVE_ADMIN`.
-- **RBAC Enforcement:** Only administrators with `role: "ADMIN"` may issue, list, or revoke invitations. Callers with `MANAGER`, `ANALYST` or `REGISTRATION_DESK` roles receive HTTP 403 `Insufficient permissions`.
-- **Audit Logging:** Every invitation issuance (`INVITE_ADMIN`), completion (`COMPLETE_INVITATION`), and revocation (`REVOKE_INVITATION`) produces an append-only row in `audit_logs`.
-- **Safe Error Responses:** Generic 500 error responses mask internal exceptions and SQL errors.
+### 12.3 Transport and CSRF
 
-### 13.5 Email Architecture
-- Clean configuration placeholders: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`, `ADMIN_SETUP_URL_BASE`, `APP_BASE_URL`.
-- Development / Test Harness: If SMTP credentials are absent or in `test`/`development` mode, dispatched emails are captured in an in-memory test queue (`getSentEmails()`, `getLastSentEmail()`) and logged safely without leaking sensitive tokens or blocking local development.
+Every request authenticates with `Authorization: Bearer <Supabase access token>`. No cookie authenticates a request, so CSRF protection does not apply (decision recorded in `SUPABASE_AUTH.md`).
 
-### 13.6 User Interface
-- **Invitations Page (`/admin/invitations`):**
-  - Restricted to `ADMIN` role (non-admin visitors receive an "Access Restricted" notice).
-  - "Invite New Administrator" form: full name, email address, role selector (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`), and submit button with inline feedback.
-  - "Invitation Status & History" table: lists invitee name, email, role badge, status badge (`Pending Setup`, `Active`, `Expired`, `Revoked`), expiration and creation timestamps, and inline "Revoke" action.
-- **Setup Password Page (`/admin/setup-password`):**
-  - Public route (outside `RequireAuth`).
-  - Automatically loads and verifies the `?token=...` parameter.
-  - Displays invitee name, email, and role badge.
-  - Password and confirm password inputs with visibility toggle and minimum 8-character validation.
-  - Success screen with direct navigation to Sign In (`/admin/login`).
-  - Friendly error screens for invalid, expired, revoked, or already-used invitation tokens.
+## 13. User management and invitations (ADMIN only)
 
-## 14. Self-Service Password Reset System
+Routes in `src/routes/users.js`, mounted at `/api/admin/users`; every one needs the ADMIN role.
 
-### 14.1 Functional Overview
-Provides secure, self-service password recovery for administrator accounts:
-1. Admin enters their email address on the Login page (`/admin/login`) or navigates to `/admin/forgot-password`.
-2. Backend receives `POST /auth/forgot-password`. If an active admin account exists with `status === "ACTIVE"`, it generates a 256-bit cryptographically secure random token, stores its SHA-256 hash in `admin_password_resets` with a 1-hour expiration, and dispatches a password reset email via `emailService`.
-3. To prevent email or account enumeration, `POST /auth/forgot-password` always returns a generic response (`"If the account exists, a password reset link has been sent."`) regardless of whether the email exists, is active, or is deactivated.
-4. The admin clicks the link in their email (`/admin/reset-password?token=...`). The frontend verifies the token with `GET /auth/reset-password?token=...` without consuming it.
-5. The admin inputs and confirms their new password (satisfying length requirements of 8–128 characters).
-6. Submitting the form calls `POST /auth/reset-password`. The backend verifies the token hash, ensures the token has not expired and has not already been used, encrypts the new password using bcrypt, marks the token as used, creates an append-only `audit_logs` record, and preserves the account's existing status (inactive accounts are never automatically activated).
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/admin/users` | List application users (profile fields only) |
+| `POST` | `/api/admin/users/invite` | Invite a user: `{ name, email, role }` (any of the four roles) |
+| `PUT` | `/api/admin/users/:userId/role` | Change a user's role (not your own) |
+| `POST` | `/api/admin/users/:userId/deactivate` | Deactivate a user (not your own account) |
 
-### 14.2 Database Schema (`admin_password_resets`)
-- `reset_id`: UUID primary key.
-- `admin_id`: foreign key referencing `admins(admin_id)` with `ON DELETE CASCADE`.
-- `token_hash`: SHA-256 hex string of the raw random token (unique index).
-- `expires_at`: timestamp marking 1-hour expiration.
-- `used_at`: timestamp marking single-use consumption (null while unused).
-- `created_at`: creation timestamp.
+**Invitation flow.**
 
-### 14.3 API Endpoints
-| Method | Endpoint | Access | Rate Limit | Description |
-|---|---|---|---|---|
-| `POST` | `/auth/forgot-password` | Public | 5 req / 15 min per IP | Initiates reset; emails active admins; returns generic 200 response |
-| `GET` | `/auth/reset-password?token=...` | Public | None | Pre-flight token validation without consuming it |
-| `POST` | `/auth/reset-password` | Public | None | Consumes token, updates bcrypt hash, marks used, writes audit log |
+1. The backend validates the role and email. The role is never taken from Supabase metadata.
+2. The backend calls the Supabase Auth Admin API `inviteUserByEmail()`. **Supabase sends the email**, using the SMTP server and Invite template configured in the Supabase dashboard. The application sends no email and has no SMTP settings.
+3. The redirect is `${APP_BASE_URL}/admin/setup-password`. `APP_BASE_URL` is a required, environment-specific server setting and the redirect is never taken from the request. If it is missing or invalid the invitation is refused with HTTP 503 `INVITE_NOT_CONFIGURED` before anything is sent.
+4. `public."user"` is created or updated by email, linked by `auth_user_id`, with status `INVITED`. An `ACTIVE` email is refused (409).
+5. The invitee opens the Supabase link, sets a password with Supabase on `/admin/setup-password`, and `POST /auth/complete-invite` turns the account `ACTIVE`.
 
-### 14.4 Security Controls
-- **Cryptographic Randomness:** 256-bit random tokens (`crypto.randomBytes(32).toString('hex')`).
-- **No Plaintext Tokens:** Only SHA-256 hashes are stored in the database.
-- **Strict Single-Use:** Tokens cannot be reused; subsequent submissions fail with `ALREADY_USED`.
-- **1-Hour Expiration:** Tokens expire after 60 minutes and are rejected with `EXPIRED`.
-- **Zero Account Enumeration:** Response messages and error shapes never reveal whether an email exists or whether an account is active.
-- **Brute-Force & Flood Protection:** Scoped rate limiter (`createResetRateLimiter`) caps `POST /auth/forgot-password` to 5 requests per 15 minutes per IP.
-- **Preserved Inactivity:** Deactivated or disabled accounts cannot be activated via password reset; resetting their password keeps their status `INACTIVE` or `DISABLED`, and login remains blocked.
-- **Audit Logging:** Every password reset produces an immutable entry in `audit_logs` (`action: "RESET_PASSWORD"`).
+**User interface.** *Invite User* (`/admin/invitations`) and *Change Roles* (`/admin/roles`), both ADMIN only.
 
-### 14.5 User Interface
-- **Login Page (`/admin/login`):** Features a "Forgot password?" shortcut directly beside the password field heading.
-- **Forgot Password Page (`/admin/forgot-password`):** Clean single-field email request form with clear loading indicators and a generic confirmation screen instructing users to check their email.
-- **Reset Password Page (`/admin/reset-password`):** Pre-flights the reset token, handles expired/invalid links gracefully with recovery shortcuts, enforces password matching and 8-character minimums, provides password visibility toggling, and displays a confirmation state routing back to `/login`.
+## 14. Password recovery
 
+Password recovery is entirely Supabase Auth's. The backend has no recovery endpoints and stores no reset tokens.
 
+1. The user enters their email on `/admin/forgot-password`; the app calls `supabase.auth.resetPasswordForEmail()` with the redirect `<site origin>/admin/reset-password`, built from the page's own origin (the same site as `APP_BASE_URL` in a correctly configured environment). The page shows the same confirmation whether or not the email has an account.
+2. Supabase sends the email (dashboard SMTP and Reset password template).
+3. The link opens `/admin/reset-password` with a recovery session; the user chooses a new password (`supabase.auth.updateUser`) and signs in again.
+4. An expired or already-used link shows a "Reset Link Problem" page with a way to request a new one.
 
+Rate limiting for recovery emails is Supabase's. `/admin/reset-password` and `/admin/setup-password` must be in the Supabase allowed redirect URLs.

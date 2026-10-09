@@ -1,413 +1,153 @@
+// Authentication: a Supabase session (Authorization: Bearer <access token>)
+// is the only credential. The backend verifies it with Supabase, then loads
+// the application user by auth_user_id on every request. Sign-in itself is
+// Supabase's (admin frontend); here Supabase is a stand-in
+// (test/helpers/fakeSupabaseAuth.js).
 import { describe, test, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
-import jwt from "jsonwebtoken";
 
-import { createAuthRouter, ACTIVE_ADMIN_STATUS } from "../src/routes/auth.js";
+import { createAuthRouter } from "../src/routes/auth.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
-import { hashPassword } from "../src/utils/password.js";
 import { createFakeAdminDb, noRateLimit } from "./helpers/fakeAdminDb.js";
+import { authIdFor, createFakeVerifier, tokenFor, tokenForAuthId } from "./helpers/fakeSupabaseAuth.js";
 
-// Synthetic accounts and secrets only.
-process.env.JWT_SECRET = "test-jwt-secret-placeholder";
-const PASSWORD = "Correct-Horse-7";
-const WRONG_PASSWORD = "wrong-password";
-const GENERIC_LOGIN_FAILURE = { message: "Invalid email or password" };
+const ACCOUNT_NOT_ACTIVE = { message: "Your account is not active. Contact an administrator.", code: "ACCOUNT_NOT_ACTIVE" };
 
 let server;
 let baseUrl;
 let db;
+let verifyAccessToken;
+let verifierFailure = null;
 
 before(async () => {
-    const passwordHash = await hashPassword(PASSWORD);
     db = createFakeAdminDb([
-        { adminId: "admin-active", name: "Active Admin", email: "active@example.invalid", passwordHash, role: "ADMIN", status: ACTIVE_ADMIN_STATUS },
-        { adminId: "admin-inactive", name: "Inactive Admin", email: "inactive@example.invalid", passwordHash, role: "ADMIN", status: "INACTIVE" },
-        { adminId: "admin-disabled", name: "Disabled Admin", email: "disabled@example.invalid", passwordHash, role: "ADMIN", status: "DISABLED" },
+        { adminId: "user-active", name: "Active User", email: "active@example.invalid", role: "MANAGER", status: "ACTIVE" },
+        { adminId: "user-inactive", name: "Inactive User", email: "inactive@example.invalid", role: "ADMIN", status: "INACTIVE" },
+        { adminId: "user-invited", name: "Invited User", email: "invited@example.invalid", role: "ANALYST", status: "INVITED" },
+        { adminId: "user-signout", name: "Signing Out", email: "signout@example.invalid", role: "ANALYST", status: "ACTIVE" },
     ]);
+    const fake = createFakeVerifier();
+    verifyAccessToken = async (token) => {
+        if (verifierFailure) throw verifierFailure;
+        return fake(token);
+    };
+    verifyAccessToken.revoke = fake.revoke;
 
     const app = express();
     app.use(express.json());
-    // Rate limiting has its own tests (loginRateLimit.test.js); here it would
-    // block the many deliberate failures these login-logic tests make.
-    app.use("/auth", createAuthRouter({ db, loginLimiter: noRateLimit, apiLimiter: noRateLimit }));
+    app.use("/auth", createAuthRouter({ db, verifyAccessToken, apiLimiter: noRateLimit }));
     app.use(errorHandler);
-
-    await new Promise((resolve) => {
-        server = app.listen(0, "127.0.0.1", resolve);
-    });
+    await new Promise((resolve) => { server = app.listen(0, "127.0.0.1", resolve); });
     baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
+after(() => server?.close());
 
-after(() => server.close());
+const me = async (token) => {
+    const response = await fetch(`${baseUrl}/auth/me`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    return { status: response.status, headers: response.headers, text: await response.text() };
+};
 
-// Nothing below should log account data; collect anything that is logged.
-let logged;
-let realConsoleError;
-beforeEach(() => {
-    logged = [];
-    realConsoleError = console.error;
-    console.error = (...args) => logged.push(args);
-});
-afterEach(() => {
-    console.error = realConsoleError;
-});
-
-async function login(email, password) {
-    const response = await fetch(`${baseUrl}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+describe("GET /auth/me (Supabase session -> application user)", () => {
+    let logged;
+    let originalError;
+    beforeEach(() => {
+        logged = [];
+        originalError = console.error;
+        console.error = (...args) => logged.push(args);
     });
-    const text = await response.text();
-    return { status: response.status, text, body: JSON.parse(text) };
-}
+    afterEach(() => {
+        console.error = originalError;
+        verifierFailure = null;
+    });
 
-async function getProfile(token) {
-    const response = await fetch(`${baseUrl}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
-    const text = await response.text();
-    return { status: response.status, text, body: JSON.parse(text) };
-}
-
-describe("POST /auth/login", () => {
-    test("1. ACTIVE admin + correct password -> 200 with a JWT", async () => {
-        const result = await login("active@example.invalid", PASSWORD);
-
+    test("valid session of an ACTIVE user -> the minimal profile; role from the database", async () => {
+        const result = await me(tokenFor("user-active"));
         assert.equal(result.status, 200);
-        assert.equal(result.body.message, "Login successful");
-        const payload = jwt.verify(result.body.token, process.env.JWT_SECRET);
-        assert.equal(payload.adminId, "admin-active");
-        assert.ok(payload.exp - payload.iat === 3600, "token expires after 1 hour");
+        assert.deepEqual(JSON.parse(result.text), { user: { userId: "user-active", email: "active@example.invalid", name: "Active User", role: "MANAGER", status: "ACTIVE" } });
+        assert.equal(result.headers.get("cache-control"), "no-store");
+        assert.doesNotMatch(result.text, /authUserId|password|token|secret/i, "no identity link, credential or token in the response");
     });
 
-    test("the response and token never contain the password or its hash", async () => {
-        const result = await login("active@example.invalid", PASSWORD);
-        const payload = jwt.decode(result.body.token);
-
-        assert.ok(!result.text.includes(PASSWORD));
-        assert.ok(!result.text.includes("$2b$"), "no bcrypt hash in the response");
-        assert.equal(payload.passwordHash, undefined);
-    });
-
-    test("2. ACTIVE admin + wrong password -> 401 generic", async () => {
-        const result = await login("active@example.invalid", WRONG_PASSWORD);
-
+    test("missing session -> 401", async () => {
+        const result = await me(null);
         assert.equal(result.status, 401);
-        assert.deepEqual(result.body, GENERIC_LOGIN_FAILURE);
+        assert.deepEqual(JSON.parse(result.text), { message: "Authentication Token is required!" });
     });
 
-    test("3. unknown email -> 401, same generic message", async () => {
-        const result = await login("nobody@example.invalid", PASSWORD);
-
-        assert.equal(result.status, 401);
-        assert.deepEqual(result.body, GENERIC_LOGIN_FAILURE);
-    });
-
-    test("4. INACTIVE admin + correct password -> 401, same generic message", async () => {
-        const result = await login("inactive@example.invalid", PASSWORD);
-
-        assert.equal(result.status, 401);
-        assert.deepEqual(result.body, GENERIC_LOGIN_FAILURE);
-    });
-
-    test("5. INACTIVE admin + wrong password -> 401, same generic message", async () => {
-        const result = await login("inactive@example.invalid", WRONG_PASSWORD);
-
-        assert.equal(result.status, 401);
-        assert.deepEqual(result.body, GENERIC_LOGIN_FAILURE);
-    });
-
-    test("any status other than ACTIVE is refused (e.g. DISABLED)", async () => {
-        const result = await login("disabled@example.invalid", PASSWORD);
-
-        assert.equal(result.status, 401);
-        assert.deepEqual(result.body, GENERIC_LOGIN_FAILURE);
-    });
-
-    test("6. no token is returned for an inactive admin", async () => {
-        const result = await login("inactive@example.invalid", PASSWORD);
-
-        assert.equal(result.body.token, undefined);
-        assert.doesNotMatch(result.text, /eyJ/, "no JWT anywhere in the response");
-    });
-
-    test("7. failures are indistinguishable and never reveal status or existence", async () => {
-        const failures = await Promise.all([
-            login("active@example.invalid", WRONG_PASSWORD),
-            login("nobody@example.invalid", PASSWORD),
-            login("inactive@example.invalid", PASSWORD),
-            login("inactive@example.invalid", WRONG_PASSWORD),
-            login("disabled@example.invalid", PASSWORD),
-        ]);
-
-        const texts = new Set(failures.map((f) => `${f.status} ${f.text}`));
-        assert.equal(texts.size, 1, "every failure must look exactly the same");
-
-        for (const { text } of failures) {
-            assert.doesNotMatch(text, /inactive|disabled|status|active|exist|not found/i);
+    test("invalid, expired or forged token -> 401", async () => {
+        for (const token of ["not-a-token", "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiQURNSU4ifQ.forged", tokenForAuthId("unknown")]) {
+            const result = await me(token);
+            if (token.startsWith("test-access-token:")) continue; // valid session, no user: covered below
+            assert.equal(result.status, 401, token);
+            assert.deepEqual(JSON.parse(result.text), { message: "Invalid or Expired Token" });
         }
     });
 
-    test("failed logins log nothing (no emails, passwords or hashes)", async () => {
-        await login("inactive@example.invalid", PASSWORD);
-        await login("active@example.invalid", WRONG_PASSWORD);
-
-        assert.equal(logged.length, 0);
+    test("signed out (session revoked in Supabase) -> 401 on the very next request", async () => {
+        const token = tokenFor("user-signout");
+        assert.equal((await me(token)).status, 200);
+        verifyAccessToken.revoke(token);
+        assert.equal((await me(token)).status, 401);
     });
 
-    test("missing fields still get the existing 400", async () => {
-        const response = await fetch(`${baseUrl}/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "active@example.invalid" }),
-        });
-        assert.equal(response.status, 400);
+    test("valid session, no public.user row -> 403 (fails closed)", async () => {
+        const result = await me(tokenForAuthId(authIdFor("someone-never-invited")));
+        assert.equal(result.status, 403);
+        assert.deepEqual(JSON.parse(result.text), ACCOUNT_NOT_ACTIVE);
     });
-});
 
-describe("POST /auth/login: input validation (SEC-013)", () => {
-    const postRaw = async (body, contentType = "application/json") => {
-        const response = await fetch(`${baseUrl}/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": contentType },
-            body,
-        });
-        const text = await response.text();
-        return { status: response.status, text };
-    };
-
-    test("non-string email or password -> 400, never reaches the database", async () => {
-        const bodies = [
-            { email: { $ne: null }, password: PASSWORD },
-            { email: ["active@example.invalid"], password: PASSWORD },
-            { email: "active@example.invalid", password: { $gt: "" } },
-            { email: 12345, password: PASSWORD },
-            { email: "active@example.invalid", password: true },
-        ];
-        for (const body of bodies) {
-            const result = await postRaw(JSON.stringify(body));
-            assert.equal(result.status, 400, JSON.stringify(body));
-            assert.deepEqual(JSON.parse(result.text), { message: "Invalid login request" });
+    test("INACTIVE and INVITED (setup not completed) users -> 403", async () => {
+        for (const id of ["user-inactive", "user-invited"]) {
+            const result = await me(tokenFor(id));
+            assert.equal(result.status, 403, id);
+            assert.deepEqual(JSON.parse(result.text), ACCOUNT_NOT_ACTIVE);
         }
     });
 
-    test("over-long email or password -> 400, input not echoed", async () => {
-        const longEmail = `${"a".repeat(260)}@example.invalid`;
-        const longPassword = "p".repeat(10_000);
-
-        for (const body of [{ email: longEmail, password: PASSWORD }, { email: "active@example.invalid", password: longPassword }]) {
-            const result = await postRaw(JSON.stringify(body));
-            assert.equal(result.status, 400);
-            assert.ok(!result.text.includes("aaaa") && !result.text.includes("pppp"));
-        }
-    });
-
-    test("the longest allowed values are still accepted for checking", async () => {
-        const result = await login("active@example.invalid", "p".repeat(128));
-        assert.equal(result.status, 401);
-    });
-
-    test("empty strings and a body that isn't JSON -> 400", async () => {
-        assert.equal((await postRaw(JSON.stringify({ email: "", password: "" }))).status, 400);
-        assert.equal((await postRaw("email=a&password=b", "text/plain")).status, 400);
-    });
-
-    test("the password is never echoed in any response", async () => {
-        const secret = "Unique-Secret-4821";
-        for (const email of ["active@example.invalid", "nobody@example.invalid"]) {
-            const result = await login(email, secret);
-            assert.ok(!result.text.includes(secret));
-            assert.ok(!result.text.includes(email));
-        }
-    });
-});
-
-describe("POST /auth/login: timing (SEC-012)", () => {
-    const timeLogin = async (email, password) => {
-        const start = process.hrtime.bigint();
-        await login(email, password);
-        return Number(process.hrtime.bigint() - start) / 1e6;
-    };
-    const median = (values) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
-
-    test("an unknown email takes about as long as a wrong password (a bcrypt comparison runs)", async () => {
-        await timeLogin("nobody@example.invalid", WRONG_PASSWORD); // creates the dummy hash once
-
-        const unknown = [];
-        const wrong = [];
-        for (let i = 0; i < 5; i++) {
-            unknown.push(await timeLogin("nobody@example.invalid", WRONG_PASSWORD));
-            wrong.push(await timeLogin("active@example.invalid", WRONG_PASSWORD));
-        }
-
-        // Without the dummy comparison an unknown email returns in ~1 ms while
-        // bcrypt takes tens of ms; with it both are bcrypt-bound.
-        const ratio = median(unknown) / median(wrong);
-        assert.ok(ratio > 0.5, `unknown-email login is too fast (ratio ${ratio.toFixed(2)})`);
-    });
-
-    test("an admin without a password hash is refused like any other failure", async () => {
-        db.rows.push({ adminId: "admin-nohash", name: "No Hash", email: "nohash@example.invalid", passwordHash: null, role: "ADMIN", status: ACTIVE_ADMIN_STATUS });
-        try {
-            const result = await login("nohash@example.invalid", PASSWORD);
-            assert.equal(result.status, 401);
-            assert.deepEqual(result.body, GENERIC_LOGIN_FAILURE);
-        } finally {
-            db.rows.pop();
-        }
-    });
-});
-
-describe("GET /auth/me", () => {
-    test("8. ACTIVE admin token -> profile, without the password hash", async () => {
-        const { body: { token } } = await login("active@example.invalid", PASSWORD);
-        const result = await getProfile(token);
-
-        assert.equal(result.status, 200);
-        assert.equal(result.body.admin.adminId, "admin-active");
-        assert.equal(result.body.admin.passwordHash, undefined);
-        assert.ok(!result.text.includes("$2b$"));
-    });
-
-    test("9. admin deactivated after the token was issued -> 401, status not revealed", async () => {
-        const { body: { token } } = await login("active@example.invalid", PASSWORD);
-        const row = db.rows.find((r) => r.adminId === "admin-active");
-
+    test("deactivation and role changes apply to the next request (no stale token claims)", async () => {
+        const row = db.rows.find((r) => r.adminId === "user-active");
+        row.role = "ANALYST";
+        assert.equal(JSON.parse((await me(tokenFor("user-active"))).text).user.role, "ANALYST");
         row.status = "INACTIVE";
+        assert.equal((await me(tokenFor("user-active"))).status, 403);
+        Object.assign(row, { role: "MANAGER", status: "ACTIVE" });
+    });
+
+    test("the identity comes only from the verified token, never the request", async () => {
+        const response = await fetch(`${baseUrl}/auth/me?authUserId=${authIdFor("user-active")}`, {
+            headers: { "X-Auth-User-Id": authIdFor("user-active"), "Content-Type": "application/json" },
+        });
+        assert.equal(response.status, 401);
+    });
+
+    test("Supabase unreachable -> generic 500; the token is never logged", async () => {
+        verifierFailure = Object.assign(new Error("Supabase token verification failed"), { name: "AuthVerificationError" });
+        const token = tokenFor("user-active");
+        const result = await me(token);
+        assert.equal(result.status, 500);
+        assert.deepEqual(JSON.parse(result.text), { message: "Internal server error" });
+        assert.ok(!JSON.stringify(logged).includes(token), "access token never logged");
+    });
+
+    test("database failure while loading the user -> generic 500, no details", async () => {
+        const original = db.user.findUnique;
+        db.user.findUnique = async () => { throw Object.assign(new Error("The table `public.user` does not exist"), { code: "P2021", meta: { table: "public.user" } }); };
         try {
-            const result = await getProfile(token);
-
-            assert.equal(result.status, 401);
-            assert.deepEqual(result.body, { message: "Invalid or Expired Token" });
-            assert.doesNotMatch(result.text, /inactive|status/i);
-        } finally {
-            row.status = ACTIVE_ADMIN_STATUS;
-        }
-    });
-
-    test("reactivated admin can use the same (unexpired) token again", async () => {
-        const { body: { token } } = await login("active@example.invalid", PASSWORD);
-        const result = await getProfile(token);
-
-        assert.equal(result.status, 200);
-    });
-
-    test("missing or invalid token -> 401 (unchanged)", async () => {
-        const missing = await fetch(`${baseUrl}/auth/me`);
-        assert.equal(missing.status, 401);
-
-        const invalid = await getProfile("not-a-jwt");
-        assert.equal(invalid.status, 401);
-    });
-});
-
-describe("POST /auth/login: email case", () => {
-    test("the email is matched case-insensitively (stored lowercased)", async () => {
-        const result = await login("  Active@Example.INVALID ", PASSWORD);
-        assert.equal(result.status, 200);
-    });
-});
-
-describe("admin token checks (SEC-022)", () => {
-    const payload = { adminId: "admin-active", email: "active@example.invalid", role: "ADMIN" };
-    const base64url = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
-
-    test("login tokens are HS256 and expire after one hour", async () => {
-        const { body } = await login("active@example.invalid", PASSWORD);
-        const decoded = jwt.decode(body.token, { complete: true });
-        assert.equal(decoded.header.alg, "HS256");
-        assert.equal(decoded.payload.exp - decoded.payload.iat, 3600);
-    });
-
-    test("expired token -> 401", async () => {
-        const token = jwt.sign({ ...payload, exp: Math.floor(Date.now() / 1000) - 10 }, process.env.JWT_SECRET);
-        assert.equal((await getProfile(token)).status, 401);
-    });
-
-    test("unsigned (alg: none) token -> 401", async () => {
-        const token = `${base64url({ alg: "none", typ: "JWT" })}.${base64url(payload)}.`;
-        assert.equal((await getProfile(token)).status, 401);
-    });
-
-    test("token signed with another secret or another algorithm -> 401", async () => {
-        assert.equal((await getProfile(jwt.sign(payload, "some-other-secret-value-0123456789"))).status, 401);
-        assert.equal((await getProfile(jwt.sign(payload, process.env.JWT_SECRET, { algorithm: "HS512" }))).status, 401);
-    });
-
-    test("payload changed after signing -> 401", async () => {
-        const [header, , signature] = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1h" }).split(".");
-        const forged = `${header}.${base64url({ ...payload, adminId: "admin-other" })}.${signature}`;
-        assert.equal((await getProfile(forged)).status, 401);
-    });
-
-    test("malformed Authorization headers -> 401", async () => {
-        const valid = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1h" });
-        for (const header of [valid, `Basic ${valid}`, `bearer ${valid}`, "Bearer", "Bearer ", `Token ${valid}`]) {
-            const response = await fetch(`${baseUrl}/auth/me`, { headers: { Authorization: header } });
-            assert.equal(response.status, 401, header.slice(0, 12));
-        }
-    });
-
-    test("token responses never say why a token was refused", async () => {
-        const expired = jwt.sign({ ...payload, exp: 1 }, process.env.JWT_SECRET);
-        const bad = await getProfile(expired);
-        assert.deepEqual(bad.body, { message: "Invalid or Expired Token" });
-        assert.doesNotMatch(bad.text, /jwt|expired at|signature|malformed/i);
-    });
-});
-
-describe("POST /auth/login: Prisma error diagnostics", () => {
-    // A schema-mismatch error (table/column missing in the live database),
-    // shaped like a real PrismaClientKnownRequestError, thrown from the one
-    // query the login handler itself makes.
-    test("db.admin.findUnique throwing a Prisma error -> still a generic 500, but the log carries the code and safe meta", async () => {
-        const realFindUnique = db.admin.findUnique;
-        db.admin.findUnique = async () => {
-            throw Object.assign(new Error('The table `public.admins` does not exist in the current database.'), {
-                code: "P2021",
-                meta: { table: "public.admins" },
-            });
-        };
-
-        try {
-            const result = await login("active@example.invalid", PASSWORD);
-
+            const result = await me(tokenFor("user-active"));
             assert.equal(result.status, 500);
-            assert.deepEqual(result.body, { message: "Internal server error" });
-            assert.ok(!result.text.includes("does not exist"), "raw Prisma message must not reach the client");
-
-            assert.equal(logged.length, 1);
-            const [label, details] = logged[0];
-            assert.equal(label, "Login error:");
-            assert.deepEqual(details, {
-                errorType: "Error",
-                prismaCode: "P2021",
-                prismaMeta: { table: "public.admins" },
-            });
-
-            const serialized = JSON.stringify(logged);
-            assert.ok(!serialized.includes("does not exist"), "raw Prisma message must never be logged");
-            assert.ok(!serialized.includes("active@example.invalid"), "the attempted email must never be logged");
+            assert.ok(!result.text.includes("does not exist"));
         } finally {
-            db.admin.findUnique = realFindUnique;
+            db.user.findUnique = original;
         }
     });
+});
 
-    test("a non-Prisma error during login logs no code/meta fields (shape unchanged)", async () => {
-        const realFindUnique = db.admin.findUnique;
-        db.admin.findUnique = async () => {
-            throw new Error("boom");
-        };
-
-        try {
-            const result = await login("active@example.invalid", PASSWORD);
-            assert.equal(result.status, 500);
-
-            assert.equal(logged.length, 1);
-            const [, details] = logged[0];
-            assert.deepEqual(details, { errorType: "Error" });
-        } finally {
-            db.admin.findUnique = realFindUnique;
+describe("POST /auth/complete-invite authentication", () => {
+    test("needs a valid Supabase session", async () => {
+        for (const headers of [{}, { Authorization: "Bearer not-a-token" }]) {
+            const response = await fetch(`${baseUrl}/auth/complete-invite`, { method: "POST", headers });
+            assert.equal(response.status, 401);
         }
     });
 });

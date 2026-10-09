@@ -3,7 +3,7 @@ import { PrismaClient } from './generated/prisma/index.js';
 async function main() {
     const prisma = new PrismaClient();
     try {
-        const users = await prisma.user.findMany({
+        const users = await prisma.candidate.findMany({
             where: { whatsappNumber: { not: null } }
         });
         const counts = {};

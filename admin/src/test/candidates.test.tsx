@@ -40,7 +40,8 @@ const DETAILS: CandidateDetails = {
     requiredDocuments: (["PASSPORT", "MEDICAL", "POLICE_REPORT", "SCAN"] as const).map((documentType) => ({ documentType, included: documentType === "PASSPORT" })),
 };
 
-const VIEWER = { ...ADMIN, role: "VIEWER" };
+// A role that may see candidates but not change them (the legacy VIEWER role no longer exists).
+const VIEWER = { ...ADMIN, role: "REGISTRATION_DESK" };
 
 // A document upload: the API issues a signed URL for one staged object
 // (upload-target), the browser PUTs the file there, straight to storage, and
@@ -118,7 +119,7 @@ describe("Candidates list", () => {
     });
 
     test("a viewer cannot add candidates", async () => {
-        signedInBackend({ "GET /auth/me": { status: 200, body: { admin: VIEWER } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
+        signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
         renderApp("/candidates");
         await screen.findByRole("table", { name: "Candidates" });
         expect(screen.queryByRole("link", { name: "Add candidate" })).not.toBeInTheDocument();
@@ -219,7 +220,7 @@ describe("Candidate deployment", () => {
         });
 
         test("a viewer sees the test details but can't change them", async () => {
-            signedInBackend({ "GET /auth/me": { status: 200, body: { admin: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withTest("PASS", "2026-09-28") } });
+            signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withTest("PASS", "2026-09-28") } });
             renderApp("/candidates/N0000002?stage=TEST_DETAILS");
             expect(await screen.findByLabelText("Test result")).toBeDisabled();
             expect(screen.getByLabelText("Test result")).toHaveValue("PASS");
@@ -309,7 +310,7 @@ describe("Candidate deployment", () => {
 
         test("a viewer sees the files but can't upload or remove", async () => {
             signedInBackend({
-                "GET /auth/me": { status: 200, body: { admin: VIEWER } },
+                "GET /auth/me": { status: 200, body: { user: VIEWER } },
                 "GET /api/admin/candidates/N0000002": { status: 200, body: withPolice({ ROMANIA: document("r", "ROMANIA", "romania.pdf") }) },
             });
             renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
@@ -436,7 +437,7 @@ describe("Candidate deployment", () => {
         });
 
         test("a viewer has no Remove", async () => {
-            signedInBackend({ "GET /auth/me": { status: 200, body: { admin: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withNic } });
+            signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withNic } });
             renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
             await screen.findByLabelText("NIC document file");
             expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
@@ -680,7 +681,7 @@ describe("Call log", () => {
 
     test("a viewer sees the calls but can't add one", async () => {
         signedInBackend({
-            "GET /auth/me": { status: 200, body: { admin: VIEWER } },
+            "GET /auth/me": { status: 200, body: { user: VIEWER } },
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
             "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
         });
@@ -967,9 +968,9 @@ describe("Candidate registration", () => {
     });
 
     test("a viewer sees no registration form", async () => {
-        signedInBackend({ "GET /auth/me": { status: 200, body: { admin: VIEWER } } });
+        signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates/new");
-        expect(await screen.findByText("Candidate registration needs an admin or analyst account.")).toBeInTheDocument();
+        expect(await screen.findByText("Candidate registration needs an admin, manager or analyst account.")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Register candidate" })).not.toBeInTheDocument();
     });
 });
@@ -1005,7 +1006,7 @@ describe("Candidate Document Submission: Police Slip", () => {
 
     test("VIEWER cannot upload a Police slip", async () => {
         signedInBackend({
-            "GET /auth/me": { status: 200, body: { admin: VIEWER } },
+            "GET /auth/me": { status: 200, body: { user: VIEWER } },
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS }
         });
         renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");

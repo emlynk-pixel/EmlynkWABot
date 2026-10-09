@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Link } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
-import { getReviewQueue, type DocumentItem, type PendingItem } from "../api/admin";
+import { getReviewQueue } from "../api/admin";
 import { Icon } from "./Icon";
 import { reviewReasonLabel } from "./reviewLabels";
 
@@ -19,9 +19,9 @@ type NotificationItem = {
 
 const STORAGE_KEY_PREFIX = "emlynk.admin.readNotifications.";
 
-function getReadIds(adminId: string): string[] {
+function getReadIds(userId: string): string[] {
     try {
-        const stored = window.localStorage.getItem(STORAGE_KEY_PREFIX + adminId);
+        const stored = window.localStorage.getItem(STORAGE_KEY_PREFIX + userId);
         if (stored) {
             const parsed = JSON.parse(stored);
             return Array.isArray(parsed) ? parsed.map(String) : [];
@@ -32,16 +32,16 @@ function getReadIds(adminId: string): string[] {
     return [];
 }
 
-function saveReadIds(adminId: string, ids: string[]) {
+function saveReadIds(userId: string, ids: string[]) {
     try {
-        window.localStorage.setItem(STORAGE_KEY_PREFIX + adminId, JSON.stringify(ids));
+        window.localStorage.setItem(STORAGE_KEY_PREFIX + userId, JSON.stringify(ids));
     } catch {
         // safe fallback if storage is full/unavailable
     }
 }
 
 export function NotificationBell() {
-    const { admin, token } = useAuth();
+    const { user, token } = useAuth();
     const [isOpen, setIsOpen] = useState(false);
     const [items, setItems] = useState<NotificationItem[]>([]);
     const [readIds, setReadIds] = useState<Set<string>>(new Set());
@@ -62,7 +62,7 @@ export function NotificationBell() {
     }, [isOpen]);
 
     const fetchNotifications = useCallback(async (abortSignal?: AbortSignal) => {
-        if (!token || !admin) return;
+        if (!token || !user) return;
         setLoading(true);
         setError(false);
         try {
@@ -88,10 +88,10 @@ export function NotificationBell() {
 
             // Reconcile read IDs: remove stale ones no longer active in the queue
             const currentIds = new Set(allItems.map(i => i.reviewId));
-            const storedRead = getReadIds(admin.adminId);
+            const storedRead = getReadIds(user.userId);
             const validReadIds = storedRead.filter(id => currentIds.has(id));
 
-            saveReadIds(admin.adminId, validReadIds);
+            saveReadIds(user.userId, validReadIds);
             setReadIds(new Set(validReadIds));
         } catch (e: unknown) {
             if ((e as Error)?.name !== "AbortError") {
@@ -100,7 +100,7 @@ export function NotificationBell() {
         } finally {
             setLoading(false);
         }
-    }, [token, admin]);
+    }, [token, user]);
 
     // Initial fetch
     useEffect(() => {
@@ -118,18 +118,18 @@ export function NotificationBell() {
     };
 
     const markAsRead = (reviewId: string) => {
-        if (!admin || readIds.has(reviewId)) return;
+        if (!user || readIds.has(reviewId)) return;
         const next = new Set(readIds);
         next.add(reviewId);
         setReadIds(next);
-        saveReadIds(admin.adminId, Array.from(next));
+        saveReadIds(user.userId, Array.from(next));
     };
 
     const markAllAsRead = () => {
-        if (!admin) return;
+        if (!user) return;
         const allIds = items.map(i => i.reviewId);
         setReadIds(new Set(allIds));
-        saveReadIds(admin.adminId, allIds);
+        saveReadIds(user.userId, allIds);
     };
 
     const unreadCount = items.length - readIds.size;

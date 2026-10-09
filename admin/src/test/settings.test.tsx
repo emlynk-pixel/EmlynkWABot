@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import type { SheetSyncRun, SheetSyncStatus } from "../api/sheetSync";
-import { ADMIN, renderApp, signedInBackend, stubBackend, fakeJwt, TOKEN_KEY, OVERVIEW, type FetchRoutes } from "./helpers";
+import { ADMIN, renderApp, signedInBackend, stubBackend, OVERVIEW, type FetchRoutes, SESSION_TOKEN, fakeAuth, renderAppSignedIn, RENDER_STEP } from "./helpers";
 
 // Settings -> Google Sheet Sync. Synthetic data only; the backend is stubbed.
 
@@ -30,8 +30,8 @@ const STATUS: SheetSyncStatus = {
 const STATUS_PATH = "/api/admin/settings/sheet-sync/status";
 
 function asRole(role: string, routes: FetchRoutes = {}) {
-    window.sessionStorage.setItem(TOKEN_KEY, fakeJwt());
-    return stubBackend({ "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role } } }, "GET /api/admin/overview": { status: 200, body: OVERVIEW }, ...routes });
+    fakeAuth.setSession(SESSION_TOKEN);
+    return stubBackend({ "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role } } }, "GET /api/admin/overview": { status: 200, body: OVERVIEW }, ...routes });
 }
 
 const settingsCalls = (calls: { path: string }[]) => calls.filter((c) => c.path.startsWith("/api/admin/settings"));
@@ -42,7 +42,7 @@ describe("Settings navigation", () => {
         renderApp("/settings");
         const nav = await screen.findByRole("navigation", { name: "Main navigation" });
         const labels = within(nav).getAllByRole("link").map((l) => l.textContent);
-        expect(labels.slice(-3)).toEqual(["Invite Admin", "Change Roles", "Settings"]);
+        expect(labels.slice(-3)).toEqual(["Invite User", "Change Roles", "Settings"]);
         expect(within(nav).getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
         expect(within(nav).getByRole("link", { name: "Change Roles" })).not.toHaveAttribute("aria-current");
         expect(await screen.findByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
@@ -87,10 +87,10 @@ describe("Google Sheet Sync section", () => {
     test("shows a loading state first, and an error inside the section only when the status request fails", async () => {
         let resolve: (value: { status: number; body: unknown }) => void = () => {};
         signedInBackend({ [`GET ${STATUS_PATH}`]: () => new Promise((r) => { resolve = r; }) });
-        renderApp("/settings");
-        expect(await screen.findByText("Loading sync status…")).toBeInTheDocument();
+        await renderAppSignedIn("/settings");
+        expect(await screen.findByText("Loading sync status…", {}, RENDER_STEP)).toBeInTheDocument();
         resolve({ status: 503, body: { message: "Service unavailable" } });
-        expect(await screen.findByRole("alert")).toBeInTheDocument();
+        expect(await screen.findByRole("alert", {}, RENDER_STEP)).toBeInTheDocument();
         // The rest of the console still works.
         expect(screen.getByRole("navigation", { name: "Main navigation" })).toBeInTheDocument();
         expect(screen.getByRole("heading", { name: "Google Sheet Sync" })).toBeInTheDocument();

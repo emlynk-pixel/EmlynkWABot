@@ -1,9 +1,8 @@
 import express from "express";
 
-import { createRequireActiveAdmin } from "../middleware/requireActiveAdmin.js";
-import { requireRole, ADMIN_ROLES } from "../middleware/requireRole.js";
+import { createRequireActiveUser } from "../middleware/requireActiveUser.js";
+import { requireRole, ROLES } from "../middleware/requireRole.js";
 import { createApiRateLimiter } from "../middleware/apiRateLimiter.js";
-import { doubleCsrfProtection } from "../middleware/csrf.js";
 import {
     getOverview,
     listDocuments,
@@ -46,11 +45,10 @@ import {
     setPoliceSubmittedDate,
 } from "../services/adminCorrectionService.js";
 import { getDailyReport, getMonthlyOverview, parseDailyReportQuery, parseMonthlyOverviewQuery } from "../services/adminReportService.js";
-import { createInvitationRouter } from "./adminInvitations.js";
+import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 import { deleteTemporaryDocument } from "../services/temporaryDataService.js";
-import { listAdmins, updateAdminRole, AdminAccountError } from "../services/adminAccountService.js";
 import {
     addCallLog,
     CandidateError,
@@ -87,7 +85,7 @@ function contentDisposition(fileName) {
 // MANAGER: full access except user management.
 // ADMIN: full access including user management.
 // REGISTRATION_DESK: only candidate registration.
-const { ADMIN, MANAGER, ANALYST, REGISTRATION_DESK } = ADMIN_ROLES;
+const { ADMIN, MANAGER, ANALYST, REGISTRATION_DESK } = ROLES;
 // The set of roles allowed for each endpoint tier.
 const ALL_ACTIVE = [ADMIN, MANAGER, ANALYST];                   // overview, reports, etc
 const REGISTRATION_UP = [ADMIN, MANAGER, ANALYST, REGISTRATION_DESK]; // candidate basic routes
@@ -100,26 +98,22 @@ const ADMINS_ONLY = [ADMIN];                                    // administrator
 // corrections (document type, client, police slip date); every change is
 // audited. There is no reject action and no route that changes or deletes
 // an audit entry, and nothing removes a pending item automatically.
-// Every route needs a valid token of an ACTIVE admin. Responses hold client
+// Every route needs a valid Supabase session of an ACTIVE application user. Responses hold client
 // data, so browsers and proxies must not cache them.
 // Phase 12: RBAC is enforced per-endpoint via requireRole.
 // Errors: { message } or { message, errors: [{ field, message }] }; review
 // action conflicts also carry a machine-readable { code }.
-export function createAdminRouter({ 
-    db, 
-    bucket, 
-    requireAdmin = createRequireActiveAdmin({ db }),
+export function createAdminRouter({
+    db,
+    bucket,
+    verifyAccessToken,
+    authAdmin,
+    requireAdmin = createRequireActiveUser({ db, verifyAccessToken }),
     apiLimiter = createApiRateLimiter(),
 } = {}) {
     const router = express.Router();
 
     router.use(apiLimiter);
-
-    // Defence in depth on top of the httpOnly + SameSite=Strict auth cookie
-    // (see middleware/csrf.js); GET reads are unaffected (ignoredMethods),
-    // and Bearer-authenticated callers (CLI tools, tests) are exempt since
-    // they can't be forged cross-site.
-    router.use(doubleCsrfProtection);
 
     router.use((req, res, next) => {
         res.set("Cache-Control", "no-store");
@@ -255,7 +249,7 @@ export function createAdminRouter({
 
     // ---------------------------------------------------------------- review actions (ANALYST and above)
 
-    // Review actions. The admin comes from the token (req.admin), never the body.
+    // Review actions. The acting user is the authenticated one (req.user), never the body.
     // `parse` validates the body and returns the action's arguments or { errors }.
     const runAction = async (res, parsed, needsBucket, run) => {
         if (parsed.errors) {
@@ -276,7 +270,7 @@ export function createAdminRouter({
         const parsed = parse ? parse(req.body) : parseReviewActionBody(req.body, { reasonRequired, acceptsPoliceDate });
         return runAction(res, parsed, needsBucket, ({ client, storage }) => {
             const { errors, ...values } = parsed;
-            return action({ ...values, db: client, bucket: storage, admin: req.admin, reviewId: req.params.reviewId });
+            return action({ ...values, db: client, bucket: storage, admin: req.user, reviewId: req.params.reviewId });
         });
     };
 
@@ -314,7 +308,7 @@ export function createAdminRouter({
         }
         
         try {
-            await deleteTemporaryDocument(temporaryId, req.admin, { db, bucket });
+            await deleteTemporaryDocument(temporaryId, req.user, { db, bucket });
             return res.status(200).json({ action: "DELETE_TEMPORARY_DOCUMENT", temporaryId, deleted: true });
         } catch (error) {
             if (error.message === "Temporary document not found.") {
@@ -337,7 +331,7 @@ export function createAdminRouter({
         }
         const parsed = parsePoliceDateBody(req.body);
         return runAction(res, parsed, false, ({ client }) => setPoliceSubmittedDate({
-            db: client, admin: req.admin, documentId: req.params.documentId, reason: parsed.reason, policeSubmittedDate: parsed.policeSubmittedDate,
+            db: client, admin: req.user, documentId: req.params.documentId, reason: parsed.reason, policeSubmittedDate: parsed.policeSubmittedDate,
         }));
     });
 
@@ -453,7 +447,7 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await finalizeUpload({
             db: client,
             bucket: storage,
-            admin: req.admin,
+            admin: req.user,
             passportId: await storedCandidateId(client, req.params.passportId),
             ...parsed.values,
         })));
@@ -474,7 +468,7 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await removeCandidateDocument({
             db: client,
             bucket: storage,
-            admin: req.admin,
+            admin: req.user,
             passportId: await storedCandidateId(client, req.params.passportId),
             documentId: req.params.documentId,
             reason: parsed.values.reason,
@@ -495,34 +489,12 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.status(201).json(await addCallLog({
-            db: client, admin: req.admin, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
+            db: client, admin: req.user, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
         })));
     });
 
-    // ---------------------------------------------------------------- admin invitations (ADMIN only)
-    router.use("/invitations", createInvitationRouter({ db }));
-
-
-    // ---------------------------------------------------------------- admin accounts (ADMIN only)
-    router.get("/admins", requireRole(ADMINS_ONLY), async (req, res) => {
-        const client = await resolveDb(db);
-        return res.json(await listAdmins({ db: client }));
-    });
-
-    router.put("/admins/:adminId/role", requireRole(ADMINS_ONLY), async (req, res) => {
-        const { role } = req.body;
-        if (!role) return res.status(400).json({ message: "Role is required" });
-        try {
-            const client = await resolveDb(db);
-            return res.json(await updateAdminRole({ db: client, admin: req.admin, targetAdminId: req.params.adminId, newRole: role }));
-        } catch (error) {
-            if (error instanceof AdminAccountError) {
-                return res.status(error.status).json({ message: error.message, code: error.code });
-            }
-            console.error("Update admin role error:", error);
-            return res.status(500).json({ message: "Internal server error" });
-        }
-    });
+    // ---------------------------------------------------------------- users (ADMIN only)
+    router.use("/users", createUsersRouter({ db, authAdmin }));
 
     // ---------------------------------------------------------------- settings: Google Sheet Sync (ADMIN only)
     // Reads PostgreSQL and records run requests; never calls Google.

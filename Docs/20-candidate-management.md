@@ -10,7 +10,7 @@ This document covers the Candidate Management feature introduced after Phase 10:
 
 **Candidate Management** is a section of the admin dashboard (`/admin/candidates`) for managing deployment candidates — people being prepared for overseas deployment. It is separate from the main WhatsApp-driven document review workflow (clients).
 
-A candidate is stored as a row in the `users` table identified by their **passport ID**. The same table is used for WhatsApp clients; a candidate who later sends documents via WhatsApp is the same row.
+A candidate is stored as a row in the `candidate` table (named `users` before migration `20261008120000_rename_candidate_user_tables`) identified by their **passport ID**. The same table is used for WhatsApp clients; a candidate who later sends documents via WhatsApp is the same row.
 
 | | |
 |---|---|
@@ -51,7 +51,7 @@ A candidate is stored as a row in the `users` table identified by their **passpo
 
 | Table | Purpose |
 |---|---|
-| `users` | One row per candidate (same table used for WhatsApp clients) |
+| `candidate` | One row per candidate (same table used for WhatsApp clients) |
 | `candidate_stages` | One row per stage per candidate: completion, notes, timestamps |
 | `documents` | All uploaded files (passport, NIC, skill video, medical, police report, scan) |
 | `audit_logs` | Every document upload is appended here |
@@ -88,7 +88,7 @@ flowchart TD
    - **Passport** (required, PDF/JPG/PNG, ≤ 50 MB)
    - NIC document (optional)
    - Skill video (optional, `video/mp4`, `video/quicktime`, `video/webm`)
-4. On submit, `POST /api/admin/candidates` creates the `users` row and stage rows, then documents are uploaded one by one.
+4. On submit, `POST /api/admin/candidates` creates the `candidate` row and stage rows, then documents are uploaded one by one.
 5. On success the admin is navigated to the candidate's deployment page at `CANDIDATE_DETAILS` stage.
 
 **Fields collected at registration:**
@@ -192,11 +192,11 @@ The following issues were fixed in a single release. The stage order, completion
 
   ```sql
   -- prisma/migrations/20261001140000_whatsapp_unique_constraint/migration.sql
-  CREATE UNIQUE INDEX "users_whatsapp_number_unique"
-  ON "users" ("whatsapp_number")
-  WHERE "whatsapp_number" IS NOT NULL
-    AND "whatsapp_number" NOT IN ('+94771581916');
+  CREATE UNIQUE INDEX "users_whatsapp_number_key" ON "users"("whatsapp_number")
+  WHERE "whatsapp_number" IS NOT NULL AND "whatsapp_number" != '+94771581916';
   ```
+
+  Historical SQL: migration `20261008120000_rename_candidate_user_tables` later renamed the table to `candidate` and this index to `candidate_whatsapp_number_key`.
 
   The exclusion covers one pre-existing duplicate that cannot be cleaned up without business input. All new registrations are enforced at the database level.
 
@@ -412,7 +412,9 @@ const { PrismaClient } = require('./generated/prisma');
 async function main() {
     const prisma = new PrismaClient();
     try {
-        const users = await prisma.user.findMany({
+        // Candidates are prisma.candidate (the model was named User when this
+        // script was first written; prisma.user is now the staff table).
+        const users = await prisma.candidate.findMany({
             where: { whatsappNumber: { not: null } }
         });
         const counts = {};

@@ -44,7 +44,7 @@
 - **MUST** validate all request parameters, query strings, and request bodies against strict schemas/regexes.
 - **MUST** enforce RBAC via `requireRole` on every administrative route.
 - **MUST** compare security-sensitive tokens using `crypto.timingSafeEqual`.
-- **MUST** store passwords using bcrypt (minimum 10 rounds).
+- **MUST NOT** store or handle passwords in the application: Supabase Auth owns credentials, sessions and password recovery (Docs/SUPABASE_AUTH.md).
 
 ## 10. Logging & Privacy
 - **MUST NOT** log raw PII (passport numbers, full telephone numbers, full names, extracted document text).

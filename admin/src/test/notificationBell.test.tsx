@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, beforeEach, vi, afterEach } from "vitest";
 import { MemoryRouter } from "react-router";
@@ -14,15 +14,17 @@ vi.mock("../api/admin", async (importOriginal) => {
     };
 });
 
-const MOCK_ADMIN = { adminId: "admin-1", email: "test@example.com", name: "Test Admin", role: "ADMIN", status: "ACTIVE" };
+const MOCK_USER = { userId: "user-1", email: "test@example.com", name: "Test Admin", role: "ADMIN", status: "ACTIVE" };
 
-function renderBell(admin = MOCK_ADMIN) {
+function renderBell(user = MOCK_USER) {
     vi.spyOn(authProvider, "useAuth").mockReturnValue({
-        admin: admin as any,
+        user: user as any,
         token: "fake-token",
         status: "authenticated",
+        notice: null,
         signIn: vi.fn(),
-        signOut: vi.fn()
+        signOut: vi.fn(),
+        refreshUser: vi.fn(),
     });
 
     return render(
@@ -174,7 +176,7 @@ describe("NotificationBell", () => {
     });
 
     test("resolved item disappears after refresh and stale localStorage IDs are pruned", async () => {
-        window.localStorage.setItem("emlynk.admin.readNotifications.admin-1", JSON.stringify(["stale-id", "valid-id"]));
+        window.localStorage.setItem("emlynk.admin.readNotifications.user-1", JSON.stringify(["stale-id", "valid-id"]));
         
         mockQueueResponse([{ reviewId: "valid-id", receivedDate: "2026-09-25T01:00:00Z" }]);
         renderBell();
@@ -184,22 +186,22 @@ describe("NotificationBell", () => {
         });
 
         // "stale-id" should be removed from localStorage since it's not active anymore
-        const stored = JSON.parse(window.localStorage.getItem("emlynk.admin.readNotifications.admin-1")!);
+        const stored = JSON.parse(window.localStorage.getItem("emlynk.admin.readNotifications.user-1")!);
         expect(stored).toEqual(["valid-id"]);
     });
 
     test("localStorage is isolated by admin ID", async () => {
-        window.localStorage.setItem("emlynk.admin.readNotifications.admin-2", JSON.stringify(["rev-1"]));
+        window.localStorage.setItem("emlynk.admin.readNotifications.user-2", JSON.stringify(["rev-1"]));
         
         mockQueueResponse([{ reviewId: "rev-1", receivedDate: "2026-09-25T01:00:00Z" }]);
-        renderBell(MOCK_ADMIN); // admin-1
+        renderBell(MOCK_USER); // user-1
         
-        // admin-1 should see it as unread (count 1)
+        // user-1 should see it as unread (count 1)
         expect(await screen.findByText("1")).toBeInTheDocument();
     });
 
     test("malformed localStorage does not crash UI", async () => {
-        window.localStorage.setItem("emlynk.admin.readNotifications.admin-1", "{invalid json");
+        window.localStorage.setItem("emlynk.admin.readNotifications.user-1", "{invalid json");
         
         mockQueueResponse([{ reviewId: "rev-1", receivedDate: "2026-09-25T01:00:00Z" }]);
         expect(() => renderBell()).not.toThrow();

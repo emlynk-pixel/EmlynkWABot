@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import type { DailyReport } from "../api/admin";
 import { todayInSriLanka } from "../components/format";
-import { renderApp, signedInBackend } from "./helpers";
+import { renderApp, signedInBackend, renderAppSignedIn, RENDER_STEP } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Mock jspdf at module level (vitest hoists vi.mock)
@@ -56,17 +56,17 @@ describe("Daily Report — PDF Export", () => {
     test("Export PDF button is visible when report data is loaded", async () => {
         signedInBackend({ "GET /api/admin/reports/daily": { status: 200, body: report() } });
         renderApp("/reports/daily");
-        expect(await screen.findByRole("button", { name: "Export PDF" })).toBeInTheDocument();
+        expect(await screen.findByRole("button", { name: "Export PDF" }, RENDER_STEP)).toBeInTheDocument();
     });
 
     test("Export PDF button is NOT visible while loading", async () => {
         let release: (value: { status: number; body: unknown }) => void = () => {};
         signedInBackend({ "GET /api/admin/reports/daily": () => new Promise((resolve) => { release = resolve; }) });
-        renderApp("/reports/daily");
-        expect(await screen.findByText("Loading daily report…")).toBeInTheDocument();
+        await renderAppSignedIn("/reports/daily");
+        expect(await screen.findByText("Loading daily report…", {}, RENDER_STEP)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Export PDF" })).not.toBeInTheDocument();
         release({ status: 200, body: report() });
-        expect(await screen.findByRole("button", { name: "Export PDF" })).toBeInTheDocument();
+        expect(await screen.findByRole("button", { name: "Export PDF" }, RENDER_STEP)).toBeInTheDocument();
     });
 
     test("Export PDF button is NOT visible on error", async () => {

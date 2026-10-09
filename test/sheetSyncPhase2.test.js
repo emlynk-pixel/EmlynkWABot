@@ -33,12 +33,12 @@ function candidateRow(n, overrides = {}) {
     };
 }
 
-// Just enough of Prisma's users model; records every query.
+// Just enough of Prisma's candidate model; records every query.
 function fakeDb(rows) {
     const queries = [];
     return {
         queries,
-        user: {
+        candidate: {
             async findUnique(args) {
                 queries.push({ method: "findUnique", ...args });
                 return structuredClone(rows.find((r) => r.uniqueId === args.where.uniqueId) ?? null);
