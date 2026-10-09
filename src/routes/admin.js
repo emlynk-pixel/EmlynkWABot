@@ -45,6 +45,7 @@ import {
     setPoliceSubmittedDate,
 } from "../services/adminCorrectionService.js";
 import { getDailyReport, getMonthlyOverview, parseDailyReportQuery, parseMonthlyOverviewQuery } from "../services/adminReportService.js";
+import { listAuditLogs, parseAuditLogQuery } from "../services/auditLogService.js";
 import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
@@ -491,6 +492,17 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.status(201).json(await addCallLog({
             db: client, admin: req.user, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
         })));
+    });
+
+    // ---------------------------------------------------------------- audit logs (ADMIN only, read-only)
+    // There is deliberately no route that changes, deletes or clears an entry.
+    router.get("/audit-logs", requireRole(ADMINS_ONLY), async (req, res) => {
+        const parsed = parseAuditLogQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await listAuditLogs({ db: client, params: parsed.params }));
     });
 
     // ---------------------------------------------------------------- users (ADMIN only)
