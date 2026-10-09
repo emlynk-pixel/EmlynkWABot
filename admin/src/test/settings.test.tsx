@@ -37,12 +37,12 @@ function asRole(role: string, routes: FetchRoutes = {}) {
 const settingsCalls = (calls: { path: string }[]) => calls.filter((c) => c.path.startsWith("/api/admin/settings"));
 
 describe("Settings navigation", () => {
-    test("ADMIN: Settings is the last sidebar item, after Change Roles; active state and breadcrumb on /settings", async () => {
+    test("ADMIN: Settings is the last sidebar item, after Change Roles and Audit Logs; active state and breadcrumb on /settings", async () => {
         signedInBackend({ [`GET ${STATUS_PATH}`]: { status: 200, body: STATUS } });
         renderApp("/settings");
         const nav = await screen.findByRole("navigation", { name: "Main navigation" });
         const labels = within(nav).getAllByRole("link").map((l) => l.textContent);
-        expect(labels.slice(-3)).toEqual(["Invite User", "Change Roles", "Settings"]);
+        expect(labels.slice(-4)).toEqual(["Invite User", "Change Roles", "Audit Logs", "Settings"]);
         expect(within(nav).getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
         expect(within(nav).getByRole("link", { name: "Change Roles" })).not.toHaveAttribute("aria-current");
         expect(await screen.findByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
