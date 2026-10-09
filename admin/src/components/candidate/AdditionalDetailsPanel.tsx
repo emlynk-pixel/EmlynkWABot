@@ -80,7 +80,8 @@ export function validateAdditionalDetails(form: Form, today = todayInSriLanka())
 const SERVER_MESSAGES: Record<string, string> = { "must not be in the future": "This date is in the future." };
 const serverMessage = (message: string) => SERVER_MESSAGES[message] ?? `This value ${message}.`;
 
-export function AdditionalDetailsPanel({ passportId, canEdit }: { passportId: string; canEdit: boolean }) {
+// onSaved: told after each save (the page's Additional details step).
+export function AdditionalDetailsPanel({ passportId, canEdit, onSaved }: { passportId: string; canEdit: boolean; onSaved?: (view: AdditionalDetailsView) => void }) {
     const resource = useAdminResource(`candidate-additional:${passportId}`, (token, signal) => getAdditionalDetails(token, passportId, signal));
     const [saved, setSaved] = useState<AdditionalDetailsView | null>(null);
     const [notice, setNotice] = useState(false);
@@ -102,7 +103,7 @@ export function AdditionalDetailsPanel({ passportId, canEdit }: { passportId: st
             view={data}
             canEdit={canEdit}
             notice={notice}
-            onSaved={(view) => { setSaved(view); setNotice(true); }}
+            onSaved={(view) => { setSaved(view); setNotice(true); onSaved?.(view); }}
             onEdit={() => setNotice(false)}
         />
     );

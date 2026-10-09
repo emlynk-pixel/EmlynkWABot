@@ -135,11 +135,11 @@ describe("Candidate deployment", () => {
         renderApp("/candidates/N0000002");
         const stepper = await screen.findByRole("navigation", { name: "Deployment stages" });
         expect(within(stepper).getByRole("button", { name: "1. Test details (incomplete)" })).toHaveAttribute("aria-current", "step");
-        expect(within(stepper).getByRole("button", { name: "4. IVS interview (completed out of order)" })).toBeInTheDocument();
+        expect(within(stepper).getByRole("button", { name: "5. Visa approval (completed out of order)" })).toBeInTheDocument();
         expect(screen.getByRole("heading", { name: "Test details" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Call log" })).toBeInTheDocument();
 
-        await userEvent.setup().click(within(stepper).getByRole("button", { name: /^3\. Document submission/ }));
+        await userEvent.setup().click(within(stepper).getByRole("button", { name: /^4\. Document submission/ }));
         expect(await screen.findByRole("heading", { name: "Document submission" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Export PDF" })).toBeInTheDocument();
         // Completed by the documents themselves: no checkbox, no Save.
@@ -1059,7 +1059,7 @@ describe("REGISTRATION_DESK: the whole Candidates area", () => {
         for (const upload of screen.getAllByRole("button", { name: /Upload|Replace/ })) expect(upload).toBeEnabled();
 
         const user = userEvent.setup();
-        await user.click(within(screen.getByRole("navigation", { name: "Deployment stages" })).getByRole("button", { name: /^4. IVS interview/ }));
+        await user.click(within(screen.getByRole("navigation", { name: "Deployment stages" })).getByRole("button", { name: /^5\. Visa approval/ }));
         expect(await screen.findByRole("checkbox", { name: "Stage completed" })).toBeEnabled();
         expect(screen.getByLabelText("Notes")).toBeEnabled();
     });

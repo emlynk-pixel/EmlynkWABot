@@ -4,7 +4,7 @@ import { describe, expect, test, vi } from "vitest";
 import { CANDIDATE_STAGES, type AdditionalDetails, type AdditionalDetailsView, type CandidateDetails } from "../api/candidates";
 import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from "./helpers";
 
-// Candidate > Additional Details tab. Synthetic data only; the backend is stubbed.
+// Candidate > Additional details (opened from its progress step). Synthetic data only; the backend is stubbed.
 
 const DETAILS: CandidateDetails = {
     candidate: {
@@ -43,29 +43,28 @@ function backend(view: AdditionalDetailsView, routes: FetchRoutes = {}, user = A
     });
 }
 
+// Opened from its progress step (there is no tab bar).
 const openTab = async () => {
-    await userEvent.setup().click(await screen.findByRole("tab", { name: "Additional Details" }, RENDER_STEP));
+    const stepper = await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
+    await userEvent.setup().click(within(stepper).getByRole("button", { name: /^3\. Additional details/ }));
     return screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
 };
 const puts = (calls: { method: string; path: string; body: unknown }[]) => calls.filter((c) => c.method === "PUT" && c.path === PATH);
 
-describe("Additional Details tab", () => {
-    test("is a tab next to Deployment; the stages stay on Deployment", async () => {
+describe("Additional Details", () => {
+    test("no Deployment / Additional Details tab bar; the form opens from its step, with its sections", async () => {
         backend(NEW_VIEW);
         renderApp("/candidates/N0000002");
-        const tabs = await screen.findByRole("tablist", { name: "Candidate sections" }, RENDER_STEP);
-        expect(within(tabs).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Deployment", "Additional Details"]);
-        expect(within(tabs).getByRole("tab", { name: "Deployment" })).toHaveAttribute("aria-selected", "true");
-        expect(screen.getByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Test details" }, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.queryByRole("tablist")).toBeNull();
+        expect(screen.queryByRole("tab")).toBeNull();
+        expect(screen.queryByText("Deployment", { selector: "button" })).toBeNull();
 
         await openTab();
-        expect(screen.getByRole("tab", { name: "Additional Details" })).toHaveAttribute("aria-selected", "true");
-        expect(screen.queryByRole("navigation", { name: "Deployment stages" })).toBeNull();
         for (const section of ["Passport & personal details", "Clothing & sizes", "Father details", "Mother details", "Marital & family details", "Employment / skills"]) {
             expect(screen.getByRole("group", { name: section })).toBeInTheDocument();
         }
-        await userEvent.setup().click(screen.getByRole("tab", { name: "Deployment" }));
-        expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
+        expect(screen.queryByRole("tablist")).toBeNull();
     });
 
     test("a new form is filled in from the candidate's record, with the passport number read-only; nothing is saved until Save", async () => {
@@ -192,5 +191,61 @@ describe("Additional Details tab", () => {
         await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
         expect(screen.getByLabelText("T-shirt size")).toBeDisabled();
         expect(screen.queryByRole("button", { name: "Save additional details" })).toBeNull();
+    });
+});
+
+describe("progress stepper", () => {
+    const stepper = () => within(screen.getByRole("navigation", { name: "Deployment stages" }));
+    const labels = () => stepper().getAllByRole("button").map((b) => b.getAttribute("aria-label"));
+
+    test("Additional details follows Candidate details; IVS interview and Finalizing the job have no circle", async () => {
+        backend(NEW_VIEW);
+        renderApp("/candidates/N0000002");
+        await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
+        expect(labels()).toEqual([
+            "1. Test details (incomplete)",
+            "2. Candidate details (incomplete)",
+            "3. Additional details (incomplete)",
+            "4. Document submission (incomplete)",
+            "5. Visa approval (incomplete)",
+        ]);
+    });
+
+    test("its step shows the Additional details content and is the active step; another step shows that stage again", async () => {
+        backend(NEW_VIEW);
+        renderApp("/candidates/N0000002");
+        await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
+        const user = userEvent.setup();
+        await user.click(stepper().getByRole("button", { name: /^3\. Additional details/ }));
+        expect(await screen.findByRole("form", { name: "Additional details" })).toBeInTheDocument();
+        expect(stepper().getByRole("button", { name: /^3\. Additional details/ })).toHaveAttribute("aria-current", "step");
+
+        await user.click(stepper().getByRole("button", { name: /^4\. Document submission/ }));
+        expect(await screen.findByRole("heading", { name: "Document submission" })).toBeInTheDocument();
+        expect(screen.queryByRole("form", { name: "Additional details" })).toBeNull();
+        expect(stepper().getByRole("button", { name: /^4\. Document submission/ })).toHaveAttribute("aria-current", "step");
+    });
+
+    test("the step is completed when details are saved", async () => {
+        backend(SAVED_VIEW);
+        renderApp("/candidates/N0000002");
+        await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
+        await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^3\. Additional details/ })).toHaveAccessibleName(/\(completed/), RENDER_STEP);
+    });
+
+    test("the step turns completed right after Save", async () => {
+        backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        expect(stepper().getByRole("button", { name: /^3\. Additional details/ })).toHaveAccessibleName("3. Additional details (incomplete)");
+        await userEvent.setup().click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^3\. Additional details/ })).toHaveAccessibleName(/\(completed/));
+    });
+
+    test("IVS interview and Finalizing the job stay reachable by link", async () => {
+        backend(NEW_VIEW);
+        renderApp("/candidates/N0000002?stage=FINALIZING_JOB");
+        expect(await screen.findByRole("heading", { name: "Finalizing the job" }, RENDER_STEP)).toBeInTheDocument();
+        expect(stepper().queryByRole("button", { current: "step" })).toBeNull();
     });
 });
