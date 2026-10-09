@@ -82,17 +82,23 @@ describe("candidate -> Sheet row", () => {
         assert.throws(() => map({}), SheetMappingError);
     });
 
-    test("TEST NUMBER, DRIVING LICIAN and POLICE REP FM are always blank", () => {
+    test("TEST NUMBER is always blank; DRIVING LICIAN and POLICE REP FM (no document type) are always \"Not Submitted\"", () => {
         const stages = [{ stage: "TEST_DETAILS", completed: true, jobId: "JOB-0001", testResult: "PASS", testDate: new Date("2026-10-03T00:00:00.000Z") }];
         const documents = [doc("POLICE_REPORT", "VERIFIED", { documentVariant: "SL_VERIFIED" }), doc("POLICE_REPORT", "VERIFIED", { documentVariant: "SL_NORMAL" })];
         const row = map({ user: user(), stages, documents });
         assert.equal(row[0], "", "TEST NUMBER (A)");
         assert.equal(cell(row, "testNumber"), "");
         assert.notEqual(row[0], "JOB-0001", "job_id is never mapped to TEST NUMBER");
-        assert.equal(cell(row, "drivingLicence"), "");
-        assert.equal(row[17], "", "DRIVING LICIAN (R)");
-        assert.equal(cell(row, "policeReportFm"), "");
-        assert.equal(row[22], "", "POLICE REP FM (W)");
+        assert.equal(cell(row, "drivingLicence"), "Not Submitted");
+        assert.equal(atColumn(row, "R"), "Not Submitted", "DRIVING LICIAN (R)");
+        assert.equal(cell(row, "policeReportFm"), "Not Submitted");
+        assert.equal(atColumn(row, "W"), "Not Submitted", "POLICE REP FM (W)");
+        // Whatever documents exist (including police report variants), R and W never change.
+        const empty = map({ user: user() });
+        assert.deepEqual([atColumn(empty, "R"), atColumn(empty, "W")], ["Not Submitted", "Not Submitted"]);
+        const everything = map({ user: user(), documents: ["PASSPORT", "NIC", "MEDICAL", "SCAN", "SKILL_VIDEO", "POLICE_SLIP", "VISA_SUBMISSION"].map((t) => doc(t)).concat(["SL_VERIFIED", "ROMANIA", "SL_NORMAL"].map((v) => doc("POLICE_REPORT", "VERIFIED", { documentVariant: v })), [doc("DRIVING_LICENCE"), doc("POLICE_REPORT", "VERIFIED", { documentVariant: "FM" })]) });
+        assert.deepEqual([atColumn(everything, "R"), atColumn(everything, "W")], ["Not Submitted", "Not Submitted"], "no untracked type or variant is read");
+        assert.equal(atColumn(everything, "U"), "", "SUBMIT DATE (U) unchanged: the slip has no submitted date");
     });
 
     test("police reports: N = SL_VERIFIED, V = SL_NORMAL, O = ROMANIA, each with its own submission date", () => {

@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 
 import { createTestDatabase } from "./helpers/pgliteDatabase.js";
 import { createFakeGoogleSheet, googleError } from "./helpers/fakeGoogleSheet.js";
-import { createCandidate, parseCandidateBody, parseStageBody, updateStage } from "../src/services/candidateService.js";
+import { CANDIDATE_DOCUMENT_TYPES, createCandidate, parseCandidateBody, parseStageBody, updateStage } from "../src/services/candidateService.js";
 import { createCandidateAggregateReader } from "../src/services/candidateAggregateReader.js";
 import { createGoogleSheetsAdapter } from "../src/services/googleSheetsAdapter.js";
 import { createSheetSyncEngine } from "../src/services/sheetSyncEngine.js";
@@ -521,7 +521,7 @@ describe("reconciliation and durable runs", () => {
 });
 
 describe("document columns: submission date or \"Not Submitted\"", () => {
-    const DOCUMENT_FIELDS = ["passportCopy", "policeReportSriLankaVerified", "policeReportRomania", "medical", "scan", "nationalId", "policeReportApplied", "policeReportSriLankaNormal", "videos"];
+    const DOCUMENT_FIELDS = ["passportCopy", "policeReportSriLankaVerified", "policeReportRomania", "medical", "scan", "drivingLicence", "nationalId", "policeReportApplied", "policeReportSriLankaNormal", "policeReportFm", "videos"];
 
     test("a scheduled run writes each document's submission date, and exactly \"Not Submitted\" where there is none", async () => {
         const { sheet, store, worker } = setup();
@@ -537,8 +537,8 @@ describe("document columns: submission date or \"Not Submitted\"", () => {
         for (const field of ["policeReportRomania", "medical", "nationalId", "policeReportApplied", "policeReportSriLankaNormal", "videos"]) {
             assert.equal(row[col(field)], "Not Submitted", field);
         }
-        assert.equal(row[col("drivingLicence")], "", "no document type exists for DRIVING LICIAN");
-        assert.equal(row[col("policeReportFm")], "", "no document type exists for POLICE REP FM");
+        assert.equal(row[col("drivingLicence")], "Not Submitted", "no document type exists for DRIVING LICIAN");
+        assert.equal(row[col("policeReportFm")], "Not Submitted", "no document type exists for POLICE REP FM");
     });
 
     test("a replaced document shows the replacement's date after the next run", async () => {
@@ -581,6 +581,26 @@ describe("document columns: submission date or \"Not Submitted\"", () => {
         const restored = sheet.row(rowNumber);
         assert.deepEqual([restored[col("scan")], restored[col("medical")], restored[col("passportCopy")]], ["2026-10-08", "Not Submitted", "Not Submitted"]);
         assert.deepEqual(await prisma.document.findMany({ where: { passportId }, orderBy: { documentId: "asc" } }), documentsBefore, "\"Not Submitted\" in the Sheet deleted nothing");
+    });
+
+    test("DRIVING LICIAN (R) and POLICE REP FM (W): Sheet output \"Not Submitted\" only; no database write, no new document type", async () => {
+        const { sheet, store, worker } = setup();
+        const { passportId, uniqueId } = await register();
+        await addDocument(passportId, "PASSPORT", { receivedDate: new Date("2026-10-09T03:00:00.000Z") });
+        const snapshot = async () => ({
+            candidate: await prisma.candidate.findUnique({ where: { passportId } }),
+            documents: await prisma.document.findMany({ where: { passportId }, orderBy: { documentId: "asc" } }),
+            stages: await prisma.candidateStage.findMany({ where: { passportId } }),
+            documentTypes: (await prisma.document.findMany({ distinct: ["documentType"], select: { documentType: true } })).map((d) => d.documentType).sort(),
+        });
+        const before = await snapshot();
+        await sync(store, worker);
+        const [row] = rowFor(sheet, uniqueId);
+        assert.deepEqual([row[col("drivingLicence")], row[col("policeReportFm")]], ["Not Submitted", "Not Submitted"]);
+        assert.equal(row[col("passportCopy")], "2026-10-09", "tracked mappings unchanged");
+        assert.equal(row[col("submitDate")], "", "SUBMIT DATE (U) unchanged");
+        assert.deepEqual(await snapshot(), before, "no candidate, document, stage or document-type change");
+        assert.deepEqual(Object.keys(CANDIDATE_DOCUMENT_TYPES).sort(), ["MEDICAL", "NIC", "PASSPORT", "POLICE_REPORT", "POLICE_SLIP", "SCAN", "SKILL_VIDEO", "VISA_SUBMISSION"], "no document type added");
     });
 
     test("every document column follows the rule for a candidate with no documents", async () => {

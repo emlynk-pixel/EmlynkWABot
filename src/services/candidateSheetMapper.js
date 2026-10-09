@@ -12,8 +12,10 @@
 // same functions the Admin candidate page uses (candidateService.js), never
 // from a second copy of those rules.
 //
-// Columns with no confirmed system data (TEST NUMBER, DRIVING LICIAN,
-// POLICE REP FM) are always "". There is one SCAN column only.
+// TEST NUMBER has no confirmed system data and is always "". DRIVING LICIAN
+// and POLICE REP FM are document columns with no document type in the
+// application, so no candidate can have one: they are always "Not Submitted"
+// (Sheet output only; nothing is stored). There is one SCAN column only.
 //
 // Document columns (PASSPORT COPY, POLICE REP SRI LANKA (verified), POLICE
 // REP ROMANIA, MEDICAL, SCAN, NATIONAL ID, POLICE REPORT APPLIED, POLICE REP
@@ -150,12 +152,12 @@ export function mapCandidateToSheetRow(aggregate, { mirroredAt, recordStatus = R
         policeReportRomania: documentCell(documents, "POLICE_REPORT", "ROMANIA"),
         medical: documentCell(documents, "MEDICAL"),
         scan: documentCell(documents, "SCAN"),
-        drivingLicence: "",
+        drivingLicence: DOCUMENT_NOT_SUBMITTED,
         nationalId: documentCell(documents, "NIC"),
         policeReportApplied: documentCell(documents, "POLICE_SLIP"),
         submitDate: dateOnly(policeSlip?.policeSubmittedDate),
         policeReportSriLankaNormal: documentCell(documents, "POLICE_REPORT", "SL_NORMAL"),
-        policeReportFm: "",
+        policeReportFm: DOCUMENT_NOT_SUBMITTED,
         videos: documentCell(documents, "SKILL_VIDEO"),
         placeOfBirth: text(user.placeOfBirth),
         sex: text(user.sex),

@@ -355,12 +355,12 @@ Kind legend: **Auth** = authoritative value copied from PostgreSQL; **Derived** 
 | 15 | **O** | `POLICE REP ROMANIA` | current `POLICE_REPORT` variant `ROMANIA` submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.4: the only Romania column) |
 | 16 | **P** | `MEDICAL` | current `MEDICAL` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** |
 | 17 | **Q** | `SCAN` | current `SCAN` document submission date | Derived | date | `Not Submitted` | **CONFIRMED**. The one and only scan column |
-| 18 | **R** | `DRIVING LICIAN` | none (no driving-licence document type exists in the repository) | Blank | text | always `""` | **CONFIRMED BLANK** (D-18.5) |
+| 18 | **R** | `DRIVING LICIAN` | none (no driving-licence document type exists in the repository) | Fixed | text | always `Not Submitted` | **CONFIRMED**: no document type exists, so no candidate has one (Sheet output only; D-18.5 originally blank) |
 | 19 | **S** | `NATIONAL ID` | current `NIC` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.6; `ID NUMBER` holds the NIC value itself) |
 | 20 | **T** | `POLICE REPORT APPLIED` | current `POLICE_SLIP` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.7) |
 | 21 | **U** | `SUBMIT DATE` | `Document.police_submitted_date` of the current `POLICE_SLIP` | Auth | `YYYY-MM-DD` | `""` | **CONFIRMED** |
 | 22 | **V** | `POLICE REP SRI LANKA` | current `POLICE_REPORT` variant `SL_NORMAL` submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.3) |
-| 23 | **W** | `POLICE REP FM` | none (no "FM" variant exists; no Foreign Ministry/attestation logic is invented) | Blank | text | always `""` | **CONFIRMED BLANK** (D-18.8) |
+| 23 | **W** | `POLICE REP FM` | none (no "FM" variant exists; no Foreign Ministry/attestation logic is invented) | Fixed | text | always `Not Submitted` | **CONFIRMED**: no FM variant exists, so no candidate has one (Sheet output only; D-18.8 originally blank) |
 | 24 | **X** | `VIDEOS` | current `SKILL_VIDEO` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.9) |
 | 25 | **Y** | `PLACE OF BIRTH` | `User.place_of_birth` | Auth | text | `""` | **CONFIRMED** |
 | 26 | **Z** | `SEX` | `User.sex` | Auth | `M` / `F` / `X` | `""` | **CONFIRMED** |
@@ -388,12 +388,12 @@ Kind legend: **Auth** = authoritative value copied from PostgreSQL; **Derived** 
 | `PASSPORT COPY` (`M`) | Only one column; current `PASSPORT` document's submission date | Document type `PASSPORT` |
 | `POLICE REP SRI LANKA` (`N`) | Variant `SL_VERIFIED` | `POLICE_REPORT_VARIANTS` |
 | `POLICE REP ROMANIA` (`O`) | Only one column; variant `ROMANIA` | `POLICE_REPORT_VARIANTS` |
-| `DRIVING LICIAN` (`R`) | Always `""` (header spelling preserved) | No driving-licence type anywhere in the repository |
+| `DRIVING LICIAN` (`R`) | Always `Not Submitted` (header spelling preserved; no document type is created) | No driving-licence type anywhere in the repository |
 | `NATIONAL ID` (`S`) | Current `NIC` document's submission date | Document type `NIC` |
 | `POLICE REPORT APPLIED` (`T`) | Current `POLICE_SLIP` document's submission date | Document type `POLICE_SLIP` (the application receipt that starts the 21-day wait) |
 | `SUBMIT DATE` (`U`) | `police_submitted_date` of the current `POLICE_SLIP`, `YYYY-MM-DD` | `Document.police_submitted_date` |
 | `POLICE REP SRI LANKA` (`V`) | Variant `SL_NORMAL` | `POLICE_REPORT_VARIANTS` |
-| `POLICE REP FM` (`W`) | Always `""`; no Foreign Ministry / attestation logic is invented | No "FM" variant exists |
+| `POLICE REP FM` (`W`) | Always `Not Submitted`; no Foreign Ministry / attestation logic or variant is invented | No "FM" variant exists |
 | `VIDEOS` (`X`) | Current `SKILL_VIDEO` document's submission date | Document type `SKILL_VIDEO` |
 
 Notes:
@@ -410,9 +410,9 @@ Notes:
 | Timestamps | ISO-8601 UTC with `Z` suffix (`YYYY-MM-DDTHH:mm:ssZ`), whole seconds |
 | Phone numbers | Stored normalized digits only (`94700000001`); no `+` prefix is added |
 | Null / missing | An empty cell (`""`), never `null`, `undefined`, `N/A` or `-` |
-| Intentionally blank columns | `TEST NUMBER`, `DRIVING LICIAN`, `POLICE REP FM`: always `""` |
+| Intentionally blank columns | `TEST NUMBER`: always `""` |
 | Stage statuses | `COMPLETED` / `INCOMPLETE` |
-| Document columns | the current document's **submission date** (`received_date`, as the Sri Lanka calendar date `YYYY-MM-DD`), or exactly `Not Submitted` when there is no current (non-superseded) document of that type/variant. One format for all nine document columns. `DRIVING LICIAN` and `POLICE REP FM` have no document type in the system and stay `""` |
+| Document columns | the current document's **submission date** (`received_date`, as the Sri Lanka calendar date `YYYY-MM-DD`), or exactly `Not Submitted` when there is no current (non-superseded) document of that type/variant. One format for all nine document columns. `DRIVING LICIAN` and `POLICE REP FM` have no document type in the system, so they are always `Not Submitted` (output only; nothing is stored) |
 | Writing mode | `valueInputOption=RAW` into columns formatted as **plain text**, so Sheets never coerces phone numbers, NICs or zero-padded IDs into numbers or dates |
 | Comparing mode | Reconciliation reads displayed strings and compares them with freshly generated strings using exactly the same mapper |
 
@@ -1630,7 +1630,7 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 | **D-15** | Production reconciliation time of day | **RESOLVED: 06:00, 12:00 and 18:00 Asia/Colombo; no real-time sync** (supersedes the daily off-peak proposal) |
 | **D-16** | Spreadsheet access review cadence | Quarterly |
 | **D-17** | Row identity implementation | **CONFIRMED / RESOLVED:** technical column `AN` (column 40) with header `_SYSTEM_CANDIDATE_ID`, storing `User.unique_id`, approved and manually added to the real Sheet (Section 7.1). Passport number and NIC are never the row identity. |
-| **D-18** | Legacy field mappings | **CONFIRMED / RESOLVED** (Section 6.2):<br/>- **D-18.1:** `TEST NUMBER` (`A`) -> always blank; `job_id` is not mapped.<br/>- **D-18.2:** one `PASSPORT COPY` column (`M`) -> current `PASSPORT` document status.<br/>- **D-18.3:** `POLICE REP SRI LANKA` `N` -> `SL_VERIFIED`; `POLICE REP SRI LANKA` `V` -> `SL_NORMAL`.<br/>- **D-18.4:** one `POLICE REP ROMANIA` column (`O`) -> `ROMANIA`.<br/>- **D-18.5:** `DRIVING LICIAN` (`R`) -> always blank (no repository mapping).<br/>- **D-18.6:** `NATIONAL ID` (`S`) -> current `NIC` document status.<br/>- **D-18.7:** `POLICE REPORT APPLIED` (`T`) -> current `POLICE_SLIP` document status; `SUBMIT DATE` (`U`) -> its `police_submitted_date`.<br/>- **D-18.8:** `POLICE REP FM` (`W`) -> always blank (no repository mapping).<br/>- **D-18.9:** `VIDEOS` (`X`) -> current `SKILL_VIDEO` document status. |
+| **D-18** | Legacy field mappings | **CONFIRMED / RESOLVED** (Section 6.2):<br/>- **D-18.1:** `TEST NUMBER` (`A`) -> always blank; `job_id` is not mapped.<br/>- **D-18.2:** one `PASSPORT COPY` column (`M`) -> current `PASSPORT` document status.<br/>- **D-18.3:** `POLICE REP SRI LANKA` `N` -> `SL_VERIFIED`; `POLICE REP SRI LANKA` `V` -> `SL_NORMAL`.<br/>- **D-18.4:** one `POLICE REP ROMANIA` column (`O`) -> `ROMANIA`.<br/>- **D-18.5:** `DRIVING LICIAN` (`R`) -> always `Not Submitted` (no document type; Sheet output only; originally blank).<br/>- **D-18.6:** `NATIONAL ID` (`S`) -> current `NIC` document status.<br/>- **D-18.7:** `POLICE REPORT APPLIED` (`T`) -> current `POLICE_SLIP` document status; `SUBMIT DATE` (`U`) -> its `police_submitted_date`.<br/>- **D-18.8:** `POLICE REP FM` (`W`) -> always `Not Submitted` (no document type or variant; Sheet output only; originally blank).<br/>- **D-18.9:** `VIDEOS` (`X`) -> current `SKILL_VIDEO` document status. |
 
 ### Non-Goals
 

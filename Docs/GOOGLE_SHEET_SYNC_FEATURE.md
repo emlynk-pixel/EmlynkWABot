@@ -209,12 +209,12 @@ The operational mirror implements an exact **40-column contract** (`A` through `
 | **O** | `POLICE REP ROMANIA` | `documents` type `POLICE_REPORT`, variant `ROMANIA` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
 | **P** | `MEDICAL` | `documents` type `MEDICAL` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
 | **Q** | `SCAN` | `documents` type `SCAN` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. **Exactly one SCAN column** exists. |
-| **R** | `DRIVING LICIAN` | Unmapped / Empty (`""`) | Legacy spelling preserved intentionally from manual Sheet; always empty string. |
+| **R** | `DRIVING LICIAN` | No document type (Sheet output only) | Legacy spelling preserved intentionally from manual Sheet; always `Not Submitted`. |
 | **S** | `NATIONAL ID` | `documents` type `NIC` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
 | **T** | `POLICE REPORT APPLIED` | `documents` type `POLICE_SLIP` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
 | **U** | `SUBMIT DATE` | `policeSlip.policeSubmittedDate` | Submission date of active `POLICE_SLIP`: `YYYY-MM-DD`. |
 | **V** | `POLICE REP SRI LANKA` | `documents` type `POLICE_REPORT`, variant `SL_NORMAL` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. Standard unverified Sri Lankan report. |
-| **W** | `POLICE REP FM` | Unmapped / Empty (`""`) | Foreign Ministry police report column; always empty string. |
+| **W** | `POLICE REP FM` | No document type (Sheet output only) | Foreign Ministry police report column; always `Not Submitted`. |
 | **X** | `VIDEOS` | `documents` type `SKILL_VIDEO` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
 | **Y** | `PLACE OF BIRTH` | `users.place_of_birth` | String text. |
 | **Z** | `SEX` | `users.sex` | Candidate sex / gender string. |
