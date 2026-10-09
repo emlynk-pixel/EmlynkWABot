@@ -164,13 +164,14 @@ The primary interface for managing candidate registrations and deployment workfl
 - **Candidate Call Logs**:
   - Slide-out drawer on the deployment screen.
   - Staff can record phone calls with timestamp, conversation notes, and staff attribution (`public.candidate_call_logs`).
-- **Additional Details tab (`/admin/candidates/:passportId?tab=additional`)**:
-  - A second tab next to **Deployment** on every candidate page, for every role that manages candidates (REGISTRATION_DESK included).
+- **Additional details step (`/admin/candidates/:passportId?tab=additional`)**:
+  - The third circle of the candidate's progress stepper (after Candidate details), for every role that manages candidates (REGISTRATION_DESK included). IVS interview and Finalizing the job have no circle.
   - Sections: Passport & Personal Details, Clothing & Sizes, Father Details, Mother Details, Marital & Family Details, Employment / Skills.
   - The passport number is the candidate's own passport ID (read-only), so the details always belong to the existing candidate.
   - A new form is pre-filled from the candidate's record (name, address, date of birth). Those values are only stored when Save is pressed, and the candidate's record itself is never changed from this tab.
   - Father / mother details appear only when that parent is alive (the name is then required). Wife details appear only when married (her name is then required).
   - Pant and shoe sizes take a preset or a custom value.
+  - If someone else saved the same candidate's details after you opened them, your save is refused with a message; press **Sync** to load their changes and try again (what you typed is kept until then).
   - Saved in `public.candidate_additional_details`. Every change is in Audit Logs with only the changed fields.
 
 ### Invite User (`/admin/invitations`) — ADMIN Only

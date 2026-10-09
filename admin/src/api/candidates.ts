@@ -267,7 +267,9 @@ export function getAdditionalDetails(token: string, passportId: string, signal?:
     return apiRequest<AdditionalDetailsView>(`${base(passportId)}/additional-details`, { token, signal });
 }
 
-// A full replacement: a field sent as null is cleared.
-export function saveAdditionalDetails(token: string, passportId: string, body: AdditionalDetails): Promise<AdditionalDetailsView> {
-    return apiRequest<AdditionalDetailsView>(`${base(passportId)}/additional-details`, { method: "PUT", token, body });
+// A full replacement: a field sent as null is cleared. expectedUpdatedDate:
+// the updatedDate the form was loaded with (null: nothing saved yet); the
+// server answers 409 if someone saved since, instead of overwriting them.
+export function saveAdditionalDetails(token: string, passportId: string, body: AdditionalDetails, expectedUpdatedDate: string | null): Promise<AdditionalDetailsView> {
+    return apiRequest<AdditionalDetailsView>(`${base(passportId)}/additional-details`, { method: "PUT", token, body: { ...body, expectedUpdatedDate } });
 }

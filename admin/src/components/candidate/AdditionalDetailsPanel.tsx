@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
+import { useId, useState, type FormEvent, type ReactNode } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import {
@@ -6,12 +6,10 @@ import {
     PANT_SIZE_PRESETS,
     SHOE_SIZE_PRESETS,
     TSHIRT_SIZES,
-    getAdditionalDetails,
     saveAdditionalDetails,
     type AdditionalDetails,
     type AdditionalDetailsView,
 } from "../../api/candidates";
-import { useAdminResource } from "../../api/useAdminResource";
 import { todayInSriLanka } from "../format";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { ErrorState, LoadingState } from "../States";
@@ -80,21 +78,24 @@ export function validateAdditionalDetails(form: Form, today = todayInSriLanka())
 const SERVER_MESSAGES: Record<string, string> = { "must not be in the future": "This date is in the future." };
 const serverMessage = (message: string) => SERVER_MESSAGES[message] ?? `This value ${message}.`;
 
-// onSaved: told after each save (the page's Additional details step).
-export function AdditionalDetailsPanel({ passportId, canEdit, onSaved }: { passportId: string; canEdit: boolean; onSaved?: (view: AdditionalDetailsView) => void }) {
-    const resource = useAdminResource(`candidate-additional:${passportId}`, (token, signal) => getAdditionalDetails(token, passportId, signal));
-    const [saved, setSaved] = useState<AdditionalDetailsView | null>(null);
-    const [notice, setNotice] = useState(false);
-    // A reload (Sync) replaces the copy from the last save.
-    useEffect(() => {
-        setSaved(null);
-        setNotice(false);
-    }, [resource.data]);
+// What the page loaded for this candidate (it also needs it for the stepper,
+// so it is fetched once, there). data: null until it has loaded for THIS candidate.
+export type AdditionalDetailsLoad = {
+    data: AdditionalDetailsView | null;
+    status: "loading" | "success" | "error";
+    errorMessage: string | null;
+    reload: () => void;
+};
 
-    const data = saved ?? resource.data;
+// onSaved: told after each save (the page's Additional details step).
+export function AdditionalDetailsPanel({ resource, canEdit, onSaved }: { resource: AdditionalDetailsLoad; canEdit: boolean; onSaved?: (view: AdditionalDetailsView) => void }) {
+    // The version this panel saved last: "Saved" is shown only while that is still the one on screen.
+    const [savedVersion, setSavedVersion] = useState<string | null | undefined>(undefined);
+
+    const data = resource.data;
     if (!data) {
         return resource.status === "error"
-            ? <ErrorState message={resource.error.message} onRetry={resource.reload} />
+            ? <ErrorState message={resource.errorMessage ?? "The additional details could not be loaded."} onRetry={resource.reload} />
             : <LoadingState label="Loading additional details…" />;
     }
     return (
@@ -102,19 +103,17 @@ export function AdditionalDetailsPanel({ passportId, canEdit, onSaved }: { passp
             key={data.updatedDate ?? "new"}
             view={data}
             canEdit={canEdit}
-            notice={notice}
-            onSaved={(view) => { setSaved(view); setNotice(true); onSaved?.(view); }}
-            onEdit={() => setNotice(false)}
+            notice={savedVersion !== undefined && savedVersion === data.updatedDate}
+            onSaved={(view) => { setSavedVersion(view.updatedDate); onSaved?.(view); }}
         />
     );
 }
 
-function AdditionalDetailsForm({ view, canEdit, notice, onSaved, onEdit }: {
+function AdditionalDetailsForm({ view, canEdit, notice, onSaved }: {
     view: AdditionalDetailsView;
     canEdit: boolean;
     notice: boolean;
     onSaved: (view: AdditionalDetailsView) => void;
-    onEdit: () => void;
 }) {
     const { token } = useAuth();
     // A new form starts from the candidate's record (only what it has).
@@ -124,6 +123,8 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, onEdit }: {
     const [errors, setErrors] = useState<Partial<Record<Key, string>>>({});
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    // Cancel remounts the size fields, so a custom-size input follows the restored value.
+    const [resets, setResets] = useState(0);
     const today = todayInSriLanka();
 
     const changed = JSON.stringify(form) !== JSON.stringify(initial);
@@ -134,7 +135,6 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, onEdit }: {
     const set = (key: Key) => (value: string) => {
         setForm((previous) => ({ ...previous, [key]: value }));
         setErrors((previous) => ({ ...previous, [key]: undefined }));
-        onEdit();
     };
 
     const submit = async (event: FormEvent) => {
@@ -149,7 +149,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, onEdit }: {
         }
         setBusy(true);
         try {
-            onSaved(await saveAdditionalDetails(token, view.passportId, payloadOf(form)));
+            onSaved(await saveAdditionalDetails(token, view.passportId, payloadOf(form), view.updatedDate));
         } catch (caught) {
             if (caught instanceof ApiError && caught.fieldErrors.length) {
                 setErrors(Object.fromEntries(caught.fieldErrors.filter((e) => KEYS.includes(e.field as Key)).map((e) => [e.field, serverMessage(e.message)])));
@@ -214,8 +214,8 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, onEdit }: {
                         {TSHIRT_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
                     </select>
                 </Field>
-                <SizeField id="pantSize" label="Pant size" presets={PANT_SIZE_PRESETS} value={form.pantSize} onChange={set("pantSize")} error={errors.pantSize} disabled={disabled} />
-                <SizeField id="shoeSize" label="Shoe size (UK)" presets={SHOE_SIZE_PRESETS} value={form.shoeSize} onChange={set("shoeSize")} error={errors.shoeSize} disabled={disabled} />
+                <SizeField key={`pant-${resets}`} id="pantSize" label="Pant size" presets={PANT_SIZE_PRESETS} value={form.pantSize} onChange={set("pantSize")} error={errors.pantSize} disabled={disabled} />
+                <SizeField key={`shoe-${resets}`} id="shoeSize" label="Shoe size (UK)" presets={SHOE_SIZE_PRESETS} value={form.shoeSize} onChange={set("shoeSize")} error={errors.shoeSize} disabled={disabled} />
             </Section>
 
             <Section title="Father details">
@@ -269,7 +269,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, onEdit }: {
                 <DialogError message={error} />
                 {canEdit && (
                     <div className="mt-4 flex justify-end gap-2">
-                        <button type="button" onClick={() => { setForm(initial); setErrors({}); setError(null); }} disabled={busy || !changed} className={secondaryButton}>Cancel</button>
+                        <button type="button" onClick={() => { setForm(initial); setErrors({}); setError(null); setResets((n) => n + 1); }} disabled={busy || !changed} className={secondaryButton}>Cancel</button>
                         <button type="submit" disabled={busy || !canSave} className={primaryButton}>{busy ? "Saving…" : "Save additional details"}</button>
                     </div>
                 )}

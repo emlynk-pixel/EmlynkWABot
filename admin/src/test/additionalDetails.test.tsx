@@ -1,7 +1,10 @@
-import { screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, useNavigate } from "react-router";
 import { describe, expect, test, vi } from "vitest";
 import { CANDIDATE_STAGES, type AdditionalDetails, type AdditionalDetailsView, type CandidateDetails } from "../api/candidates";
+import { AppRoutes } from "../App";
+import { AuthProvider } from "../auth/AuthProvider";
 import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from "./helpers";
 
 // Candidate > Additional details (opened from its progress step). Synthetic data only; the backend is stubbed.
@@ -81,7 +84,7 @@ describe("Additional Details", () => {
 
         await userEvent.setup().click(screen.getByRole("button", { name: "Save additional details" }));
         await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
-        expect(puts(calls)[0].body).toEqual({ ...EMPTY, ...SUGGESTED });
+        expect(puts(calls)[0].body).toEqual({ ...EMPTY, ...SUGGESTED, expectedUpdatedDate: null });
         expect(await screen.findByText("Additional details saved.")).toBeInTheDocument();
         expect(calls.some((c) => c.method === "PUT" && c.path === "/api/admin/candidates/N0000002")).toBe(false);
     });
@@ -334,5 +337,115 @@ describe("progress steps: one shared step UI", () => {
         await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT" && c.path === "/api/admin/candidates/N0000002/stages/VISA_SUBMISSION")).toBe(true));
         expect(calls.find((c) => c.path.endsWith("/stages/VISA_SUBMISSION"))!.body).toEqual({ notes: null, completed: true });
         await vi.waitFor(() => expect(step(/^5\. Visa submission/)).toHaveAccessibleName(/\(completed/));
+    });
+});
+
+describe("one load, versions and resets", () => {
+    const gets = (calls: { method: string; path: string }[]) => calls.filter((c) => c.method === "GET" && c.path === PATH);
+    const stepper = () => within(screen.getByRole("navigation", { name: "Deployment stages" }));
+
+    test("the details are fetched once per candidate page, however often the step is opened", async () => {
+        const { calls } = backend(SAVED_VIEW);
+        renderApp("/candidates/N0000002");
+        await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
+        const user = userEvent.setup();
+        await user.click(stepper().getByRole("button", { name: /^3\. Additional details/ }));
+        await screen.findByRole("form", { name: "Additional details" });
+        await user.click(stepper().getByRole("button", { name: /^4\. Document submission/ }));
+        await user.click(stepper().getByRole("button", { name: /^3\. Additional details/ }));
+        await screen.findByRole("form", { name: "Additional details" });
+        expect(gets(calls)).toHaveLength(1);
+    });
+
+    test("a save sends the version the form was loaded with", async () => {
+        const { calls } = backend(SAVED_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const user = userEvent.setup();
+        await user.type(screen.getByLabelText("Other job skills"), "Welding");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
+        expect(puts(calls)[0].body).toMatchObject({ expectedUpdatedDate: SAVED_VIEW.updatedDate });
+    });
+
+    test("someone else saved first: the message is shown and the typed changes are kept", async () => {
+        backend(SAVED_VIEW, { [`PUT ${PATH}`]: { status: 409, body: { message: "These details were changed by someone else after you opened them. Use Sync to load their changes, then try again.", code: "DETAILS_CHANGED" } } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const user = userEvent.setup();
+        await user.type(screen.getByLabelText("Other job skills"), "Welding");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        expect(await screen.findByText(/changed by someone else/)).toBeInTheDocument();
+        expect(screen.getByLabelText("Other job skills")).toHaveValue("Welding");
+        expect(screen.getByRole("button", { name: "Save additional details" })).toBeEnabled();
+    });
+
+    test("after a save, leaving the step and coming back shows the saved details and the next save uses the new version", async () => {
+        const NEXT: AdditionalDetailsView = { ...SAVED_VIEW, details: { ...SAVED, otherJobSkills: "Welding" }, updatedDate: "2026-10-09T06:30:00.000Z" };
+        const { calls } = backend(SAVED_VIEW, { [`PUT ${PATH}`]: { status: 200, body: NEXT } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const user = userEvent.setup();
+        await user.type(screen.getByLabelText("Other job skills"), "Welding");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        expect(await screen.findByText("Additional details saved.")).toBeInTheDocument();
+
+        await user.click(stepper().getByRole("button", { name: /^4\. Document submission/ }));
+        await user.click(stepper().getByRole("button", { name: /^3\. Additional details/ }));
+        await screen.findByRole("form", { name: "Additional details" });
+        expect(screen.getByLabelText("Other job skills")).toHaveValue("Welding");
+
+        await user.type(screen.getByLabelText("1st child name"), "Nimal");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(puts(calls)).toHaveLength(2));
+        expect(puts(calls)[1].body).toMatchObject({ expectedUpdatedDate: NEXT.updatedDate });
+        expect(gets(calls)).toHaveLength(1);
+    });
+
+    test("Cancel restores a preset size and its select, after Other had been chosen", async () => {
+        backend(SAVED_VIEW);
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const user = userEvent.setup();
+        expect(screen.getByLabelText("Shoe size (UK)")).toHaveValue("9");
+        await user.selectOptions(screen.getByLabelText("Shoe size (UK)"), "__custom");
+        await user.type(screen.getByLabelText("Custom shoe size (uk)"), "EU 43");
+        await user.click(screen.getByRole("button", { name: "Cancel" }));
+        expect(screen.getByLabelText("Shoe size (UK)")).toHaveValue("9");
+        expect(screen.queryByLabelText("Custom shoe size (uk)")).toBeNull();
+    });
+
+    test("another candidate's details never show on this one: the step stays incomplete until its own load arrives", async () => {
+        // Candidate B's additional details are held back; A's say "saved".
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const B_DETAILS = { ...DETAILS, candidate: { ...DETAILS.candidate, passportId: "N0000003", uniqueId: "0003", name: "NIMAL FERNANDO" } };
+        backend(SAVED_VIEW, {
+            "GET /api/admin/candidates/N0000003": { status: 200, body: B_DETAILS },
+            "GET /api/admin/candidates/N0000003/additional-details": async () => {
+                await held;
+                return { status: 200, body: { passportId: "N0000003", details: null, suggested: SUGGESTED, updatedDate: null } };
+            },
+        });
+        let go!: (to: string) => void;
+        function Probe() {
+            go = useNavigate();
+            return null;
+        }
+        render(
+            <MemoryRouter initialEntries={["/candidates/N0000002"]}>
+                <AuthProvider>
+                    <AppRoutes />
+                    <Probe />
+                </AuthProvider>
+            </MemoryRouter>,
+        );
+        const nav = () => within(screen.getByRole("navigation", { name: "Deployment stages" }));
+        await vi.waitFor(() => expect(nav().getByRole("button", { name: /^3\. Additional details/ })).toHaveAccessibleName(/\(completed/), RENDER_STEP);
+
+        act(() => go("/candidates/N0000003"));
+        expect(await screen.findByRole("heading", { name: "NIMAL FERNANDO" }, RENDER_STEP)).toBeInTheDocument();
+        expect(nav().getByRole("button", { name: /^3\. Additional details/ })).toHaveAccessibleName("3. Additional details (incomplete)");
+        release();
     });
 });

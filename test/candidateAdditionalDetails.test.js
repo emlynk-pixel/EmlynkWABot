@@ -320,3 +320,111 @@ describe("validation", () => {
         assert.equal((await auditRows()).length, 0);
     });
 });
+
+describe("two people editing the same details", () => {
+    const put = (call, body) => call("/N1023757/additional-details", { method: "PUT", body });
+
+    test("a form opened on an older version is refused (409) and nothing is overwritten or audited", async () => {
+        await withServer("ADMIN", async (call) => {
+            const first = (await put(call, { ...FULL })).body;
+            const second = await put(call, { ...FULL, tshirtSize: "L", expectedUpdatedDate: first.updatedDate });
+            assert.equal(second.status, 200);
+            assert.notEqual(second.body.updatedDate, first.updatedDate, "a real change moves the version");
+
+            // The first person still has the old form open: it says tshirtSize M and has no idea of "L".
+            const stale = await put(call, { ...FULL, pantSize: "36", expectedUpdatedDate: first.updatedDate });
+            assert.equal(stale.status, 409);
+            assert.equal(stale.body.code, "DETAILS_CHANGED");
+            assert.match(stale.body.message, /changed by someone else/);
+
+            const current = (await call("/N1023757/additional-details")).body;
+            assert.equal(current.details.tshirtSize, "L", "the other person's change survives");
+            assert.equal(current.details.pantSize, "32", "and the stale form's change was not applied");
+            assert.equal(current.updatedDate, second.body.updatedDate);
+        });
+        assert.deepEqual((await auditRows()).map((r) => r.action), ["CREATE_ADDITIONAL_DETAILS", "UPDATE_ADDITIONAL_DETAILS"]);
+    });
+
+    test("saving with the current version works, and the response carries the new one to use next", async () => {
+        await withServer("ADMIN", async (call) => {
+            const created = await put(call, { ...FULL, expectedUpdatedDate: null });
+            assert.equal(created.status, 200, "a form that had nothing saved sends null");
+            const next = await put(call, { ...FULL, shoeSize: "10", expectedUpdatedDate: created.body.updatedDate });
+            assert.equal(next.status, 200);
+            const after = await put(call, { ...FULL, shoeSize: "11", expectedUpdatedDate: next.body.updatedDate });
+            assert.equal(after.status, 200);
+            assert.equal(after.body.details.shoeSize, "11");
+        });
+    });
+
+    test("a form that had nothing saved is refused when someone saved in the meantime", async () => {
+        await withServer("ADMIN", async (call) => {
+            await put(call, { tshirtSize: "S" });
+            const late = await put(call, { tshirtSize: "XL", expectedUpdatedDate: null });
+            assert.equal(late.status, 409);
+            assert.equal((await call("/N1023757/additional-details")).body.details.tshirtSize, "S");
+        });
+    });
+
+    test("a stale form whose values equal the stored ones is a harmless no-op, not an error", async () => {
+        await withServer("ADMIN", async (call) => {
+            const first = (await put(call, { ...FULL })).body;
+            await put(call, { ...FULL, tshirtSize: "L", expectedUpdatedDate: first.updatedDate });
+            const same = await put(call, { ...FULL, tshirtSize: "L", expectedUpdatedDate: first.updatedDate });
+            assert.equal(same.status, 200);
+            assert.equal(same.body.details.tshirtSize, "L");
+        });
+        assert.equal((await auditRows()).length, 2, "no entry for it");
+    });
+
+    test("two saves at once: one wins, the other is refused; the audit shows only the winner", async () => {
+        await withServer("ADMIN", async (call) => {
+            const first = (await put(call, { ...FULL })).body;
+            const [a, b] = await Promise.all([
+                put(call, { ...FULL, tshirtSize: "S", expectedUpdatedDate: first.updatedDate }),
+                put(call, { ...FULL, tshirtSize: "XL", expectedUpdatedDate: first.updatedDate }),
+            ]);
+            assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+            const winner = a.status === 200 ? "S" : "XL";
+            assert.equal((await call("/N1023757/additional-details")).body.details.tshirtSize, winner);
+        });
+        const updates = (await auditRows()).filter((r) => r.action === "UPDATE_ADDITIONAL_DETAILS");
+        assert.equal(updates.length, 1);
+        assert.deepEqual(JSON.parse(updates[0].previousValue), { tshirtSize: "M" });
+    });
+
+    test("two first saves at once: one creates, the other is refused (never a duplicate row, never a 500)", async () => {
+        await withServer("ADMIN", async (call) => {
+            const [a, b] = await Promise.all([
+                put(call, { tshirtSize: "S", expectedUpdatedDate: null }),
+                put(call, { tshirtSize: "XL", expectedUpdatedDate: null }),
+            ]);
+            assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+        });
+        assert.equal(await prisma.candidateAdditionalDetails.count(), 1);
+        assert.deepEqual((await auditRows()).map((r) => r.action), ["CREATE_ADDITIONAL_DETAILS"]);
+    });
+
+    test("the version is optional (older callers) and checked for shape", async () => {
+        await withServer("ADMIN", async (call) => {
+            assert.equal((await put(call, { tshirtSize: "S" })).status, 200, "no version: no check");
+            assert.equal((await put(call, { tshirtSize: "M" })).status, 200);
+            const bad = await put(call, { tshirtSize: "L", expectedUpdatedDate: "yesterday" });
+            assert.equal(bad.status, 400);
+            assert.deepEqual(bad.body.errors.map((e) => e.field), ["expectedUpdatedDate"]);
+            assert.equal((await put(call, { tshirtSize: "L", expectedUpdatedDate: 12345 })).status, 400);
+        });
+    });
+});
+
+describe("dates use the business day (Sri Lanka), not the UTC day", () => {
+    // 2026-10-09 20:00 UTC is already 2026-10-10 01:30 in Sri Lanka.
+    const now = new Date("2026-10-09T20:00:00Z");
+    const fields = (birthday) => parseAdditionalDetailsBody({ birthday }, { now }).errors?.map((e) => e.field) ?? [];
+
+    test("today in Sri Lanka is allowed, tomorrow is not", () => {
+        assert.deepEqual(fields("2026-10-09"), []);
+        assert.deepEqual(fields("2026-10-10"), [], "the form allows it, so the server must too");
+        assert.deepEqual(fields("2026-10-11"), ["birthday"]);
+    });
+});

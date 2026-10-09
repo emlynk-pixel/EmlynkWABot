@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router";
-import { CANDIDATE_STAGES, STAGE_LABELS, getAdditionalDetails, getCandidate, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
+import { CANDIDATE_STAGES, STAGE_LABELS, getAdditionalDetails, getCandidate, type AdditionalDetailsView, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageCandidates, useAuth } from "../auth/AuthProvider";
 import { AdditionalDetailsPanel } from "../components/candidate/AdditionalDetailsPanel";
@@ -33,23 +33,30 @@ export function CandidateDeploymentPage() {
     const location = useLocation();
     const [searchParams, setSearchParams] = useSearchParams();
     const resource = useAdminResource(`candidate:${passportId}`, (token, signal) => getCandidate(token, passportId, signal));
-    // Whether additional details are saved: the Additional details step's circle.
-    const additional = useAdminResource(`candidate-additional-step:${passportId}`, (token, signal) => getAdditionalDetails(token, passportId, signal));
-    const [additionalSaved, setAdditionalSaved] = useState<boolean | null>(null);
+    // The additional details: the Additional details step's circle and its form
+    // (fetched once, here). savedAdditional: the copy from the last save, which
+    // is newer than the loaded one until the next reload.
+    const additional = useAdminResource(`candidate-additional:${passportId}`, (token, signal) => getAdditionalDetails(token, passportId, signal));
+    const [savedAdditional, setSavedAdditional] = useState<AdditionalDetailsView | null>(null);
     const [updated, setUpdated] = useState<CandidateDetails | null>(null);
     const [callLogOpen, setCallLogOpen] = useState(false);
     const failedUploads = (location.state as { failedUploads?: FailedUpload[] } | null)?.failedUploads ?? [];
 
     // A reload (Sync) replaces any locally updated copy.
     useEffect(() => setUpdated(null), [resource.data]);
-    useEffect(() => setAdditionalSaved(null), [additional.data]);
+    useEffect(() => setSavedAdditional(null), [additional.data]);
 
     // Reset local state when the route parameter changes.
     useEffect(() => {
         setUpdated(null);
-        setAdditionalSaved(null);
+        setSavedAdditional(null);
         setCallLogOpen(false);
     }, [passportId]);
+
+    // The additional details of THIS candidate: while another candidate's are
+    // still held from the previous page, there are none yet.
+    const ofThisCandidate = (view: AdditionalDetailsView | null) => (view && view.passportId.toUpperCase() === passportId.toUpperCase() ? view : null);
+    const additionalView = ofThisCandidate(savedAdditional) ?? ofThisCandidate(additional.data);
 
     const details = updated ?? resource.data;
     if (!details || details.candidate.passportId.toUpperCase() !== passportId.toUpperCase()) {
@@ -67,7 +74,7 @@ export function CandidateDeploymentPage() {
     const steps: StepperStep[] = stepperStages.flatMap((s) => {
         const step = { key: s.stage, label: STAGE_LABELS[s.stage], completed: s.completed };
         return s.stage === "CANDIDATE_DETAILS"
-            ? [step, { key: ADDITIONAL_STEP, label: "Additional details", completed: additionalSaved ?? Boolean(additional.data?.details) }]
+            ? [step, { key: ADDITIONAL_STEP, label: "Additional details", completed: Boolean(additionalView?.details) }]
             : [step];
     });
     const canEdit = canManageCandidates(user);
@@ -108,7 +115,11 @@ export function CandidateDeploymentPage() {
                 </Card>
             ) : (
                 <Card className="p-6">
-                    <AdditionalDetailsPanel passportId={c.passportId} canEdit={canEdit} onSaved={(view) => setAdditionalSaved(Boolean(view.details))} />
+                    <AdditionalDetailsPanel
+                        resource={{ data: additionalView, status: additional.status, errorMessage: additional.status === "error" ? additional.error.message : null, reload: additional.reload }}
+                        canEdit={canEdit}
+                        onSaved={setSavedAdditional}
+                    />
                 </Card>
             )}
 

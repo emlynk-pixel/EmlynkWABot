@@ -677,7 +677,7 @@ describe("Call log", () => {
         let dialog = await openCallLog();
         await user.click(within(dialog).getByRole("button", { name: "Close call logs" }));
         await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-        expect(screen.getByRole("button", { name: "Call log" })).toHaveFocus();
+        await vi.waitFor(() => expect(screen.getByRole("button", { name: "Call log" })).toHaveFocus());
 
         dialog = await openCallLog();
         await within(dialog).findByText("Asked about the medical");

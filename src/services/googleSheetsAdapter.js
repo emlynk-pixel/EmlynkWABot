@@ -111,7 +111,8 @@ export function classifySheetsError(error) {
 // Default Credentials and the spreadsheets scope only. Imported lazily, so
 // nothing Google-related loads unless a live adapter is actually built.
 export async function createLiveSheetsClient({ env = process.env, scopes = [SHEETS_SCOPE] } = {}) {
-    if (env.NODE_TEST_CONTEXT) {
+    // The test runner is a fact about this process, whatever env a caller passes in.
+    if (env.NODE_TEST_CONTEXT || process.env.NODE_TEST_CONTEXT) {
         throw new Error("The live Google Sheets client is not available under the test runner; inject a fake client");
     }
     const { sheets, auth } = await import("@googleapis/sheets");
