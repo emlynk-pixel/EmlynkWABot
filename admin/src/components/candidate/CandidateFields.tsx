@@ -38,28 +38,37 @@ const isPhoneNumber = (value: string) => {
 };
 
 // WhatsApp numbers are stored as the server keeps them: international digits
-// without "+", e.g. 94771234567 (normalizePhoneNumber, src/utils/phoneNumber.js).
-// The form shows "+94" as a fixed prefix and the user types only the rest.
-export const WHATSAPP_COUNTRY_CODE = "94";
-const WHATSAPP_STORED = /^947\d{8}$/;
+// without "+", e.g. 94771234567, 919876543210 (normalizePhoneNumber, src/utils/phoneNumber.js).
+// The form shows "+" as a fixed prefix and the user types the country code and number.
+export const WHATSAPP_PREFIX = "+";
+const WHATSAPP_STORED = /^[1-9]\d{7,14}$/;
 
-// What was typed after the prefix -> the stored form ("94" + up to 9 digits),
-// or "" when nothing is left. A leading 0 (the local trunk prefix) and a
-// pasted +94 / 0094 number are taken off, so the country code is never doubled.
-export function whatsappFromLocal(input: string): string {
-    let digits = input.replace(/\D/g, "").replace(/^00/, "");
-    if (digits.length > 9 && digits.startsWith(WHATSAPP_COUNTRY_CODE)) digits = digits.slice(WHATSAPP_COUNTRY_CODE.length);
-    digits = digits.replace(/^0/, "").slice(0, 9);
-    return digits ? WHATSAPP_COUNTRY_CODE + digits : "";
+// Converts user input into the stored international digits format.
+// Strips non-digits, leading "+", and international "00" prefix.
+export function whatsappFromInput(input: string): string {
+    let digits = input.replace(/\D/g, "");
+    if (digits.startsWith("00")) {
+        digits = digits.slice(2);
+    }
+    return digits.slice(0, 15);
 }
 
-// A stored number's part after +94, or null when it is not a +94 number
-// (it is then shown as it is). Older records may hold the local format.
-export function whatsappLocalPart(stored: string): string | null {
-    const digits = stored.replace(/\D/g, "").replace(/^00/, "");
-    if (/^94\d{9}$/.test(digits)) return digits.slice(2);
-    if (/^0?7\d{8}$/.test(digits)) return digits.replace(/^0/, "");
-    return null;
+// Kept for backward compatibility with existing imports.
+export const whatsappFromLocal = whatsappFromInput;
+
+// A stored number's digits after "+", or normalized international digits for older records.
+export function whatsappLocalPart(stored: string): string {
+    if (!stored) return "";
+    let digits = stored.replace(/\D/g, "");
+    if (digits.startsWith("00")) {
+        digits = digits.slice(2);
+    }
+    if (/^07\d{8}$/.test(digits)) {
+        digits = "94" + digits.slice(1);
+    } else if (/^7\d{8}$/.test(digits)) {
+        digits = "94" + digits;
+    }
+    return digits.slice(0, 15);
 }
 
 // "registration": the WhatsApp number is required. "details": saving
@@ -91,7 +100,7 @@ export function validateDetails(value: CandidateDetailsInput, form: DetailsForm 
     }
     // A number already on record is read-only and kept as it is.
     if (!whatsappLocked && value.whatsappNumber && !WHATSAPP_STORED.test(value.whatsappNumber)) {
-        errors.whatsappNumber = "Enter the 9-digit mobile number after +94, e.g. 771234567.";
+        errors.whatsappNumber = "Enter the mobile number with country code after +, e.g. 94771234567.";
     }
     if (value.contactNumber.trim() && !isPhoneNumber(value.contactNumber.trim())) errors.contactNumber = "Enter a phone number, e.g. 0771234567.";
     return errors;
@@ -127,38 +136,35 @@ export function Field({ label, required, error, htmlFor, children, className = "
 // Field hints. They describe the rules the server applies.
 export const FIELD_HINTS = {
     passportId: "6 to 9 letters and digits with at least one digit, as printed on the passport (e.g. N1234567). Spaces and dashes are ignored.",
-    whatsappNumber: "The Sri Lankan mobile number after +94: 9 digits starting with 7 (e.g. 771234567). A leading 0 is dropped. It can't be changed once saved.",
+    whatsappNumber: "The mobile number with country code after + (e.g. 94771234567, 919876543210). It can't be changed once saved.",
     passportIssueDate: "As printed on the passport. Required, and before the expiry date.",
     passportExpiryDate: "As printed on the passport. Required, and after the issue date.",
 } as const;
 
-// The WhatsApp number: "+94" fixed in front, the rest typed. A number on
-// record is read-only; one that isn't a +94 number is shown as stored.
+// The WhatsApp number: "+" fixed in front, the rest typed. A number on
+// record is read-only.
 function WhatsAppInput({ id, value, onChange, disabled, locked, invalid }: { id: string; value: string; onChange: (next: string) => void; disabled?: boolean; locked?: boolean; invalid?: boolean }) {
     const prefixId = `${id}-prefix`;
-    const local = locked ? whatsappLocalPart(value) : value.startsWith(WHATSAPP_COUNTRY_CODE) ? value.slice(WHATSAPP_COUNTRY_CODE.length) : value;
-    if (locked && local === null) {
-        return <input id={id} type="tel" value={value} readOnly className={`${fieldControl} bg-canvas text-ink-muted`} />;
-    }
+    const displayValue = locked ? whatsappLocalPart(value) : (value.startsWith("+") ? value.slice(1) : value);
     return (
         <div className="flex">
             <span aria-hidden="true" className="inline-flex h-10 shrink-0 items-center rounded-l border border-r-0 border-border-strong bg-canvas px-3 text-body-sm text-ink-muted">
-                +{WHATSAPP_COUNTRY_CODE}
+                +
             </span>
-            <span id={prefixId} className="sr-only">Country code +{WHATSAPP_COUNTRY_CODE}</span>
+            <span id={prefixId} className="sr-only">Prefix +</span>
             <input
                 id={id}
                 type="tel"
                 inputMode="numeric"
-                autoComplete="tel-national"
+                autoComplete="tel"
                 maxLength={20}
-                placeholder="771234567"
-                value={local ?? ""}
+                placeholder="94771234567"
+                value={displayValue}
                 disabled={disabled && !locked}
                 readOnly={locked}
                 aria-describedby={prefixId}
                 aria-invalid={invalid}
-                onChange={(event) => onChange(whatsappFromLocal(event.target.value))}
+                onChange={(event) => onChange(whatsappFromInput(event.target.value))}
                 className={`${fieldControl} min-w-0 rounded-l-none ${locked ? "bg-canvas text-ink-muted" : ""} ${invalid ? "border-critical" : ""}`}
             />
         </div>

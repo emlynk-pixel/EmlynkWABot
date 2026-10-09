@@ -453,8 +453,8 @@ describe("Candidate deployment", () => {
         signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
         expect(await screen.findByLabelText("WhatsApp number *")).toHaveAttribute("readonly");
-        expect(screen.getByLabelText("WhatsApp number *")).toHaveValue("770000002");
-        expect(screen.getByLabelText("WhatsApp number *")).toHaveAccessibleDescription("Country code +94");
+        expect(screen.getByLabelText("WhatsApp number *")).toHaveValue("94770000002");
+        expect(screen.getByLabelText("WhatsApp number *")).toHaveAccessibleDescription("Prefix +");
         expect(screen.getByText("Registered WhatsApp numbers cannot be changed.")).toBeInTheDocument();
         expect(screen.getByLabelText("Contact number")).not.toHaveAttribute("readonly");
         expect(screen.getByLabelText("Nationality")).toHaveValue("");
@@ -722,7 +722,7 @@ describe("Candidate registration", () => {
         await user.type(screen.getByLabelText("Passport ID *"), "n0000002");
         await user.type(screen.getByLabelText("Job type *"), "Driver{Enter}");
         await user.type(screen.getByLabelText("Job experience *"), "5 years");
-        await user.type(screen.getByLabelText("WhatsApp number *"), "0771234567");
+        await user.type(screen.getByLabelText("WhatsApp number *"), "94771234567");
         await user.type(screen.getByLabelText("Passport issue date *"), "2020-01-15");
         await user.type(screen.getByLabelText("Passport expiry date *"), "2030-01-14");
     }
@@ -823,7 +823,7 @@ describe("Candidate registration", () => {
         expect(calls.filter((c) => c.url.pathname.startsWith("/api/") && c.body instanceof File)).toEqual([]);
     });
 
-    test("values are checked: issue date before expiry, the WhatsApp number after +94, the contact number", async () => {
+    test("values are checked: issue date before expiry, the WhatsApp number after +, the contact number", async () => {
         const { calls } = signedInBackend();
         renderApp("/candidates/new");
         const user = userEvent.setup();
@@ -837,7 +837,7 @@ describe("Candidate registration", () => {
         await user.type(screen.getByLabelText("Contact number"), "12");
         await user.click(screen.getByRole("button", { name: "Register candidate" }));
         expect(screen.getByText("Must be before the expiry date.")).toBeInTheDocument();
-        expect(screen.getByText("Enter the 9-digit mobile number after +94, e.g. 771234567.")).toBeInTheDocument();
+        expect(screen.getByText("Enter the mobile number with country code after +, e.g. 94771234567.")).toBeInTheDocument();
         expect(screen.getByText("Enter a phone number, e.g. 0771234567.")).toBeInTheDocument();
         expect(calls.some((c) => c.method === "POST")).toBe(false);
     });
@@ -916,7 +916,7 @@ describe("Candidate registration", () => {
         expect(screen.getByLabelText("Passport expiry date *")).toHaveValue("2030-05-11");
         expect(screen.getByLabelText("Passport issue date *")).toHaveValue("");
         expect(screen.getByLabelText("WhatsApp number *")).toHaveAttribute("readonly");
-        expect(screen.getByLabelText("WhatsApp number *")).toHaveValue("770000002");
+        expect(screen.getByLabelText("WhatsApp number *")).toHaveValue("94770000002");
         expect(screen.getByText("Registered WhatsApp numbers cannot be changed.")).toBeInTheDocument();
         expect(screen.getByLabelText("Contact number")).toHaveValue("");
         expect(screen.getByLabelText("Comment")).toHaveValue("Prefers morning calls");
@@ -1122,26 +1122,60 @@ describe("other roles are unchanged", () => {
     }
 });
 
-describe("WhatsApp number: fixed +94 prefix", () => {
-    test("the stored form is 94 + the 9 digits typed; a leading 0 or a pasted +94 / 0094 number never doubles the country code", () => {
-        expect(whatsappFromLocal("771234567")).toBe("94771234567");
-        expect(whatsappFromLocal("0771234567")).toBe("94771234567");
+describe("WhatsApp number: fixed + prefix", () => {
+    test("normalization and input handling for +94, +91, +971, and arbitrary country codes", () => {
+        // +94 (Sri Lanka)
+        expect(whatsappFromLocal("94771234567")).toBe("94771234567");
         expect(whatsappFromLocal("+94 77 123 4567")).toBe("94771234567");
+        expect(whatsappFromLocal("+94771234567")).toBe("94771234567");
+
+        // +91 (India)
+        expect(whatsappFromLocal("919876543210")).toBe("919876543210");
+        expect(whatsappFromLocal("+91 987 654 3210")).toBe("919876543210");
+        expect(whatsappFromLocal("+919876543210")).toBe("919876543210");
+
+        // +971 (UAE)
+        expect(whatsappFromLocal("971501234567")).toBe("971501234567");
+        expect(whatsappFromLocal("+971 50 123 4567")).toBe("971501234567");
+        expect(whatsappFromLocal("+971501234567")).toBe("971501234567");
+
+        // Arbitrary valid country codes (+44 UK, +1 US, etc.)
+        expect(whatsappFromLocal("447700900123")).toBe("447700900123");
+        expect(whatsappFromLocal("+44 7700 900123")).toBe("447700900123");
+        expect(whatsappFromLocal("+1 202 555 0123")).toBe("12025550123");
+
+        // "00" international prefix stripped
+        expect(whatsappFromLocal("00919876543210")).toBe("919876543210");
         expect(whatsappFromLocal("0094771234567")).toBe("94771234567");
-        expect(whatsappFromLocal("77-123 4567")).toBe("94771234567");
+
+        // Non-digits and empty inputs
         expect(whatsappFromLocal("abc")).toBe("");
         expect(whatsappFromLocal("")).toBe("");
-        expect(whatsappFromLocal("7712345678999")).toBe("94771234567");
+        expect(whatsappFromLocal("+")).toBe("");
     });
 
-    test("stored numbers load into the prefix + local part; anything else is shown as stored", () => {
-        expect(whatsappLocalPart("94771234567")).toBe("771234567");
-        expect(whatsappLocalPart("+94771234567")).toBe("771234567");
-        expect(whatsappLocalPart("0771234567")).toBe("771234567");
-        expect(whatsappLocalPart("447700900123")).toBeNull();
+    test("existing saved numbers load correctly for any country code (+94, +91, +971, arbitrary, and legacy local)", () => {
+        // Sri Lanka +94
+        expect(whatsappLocalPart("94771234567")).toBe("94771234567");
+        expect(whatsappLocalPart("+94771234567")).toBe("94771234567");
+
+        // India +91
+        expect(whatsappLocalPart("919876543210")).toBe("919876543210");
+        expect(whatsappLocalPart("+919876543210")).toBe("919876543210");
+
+        // UAE +971
+        expect(whatsappLocalPart("971501234567")).toBe("971501234567");
+        expect(whatsappLocalPart("+971501234567")).toBe("971501234567");
+
+        // Arbitrary country code (+44 UK)
+        expect(whatsappLocalPart("447700900123")).toBe("447700900123");
+        expect(whatsappLocalPart("+447700900123")).toBe("447700900123");
+
+        // Legacy local Sri Lankan mobile numbers
+        expect(whatsappLocalPart("0771234567")).toBe("94771234567");
     });
 
-    test("the prefix is fixed and outside the input; the user types only the rest, and the save is in the stored form", async () => {
+    test("the prefix + is fixed and outside the input; + cannot be removed; users can enter any mobile number with (+)", async () => {
         let created = false;
         const { calls } = signedInBackend({
             "POST /api/admin/candidates": () => { created = true; return { status: 201, body: { passportId: "N0000002", uniqueId: "0002" } }; },
@@ -1150,21 +1184,42 @@ describe("WhatsApp number: fixed +94 prefix", () => {
         renderApp("/candidates/new");
         const user = userEvent.setup();
         const whatsapp = await screen.findByLabelText("WhatsApp number *");
-        expect(whatsapp).toHaveAccessibleDescription("Country code +94");
+        expect(whatsapp).toHaveAccessibleDescription("Prefix +");
         expect(whatsapp).toHaveValue("");
         const prefix = whatsapp.parentElement!.querySelector('[aria-hidden="true"]') as HTMLElement;
-        expect(prefix).toHaveTextContent(/^\+94$/);
+        expect(prefix).toHaveTextContent(/^\+$/);
         expect(prefix.tagName).not.toBe("INPUT");
 
-        // Select-all + Delete can't remove the prefix: it isn't in the input.
-        await user.type(whatsapp, "0771234567");
-        expect(whatsapp).toHaveValue("771234567");
+        // + cannot be removed by typing, select-all + delete, or clear
+        await user.type(whatsapp, "94771234567");
+        expect(whatsapp).toHaveValue("94771234567");
         await user.clear(whatsapp);
         expect(whatsapp).toHaveValue("");
-        expect(prefix).toHaveTextContent(/^\+94$/);
+        expect(prefix).toHaveTextContent(/^\+$/);
+
+        // Users can enter any mobile number with (+) - +94
         await user.click(whatsapp);
         await user.paste("+94 77 123 4567");
-        expect(whatsapp).toHaveValue("771234567");
+        expect(whatsapp).toHaveValue("94771234567");
+        expect(prefix).toHaveTextContent(/^\+$/);
+
+        // Users can enter any mobile number with (+) - +91 (India)
+        await user.clear(whatsapp);
+        await user.paste("+91 987 654 3210");
+        expect(whatsapp).toHaveValue("919876543210");
+        expect(prefix).toHaveTextContent(/^\+$/);
+
+        // Users can enter any mobile number with (+) - +971 (UAE)
+        await user.clear(whatsapp);
+        await user.paste("+971 50 123 4567");
+        expect(whatsapp).toHaveValue("971501234567");
+        expect(prefix).toHaveTextContent(/^\+$/);
+
+        // Users can enter any mobile number with (+) - arbitrary (+44 UK)
+        await user.clear(whatsapp);
+        await user.paste("+447700900123");
+        expect(whatsapp).toHaveValue("447700900123");
+        expect(prefix).toHaveTextContent(/^\+$/);
 
         await user.type(screen.getByLabelText("Surname *"), "SILVA");
         await user.type(screen.getByLabelText("Other names *"), "SAMAN");
@@ -1176,16 +1231,18 @@ describe("WhatsApp number: fixed +94 prefix", () => {
         await user.type(screen.getByLabelText("Passport expiry date *"), "2030-01-14");
         await user.click(screen.getByRole("button", { name: "Register candidate" }));
         await screen.findByRole("navigation", { name: "Deployment stages" });
-        expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ whatsappNumber: "94771234567" });
+        expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ whatsappNumber: "447700900123" });
     });
 
-    test("a number on record that is not a +94 number is shown exactly as stored, read-only, without the prefix", async () => {
+    test("existing saved numbers for +94, +91, +971, and arbitrary country codes load read-only with the fixed + prefix", async () => {
+        // Arbitrary (+44)
         const foreign: CandidateDetails = { ...DETAILS, candidate: { ...DETAILS.candidate, whatsappNumber: "447700900123" } };
         signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: foreign } });
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
         const whatsapp = await screen.findByLabelText("WhatsApp number *");
         expect(whatsapp).toHaveValue("447700900123");
         expect(whatsapp).toHaveAttribute("readonly");
+        expect(screen.getByText("+")).toBeInTheDocument();
         expect(screen.queryByText("+94")).toBeNull();
     });
 
@@ -1197,7 +1254,7 @@ describe("WhatsApp number: fixed +94 prefix", () => {
         });
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
         const user = userEvent.setup();
-        expect(await screen.findByLabelText("WhatsApp number *")).toHaveValue("771234567");
+        expect(await screen.findByLabelText("WhatsApp number *")).toHaveValue("94771234567");
         await user.type(screen.getByLabelText("Contact number"), "0112345678");
         await user.click(screen.getByRole("button", { name: "Save changes" }));
         await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
@@ -1235,10 +1292,10 @@ describe("field hints", () => {
         expect(screen.queryByRole("tooltip")).toBeNull();
     });
 
-    test("the hints state the rules actually applied (passport 6-9 letters and digits, no fixed prefix; +94 mobile; dates required)", () => {
+    test("the hints state the rules actually applied (passport 6-9 letters and digits, no fixed prefix; mobile with country code; dates required)", () => {
         expect(FIELD_HINTS.passportId).toMatch(/6 to 9 letters and digits/);
         expect(FIELD_HINTS.passportId).not.toMatch(/\bPN\b/);
-        expect(FIELD_HINTS.whatsappNumber).toMatch(/\+94/);
+        expect(FIELD_HINTS.whatsappNumber).toMatch(/\+/);
         expect(FIELD_HINTS.passportIssueDate).toMatch(/Required/);
         expect(FIELD_HINTS.passportExpiryDate).toMatch(/Required/);
     });
