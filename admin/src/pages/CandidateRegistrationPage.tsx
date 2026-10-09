@@ -7,7 +7,6 @@ import {
     updateCandidate,
     updateCandidateStage,
     uploadCandidateDocument,
-    uploadRegistrationDocument,
     storedDocuments,
     variantLabel,
     type CandidateDetails,
@@ -15,7 +14,7 @@ import {
     type CandidateDocumentType,
     type FailedUpload,
 } from "../api/candidates";
-import { canRegisterCandidate, isRegistrationDesk, useAuth } from "../auth/AuthProvider";
+import { canManageCandidates, useAuth } from "../auth/AuthProvider";
 import { CandidateFields, detailsFrom, emptyDetails, Field, textAreaControl, validateDetails } from "../components/candidate/CandidateFields";
 import { DocumentRow, DOCUMENT_ACCEPT, VIDEO_ACCEPT } from "../components/candidate/DocumentRow";
 import { DialogError, primaryButton, secondaryButton } from "../components/Dialog";
@@ -62,7 +61,7 @@ function FileInput({ id, label, required, accept, file, onChange, disabled, erro
 // existing candidate is loaded into the same form and saved to their record,
 // with their stored documents shown (Replace uses the normal versioning).
 export function CandidateRegistrationPage() {
-    const { admin, token } = useAuth();
+    const { user, token } = useAuth();
     const navigate = useNavigate();
     const id = useId();
     const [passportId, setPassportId] = useState("");
@@ -76,14 +75,9 @@ export function CandidateRegistrationPage() {
     // The lookup for the current passport ID, shared by blur and submit so
     // the same ID is fetched once.
     const pending = useRef<{ passportId: string; promise: Promise<CandidateDetails | null> } | null>(null);
-    // The registration desk registers new candidates only: no passport ID
-    // lookup (it may not read existing candidates), no editing an existing
-    // one, and a confirmation here instead of the candidate's page.
-    const desk = isRegistrationDesk(admin);
-    const [registered, setRegistered] = useState<{ passportId: string; uniqueId: string; failedUploads: FailedUpload[] } | null>(null);
 
-    if (!canRegisterCandidate(admin)) {
-        return <Card><EmptyState title="Candidate registration needs an admin, analyst or registration desk account." /></Card>;
+    if (!canManageCandidates(user)) {
+        return <Card><EmptyState title="Candidate registration needs a staff account with access to Candidates." /></Card>;
     }
 
     const existing = lookup.status === "found" ? lookup.details : null;
@@ -102,7 +96,7 @@ export function CandidateRegistrationPage() {
     // existing candidate, or null for a new one or a failed lookup.
     const runLookup = (raw: string): Promise<CandidateDetails | null> => {
         const normalized = normalizePassportId(raw);
-        if (desk || !token || !isPassportId(normalized)) return Promise.resolve(null);
+        if (!token || !isPassportId(normalized)) return Promise.resolve(null);
         if (pending.current?.passportId === normalized) return pending.current.promise;
         setLookup({ status: "checking", passportId: normalized });
         const entry = { passportId: normalized, promise: Promise.resolve<CandidateDetails | null>(null) };
@@ -144,17 +138,9 @@ export function CandidateRegistrationPage() {
         setError(null);
     };
 
-    // The desk's Cancel and "Register another": an empty form.
-    const resetForm = () => {
-        startOver();
-        setFiles({ PASSPORT: null, NIC: null, SKILL_VIDEO: null });
-        setRegistered(null);
-        setBusy(false);
-    };
-
     const saveExisting = async (current: CandidateDetails) => {
         if (!token) return;
-        const found = validateDetails(details);
+        const found = validateDetails(details, "registration", { whatsappLocked: Boolean(current.candidate.whatsappNumber) });
         setErrors(found);
         if (Object.keys(found).length) return;
         setBusy(true);
@@ -179,10 +165,9 @@ export function CandidateRegistrationPage() {
         if (!token) return;
         if (existing) return saveExisting(existing);
 
-        // An existing passport ID loads that candidate instead of registering
-        // (not for the desk: the register request refuses a duplicate).
+        // An existing passport ID loads that candidate instead of registering.
         const normalizedId = normalizePassportId(passportId);
-        if (!desk && isPassportId(normalizedId)) {
+        if (isPassportId(normalizedId)) {
             setBusy(true);
             const found = await runLookup(normalizedId);
             setBusy(false);
@@ -197,18 +182,11 @@ export function CandidateRegistrationPage() {
         setBusy(true);
         setError(null);
         let created: string;
-        let uniqueId: string;
-        let grant: string | undefined;
         try {
-            ({ passportId: created, uniqueId, registrationUploadGrant: grant } = await createCandidate(token, { ...details, passportId: normalizedId, comment }));
+            created = (await createCandidate(token, { ...details, passportId: normalizedId, comment })).passportId;
         } catch (caught) {
-            setBusy(false);
-            // The desk sees only the refusal (e.g. already registered), never the existing record.
-            if (desk) {
-                setError({ message: caught instanceof ApiError ? caught.message : "The candidate could not be registered." });
-                return;
-            }
             const exists = caught instanceof ApiError && caught.status === 409 && /passport ID/i.test(caught.message);
+            setBusy(false);
             // Registered in the meantime: load it instead.
             if (exists) {
                 try {
@@ -231,16 +209,10 @@ export function CandidateRegistrationPage() {
             const file = files[documentType as keyof typeof files];
             if (!file) continue;
             try {
-                if (desk) await uploadRegistrationDocument(token, created, documentType, file, grant ?? "");
-                else await uploadCandidateDocument(token, created, documentType, file);
+                await uploadCandidateDocument(token, created, documentType, file);
             } catch (caught) {
                 failedUploads.push({ documentType, message: caught instanceof ApiError ? caught.message : "upload failed" });
             }
-        }
-        if (desk) {
-            setBusy(false);
-            setRegistered({ passportId: created, uniqueId, failedUploads });
-            return;
         }
         navigate(`/candidates/${encodeURIComponent(created)}?stage=CANDIDATE_DETAILS`, {
             state: failedUploads.length ? { failedUploads } : undefined,
@@ -273,37 +245,10 @@ export function CandidateRegistrationPage() {
         return `${documentTypeLabel(type)}${variant ? ` (${variant})` : ""}`;
     })) : [];
 
-    if (registered) {
-        return (
-            <section aria-labelledby="page-title" className="mx-auto max-w-4xl space-y-4">
-                <h1 id="page-title" className="text-headline-lg text-ink">Candidate registered</h1>
-                <Card className="p-6">
-                    <div role="status" className="flex items-start gap-2 text-body-md text-verified">
-                        <Icon name="check_circle" className="mt-0.5 size-5 shrink-0" />
-                        <p>Registered passport ID <strong>{registered.passportId}</strong> (unique ID {registered.uniqueId}).</p>
-                    </div>
-                    {registered.failedUploads.length > 0 && (
-                        <div role="alert" className="mt-4 rounded border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
-                            <p>These files were not uploaded; an analyst can add them on the candidate's page:</p>
-                            <ul className="mt-1 list-disc pl-5">
-                                {registered.failedUploads.map((failed) => (
-                                    <li key={failed.documentType}>{documentTypeLabel(failed.documentType)}: {failed.message}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-                    <div className="mt-6 flex justify-end">
-                        <button type="button" onClick={resetForm} className={primaryButton}>Register another candidate</button>
-                    </div>
-                </Card>
-            </section>
-        );
-    }
-
     return (
         <section aria-labelledby="page-title" className="mx-auto max-w-4xl space-y-4">
             <div>
-                {!desk && <Link to="/candidates" className="text-label-md text-primary hover:underline">Candidates</Link>}
+                <Link to="/candidates" className="text-label-md text-primary hover:underline">Candidates</Link>
                 <h1 id="page-title" className="mt-1 text-headline-lg text-ink">Add candidate</h1>
             </div>
             <Card className="p-6">
@@ -349,7 +294,7 @@ export function CandidateRegistrationPage() {
                         </div>
                     )}
                     <div className="mt-6 flex justify-end gap-2">
-                        <button type="button" onClick={desk ? resetForm : () => navigate("/candidates")} disabled={busy} className={secondaryButton}>Cancel</button>
+                        <button type="button" onClick={() => navigate("/candidates")} disabled={busy} className={secondaryButton}>Cancel</button>
                         <button type="submit" disabled={busy} className={primaryButton}>
                             {existing ? (busy ? "Saving…" : "Save changes") : busy ? "Registering…" : "Register candidate"}
                         </button>

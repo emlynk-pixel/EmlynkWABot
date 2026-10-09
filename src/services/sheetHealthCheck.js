@@ -2,8 +2,9 @@
 // (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 11.6 and 13.2.)
 //
 // Proves that the runtime identity can reach the configured spreadsheet and
-// tab, and that row 1 is the exact 40-column header, by reading A1:AN1 and
-// nothing else. It never appends, updates, clears, deletes, formats, creates
+// tab, and that row 1 has every system header exactly once (twice for POLICE
+// REP SRI LANKA), in any order and with any operator columns around them, by
+// reading row 1 and nothing else. It never appends, updates, clears, deletes, formats, creates
 // tabs or touches metadata:
 //   - the live client asks for the spreadsheets.readonly scope only, so its
 //     token cannot write;
@@ -14,9 +15,11 @@
 // It does NOT depend on SHEET_SYNC_ENABLED: verifying access must not require
 // enabling candidate writes. Write enablement is a separate switch.
 //
-// The result is sanitized: a status, the schema verdict, the letters of any
-// mismatched header columns, an HTTP status / Google reason code on failure.
-// Never tokens, credentials, Google's message text, header text or Sheet data.
+// The result is sanitized: a status, the schema verdict, the names of any
+// missing or duplicated SYSTEM headers (our own constants) with the letters
+// where duplicates were found, an HTTP status / Google reason code on
+// failure. Never tokens, credentials, Google's message text, the Sheet's
+// other header text or Sheet data.
 
 import { readSheetSyncConfig } from "../config/sheetSync.js";
 import { validateHeaderRow } from "./sheetSchema.js";
@@ -66,6 +69,8 @@ export async function runSheetHealthCheck({ env = process.env, sheetsClient, clo
         ok: fields.status === HEALTH_STATUS.CONNECTED && fields.schema === SCHEMA_STATUS.VALID,
         schema: SCHEMA_STATUS.NOT_CHECKED,
         mismatchedColumns: [],
+        missingHeaders: [],
+        duplicateHeaders: [],
         httpStatus: null,
         reason: null,
         googleStatus: null,
@@ -100,6 +105,8 @@ export async function runSheetHealthCheck({ env = process.env, sheetsClient, clo
     return result({
         status: HEALTH_STATUS.CONNECTED,
         schema: valid ? SCHEMA_STATUS.VALID : SCHEMA_STATUS.INVALID,
-        mismatchedColumns: mismatches.map((m) => m.column),
+        mismatchedColumns: mismatches.flatMap((m) => m.columns),
+        missingHeaders: mismatches.filter((m) => m.problem === "MISSING").map((m) => m.header),
+        duplicateHeaders: mismatches.filter((m) => m.problem === "DUPLICATE").map((m) => m.header),
     });
 }

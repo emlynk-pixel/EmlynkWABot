@@ -25,7 +25,7 @@ import {
 } from "../api/admin";
 import { ApiError } from "../api/client";
 import { useAdminResource } from "../api/useAdminResource";
-import { useAuth, canReview, isManagerOrAdmin } from "../auth/AuthProvider";
+import { useAuth, canReview, canCorrectPoliceDates } from "../auth/AuthProvider";
 import { Confidence } from "../components/Confidence";
 import { documentTypeLabel, formatDateTime, formatDay, formatFileSize, humanize, shortId, todayInSriLanka } from "../components/format";
 import { ActionDialog, DialogError, dangerButton, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
@@ -240,7 +240,7 @@ function ClientPicker({ selected, onSelect, disabled }: { selected: ClientListIt
 }
 
 function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () => void }) {
-    const { token, signOut, admin } = useAuth();
+    const { token, signOut, user } = useAuth();
     const reason = item.reviewReason ? REVIEW_REASONS[item.reviewReason] : undefined;
     const identity = item.processing?.identity;
     const idLabel = shortId((item.document.documentId ?? item.document.temporaryId ?? item.reviewId.replace(/^(pending|document|failed)-/, "")));
@@ -294,8 +294,8 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                     : item.auditLog;
     const verificationStatus = approved ? approved.document.verificationStatus : item.document.verificationStatus;
 
-    const hasReviewPermission = canReview(admin);
-    const canCorrectPoliceDate = isManagerOrAdmin(admin);
+    const hasReviewPermission = canReview(user);
+    const canSetPoliceDate = canCorrectPoliceDates(user);
 
     const canRemove = hasReviewPermission && item.actions?.remove?.available === true;
     const canSetType = hasReviewPermission && item.actions?.setDocumentType?.available === true;
@@ -801,7 +801,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             Submitted date read from the slip: <span className="font-medium">{formatDay(storedPoliceDate)}</span>. The 21-day follow-up runs from this date.
                         </p>
                     )}
-                    {needsPoliceDate && canCorrectPoliceDate ? (
+                    {needsPoliceDate && canSetPoliceDate ? (
                         <div className="mt-3">
                             <label htmlFor="police-date" className="block text-label-md text-ink">
                                 Submitted date on the police slip <span aria-hidden="true" className="text-critical">*</span>
@@ -835,7 +835,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                     <DialogError message={error} />
                     <div className="mt-4 flex justify-end gap-2">
                         <button type="button" className={secondaryButton} disabled={busy} onClick={close} autoFocus>Cancel</button>
-                        <button type="button" className={primaryButton} disabled={busy || (needsPoliceDate && !canCorrectPoliceDate)} onClick={confirmApprove}>{busy ? "Approving…" : "Approve"}</button>
+                        <button type="button" className={primaryButton} disabled={busy || (needsPoliceDate && !canSetPoliceDate)} onClick={confirmApprove}>{busy ? "Approving…" : "Approve"}</button>
                     </div>
                 </ActionDialog>
             )}

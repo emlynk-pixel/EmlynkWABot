@@ -16,18 +16,18 @@ import { createSheetSyncStore } from "../src/services/sheetSyncStore.js";
 import { createSheetSyncWorker, WORKER_TIMINGS } from "../src/services/sheetSyncWorker.js";
 import { runSheetHealthCheck } from "../src/services/sheetHealthCheck.js";
 import { readSheetSyncConfig, readSheetSyncTuning } from "../src/config/sheetSync.js";
-import { SHEET_COLUMNS, SHEET_HEADERS, SYSTEM_CANDIDATE_ID_INDEX } from "../src/services/sheetSchema.js";
+import { SHEET_COLUMN_COUNT, SHEET_COLUMNS, SHEET_HEADERS, SYSTEM_CANDIDATE_ID_INDEX } from "../src/services/sheetSchema.js";
 
 const TAB = "Emlynk Candidate Operational Mirror";
 const col = (field) => SHEET_COLUMNS.findIndex((c) => c.field === field);
-const AK = col("recordStatus");
-const AM = col("lastMirroredAt");
+const AL = col("recordStatus");
+const AN = col("lastMirroredAt");
 const B = col("passportNumber");
 const C = col("firstName");
 
 const BODY = {
     passportId: "N1023757", surname: "De Soysa", otherNames: "Anusha", nic: "965404378V",
-    whatsappNumber: "+94771234567", jobTypes: ["Caregiver"], jobExperience: "2 years",
+    whatsappNumber: "+94771234567", jobTypes: ["Caregiver"], jobExperience: "2 years", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14",
 };
 const SECOND = { passportId: "N7654321", surname: "Perera", otherNames: "Kamal", nic: "199012345678", whatsappNumber: "+94770000002" };
 
@@ -41,7 +41,7 @@ before(async () => {
 after(async () => database?.close());
 beforeEach(async () => {
     await pg.exec(`
-        DELETE FROM "documents"; DELETE FROM "candidate_stages"; DELETE FROM "users";
+        DELETE FROM "documents"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
         DELETE FROM "sheet_sync_queue"; DELETE FROM "sheet_sync_runs";
         UPDATE "sheet_sync_state" SET "integration_state" = 'UNKNOWN', "writer_lease_owner" = NULL, "writer_lease_expires_at" = NULL,
             "last_error_class" = NULL, "last_error_code" = NULL, "last_sync_success_at" = NULL;
@@ -91,12 +91,12 @@ describe("incremental sync", () => {
         const rows = rowFor(sheet, uniqueId);
         assert.equal(rows.length, 1);
         assert.equal(rows[0][B], "N1023757");
-        assert.equal(rows[0][AK], "ACTIVE");
-        assert.match(rows[0][AM], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+        assert.equal(rows[0][AL], "ACTIVE");
+        assert.match(rows[0][AN], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
         const [item] = await queueRows();
         assert.deepEqual([item.status, item.lastResult], ["COMPLETED", "APPENDED"]);
         const appendCall = sheet.writes().find((c) => c.method === "append");
-        assert.deepEqual([appendCall.range, appendCall.insertDataOption, appendCall.valueInputOption], [`'${TAB}'!A:AN`, "INSERT_ROWS", "RAW"]);
+        assert.deepEqual([appendCall.range, appendCall.insertDataOption, appendCall.valueInputOption], [`'${TAB}'!A:AO`, "INSERT_ROWS", "RAW"]);
         assert.ok((await state()).lastSyncSuccessAt);
     });
 
@@ -113,17 +113,17 @@ describe("incremental sync", () => {
         assert.deepEqual([row[col("ivsInterviewStatus")], row[col("visaApprovalStatus")], row[col("finalizingJobStatus")]], ["COMPLETED", "COMPLETED", "COMPLETED"]);
     });
 
-    test("an existing candidate row is updated in place (found by AN, not by position or passport number)", async () => {
+    test("an existing candidate row is updated in place (found by AO, not by position or passport number)", async () => {
         const { uniqueId } = await register();
         // The candidate's row sits below an unrelated row, with stale data.
-        const stale = Array(40).fill("");
+        const stale = Array(SHEET_COLUMN_COUNT).fill("");
         stale[C] = "OLD NAME";
         stale[SYSTEM_CANDIDATE_ID_INDEX] = uniqueId;
-        const other = Array(40).fill("x");
+        const other = Array(SHEET_COLUMN_COUNT).fill("x");
         other[SYSTEM_CANDIDATE_ID_INDEX] = "9999";
         const { sheet, worker } = setup({ rows: [other, stale] });
         await worker.tick();
-        assert.deepEqual(sheet.writes().map((c) => [c.method, c.ranges]), [["batchUpdate", [`'${TAB}'!A3:AN3`]]]);
+        assert.deepEqual(sheet.writes().map((c) => [c.method, c.ranges]), [["batchUpdate", [`'${TAB}'!A3:AO3`]]]);
         assert.equal(sheet.row(3)[C], "Anusha");
         assert.deepEqual(sheet.row(2), other, "the unrelated row is untouched");
         assert.equal(sheet.dataRows().length, 2, "no row was appended");
@@ -133,12 +133,12 @@ describe("incremental sync", () => {
         const { sheet, worker } = setup();
         const { passportId, uniqueId } = await register();
         await worker.tick();
-        const firstMirroredAt = rowFor(sheet, uniqueId)[0][AM];
+        const firstMirroredAt = rowFor(sheet, uniqueId)[0][AN];
         // A change that does not alter any mirrored cell (job ID is not mirrored).
         await updateStage({ db: prisma, passportId, stage: "TEST_DETAILS", values: parseStageBody({ jobId: "J-77" }, "TEST_DETAILS").values });
         await worker.tick();
         assert.equal(sheet.writes().length, 1, "only the first append wrote");
-        assert.equal(rowFor(sheet, uniqueId)[0][AM], firstMirroredAt);
+        assert.equal(rowFor(sheet, uniqueId)[0][AN], firstMirroredAt);
         assert.equal((await queueRows()).at(-1).lastResult, "UNCHANGED");
     });
 
@@ -148,7 +148,7 @@ describe("incremental sync", () => {
         // Claim the item, then "crash" (never settle it).
         const store = createSheetSyncStore({ db: prisma });
         await store.claimQueueBatch({ owner: "crashed-worker", now: new Date(), leaseMs: 1_000, limit: 10 });
-        await sheet.client.spreadsheets.values.append({ range: `'${TAB}'!A:AN`, insertDataOption: "INSERT_ROWS", valueInputOption: "RAW", requestBody: { values: [Object.assign(Array(40).fill(""), { [SYSTEM_CANDIDATE_ID_INDEX]: uniqueId })] } });
+        await sheet.client.spreadsheets.values.append({ range: `'${TAB}'!A:AO`, insertDataOption: "INSERT_ROWS", valueInputOption: "RAW", requestBody: { values: [Object.assign(Array(SHEET_COLUMN_COUNT).fill(""), { [SYSTEM_CANDIDATE_ID_INDEX]: uniqueId })] } });
         advance(WORKER_TIMINGS.queueLeaseMs + 5_000);
         await worker.tick(); // reclaims the expired lease
         assert.equal(rowFor(sheet, uniqueId).length, 1);
@@ -176,9 +176,9 @@ describe("incremental sync", () => {
         assert.deepEqual([item.status, item.lastResult], ["COMPLETED", "UNCHANGED"]);
     });
 
-    test("a blank AN cell identifies nobody: the candidate is appended and the blank row is untouched", async () => {
-        const blank = Array(40).fill("");
-        blank[B] = "N1023757"; // same passport number, but no AN
+    test("a blank AO cell identifies nobody: the candidate is appended and the blank row is untouched", async () => {
+        const blank = Array(SHEET_COLUMN_COUNT).fill("");
+        blank[B] = "N1023757"; // same passport number, but no AO
         blank[C] = "Manual entry";
         const { sheet, worker } = setup({ rows: [blank] });
         const { uniqueId } = await register();
@@ -187,9 +187,9 @@ describe("incremental sync", () => {
         assert.equal(rowFor(sheet, uniqueId).length, 1);
     });
 
-    test("duplicate AN: hard data-integrity stop, no write at all, the duplicate rows untouched, the item kept", async () => {
+    test("duplicate AO: hard data-integrity stop, no write at all, the duplicate rows untouched, the item kept", async () => {
         const { uniqueId } = await register();
-        const dup = Array(40).fill("");
+        const dup = Array(SHEET_COLUMN_COUNT).fill("");
         dup[SYSTEM_CANDIDATE_ID_INDEX] = uniqueId;
         const dupA = [...dup];
         dupA[C] = "copy A";
@@ -209,17 +209,17 @@ describe("incremental sync", () => {
         const { passportId, uniqueId } = await register();
         await worker.tick();
         const before = rowFor(sheet, uniqueId)[0];
-        await prisma.user.delete({ where: { passportId } });
+        await prisma.candidate.delete({ where: { passportId } });
         await worker.tick();
         const after = rowFor(sheet, uniqueId);
         assert.equal(after.length, 1, "never deleted");
-        assert.equal(after[0][AK], "DELETED / INACTIVE");
-        for (let i = 0; i < 40; i++) if (i !== AK && i !== AM) assert.equal(after[0][i], before[i]);
+        assert.equal(after[0][AL], "DELETED / INACTIVE");
+        for (let i = 0; i < SHEET_COLUMN_COUNT; i++) if (i !== AL && i !== AN) assert.equal(after[0][i], before[i]);
         assert.equal((await queueRows()).at(-1).lastResult, "MARKED_INACTIVE");
     });
 
     test("an unknown unique ID without a delete hint changes nothing (NOT_IN_DATABASE)", async () => {
-        const row = Array(40).fill("v");
+        const row = Array(SHEET_COLUMN_COUNT).fill("v");
         row[SYSTEM_CANDIDATE_ID_INDEX] = "7777";
         const { sheet, worker } = setup({ rows: [row] });
         await prisma.sheetSyncQueue.create({ data: { uniqueId: "7777" } });
@@ -234,7 +234,7 @@ describe("failures: the database stays authoritative and unaffected", () => {
         const { sheet, worker, advance } = setup();
         sheet.failNext("*", googleError(503, { reason: "backendError", googleStatus: "UNAVAILABLE" }), 100);
         const { uniqueId } = await register();
-        assert.ok(await prisma.user.findUnique({ where: { uniqueId } }), "the candidate is in the database");
+        assert.ok(await prisma.candidate.findUnique({ where: { uniqueId } }), "the candidate is in the database");
 
         await worker.tick();
         let [item] = await queueRows();
@@ -283,7 +283,7 @@ describe("failures: the database stays authoritative and unaffected", () => {
         await worker.tick();
         assert.deepEqual(sheet.writes(), []);
         let [item] = await queueRows();
-        assert.deepEqual([item.status, item.attempts, item.lastErrorClass, item.lastErrorCode], ["PENDING", 0, "SCHEMA_INVALID", "F"]);
+        assert.deepEqual([item.status, item.attempts, item.lastErrorClass, item.lastErrorCode], ["PENDING", 0, "SCHEMA_INVALID", "MISSING:BIRTHDAY"]);
         assert.equal((await state()).integrationState, "CONFIG_ERROR");
 
         const calls = sheet.calls.length;
@@ -385,7 +385,7 @@ describe("reconciliation and durable runs", () => {
             { updated: 1, unchanged: 1, appended: 0, markedInactive: 0 },
         );
         assert.equal(sheet.row(aRow)[C], "Anusha");
-        assert.deepEqual(sheet.writes().slice(writesBefore).map((c) => c.ranges ?? c.method), [[`'${TAB}'!A${aRow}:AN${aRow}`]], "only the drifted row is written");
+        assert.deepEqual(sheet.writes().slice(writesBefore).map((c) => c.ranges ?? c.method), [[`'${TAB}'!A${aRow}:AO${aRow}`]], "only the drifted row is written");
         assert.doesNotMatch(JSON.stringify(run), /Anusha|N1023757|Kamal/);
         assert.equal(rowFor(sheet, b.uniqueId).length, 1);
     });
@@ -400,9 +400,9 @@ describe("reconciliation and durable runs", () => {
         assert.equal(sheet.writes().length, writes);
     });
 
-    test("Sheet-only AN (candidate absent from a complete snapshot): marked inactive within the guard, never deleted", async () => {
-        const orphan = Array(40).fill("kept");
-        orphan[AK] = "ACTIVE";
+    test("Sheet-only AO (candidate absent from a complete snapshot): marked inactive within the guard, never deleted", async () => {
+        const orphan = Array(SHEET_COLUMN_COUNT).fill("kept");
+        orphan[AL] = "ACTIVE";
         orphan[SYSTEM_CANDIDATE_ID_INDEX] = "0500";
         const rows = [orphan];
         // Enough identified rows that one orphan is within the 5% guard.
@@ -413,13 +413,13 @@ describe("reconciliation and durable runs", () => {
         await worker.tick();
         const run = await store.getRun(runId);
         assert.equal(run.summary.markedInactive, 1);
-        assert.equal(sheet.row(2)[AK], "DELETED / INACTIVE");
+        assert.equal(sheet.row(2)[AL], "DELETED / INACTIVE");
         assert.equal(sheet.row(2)[C], "kept");
         assert.equal(sheet.dataRows().length, 21, "no row removed");
     });
 
     test("deletion guard: too many absent candidates -> nothing marked, reported NOT_IN_DATABASE, rows unchanged", async () => {
-        const orphans = ["0601", "0602", "0603"].map((id) => Object.assign(Array(40).fill("kept"), { [AK]: "ACTIVE", [SYSTEM_CANDIDATE_ID_INDEX]: id }));
+        const orphans = ["0601", "0602", "0603"].map((id) => Object.assign(Array(SHEET_COLUMN_COUNT).fill("kept"), { [AL]: "ACTIVE", [SYSTEM_CANDIDATE_ID_INDEX]: id }));
         const { sheet, worker, store, lines } = setup({ rows: orphans.map((r) => [...r]) });
         await register();
         await worker.tick();
@@ -429,16 +429,16 @@ describe("reconciliation and durable runs", () => {
         assert.equal(run.summary.deletionGuardTriggered, true);
         assert.equal(run.summary.notInDatabase, 3);
         assert.equal(run.summary.markedInactive, 0);
-        for (let n = 2; n <= 4; n++) assert.equal(sheet.row(n)[AK], "ACTIVE");
+        for (let n = 2; n <= 4; n++) assert.equal(sheet.row(n)[AL], "ACTIVE");
         assert.ok(lines.some((l) => l.includes("sheet_sync.reconcile_deletion_guard")));
     });
 
     test("an empty database snapshot never marks anything inactive", async () => {
-        const orphan = Object.assign(Array(40).fill("kept"), { [AK]: "ACTIVE", [SYSTEM_CANDIDATE_ID_INDEX]: "0700" });
+        const orphan = Object.assign(Array(SHEET_COLUMN_COUNT).fill("kept"), { [AL]: "ACTIVE", [SYSTEM_CANDIDATE_ID_INDEX]: "0700" });
         const { sheet, worker, store } = setup({ rows: [orphan], env: { SHEET_SYNC_DELETION_GUARD_MAX: "100", SHEET_SYNC_DELETION_GUARD_FRACTION: "1" } });
         await reconcileRun(store);
         await worker.tick();
-        assert.equal(sheet.row(2)[AK], "ACTIVE");
+        assert.equal(sheet.row(2)[AL], "ACTIVE");
         assert.deepEqual(sheet.writes(), []);
     });
 
@@ -452,8 +452,8 @@ describe("reconciliation and durable runs", () => {
         assert.deepEqual(sheet.writes(), []);
     });
 
-    test("duplicate AN stops a reconciliation before any write; the run is FAILED with a code", async () => {
-        const dup = Object.assign(Array(40).fill(""), { [SYSTEM_CANDIDATE_ID_INDEX]: "0001" });
+    test("duplicate AO stops a reconciliation before any write; the run is FAILED with a code", async () => {
+        const dup = Object.assign(Array(SHEET_COLUMN_COUNT).fill(""), { [SYSTEM_CANDIDATE_ID_INDEX]: "0001" });
         const { sheet, worker, store } = setup({ rows: [[...dup], [...dup]] });
         await register();
         await prisma.sheetSyncQueue.deleteMany();

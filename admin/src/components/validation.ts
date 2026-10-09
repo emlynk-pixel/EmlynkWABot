@@ -1,5 +1,5 @@
 // Client-side checks for the admin forms. They mirror the backend rules
-// (src/routes/auth.js, passwordResetService.js, adminInvitationService.js)
+// (src/services/userAccountService.js; passwords: the Supabase project policy)
 // so a value the form accepts is one the server accepts too; the server
 // still validates everything. Each returns an error message or null.
 

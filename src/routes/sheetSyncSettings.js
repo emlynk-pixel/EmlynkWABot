@@ -7,9 +7,10 @@
 //   GET  /runs/:runId     one run's status and result
 //
 // ADMIN only, enforced here by requireRole (the role is re-read from the
-// database for every request by requireActiveAdmin), on top of the admin
-// router's authentication, rate limiting and CSRF protection. Hiding the
-// sidebar item is not the security boundary; this is.
+// database for every request by requireActiveUser), on top of the admin
+// router's Supabase-session authentication and rate limiting (no cookie
+// authenticates a request, so CSRF does not apply; Docs/SUPABASE_AUTH.md).
+// Hiding the sidebar item is not the security boundary; this is.
 //
 // This runs on Vercel and never calls Google: POST only records a request
 // that the sheet-sync worker (Cloud Run) executes, and returns at once, so no
@@ -17,12 +18,12 @@
 // same kind is queued or running returns that run (no duplicates).
 
 import express from "express";
-import { requireRole, ADMIN_ROLES } from "../middleware/requireRole.js";
+import { requireRole, ROLES } from "../middleware/requireRole.js";
 import { resolveDb } from "../utils/resolveClients.js";
 import { RUN_KIND, RUN_TRIGGER } from "../services/sheetSyncStore.js";
 import { getSheetSyncRun, getSheetSyncStatus, isValidRunId, requestSheetSyncRun } from "../services/sheetSyncStatusService.js";
 
-const ADMINS_ONLY = [ADMIN_ROLES.ADMIN];
+const ADMINS_ONLY = [ROLES.ADMIN];
 
 export function createSheetSyncSettingsRouter({ db, log = console } = {}) {
     const router = express.Router();
@@ -33,9 +34,9 @@ export function createSheetSyncSettingsRouter({ db, log = console } = {}) {
     });
 
     const request = (kind) => async (req, res) => {
-        const { run, created } = await requestSheetSyncRun({ db: await resolveDb(db), kind, triggerSource: RUN_TRIGGER.ADMIN, requestedBy: req.admin.adminId });
+        const { run, created } = await requestSheetSyncRun({ db: await resolveDb(db), kind, triggerSource: RUN_TRIGGER.ADMIN, requestedBy: req.user.adminId });
         // IDs and codes only.
-        log.log(JSON.stringify({ event: "sheet_sync.run_requested", kind, runId: run.runId, created, adminId: req.admin.adminId }));
+        log.log(JSON.stringify({ event: "sheet_sync.run_requested", kind, runId: run.runId, created, adminId: req.user.adminId }));
         res.status(202).json({ run, alreadyActive: !created });
     };
     router.post("/test", request(RUN_KIND.TEST_CONNECTION));

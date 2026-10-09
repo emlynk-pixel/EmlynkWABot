@@ -1,5 +1,6 @@
 import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
 import { SEX_OPTIONS, type CandidateDetails, type CandidateDetailsInput } from "../../api/candidates";
+import { HelpTip } from "../Form";
 
 export const fieldControl = "h-10 w-full rounded border border-border-strong bg-surface px-3 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
 export const textAreaControl = "w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
@@ -36,10 +37,45 @@ const isPhoneNumber = (value: string) => {
     return /^[\d\s()+-]+$/.test(value) && digits.length >= 8 && digits.length <= 15;
 };
 
-// "registration": the WhatsApp number is required; the address (and the
-// passport document) are not. "details": saving Candidate Details is never
-// blocked by the address or WhatsApp number (completionGaps reports them);
-// the stage only completes once they and the passport are on record.
+// WhatsApp numbers are stored as the server keeps them: international digits
+// without "+", e.g. 94771234567, 919876543210 (normalizePhoneNumber, src/utils/phoneNumber.js).
+// The form shows "+" as a fixed prefix and the user types the country code and number.
+export const WHATSAPP_PREFIX = "+";
+const WHATSAPP_STORED = /^[1-9]\d{7,14}$/;
+
+// Converts user input into the stored international digits format.
+// Strips non-digits, leading "+", and international "00" prefix.
+export function whatsappFromInput(input: string): string {
+    let digits = input.replace(/\D/g, "");
+    if (digits.startsWith("00")) {
+        digits = digits.slice(2);
+    }
+    return digits.slice(0, 15);
+}
+
+// Kept for backward compatibility with existing imports.
+export const whatsappFromLocal = whatsappFromInput;
+
+// A stored number's digits after "+", or normalized international digits for older records.
+export function whatsappLocalPart(stored: string): string {
+    if (!stored) return "";
+    let digits = stored.replace(/\D/g, "");
+    if (digits.startsWith("00")) {
+        digits = digits.slice(2);
+    }
+    if (/^07\d{8}$/.test(digits)) {
+        digits = "94" + digits.slice(1);
+    } else if (/^7\d{8}$/.test(digits)) {
+        digits = "94" + digits;
+    }
+    return digits.slice(0, 15);
+}
+
+// "registration": the WhatsApp number is required. "details": saving
+// Candidate Details is never blocked by a missing WhatsApp number
+// (completionGaps reports it); the stage only completes once it and the
+// passport are on record. The address is optional everywhere; the passport
+// issue and expiry dates are required on both.
 export type DetailsForm = "registration" | "details";
 
 const COMPLETION_REQUIRED = "Required to complete Candidate details.";
@@ -48,7 +84,7 @@ const COMPLETION_REQUIRED = "Required to complete Candidate details.";
 // the admin sees which field to fix. Returns field -> message; any message
 // blocks saving. The passport and contact details are optional: only a value
 // that is given is checked.
-export function validateDetails(value: CandidateDetailsInput, form: DetailsForm = "registration"): Record<string, string> {
+export function validateDetails(value: CandidateDetailsInput, form: DetailsForm = "registration", { whatsappLocked = false }: { whatsappLocked?: boolean } = {}): Record<string, string> {
     const errors: Record<string, string> = {};
     if (!value.surname.trim()) errors.surname = "Enter the surname.";
     if (!value.otherNames.trim()) errors.otherNames = "Enter the other names.";
@@ -57,12 +93,16 @@ export function validateDetails(value: CandidateDetailsInput, form: DetailsForm 
     if (form === "registration" && !value.whatsappNumber.trim()) errors.whatsappNumber = "Enter the WhatsApp number.";
     if (!value.jobTypes.length) errors.jobTypes = "Add at least one job type.";
     if (!value.jobExperience.trim()) errors.jobExperience = "Enter the job experience.";
+    if (!value.passportIssueDate) errors.passportIssueDate = "Enter the passport issue date.";
+    if (!value.passportExpiryDate) errors.passportExpiryDate = "Enter the passport expiry date.";
     if (value.passportIssueDate && value.passportExpiryDate && value.passportIssueDate >= value.passportExpiryDate) {
         errors.passportIssueDate = "Must be before the expiry date.";
     }
-    for (const field of ["whatsappNumber", "contactNumber"] as const) {
-        if (value[field].trim() && !isPhoneNumber(value[field].trim())) errors[field] = "Enter a phone number, e.g. 0771234567.";
+    // A number already on record is read-only and kept as it is.
+    if (!whatsappLocked && value.whatsappNumber && !WHATSAPP_STORED.test(value.whatsappNumber)) {
+        errors.whatsappNumber = "Enter the mobile number with country code after +, e.g. 94771234567.";
     }
+    if (value.contactNumber.trim() && !isPhoneNumber(value.contactNumber.trim())) errors.contactNumber = "Enter a phone number, e.g. 0771234567.";
     return errors;
 }
 
@@ -72,18 +112,61 @@ export function validateDetails(value: CandidateDetailsInput, form: DetailsForm 
 export function completionGaps(value: CandidateDetailsInput): Record<string, string> {
     const gaps: Record<string, string> = {};
     if (!value.whatsappNumber.trim()) gaps.whatsappNumber = COMPLETION_REQUIRED;
-    if (!value.address.trim()) gaps.address = COMPLETION_REQUIRED;
     return gaps;
 }
 
-export function Field({ label, required, error, htmlFor, children, className = "" }: { label: string; required?: boolean; error?: string; htmlFor: string; children: ReactNode; className?: string }) {
+export function Field({ label, required, error, htmlFor, children, className = "", help }: { label: string; required?: boolean; error?: string; htmlFor: string; children: ReactNode; className?: string; help?: string }) {
+    const text = <>{label}{required && <span className="text-critical"> *</span>}</>;
     return (
         <div className={className}>
-            <label htmlFor={htmlFor} className="mb-1 block text-label-sm text-ink-muted">
-                {label}{required && <span className="text-critical"> *</span>}
-            </label>
+            {help ? (
+                <div className="mb-1 flex items-center gap-1.5">
+                    <label htmlFor={htmlFor} className="block text-label-sm text-ink-muted">{text}</label>
+                    <HelpTip label={label} text={help} />
+                </div>
+            ) : (
+                <label htmlFor={htmlFor} className="mb-1 block text-label-sm text-ink-muted">{text}</label>
+            )}
             {children}
             {error && <p className="mt-1 text-label-sm text-critical">{error}</p>}
+        </div>
+    );
+}
+
+// Field hints. They describe the rules the server applies.
+export const FIELD_HINTS = {
+    passportId: "6 to 9 letters and digits with at least one digit, as printed on the passport (e.g. N1234567). Spaces and dashes are ignored.",
+    whatsappNumber: "The mobile number with country code after + (e.g. 94771234567, 919876543210). It can't be changed once saved.",
+    passportIssueDate: "As printed on the passport. Required, and before the expiry date.",
+    passportExpiryDate: "As printed on the passport. Required, and after the issue date.",
+} as const;
+
+// The WhatsApp number: "+" fixed in front, the rest typed. A number on
+// record is read-only.
+function WhatsAppInput({ id, value, onChange, disabled, locked, invalid }: { id: string; value: string; onChange: (next: string) => void; disabled?: boolean; locked?: boolean; invalid?: boolean }) {
+    const prefixId = `${id}-prefix`;
+    const displayValue = locked ? whatsappLocalPart(value) : (value.startsWith("+") ? value.slice(1) : value);
+    return (
+        <div className="flex">
+            <span aria-hidden="true" className="inline-flex h-10 shrink-0 items-center rounded-l border border-r-0 border-border-strong bg-canvas px-3 text-body-sm text-ink-muted">
+                +
+            </span>
+            <span id={prefixId} className="sr-only">Prefix +</span>
+            <input
+                id={id}
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel"
+                maxLength={20}
+                placeholder="94771234567"
+                value={displayValue}
+                disabled={disabled && !locked}
+                readOnly={locked}
+                aria-describedby={prefixId}
+                aria-invalid={invalid}
+                onChange={(event) => onChange(whatsappFromInput(event.target.value))}
+                className={`${fieldControl} min-w-0 rounded-l-none ${locked ? "bg-canvas text-ink-muted" : ""} ${invalid ? "border-critical" : ""}`}
+            />
         </div>
     );
 }
@@ -131,17 +214,15 @@ function JobTypesInput({ id, value, onChange, disabled, invalid }: { id: string;
 // Candidate details: passport details, NIC, contact numbers, address, job
 // types and experience. Required fields are marked; the rest are optional.
 // The passport ID is entered once at registration and shown read-only after;
-// so is a WhatsApp number already on record (whatsappLocked).
-// `form` marks what is required where: the address only for Candidate Details
-// (registration doesn't need it), the WhatsApp number on both.
-export function CandidateFields({ value, onChange, errors = {}, disabled, passportId, whatsappLocked, form = "registration" }: {
+// so is a WhatsApp number already on record (whatsappLocked). The required
+// marks are the same on registration and Candidate Details.
+export function CandidateFields({ value, onChange, errors = {}, disabled, passportId, whatsappLocked }: {
     value: CandidateDetailsInput;
     onChange: (next: CandidateDetailsInput) => void;
     errors?: Record<string, string>;
     disabled?: boolean;
     passportId: { value: string; onChange?: (next: string) => void; onBlur?: () => void; error?: string; hint?: ReactNode };
     whatsappLocked?: boolean;
-    form?: DetailsForm;
 }) {
     const id = useId();
     const set = (field: keyof CandidateDetailsInput) => (next: string) => onChange({ ...value, [field]: next });
@@ -164,7 +245,7 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
             <Field label="Surname" required htmlFor={`${id}-surname`} error={errors.surname}>{input("surname")}</Field>
             <Field label="Other names" required htmlFor={`${id}-otherNames`} error={errors.otherNames}>{input("otherNames")}</Field>
             <Field label="NIC" required htmlFor={`${id}-nic`} error={errors.nic}>{input("nic", { maxLength: 12 })}</Field>
-            <Field label="Passport ID" required htmlFor={`${id}-passportId`} error={passportId.error}>
+            <Field label="Passport ID" required htmlFor={`${id}-passportId`} error={passportId.error} help={FIELD_HINTS.passportId}>
                 <input
                     id={`${id}-passportId`}
                     value={passportId.value}
@@ -193,10 +274,10 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
             </Field>
             <Field label="Date of birth" htmlFor={`${id}-dateOfBirth`} error={errors.dateOfBirth}>{input("dateOfBirth", { type: "date" })}</Field>
             <Field label="Place of birth" htmlFor={`${id}-placeOfBirth`} error={errors.placeOfBirth}>{input("placeOfBirth")}</Field>
-            <Field label="Passport issue date" htmlFor={`${id}-passportIssueDate`} error={errors.passportIssueDate}>{input("passportIssueDate", { type: "date" })}</Field>
-            <Field label="Passport expiry date" htmlFor={`${id}-passportExpiryDate`} error={errors.passportExpiryDate}>{input("passportExpiryDate", { type: "date" })}</Field>
-            <Field label="WhatsApp number" required htmlFor={`${id}-whatsappNumber`} error={errors.whatsappNumber}>
-                {input("whatsappNumber", { type: "tel", maxLength: 30, readOnly: whatsappLocked })}
+            <Field label="Passport issue date" required htmlFor={`${id}-passportIssueDate`} error={errors.passportIssueDate} help={FIELD_HINTS.passportIssueDate}>{input("passportIssueDate", { type: "date" })}</Field>
+            <Field label="Passport expiry date" required htmlFor={`${id}-passportExpiryDate`} error={errors.passportExpiryDate} help={FIELD_HINTS.passportExpiryDate}>{input("passportExpiryDate", { type: "date" })}</Field>
+            <Field label="WhatsApp number" required htmlFor={`${id}-whatsappNumber`} error={errors.whatsappNumber} help={FIELD_HINTS.whatsappNumber}>
+                <WhatsAppInput id={`${id}-whatsappNumber`} value={value.whatsappNumber} onChange={set("whatsappNumber")} disabled={disabled} locked={whatsappLocked} invalid={Boolean(errors.whatsappNumber)} />
                 {whatsappLocked && <div className="mt-1 text-label-sm text-ink-muted">Registered WhatsApp numbers cannot be changed.</div>}
             </Field>
             <Field label="Contact number" htmlFor={`${id}-contactNumber`} error={errors.contactNumber}>{input("contactNumber", { type: "tel", maxLength: 30 })}</Field>
@@ -206,7 +287,7 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
             <Field label="Job experience" required htmlFor={`${id}-jobExperience`} error={errors.jobExperience} className="md:col-span-2">
                 {input("jobExperience", { maxLength: 2000 })}
             </Field>
-            <Field label="Address" required={form === "details"} htmlFor={`${id}-address`} error={errors.address} className="md:col-span-2">
+            <Field label="Address" htmlFor={`${id}-address`} error={errors.address} className="md:col-span-2">
                 <textarea
                     id={`${id}-address`}
                     rows={2}

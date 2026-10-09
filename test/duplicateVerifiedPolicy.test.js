@@ -1,26 +1,25 @@
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import jwt from "jsonwebtoken";
 
 import { processDocument } from "../src/services/documentProcessingService.js";
 import { decidePlacement, PLACEMENT } from "../src/services/storagePlacementService.js";
 import { CHECKSUM_OUTCOME } from "../src/services/documentChecksumService.js";
 import { REVIEW_REASON, deriveReviewReason } from "../src/services/reviewReason.js";
 import { createAdminRouter } from "../src/routes/admin.js";
-import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.js";
+import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js";
 import { sha256Hex } from "../src/utils/fileChecksum.js";
 import { createFakePrisma } from "./helpers/fakePrisma.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import "./helpers/localOcrService.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
+import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 Object.assign(process.env, {
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
 
@@ -68,7 +67,7 @@ describe("M4 pipeline", () => {
         assert.ok(objects.includes(VERIFIED_PATH));
         assert.equal(objects.filter((p) => p.startsWith("clients/")).length, 1);
         assert.ok(!db.calls.some((c) => c.method === "document.create"));
-        assert.ok(!db.calls.some((c) => c.method === "user.updateMany"), "no client record writes");
+        assert.ok(!db.calls.some((c) => c.method === "candidate.updateMany"), "no client record writes");
     });
 
     test("TEST 2: exact duplicate of a NON-verified document -> existing policy (DUPLICATE, nothing stored, no review)", async () => {
@@ -150,7 +149,7 @@ function setup() {
     const bucket = createFakeBucket([VERIFIED_PATH, PENDING, TEMP]);
     return { db, bucket };
 }
-const token = jwt.sign({ adminId: "admin-active" }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
+const token = tokenFor("admin-active");
 let server;
 let base;
 let current;
@@ -161,7 +160,7 @@ before(async () => {
 });
 after(() => server.close());
 function use(fixture) {
-    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveAdmin({ db: fixture.db.client }) }) };
+    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveUser({ db: fixture.db.client, verifyAccessToken: fakeVerifyAccessToken }) }) };
     return fixture;
 }
 async function call(method, path, body) {

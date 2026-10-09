@@ -1,9 +1,7 @@
 import { useState, useEffect, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate, type Location } from "react-router";
 import { ApiError } from "../api/client";
-import type { Admin } from "../api/auth";
-import { isRegistrationDesk, useAuth } from "../auth/AuthProvider";
-import { REGISTRATION_DESK_HOME } from "../layout/navigation";
+import { useAuth } from "../auth/AuthProvider";
 import { Icon } from "../components/Icon";
 import { FormField, fieldA11y } from "../components/Form";
 import { inputClass } from "../components/ui";
@@ -15,13 +13,7 @@ function validateLogin(email: string, password: string): LoginErrors {
     return { email: emailError(email), password: password ? null : "Enter your password." };
 }
 
-// Only returns within the admin app are followed after sign-in. The
-// registration desk always goes straight to Add candidate, its only page
-// (never through the dashboard).
-function landingPath(admin: Admin | null, state: unknown): string {
-    return isRegistrationDesk(admin) ? REGISTRATION_DESK_HOME : returnPath(state);
-}
-
+// Only returns within the admin app are followed after sign-in.
 function returnPath(state: unknown): string {
     const from = (state as { from?: Location } | null)?.from;
     const path = from?.pathname;
@@ -30,12 +22,12 @@ function returnPath(state: unknown): string {
         : "/";
 }
 
-// Same limits the backend enforces (src/routes/auth.js).
+// Input caps (an email address is at most 254 characters).
 const MAX_EMAIL_LENGTH = 254;
 const MAX_PASSWORD_LENGTH = 128;
 
 export function LoginPage() {
-    const { status, admin, signIn } = useAuth();
+    const { status, signIn, notice } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
     const [email, setEmail] = useState("");
@@ -66,7 +58,7 @@ export function LoginPage() {
     }, [resetTime]);
 
     if (status === "authenticated") {
-        return <Navigate to={landingPath(admin, location.state)} replace />;
+        return <Navigate to={returnPath(location.state)} replace />;
     }
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -83,8 +75,8 @@ export function LoginPage() {
 
         setSubmitting(true);
         try {
-            const signedIn = await signIn(email.trim(), password);
-            navigate(landingPath(signedIn, location.state), { replace: true });
+            await signIn(email.trim(), password);
+            navigate(returnPath(location.state), { replace: true });
         } catch (caught) {
             setError(caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
             if (caught instanceof ApiError && caught.resetTime) {
@@ -116,7 +108,14 @@ export function LoginPage() {
 
                 <div className="rounded-lg border border-border bg-surface p-6 shadow-surface">
                     <h1 className="text-headline-lg text-ink">Sign in</h1>
-                    <p className="mt-1 text-body-sm text-ink-muted">Use your administrator account.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Use your console account.</p>
+
+                    {!error && notice && (
+                        <div role="alert" className="mt-4 flex items-start gap-2 rounded border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
+                            <Icon name="error" className="mt-px size-4 shrink-0" />
+                            <span>{notice}</span>
+                        </div>
+                    )}
 
                     {error && (
                         <div role="alert" className="mt-4 flex flex-col gap-1 rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">

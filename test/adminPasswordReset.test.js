@@ -1,427 +1,56 @@
-import { describe, test, before, after, beforeEach } from "node:test";
+// Password recovery belongs to Supabase Auth: the admin app calls
+// resetPasswordForEmail() and updateUser({ password }) directly (covered by
+// admin/src/test/passwordReset.test.tsx). The backend keeps no reset tokens
+// and has no recovery endpoint; this file checks that nothing of the old
+// custom flow is reachable or stored.
+import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import express from "express";
-import cookieParser from "cookie-parser";
-import { MemoryStore } from "express-rate-limit";
 
-import { createAuthRouter, ACTIVE_ADMIN_STATUS } from "../src/routes/auth.js";
-import { hashPassword, comparePassword } from "../src/utils/password.js";
+import { createAuthRouter } from "../src/routes/auth.js";
+import { errorHandler } from "../src/middleware/errorHandler.js";
 import { createFakeAdminDb, noRateLimit } from "./helpers/fakeAdminDb.js";
-import { clearSentEmails, getLastSentEmail, getSentEmails } from "../src/services/emailService.js";
-import { hashResetToken } from "../src/services/passwordResetService.js";
-import { createResetRateLimiter } from "../src/middleware/loginRateLimiter.js";
-
-process.env.JWT_SECRET = "test-jwt-secret-placeholder-for-password-resets-987654";
-const INITIAL_PASSWORD = "InitialPassword123!";
-const NEW_PASSWORD = "NewBrandPassword2026!";
+import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 let server;
 let baseUrl;
-let db;
 
 before(async () => {
-    const passwordHash = await hashPassword(INITIAL_PASSWORD);
-    const admins = [
-        {
-            adminId: "admin-active",
-            name: "Active Admin",
-            email: "active@example.invalid",
-            passwordHash,
-            role: "ADMIN",
-            status: ACTIVE_ADMIN_STATUS,
-        },
-        {
-            adminId: "admin-inactive",
-            name: "Inactive Admin",
-            email: "inactive@example.invalid",
-            passwordHash,
-            role: "ANALYST",
-            status: "INACTIVE",
-        },
-        {
-            adminId: "admin-disabled",
-            name: "Disabled Admin",
-            email: "disabled@example.invalid",
-            passwordHash,
-            role: "VIEWER",
-            status: "DISABLED",
-        },
-    ];
-
-    db = createFakeAdminDb(admins);
-
     const app = express();
     app.use(express.json());
-    app.use(cookieParser());
-    // Attach router with bypass rate limiting for general functional tests
-    app.use("/auth", createAuthRouter({ db, loginLimiter: noRateLimit, resetLimiter: noRateLimit }));
-
-    await new Promise((resolve) => {
-        server = app.listen(0, "127.0.0.1", resolve);
-    });
+    const db = createFakeAdminDb([{ adminId: "u1", name: "U", email: "u@example.invalid", role: "ADMIN", status: "ACTIVE" }]);
+    app.use("/auth", createAuthRouter({ db, verifyAccessToken: fakeVerifyAccessToken, apiLimiter: noRateLimit }));
+    app.use((req, res) => res.status(404).json({ message: "Not found" }));
+    app.use(errorHandler);
+    await new Promise((resolve) => { server = app.listen(0, "127.0.0.1", resolve); });
     baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
+after(() => server?.close());
 
-after(() => server.close());
-
-beforeEach(() => {
-    clearSentEmails();
-});
-
-describe("POST /auth/forgot-password", () => {
-    test("forgot-password existing account generates token, hashes it, sends email, and returns generic response", async () => {
-        const response = await fetch(`${baseUrl}/auth/forgot-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "active@example.invalid" }),
-        });
-
-        assert.equal(response.status, 200);
-        const data = await response.json();
-        assert.equal(data.message, "If the account exists, a password reset link has been sent.");
-        // Raw token must never be present in the response
-        assert.equal(data.token, undefined);
-
-        // Verify email was dispatched
-        const sentEmail = getLastSentEmail();
-        assert.ok(sentEmail, "Email should be dispatched");
-        assert.equal(sentEmail.to, "active@example.invalid");
-        assert.ok(sentEmail.text.includes("Reset your Emlynk Admin password") || sentEmail.subject.includes("Reset your Emlynk Admin password"));
-        assert.ok(sentEmail.resetUrl, "Reset URL must be included in email");
-
-        // Verify database contains ONLY the SHA-256 hash
-        const urlObj = new URL(sentEmail.resetUrl);
-        const rawToken = urlObj.searchParams.get("token");
-        assert.ok(rawToken, "Raw token must be query parameter in reset link");
-
-        const computedHash = hashResetToken(rawToken);
-        const storedReset = db.passwordResetRows.find((r) => r.tokenHash === computedHash);
-        assert.ok(storedReset, "A password reset record matching the SHA-256 hash must exist in DB");
-        assert.equal(storedReset.adminId, "admin-active");
-        assert.equal(storedReset.usedAt, null);
-        assert.ok(storedReset.expiresAt > new Date());
-    });
-
-    test("forgot-password unknown email returns the same generic response and sends no email", async () => {
-        const response = await fetch(`${baseUrl}/auth/forgot-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "nonexistent@example.invalid" }),
-        });
-
-        assert.equal(response.status, 200);
-        const data = await response.json();
-        assert.equal(data.message, "If the account exists, a password reset link has been sent.");
-
-        // No email sent
-        assert.equal(getSentEmails().length, 0);
-    });
-
-    test("forgot-password for deactivated or disabled account returns generic response and sends no email", async () => {
-        const responseInactive = await fetch(`${baseUrl}/auth/forgot-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "inactive@example.invalid" }),
-        });
-        assert.equal(responseInactive.status, 200);
-        assert.equal((await responseInactive.json()).message, "If the account exists, a password reset link has been sent.");
-        assert.equal(getSentEmails().length, 0);
-
-        const responseDisabled = await fetch(`${baseUrl}/auth/forgot-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "disabled@example.invalid" }),
-        });
-        assert.equal(responseDisabled.status, 200);
-        assert.equal((await responseDisabled.json()).message, "If the account exists, a password reset link has been sent.");
-        assert.equal(getSentEmails().length, 0);
-    });
-
-    test("forgot-password missing email returns 400", async () => {
-        const response = await fetch(`${baseUrl}/auth/forgot-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
-        });
-        assert.equal(response.status, 400);
-        const data = await response.json();
-        assert.equal(data.message, "Email is required");
-    });
-});
-
-describe("GET /auth/reset-password", () => {
-    test("validates token successfully without consuming it", async () => {
-        // Request a reset
-        await fetch(`${baseUrl}/auth/forgot-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "active@example.invalid" }),
-        });
-
-        const sentEmail = getLastSentEmail();
-        const rawToken = new URL(sentEmail.resetUrl).searchParams.get("token");
-
-        const response = await fetch(`${baseUrl}/auth/reset-password?token=${encodeURIComponent(rawToken)}`);
-        assert.equal(response.status, 200);
-        const data = await response.json();
-        assert.equal(data.valid, true);
-
-        // Confirm token is not consumed yet
-        const computedHash = hashResetToken(rawToken);
-        const record = db.passwordResetRows.find((r) => r.tokenHash === computedHash);
-        assert.equal(record.usedAt, null);
-    });
-
-    test("missing token returns 400", async () => {
-        const response = await fetch(`${baseUrl}/auth/reset-password`);
-        assert.equal(response.status, 400);
-        const data = await response.json();
-        assert.equal(data.message, "Reset token is required");
-    });
-
-    test("invalid token returns 400 INVALID_TOKEN", async () => {
-        const response = await fetch(`${baseUrl}/auth/reset-password?token=invalid-hex-token-12345`);
-        assert.equal(response.status, 400);
-        const data = await response.json();
-        assert.equal(data.code, "INVALID_TOKEN");
-    });
-
-    test("expired token returns 400 EXPIRED", async () => {
-        // Create an expired record
-        const expiredToken = "expired-token-" + Math.random().toString(36).slice(2);
-        const tokenHash = hashResetToken(expiredToken);
-        await db.adminPasswordReset.create({
-            data: {
-                resetId: "expired-reset-id",
-                adminId: "admin-active",
-                tokenHash,
-                expiresAt: new Date(Date.now() - 1000 * 60), // expired 1 min ago
-            },
-        });
-
-        const response = await fetch(`${baseUrl}/auth/reset-password?token=${encodeURIComponent(expiredToken)}`);
-        assert.equal(response.status, 400);
-        const data = await response.json();
-        assert.equal(data.code, "EXPIRED");
-    });
-
-    test("already used token returns 400 ALREADY_USED", async () => {
-        const usedToken = "used-token-" + Math.random().toString(36).slice(2);
-        const tokenHash = hashResetToken(usedToken);
-        await db.adminPasswordReset.create({
-            data: {
-                resetId: "used-reset-id",
-                adminId: "admin-active",
-                tokenHash,
-                expiresAt: new Date(Date.now() + 1000 * 60 * 60),
-                usedAt: new Date(),
-            },
-        });
-
-        const response = await fetch(`${baseUrl}/auth/reset-password?token=${encodeURIComponent(usedToken)}`);
-        assert.equal(response.status, 400);
-        const data = await response.json();
-        assert.equal(data.code, "ALREADY_USED");
-    });
-});
-
-describe("POST /auth/reset-password", () => {
-    test("successfully resets password, updates DB, marks token used, writes audit log, and allows sign in", async () => {
-        // 1. Request reset
-        await fetch(`${baseUrl}/auth/forgot-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "active@example.invalid" }),
-        });
-
-        const sentEmail = getLastSentEmail();
-        const rawToken = new URL(sentEmail.resetUrl).searchParams.get("token");
-
-        // 2. Submit new password
-        const resetResponse = await fetch(`${baseUrl}/auth/reset-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                token: rawToken,
-                password: NEW_PASSWORD,
-            }),
-        });
-
-        assert.equal(resetResponse.status, 200);
-        const resetData = await resetResponse.json();
-        assert.ok(resetData.message.includes("Password reset successful"));
-
-        // 3. Verify token is marked as used
-        const computedHash = hashResetToken(rawToken);
-        const record = db.passwordResetRows.find((r) => r.tokenHash === computedHash);
-        assert.ok(record.usedAt !== null, "usedAt must be set");
-
-        // 4. Verify admin password hash is updated with bcrypt
-        const admin = db.rows.find((a) => a.adminId === "admin-active");
-        const passwordMatches = await comparePassword(NEW_PASSWORD, admin.passwordHash);
-        assert.ok(passwordMatches, "New password must match stored bcrypt hash");
-
-        // 5. Verify audit log entry
-        const audit = db.auditLogRows.find((r) => r.action === "RESET_PASSWORD" && r.adminId === "admin-active");
-        assert.ok(audit, "Audit log entry must be created");
-        assert.equal(audit.previousStatus, ACTIVE_ADMIN_STATUS);
-        assert.equal(audit.newStatus, ACTIVE_ADMIN_STATUS);
-
-        // 6. Verify admin can sign in with new password
-        const loginResponse = await fetch(`${baseUrl}/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                email: "active@example.invalid",
-                password: NEW_PASSWORD,
-            }),
-        });
-        assert.equal(loginResponse.status, 200);
-        const loginData = await loginResponse.json();
-        assert.equal(loginData.message, "Login successful");
-
-        // 7. Verify old password no longer works
-        const oldLoginResponse = await fetch(`${baseUrl}/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                email: "active@example.invalid",
-                password: INITIAL_PASSWORD,
-            }),
-        });
-        assert.equal(oldLoginResponse.status, 401);
-    });
-
-    test("reused token is rejected", async () => {
-        // Request reset
-        await fetch(`${baseUrl}/auth/forgot-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "active@example.invalid" }),
-        });
-
-        const sentEmail = getLastSentEmail();
-        const rawToken = new URL(sentEmail.resetUrl).searchParams.get("token");
-
-        // First use
-        const res1 = await fetch(`${baseUrl}/auth/reset-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: rawToken, password: "SecondPassword99!" }),
-        });
-        assert.equal(res1.status, 200);
-
-        // Second use attempt
-        const res2 = await fetch(`${baseUrl}/auth/reset-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: rawToken, password: "ThirdPassword88!" }),
-        });
-        assert.equal(res2.status, 400);
-        const data = await res2.json();
-        assert.equal(data.code, "ALREADY_USED");
-    });
-
-    test("weak password (< 8 chars) is rejected", async () => {
-        await fetch(`${baseUrl}/auth/forgot-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "active@example.invalid" }),
-        });
-
-        const sentEmail = getLastSentEmail();
-        const rawToken = new URL(sentEmail.resetUrl).searchParams.get("token");
-
-        const response = await fetch(`${baseUrl}/auth/reset-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: rawToken, password: "short" }),
-        });
-
-        assert.equal(response.status, 400);
-        const data = await response.json();
-        assert.equal(data.code, "INVALID_PASSWORD");
-    });
-
-    test("deactivated accounts are not automatically activated upon reset", async () => {
-        // Manually place a reset token for the inactive account
-        const testToken = "test-token-inactive-account";
-        const tokenHash = hashResetToken(testToken);
-        await db.adminPasswordReset.create({
-            data: {
-                resetId: "reset-for-inactive",
-                adminId: "admin-inactive",
-                tokenHash,
-                expiresAt: new Date(Date.now() + 1000 * 60 * 60),
-            },
-        });
-
-        const resetRes = await fetch(`${baseUrl}/auth/reset-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: testToken, password: "SomeNewPassword123!" }),
-        });
-
-        assert.equal(resetRes.status, 200);
-
-        // Account status must remain INACTIVE!
-        const admin = db.rows.find((a) => a.adminId === "admin-inactive");
-        assert.equal(admin.status, "INACTIVE");
-
-        // Login attempt must fail because account is INACTIVE
-        const loginRes = await fetch(`${baseUrl}/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "inactive@example.invalid", password: "SomeNewPassword123!" }),
-        });
-        assert.equal(loginRes.status, 401);
-    });
-});
-
-describe("POST /auth/forgot-password rate limiting", () => {
-    let rateLimitServer;
-    let rateLimitBaseUrl;
-
-    before(async () => {
-        const rateLimitApp = express();
-        rateLimitApp.use(express.json());
-        rateLimitApp.use(
-            "/auth",
-            createAuthRouter({
-                db,
-                loginLimiter: noRateLimit,
-                // Counts in memory here; the shared PostgreSQL store is
-                // tested in postgresRateLimitStore.test.js.
-                resetLimiter: createResetRateLimiter({ limit: 3, windowMs: 60 * 1000, store: new MemoryStore() }),
-            })
-        );
-
-        await new Promise((resolve) => {
-            rateLimitServer = rateLimitApp.listen(0, "127.0.0.1", resolve);
-        });
-        rateLimitBaseUrl = `http://127.0.0.1:${rateLimitServer.address().port}`;
-    });
-
-    after(() => rateLimitServer?.close());
-
-    test("exceeding rate limit returns 429", async () => {
-        for (let i = 0; i < 3; i++) {
-            const res = await fetch(`${rateLimitBaseUrl}/auth/forgot-password`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email: "active@example.invalid" }),
-            });
-            assert.equal(res.status, 200);
+describe("password recovery is Supabase's", () => {
+    test("the backend has no forgot/reset endpoints (with or without a session)", async () => {
+        for (const [method, path] of [["POST", "/auth/forgot-password"], ["GET", "/auth/reset-password?token=abc"], ["POST", "/auth/reset-password"]]) {
+            for (const headers of [{}, { Authorization: `Bearer ${tokenFor("u1")}` }]) {
+                const response = await fetch(`${baseUrl}${path}`, { method, headers: { ...headers, "Content-Type": "application/json" }, body: method === "POST" ? JSON.stringify({ email: "u@example.invalid", token: "abc", password: "New-Password-1" }) : undefined });
+                assert.equal(response.status, 404, `${method} ${path}`);
+            }
         }
+    });
 
-        // 4th request must be blocked
-        const blockedRes = await fetch(`${rateLimitBaseUrl}/auth/forgot-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "active@example.invalid" }),
-        });
-        assert.equal(blockedRes.status, 429);
-        const data = await blockedRes.json();
-        assert.ok(data.message.includes("Too many password reset requests"));
+    test("no reset-token model or table remains in the final schema", () => {
+        const schema = fs.readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
+        assert.doesNotMatch(schema, /AdminPasswordReset|admin_password_resets|passwordHash|password_hash/);
+        const cutover = fs.readFileSync(new URL("../prisma/migrations/20261009120000_supabase_auth_cutover/migration.sql", import.meta.url), "utf8");
+        assert.match(cutover, /DROP TABLE "admin_password_resets";/);
+        assert.match(cutover, /DROP COLUMN "password_hash";/);
+    });
+
+    test("no live application code references the old reset service, its table or the custom email sender", () => {
+        const files = ["src/routes/auth.js", "src/routes/admin.js", "src/routes/users.js", "src/createApp.js", "src/services/userAccountService.js"];
+        for (const file of files) {
+            const source = fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+            assert.doesNotMatch(source, /passwordResetService|adminPasswordReset|emailService|forgot-password/, file);
+        }
     });
 });

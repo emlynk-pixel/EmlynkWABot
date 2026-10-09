@@ -42,12 +42,12 @@ export function toCandidateAggregate(row) {
 }
 
 export function createCandidateAggregateReader({ db } = {}) {
-    if (!db?.user) throw new Error("A database client is required");
+    if (!db?.candidate) throw new Error("A database client is required");
 
     // One candidate by its immutable unique ID; null when there is none.
     async function findByUniqueId(uniqueId) {
         if (!isUniqueId(uniqueId)) throw new Error("A candidate unique ID is required");
-        const row = await db.user.findUnique({ where: { uniqueId }, select: CANDIDATE_AGGREGATE_SELECT });
+        const row = await db.candidate.findUnique({ where: { uniqueId }, select: CANDIDATE_AGGREGATE_SELECT });
         return row ? toCandidateAggregate(row) : null;
     }
 
@@ -57,7 +57,7 @@ export function createCandidateAggregateReader({ db } = {}) {
         const ids = [...new Set(uniqueIds)];
         if (!ids.every(isUniqueId)) throw new Error("Candidate unique IDs are required");
         if (!ids.length) return new Map();
-        const rows = await db.user.findMany({ where: { uniqueId: { in: ids } }, select: CANDIDATE_AGGREGATE_SELECT });
+        const rows = await db.candidate.findMany({ where: { uniqueId: { in: ids } }, select: CANDIDATE_AGGREGATE_SELECT });
         return new Map(rows.map((row) => [row.uniqueId, toCandidateAggregate(row)]));
     }
 
@@ -68,7 +68,7 @@ export function createCandidateAggregateReader({ db } = {}) {
             throw new Error(`The batch size must be a whole number from 1 to ${MAX_AGGREGATE_BATCH_SIZE}`);
         }
         if (afterUniqueId !== null && !isUniqueId(afterUniqueId)) throw new Error("The cursor must be a candidate unique ID");
-        const rows = await db.user.findMany({
+        const rows = await db.candidate.findMany({
             where: afterUniqueId === null ? {} : { uniqueId: { gt: afterUniqueId } },
             orderBy: { uniqueId: "asc" },
             take: limit,
@@ -95,7 +95,7 @@ export function createCandidateAggregateReader({ db } = {}) {
     async function readSnapshot({ limit = DEFAULT_AGGREGATE_BATCH_SIZE } = {}) {
         if (typeof db.$transaction !== "function") throw new Error("A transactional database client is required for a snapshot");
         return db.$transaction(async (tx) => {
-            const expectedCount = await tx.user.count();
+            const expectedCount = await tx.candidate.count();
             const aggregates = [];
             for await (const page of createCandidateAggregateReader({ db: tx }).readAll({ limit })) aggregates.push(...page);
             if (aggregates.length !== expectedCount) throw new IncompleteSnapshotError("row count mismatch");

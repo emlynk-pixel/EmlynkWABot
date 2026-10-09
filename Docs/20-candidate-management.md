@@ -10,7 +10,7 @@ This document covers the Candidate Management feature introduced after Phase 10:
 
 **Candidate Management** is a section of the admin dashboard (`/admin/candidates`) for managing deployment candidates — people being prepared for overseas deployment. It is separate from the main WhatsApp-driven document review workflow (clients).
 
-A candidate is stored as a row in the `users` table identified by their **passport ID**. The same table is used for WhatsApp clients; a candidate who later sends documents via WhatsApp is the same row.
+A candidate is stored as a row in the `candidate` table (named `users` before migration `20261008120000_rename_candidate_user_tables`) identified by their **passport ID**. The same table is used for WhatsApp clients; a candidate who later sends documents via WhatsApp is the same row.
 
 | | |
 |---|---|
@@ -31,7 +31,8 @@ A candidate is stored as a row in the `users` table identified by their **passpo
 | File | Purpose |
 |---|---|
 | `src/services/candidateService.js` | All candidate business logic: registration, stage updates, document uploads, validation, uniqueness checks |
-| `src/routes/admin.js` (lines 319–454) | Express routes for `/api/admin/candidates/*` |
+| `src/services/candidateAdditionalDetailsService.js` | Additional details: validation, read with suggestions, save with audit |
+| `src/routes/admin.js` | Express routes for `/api/admin/candidates/*` |
 
 ### Frontend (admin/)
 
@@ -45,16 +46,18 @@ A candidate is stored as a row in the `users` table identified by their **passpo
 | `admin/src/components/candidate/DocumentRow.tsx` | Per-document upload row (used in both registration and stage 2) |
 | `admin/src/components/candidate/CandidateStepper.tsx` | Progress stepper shown across the top of the deployment page |
 | `admin/src/components/candidate/CallLogDialog.tsx` | Admin call log dialog |
+| `admin/src/components/candidate/AdditionalDetailsPanel.tsx` | Additional details form: sections, conditional fields, sizes, save |
 | `admin/src/api/candidates.ts` | Typed frontend API wrappers for all candidate endpoints |
 
 ### Database
 
 | Table | Purpose |
 |---|---|
-| `users` | One row per candidate (same table used for WhatsApp clients) |
+| `candidate` | One row per candidate (same table used for WhatsApp clients) |
 | `candidate_stages` | One row per stage per candidate: completion, notes, timestamps |
 | `documents` | All uploaded files (passport, NIC, skill video, medical, police report, scan) |
-| `audit_logs` | Every document upload is appended here |
+| `candidate_additional_details` | At most one row per candidate: the Additional details form (primary key and foreign key `passport_id`) |
+| `audit_logs` | Candidate, stage, document and additional-details changes are appended here |
 
 ---
 
@@ -88,27 +91,27 @@ flowchart TD
    - **Passport** (required, PDF/JPG/PNG, ≤ 50 MB)
    - NIC document (optional)
    - Skill video (optional, `video/mp4`, `video/quicktime`, `video/webm`)
-4. On submit, `POST /api/admin/candidates` creates the `users` row and stage rows, then documents are uploaded one by one.
+4. On submit, `POST /api/admin/candidates` creates the `candidate` row and stage rows, then documents are uploaded one by one.
 5. On success the admin is navigated to the candidate's deployment page at `CANDIDATE_DETAILS` stage.
 
 **Fields collected at registration:**
 
 | Field | Required | Notes |
 |---|---|---|
-| Passport ID | ✓ | Normalized to uppercase, 6–9 alphanumeric |
+| Passport ID | ✓ | Normalized to uppercase, 6–9 letters and digits with at least one digit (hint `!` beside the label) |
 | Surname | ✓ | |
 | Other names | ✓ | |
 | NIC | ✓ | 9 digits + V/X, or 12 digits |
-| Address | ✓ | |
+| Address | | Optional everywhere (registration, saving details, completing Candidate details) |
 | Job types | ✓ | Up to 10 chips; Enter or comma to add |
 | Job experience | ✓ | |
 | Nationality | | |
 | Sex | | M / F / X (as on ICAO passports) |
 | Date of birth | | |
 | Place of birth | | |
-| Passport issue date | | |
-| Passport expiry date | | |
-| WhatsApp number | | Stored and locked once saved (see §5.1) |
+| Passport issue date | ✓ | Before the expiry date (hint `!`) |
+| Passport expiry date | ✓ | After the issue date (hint `!`) |
+| WhatsApp number | ✓ | Fixed `+94` prefix; the user types the 9-digit mobile number (e.g. `771234567`). Stored as `94771234567`. Locked once saved (see §5.1) (hint `!`) |
 | Contact number | | |
 | Comment | | Internal note, saved to `CANDIDATE_DETAILS` stage |
 
@@ -124,22 +127,23 @@ On save, the form calls `PUT /api/admin/candidates/:passportId` and, if the comm
 
 ---
 
-## 4. Six-Stage Deployment Process
+## 4. Seven-Stage Deployment Process
 
-Each candidate has exactly **six stages**, always in this order:
+Each candidate has exactly **seven stages**, always in this order:
 
 ```mermaid
 flowchart LR
     S1[1. Test Details\n(Admin)] --> S2[2. Candidate Details\n(Automatic)]
     S2 --> S3[3. Document Submission\n(Automatic)]
     S3 --> S4[4. IVS Interview\n(Admin)]
-    S4 --> S5[5. Visa Approval\n(Admin)]
-    S5 --> S6[6. Finalizing Job\n(Admin)]
+    S4 --> S5[5. Visa Submission\n(Admin)]
+    S5 --> S6[6. Visa Approval\n(Admin)]
+    S6 --> S7[7. Finalizing Job\n(Admin)]
     
     classDef auto fill:#e1bee7,stroke:#8e24aa,stroke-width:2px,color:#000;
     classDef manual fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000;
     
-    class S1,S4,S5,S6 manual;
+    class S1,S4,S5,S6,S7 manual;
     class S2,S3 auto;
 ```
 
@@ -149,8 +153,11 @@ flowchart LR
 | 2 | `CANDIDATE_DETAILS` | Candidate details | Automatically — when required fields and passport are present |
 | 3 | `DOCUMENT_SUBMISSION` | Document submission | Automatically — when all 5 required documents are present |
 | 4 | `IVS_INTERVIEW` | IVS interview | Admin (checkbox) |
-| 5 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
-| 6 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
+| 5 | `VISA_SUBMISSION` | Visa submission | Admin (checkbox) |
+| 6 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
+| 7 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
+
+The progress stepper on the candidate page shows Test details, Candidate details, Additional details, Document submission, Visa submission and Visa approval. IVS interview and Finalizing the job have no circle (their data and `?stage=` links are unchanged). The candidate list's progress counts all seven stages (`x/7`).
 
 Stages are independent: any stage can be opened and edited in any order. The URL uses `?stage=<key>` to select which panel is shown; the default is the first incomplete stage.
 
@@ -158,7 +165,9 @@ Stages are independent: any stage can be opened and edited in any order. The URL
 
 **Stage 2 — Candidate details** is marked complete when the following required fields are filled **and** a `PASSPORT` document is uploaded:
 
-- Surname, other names, NIC, address, one or more job types, job experience.
+- Surname, other names, NIC, passport issue date, passport expiry date, one or more job types, job experience, WhatsApp number. The address is **not** needed.
+
+Candidates saved before the passport dates were required still load; their Candidate details shows the dates as missing until they are filled in (they must be, to save the details again).
 
 The panel shows what is still missing (`Missing: …`) until complete.
 
@@ -168,13 +177,37 @@ The panel shows what is still missing (`Missing: …`) until complete.
 
 A checklist of the five documents is shown at the top of the panel.
 
-### 4.2 Notes stages (1, 4, 5, 6)
+### 4.2 Notes stages (1, 4, 5, 6, 7)
 
 Each has a free-text **Notes** field and a **Stage completed** checkbox. Changes are saved with **Save changes** / discarded with **Cancel**. The `PUT /api/admin/candidates/:passportId/stages/:stage` endpoint accepts `{ notes, completed }`.
 
 ### 4.3 Call log
 
 Every candidate page has a **Call log** button (top right). The dialog shows a chronological log of admin call notes and allows adding new ones (`POST /api/admin/candidates/:passportId/call-logs`).
+
+### 4.4 Additional details (a progress step)
+
+The candidate page's progress stepper shows five circles: Test details, Candidate details, **Additional details**, Document submission, Visa approval. Selecting *Additional details* shows its form (`?tab=additional`); selecting any other circle shows that stage (`?stage=…`). There is no separate tab bar. The circle is completed once additional details have been saved.
+
+**IVS interview and Finalizing the job have no circle.** They are still stages (their data, panels and `?stage=IVS_INTERVIEW` / `?stage=FINALIZING_JOB` links are unchanged); only the circles are hidden. The candidate list's "current stage" and `x/6` still count all six stages.
+
+Every role that manages candidates can edit the form, REGISTRATION_DESK included.
+
+| Section | Fields |
+|---|---|
+| Passport & Personal Details | Passport number (read-only: the candidate's passport ID), name according to passport, permanent address, birthday |
+| Clothing & Sizes | T-shirt size (XS–XXL), pant size (28–46 or custom), shoe size (UK 5–13 or custom) |
+| Father Details | Is father alive? If Yes: full name (required), birthday |
+| Mother Details | Is mother alive? If Yes: full name (required), birthday |
+| Marital & Family Details | Marital status; if Married: wife full name (required), wife birthday; 1st–3rd child names |
+| Employment / Skills | Other job skills |
+
+- **Always the existing candidate**: the passport number is the candidate's own passport ID and can't be edited, so a duplicate candidate can't be created from here. The API resolves the passport ID to the existing record and returns 404 for an unknown one.
+- **Auto-fill**: a form with nothing saved yet is pre-filled from the candidate's record (name, address, date of birth), with a note saying so. Those values are stored only when **Save additional details** is pressed.
+- **The candidate's own record is never changed** from this tab; the details live in `candidate_additional_details`.
+- Hidden details are cleared on save: father details when he is not alive, and the same for the mother and for the wife when not married.
+- **Two people editing**: the form sends the `updatedDate` it loaded, and a save on a different version is refused with `409 DETAILS_CHANGED` ("changed by someone else… use Sync"). The typed values stay in the form. The page loads the details once and shares them with the stepper and the form.
+- Every change appears in Audit Logs (`CREATE_ADDITIONAL_DETAILS` / `UPDATE_ADDITIONAL_DETAILS`) with only the changed fields. Saving without changes writes nothing.
 
 ---
 
@@ -192,11 +225,11 @@ The following issues were fixed in a single release. The stage order, completion
 
   ```sql
   -- prisma/migrations/20261001140000_whatsapp_unique_constraint/migration.sql
-  CREATE UNIQUE INDEX "users_whatsapp_number_unique"
-  ON "users" ("whatsapp_number")
-  WHERE "whatsapp_number" IS NOT NULL
-    AND "whatsapp_number" NOT IN ('+94771581916');
+  CREATE UNIQUE INDEX "users_whatsapp_number_key" ON "users"("whatsapp_number")
+  WHERE "whatsapp_number" IS NOT NULL AND "whatsapp_number" != '+94771581916';
   ```
+
+  Historical SQL: migration `20261008120000_rename_candidate_user_tables` later renamed the table to `candidate` and this index to `candidate_whatsapp_number_key`.
 
   The exclusion covers one pre-existing duplicate that cannot be cleaned up without business input. All new registrations are enforced at the database level.
 
@@ -268,7 +301,7 @@ Normal pagination is unaffected: rows from the previous page remain visible whil
 
 | Document type | Accepted MIME types |
 |---|---|
-| Passport, NIC, Medical, Police Report, Scan | `image/jpeg`, `image/png`, `application/pdf` |
+| Passport, NIC, Medical, Police Report, Scan, Visa submission | `image/jpeg`, `image/png`, `application/pdf` |
 | Skill video | `video/mp4`, `video/quicktime`, `video/webm` |
 
 Size limits: **50 MB** for a skill video, **10 MB** for every other document. They are checked when the upload is requested, again on the stored file, and by the Supabase bucket (its file size limit must be at least 50 MB).
@@ -330,16 +363,22 @@ All routes are mounted under `/api/admin/candidates` by `src/routes/admin.js`.
 
 | Method | Path | Role | Description |
 |---|---|---|---|
-| `GET` | `/candidates` | All active admins | List candidates (paginated, searchable) |
-| `POST` | `/candidates` | Reviewer+ | Register a new candidate |
-| `GET` | `/candidates/:passportId` | All active admins | Get a single candidate (also used for the registration lookup) |
-| `PUT` | `/candidates/:passportId` | Reviewer+ | Update candidate details |
-| `PUT` | `/candidates/:passportId/stages/:stage` | Reviewer+ | Update a stage (notes, completed) |
-| `POST` | `/candidates/:passportId/documents/upload-target` | Reviewer+ | Check a file's description; returns a signed upload URL (JSON only) |
-| `POST` | `/candidates/:passportId/documents/finalize` | Reviewer+ | Check the uploaded file and record it (JSON only) |
-| `POST` | `/candidates/:passportId/documents/:documentId/remove` | Reviewer+ | Delete the current document and its file; `{ reason }` required |
-| `GET` | `/candidates/:passportId/call-logs` | All active admins | List call log entries |
-| `POST` | `/candidates/:passportId/call-logs` | Reviewer+ | Add a call log entry |
+Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANALYST, REGISTRATION_DESK. Any other role gets 403.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/candidates` | List candidates (paginated, searchable) |
+| `POST` | `/candidates` | Register a new candidate |
+| `GET` | `/candidates/:passportId` | Get a single candidate (also used for the registration lookup) |
+| `PUT` | `/candidates/:passportId` | Update candidate details |
+| `PUT` | `/candidates/:passportId/stages/:stage` | Update a stage (notes, completed) |
+| `POST` | `/candidates/:passportId/documents/upload-target` | Check a file's description; returns a signed upload URL (JSON only) |
+| `POST` | `/candidates/:passportId/documents/finalize` | Check the uploaded file and record it (JSON only) |
+| `POST` | `/candidates/:passportId/documents/:documentId/remove` | Delete the current document and its file; `{ reason }` required |
+| `GET` | `/candidates/:passportId/call-logs` | List call log entries |
+| `POST` | `/candidates/:passportId/call-logs` | Add a call log entry |
+| `GET` | `/candidates/:passportId/additional-details` | Additional details, or suggestions from the candidate record when none are saved |
+| `PUT` | `/candidates/:passportId/additional-details` | Save additional details (full replacement; audited; never creates a candidate) |
 
 ### Error codes
 
@@ -390,14 +429,31 @@ These are enforced by `parseCandidateBody` in `candidateService.js` (server) and
 | Passport ID | `/^[A-Z0-9]{6,9}$/` with at least one digit |
 | Surname, other names | Required, <= 100 characters |
 | NIC | `/^(\d{9}[VX]|\d{12})$/` |
-| Address | Required, <= 500 characters |
+| Address | Optional everywhere, <= 500 characters |
 | Job types | At least 1, at most 10; each <= 60 characters |
 | Job experience | Required, <= 2000 characters |
 | Nationality | Optional, <= 60 characters |
 | Sex | `M`, `F`, or `X` (ICAO) |
-| Dates | `YYYY-MM-DD`; passport issue date must be before expiry date |
-| WhatsApp / Contact | If given: 8–15 digits (after removing spaces, dashes, `+`, leading `00`) |
+| Dates | `YYYY-MM-DD`; passport issue and expiry dates **required** (registration and every save), issue date before expiry date |
+| WhatsApp | Required. Form: fixed `+94` prefix plus 9 digits starting with 7 (a leading `0` or a pasted `+94…` / `0094…` is taken off). Stored as international digits without `+` (`94771234567`), the server's existing format (`normalizePhoneNumber`). A number already on record is read-only and kept as stored |
+| Contact | If given: 8–15 digits (after removing spaces, dashes, `+`, leading `00`) |
 | Comment | Optional, <= 2000 characters |
+
+### 8.1 Additional details
+
+Enforced by `parseAdditionalDetailsBody` in `candidateAdditionalDetailsService.js` (server) and `validateAdditionalDetails` in `AdditionalDetailsPanel.tsx` (client). Every field is optional unless stated.
+
+| Field | Rule |
+|---|---|
+| Name according to passport, parent / wife / child names | <= 150 characters |
+| Permanent address | <= 500 characters |
+| Other job skills | <= 1000 characters |
+| Birthdays | `YYYY-MM-DD`, a real date, from 1900-01-01, not in the future |
+| T-shirt size | `XS`, `S`, `M`, `L`, `XL`, `XXL` |
+| Pant / shoe size | A preset or a custom value: up to 10 letters, digits, spaces, `.`, `/`, `-` |
+| Father / mother alive | `true` / `false` / not recorded; full name required when `true`; name and birthday refused otherwise |
+| Marital status | `SINGLE`, `MARRIED`, `DIVORCED`, `WIDOWED`, `SEPARATED`; wife full name required when `MARRIED`; wife details refused otherwise |
+| Children | In order: no 2nd without a 1st, no 3rd without a 2nd |
 
 ---
 
@@ -412,7 +468,9 @@ const { PrismaClient } = require('./generated/prisma');
 async function main() {
     const prisma = new PrismaClient();
     try {
-        const users = await prisma.user.findMany({
+        // Candidates are prisma.candidate (the model was named User when this
+        // script was first written; prisma.user is now the staff table).
+        const users = await prisma.candidate.findMany({
             where: { whatsappNumber: { not: null } }
         });
         const counts = {};

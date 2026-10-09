@@ -1,620 +1,269 @@
-import { describe, test, before, after, beforeEach } from "node:test";
+// Invite User and user management through Supabase Auth: the real admin and
+// auth routers, an in-memory public."user", and a Supabase stand-in
+// (test/helpers/fakeSupabaseAuth.js). Supabase sends the email; the backend
+// validates the ADMIN caller and the role, and links public."user" by
+// auth_user_id.
+import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
-import cookieParser from "cookie-parser";
-import jwt from "jsonwebtoken";
-import crypto from "crypto";
 
-import { createAuthRouter, ACTIVE_ADMIN_STATUS } from "../src/routes/auth.js";
 import { createAdminRouter } from "../src/routes/admin.js";
-import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.js";
-import { JWT_ALGORITHM } from "../src/middleware/auth.js";
-import { ADMIN_ROLES } from "../src/middleware/requireRole.js";
-import { hashPassword, comparePassword } from "../src/utils/password.js";
+import { createAuthRouter } from "../src/routes/auth.js";
+import { inviteRedirectUrl } from "../src/routes/users.js";
+import { inviteUser } from "../src/services/userAccountService.js";
+import { errorHandler } from "../src/middleware/errorHandler.js";
 import { createFakeAdminDb, noRateLimit } from "./helpers/fakeAdminDb.js";
-import { clearSentEmails, getLastSentEmail, getSentEmails } from "../src/services/emailService.js";
-import { hashInvitationToken } from "../src/services/adminInvitationService.js";
+import { createFakeAuthAdmin, createFakeVerifier, tokenFor, tokenForAuthId } from "./helpers/fakeSupabaseAuth.js";
 
-process.env.JWT_SECRET = "test-jwt-secret-placeholder-for-invitations-0123456789";
-const ADMIN_PASSWORD = "Admin-Secret-Password-1";
+const ADMIN = { adminId: "admin-1", name: "Admin", email: "admin@example.invalid", role: "ADMIN", status: "ACTIVE" };
+const MANAGER = { adminId: "manager-1", name: "Manager", email: "manager@example.invalid", role: "MANAGER", status: "ACTIVE" };
+const REDIRECT = "https://app.example.invalid/admin/setup-password";
 
 let server;
 let baseUrl;
 let db;
+let authAdmin;
+let verifyAccessToken;
 
-function makeToken({ adminId, email, role, expiresIn = "1h" }) {
-    return jwt.sign({ adminId, email, role }, process.env.JWT_SECRET, {
-        algorithm: JWT_ALGORITHM,
-        expiresIn,
-    });
-}
-
-before(async () => {
-    const adminPasswordHash = await hashPassword(ADMIN_PASSWORD);
-    const admins = [
-        { adminId: "admin-1", name: "Super Admin", email: "admin@example.invalid", passwordHash: adminPasswordHash, role: ADMIN_ROLES.ADMIN, status: ACTIVE_ADMIN_STATUS },
-        { adminId: "analyst-1", name: "Analyst Admin", email: "analyst@example.invalid", passwordHash: adminPasswordHash, role: ADMIN_ROLES.ANALYST, status: ACTIVE_ADMIN_STATUS },
-        { adminId: "analyst-2", name: "Viewer Admin", email: "analyst-dup@example.invalid", passwordHash: adminPasswordHash, role: ADMIN_ROLES.ANALYST, status: ACTIVE_ADMIN_STATUS },
-        { adminId: "inactive-1", name: "Inactive Admin", email: "inactive@example.invalid", passwordHash: adminPasswordHash, role: ADMIN_ROLES.ADMIN, status: "INACTIVE" },
-        { adminId: "existing-active", name: "Already Active", email: "active@example.invalid", passwordHash: adminPasswordHash, role: ADMIN_ROLES.ANALYST, status: ACTIVE_ADMIN_STATUS },
-    ];
-
-    db = createFakeAdminDb(admins);
-
+async function start(users = [ADMIN, MANAGER], identities = {}) {
+    db = createFakeAdminDb(users);
+    authAdmin = createFakeAuthAdmin({ identities });
+    verifyAccessToken = createFakeVerifier();
     const app = express();
     app.use(express.json());
-    app.use(cookieParser());
-    app.use("/auth", createAuthRouter({ db, loginLimiter: noRateLimit, resetLimiter: noRateLimit }));
-    app.use("/api/admin", createAdminRouter({ apiLimiter: (req, res, next) => next(),
-        db,
-        requireAdmin: createRequireActiveAdmin({ db }),
-    }));
-
-    await new Promise((resolve) => {
-        server = app.listen(0, "127.0.0.1", resolve);
-    });
+    app.use("/auth", createAuthRouter({ db, verifyAccessToken, apiLimiter: noRateLimit }));
+    app.use("/api/admin", createAdminRouter({ db, bucket: {}, verifyAccessToken, authAdmin, apiLimiter: noRateLimit }));
+    app.use(errorHandler);
+    await new Promise((resolve) => { server = app.listen(0, "127.0.0.1", resolve); });
     baseUrl = `http://127.0.0.1:${server.address().port}`;
-});
-
-after(() => server.close());
-
-beforeEach(() => {
-    clearSentEmails();
-});
-
-describe("Admin Invitation System (Phase 12 Checkpoint 2)", () => {
-    test("ADMIN can invite a new admin, analyst, or viewer", async () => {
-        const token = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-        const res = await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-                name: "John Doe",
-                email: "john@example.invalid",
-                role: "ANALYST",
-            }),
-        });
-
-        assert.equal(res.status, 201);
-        const data = await res.json();
-        assert.equal(data.message, "Invitation sent successfully");
-        assert.equal(data.invitation.name, "John Doe");
-        assert.equal(data.invitation.email, "john@example.invalid");
-        assert.equal(data.invitation.role, "ANALYST");
-        assert.equal(data.invitation.status, "PENDING");
-        assert.ok(data.invitation.expiresAt);
-
-        // Security check: raw token and token hash are NEVER exposed in response body
-        assert.equal(data.invitation.token, undefined);
-        assert.equal(data.invitation.rawToken, undefined);
-        assert.equal(data.invitation.tokenHash, undefined);
-
-        // Email was dispatched
-        const sentEmail = getLastSentEmail();
-        assert.ok(sentEmail, "Invitation email should be sent");
-        assert.equal(sentEmail.to, "john@example.invalid");
-        assert.ok(sentEmail.setupUrl.includes("/setup-password?token="));
-    });
-
-    test("Token hashing: only the SHA-256 hash is stored in the database", async () => {
-        const token = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-        await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-                name: "Hash Test",
-                email: "hashtest@example.invalid",
-                role: "ANALYST",
-            }),
-        });
-
-        const sentEmail = getLastSentEmail();
-        const rawToken = new URL(sentEmail.setupUrl).searchParams.get("token");
-        assert.ok(rawToken, "Setup URL must contain the raw token parameter");
-
-        // Lookup in fake DB
-        const storedInv = db.invitationRows.find((r) => r.email === "hashtest@example.invalid");
-        assert.ok(storedInv, "Invitation row must exist");
-        assert.notEqual(storedInv.tokenHash, rawToken, "Database must NOT store the raw token");
-        assert.equal(storedInv.tokenHash, hashInvitationToken(rawToken), "Stored hash must match SHA-256 of raw token");
-    });
-
-    test("Role validation: rejects invalid or unauthorized roles with 400", async () => {
-        const token = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-        for (const badRole of ["SUPER_ADMIN", "ROOT", "USER", ""]) {
-            const res = await fetch(`${baseUrl}/api/admin/invitations`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({
-                    name: "Bad Role User",
-                    email: "badrole@example.invalid",
-                    role: badRole,
-                }),
-            });
-            assert.equal(res.status, 400);
-            const data = await res.json();
-            assert.ok(data.message.includes("Invalid role"));
-        }
-    });
-
-    test("Prevent duplicate active accounts: returns 409 if active admin exists with that email", async () => {
-        const token = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-        const res = await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-                name: "Duplicate Active",
-                email: "active@example.invalid",
-                role: "ADMIN",
-            }),
-        });
-        assert.equal(res.status, 409);
-        const data = await res.json();
-        assert.equal(data.message, "An active admin with this email already exists");
-        assert.equal(data.code, "DUPLICATE_ACTIVE_ADMIN");
-    });
-
-    test("Unauthorized attempts: ANALYST or ANALYST cannot invite admins (403)", async () => {
-        const analystToken = makeToken({ adminId: "analyst-1", email: "analyst@example.invalid", role: ADMIN_ROLES.ANALYST });
-        const resAnalyst = await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${analystToken}`,
-            },
-            body: JSON.stringify({ name: "Bob", email: "bob@example.invalid", role: "ANALYST" }),
-        });
-        assert.equal(resAnalyst.status, 403);
-        const revData = await resAnalyst.json();
-        assert.equal(revData.message, "Insufficient permissions");
-
-        const viewerToken = makeToken({ adminId: "analyst-2", email: "analyst-dup@example.invalid", role: ADMIN_ROLES.ANALYST });
-        const resViewer = await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${viewerToken}`,
-            },
-            body: JSON.stringify({ name: "Bob", email: "bob@example.invalid", role: "ANALYST" }),
-        });
-        assert.equal(resViewer.status, 403);
-    });
-
-    test("Inactive inviter cannot invite (401)", async () => {
-        const inactiveToken = makeToken({ adminId: "inactive-1", email: "inactive@example.invalid", role: ADMIN_ROLES.ADMIN });
-        const res = await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${inactiveToken}`,
-            },
-            body: JSON.stringify({ name: "Test", email: "test@example.invalid", role: "ANALYST" }),
-        });
-        assert.equal(res.status, 401);
-    });
-
-    test("Successful password setup: activates account, hashes password with bcrypt, enables login", async () => {
-        const adminToken = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-        await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${adminToken}`,
-            },
-            body: JSON.stringify({
-                name: "Alice Smith",
-                email: "alice@example.invalid",
-                role: "ADMIN",
-            }),
-        });
-
-        const sentEmail = getLastSentEmail();
-        const rawToken = new URL(sentEmail.setupUrl).searchParams.get("token");
-
-        // 1. Invitee opens setup link -> GET /auth/invitation?token=...
-        const checkRes = await fetch(`${baseUrl}/auth/invitation?token=${rawToken}`);
-        assert.equal(checkRes.status, 200);
-        const checkData = await checkRes.json();
-        assert.equal(checkData.invitation.name, "Alice Smith");
-        assert.equal(checkData.invitation.email, "alice@example.invalid");
-        assert.equal(checkData.invitation.role, "ADMIN");
-
-        // 2. Invitee sets password -> POST /auth/setup-password
-        const newPassword = "AliceSuperSecurePassword-2026!";
-        const setupRes = await fetch(`${baseUrl}/auth/setup-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                token: rawToken,
-                password: newPassword,
-            }),
-        });
-        assert.equal(setupRes.status, 200);
-        const setupData = await setupRes.json();
-        assert.ok(setupData.message.includes("Password set successfully"));
-
-        // 3. Verify admin row in database
-        const createdAdmin = db.rows.find((a) => a.email === "alice@example.invalid");
-        assert.ok(createdAdmin, "Admin row must exist after password setup");
-        assert.equal(createdAdmin.status, ACTIVE_ADMIN_STATUS, "Admin status must be ACTIVE");
-        assert.equal(createdAdmin.role, "ADMIN");
-
-        // Verify password was hashed with bcrypt
-        assert.ok(createdAdmin.passwordHash.startsWith("$2b$") || createdAdmin.passwordHash.startsWith("$2a$"));
-        const matches = await comparePassword(newPassword, createdAdmin.passwordHash);
-        assert.equal(matches, true, "Bcrypt hash must match the new password");
-
-        // 4. Invitee can now log in with the new password
-        const loginRes = await fetch(`${baseUrl}/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                email: "alice@example.invalid",
-                password: newPassword,
-            }),
-        });
-        assert.equal(loginRes.status, 200);
-        const loginData = await loginRes.json();
-        assert.equal(loginData.message, "Login successful");
-        assert.ok(loginData.token);
-    });
-
-    test("Reused token: token becomes unusable after first successful use (ALREADY_USED)", async () => {
-        const adminToken = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-        await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${adminToken}`,
-            },
-            body: JSON.stringify({
-                name: "Reused Token Test",
-                email: "reused@example.invalid",
-                role: "ANALYST",
-            }),
-        });
-
-        const rawToken = new URL(getLastSentEmail().setupUrl).searchParams.get("token");
-
-        // First use
-        const first = await fetch(`${baseUrl}/auth/setup-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: rawToken, password: "FirstPassword-123" }),
-        });
-        assert.equal(first.status, 200);
-
-        // Second use attempt -> must be rejected
-        const second = await fetch(`${baseUrl}/auth/setup-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: rawToken, password: "SecondPassword-456" }),
-        });
-        assert.equal(second.status, 400);
-        const secondData = await second.json();
-        assert.equal(secondData.code, "ALREADY_USED");
-
-        // Check GET also fails
-        const check = await fetch(`${baseUrl}/auth/invitation?token=${rawToken}`);
-        assert.equal(check.status, 400);
-        const checkData = await check.json();
-        assert.equal(checkData.code, "ALREADY_USED");
-    });
-
-    test("Expired token: rejects setup when expiresAt is in the past (EXPIRED)", async () => {
-        const adminToken = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-        await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${adminToken}`,
-            },
-            body: JSON.stringify({
-                name: "Expired Test",
-                email: "expired@example.invalid",
-                role: "ANALYST",
-            }),
-        });
-
-        const rawToken = new URL(getLastSentEmail().setupUrl).searchParams.get("token");
-        // Artificially expire the token in database
-        const invRow = db.invitationRows.find((r) => r.email === "expired@example.invalid");
-        invRow.expiresAt = new Date(Date.now() - 3600 * 1000); // 1 hour ago
-
-        // Attempt GET validation
-        const check = await fetch(`${baseUrl}/auth/invitation?token=${rawToken}`);
-        assert.equal(check.status, 400);
-        const checkData = await check.json();
-        assert.equal(checkData.code, "EXPIRED");
-
-        // Attempt password setup
-        const setup = await fetch(`${baseUrl}/auth/setup-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: rawToken, password: "SomeNewPassword-123" }),
-        });
-        assert.equal(setup.status, 400);
-        const setupData = await setup.json();
-        assert.equal(setupData.code, "EXPIRED");
-    });
-
-    test("Invalid token: rejects non-existent tokens with 400", async () => {
-        const fakeToken = crypto.randomBytes(32).toString("hex");
-        const check = await fetch(`${baseUrl}/auth/invitation?token=${fakeToken}`);
-        assert.equal(check.status, 400);
-        const checkData = await check.json();
-        assert.equal(checkData.code, "INVALID_TOKEN");
-
-        const setup = await fetch(`${baseUrl}/auth/setup-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: fakeToken, password: "SomeNewPassword-123" }),
-        });
-        assert.equal(setup.status, 400);
-        const setupData = await setup.json();
-        assert.equal(setupData.code, "INVALID_TOKEN");
-    });
-
-    test("Revoked invitation: admin can revoke, and revoked token is rejected (REVOKED)", async () => {
-        const adminToken = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-        const createRes = await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${adminToken}`,
-            },
-            body: JSON.stringify({
-                name: "Revoke Test",
-                email: "revoketest@example.invalid",
-                role: "ANALYST",
-            }),
-        });
-        const createData = await createRes.json();
-        const invitationId = createData.invitation.invitationId;
-        const rawToken = new URL(getLastSentEmail().setupUrl).searchParams.get("token");
-
-        // ADMIN revokes the invitation
-        const revokeRes = await fetch(`${baseUrl}/api/admin/invitations/${invitationId}/revoke`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${adminToken}` },
-        });
-        assert.equal(revokeRes.status, 200);
-        const revokeData = await revokeRes.json();
-        assert.equal(revokeData.message, "Invitation revoked");
-
-        // Invitee attempting GET validation
-        const check = await fetch(`${baseUrl}/auth/invitation?token=${rawToken}`);
-        assert.equal(check.status, 400);
-        const checkData = await check.json();
-        assert.equal(checkData.code, "REVOKED");
-
-        // Invitee attempting setup password
-        const setup = await fetch(`${baseUrl}/auth/setup-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: rawToken, password: "SomeNewPassword-123" }),
-        });
-        assert.equal(setup.status, 400);
-        const setupData = await setup.json();
-        assert.equal(setupData.code, "REVOKED");
-    });
-
-    test("Audit entries: invitation creation, completion, and revocation are all audited", async () => {
-        const adminToken = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-
-        // 1. Creation
-        const createRes = await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${adminToken}`,
-            },
-            body: JSON.stringify({
-                name: "Audited Admin",
-                email: "audited@example.invalid",
-                role: "ANALYST",
-            }),
-        });
-        const createData = await createRes.json();
-        const rawToken = new URL(getLastSentEmail().setupUrl).searchParams.get("token");
-
-        const inviteAudit = db.auditLogRows.find(
-            (l) => l.action === "INVITE_ADMIN" && l.newValue === "audited@example.invalid"
-        );
-        assert.ok(inviteAudit, "INVITE_ADMIN audit log must be created");
-        assert.equal(inviteAudit.adminId, "admin-1");
-        assert.equal(inviteAudit.previousStatus, "NONE");
-        assert.equal(inviteAudit.newStatus, "INVITED");
-
-        // 2. Completion
-        await fetch(`${baseUrl}/auth/setup-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: rawToken, password: "AuditedPassword-123!" }),
-        });
-
-        const completeAudit = db.auditLogRows.find(
-            (l) => l.action === "COMPLETE_INVITATION" && l.newValue === "audited@example.invalid"
-        );
-        assert.ok(completeAudit, "COMPLETE_INVITATION audit log must be created");
-        assert.equal(completeAudit.previousStatus, "INVITED");
-        assert.equal(completeAudit.newStatus, ACTIVE_ADMIN_STATUS);
-
-        // 3. Revocation audit
-        const res2 = await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${adminToken}`,
-            },
-            body: JSON.stringify({
-                name: "Revoke Audit",
-                email: "revokeaudit@example.invalid",
-                role: "ANALYST",
-            }),
-        });
-        const inv2 = (await res2.json()).invitation;
-
-        await fetch(`${baseUrl}/api/admin/invitations/${inv2.invitationId}/revoke`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${adminToken}` },
-        });
-
-        const revokeAudit = db.auditLogRows.find(
-            (l) => l.action === "REVOKE_INVITATION" && l.newValue === "revokeaudit@example.invalid"
-        );
-        assert.ok(revokeAudit, "REVOKE_INVITATION audit log must be created");
-        assert.equal(revokeAudit.adminId, "admin-1");
-        assert.equal(revokeAudit.newStatus, "REVOKED");
-    });
-
-    test("List invitations: ADMIN can list invitations with computed status", async () => {
-        const adminToken = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-        const res = await fetch(`${baseUrl}/api/admin/invitations`, {
-            headers: { Authorization: `Bearer ${adminToken}` },
-        });
-        assert.equal(res.status, 200);
-        const data = await res.json();
-        assert.ok(Array.isArray(data.invitations));
-        assert.ok(data.invitations.length > 0);
-
-        // Check attributes of listed invitation
-        const inv = data.invitations[0];
-        assert.ok(inv.invitationId);
-        assert.ok(inv.email);
-        assert.ok(inv.role);
-        assert.ok(inv.status);
-        assert.ok(inv.expiresAt);
-        // Sensitive data not leaked
-        assert.equal(inv.tokenHash, undefined);
-    });
-
-    test("Delete invitation: ADMIN can permanently remove an invitation", async () => {
-        const adminToken = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-        const createRes = await fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${adminToken}`,
-            },
-            body: JSON.stringify({
-                name: "To Delete",
-                email: "todelete@example.invalid",
-                role: "ANALYST",
-            }),
-        });
-        const inv = (await createRes.json()).invitation;
-
-        const deleteRes = await fetch(`${baseUrl}/api/admin/invitations/${inv.invitationId}`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${adminToken}` },
-        });
-        assert.equal(deleteRes.status, 200);
-        const deleteData = await deleteRes.json();
-        assert.ok(deleteData.message.includes("permanently removed"));
-
-        // Confirm it is gone from the database
-        const found = db.invitationRows.find((r) => r.invitationId === inv.invitationId);
-        assert.equal(found, undefined);
-
-        // Confirm audit log created
-        const audit = db.auditLogRows.find((l) => l.action === "DELETE_INVITATION" && l.newValue === "todelete@example.invalid");
-        assert.ok(audit);
-    });
-});
-
-// Runs fn with these environment variables set (undefined = unset), then
-// restores them. The test server reads process.env per request.
-async function withEnv(vars, fn) {
-    const saved = Object.fromEntries(Object.keys(vars).map((key) => [key, process.env[key]]));
-    const apply = (values) => {
-        for (const [key, value] of Object.entries(values)) {
-            if (value === undefined) delete process.env[key];
-            else process.env[key] = value;
-        }
-    };
-    apply(vars);
-    try {
-        return await fn();
-    } finally {
-        apply(saved);
-    }
 }
 
-describe("Invitation link on a deployment", () => {
-    function invite(email) {
-        const adminToken = makeToken({ adminId: "admin-1", email: "admin@example.invalid", role: ADMIN_ROLES.ADMIN });
-        return fetch(`${baseUrl}/api/admin/invitations`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-            body: JSON.stringify({ name: "Deployed Invitee", email, role: "ANALYST" }),
-        });
-    }
+beforeEach(async () => {
+    process.env.APP_BASE_URL = "https://app.example.invalid/";
+    await start();
+});
+afterEach(() => {
+    server?.close();
+    delete process.env.APP_BASE_URL;
+});
 
-    test("emailed link opens /admin/setup-password on the public domain, and the invitee can activate and log in", async () => {
-        await withEnv({ VERCEL: "1", VERCEL_ENV: "preview", ADMIN_SETUP_URL_BASE: "https://app.example.invalid/", APP_BASE_URL: "http://localhost:3000" }, async () => {
-            assert.equal((await invite("deployed@example.invalid")).status, 201);
-        });
+async function request(method, path, { token = tokenFor(ADMIN.adminId), body } = {}) {
+    const headers = { Accept: "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    const response = await fetch(`${baseUrl}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: response.status, body: await response.json().catch(() => null) };
+}
+const invite = (body, options) => request("POST", "/api/admin/users/invite", { body, ...options });
+const rowOf = (email) => db.rows.find((r) => r.email === email);
+const sessionOf = (email) => tokenForAuthId(rowOf(email).authUserId);
 
-        const link = new URL(getLastSentEmail().setupUrl);
-        assert.equal(link.origin, "https://app.example.invalid");
-        // The admin router's basename is /admin and the page route /setup-password.
-        assert.equal(link.pathname, "/admin/setup-password");
-        const rawToken = link.searchParams.get("token");
-        assert.match(rawToken, /^[0-9a-f]{64}$/);
+describe("POST /api/admin/users/invite", () => {
+    test("ADMIN invites: Supabase sends the invite; the row is INVITED, linked, audited", async () => {
+        const result = await invite({ email: "  New.Person@Example.invalid ", name: " New Person ", role: "analyst" });
+        assert.equal(result.status, 201);
+        assert.equal(result.body.outcome, "INVITED");
+        assert.deepEqual(Object.keys(result.body.user).sort(), ["createdDate", "email", "name", "role", "status", "userId"]);
+        assert.deepEqual([result.body.user.email, result.body.user.name, result.body.user.role, result.body.user.status], ["new.person@example.invalid", "New Person", "ANALYST", "INVITED"]);
 
-        // What the setup page does with the token from the link.
-        assert.equal((await fetch(`${baseUrl}/auth/invitation?token=${encodeURIComponent(rawToken)}`)).status, 200);
-        const password = "Deployed-Invitee-Password-2026";
-        const setupRes = await fetch(`${baseUrl}/auth/setup-password`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: rawToken, password }),
-        });
-        assert.equal(setupRes.status, 200);
-
-        const loginRes = await fetch(`${baseUrl}/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "deployed@example.invalid", password }),
-        });
-        assert.equal(loginRes.status, 200);
-        const me = await fetch(`${baseUrl}/auth/me`, { headers: { Authorization: `Bearer ${(await loginRes.json()).token}` } });
-        assert.equal(me.status, 200);
-        assert.equal((await me.json()).admin.role, "ANALYST");
+        assert.deepEqual(authAdmin.calls, [{ method: "inviteUserByEmail", email: "new.person@example.invalid", options: { redirectTo: REDIRECT } }], "only email + redirect go to Supabase: no role");
+        const row = rowOf("new.person@example.invalid");
+        assert.equal(row.authUserId, authAdmin.users.get("new.person@example.invalid").authUserId);
+        const [entry] = db.auditLogRows;
+        assert.deepEqual([entry.action, entry.adminId, entry.newStatus, entry.newValue], ["INVITE_USER", ADMIN.adminId, "INVITED", "new.person@example.invalid"]);
     });
 
-    test("a deployment with only a localhost base refuses to invite and stores nothing", async () => {
-        const res = await withEnv({ VERCEL: "1", VERCEL_ENV: "preview", ADMIN_SETUP_URL_BASE: undefined, APP_BASE_URL: "http://localhost:3000" }, () =>
-            invite("misconfigured@example.invalid")
-        );
-        assert.equal(res.status, 500);
-        const data = await res.json();
-        assert.equal(data.code, "LINK_BASE_NOT_CONFIGURED");
-        assert.match(data.message, /ADMIN_SETUP_URL_BASE/);
-        assert.equal(getLastSentEmail(), null);
-        assert.equal(db.invitationRows.find((r) => r.email === "misconfigured@example.invalid"), undefined);
+    test("every application role can be invited; anything else is refused before Supabase", async () => {
+        for (const role of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+            assert.equal((await invite({ email: `new-${role}@example.invalid`.toLowerCase(), name: role, role })).status, 201, role);
+        }
+        const calls = authAdmin.calls.length;
+        for (const role of ["VIEWER", "REVIEWER", "SUPERADMIN", "", undefined]) {
+            const result = await invite({ email: "x@example.invalid", name: "X", role });
+            assert.equal(result.status, 400);
+            assert.ok(result.body.errors.some((e) => e.field === "role"));
+        }
+        assert.equal(authAdmin.calls.length, calls);
     });
 
-    test("the existing admin can still log in", async () => {
-        const loginRes = await fetch(`${baseUrl}/auth/login`, {
+    test("invalid email or name -> 400 with field messages, nothing sent", async () => {
+        const result = await invite({ email: "not-an-email", name: "", role: "ANALYST" });
+        assert.equal(result.status, 400);
+        assert.deepEqual(result.body.errors.map((e) => e.field).sort(), ["email", "name"]);
+        assert.equal(authAdmin.calls.length, 0);
+    });
+
+    test("non-ADMIN or no session -> refused, Supabase never called", async () => {
+        assert.equal((await invite({ email: "x@example.invalid", name: "X", role: "ANALYST" }, { token: tokenFor(MANAGER.adminId) })).status, 403);
+        assert.equal((await invite({ email: "x@example.invalid", name: "X", role: "ANALYST" }, { token: null })).status, 401);
+        assert.equal(authAdmin.calls.length, 0);
+        assert.equal(rowOf("x@example.invalid"), undefined);
+    });
+
+    test("the service itself refuses a non-ADMIN actor (defence in depth)", async () => {
+        await assert.rejects(inviteUser({ db, authAdmin, actor: MANAGER, values: { email: "x@example.invalid", name: "X", role: "ADMIN" } }), { code: "FORBIDDEN" });
+    });
+
+    test("an ACTIVE user's email -> 409, no second account, no email sent", async () => {
+        const result = await invite({ email: MANAGER.email, name: "Again", role: "ADMIN" });
+        assert.equal(result.status, 409);
+        assert.equal(result.body.code, "USER_ALREADY_ACTIVE");
+        assert.equal(authAdmin.calls.length, 0);
+        assert.equal(rowOf(MANAGER.email).role, "MANAGER");
+    });
+
+    test("re-inviting a pending invitee re-sends the invite: one row, same identity, new role", async () => {
+        await invite({ email: "p@example.invalid", name: "P", role: "ANALYST" });
+        const first = rowOf("p@example.invalid");
+        const again = await invite({ email: "p@example.invalid", name: "P", role: "MANAGER" });
+        assert.equal(again.status, 201);
+        assert.equal(db.rows.filter((r) => r.email === "p@example.invalid").length, 1);
+        assert.equal(rowOf("p@example.invalid").authUserId, first.authUserId);
+        assert.equal(rowOf("p@example.invalid").role, "MANAGER");
+    });
+
+    test("re-inviting a deactivated user who had set up their account reactivates them (no new identity)", async () => {
+        await invite({ email: "r@example.invalid", name: "R", role: "ANALYST" });
+        authAdmin.confirm("r@example.invalid");
+        rowOf("r@example.invalid").status = "INACTIVE";
+        const result = await invite({ email: "r@example.invalid", name: "R", role: "ANALYST" });
+        assert.equal(result.status, 200);
+        assert.equal(result.body.outcome, "REACTIVATED");
+        assert.equal(rowOf("r@example.invalid").status, "ACTIVE");
+        assert.equal(db.auditLogRows.at(-1).action, "REACTIVATE_USER");
+    });
+
+    test("an existing confirmed Supabase identity without an application row is linked, not duplicated", async () => {
+        server.close();
+        await start([ADMIN], { "linked@example.invalid": { authUserId: "11111111-2222-4333-8444-555555555555", confirmed: true } });
+        const result = await invite({ email: "linked@example.invalid", name: "Linked", role: "REGISTRATION_DESK" });
+        assert.equal(result.status, 200);
+        assert.equal(rowOf("linked@example.invalid").authUserId, "11111111-2222-4333-8444-555555555555");
+        assert.equal(rowOf("linked@example.invalid").status, "ACTIVE");
+    });
+
+    test("an email whose row is bound to another Supabase identity is refused", async () => {
+        db.rows.push({ adminId: "u-x", authUserId: "99999999-0000-4000-8000-000000000000", email: "bound@example.invalid", name: "B", role: "ANALYST", status: "INACTIVE" });
+        const result = await invite({ email: "bound@example.invalid", name: "B", role: "ANALYST" });
+        assert.equal(result.status, 409);
+        assert.equal(result.body.code, "IDENTITY_MISMATCH");
+        assert.equal(rowOf("bound@example.invalid").authUserId, "99999999-0000-4000-8000-000000000000");
+    });
+
+    test("Supabase rate limit -> 429; Supabase failure -> 502; no row either way", async () => {
+        authAdmin.failNext("RATE_LIMITED");
+        assert.equal((await invite({ email: "a@example.invalid", name: "A", role: "ANALYST" })).status, 429);
+        authAdmin.failNext("FAILED");
+        assert.equal((await invite({ email: "a@example.invalid", name: "A", role: "ANALYST" })).status, 502);
+        assert.equal(rowOf("a@example.invalid"), undefined);
+    });
+
+    test("concurrent invites of one person converge on one row", async () => {
+        const results = await Promise.all([1, 2, 3].map(() => invite({ email: "race@example.invalid", name: "Race", role: "ANALYST" })));
+        assert.ok(results.every((r) => r.status === 201), JSON.stringify(results.map((r) => r.status)));
+        assert.equal(db.rows.filter((r) => r.email === "race@example.invalid").length, 1);
+    });
+
+    test("redirect URL is ${APP_BASE_URL}/admin/setup-password (trailing slash tolerated)", () => {
+        assert.equal(inviteRedirectUrl({ APP_BASE_URL: "https://x.example/" }), "https://x.example/admin/setup-password");
+        assert.equal(inviteRedirectUrl({ APP_BASE_URL: "http://localhost:5173" }), "http://localhost:5173/admin/setup-password");
+    });
+
+    test("APP_BASE_URL missing or invalid -> the invite is refused (503) and nothing is sent or stored", async () => {
+        for (const value of [undefined, "", "   ", "not a url", "ftp://host.example", "https://host.example/admin", "https://host.example/?x=1", "https://user:pw@host.example"]) {
+            if (value === undefined) delete process.env.APP_BASE_URL;
+            else process.env.APP_BASE_URL = value;
+            const result = await invite({ email: "cfg@example.invalid", name: "Cfg", role: "ANALYST" });
+            assert.equal(result.status, 503, String(value));
+            assert.equal(result.body.code, "INVITE_NOT_CONFIGURED");
+            assert.match(result.body.message, /^Invitations are not configured: APP_BASE_URL/);
+            assert.ok(!JSON.stringify(result.body).includes("pw@"), "the configured value is never echoed");
+        }
+        assert.equal(authAdmin.calls.length, 0, "Supabase is never asked to send an email");
+        assert.equal(rowOf("cfg@example.invalid"), undefined);
+        assert.equal(db.auditLogRows.length, 0);
+    });
+
+    test("the redirect cannot be influenced by the request (body, query or headers)", async () => {
+        const response = await fetch(`${baseUrl}/api/admin/users/invite?redirectTo=https://evil.example&APP_BASE_URL=https://evil.example`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: "admin@example.invalid", password: ADMIN_PASSWORD }),
+            headers: { Authorization: `Bearer ${tokenFor(ADMIN.adminId)}`, "Content-Type": "application/json", Host: "evil.example", "X-Forwarded-Host": "evil.example", Origin: "https://evil.example", Referer: "https://evil.example/" },
+            body: JSON.stringify({ email: "safe@example.invalid", name: "Safe", role: "ANALYST", redirectTo: "https://evil.example/x", redirect_to: "https://evil.example/y", appBaseUrl: "https://evil.example" }),
         });
-        assert.equal(loginRes.status, 200);
+        assert.equal(response.status, 201);
+        assert.equal(authAdmin.calls.at(-1).options.redirectTo, REDIRECT);
+    });
+
+    test("a missing redirect is refused by the service and the Supabase wrapper too (no Site URL fallback)", async () => {
+        await assert.rejects(inviteUser({ db, authAdmin, actor: ADMIN, values: { email: "x@example.invalid", name: "X", role: "ANALYST" } }), { code: "INVITE_NOT_CONFIGURED" });
+        assert.equal(authAdmin.calls.length, 0);
     });
 });
 
+describe("invited user setup: POST /auth/complete-invite", () => {
+    test("the invitee's own session activates their account; then /auth/me works", async () => {
+        await invite({ email: "n@example.invalid", name: "N", role: "MANAGER" });
+        const token = sessionOf("n@example.invalid");
+        assert.equal((await request("GET", "/auth/me", { token })).status, 403, "not usable before setup");
+
+        const done = await request("POST", "/auth/complete-invite", { token });
+        assert.equal(done.status, 200);
+        assert.deepEqual(done.body.user, { userId: rowOf("n@example.invalid").adminId, email: "n@example.invalid", name: "N", role: "MANAGER", status: "ACTIVE" });
+        assert.equal(db.auditLogRows.at(-1).action, "COMPLETE_INVITATION");
+
+        const me = await request("GET", "/auth/me", { token });
+        assert.equal(me.status, 200);
+        assert.equal(me.body.user.role, "MANAGER", "role from public.user, set by the ADMIN");
+        assert.equal((await request("POST", "/auth/complete-invite", { token })).status, 200, "idempotent");
+    });
+
+    test("a revoked (deactivated) invitation can't be completed", async () => {
+        await invite({ email: "v@example.invalid", name: "V", role: "ANALYST" });
+        const userId = rowOf("v@example.invalid").adminId;
+        assert.equal((await request("POST", `/api/admin/users/${userId}/deactivate`)).status, 200);
+        const result = await request("POST", "/auth/complete-invite", { token: sessionOf("v@example.invalid") });
+        assert.equal(result.status, 403);
+        assert.equal(rowOf("v@example.invalid").status, "INACTIVE");
+    });
+
+    test("a Supabase identity that was never invited gets nothing", async () => {
+        const result = await request("POST", "/auth/complete-invite", { token: tokenForAuthId("00000000-1111-4222-8333-444444444444") });
+        assert.equal(result.status, 403);
+    });
+});
+
+describe("user management (ADMIN only)", () => {
+    test("GET /users lists profiles without Supabase identities", async () => {
+        const result = await request("GET", "/api/admin/users");
+        assert.equal(result.status, 200);
+        assert.deepEqual(result.body.users.map((u) => u.userId).sort(), ["admin-1", "manager-1"]);
+        assert.ok(!JSON.stringify(result.body).includes("authUserId"));
+        assert.equal((await request("GET", "/api/admin/users", { token: tokenFor(MANAGER.adminId) })).status, 403);
+    });
+
+    test("role change: validated, audited, effective on the next request; never your own", async () => {
+        assert.equal((await request("PUT", `/api/admin/users/${MANAGER.adminId}/role`, { body: { role: "VIEWER" } })).status, 400);
+        assert.equal((await request("PUT", `/api/admin/users/${ADMIN.adminId}/role`, { body: { role: "ANALYST" } })).status, 400);
+        assert.equal((await request("PUT", "/api/admin/users/nobody/role", { body: { role: "ANALYST" } })).status, 404);
+
+        const result = await request("PUT", `/api/admin/users/${MANAGER.adminId}/role`, { body: { role: "ADMIN" } });
+        assert.equal(result.status, 200);
+        assert.equal(result.body.user.role, "ADMIN");
+        assert.equal(db.auditLogRows.at(-1).action, "UPDATE_USER_ROLE");
+        assert.equal((await request("GET", "/api/admin/users", { token: tokenFor(MANAGER.adminId) })).status, 200, "the new role applies at once");
+    });
+
+    test("deactivate: the user's session stops working at once; not yourself", async () => {
+        assert.equal((await request("GET", "/auth/me", { token: tokenFor(MANAGER.adminId) })).status, 200);
+        assert.equal((await request("POST", `/api/admin/users/${ADMIN.adminId}/deactivate`)).status, 400);
+        const result = await request("POST", `/api/admin/users/${MANAGER.adminId}/deactivate`);
+        assert.equal(result.status, 200);
+        assert.equal(result.body.user.status, "INACTIVE");
+        assert.equal((await request("GET", "/auth/me", { token: tokenFor(MANAGER.adminId) })).status, 403);
+        assert.equal(db.auditLogRows.at(-1).action, "DEACTIVATE_USER");
+    });
+
+    test("invalid user IDs are refused", async () => {
+        assert.equal((await request("POST", "/api/admin/users/bad%20id!/deactivate")).status, 400);
+    });
+});

@@ -1,10 +1,9 @@
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import jwt from "jsonwebtoken";
 
 import { createAdminRouter } from "../src/routes/admin.js";
-import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.js";
+import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js";
 import { removeFromReview } from "../src/services/adminReviewActionService.js";
 import { decidePlacement, PLACEMENT } from "../src/services/storagePlacementService.js";
 import { processDocument } from "../src/services/documentProcessingService.js";
@@ -12,13 +11,13 @@ import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
 import { createFakePrisma } from "./helpers/fakePrisma.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
+import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 Object.assign(process.env, {
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
 
@@ -56,7 +55,6 @@ function setup({ documents = [verifiedDoc, reviewDoc], bucketOptions = {} } = {}
     return { db, bucket };
 }
 
-const tokenFor = (adminId) => jwt.sign({ adminId }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
 let server;
 let base;
 let current;
@@ -67,7 +65,7 @@ before(async () => {
 });
 after(() => server.close());
 function use(fixture) {
-    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveAdmin({ db: fixture.db.client }) }) };
+    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveUser({ db: fixture.db.client, verifyAccessToken: fakeVerifyAccessToken }) }) };
     return fixture;
 }
 async function call(method, path, { body, token = tokenFor("admin-active") } = {}) {
@@ -145,7 +143,7 @@ describe("A: Remove from Review for a stored REVIEW_REQUIRED document", () => {
         for (const body of [{}, { reason: "" }, { reason: "   " }, { reason: 5 }, { reason: "x".repeat(501) }]) {
             assert.equal((await call("POST", `/review/document-${REVIEW_ID}/remove`, { body })).status, 400, JSON.stringify(body));
         }
-        assert.equal((await call("POST", `/review/document-${REVIEW_ID}/remove`, { body: { reason: "x" }, token: tokenFor("admin-inactive") })).status, 401);
+        assert.equal((await call("POST", `/review/document-${REVIEW_ID}/remove`, { body: { reason: "x" }, token: tokenFor("admin-inactive") })).status, 403);
         assert.equal(db.tables.document.length, 2);
         await call("POST", `/review/document-${REVIEW_ID}/remove`, { body: { reason: "x", adminId: "admin-inactive" } });
         assert.equal(db.tables.auditLog[0].adminId, "admin-active");

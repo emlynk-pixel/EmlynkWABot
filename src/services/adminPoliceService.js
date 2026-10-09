@@ -39,7 +39,7 @@ export function countdownFromDocuments(documents, pendingSlips, today) {
 // Every client's police status. Three queries whatever the number of clients.
 export async function loadPoliceStatuses({ db, today }) {
     const [users, documents, pending] = await Promise.all([
-        db.user.findMany({ select: clientSelect, orderBy: [{ passportId: "asc" }] }),
+        db.candidate.findMany({ select: clientSelect, orderBy: [{ passportId: "asc" }] }),
         db.document.findMany({
             // VERIFIED and REVIEW_REQUIRED slips/reports both count towards the
             // countdown (a REVIEW_REQUIRED slip's date counts too, see below);

@@ -9,27 +9,32 @@ The development history, per-checkpoint tests and migrations are in [`09a-admin-
 | | |
 |---|---|
 | Address | `/admin` on the backend server (e.g. `http://localhost:3000/admin/`) |
-| Sign in | Admin email and password; the session lasts 1 hour |
-| Who can use it | Any admin account with status `ACTIVE`. There are no roles yet (Phase 12). |
-| Screens | Overview, Documents, Review Queue, Review Detail, Clients, Client Details, Missing Documents, Police Workflow, Daily Report |
-| Actions | Approve, Keep Pending, Remove from Review, Set Document Type, Assign Client, Set Police Slip Date |
-| Never | Reject, automatic removal of pending documents, creating clients, changing a client's WhatsApp number |
+| Sign in | Email and password (Supabase Auth); the session is refreshed automatically and ends when you sign out |
+| Who can use it | Any staff user with status `ACTIVE`. What each person can do depends on their role: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK` (section 6). |
+| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Clients, Client Details, Missing Documents, Police Workflow, Daily Report, Invite User, Change Roles, Audit Logs, Settings |
+| Actions | Approve, Keep Pending, Remove from Review, Set Document Type, Assign Client, Set Police Slip Date, Upload Candidate Document, Update Candidate Stage, Invite User, Change Roles, Deactivate User |
+| Never | Reject, automatic removal of pending documents, changing a candidate's locked WhatsApp number, modifying or deleting audit logs |
 | Every action | Needs confirmation, is taken by the signed-in admin, and is written to an append-only audit log |
 | Time | Every date and "today" is Sri Lanka time (`Asia/Colombo`) |
 
 ## 1. Signing in
 
 1. Open `/admin`. Without a session you are sent to the sign-in page.
-2. Sign in with your admin email and password. After too many failed attempts the login is rate-limited for a while.
-3. The session ends after 1 hour, when you sign out, or when you close the browser tab. If your account is deactivated, your next request signs you out.
+2. Sign in with your email and password. Sign-in is handled by Supabase Auth, which also limits repeated failed attempts.
+3. The session ends when you sign out or close the browser tab. If your account is deactivated, your next request signs you out.
 
-The first admin account is created on the server with `npm run admin:create` ([`13-security-overview.md`](13-security-overview.md)).
+**Forgot your password?** Use *Forgot password* on the sign-in page and enter your email. Supabase Auth sends a reset link (the page gives the same answer whether or not the email has an account); it opens `/admin/reset-password`, where you choose a new password and sign in again. If the link has expired or was already used, request a new one.
+
+**First sign-in (invited users).** An `ADMIN` invites you from *Invite User*. Supabase Auth emails you an invitation link that opens `/admin/setup-password`, where you set your password and your account becomes `ACTIVE`. Outgoing auth emails use the SMTP server configured in the Supabase dashboard, not the application.
+
+The first ADMIN is created on the server with `npm run user:create` (a Supabase Auth identity plus the application profile); everyone else is invited from the dashboard ([`SUPABASE_AUTH.md`](SUPABASE_AUTH.md)).
 
 ## 2. Screens
 
 ### Header (every page)
 
 - **Breadcrumb** with the current section.
+- **Review Queue Notification Bell**: Displays an alert bell icon in the top header with a real-time badge count of unread Review Queue submissions. Clicking the bell opens a dropdown panel listing recent pending items with quick navigation to `/admin/review/:id` and a "Mark all as read" button. Read/unread tracking is persisted in `localStorage` per staff user (`emlynk.admin.readNotifications.<userId>`).
 - **Sync** reloads the data on the current page from the server. Your filters, search and page are kept. While it runs the button shows *Syncing…* and can't be pressed again; afterwards the header shows *Synced HH:MM:SS* or *Sync failed*. Sync only reloads the page's data. It does not talk to WhatsApp or any other system.
 - **Dark mode** toggle (moon / sun icon). The choice is remembered in this browser. Light mode is the default.
 - Your name and role, and **Sign out**.
@@ -131,6 +136,105 @@ Figures for one **business day** in Sri Lanka (00:00–24:00). Pick a date (not 
 
 **Current status**, labelled with the time it was taken: completed and incomplete clients, missing documents, and police reports due soon, due today and overdue. These are always *now*, because no history of them is kept. For a past date the page says so rather than pretending they were that day's figures.
 
+### Candidates (Candidate Pool & Deployment)
+
+The primary interface for managing candidate registrations and deployment workflows (`/admin/candidates`). In the dashboard sidebar, Candidates replaces the older Clients link.
+
+- **Candidate Pool (`/admin/candidates`)**:
+  - Lists candidates from `public.candidate` with server-side pagination.
+  - Search by passport ID, unique ID, first or other name, NIC, or contact number.
+  - Candidate summary card: passport ID, business unique ID (`0001`, `0002`...), candidate name, contact numbers, and a 6-stage deployment progress overview.
+  - Action buttons: **Register Candidate** and **View/Edit Deployment**.
+- **Candidate Registration (`/admin/candidates/new`)**:
+  - Registers a new candidate into `public.candidate`.
+  - Captures: Passport ID, NIC, First Name, Other Name, Date of Birth, Place of Birth, Passport Issue Date, Passport Expiry Date, Nationality, Sex, WhatsApp Number, Contact Number, Address, Job Experience, and initial stage notes.
+  - Prevents duplicates on Passport ID, NIC, and WhatsApp number.
+- **Candidate Deployment & Stage Tracking (`/admin/candidates/:passportId`)**:
+  - Independent seven-stage workflow for each candidate:
+    1. **TEST_DETAILS**: Job ID, test result (`PASS`, `FAIL`), and test date.
+    2. **CANDIDATE_DETAILS**: Bio and contact details. WhatsApp number is locked once set to maintain inbound document matching.
+    3. **DOCUMENT_SUBMISSION**: Checklist of 5 required candidate documents (`PASSPORT`, `POLICE_REPORT` [SL Verified + Romania], `MEDICAL`, `AFFIDAVIT`, `SKILL_VIDEO`).
+    4. **IVS_INTERVIEW**: Interview completion status and notes.
+    5. **VISA_SUBMISSION**: Visa submission completion status and notes (completed by staff, like Visa approval).
+    6. **VISA_APPROVAL**: Visa processing completion status and notes.
+    7. **FINALIZING_JOB**: Final deployment readiness completion status and notes.
+- **Candidate Document Uploads & Removals**:
+  - Direct browser-to-storage uploads via signed URLs (`POST /candidates/:passportId/documents/upload-target` and `POST /candidates/:passportId/documents/finalize`).
+  - Stored documents can be removed with a mandatory reason via `POST /candidates/:passportId/documents/:documentId/remove`.
+- **Candidate Call Logs**:
+  - Slide-out drawer on the deployment screen.
+  - Staff can record phone calls with timestamp, conversation notes, and staff attribution (`public.candidate_call_logs`).
+- **Additional details step (`/admin/candidates/:passportId?tab=additional`)**:
+  - The third circle of the candidate's progress stepper (after Candidate details), for every role that manages candidates (REGISTRATION_DESK included). IVS interview and Finalizing the job have no circle.
+  - Sections: Passport & Personal Details, Clothing & Sizes, Father Details, Mother Details, Marital & Family Details, Employment / Skills.
+  - The passport number is the candidate's own passport ID (read-only), so the details always belong to the existing candidate.
+  - A new form is pre-filled from the candidate's record (name, address, date of birth). Those values are only stored when Save is pressed, and the candidate's record itself is never changed from this tab.
+  - Father / mother details appear only when that parent is alive (the name is then required). Wife details appear only when married (her name is then required).
+  - Pant and shoe sizes take a preset or a custom value.
+  - If someone else saved the same candidate's details after you opened them, your save is refused with a message; press **Sync** to load their changes and try again (what you typed is kept until then).
+  - Saved in `public.candidate_additional_details`. Every change is in Audit Logs with only the changed fields.
+
+### Invite User (`/admin/invitations`) — ADMIN Only
+
+- Accessible exclusively to users with the `ADMIN` role.
+- Interface for inviting new console users (`/admin/invitations`).
+- **Invite Form**: Enter email, display name, and select a role (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`).
+- Backend calls the Supabase Auth Admin API to send an invitation email with a link pointing to `${APP_BASE_URL}/admin/setup-password`.
+- Displays the user list with account status: `INVITED`, `ACTIVE`, `INACTIVE`.
+- Audited under `INVITE_USER` or `REACTIVATE_USER`.
+
+### Change Roles (`/admin/roles`) — ADMIN Only
+
+- Accessible exclusively to users with the `ADMIN` role.
+- Interface for managing roles and deactivating staff users (`/admin/roles`).
+- Table lists all staff accounts from `public."user"`.
+- Role selector dropdown updates the user role via `PUT /api/admin/users/:userId/role` and applies immediately to the user's next request.
+- Deactivate button sets user status to `INACTIVE` via `POST /api/admin/users/:userId/deactivate`.
+- Self-role modification and self-deactivation are prevented.
+- Audited under `UPDATE_USER_ROLE` and `DEACTIVATE_USER`.
+
+### Audit Logs (`/admin/audit-logs`) — NEW FEATURE (ADMIN Only)
+
+A centralized, immutable audit log viewer for all system operations, candidate modifications, document decisions, and staff lifecycle events.
+
+- **Route**: `/admin/audit-logs`
+- **Access**: Strictly **ADMIN only**. Non-admin roles (`MANAGER`, `ANALYST`, `REGISTRATION_DESK`) cannot see the navigation link in the sidebar, and direct URL access renders an `<AccessRestricted />` barrier while the backend API returns `403 { message: "Insufficient permissions" }`.
+- **View-Only & Immutable**: The page provides view-only inspection. There are zero edit, delete, rollback, or clear endpoints in the system; database triggers block all row modifications.
+- **Displayed Data**:
+  - **Timestamp**: Exact event time formatted in Sri Lanka timezone (`Asia/Colombo`).
+  - **Action**: Visual semantic badge (e.g. blue for Candidate, green for Approvals, purple for Staff, amber for Removals/Deactivations).
+  - **Performed By**: Name, email, and current role of the staff member who executed the action.
+  - **Candidate**: Passport ID and Candidate Name (if associated with a candidate).
+  - **Category**: High-level classification (`Candidate`, `Documents`, `Staff`, `Review`).
+  - **Change Summary**: Transition from `previousStatus` → `newStatus`, or detailed diff of `previousValue` → `newValue`.
+  - **Reason / Notes**: Admin justification or notes entered when taking the action.
+- **Comprehensive Filters**:
+  - **Performed By (Staff)**: Dropdown filter by staff user.
+  - **Candidate Filter**: Filter by passport ID or search query.
+  - **Category Filter**: Filter by high-level category (`CANDIDATE`, `DOCUMENT`, `STAFF`, `REVIEW`).
+  - **Action Filter**: Filter by specific action code (e.g., `CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `UPDATE_STAGE`, `APPROVE`, `REMOVE_DOCUMENT`, `UPDATE_USER_ROLE`).
+  - **Date Range**: Date pickers for Start Date and End Date.
+  - **Free-Text Search**: Searches across reason, values, passport ID, and staff details.
+  - **Pagination Controls**: Selectable rows per page (10, 25, 50, 100), with Next/Previous server-side pagination.
+  - **Clear Filters**: One-click reset to default view.
+- **Audited Events**:
+  - Candidate lifecycle: `CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `UPDATE_STAGE`.
+  - Document actions: `UPLOAD_DOCUMENT`, `REMOVE_DOCUMENT`, `REPLACE_VERIFIED`, `KEEP_AS_VERSION`, `DELETE_TEMPORARY_DOCUMENT`.
+  - Review queue decisions: `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT`, `SET_POLICE_DATE`, `RETRY_PROCESSING`.
+  - Staff management: `INVITE_USER`, `REACTIVATE_USER`, `COMPLETE_INVITATION`, `UPDATE_USER_ROLE`, `DEACTIVATE_USER`.
+- **API**: `GET /api/admin/audit-logs` (requires `ADMIN` role).
+
+### Settings (`/admin/settings`) — ADMIN Only
+
+- Dedicated console section for system integrations (`/admin/settings`).
+- **Google Sheet Sync**:
+  - Current sync state (`OK`, `CONFIG_ERROR`, `DATA_INTEGRITY`, `UNKNOWN`).
+  - Target Hint: Last characters of the Google Spreadsheet ID and sheet tab name.
+  - Write Gate Toggle: Enable or disable writing to the Google Sheet.
+  - Sync Now: Immediately triggers a reconciliation run (`sheet_sync_runs`).
+  - Test Connection: Verifies Google Sheets API credentials and tab headers.
+  - Worker Heartbeat: Reports the last active heartbeat of the background sheet-sync worker.
+
 ## 3. Rules
 
 ### No reject
@@ -210,9 +314,8 @@ Other statuses: `MANUAL_REVIEW` and `CONFLICT` (held for review), `DUPLICATE` (t
 | Setting | Where | Notes |
 |---|---|---|
 | `REQUIRED_DOCUMENT_TYPES` | server environment (`.env`) | Comma-separated; must include `PASSPORT`; allowed `PASSPORT`, `POLICE_SLIP`, `POLICE_REPORT`, `MEDICAL`. Default `PASSPORT,POLICE_REPORT,MEDICAL`. An invalid value stops the server at startup with a clear message; nothing falls back silently. Restart after changing it. |
-| Dark / light mode | each admin's browser | Stored in the browser only |
-
-There is no Settings page.
+| Dark / light mode | each admin's browser | Stored in the browser only (`localStorage`) |
+| Google Sheet Sync | `/admin/settings` | Operational controls: Write Gate toggle, Sync Now, Test Connection |
 
 ```bash
 npm run admin:install   # once
@@ -239,43 +342,62 @@ WhatsApp documents are processed in the background. When a document arrives, the
 
 ## 6. API
 
-All endpoints are under `/api/admin` and require an ACTIVE admin session via `emlynk_admin_token` httpOnly cookie (preferred) or `Authorization: Bearer <token>`. Role-based access control (RBAC) enforces endpoint permissions based on `admin.role` (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`). Responses are never cached.
+All endpoints are under `/api/admin` and require a Supabase session (`Authorization: Bearer <access token>`) of an `ACTIVE` user. Role-based access control (RBAC) enforces endpoint permissions from `public."user".role` (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`), always read from the database. Responses are never cached.
 
 | Method | Path | Allowed Roles | Purpose |
 |---|---|---|---|
 | GET | `/overview` | ADMIN, MANAGER, ANALYST | Overview figures |
 | GET | `/documents` | ADMIN, MANAGER, ANALYST | Stored documents (search, filters, sort, paging) |
 | GET | `/documents/missing` | ADMIN, MANAGER, ANALYST | Incomplete clients and missing types (`documentType`, `search`, paging) |
-| POST | `/documents/:documentId/police-date` | ADMIN | Set or correct a police slip date `{ policeSubmittedDate, reason }` |
-| GET | `/clients` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Clients directory (`search`, `completion`, `missingType`, paging) |
-| GET | `/clients/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Client details |
+| POST | `/documents/:documentId/police-date` | ADMIN, MANAGER | Set or correct a police slip date `{ policeSubmittedDate, reason }` |
+| GET | `/clients` | ADMIN, MANAGER, ANALYST | Clients directory (`search`, `completion`, `missingType`, paging) |
+| GET | `/clients/:passportId` | ADMIN, MANAGER, ANALYST | Client details |
+| GET | `/candidates` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate list (search, filters, paging) |
+| POST | `/candidates` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate registration `{ passportId, nic, firstName, ... }` |
+| GET | `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate details and stage status |
+| PUT | `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Update candidate details |
+| PUT | `/candidates/:passportId/stages/:stage` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Update candidate deployment stage `{ completed, notes, ... }` |
+| POST | `/candidates/:passportId/documents/upload-target` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Issue signed upload URL for candidate document |
+| POST | `/candidates/:passportId/documents/finalize` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Finalize and verify candidate document upload |
+| POST | `/candidates/:passportId/documents/:documentId/remove` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Remove candidate document `{ reason }` |
+| GET | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate call logs |
+| POST | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Record call log `{ note, createdDate }` |
+| GET | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Additional details `{ passportId, details, suggested, updatedDate }` |
+| PUT | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Save additional details (full replacement; audited) |
 | GET | `/review`, `/review/:reviewId`, `/review/:reviewId/file` | ADMIN, MANAGER, ANALYST | Review Queue, one item, its file |
-| POST | `/review/:reviewId/approve` | ADMIN, MANAGER | Approve `{ reason?, policeSubmittedDate? }` |
-| POST | `/review/:reviewId/keep-pending` | ADMIN, MANAGER | Keep Pending `{ reason }` |
-| POST | `/review/:reviewId/remove` | ADMIN, MANAGER | Remove from Review `{ reason }` |
-| POST | `/review/:reviewId/document-type` | ADMIN, MANAGER | Set Document Type `{ documentType, reason }` |
-| POST | `/review/:reviewId/assign-client` | ADMIN, MANAGER | Assign Client `{ passportId, reason }` |
-| POST | `/review/:reviewId/retry` | ADMIN, MANAGER | Retry processing `{ reason? }` |
-| POST | `/review/:reviewId/replace-verified` | ADMIN, MANAGER | Replace verified document `{ existingDocumentId, reason?, policeSubmittedDate? }` |
-| POST | `/review/:reviewId/keep-as-version` | ADMIN, MANAGER | Keep document as version `{ reason? }` |
+| POST | `/review/:reviewId/approve` | ADMIN, MANAGER, ANALYST | Approve `{ reason?, policeSubmittedDate? }` |
+| POST | `/review/:reviewId/keep-pending` | ADMIN, MANAGER, ANALYST | Keep Pending `{ reason }` |
+| POST | `/review/:reviewId/remove` | ADMIN, MANAGER, ANALYST | Remove from Review `{ reason }` |
+| POST | `/review/:reviewId/document-type` | ADMIN, MANAGER, ANALYST | Set Document Type `{ documentType, reason }` |
+| POST | `/review/:reviewId/assign-client` | ADMIN, MANAGER, ANALYST | Assign Client `{ passportId, reason }` |
+| POST | `/review/:reviewId/retry` | ADMIN, MANAGER, ANALYST | Retry processing `{ reason? }` |
+| POST | `/review/:reviewId/replace-verified` | ADMIN, MANAGER, ANALYST | Replace verified document `{ existingDocumentId, reason?, policeSubmittedDate? }` |
+| POST | `/review/:reviewId/keep-as-version` | ADMIN, MANAGER, ANALYST | Keep document as version `{ reason? }` |
 | GET | `/police` | ADMIN, MANAGER, ANALYST | Police Workflow (`status`, `search`, `passportId`, paging) |
 | GET | `/reports/daily` | ADMIN, MANAGER, ANALYST | Daily Report (`date=YYYY-MM-DD`, default today) |
-| POST | `/invitations` | ADMIN | Issue new admin invitation `{ name, email, role }` (Phase 12, Checkpoint 2) |
-| GET | `/invitations` | ADMIN | List admin invitations with status (Phase 12, Checkpoint 2) |
-| POST | `/invitations/:id/revoke` | ADMIN | Revoke a pending invitation (Phase 12, Checkpoint 2) |
-| GET | `/auth/invitation?token=...` | Public | Validate setup token without consuming |
-| POST | `/auth/setup-password` | Public | Set password from invitation `{ token, password }` |
+| GET | `/audit-logs` | ADMIN | View-only audit logs (search, user/candidate filters, dates, paging) |
+| GET | `/users` | ADMIN | List staff users (under `/api/admin/users`) |
+| POST | `/users/invite` | ADMIN | Invite a user `{ name, email, role }` |
+| PUT | `/users/:userId/role` | ADMIN | Change a user's role |
+| POST | `/users/:userId/deactivate` | ADMIN | Deactivate a user |
+| GET | `/sheet-sync/settings` | ADMIN | Google Sheet Sync operational status |
+| POST | `/sheet-sync/settings/write-gate` | ADMIN | Toggle Google Sheet writing `{ enabled }` |
+| POST | `/sheet-sync/sync-now` | ADMIN | Trigger immediate reconciliation sync |
+| POST | `/sheet-sync/test-connection` | ADMIN | Test Google Sheet connection |
+
+Sign-in, sign-out, password recovery and setting a password from an invitation are Supabase Auth's, called by the dashboard directly; the backend only offers `GET /auth/me` and `POST /auth/complete-invite` (activates an invited user after they set a password).
 
 Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, message }]`, refused actions (409) add a `code` such as `ALREADY_RESOLVED`, `VERIFIED_DOCUMENT_EXISTS`, `CLIENT_NOT_FOUND`, `DUPLICATE_ACTIVE_ADMIN` or `NOT_CORRECTABLE`, and insufficient permissions (403) return `{ "message": "Insufficient permissions" }`. 401 means no or an invalid session, 404 an unknown item, 502 a storage failure, and 500 an unexpected error (no details are shown).
 
 ## 7. Security
 
-- Documents are in a **private** storage bucket. The dashboard never receives a storage link or credential: files are streamed through the server to signed-in admins only and shown from a local browser copy.
-- The session authentication token is transported via a secure `httpOnly; SameSite=Strict; Secure (in production)` cookie (`emlynk_admin_token`) set on login and cleared on logout. The frontend never accesses raw JWT secrets. The server verifies on every request that the admin exists and is ACTIVE.
-- Role-based authorization (`requireRole` middleware) enforces the principle of least privilege across all endpoints.
-- Admin Invitation System (Phase 12, Checkpoint 2): 256-bit cryptographically secure random invitation tokens, stored exclusively as SHA-256 hashes, with 24-hour expiration, single-use enforcement, bcrypt password hashing, and immutable audit logging (`INVITE_ADMIN`, `COMPLETE_INVITATION`, `REVOKE_INVITATION`).
-- The server's Content Security Policy allows scripts only from the dashboard itself; the dashboard loads no external fonts or scripts.
-- Responses contain no storage paths or checksums.
+- **Private Storage**: Documents reside in a private Supabase Storage bucket. The dashboard never receives raw storage credentials: files stream securely through the authenticated server. Direct uploads to candidate folders use time-limited, signed URLs issued by the API.
+- **Supabase Auth & Bearer Tokens**: All authenticated requests pass `Authorization: Bearer <token>`. The server verifies tokens directly with Supabase Auth. Browser applications hold only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. The `SUPABASE_SERVICE_ROLE_KEY` is server-only.
+- **Server-Side Authoritative RBAC**: Frontend sidebar navigation hiding is a user interface affordance only, **not** the security perimeter. The server-side `createRequireActiveUser` and `requireRole` middleware inspect the database `public."user"` row on every single request, validating `status === 'ACTIVE'` and the caller's role (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`). Unauthorized requests fail closed with `403 { message: "Insufficient permissions" }`.
+- **User Invitations & Password Lifecycle**: Invitations are managed through the Supabase Auth Admin API and dispatched via configured SMTP to `${APP_BASE_URL}/admin/setup-password`. Password recovery operates through Supabase Auth without disclosing email existence.
+- **Immutable Audit Trail**: All administrative decisions, candidate creations, candidate updates, stage progress, document uploads/removals, role updates, and user invitations are immutably recorded in `audit_logs`, protected by database triggers.
+- **Content Security Policy**: Helmet enforces strict CSP headers, preventing unauthorized script execution, frame injection, or untrusted network connections.
+- **Responses contain no storage paths or checksums**: Candidate endpoints and audit endpoints strictly omit internal storage paths and credential details.
 
 ## 8. Decisions that differ from the proposal
 
@@ -285,7 +407,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 | 2 | Remove from Review | Manual, after inspection, with a required reason and confirmation; permanently deletes the waiting file (with its original and record) or the stored *Review required* document (with its file); the audit entry stays; no undo; never a verified document. |
 | 3 | Automatic removal | Pending documents are never removed automatically. |
 | 4 | Audit log | Every admin action is recorded in an append-only table (`audit_logs`, protected by a database trigger). |
-| 5 | Roles | Implemented in Phase 12 Checkpoint 1 per Proposal §33: four roles (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`) using the existing `Admin.role` column, enforced via `requireRole` middleware with safe 403 responses. |
+| 5 | Roles | Four roles (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`) stored in `public."user".role`, enforced by `requireRole` middleware with safe 403 responses. |
 | 6 | Identity assignment | Admins may link a waiting file to an existing client only; no client is created; the sender's number and the original identity result are kept. |
 | 7 | Police report completion | A verified police report completes the workflow, whenever it arrived. Admins enter or confirm the slip's submitted date when approving, and can set or correct it later. There is no admin upload of the police report. |
 | 8 | Required documents | Configured with `REQUIRED_DOCUMENT_TYPES` (environment, validated at startup); no document-type table and no Settings page. |
@@ -297,8 +419,8 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 | 14 | Daily reporting | Moved from Phase 11 into Phase 10. Daily and current figures are kept apart; figures without a data source are not estimated. |
 | 15 | Sync | Means an explicit reload of the dashboard data only. |
 | 16 | Dark mode | Added on top of the Stitch design through its colour tokens; light mode unchanged. |
-| 17 | Admin Invitations | Self-service onboarding via one-time 24-hour setup links, hashed token storage, bcrypt password encryption, and immutable audit logging (Phase 12, Checkpoint 2). |
-| 18 | Password Reset | Self-service password recovery via 1-hour single-use reset links, SHA-256 token hashing, zero account enumeration, scoped rate limiting, bcrypt encryption, and audit logging. |
+| 17 | User invitations | An ADMIN invites a user; Supabase Auth sends the invitation email and the user sets their password on `/admin/setup-password`. Dashboard SMTP is configured in Supabase, and every step is audit-logged. |
+| 18 | Password recovery | Handled by Supabase Auth: the reset link opens `/admin/reset-password`, and the forgot-password page never reveals whether an email has an account. |
 
 ## 9. Known limitations
 

@@ -490,78 +490,91 @@ export function getReviewFile(token: string, previewUrl: string, signal?: AbortS
     return apiRequestBlob(previewUrl, { token, signal });
 }
 
-export type AdminInvitationSummary = {
-    invitationId: string;
-    email: string;
-    name: string;
-    role: string;
-    status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
-    expiresAt: string;
-    createdAt: string;
-    acceptedAt: string | null;
-    revokedAt: string | null;
-    invitedBy: string;
-};
+// ---------------------------------------------------------------- users (ADMIN only)
+// Application users (public."user"). Invitations are Supabase Auth's: the
+// backend asks Supabase to send the invite and links the account.
 
-export type InviteAdminPayload = {
+export type UserStatus = "INVITED" | "ACTIVE" | "INACTIVE";
+
+export type UserSummary = {
+    userId: string;
     name: string;
     email: string;
     role: string;
-};
-
-export type InviteAdminResult = {
-    message: string;
-    invitation: AdminInvitationSummary;
-};
-
-// Phase 12 Checkpoint 2: Invite a new administrator (ADMIN only)
-export function inviteAdmin(data: InviteAdminPayload, token?: string): Promise<InviteAdminResult> {
-    return apiRequest<InviteAdminResult>("/api/admin/invitations", {
-        method: "POST",
-        token,
-        body: data,
-    });
-}
-
-// Phase 12 Checkpoint 2: List all invitations (ADMIN only)
-export function listInvitations(token?: string, signal?: AbortSignal): Promise<{ invitations: AdminInvitationSummary[] }> {
-    return apiRequest<{ invitations: AdminInvitationSummary[] }>("/api/admin/invitations", {
-        token,
-        signal,
-    });
-}
-
-// Phase 12 Checkpoint 2: Revoke an invitation (ADMIN only)
-export function revokeInvitation(invitationId: string, token?: string): Promise<{ message: string }> {
-    return apiRequest<{ message: string }>(`/api/admin/invitations/${encodeURIComponent(invitationId)}/revoke`, {
-        method: "POST",
-        token,
-    });
-}
-
-// Permanently delete an invitation from the list (ADMIN only)
-export function deleteInvitation(invitationId: string, token?: string): Promise<{ message: string }> {
-    return apiRequest<{ message: string }>(`/api/admin/invitations/${encodeURIComponent(invitationId)}`, {
-        method: "DELETE",
-        token,
-    });
-}export type AdminAccount = {
-    adminId: string;
-    name: string;
-    email: string;
-    role: string;
-    status: string;
+    status: UserStatus;
     createdDate: string;
 };
 
-export async function listAdmins(token: string, signal?: AbortSignal): Promise<AdminAccount[]> {
-    return apiRequest<AdminAccount[]>("/api/admin/admins", { token, signal });
+export type InviteUserPayload = { name: string; email: string; role: string };
+
+// INVITED: Supabase sent an invitation. REACTIVATED: the person already had a
+// Supabase account, which was linked / reactivated instead.
+export type InviteUserResult = { user: UserSummary; outcome: "INVITED" | "REACTIVATED" };
+
+export function listUsers(token: string, signal?: AbortSignal): Promise<{ users: UserSummary[] }> {
+    return apiRequest<{ users: UserSummary[] }>("/api/admin/users", { token, signal });
 }
 
-export async function updateAdminRole(token: string, adminId: string, role: string): Promise<AdminAccount> {
-    return apiRequest<AdminAccount>(`/api/admin/admins/${encodeURIComponent(adminId)}/role`, {
-        method: "PUT",
-        token,
-        body: { role },
-    });
+export function inviteUser(token: string, data: InviteUserPayload): Promise<InviteUserResult> {
+    return apiRequest<InviteUserResult>("/api/admin/users/invite", { method: "POST", token, body: data });
+}
+
+export function updateUserRole(token: string, userId: string, role: string): Promise<{ user: UserSummary }> {
+    return apiRequest<{ user: UserSummary }>(`/api/admin/users/${encodeURIComponent(userId)}/role`, { method: "PUT", token, body: { role } });
+}
+
+// Also revokes a pending invitation: an inactive account can't use the app.
+export function deactivateUser(token: string, userId: string): Promise<{ user: UserSummary }> {
+    return apiRequest<{ user: UserSummary }>(`/api/admin/users/${encodeURIComponent(userId)}/deactivate`, { method: "POST", token });
+}
+
+// ---------------------------------------------------------------- audit logs (ADMIN only, read-only)
+
+export type AuditCategory = "CANDIDATE" | "STAGE" | "DOCUMENT" | "REVIEW" | "USER" | "OTHER";
+export type AuditChange = { field: string; from: string | boolean | null; to: string | boolean | null };
+
+export type AuditLogItem = {
+    auditId: string;
+    createdDate: string;
+    action: string;
+    category: AuditCategory;
+    actor: { userId: string; name: string | null; role: string | null };
+    candidate: { passportId: string; uniqueId: string | null; name: string | null } | null;
+    documentType: string | null;
+    stage: string | null;
+    previousStatus: string;
+    newStatus: string;
+    previousValue: string | null;
+    newValue: string | null;
+    changes: AuditChange[] | null;
+    details: Record<string, unknown> | null;
+    policeSubmittedDate: string | null;
+    reason: string | null;
+};
+
+export type AuditLogParams = {
+    page?: number;
+    pageSize?: number;
+    adminId?: string;
+    passportId?: string;
+    candidate?: string;
+    action?: string;
+    category?: AuditCategory;
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+};
+
+export type AuditLogList = {
+    items: AuditLogItem[];
+    pagination: { page: number; pageSize: number; total: number; totalPages: number };
+    filters: {
+        users: { userId: string; name: string; role: string; status: string }[];
+        categories: { category: AuditCategory; actions: string[] }[];
+        actions: string[];
+    };
+};
+
+export function listAuditLogs(token: string, params: AuditLogParams, signal?: AbortSignal): Promise<AuditLogList> {
+    return apiRequest<AuditLogList>(`/api/admin/audit-logs${queryString(params)}`, { token, signal });
 }

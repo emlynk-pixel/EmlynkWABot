@@ -5,14 +5,11 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
-import jwt from "jsonwebtoken";
 
 import { createTestDatabase } from "./helpers/pgliteDatabase.js";
 import { createAdminRouter } from "../src/routes/admin.js";
-import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.js";
-import { JWT_ALGORITHM } from "../src/middleware/auth.js";
-
-process.env.JWT_SECRET ??= "test-jwt-secret-placeholder-for-sheet-sync-0123456789";
+import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js";
+import { authIdFor, fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 const BASE = "/api/admin/settings/sheet-sync";
 const ROLES = ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"];
@@ -26,15 +23,15 @@ before(async () => {
     database = await createTestDatabase();
     prisma = database.prisma;
     for (const role of ROLES) {
-        await prisma.admin.create({ data: { adminId: `admin-${role}`, name: role, email: `${role.toLowerCase()}@example.invalid`, role, status: "ACTIVE" } });
+        await prisma.user.create({ data: { adminId: `admin-${role}`, authUserId: authIdFor(`admin-${role}`), name: role, email: `${role.toLowerCase()}@example.invalid`, role, status: "ACTIVE" } });
     }
-    await prisma.admin.create({ data: { adminId: "admin-inactive", name: "x", email: "inactive@example.invalid", role: "ADMIN", status: "INACTIVE" } });
-    // A demoted admin whose token still says ADMIN: the database role decides.
-    await prisma.admin.create({ data: { adminId: "admin-demoted", name: "y", email: "demoted@example.invalid", role: "MANAGER", status: "ACTIVE" } });
+    await prisma.user.create({ data: { adminId: "admin-inactive", authUserId: authIdFor("admin-inactive"), name: "x", email: "inactive@example.invalid", role: "ADMIN", status: "INACTIVE" } });
+    // Its role is changed in the database during a test: the next request uses it.
+    await prisma.user.create({ data: { adminId: "admin-demoted", authUserId: authIdFor("admin-demoted"), name: "y", email: "demoted@example.invalid", role: "MANAGER", status: "ACTIVE" } });
 
     const app = express();
     app.use(express.json());
-    app.use("/api/admin", createAdminRouter({ db: prisma, requireAdmin: createRequireActiveAdmin({ db: prisma }), apiLimiter: (req, res, next) => next() }));
+    app.use("/api/admin", createAdminRouter({ db: prisma, requireAdmin: createRequireActiveUser({ db: prisma, verifyAccessToken: fakeVerifyAccessToken }), apiLimiter: (req, res, next) => next() }));
     app.use((error, req, res, next) => res.status(500).json({ message: "Internal server error" })); // eslint-disable-line no-unused-vars
     await new Promise((resolve) => { server = app.listen(0, "127.0.0.1", resolve); });
     baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -48,10 +45,11 @@ beforeEach(async () => {
     await prisma.sheetSyncState.update({ where: { stateId: "sheet-sync" }, data: { workerHeartbeatAt: null, writeGate: null, configured: null, targetHint: null } });
 });
 
-const token = (adminId, role) => jwt.sign({ adminId, email: "x@example.invalid", role }, process.env.JWT_SECRET, { algorithm: JWT_ALGORITHM, expiresIn: "1h" });
-async function call(method, path, adminId, role = "ADMIN") {
+// A Supabase session carries no role: the role parameter is ignored by design.
+const token = (adminId) => tokenFor(adminId);
+async function call(method, path, adminId) {
     const headers = { Accept: "application/json" };
-    if (adminId) headers.Authorization = `Bearer ${token(adminId, role)}`;
+    if (adminId) headers.Authorization = `Bearer ${token(adminId)}`;
     const response = await fetch(`${baseUrl}${BASE}${path}`, { method, headers });
     return { status: response.status, body: await response.json().catch(() => null) };
 }
@@ -62,7 +60,7 @@ describe("authorization (backend is the boundary)", () => {
     for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
         test(`${role}: 403 on every Settings endpoint, and no run is recorded`, async () => {
             for (const [method, path] of endpoints) {
-                const { status, body } = await call(method, path, `admin-${role}`, role);
+                const { status, body } = await call(method, path, `admin-${role}`);
                 assert.equal(status, 403, `${method} ${path}`);
                 assert.deepEqual(body, { message: "Insufficient permissions" });
             }
@@ -70,13 +68,17 @@ describe("authorization (backend is the boundary)", () => {
         });
     }
 
-    test("no token: 401; inactive admin: 401", async () => {
+    test("no token: 401; inactive user: 403", async () => {
         for (const [method, path] of endpoints) assert.equal((await call(method, path, null)).status, 401);
-        assert.equal((await call("GET", "/status", "admin-inactive")).status, 401);
+        assert.equal((await call("GET", "/status", "admin-inactive")).status, 403);
     });
 
-    test("the role is re-read from the database: a token claiming ADMIN for a MANAGER is refused", async () => {
-        assert.equal((await call("POST", "/run", "admin-demoted", "ADMIN")).status, 403);
+    test("the role is re-read from the database on every request: a change applies immediately", async () => {
+        assert.equal((await call("GET", "/status", "admin-demoted")).status, 403);
+        await prisma.user.update({ where: { adminId: "admin-demoted" }, data: { role: "ADMIN" } });
+        assert.equal((await call("GET", "/status", "admin-demoted")).status, 200);
+        await prisma.user.update({ where: { adminId: "admin-demoted" }, data: { role: "MANAGER" } });
+        assert.equal((await call("POST", "/run", "admin-demoted")).status, 403);
         assert.equal(await prisma.sheetSyncRun.count(), 0);
     });
 });
@@ -142,13 +144,13 @@ describe("ADMIN", () => {
 describe("existing routes are unchanged", () => {
     test("Candidate Pool list still answers for every role it allowed before", async () => {
         for (const role of ROLES) {
-            const response = await fetch(`${baseUrl}/api/admin/candidates`, { headers: { Authorization: `Bearer ${token(`admin-${role}`, role)}` } });
+            const response = await fetch(`${baseUrl}/api/admin/candidates`, { headers: { Authorization: `Bearer ${token(`admin-${role}`)}` } });
             assert.equal(response.status, 200, role);
         }
     });
 
     test("unknown /api/admin paths still 404", async () => {
-        const response = await fetch(`${baseUrl}/api/admin/settings/other`, { headers: { Authorization: `Bearer ${token("admin-ADMIN", "ADMIN")}` } });
+        const response = await fetch(`${baseUrl}/api/admin/settings/other`, { headers: { Authorization: `Bearer ${token("admin-ADMIN")}` } });
         assert.equal(response.status, 404);
     });
 });

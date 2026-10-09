@@ -16,7 +16,6 @@ Object.assign(process.env, {
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createWhatsappRouter } = await import("../src/routes/whatsapp.js");
 const { createTemporaryDocumentRecord } = await import("../src/services/temporaryDataService.js");

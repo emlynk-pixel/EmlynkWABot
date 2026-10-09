@@ -155,7 +155,7 @@ function policeDateForApproval({ documentType, storedDate, givenDate }) {
 // ---------------------------------------------------------------- locks
 
 // Row locks, held until the transaction ends. Lock order is always
-// reviewed row first, then the client's users row.
+// reviewed row first, then the client's candidate row.
 export async function lockTemporaryRow(tx, temporaryId) {
     await tx.$queryRaw`SELECT "temporary_id" FROM "temporary_data" WHERE "temporary_id" = ${temporaryId} FOR UPDATE`;
 }
@@ -167,7 +167,7 @@ export async function lockDocumentRow(tx, documentId) {
 // Serializes approvals for one client, so two items of the same type can't
 // both become the client's verified document.
 export async function lockClientRow(tx, passportId) {
-    const rows = await tx.$queryRaw`SELECT "passport_id" FROM "users" WHERE "passport_id" = ${passportId} FOR UPDATE`;
+    const rows = await tx.$queryRaw`SELECT "passport_id" FROM "candidate" WHERE "passport_id" = ${passportId} FOR UPDATE`;
     return rows.length > 0;
 }
 

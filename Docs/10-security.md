@@ -2,36 +2,37 @@
 
 Consolidates the security overview document with the security-relevant parts of the admin authentication and WhatsApp security documents, corrected against the current code and deployment. Full original documents, including the complete dated SEC-*/AUDIT-* findings history and point-in-time test-run numbers, are kept in `Docs/archive/` (`13-security-overview.md`, `03-admin-authentication.md`). WhatsApp-specific mechanics (HMAC verification, idempotency) are in `04-whatsapp-integration.md`; this document covers admin authentication, RBAC, storage/database access control, and cross-cutting practices.
 
-**Two corrections against the archived security overview**, verified directly against the running code: the session cookie's `SameSite` attribute is `strict`, not `lax` as an earlier draft of that document stated; the three admin roles are `ADMIN`, `REVIEWER`, `VIEWER` (an earlier draft's findings table inconsistently referred to `SUPER_ADMIN`/`OPERATOR` in one place — that was never the actual role model).
+Authentication is Supabase Auth's; authorization is the application's. The design and its security decisions are in `SUPABASE_AUTH.md`.
 
 ## Authentication
 
-- **Password storage:** bcrypt, minimum 10 rounds. Hashes are never returned in API responses or logged.
-- **Session token:** an HS256 JWT (`JWT_SECRET`, enforced ≥ 32 characters at startup), delivered in an `httpOnly`, `SameSite=Strict`, `Secure`-in-production cookie (`emlynk_admin_token`). A `Bearer` header is also accepted, kept for CLI tools and tests.
-- **Why `httpOnly` + `SameSite=Strict` together:** `httpOnly` stops a cross-site script from reading the token via `document.cookie`; `SameSite=Strict` stops the cookie from being sent on a cross-site request at all, which is also what makes a separate CSRF token unnecessary — a forged request from another site simply doesn't carry the cookie.
-- **Zero-enumeration login:** every login failure — unknown email, wrong password, inactive account — returns the same generic `401 Invalid email or password`. An unknown email still runs a dummy bcrypt comparison, so response timing doesn't leak whether the account exists.
-- **Live active-admin check:** `requireActiveAdmin` re-verifies `Admin.status === 'ACTIVE'` directly in PostgreSQL on every request, not just at login — deactivating an admin takes effect immediately, without waiting for their token to expire.
-- **Login rate limiting:** 5 failed attempts per 15 minutes per client IP; successful logins don't consume the allowance. Backed by PostgreSQL (`postgresRateLimitStore.js`, see `08-cloud-deployment.md`), so the limit holds across every app instance, not just within one process.
+- **Credentials and sessions:** Supabase Auth stores passwords (the application stores none), issues and refreshes sessions, and sends sign-in, invitation and recovery emails through the SMTP server configured in the Supabase dashboard. The application has no `JWT_SECRET` and no SMTP settings.
+- **Every request:** the admin app sends `Authorization: Bearer <Supabase access token>`. The backend verifies it with Supabase (`auth.getUser`), loads `public."user"` by `auth_user_id`, and requires `status = 'ACTIVE'`, on every request. If Supabase cannot be reached the request fails closed.
+- **No cookie authenticates a request**, so CSRF protection does not apply and the CSRF middleware was removed. If cookie-based auth is ever reintroduced, CSRF protection must return with it.
+- **Role from the database only:** the role is read from `public."user".role` on every request, never from a token claim, request body or Supabase metadata. Deactivating a user takes effect on their next request.
+- **Service-role key:** `SUPABASE_SERVICE_ROLE_KEY` is server-side only. The browser build has only `VITE_SUPABASE_URL` and the anon / publishable key, and refuses a secret key.
+- **Token storage:** the Supabase session lives in `sessionStorage` (per tab). XSS is the main threat to any browser-held token; the strict CSP (`script-src 'self'`) is the mitigation.
+- **Rate limiting:** sign-in, invitation and recovery limits are Supabase's (Authentication > Rate Limits). The API itself has a generic PostgreSQL-backed limiter (`postgresRateLimitStore.js`, see `08-cloud-deployment.md`) that holds across every app instance.
 
 ## Role-Based Access Control
 
-Three roles, enforced by `requireRole` middleware on every admin route:
+Four roles, stored in `public."user".role` and enforced by `requireRole` middleware on every admin route:
 
-| Action | ADMIN | REVIEWER | VIEWER |
-|---|:---:|:---:|:---:|
-| View overview, documents, clients, review queue, police workflow, daily reports | ✓ | ✓ | ✓ |
-| Review actions (approve, keep pending, remove, retry, replace, re-type, assign) | ✓ | ✓ | — |
-| Correct a stored police slip's date | ✓ | — | — |
-| Send/revoke admin invitations | ✓ | — | — |
-| Create admin accounts (CLI) | ✓ | — | — |
+| Action | ADMIN | MANAGER | ANALYST | REGISTRATION_DESK |
+|---|:---:|:---:|:---:|:---:|
+| View overview, documents, clients, review queue, police workflow, reports | ✓ | ✓ | ✓ | — |
+| Candidate list, registration and details | ✓ | ✓ | ✓ | ✓ |
+| Review actions, corrections, candidate work | ✓ | ✓ | ✓ | — |
+| Correct a stored police slip's date | ✓ | ✓ | — | — |
+| Invite, list, change role, deactivate users; Settings | ✓ | — | — | — |
 
-A failed authorization check returns a generic `403`, without indicating which specific permission was missing.
+A failed authorization check returns a generic `403`, without indicating which specific permission was missing. The route-by-route map is in `09a-admin-dashboard-api.md`.
 
-## Admin Invitations and Password Reset
+## Invitations and Password Recovery
 
-- **Invitations:** 256-bit random token (`crypto.randomBytes(32)`), sent once by email; only its SHA-256 hash is stored (`admin_invitations.token_hash`). 24-hour expiry, single-use (`PENDING` → `ACCEPTED`, atomically). Only `ADMIN` can send or revoke one.
-- **Password reset:** same token/hashing approach, 1-hour expiry, single-use. `POST /auth/forgot-password` always returns the same generic message regardless of whether the email exists or the account is active — an unknown email still runs a dummy bcrypt comparison for the same reason as login. A new reset request invalidates any earlier active token for that admin. Rate limited to 5 requests per 15 minutes per IP, for the same reason as login.
-- **Email dispatch is fire-and-forget** with respect to the HTTP response: the response returns at the same time whether or not the send has completed, so response timing can't be used to distinguish an active account (real email sent) from an inactive one.
+- **Invitations:** ADMIN only. The backend calls Supabase `inviteUserByEmail()` and Supabase sends the email. The redirect is built only from the required `APP_BASE_URL` (`${APP_BASE_URL}/admin/setup-password`), never from request input or headers; if `APP_BASE_URL` is missing or invalid the invitation is refused (503) before anything is sent. There is no silent fallback to Supabase's Site URL.
+- **Password recovery:** Supabase's own flow (`resetPasswordForEmail`, then `updateUser` from the recovery link). The forgot-password page shows the same confirmation whether or not the email has an account. The backend stores no reset tokens.
+- **Redirect allow-list:** the setup and reset URLs of each environment must be in the Supabase allowed redirect URLs, so a link can only return to a known site.
 
 ## WhatsApp Webhook
 
@@ -61,7 +62,7 @@ See `04-whatsapp-integration.md` for the full mechanics. In summary: HMAC-SHA256
 
 ## Logging and Error Handling
 
-- Never logged: document text, names, dates of birth, passport numbers, full phone numbers, raw file paths, raw message IDs, tokens (session, reset, invitation).
+- Never logged: document text, names, dates of birth, passport numbers, full phone numbers, raw file paths, raw message IDs, tokens and passwords (session, recovery, invitation).
 - Webhook logs use a one-way hash of the message ID (`messageRef`) instead of the ID itself.
 - Errors are logged by type or a redacted first line (`src/utils/safeLog.js`) — never a raw error object that might contain query values.
 - The Express error handler returns a generic JSON error (400/413/500) with no stack trace and no server file paths, in every environment.
@@ -76,7 +77,7 @@ See `04-whatsapp-integration.md` for the full mechanics. In summary: HMAC-SHA256
 ## Known Accepted Risks
 
 - **Concurrent identical submissions** can, in a narrow race, create an extra pending copy or skip a version number. Accepted: the consequence is a harmless duplicate in the review queue, not data loss or a security exposure.
-- **JWT revocation delay:** revoking an already-issued, unexpired token before it naturally expires requires deactivating the admin record (`status = 'INACTIVE'`, which `requireActiveAdmin` checks live) or rotating `JWT_SECRET` (which invalidates every session at once). There is no per-token revocation list.
+- **Access-token lifetime:** a Supabase access token stays cryptographically valid until it expires (default one hour), but the backend asks Supabase to verify it and checks the user's `ACTIVE` status on every request, so signing out or deactivating a user is effective on the next request.
 
 ## Full Security Findings History
 

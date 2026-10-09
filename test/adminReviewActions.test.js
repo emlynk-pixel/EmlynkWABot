@@ -1,10 +1,9 @@
 import { describe, test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import jwt from "jsonwebtoken";
 
 import { createAdminRouter } from "../src/routes/admin.js";
-import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.js";
+import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js";
 import {
     REVIEW_ACTION,
     DUPLICATE_ACTION_WINDOW_MS,
@@ -14,13 +13,13 @@ import {
 import { sha256Hex } from "../src/utils/fileChecksum.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
+import { authFailureStatus, fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 Object.assign(process.env, {
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
 
@@ -76,7 +75,6 @@ function holdDownloads(bucket, count) {
     });
 }
 
-const tokenFor = (adminId) => jwt.sign({ adminId }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
 
 let server;
 let base;
@@ -91,7 +89,7 @@ before(async () => {
 after(() => server.close());
 
 function use(fixture) {
-    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveAdmin({ db: fixture.db.client }) }) };
+    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveUser({ db: fixture.db.client, verifyAccessToken: fakeVerifyAccessToken }) }) };
     return fixture;
 }
 
@@ -338,7 +336,7 @@ describe("POST /review/:reviewId/approve (waiting file)", () => {
         assert.equal(bucket.calls.filter((c) => c.method === "copy").length, 1);
         // The row locks were taken inside the transaction.
         assert.ok(db.calls.some((c) => c.method === "$queryRaw" && /FROM "temporary_data".*FOR UPDATE/s.test(c.sql)));
-        assert.ok(db.calls.some((c) => c.method === "$queryRaw" && /FROM "users".*FOR UPDATE/s.test(c.sql)));
+        assert.ok(db.calls.some((c) => c.method === "$queryRaw" && /FROM "candidate".*FOR UPDATE/s.test(c.sql)));
     });
 
     test("two different files of the same type for one client at the same time: only one becomes VERIFIED", async () => {
@@ -507,10 +505,10 @@ describe("review detail: audit log and available actions", () => {
 describe("security and error handling", () => {
     beforeEach(() => use(setup()));
 
-    test("no token -> 401; bad token -> 401; inactive admin -> 401; nothing changes", async () => {
+    test("no token -> 401; bad token -> 401; inactive or unknown user -> 403; nothing changes", async () => {
         for (const token of [null, "not-a-token", tokenFor("admin-inactive"), tokenFor("admin-deleted")]) {
-            assert.equal((await approve(`pending-${TEMP}`, { token })).status, 401);
-            assert.equal((await keepPending(`pending-${TEMP}`, { token, body: { reason: "x" } })).status, 401);
+            assert.equal((await approve(`pending-${TEMP}`, { token })).status, authFailureStatus(token));
+            assert.equal((await keepPending(`pending-${TEMP}`, { token, body: { reason: "x" } })).status, authFailureStatus(token));
         }
         assert.equal(current.db.tables.auditLog.length, 0);
         assert.equal(current.db.tables.temporaryData[0].pendingStoragePath, PENDING_PATH);
@@ -566,6 +564,7 @@ describe("security and error handling", () => {
         assert.deepEqual(current.db.tables.auditLog, [snapshot]);
     });
 
+    // User management (invite, role, deactivate) is the ADMIN-only /users sub-router: adminInvitation.test.js.
     test("the router only writes through the review actions, corrections and candidate management", () => {
         const router = createAdminRouter({ apiLimiter: (req, res, next) => next(), db: current.db.client, bucket: current.bucket, requireAdmin: (req, res, next) => next() });
         const writes = router.stack
@@ -587,8 +586,8 @@ describe("security and error handling", () => {
             "POST /review/:reviewId/remove",
             "POST /review/:reviewId/replace-verified", // M4 Policy B: existing verified document of the same type only
             "POST /review/:reviewId/retry", // H3: failed submissions only
-            "PUT /admins/:adminId/role",
             "PUT /candidates/:passportId",
+            "PUT /candidates/:passportId/additional-details",
             "PUT /candidates/:passportId/stages/:stage",
         ]);
     });

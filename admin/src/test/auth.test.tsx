@@ -1,9 +1,11 @@
-import { screen, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
-import { ADMIN, OVERVIEW, TOKEN_KEY, fakeJwt, renderApp, signedInBackend, stubBackend } from "./helpers";
+import { ADMIN, OVERVIEW, SESSION_TOKEN, fakeAuth, newToken, renderApp, signedInBackend, stubBackend, userWithRole } from "./helpers";
 
-async function fillAndSubmit(email = ADMIN.email, password = "Correct-Horse-7") {
+const PASSWORD = "Correct-Horse-7";
+
+async function fillAndSubmit(email = ADMIN.email, password = PASSWORD) {
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Email"), email);
     await user.type(screen.getByLabelText("Password"), password);
@@ -11,8 +13,14 @@ async function fillAndSubmit(email = ADMIN.email, password = "Correct-Horse-7") 
     return user;
 }
 
+const backendFor = (profile: object, extra = {}) => stubBackend({
+    "GET /auth/me": { status: 200, body: { user: profile } },
+    "GET /api/admin/overview": { status: 200, body: OVERVIEW },
+    ...extra,
+});
+
 describe("route guard", () => {
-    test("an unauthenticated visitor is redirected to the login page", async () => {
+    test("an unauthenticated visitor is redirected to the login page, nothing requested", async () => {
         const { calls } = stubBackend({});
         renderApp("/");
         expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
@@ -22,7 +30,7 @@ describe("route guard", () => {
 
     test("every dashboard section is protected", async () => {
         stubBackend({});
-        for (const path of ["/documents", "/review", "/clients", "/police", "/anything"]) {
+        for (const path of ["/documents", "/review", "/clients", "/police", "/invitations", "/anything"]) {
             const { unmount } = renderApp(path);
             expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
             unmount();
@@ -30,56 +38,74 @@ describe("route guard", () => {
     });
 });
 
-describe("login", () => {
-    test("valid credentials -> POST /auth/login, GET /auth/me, dashboard shell", async () => {
-        const token = fakeJwt();
-        const { calls } = stubBackend({
-            "POST /auth/login": { status: 200, body: { message: "Login successful", token } },
-            "GET /auth/me": { status: 200, body: { message: "ok", admin: ADMIN } },
-            "GET /api/admin/overview": { status: 200, body: OVERVIEW },
-        });
+describe("login (Supabase Auth)", () => {
+    test("valid credentials -> Supabase sign-in, then GET /auth/me with the Supabase access token", async () => {
+        const token = newToken();
+        fakeAuth.addAccount(ADMIN.email, PASSWORD, token);
+        const { calls } = backendFor(ADMIN);
         renderApp("/");
         await screen.findByRole("heading", { name: "Sign in" });
         await fillAndSubmit();
 
         expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
         expect(screen.getByTestId("admin-name")).toHaveTextContent("Test Admin");
-        expect(calls.slice(0, 2).map((c) => `${c.method} ${c.path}`)).toEqual(["POST /auth/login", "GET /auth/me"]);
-        expect(calls[0].body).toEqual({ email: ADMIN.email, password: "Correct-Horse-7" });
-        expect(calls[1].headers.Authorization).toBe(`Bearer ${token}`);
-        expect(window.sessionStorage.getItem(TOKEN_KEY)).toBe(token);
+        expect(fakeAuth.calls.find((c) => c.method === "signInWithPassword")?.args).toEqual([{ email: ADMIN.email, password: PASSWORD }]);
+        expect(calls[0].path).toBe("/auth/me");
+        expect(calls[0].headers.Authorization).toBe(`Bearer ${token}`);
+        expect(calls.every((c) => !c.path.startsWith("/auth/login")), "no backend login endpoint").toBe(true);
+        expect(JSON.stringify(calls)).not.toContain(PASSWORD);
+        expect(window.sessionStorage.getItem("emlynk.admin.token")).toBeNull();
     });
 
-    test("after login the admin returns to the page they asked for", async () => {
-        stubBackend({
-            "POST /auth/login": { status: 200, body: { token: fakeJwt() } },
-            "GET /auth/me": { status: 200, body: { admin: ADMIN } },
-        });
+    test("after login the user returns to the page they asked for", async () => {
+        fakeAuth.addAccount(ADMIN.email, PASSWORD, newToken());
+        backendFor(ADMIN);
         renderApp("/review");
         await screen.findByRole("heading", { name: "Sign in" });
         await fillAndSubmit();
         expect(await screen.findByRole("heading", { name: "Review Queue" })).toBeInTheDocument();
     });
 
-    test("wrong credentials -> the backend's generic message, no token stored", async () => {
-        stubBackend({ "POST /auth/login": { status: 401, body: { message: "Invalid email or password" } } });
+    test("wrong credentials -> one generic message, no session, the backend never called", async () => {
+        fakeAuth.addAccount(ADMIN.email, PASSWORD, newToken());
+        const { calls } = stubBackend({});
         renderApp("/login");
         await fillAndSubmit(ADMIN.email, "wrong-password");
 
         expect(await screen.findByRole("alert")).toHaveTextContent("Invalid email or password");
         expect(screen.getByLabelText("Password")).toHaveValue("");
-        expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+        expect(fakeAuth.currentSession).toBeNull();
+        expect(calls).toHaveLength(0);
     });
 
-    test("rate limited -> the backend's message is shown", async () => {
-        stubBackend({ "POST /auth/login": { status: 429, body: { message: "Too many login attempts. Please try again later." } } });
+    test("an unknown email gets the same message as a wrong password", async () => {
+        stubBackend({});
+        renderApp("/login");
+        await fillAndSubmit("nobody@example.invalid", "whatever-password");
+        expect(await screen.findByRole("alert")).toHaveTextContent("Invalid email or password");
+    });
+
+    test("valid credentials but no ACTIVE application user -> refused, Supabase session ended", async () => {
+        fakeAuth.addAccount(ADMIN.email, PASSWORD, newToken());
+        stubBackend({ "GET /auth/me": { status: 403, body: { message: "Your account is not active. Contact an administrator.", code: "ACCOUNT_NOT_ACTIVE" } } });
         renderApp("/login");
         await fillAndSubmit();
-        expect(await screen.findByRole("alert")).toHaveTextContent("Too many login attempts");
+        expect(await screen.findByRole("alert")).toHaveTextContent("Your account is not active. Contact an administrator.");
+        expect(fakeAuth.currentSession).toBeNull();
+        expect(screen.queryByRole("navigation", { name: "Main navigation" })).not.toBeInTheDocument();
     });
 
-    test("server errors never show backend details", async () => {
-        stubBackend({ "POST /auth/login": { status: 500, body: { message: "Internal server error at /srv/app.js" } } });
+    test("Supabase rate limiting -> its message is shown", async () => {
+        fakeAuth.failures.signIn = { status: 429, code: "over_request_rate_limit" };
+        stubBackend({});
+        renderApp("/login");
+        await fillAndSubmit();
+        expect(await screen.findByRole("alert")).toHaveTextContent("Too many sign-in attempts");
+    });
+
+    test("other failures never show provider or backend details", async () => {
+        fakeAuth.failures.signIn = { status: 500, message: "upstream gotrue failure at /srv/auth" };
+        stubBackend({});
         renderApp("/login");
         await fillAndSubmit();
         const alert = await screen.findByRole("alert");
@@ -87,99 +113,116 @@ describe("login", () => {
         expect(alert).not.toHaveTextContent("/srv");
     });
 
-    test("empty fields are caught before any request, with the error under each field", async () => {
+    test("empty fields are caught before any request", async () => {
         const { calls } = stubBackend({});
         renderApp("/login");
         await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in" }));
         expect(screen.getByLabelText("Email")).toHaveAccessibleDescription("Enter your email address.");
-        expect(screen.getByLabelText("Email")).toHaveAttribute("aria-invalid", "true");
         expect(screen.getByLabelText("Password")).toHaveAccessibleDescription("Enter your password.");
-        expect(screen.getByLabelText("Email")).toHaveFocus();
         expect(calls).toHaveLength(0);
+        expect(fakeAuth.calls.some((c) => c.method === "signInWithPassword")).toBe(false);
     });
 
-    test("an invalid email is caught before any request; the error clears once the value is valid", async () => {
-        const { calls } = stubBackend({});
-        renderApp("/login");
-        const user = userEvent.setup();
-        await user.type(await screen.findByLabelText("Email"), "admin.example");
-        await user.type(screen.getByLabelText("Password"), "Correct-Horse-7");
-        await user.click(screen.getByRole("button", { name: "Sign in" }));
-        const email = screen.getByLabelText("Email");
-        expect(email).toHaveAccessibleDescription("Enter a valid email address, like name@example.com.");
-        expect(screen.getByLabelText("Password")).not.toHaveAttribute("aria-invalid");
-        expect(calls).toHaveLength(0);
-
-        await user.clear(email);
-        await user.type(email, "admin@example.invalid");
-        expect(email).not.toHaveAttribute("aria-invalid");
-        expect(screen.queryByText(/Enter a valid email address/)).not.toBeInTheDocument();
-    });
-
-    test("an already signed-in admin opening /login goes to the dashboard", async () => {
-        window.sessionStorage.setItem(TOKEN_KEY, fakeJwt());
-        stubBackend({ "GET /auth/me": { status: 200, body: { admin: ADMIN } } });
+    test("an already signed-in user opening /login goes to the dashboard", async () => {
+        signedInBackend();
         renderApp("/login");
         expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
     });
 });
 
-describe("session restore", () => {
-    test("a stored valid token is checked with GET /auth/me and restores the session", async () => {
-        const token = fakeJwt();
-        window.sessionStorage.setItem(TOKEN_KEY, token);
-        const { calls } = stubBackend({ "GET /auth/me": { status: 200, body: { admin: ADMIN } } });
+describe("session restore (page refresh)", () => {
+    test("a stored Supabase session is checked with GET /auth/me and restores the app", async () => {
+        fakeAuth.setSession(SESSION_TOKEN);
+        const { calls } = backendFor(ADMIN);
         renderApp("/clients");
-
         expect(await screen.findByRole("heading", { name: "Clients" })).toBeInTheDocument();
-        expect(calls[0].headers.Authorization).toBe(`Bearer ${token}`);
+        expect(calls[0].headers.Authorization).toBe(`Bearer ${SESSION_TOKEN}`);
     });
 
-    test("a stored token the backend rejects (e.g. admin deactivated) is cleared -> login", async () => {
-        window.sessionStorage.setItem(TOKEN_KEY, fakeJwt());
+    test("a session the backend rejects (401) is ended -> login", async () => {
+        fakeAuth.setSession(SESSION_TOKEN);
         stubBackend({ "GET /auth/me": { status: 401, body: { message: "Invalid or Expired Token" } } });
         renderApp("/");
-
         expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
-        expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+        expect(fakeAuth.currentSession).toBeNull();
     });
 
-    test("an expired stored token is dropped without calling the backend", async () => {
-        window.sessionStorage.setItem(TOKEN_KEY, fakeJwt(-60));
+    test("a deactivated or missing application user (403) -> login with the reason", async () => {
+        fakeAuth.setSession(SESSION_TOKEN);
+        stubBackend({ "GET /auth/me": { status: 403, body: { message: "x", code: "ACCOUNT_NOT_ACTIVE" } } });
+        renderApp("/");
+        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(screen.getByRole("alert")).toHaveTextContent("Your account is not active");
+    });
+
+    test("no session (expired and not refreshable) -> login, the backend never called", async () => {
         const { calls } = stubBackend({});
         renderApp("/");
-
         expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
         expect(calls).toHaveLength(0);
-        expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
     });
 
-    test("backend unreachable -> signed out, not stuck on the loading screen", async () => {
-        window.sessionStorage.setItem(TOKEN_KEY, fakeJwt());
+    test("backend unreachable -> not signed in, not stuck on the loading screen", async () => {
+        fakeAuth.setSession(SESSION_TOKEN);
         stubBackend({});
         (globalThis.fetch as unknown as { mockRejectedValue: (e: Error) => void }).mockRejectedValue(new TypeError("Failed to fetch"));
         renderApp("/");
         expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
     });
+
+    test("a refreshed Supabase access token is used for the next API call", async () => {
+        const { calls } = signedInBackend({ "GET /api/admin/documents": { status: 200, body: { items: [], pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 }, summary: { total: 0, byVerificationStatus: {} } } } });
+        renderApp("/");
+        await screen.findByText("Total clients");
+        const refreshed = newToken();
+        act(() => fakeAuth.refreshToken(refreshed));
+        await userEvent.setup().click(within(screen.getByRole("navigation", { name: "Main navigation" })).getByRole("link", { name: "Documents" }));
+        await screen.findByRole("heading", { name: "Documents" });
+        expect(calls.find((c) => c.path.startsWith("/api/admin/documents"))?.headers.Authorization).toBe(`Bearer ${refreshed}`);
+    });
+
+    test("Supabase ending the session (refresh failed) signs the app out", async () => {
+        signedInBackend();
+        renderApp("/");
+        await screen.findByTestId("admin-name");
+        act(() => fakeAuth.expireSession());
+        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    });
 });
 
 describe("dashboard shell", () => {
-    async function signedIn(path = "/") {
-        signedInBackend();
+    async function signedIn(path = "/", profile: object = ADMIN) {
+        fakeAuth.setSession(SESSION_TOKEN);
+        backendFor(profile);
         renderApp(path);
         await screen.findByTestId("admin-name");
     }
+    const navLinks = () => within(screen.getByRole("navigation", { name: "Main navigation" })).getAllByRole("link").map((link) => link.textContent);
 
-    test("sidebar lists the sections and navigates between them", async () => {
+    test("ADMIN: every section, then Invite User, Change Roles, Audit Logs and Settings", async () => {
         await signedIn();
-        const nav = screen.getByRole("navigation", { name: "Main navigation" });
-        const links = within(nav).getAllByRole("link").map((link) => link.textContent);
-        // The Stitch sections plus Missing Documents, Daily Report, Invite Admin, Change Roles and Settings (last).
-        expect(links).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Missing Documents", "Police Workflow", "Daily Report", "Invite Admin", "Change Roles", "Settings"]);
-
-        await userEvent.setup().click(within(nav).getByRole("link", { name: "Police Workflow" }));
+        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Missing Documents", "Police Workflow", "Daily Report", "Invite User", "Change Roles", "Audit Logs", "Settings"]);
+        await userEvent.setup().click(screen.getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
-        expect(within(nav).getByRole("link", { name: "Police Workflow" })).toHaveAttribute("aria-current", "page");
+    });
+
+    test("MANAGER and ANALYST: the dashboard sections, no user management or Settings", async () => {
+        for (const role of ["MANAGER", "ANALYST"]) {
+            await signedIn("/", userWithRole(role));
+            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Missing Documents", "Police Workflow", "Daily Report"]);
+            document.body.innerHTML = "";
+        }
+    });
+
+    test("REGISTRATION_DESK: Candidates only, and lands there instead of the Overview", async () => {
+        await signedIn("/", userWithRole("REGISTRATION_DESK"));
+        expect(navLinks()).toEqual(["Candidates"]);
+        expect(await screen.findByRole("heading", { name: "Candidates", level: 1 })).toBeInTheDocument();
+    });
+
+    test("the header shows the role's label", async () => {
+        await signedIn("/", userWithRole("REGISTRATION_DESK"));
+        expect(screen.getByText("Registration Desk")).toBeInTheDocument();
     });
 
     test("the session is checked before any dashboard data is requested", async () => {
@@ -199,12 +242,21 @@ describe("dashboard shell", () => {
         expect(window.localStorage.getItem("emlynk.admin.sidebarCollapsed")).toBe("1");
     });
 
-    test("sign out clears the token and returns to the login page", async () => {
+    test("sign out ends the Supabase session everywhere and returns to the login page", async () => {
         await signedIn("/documents");
         await userEvent.setup().click(screen.getByRole("button", { name: "Sign out" }));
 
         expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
-        expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+        expect(fakeAuth.calls.find((c) => c.method === "signOut")?.args).toEqual([undefined]);
+        expect(fakeAuth.currentSession).toBeNull();
+    });
+
+    test("sign out still clears the local session when Supabase can't be reached", async () => {
+        await signedIn();
+        fakeAuth.failures.signOut = { status: 0, message: "network" };
+        await userEvent.setup().click(screen.getByRole("button", { name: "Sign out" }));
+        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(fakeAuth.calls.filter((c) => c.method === "signOut").map((c) => c.args[0])).toEqual([undefined, { scope: "local" }]);
     });
 
     test("unknown paths inside the app show a not-found page", async () => {

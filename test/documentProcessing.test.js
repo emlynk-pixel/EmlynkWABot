@@ -558,10 +558,10 @@ describe("processDocument", () => {
                     makeUsers()
                 );
 
-            db.user.findMany =
+            db.candidate.findMany =
                 async () => {
                     throw new Error(
-                        'Invalid `prisma.user.findMany()` invocation:\n' +
+                        'Invalid `prisma.candidate.findMany()` invocation:\n' +
                         '  where: { passportId: "N1234567" }'
                     );
                 };

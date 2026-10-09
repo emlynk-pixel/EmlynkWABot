@@ -12,6 +12,7 @@ const DOCUMENT_TYPE_LABELS: Record<string, string> = {
     NIC: "NIC",
     SKILL_VIDEO: "Skill video",
     SCAN: "Scan",
+    VISA_SUBMISSION: "Visa submission",
 };
 
 export function documentTypeLabel(type: string): string {

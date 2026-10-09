@@ -18,12 +18,12 @@ const PLACEHOLDER_ENV = Object.freeze({
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     SUPABASE_BUCKET: "test-bucket",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
     META_APP_SECRET: "test-app-secret-placeholder",
     WHATSAPP_VERIFY_TOKEN: "test-verify-token-placeholder",
     WHATSAPP_ACCESS_TOKEN: "test-access-token-placeholder",
     WHATSAPP_API_VERSION: "v21.0",
     OCR_SERVICE_URL: "http://127.0.0.1:1",
+    APP_BASE_URL: "http://localhost:5173",
 });
 
 // Runs `script` (an ES module) in a fresh Node process. DOTENV_CONFIG_PATH
@@ -80,7 +80,8 @@ describe("Step 5A: HTTP handler without a process lifecycle", () => {
             };
             const out = {
                 health: await call("/health"),
-                // No rate limiter on /auth/me: the login check answers first.
+                // /auth/me is rate limited before it checks the login (CodeQL),
+                // and that limiter counts in PostgreSQL like the admin API's.
                 authWithoutLogin: await call("/auth/me"),
                 // The admin API's limiter counts in PostgreSQL (Step 5C); the
                 // placeholder database is unreachable, so it fails closed.
@@ -99,7 +100,8 @@ describe("Step 5A: HTTP handler without a process lifecycle", () => {
         const out = lastJsonLine(result.stdout);
         assert.equal(out.health.status, 200);
         assert.equal(JSON.parse(out.health.body).status, "OK");
-        assert.equal(out.authWithoutLogin.status, 401);
+        // The placeholder database is unreachable, so the limiter fails closed.
+        assert.deepEqual(out.authWithoutLogin, { status: 500, body: JSON.stringify({ message: "Internal server error" }) });
         assert.deepEqual(out.adminWithUnreachableStore, { status: 500, body: JSON.stringify({ message: "Internal server error" }) });
         assert.deepEqual(out.verifyGoodToken, { status: 200, body: "abc123" });
         assert.equal(out.verifyBadToken.status, 403);
@@ -109,7 +111,7 @@ describe("Step 5A: HTTP handler without a process lifecycle", () => {
 
     test("an invalid environment throws on import instead of exiting the process", () => {
         const env = { ...PLACEHOLDER_ENV };
-        delete env.JWT_SECRET;
+        delete env.META_APP_SECRET;
         const result = runChild(`
             try {
                 await import(${JSON.stringify(HANDLER_URL)});
@@ -122,7 +124,7 @@ describe("Step 5A: HTTP handler without a process lifecycle", () => {
         assert.equal(result.status, 0, "the handler must not call process.exit()");
         const out = lastJsonLine(result.stdout);
         assert.equal(out.threw, true);
-        assert.match(out.message, /JWT_SECRET is missing/);
+        assert.match(out.message, /META_APP_SECRET is missing/);
         assert.ok(!out.message.includes(PLACEHOLDER_ENV.SUPABASE_SERVICE_ROLE_KEY));
     });
 

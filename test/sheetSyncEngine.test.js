@@ -14,7 +14,7 @@ import { readSheetSyncConfig, readSheetSyncTuning, sheetTargetHint, SHEET_SYNC_T
 import { SHEET_HEADERS } from "../src/services/sheetSchema.js";
 
 const TAB = "Bob's Candidate Mirror";
-const row = (id) => Array.from({ length: 40 }, (_, i) => (i === 39 ? id : `v${i}`));
+const row = (id) => Array.from({ length: 41 }, (_, i) => (i === 40 ? id : `v${i}`));
 const adapterFor = (sheet, enabled = true) => createGoogleSheetsAdapter({ config: { enabled, spreadsheetId: "fake-id", tabName: TAB }, sheetsClient: sheet.client });
 
 describe("adapter: batch reads and writes", () => {
@@ -29,31 +29,31 @@ describe("adapter: batch reads and writes", () => {
         const result = await adapterFor(sheet).writeRows({ updates: [{ rowNumber: 2, cells: row("0001") }, { rowNumber: 3, cells: row("0002") }], appends: [row("0003")] });
         assert.deepEqual(result, { updated: 2, appended: 1 });
         assert.deepEqual(sheet.calls.map((c) => c.method), ["get", "batchUpdate", "append"]);
-        assert.equal(sheet.calls[0].range, "'Bob''s Candidate Mirror'!A1:AN1");
-        assert.deepEqual(sheet.calls[1].ranges, ["'Bob''s Candidate Mirror'!A2:AN2", "'Bob''s Candidate Mirror'!A3:AN3"]);
+        assert.equal(sheet.calls[0].range, "'Bob''s Candidate Mirror'!1:1");
+        assert.deepEqual(sheet.calls[1].ranges, ["'Bob''s Candidate Mirror'!A2:AO2", "'Bob''s Candidate Mirror'!A3:AO3"]);
         assert.equal(sheet.calls[1].valueInputOption, "RAW");
-        assert.deepEqual([sheet.calls[2].range, sheet.calls[2].insertDataOption], ["'Bob''s Candidate Mirror'!A:AN", "INSERT_ROWS"]);
+        assert.deepEqual([sheet.calls[2].range, sheet.calls[2].insertDataOption], ["'Bob''s Candidate Mirror'!A:AO", "INSERT_ROWS"]);
     });
 
-    test("writeRows writes nothing when the header does not match, and rejects rows that are not 40 cells", async () => {
+    test("writeRows writes nothing when the header does not match, and rejects rows that are not 41 cells", async () => {
         const header = [...SHEET_HEADERS];
-        header[39] = "ID";
+        header[40] = "ID";
         const bad = createFakeGoogleSheet({ tabName: TAB, header });
         await assert.rejects(adapterFor(bad).writeRows({ appends: [row("0001")] }), SheetSchemaMismatchError);
         assert.deepEqual(bad.writes(), []);
         const good = createFakeGoogleSheet({ tabName: TAB });
-        await assert.rejects(adapterFor(good).writeRows({ appends: [row("0001").slice(0, 39)] }));
+        await assert.rejects(adapterFor(good).writeRows({ appends: [row("0001").slice(0, 40)] }));
         await assert.rejects(adapterFor(good).writeRows({ updates: [{ rowNumber: 1, cells: row("0001") }] }), /data row number/);
         assert.deepEqual(good.calls, []);
     });
 
-    test("readRowsByNumber reads several rows in one batchGet per 100 rows, padded to 40 cells", async () => {
+    test("readRowsByNumber reads several rows in one batchGet per 100 rows, padded to 41 cells", async () => {
         const rows = Array.from({ length: 150 }, (_, i) => row(String(i + 1).padStart(4, "0")));
         const sheet = createFakeGoogleSheet({ tabName: TAB, rows });
         const cells = await readOnlySheetsView(adapterFor(sheet, false)).readRowsByNumber(Array.from({ length: 150 }, (_, i) => i + 2));
         assert.equal(sheet.calls.filter((c) => c.method === "batchGet").length, 2);
-        assert.equal(cells.get(151)[39], "0150");
-        assert.equal(cells.get(2).length, 40);
+        assert.equal(cells.get(151)[40], "0150");
+        assert.equal(cells.get(2).length, 41);
     });
 
     test("a Google failure surfaces as a classified SheetsAdapterError without Google's message", async () => {

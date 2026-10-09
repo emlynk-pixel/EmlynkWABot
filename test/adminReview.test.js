@@ -1,7 +1,6 @@
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import jwt from "jsonwebtoken";
 
 import { createAdminRouter } from "../src/routes/admin.js";
 import {
@@ -18,13 +17,13 @@ import { createFakeAdminDb } from "./helpers/fakeAdminDb.js";
 import { createFakePrisma } from "./helpers/fakePrisma.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
+import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 Object.assign(process.env, {
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
 
@@ -63,7 +62,7 @@ function fakeReviewDb({ pending = [pendingRow()], documents = [documentRow()] } 
     const record = (method, args, value) => { calls.push({ method, args }); return value; };
     return {
         calls,
-        admin: admins.admin,
+        user: admins.user,
         temporaryData: {
             count: async (args) => record("temporaryData.count", args, pending.length),
             findMany: async (args) => record("temporaryData.findMany", args, pending.slice(0, args.take)),
@@ -80,10 +79,9 @@ function fakeReviewDb({ pending = [pendingRow()], documents = [documentRow()] } 
     };
 }
 
-const tokenFor = (adminId) => jwt.sign({ adminId }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
 
 async function startWith(db, bucket = createFakeBucket([])) {
-    const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db, bucket }) });
+    const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db, bucket, verifyAccessToken: fakeVerifyAccessToken }) });
     const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
     const base = `http://127.0.0.1:${server.address().port}`;
     const get = async (path, token = tokenFor("admin-active")) => {
@@ -209,9 +207,9 @@ describe("GET /api/admin/review (queue)", () => {
     test("requires a token and an ACTIVE admin", async () => {
         assert.equal((await http.get("/api/admin/review", null)).status, 401);
         const inactive = await http.get("/api/admin/review", tokenFor("admin-inactive"));
-        assert.equal(inactive.status, 401);
-        assert.deepEqual(inactive.body, { message: "Invalid or Expired Token" });
-        assert.equal((await http.get("/api/admin/review/pending-" + TEMP_A, tokenFor("admin-inactive"))).status, 401);
+        assert.equal(inactive.status, 403);
+        assert.equal(inactive.body.code, "ACCOUNT_NOT_ACTIVE");
+        assert.equal((await http.get("/api/admin/review/pending-" + TEMP_A, tokenFor("admin-inactive"))).status, 403);
         assert.equal((await http.get("/api/admin/review/pending-" + TEMP_A + "/file", null)).status, 401);
     });
 

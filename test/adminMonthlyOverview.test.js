@@ -1,18 +1,17 @@
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import jwt from "jsonwebtoken";
 
 import { createAdminRouter } from "../src/routes/admin.js";
-import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.js";
+import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js";
 import { businessMonthRange, getMonthlyOverview, parseMonthlyOverviewQuery } from "../src/services/adminReportService.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
+import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 Object.assign(process.env, {
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
 
@@ -125,12 +124,12 @@ describe("GET /api/admin/reports/monthly", () => {
     let base;
     before(async () => {
         const db = monthDb();
-        const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: db.client, requireAdmin: createRequireActiveAdmin({ db: db.client }) }) });
+        const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: db.client, requireAdmin: createRequireActiveUser({ db: db.client, verifyAccessToken: fakeVerifyAccessToken }) }) });
         server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
         base = `http://127.0.0.1:${server.address().port}/api/admin`;
     });
     after(() => server.close());
-    const token = jwt.sign({ adminId: "admin-active" }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
+    const token = tokenFor("admin-active");
     const get = async (p, t = token) => {
         const response = await fetch(`${base}${p}`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
         return { status: response.status, body: await response.json() };

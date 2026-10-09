@@ -18,27 +18,27 @@ PostgreSQL (Docker locally / Supabase in production)
 
 ## Models
 
-Eight models, current as of this writing (`prisma/schema.prisma`):
+The core models are below (`prisma/schema.prisma`). The candidate stages, call logs and Google Sheet sync outbox tables (`candidate_stages`, `candidate_call_logs`, `sheet_sync_*`) are described in the documents for those features.
 
-### Admin (`admins`)
+### User (`user`): staff accounts
 
-Administrator accounts. `adminId` is the primary key; `email` is unique. `passwordHash` is bcrypt, nullable (an invited admin has none until they set a password). `role` (`ADMIN`, `REVIEWER`, `VIEWER`) and `status` (`ACTIVE` by default) drive authentication and RBAC — see `10-security.md`. Relations: `auditLogs` (as the actor), `invitationsSent`, `passwordResets`.
+The application's staff profile table (Prisma model `User`, table `public."user"`). It holds **no credentials**: authentication, passwords and sessions belong to Supabase Auth, which manages `auth.users`.
 
-### AdminPasswordReset (`admin_password_resets`)
+- `adminId`: the primary key (kept under this name; audit entries and call logs reference it).
+- `authUserId` (`auth_user_id`): required, unique UUID that references `auth.users.id`. It links a staff profile to its Supabase Auth identity and is only ever taken from a verified Supabase session, never from a request body. The foreign key to `auth.users` (`ON DELETE RESTRICT`) is created by the migration where the `auth` schema exists (Supabase), so a profile can't outlive or be detached from its identity by accident.
+- `email` (unique), `name`.
+- `role`: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK`. The application's authorization source of truth; never read from a token or Supabase metadata.
+- `status`: `INVITED` (invitation sent, password not yet set), `ACTIVE` or `INACTIVE`. Only `ACTIVE` users can use the API, checked on every request.
 
-Self-service password recovery. One-time reset tokens, 1-hour expiration. Only the SHA-256 hash of the token is stored (`tokenHash`, unique). Cascades on admin deletion. Indexed on `(adminId, expiresAt)`.
-
-### AdminInvitation (`admin_invitations`)
-
-One-time self-service invitation tokens, 24-hour expiration, only the SHA-256 hash stored. `status` defaults to `PENDING`. `inviter` references the admin who sent it (`onDelete: Restrict`, so an inviter can't be deleted while their invitations exist). Indexed on `email` and `(status, expiresAt)`.
+Relations: `auditLogs` (as the actor) and `callLogs`. There are no password hash, token, invitation or reset tables: invitations and password recovery are Supabase Auth's (`SUPABASE_AUTH.md`). Role and status rules: `10-security.md`.
 
 ### AuditLog (`audit_logs`)
 
-Append-only record of admin review actions. **A database trigger rejects `UPDATE` and `DELETE` on this table** — it is genuinely immutable, not just convention. The reviewed item is referenced by plain IDs (`temporaryId`, `documentId`, `passportId`), without foreign keys, so the audit entry outlives the row it describes (e.g. Remove from Review deletes the `temporary_data` row, but its audit entry stays). `action` is one of `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT`, `SET_POLICE_DATE`, `RETRY_PROCESSING`. Indexed on `(temporaryId, createdDate)`, `(documentId, createdDate)`, `(adminId, createdDate)`.
+Append-only record of admin review actions, candidate management operations, and staff user-management actions (`CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `UPDATE_STAGE`, `UPLOAD_DOCUMENT`, `REMOVE_DOCUMENT`, `REPLACE_VERIFIED`, `KEEP_AS_VERSION`, `INVITE_USER`, `REACTIVATE_USER`, `COMPLETE_INVITATION`, `UPDATE_USER_ROLE`, `DEACTIVATE_USER`). **A database trigger rejects `UPDATE`, `DELETE` and `TRUNCATE` on this table** — it is genuinely immutable, not just convention. The reviewed item is referenced by plain IDs (`temporaryId`, `documentId`, `passportId`), without foreign keys, so the audit entry outlives the row it describes (e.g. Remove from Review deletes the `temporary_data` row, but its audit entry stays). `action` is one of `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT`, `SET_POLICE_DATE`, `RETRY_PROCESSING`, or candidate/staff events. Indexed on `(temporaryId, createdDate)`, `(documentId, createdDate)`, `(adminId, createdDate)`. For detailed schema and architecture, see [`DATABASE_IMPLEMENTATION.md`](DATABASE_IMPLEMENTATION.md).
 
-### User (`users`)
+### Candidate (`candidate`)
 
-Registered clients. `passportId` is the **primary key and the identity** — see the critical distinction below. `uniqueId` is a separate unique reference, never used in place of `passportId`. `whatsappNumber` is nullable and is a signal, not an identity (`05-ocr-document-processing.md`, Identity Verification). Fields such as `dateOfBirth`, `placeOfBirth` and `passportExpiryDate` are filled in only by the passport reconciliation logic, never overwritten once set.
+Registered clients (formerly named `User` / `users`; renamed so `User` means staff). `passportId` is the **primary key and the identity** — see the critical distinction below. `uniqueId` is a separate unique reference, never used in place of `passportId`. `whatsappNumber` is nullable and is a signal, not an identity (`05-ocr-document-processing.md`, Identity Verification). Fields such as `dateOfBirth`, `placeOfBirth` and `passportExpiryDate` are filled in only by the passport reconciliation logic, never overwritten once set.
 
 ### Document (`documents`)
 
@@ -58,18 +58,17 @@ Three different IDs exist, and mixing them up would misattribute a client's docu
 
 | ID | Meaning | Rules |
 |---|---|---|
-| `passportId` | The client's passport number. Primary key of `User`. **The identity.** | Never overwritten once set. Used for all document ownership and lookups. |
+| `passportId` | The client's passport number. Primary key of `Candidate`. **The identity.** | Never overwritten once set. Used for all document ownership and lookups. |
 | `uniqueId` | A separate business reference (e.g. a legacy client number). | Unique, but never used in place of `passportId` for identity decisions. |
 | `whatsappNumber` | The phone number a message arrived from. | A **signal**, not an identity — see `05-ocr-document-processing.md`, Identity Verification. Never used alone to attach a document to a client's permanent record. |
 
 ## Entity Relationships
 
 ```
-Admin 1──∞ AuditLog          (admin performs many audited actions)
-Admin 1──∞ AdminInvitation   (admin sends many invitations, as inviter)
-Admin 1──∞ AdminPasswordReset
-User  1──∞ Document          (a client owns many permanent documents)
-User  1──∞ TemporaryData     (a client submits many documents over time)
+auth.users 1──1 User         (Supabase identity <-> staff profile, via auth_user_id)
+User  1──∞ AuditLog          (staff member performs many audited actions)
+Candidate 1──∞ Document      (a client owns many permanent documents)
+Candidate 1──∞ TemporaryData (a client submits many documents over time)
 TemporaryData 1──∞ Document  (one submission can be the source of one placed document)
 ```
 
@@ -94,12 +93,16 @@ Applied with `prisma migrate deploy` (forward-only; the live production database
 | `20260928100000_password_reset_tokens` | Added the `admin_password_resets` table. |
 | `20260928130000_remove_redundant_token_indexes` | Removed a redundant explicit index that duplicated a `@unique` constraint's own index (AUDIT-005). |
 | `20260930120000_phase12_rate_limits` | Added the `rate_limits` table. |
+| `20261008120000_rename_candidate_user_tables` | Renamed the client table to `candidate` and the staff table to `user`; added `auth_user_id`. |
+| `20261009120000_supabase_auth_cutover` | Dropped `admin_invitations`, `admin_password_resets` and `password_hash` (replaced by Supabase Auth); made `auth_user_id` required, with the foreign key to `auth.users`. Refuses to run while any staff row has no `auth_user_id`. |
+
+The `admin_invitations` and `admin_password_resets` tables and the bcrypt `password_hash` column in the earlier rows are historical: the cutover migration removed them.
 
 All new columns across these migrations were added nullable where existing rows had no value, with new code always setting them going forward — no migration has ever required backfilling or guessing a value for existing rows.
 
 ## Seed Data
 
-A repeatable seed script (`prisma/seed.js`, run via `npx prisma db seed`) populates sample Admin, User and Document records for local development, using Prisma `upsert` so re-running it is safe (existing records are kept, not duplicated). Inspect the result with `npx prisma studio`. See `11-development-guide.md` for the full local setup sequence.
+A repeatable seed script (`prisma/seed.js`, run via `npx prisma db seed`) populates sample records for local development, using Prisma `upsert` so re-running it is safe (existing records are kept, not duplicated). Inspect the result with `npx prisma studio`. See `11-development-guide.md` for the full local setup sequence.
 
 ## Local Development Setup
 

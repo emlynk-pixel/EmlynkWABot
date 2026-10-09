@@ -1,8 +1,7 @@
-import { useEffect, type ReactNode } from "react";
-import { Navigate, Outlet, Route, Routes, useLocation } from "react-router";
-import { isRegistrationDesk, useAuth } from "./auth/AuthProvider";
+import { useEffect } from "react";
+import { Navigate, Outlet, Route, Routes } from "react-router";
+import { canViewDashboard, useAuth } from "./auth/AuthProvider";
 import { RequireAuth } from "./auth/RequireAuth";
-import { REGISTRATION_DESK_HOME } from "./layout/navigation";
 import { AdminLayout } from "./layout/AdminLayout";
 import { CandidateDeploymentPage } from "./pages/CandidateDeploymentPage";
 import { CandidateRegistrationPage } from "./pages/CandidateRegistrationPage";
@@ -14,6 +13,7 @@ import { DocumentsPage } from "./pages/DocumentsPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { InvitationsPage } from "./pages/InvitationsPage";
 import { AdminRolesPage } from "./pages/AdminRolesPage";
+import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MissingDocumentsPage } from "./pages/MissingDocumentsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -40,16 +40,11 @@ function ClassicArea() {
     );
 }
 
-// The registration desk has one page, Add candidate: every other route (the
-// landing page after sign-in included) sends it there. The backend refuses
-// the desk everything else anyway.
-function RegistrationDeskGate({ children }: { children: ReactNode }) {
-    const { admin } = useAuth();
-    const { pathname } = useLocation();
-    if (isRegistrationDesk(admin) && pathname !== REGISTRATION_DESK_HOME) {
-        return <Navigate to={REGISTRATION_DESK_HOME} replace />;
-    }
-    return children;
+// The landing page: the Overview, or Candidates for a role without dashboard
+// access (REGISTRATION_DESK), which the API would otherwise refuse.
+function HomePage() {
+    const { user } = useAuth();
+    return canViewDashboard(user) ? <OverviewPage /> : <Navigate to="/candidates" replace />;
 }
 
 // Routes are relative to the /admin base (see main.tsx). Overview,
@@ -66,13 +61,11 @@ export function AppRoutes() {
             <Route
                 element={
                     <RequireAuth>
-                        <RegistrationDeskGate>
-                            <AdminLayout />
-                        </RegistrationDeskGate>
+                        <AdminLayout />
                     </RequireAuth>
                 }
             >
-                <Route index element={<OverviewPage />} />
+                <Route index element={<HomePage />} />
                 <Route path="documents" element={<DocumentsPage />} />
                 <Route path="review" element={<ReviewQueuePage />} />
                 <Route path="review/:id" element={<ReviewDetailPage />} />
@@ -90,6 +83,7 @@ export function AppRoutes() {
                 <Route path="reports/daily" element={<DailyReportPage />} />
                 <Route path="invitations" element={<InvitationsPage />} />
                 <Route path="roles" element={<AdminRolesPage />} />
+                <Route path="audit-logs" element={<AuditLogsPage />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="*" element={<NotFoundPage />} />
             </Route>

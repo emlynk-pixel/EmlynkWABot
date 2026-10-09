@@ -1,9 +1,8 @@
 import express from "express";
 
-import { createRequireActiveAdmin } from "../middleware/requireActiveAdmin.js";
-import { requireRole, ADMIN_ROLES } from "../middleware/requireRole.js";
+import { createRequireActiveUser } from "../middleware/requireActiveUser.js";
+import { requireRole, ROLES } from "../middleware/requireRole.js";
 import { createApiRateLimiter } from "../middleware/apiRateLimiter.js";
-import { doubleCsrfProtection } from "../middleware/csrf.js";
 import {
     getOverview,
     listDocuments,
@@ -46,17 +45,12 @@ import {
     setPoliceSubmittedDate,
 } from "../services/adminCorrectionService.js";
 import { getDailyReport, getMonthlyOverview, parseDailyReportQuery, parseMonthlyOverviewQuery } from "../services/adminReportService.js";
-import { createInvitationRouter } from "./adminInvitations.js";
+import { listAuditLogs, parseAuditLogQuery } from "../services/auditLogService.js";
+import { getAdditionalDetails, parseAdditionalDetailsBody, saveAdditionalDetails } from "../services/candidateAdditionalDetailsService.js";
+import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
 import { deleteTemporaryDocument } from "../services/temporaryDataService.js";
-import { listAdmins, updateAdminRole, AdminAccountError } from "../services/adminAccountService.js";
-import {
-    REGISTRATION_UPLOAD_HEADER,
-    REGISTRATION_UPLOAD_TYPES,
-    isValidRegistrationUploadGrant,
-    issueRegistrationUploadGrant,
-} from "../services/registrationUploadGrant.js";
 import {
     addCallLog,
     CandidateError,
@@ -92,13 +86,12 @@ function contentDisposition(fileName) {
 // ANALYST: reads + review actions.
 // MANAGER: full access except user management.
 // ADMIN: full access including user management.
-// REGISTRATION_DESK: only candidate registration.
-const { ADMIN, MANAGER, ANALYST, REGISTRATION_DESK } = ADMIN_ROLES;
+// REGISTRATION_DESK: the whole Candidates area (registration, details,
+// stages, candidate documents, call logs); nothing else.
+const { ADMIN, MANAGER, ANALYST, REGISTRATION_DESK } = ROLES;
 // The set of roles allowed for each endpoint tier.
 const ALL_ACTIVE = [ADMIN, MANAGER, ANALYST];                   // overview, reports, etc
-// Registering a new candidate (and, with a registration upload grant, its
-// registration documents). REGISTRATION_DESK has nothing else.
-const REGISTRATION_UP = [ADMIN, MANAGER, ANALYST, REGISTRATION_DESK];
+const CANDIDATE_STAFF = [ADMIN, MANAGER, ANALYST, REGISTRATION_DESK]; // the Candidates area
 const ANALYSTS_UP = [ADMIN, MANAGER, ANALYST];                  // analyst or above
 const MANAGERS_UP = [ADMIN, MANAGER];                           // manager or above
 const ADMINS_ONLY = [ADMIN];                                    // administrators only
@@ -108,26 +101,22 @@ const ADMINS_ONLY = [ADMIN];                                    // administrator
 // corrections (document type, client, police slip date); every change is
 // audited. There is no reject action and no route that changes or deletes
 // an audit entry, and nothing removes a pending item automatically.
-// Every route needs a valid token of an ACTIVE admin. Responses hold client
+// Every route needs a valid Supabase session of an ACTIVE application user. Responses hold client
 // data, so browsers and proxies must not cache them.
 // Phase 12: RBAC is enforced per-endpoint via requireRole.
 // Errors: { message } or { message, errors: [{ field, message }] }; review
 // action conflicts also carry a machine-readable { code }.
-export function createAdminRouter({ 
-    db, 
-    bucket, 
-    requireAdmin = createRequireActiveAdmin({ db }),
+export function createAdminRouter({
+    db,
+    bucket,
+    verifyAccessToken,
+    authAdmin,
+    requireAdmin = createRequireActiveUser({ db, verifyAccessToken }),
     apiLimiter = createApiRateLimiter(),
 } = {}) {
     const router = express.Router();
 
     router.use(apiLimiter);
-
-    // Defence in depth on top of the httpOnly + SameSite=Strict auth cookie
-    // (see middleware/csrf.js); GET reads are unaffected (ignoredMethods),
-    // and Bearer-authenticated callers (CLI tools, tests) are exempt since
-    // they can't be forged cross-site.
-    router.use(doubleCsrfProtection);
 
     router.use((req, res, next) => {
         res.set("Cache-Control", "no-store");
@@ -263,7 +252,7 @@ export function createAdminRouter({
 
     // ---------------------------------------------------------------- review actions (ANALYST and above)
 
-    // Review actions. The admin comes from the token (req.admin), never the body.
+    // Review actions. The acting user is the authenticated one (req.user), never the body.
     // `parse` validates the body and returns the action's arguments or { errors }.
     const runAction = async (res, parsed, needsBucket, run) => {
         if (parsed.errors) {
@@ -284,7 +273,7 @@ export function createAdminRouter({
         const parsed = parse ? parse(req.body) : parseReviewActionBody(req.body, { reasonRequired, acceptsPoliceDate });
         return runAction(res, parsed, needsBucket, ({ client, storage }) => {
             const { errors, ...values } = parsed;
-            return action({ ...values, db: client, bucket: storage, admin: req.admin, reviewId: req.params.reviewId });
+            return action({ ...values, db: client, bucket: storage, admin: req.user, reviewId: req.params.reviewId });
         });
     };
 
@@ -322,7 +311,7 @@ export function createAdminRouter({
         }
         
         try {
-            await deleteTemporaryDocument(temporaryId, req.admin, { db, bucket });
+            await deleteTemporaryDocument(temporaryId, req.user, { db, bucket });
             return res.status(200).json({ action: "DELETE_TEMPORARY_DOCUMENT", temporaryId, deleted: true });
         } catch (error) {
             if (error.message === "Temporary document not found.") {
@@ -345,16 +334,13 @@ export function createAdminRouter({
         }
         const parsed = parsePoliceDateBody(req.body);
         return runAction(res, parsed, false, ({ client }) => setPoliceSubmittedDate({
-            db: client, admin: req.admin, documentId: req.params.documentId, reason: parsed.reason, policeSubmittedDate: parsed.policeSubmittedDate,
+            db: client, admin: req.user, documentId: req.params.documentId, reason: parsed.reason, policeSubmittedDate: parsed.policeSubmittedDate,
         }));
     });
 
     // ---------------------------------------------------------------- candidates (Admin > Candidates)
-    // ANALYST and above: reads, details, stages, uploads and call notes.
-    // REGISTRATION_DESK: registering a new candidate (POST /candidates) and
-    // that candidate's registration documents, with the grant it returns;
-    // never a list, a read or an edit of a candidate. Audited where
-    // documents change.
+    // Reads for every active admin; registration, details, stages, uploads
+    // and call notes for ANALYST and above. Audited where documents change.
 
     const invalidCandidateId = (res) => res.status(400).json({
         message: "Invalid passport ID",
@@ -380,27 +366,7 @@ export function createAdminRouter({
         return passportId;
     };
 
-    // REGISTRATION_DESK uploads only while registering: with the grant POST
-    // /candidates gave it for this candidate, only a registration document,
-    // and only into an empty slot (never a replacement or a variant). Checked
-    // before the candidate is looked up, so a refusal says nothing about
-    // whether a passport ID exists. Other roles are unaffected.
-    // The grant first, before the body is even read.
-    const deskHasNoGrant = (req) => req.admin.role === REGISTRATION_DESK
-        && !isValidRegistrationUploadGrant(req.get(REGISTRATION_UPLOAD_HEADER), { adminId: req.admin.adminId, passportId: req.params.passportId });
-    // Then the document: a registration type, no variant, an empty slot.
-    const refuseDeskUpload = async (req, client, values) => {
-        if (req.admin.role !== REGISTRATION_DESK) return false;
-        if (!REGISTRATION_UPLOAD_TYPES.includes(values.documentType) || values.variant) return true;
-        const stored = await client.document.findFirst({
-            where: { passportId: req.params.passportId, documentType: values.documentType },
-            select: { documentId: true },
-        });
-        return Boolean(stored);
-    };
-    const DESK_UPLOAD_REFUSED = { message: "Insufficient permissions" };
-
-    router.get("/candidates", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.get("/candidates", requireRole(CANDIDATE_STAFF), async (req, res) => {
         const parsed = parseCandidateListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -409,33 +375,16 @@ export function createAdminRouter({
         return res.json(await listCandidates({ db: client, params: parsed.params }));
     });
 
-    router.post("/candidates", requireRole(REGISTRATION_UP), async (req, res) => {
+    router.post("/candidates", requireRole(CANDIDATE_STAFF), async (req, res) => {
         const parsed = parseCandidateBody(req.body, { creating: true });
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        if (req.admin.role === REGISTRATION_DESK) {
-            // The desk learns only that the candidate exists: not which field
-            // matched (passport ID, NIC or WhatsApp number), nor the stored ID.
-            try {
-                const created = await createCandidate({ db: client, values: parsed.values });
-                return res.status(201).json({
-                    ...created,
-                    registrationUploadGrant: issueRegistrationUploadGrant({ adminId: req.admin.adminId, passportId: created.passportId }),
-                });
-            } catch (error) {
-                if (error instanceof CandidateError && error.status === 409) {
-                    return res.status(409).json({ message: "Candidate already exists.", code: "CANDIDATE_EXISTS" });
-                }
-                if (error instanceof CandidateError) return res.status(error.status).json({ message: error.message, code: error.code });
-                throw error;
-            }
-        }
-        return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values: parsed.values })));
+        return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values: parsed.values, actor: req.user })));
     });
 
-    router.get("/candidates/:passportId", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.get("/candidates/:passportId", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         // Also the registration lookup: the response carries the stored passport ID.
@@ -445,7 +394,7 @@ export function createAdminRouter({
         return res.json(candidate);
     });
 
-    router.put("/candidates/:passportId", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.put("/candidates/:passportId", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseCandidateBody(req.body, { creating: false });
         if (parsed.errors) {
@@ -453,11 +402,11 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await updateCandidateDetails({
-            db: client, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
         })));
     });
 
-    router.put("/candidates/:passportId/stages/:stage", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.put("/candidates/:passportId/stages/:stage", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         if (!isCandidateStage(req.params.stage)) return res.status(404).json({ message: "Stage not found" });
         const parsed = parseStageBody(req.body, req.params.stage);
@@ -466,7 +415,7 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await updateStage({
-            db: client, passportId: await storedCandidateId(client, req.params.passportId), stage: req.params.stage, values: parsed.values,
+            db: client, passportId: await storedCandidateId(client, req.params.passportId), stage: req.params.stage, values: parsed.values, actor: req.user,
         })));
     });
 
@@ -474,15 +423,13 @@ export function createAdminRouter({
     // to this API (candidateService.js, "direct uploads"). Both requests are
     // small JSON bodies (express.json in createApp.js); no route here parses
     // a file body.
-    router.post("/candidates/:passportId/documents/upload-target", requireRole(REGISTRATION_UP), async (req, res) => {
-        if (deskHasNoGrant(req)) return res.status(403).json(DESK_UPLOAD_REFUSED);
+    router.post("/candidates/:passportId/documents/upload-target", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseUploadTargetBody(req.body);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
-        if (await refuseDeskUpload(req, client, parsed.values)) return res.status(403).json(DESK_UPLOAD_REFUSED);
         return candidateAction(res, async () => res.json(await createUploadTarget({
             db: client,
             bucket: storage,
@@ -493,34 +440,25 @@ export function createAdminRouter({
         })));
     });
 
-    router.post("/candidates/:passportId/documents/finalize", requireRole(REGISTRATION_UP), async (req, res) => {
-        if (deskHasNoGrant(req)) return res.status(403).json(DESK_UPLOAD_REFUSED);
+    router.post("/candidates/:passportId/documents/finalize", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseFinalizeUploadBody(req.body);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
-        if (await refuseDeskUpload(req, client, parsed.values)) return res.status(403).json(DESK_UPLOAD_REFUSED);
-        return candidateAction(res, async () => {
-            const details = await finalizeUpload({
-                db: client,
-                bucket: storage,
-                admin: req.admin,
-                passportId: await storedCandidateId(client, req.params.passportId),
-                ...parsed.values,
-            });
-            // The desk gets an acknowledgement, not the candidate's record.
-            if (req.admin.role === REGISTRATION_DESK) {
-                return res.json({ passportId: req.params.passportId, documentType: parsed.values.documentType, stored: true });
-            }
-            return res.json(details);
-        });
+        return candidateAction(res, async () => res.json(await finalizeUpload({
+            db: client,
+            bucket: storage,
+            admin: req.user,
+            passportId: await storedCandidateId(client, req.params.passportId),
+            ...parsed.values,
+        })));
     });
 
     // Removes the candidate's current document of a type: record and file,
     // with a required reason, audited (like Remove from Review).
-    router.post("/candidates/:passportId/documents/:documentId/remove", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.post("/candidates/:passportId/documents/:documentId/remove", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         if (!isValidDocumentIdParam(req.params.documentId)) {
             return res.status(400).json({ message: "Invalid document ID", errors: [{ field: "documentId", message: "must be a document ID" }] });
@@ -533,20 +471,20 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await removeCandidateDocument({
             db: client,
             bucket: storage,
-            admin: req.admin,
+            admin: req.user,
             passportId: await storedCandidateId(client, req.params.passportId),
             documentId: req.params.documentId,
             reason: parsed.values.reason,
         })));
     });
 
-    router.get("/candidates/:passportId/call-logs", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/candidates/:passportId/call-logs", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await listCallLogs({ db: client, passportId: await storedCandidateId(client, req.params.passportId) })));
     });
 
-    router.post("/candidates/:passportId/call-logs", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.post("/candidates/:passportId/call-logs", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseCallLogBody(req.body);
         if (parsed.errors) {
@@ -554,34 +492,46 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.status(201).json(await addCallLog({
-            db: client, admin: req.admin, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
+            db: client, admin: req.user, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
         })));
     });
 
-    // ---------------------------------------------------------------- admin invitations (ADMIN only)
-    router.use("/invitations", createInvitationRouter({ db }));
-
-
-    // ---------------------------------------------------------------- admin accounts (ADMIN only)
-    router.get("/admins", requireRole(ADMINS_ONLY), async (req, res) => {
+    // Additional details (candidateAdditionalDetailsService.js): always the
+    // existing candidate of the passport ID in the URL; never creates one.
+    router.get("/candidates/:passportId/additional-details", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
-        return res.json(await listAdmins({ db: client }));
+        return candidateAction(res, async () => res.json(await getAdditionalDetails({
+            db: client, passportId: await storedCandidateId(client, req.params.passportId),
+        })));
     });
 
-    router.put("/admins/:adminId/role", requireRole(ADMINS_ONLY), async (req, res) => {
-        const { role } = req.body;
-        if (!role) return res.status(400).json({ message: "Role is required" });
-        try {
-            const client = await resolveDb(db);
-            return res.json(await updateAdminRole({ db: client, admin: req.admin, targetAdminId: req.params.adminId, newRole: role }));
-        } catch (error) {
-            if (error instanceof AdminAccountError) {
-                return res.status(error.status).json({ message: error.message, code: error.code });
-            }
-            console.error("Update admin role error:", error);
-            return res.status(500).json({ message: "Internal server error" });
+    router.put("/candidates/:passportId/additional-details", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseAdditionalDetailsBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await saveAdditionalDetails({
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId),
+            values: parsed.values, expectedUpdatedDate: parsed.expectedUpdatedDate,
+        })));
     });
+
+    // ---------------------------------------------------------------- audit logs (ADMIN only, read-only)
+    // There is deliberately no route that changes, deletes or clears an entry.
+    router.get("/audit-logs", requireRole(ADMINS_ONLY), async (req, res) => {
+        const parsed = parseAuditLogQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await listAuditLogs({ db: client, params: parsed.params }));
+    });
+
+    // ---------------------------------------------------------------- users (ADMIN only)
+    router.use("/users", createUsersRouter({ db, authAdmin }));
 
     // ---------------------------------------------------------------- settings: Google Sheet Sync (ADMIN only)
     // Reads PostgreSQL and records run requests; never calls Google.

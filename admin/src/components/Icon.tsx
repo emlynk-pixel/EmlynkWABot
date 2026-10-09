@@ -40,6 +40,7 @@ import upload from "@material-symbols/svg-400/outlined/upload.svg?raw";
 import manageAccounts from "@material-symbols/svg-400/outlined/manage_accounts.svg?raw";
 import notifications from "@material-symbols/svg-400/outlined/notifications.svg?raw";
 import notificationsActive from "@material-symbols/svg-400/outlined/notifications_active.svg?raw";
+import history from "@material-symbols/svg-400/outlined/history.svg?raw";
 import settings from "@material-symbols/svg-400/outlined/settings.svg?raw";
 
 const ICONS = {
@@ -71,6 +72,7 @@ const ICONS = {
     fact_check: factCheck,
     group,
     manage_accounts: manageAccounts,
+    history,
     local_police: localPolice,
     lock,
     logout,

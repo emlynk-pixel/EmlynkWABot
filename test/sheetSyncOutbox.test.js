@@ -16,7 +16,7 @@ import {
 
 const REGISTRATION = {
     passportId: "N1023757", surname: "De Soysa", otherNames: "Anusha", nic: "965404378V",
-    whatsappNumber: "+94771234567", jobTypes: ["Caregiver"], jobExperience: "2 years",
+    whatsappNumber: "+94771234567", jobTypes: ["Caregiver"], jobExperience: "2 years", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14",
 };
 
 let database;
@@ -31,7 +31,7 @@ after(async () => database?.close());
 
 beforeEach(async () => {
     await pg.exec(`
-        DELETE FROM "documents"; DELETE FROM "candidate_stages"; DELETE FROM "users";
+        DELETE FROM "documents"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
         DELETE FROM "sheet_sync_queue"; DELETE FROM "sheet_sync_runs";
     `);
 });
@@ -57,17 +57,20 @@ const documentData = (passportId, overrides = {}) => {
     };
 };
 
+const OUTBOX_MIGRATION = "20261006120000_sheet_sync_outbox";
+
 describe("outbox migration", () => {
-    test("is the last migration, applies on top of every existing one and adds only the sheet sync tables", async () => {
-        assert.equal(migrationNames().at(-1), "20261006120000_sheet_sync_outbox");
+    test("applies on top of every existing one and adds only the sheet sync tables", async () => {
+        assert.ok(migrationNames().includes(OUTBOX_MIGRATION));
         const tables = (await pg.query(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'sheet_sync_%' ORDER BY 1`)).rows.map((r) => r.table_name);
         assert.deepEqual(tables, ["sheet_sync_queue", "sheet_sync_runs", "sheet_sync_state"]);
         const state = await prisma.sheetSyncState.findMany();
         assert.deepEqual(state.map((s) => [s.stateId, s.integrationState]), [["sheet-sync", "UNKNOWN"]]);
     });
 
-    test("a database migrated up to the previous migration has none of it (the new migration is additive)", async () => {
-        const previous = migrationNames().at(-2);
+    test("a database migrated up to the previous migration has none of it (the outbox migration is additive)", async () => {
+        const names = migrationNames();
+        const previous = names[names.indexOf(OUTBOX_MIGRATION) - 1];
         const older = await createTestDatabase({ upTo: previous });
         try {
             const count = (await older.pg.query(`SELECT count(*)::int AS n FROM information_schema.tables WHERE table_name LIKE 'sheet_sync_%'`)).rows[0].n;
@@ -130,8 +133,8 @@ describe("change capture through the real candidate service (Section 4.4 writers
             () => prisma.document.updateMany({ where: { passportId }, data: { verificationStatus: "SUPERSEDED" } }),
             () => prisma.document.updateMany({ where: { passportId }, data: { policeSubmittedDate: new Date("2026-09-30") } }),
             () => prisma.document.deleteMany({ where: { passportId } }),
-            // OCR field reconciliation writes users with updateMany.
-            () => prisma.user.updateMany({ where: { passportId, placeOfBirth: null }, data: { placeOfBirth: "Colombo" } }),
+            // OCR field reconciliation writes candidate with updateMany.
+            () => prisma.candidate.updateMany({ where: { passportId, placeOfBirth: null }, data: { placeOfBirth: "Colombo" } }),
         ]) {
             await prisma.sheetSyncQueue.deleteMany();
             await write();
@@ -177,7 +180,7 @@ describe("change capture through the real candidate service (Section 4.4 writers
     test("deleting a candidate marks the pending row candidate_deleted; the cascaded stage delete can't clear it", async () => {
         const { passportId, uniqueId } = await register({ comment: "note" });
         await prisma.sheetSyncQueue.deleteMany();
-        await prisma.user.delete({ where: { passportId } }); // stages cascade
+        await prisma.candidate.delete({ where: { passportId } }); // stages cascade
         const rows = await pending();
         assert.deepEqual(rows.map((r) => [r.uniqueId, r.candidateDeleted]), [[uniqueId, true]]);
     });
@@ -186,7 +189,7 @@ describe("change capture through the real candidate service (Section 4.4 writers
         const { passportId, uniqueId } = await register({ comment: "note" });
         await prisma.document.create({ data: documentData(passportId) });
         await prisma.sheetSyncQueue.deleteMany();
-        await pg.query(`UPDATE "users" SET "passport_id" = 'N9999999' WHERE "passport_id" = $1`, [passportId]);
+        await pg.query(`UPDATE "candidate" SET "passport_id" = 'N9999999' WHERE "passport_id" = $1`, [passportId]);
         const rows = await pending();
         assert.deepEqual(rows.map((r) => [r.uniqueId, r.candidateDeleted]), [[uniqueId, false]]);
     });

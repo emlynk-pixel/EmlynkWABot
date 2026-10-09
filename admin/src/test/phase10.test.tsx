@@ -219,7 +219,7 @@ describe("Client Details: police slip date", () => {
 
     test("ANALYST cannot see the set-date button (requires ADMIN)", async () => {
         signedInBackend({
-            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "ANALYST" } } },
+            "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "ANALYST" } } },
             "GET /api/admin/clients/N1234567": { status: 200, body: WITH_SLIP },
         });
         renderApp("/clients/N1234567");

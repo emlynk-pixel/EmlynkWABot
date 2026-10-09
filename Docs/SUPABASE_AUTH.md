@@ -1,0 +1,204 @@
+# Supabase Auth: authentication, roles and deployment
+
+Supabase Auth (`auth.users`) is the only credential and session authority for
+the admin console. The application keeps no passwords, issues no tokens and
+sends no account emails of its own.
+
+| Owned by Supabase Auth | Owned by the application (`public."user"`) |
+|---|---|
+| sign-in, passwords, password policy | profile (name, email) |
+| sessions, access/refresh tokens, sign-out | **role** (authorization source of truth) |
+| invitation and recovery emails (templates, SMTP) | **status**: `INVITED` / `ACTIVE` / `INACTIVE` |
+| auth rate limits (sign-in, recovery, invite) | RBAC on every API route, audit attribution |
+
+`public."user".auth_user_id` = `auth.users.id` (required, unique, UUID; a
+foreign key to `auth.users` on Supabase, `ON DELETE RESTRICT`).
+
+## Roles
+
+| Role | Access (enforced by `src/routes/admin.js`) |
+|---|---|
+| `ADMIN` | everything, including users (`/api/admin/users`) and Settings |
+| `MANAGER` | everything except users and Settings |
+| `ANALYST` | dashboard reads, review actions, corrections, candidate work; not police-date corrections |
+| `REGISTRATION_DESK` | candidate list, lookup, registration and details only |
+
+The role is read from `public."user"` on **every** request; nothing in the
+token is trusted for authorization. A role change or deactivation applies to
+the user's next request.
+
+## Request authentication
+
+1. The admin app signs in with `supabase.auth.signInWithPassword()` (anon /
+   publishable key, in the browser).
+2. Every API call carries `Authorization: Bearer <Supabase access token>`.
+3. The backend calls `supabase.auth.getUser(token)` (server-side, service-role
+   client): this checks signature and expiry **and that the session still
+   exists**, so a signed-out or revoked session is refused immediately.
+4. `public."user"` is loaded by `auth_user_id`; it must exist and be `ACTIVE`.
+5. `req.user` = that row; `requireRole()` checks `req.user.role`.
+
+| Situation | Response |
+|---|---|
+| no / malformed / expired / signed-out token | 401 |
+| valid session, no `public."user"` row, or not `ACTIVE` | 403 `ACCOUNT_NOT_ACTIVE` |
+| role not allowed for the route | 403 `Insufficient permissions` |
+| Supabase or the database unreachable | 500 (fails closed) |
+
+Code: `src/auth/supabaseIdentity.js`, `src/middleware/requireActiveUser.js`,
+`src/middleware/requireRole.js`.
+
+## Flows
+
+**Invite User** (ADMIN only): `POST /api/admin/users/invite {email, name, role}`
+→ role validated server-side → `auth.admin.inviteUserByEmail()` (Supabase sends
+the email; no role or metadata is sent) → `public."user"` upserted by email,
+linked by `auth_user_id`, status `INVITED`. Re-inviting: a pending invitee gets
+the invite again; a deactivated user who had set up their account, or a
+confirmed Supabase identity without a row, is linked/reactivated (`ACTIVE`); an
+`ACTIVE` email is refused (409). One row per email and per identity, so
+concurrent invites converge.
+
+**Invitation setup**: the invite link opens `/admin/setup-password` with a
+Supabase session → the invitee sets a password (`auth.updateUser`) →
+`POST /auth/complete-invite` turns `INVITED` into `ACTIVE`. Deactivating an
+`INVITED` user revokes the invitation.
+
+**Password recovery**: `/admin/forgot-password` → `auth.resetPasswordForEmail()`
+(same confirmation whether or not the email exists) → recovery link opens
+`/admin/reset-password` with a recovery session → `auth.updateUser({ password })`
+→ sign-out, sign in again.
+
+**Sign-out**: `auth.signOut()` (global scope: refresh tokens revoked; the access
+token stops being accepted by `getUser` because its session is gone). The local
+session is cleared even if Supabase can't be reached.
+
+**Bootstrap**: `npm run user:create -- --name "…" --email … [--role ADMIN]`
+creates the Supabase identity (password at a hidden prompt, or
+`BOOTSTRAP_PASSWORD`) and its `ACTIVE` row. `--link` creates the application
+row for an existing Supabase Auth identity that does not yet have a
+`public."user"` row (found by email; no password). An email whose row already
+exists is refused and nothing changes. Server-only credentials.
+
+## Security decisions
+
+- **Service-role key**: backend only (`src/config/supabase.js`). The browser
+  build reads only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`, and refuses
+  a key that is a secret / service-role key.
+- **CSRF: not applicable; middleware removed.** The credential is a bearer token
+  that the admin app attaches explicitly from JavaScript. No cookie
+  authenticates any request, so a cross-site page cannot make the browser send
+  the credential, and the API grants no CORS access for another origin to set
+  an `Authorization` header. The previous double-submit-cookie middleware
+  (`csrf-csrf`) protected the old httpOnly auth cookie; with no auth cookie it
+  had nothing to protect. If cookie-based auth is ever reintroduced, CSRF
+  protection must come back with it.
+- **Token storage**: Supabase keeps the session in `sessionStorage` (per tab,
+  cleared when the tab closes), as the previous token was. As with any
+  browser-held bearer token, XSS is the main threat; the strict CSP
+  (`script-src 'self'`) is the mitigation.
+- **No role from the client**: invitation metadata, request bodies and token
+  claims are never read for authorization; `auth_user_id` comes only from the
+  verified token.
+- **Logging**: tokens, passwords and Supabase errors' raw text are never logged.
+
+## Supabase project configuration (manual, before go-live)
+
+1. **Authentication → URL configuration**: Site URL = the admin site
+   (e.g. `https://<host>/admin`); allowed redirect URLs must include
+   `https://<host>/admin/setup-password` and `https://<host>/admin/reset-password`
+   (and `http://localhost:5173/admin/*` for local development).
+2. **Email**: enable the Email provider; disable public sign-ups (users are only
+   invited); configure custom SMTP and the Invite / Reset password templates.
+3. **Password policy and rate limits**: set the minimum password length (the app
+   asks for at least 8) and review the auth rate limits.
+4. **Environment variables**
+   - Backend (Vercel functions / server): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
+     (server-side only) and **`APP_BASE_URL` (required)**. `JWT_SECRET`, `SMTP_*`,
+     `EMAIL_FROM` and `ADMIN_SETUP_URL_BASE` are not used.
+   - Admin build (Vercel build env): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+   - Local admin development: `admin/.env.local` with
+     `VITE_SUPABASE_URL=<project URL>` and `VITE_SUPABASE_ANON_KEY=<browser-safe anon key>`
+     (copy `admin/.env.example`; never committed).
+   - **`APP_BASE_URL`** is the environment's public admin address: the site origin
+     only (no path). It is environment-specific: local
+     `APP_BASE_URL=http://localhost:5173`; stage
+     `APP_BASE_URL=https://emlynk-wa-bot-git-stage-emlynk-pixel.vercel.app`. The
+     server refuses to start without a valid http(s) value. The invitation redirect
+     is always `${APP_BASE_URL}/admin/setup-password`, never taken from a request;
+     if the value is unusable the invite endpoint answers 503 `INVITE_NOT_CONFIGURED`
+     and sends nothing. There is no fallback to the Supabase Site URL. Password
+     recovery is requested by the browser, which uses its own origin plus
+     `/admin/reset-password` (the same site when configured correctly).
+   - Outgoing auth email uses the SMTP server set in the Supabase dashboard
+     (Authentication > SMTP Settings), not application settings.
+5. CSP: `connect-src` already allows `https://*.supabase.co`
+   (`src/createApp.js`, `vercel.json`); a custom Supabase domain must be added to both.
+
+## Database deployment
+
+Two migrations make the restructure:
+
+- `20261008120000_rename_candidate_user_tables`: `users` → `candidate`,
+  `admins` → `"user"`, adds a nullable `auth_user_id`, and repoints the Sheet
+  Sync trigger and functions to `candidate`.
+- `20261009120000_supabase_auth_cutover`: drops `admin_invitations`,
+  `admin_password_resets` and `password_hash`; makes `auth_user_id` a required,
+  unique UUID with a foreign key to `auth.users` (Supabase only). It **refuses to
+  run** while any `"user"` row has no `auth_user_id`, and never invents one.
+
+### A. New or empty database
+
+1. `npx prisma migrate deploy` (with no staff rows the cutover's check passes).
+2. `npm run user:create -- --name "…" --email … --role ADMIN` for the first
+   ADMIN (password at the hidden prompt).
+3. Everyone else is invited from the app (*Invite User*).
+
+### B. Existing database from before the restructure
+
+The application code from before the restructure stops working once step 1
+runs, so deploy the new code with it.
+
+1. Apply the rename migration only. `prisma migrate deploy` cannot stop before
+   the cutover, so run its SQL directly:
+   `npx prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20261008120000_rename_candidate_user_tables/migration.sql`
+2. Record it as applied:
+   `npx prisma migrate resolve --applied 20261008120000_rename_candidate_user_tables`
+3. Create a Supabase Auth identity for every existing staff row, with the same
+   email (Supabase dashboard, Authentication > Users > Add user, auto-confirm).
+   Old password hashes are not migrated; each person sets a new password (or
+   uses *Forgot password*).
+4. Link the existing rows (IDs, roles, statuses and audit history are kept).
+   `npm run user:create` cannot do this in this in-between state: the generated
+   Prisma client already expects `auth_user_id` to be required, so reading an
+   unlinked row fails (`P2032`). Use one guarded SQL transaction instead:
+   check that every staff email matches exactly one `auth.users` email
+   (case-insensitive), then
+   `UPDATE "user" u SET auth_user_id = a.id::text FROM auth.users a WHERE lower(a.email) = lower(u.email) AND u.auth_user_id IS NULL`,
+   and commit only if the number of updated rows equals the number of staff
+   rows. Never delete a staff row: `audit_logs` and `candidate_call_logs`
+   reference it.
+5. `npx prisma migrate deploy` applies the cutover.
+
+The shared test database was migrated this way.
+
+### Prisma tooling limitation (P4002)
+
+`public."user".auth_user_id` has a foreign key into Supabase's `auth` schema,
+which is not part of the Prisma datasource. Commands that introspect the live
+Supabase database (`prisma db pull`, `prisma migrate diff --from-schema-datasource`
+or `--from-url`) therefore fail with `P4002` ("Cross schema references are only
+allowed when the target schema is listed in the schemas property").
+
+This is accepted. Do **not** add `auth` to the Prisma `schemas` or model
+`auth.users`: Prisma would then treat Supabase-managed tables as
+application-owned, and migrations could try to create, change or drop them.
+Never run `prisma migrate dev` against the shared database.
+
+Still supported: `prisma migrate deploy`, `prisma migrate status`,
+`prisma validate`, `prisma generate` and all application queries. To compare
+the migrations with `schema.prisma`, diff against a throwaway local database
+(it has no `auth` schema, so the cutover skips the foreign key):
+`npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url <local postgres URL>`.
+To check the live database, use `prisma migrate status` plus read-only catalog
+queries.

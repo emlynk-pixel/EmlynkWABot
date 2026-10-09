@@ -11,6 +11,8 @@ export const DOCUMENT_STORAGE_TYPES = Object.freeze({
     NIC: { folder: "nic", baseName: "nic" },
     SKILL_VIDEO: { folder: "skill-video", baseName: "skill_video" },
     SCAN: { folder: "scan", baseName: "scan" },
+    // Visa submission stage, admin upload only.
+    VISA_SUBMISSION: { folder: "visa-submission", baseName: "visa_submission" },
 });
 
 // The extension always comes from the validated MIME type, never from the

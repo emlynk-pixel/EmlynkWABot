@@ -1,22 +1,21 @@
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import jwt from "jsonwebtoken";
 
 import { createAdminRouter } from "../src/routes/admin.js";
-import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.js";
+import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js";
 import { REVIEW_ACTION, REMOVED_STATUS } from "../src/services/adminReviewActionService.js";
 import { findPendingDuplicate } from "../src/services/documentChecksumService.js";
 import { sha256Hex } from "../src/utils/fileChecksum.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
+import { authFailureStatus, fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 Object.assign(process.env, {
     SUPABASE_URL: "http://127.0.0.1:1",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
 
@@ -52,7 +51,6 @@ function setup({ temporaryData = [pendingRow(), pendingRow({ temporaryId: OTHER,
     return { db, bucket };
 }
 
-const tokenFor = (adminId) => jwt.sign({ adminId }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
 let server;
 let base;
 let current;
@@ -63,7 +61,7 @@ before(async () => {
 });
 after(() => server.close());
 function use(fixture) {
-    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveAdmin({ db: fixture.db.client }) }) };
+    current = { ...fixture, router: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: fixture.db.client, bucket: fixture.bucket, requireAdmin: createRequireActiveUser({ db: fixture.db.client, verifyAccessToken: fakeVerifyAccessToken }) }) };
     return fixture;
 }
 async function call(method, path, { body, token = tokenFor("admin-active") } = {}) {
@@ -188,7 +186,7 @@ describe("POST /review/:reviewId/remove", () => {
     test("only an ACTIVE admin can remove; the admin is taken from the token", async () => {
         const { db } = use(setup());
         for (const token of [null, "not-a-token", tokenFor("admin-inactive")]) {
-            assert.equal((await remove(`pending-${TEMP}`, { body: { reason: "x" }, token })).status, 401);
+            assert.equal((await remove(`pending-${TEMP}`, { body: { reason: "x" }, token })).status, authFailureStatus(token));
         }
         assert.equal(db.tables.temporaryData.length, 2);
         await remove(`pending-${TEMP}`, { body: { reason: "x", adminId: "admin-other" } });
