@@ -44,12 +44,14 @@ Google Sheet (`Emlynk Candidate Operational Mirror`)
 
 ### Core Operating Principles
 
+> **Current synchronization model:** there is **no real-time synchronization**. Database changes are only recorded in `sheet_sync_queue`; the Sheet is written by a full reconciliation of the current database at **06:00, 12:00 and 18:00 Asia/Colombo** (one Cloud Scheduler job, Section 12) and by an ADMIN's **Sync Now**. Statements below about incremental / near-real-time sync, queue claims and per-item retries describe the original design and are kept as history.
+
 1. **Database is the single source of truth:** PostgreSQL (Supabase) is authoritative for all candidate data, stages, and document statuses.
 2. **Google Sheet is an operational mirror / fallback view:** The Sheet is purely a downstream representation for human viewing and operational fallback.
-3. **Strictly one-way synchronization:** Changes in the Google Sheet are **NEVER** read back or synchronized into PostgreSQL. Any manual edit made inside the Sheet will be overwritten by the next incremental sync or daily reconciliation.
-4. **Asynchronous background processing:** Candidate registrations, document uploads, review actions, and stage updates trigger database triggers that enqueue sync events atomically. The background worker processes them asynchronously; neither candidate users nor admin users wait for Google API responses.
+3. **Strictly one-way synchronization:** Changes in the Google Sheet are **NEVER** read back or synchronized into PostgreSQL. Any manual edit made inside the Sheet will be overwritten by the next scheduled or manual reconciliation.
+4. **Asynchronous background processing:** Candidate registrations, document uploads, review actions, and stage updates trigger database triggers that record a queue row atomically. Nothing is written to the Sheet at that moment; the next scheduled (06:00, 12:00, 18:00 Asia/Colombo) or manual reconciliation mirrors the change. Neither candidate users nor admin users wait for Google API responses.
 5. **Decoupled system availability:** A Google Cloud outage, Sheets API rate limit, quota exhaustion, or network failure **CANNOT** cause a candidate database transaction to fail or roll back.
-6. **Reconciliation as a repair mechanism:** Admin "Sync Now" and automated Cloud Scheduler reconciliation perform full snapshot-to-sheet drift detection, repairing missing, stale, or manually altered rows. Normal candidate updates flow through the near-real-time incremental outbox.
+6. **Reconciliation as a repair mechanism:** Admin "Sync Now" and automated Cloud Scheduler reconciliation perform full snapshot-to-sheet drift detection, repairing missing, stale, or manually altered rows. They are the only way the Sheet is written; there is no real-time incremental sync.
 
 ---
 
@@ -303,6 +305,8 @@ Reconciliation provides a full-state repair mechanism to audit and heal drift be
 
 ### Distinctions Across Sync Modes
 
+> The "Incremental Auto-Sync" column describes the original real-time path, which the worker no longer runs. Only Scheduled Reconciliation (06:00, 12:00, 18:00 Asia/Colombo) and Sync Now write to the Sheet.
+
 | Characteristic | Incremental Auto-Sync | Scheduled Reconciliation | Admin "Sync Now" |
 | :--- | :--- | :--- | :--- |
 | **Trigger Mechanism** | Event-driven (DB triggers) | Google Cloud Scheduler | Admin UI button click |
@@ -497,11 +501,17 @@ POST /tasks/reconcile
    - `email_verified === true`.
 3. **Durable Request Enqueue:** A valid request records a `RECONCILE` run with trigger `SCHEDULER` and responds immediately with `202 Accepted`. The worker loop processes the reconciliation asynchronously.
 
-> [!WARNING]
-> **Final production reconciliation schedule is not yet locked/configured.**
-> During release staging, an automated testing schedule may run periodically (e.g., every 5 minutes in dry-run mode). The production schedule is intended to run once daily during off-peak hours (e.g., `0 2 * * *` UTC = 07:30 Sri Lanka time).
-> 
-> The scheduler is **NOT** responsible for normal, near-real-time candidate updates; those are handled continuously by the incremental outbox queue.
+### Schedule
+
+| Setting | Value |
+| :--- | :--- |
+| Job | `emlynk-sheet-sync-reconcile` (one Cloud Scheduler HTTP job) |
+| Schedule | `0 6,12,18 * * *`: 06:00, 12:00 and 18:00 |
+| Time zone | `Asia/Colombo` (the project's operational time zone, `src/utils/businessDay.js`; applied by Cloud Scheduler, so the server's time zone never matters) |
+| Target | `POST <worker URL>/tasks/reconcile` |
+| Authentication | OIDC token of `emlynk-sheet-sync-scheduler@…` (`roles/run.invoker` on the worker only); audience = the worker URL (`SHEET_SYNC_SCHEDULER_AUDIENCE`); invoker e-mail = `SHEET_SYNC_SCHEDULER_INVOKER` |
+
+These values are declared once in `SHEET_SYNC_SCHEDULE` (`src/config/sheetSync.js`); the exact `gcloud` commands are in `GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`, Section 24.9. The scheduled runs (and Sync Now) are the **only** automatic Sheet writes: there is no real-time sync. Each run mirrors the database as it is at that moment, so several changes between runs appear once, in their latest state.
 
 ---
 
@@ -524,7 +534,7 @@ POST /tasks/reconcile
 
 > **A Google Sheet outage or API failure MUST NEVER cause an otherwise valid candidate database write to fail.**
 > 
-> Because database change capture occurs entirely via local PostgreSQL triggers writing to `sheet_sync_queue`, the candidate registration or update transaction succeeds unconditionally. If Google is down, queue rows accumulate safely and drain automatically once connectivity resumes.
+> Because database change capture occurs entirely via local PostgreSQL triggers writing to `sheet_sync_queue`, the candidate registration or update transaction succeeds unconditionally. If Google is down, the run fails with a code and the next scheduled (or manual) run mirrors the then-current database.
 
 ---
 
@@ -565,8 +575,8 @@ The following verification steps have been **confirmed and completed**:
 The following release verification steps have **not yet been confirmed** in the current environment:
 
 - [ ] **Full Multi-Candidate Reconciliation:** Execution of the first full live reconciliation with writes enabled across all 6 database candidates.
-- [ ] **Automatic End-to-End Candidate Update:** Verification that creating or editing a new candidate in the live application automatically propagates to the Sheet within one polling interval.
-- [ ] **Production Cloud Scheduler Lock:** Cloud Scheduler recurring daily reconciliation job created, tested with OIDC authentication, and locked into production.
+- [ ] **Scheduled End-to-End Candidate Update:** Verification that a candidate created or edited in the live application appears in the Sheet after the next scheduled run (06:00, 12:00 or 18:00 Asia/Colombo) or Sync Now, and not before.
+- [ ] **Production Cloud Scheduler Lock:** Cloud Scheduler job `emlynk-sheet-sync-reconcile` (`0 6,12,18 * * *`, `Asia/Colombo`) created, tested with OIDC authentication, and locked into production.
 
 ---
 
@@ -746,7 +756,7 @@ Use this checklist to track the final completion status for production release:
 - [ ] **Full multi-candidate live reconciliation completed successfully**
 - [ ] **Expected candidate count present in operational Google Sheet**
 - [ ] **Column `AN` IDs unique across all rows in the operational Sheet**
-- [ ] **Normal candidate update automatically synchronizes to Sheet in near-real-time**
+- [ ] **Normal candidate update reaches the Sheet at the next scheduled run (06:00 / 12:00 / 18:00 Asia/Colombo) or Sync Now, not in real time**
 - [ ] **Zero duplicate rows generated after repeated reconciliations**
 - [ ] **Deleted/inactive candidate row behavior verified live**
 - [ ] **Production Cloud Scheduler job configured, tested, and verified**

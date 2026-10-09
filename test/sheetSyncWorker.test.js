@@ -1,10 +1,12 @@
-// Google Sheet mirror, Phases 3-4 end to end (locally): real PostgreSQL
-// (PGlite, every migration incl. the outbox triggers), the real candidate
-// service, store, reader, engine, adapter and worker. Only Google is replaced,
+// Google Sheet mirror end to end (locally): real PostgreSQL (PGlite, every
+// migration incl. the outbox triggers), the real candidate service, store,
+// reader, engine, adapter and worker. The Sheet is synchronized only by
+// RECONCILE runs (scheduled or Sync Now), never in real time. Only Google is replaced,
 // by an in-memory Sheet (test/helpers/fakeGoogleSheet.js): no test here can
 // reach Google or the real operational Sheet.
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 
 import { createTestDatabase } from "./helpers/pgliteDatabase.js";
 import { createFakeGoogleSheet, googleError } from "./helpers/fakeGoogleSheet.js";
@@ -81,113 +83,229 @@ const queueRows = () => prisma.sheetSyncQueue.findMany({ orderBy: { createdAt: "
 const state = () => prisma.sheetSyncState.findUnique({ where: { stateId: "sheet-sync" } });
 const rowFor = (sheet, uniqueId) => sheet.dataRows().filter((r) => r[SYSTEM_CANDIDATE_ID_INDEX] === uniqueId);
 
-describe("incremental sync", () => {
-    test("registration -> durable queue row -> worker appends exactly one row and completes the item", async () => {
-        const { sheet, worker } = setup();
-        const { uniqueId } = await register();
-        assert.equal((await queueRows())[0].status, "PENDING");
+// A durable RECONCILE run, as Cloud Scheduler (SCHEDULER) or Sync Now (ADMIN)
+// records it, then one worker tick that executes it. Returns the finished run.
+async function sync(store, worker, triggerSource = "SCHEDULER") {
+    const { run } = await store.requestRun({ kind: "RECONCILE", triggerSource });
+    await worker.tick();
+    return store.getRun(run.runId);
+}
 
+async function addDocument(passportId, documentType, { receivedDate = new Date(), variant = null, status = "VERIFIED" } = {}) {
+    return prisma.document.create({
+        data: {
+            documentId: randomUUID(), passportId, documentType, originalFilename: "file.pdf", storedFilename: "file.pdf",
+            storagePath: `clients/${passportId}/${randomUUID()}.pdf`, receivedDate, processingStatus: "STORED", verificationStatus: status, documentVariant: variant,
+        },
+    });
+}
+
+describe("no real-time synchronization: database changes wait for a scheduled or manual run", () => {
+    test("candidate registration and detail update: queued, never written to the Sheet by the worker loop", async () => {
+        const { sheet, worker } = setup();
+        const { passportId } = await register();
+        await prisma.candidate.update({ where: { passportId }, data: { firstName: "Changed" } });
+        for (let i = 0; i < 3; i++) await worker.tick();
+        assert.deepEqual(sheet.calls.filter((c) => c.method !== "get"), [], "no Sheet write");
+        assert.deepEqual(sheet.writes(), []);
+        const rows = await queueRows();
+        assert.deepEqual(rows.map((r) => r.status), ["PENDING"], "one coalesced row waits for the next run");
+    });
+
+    test("document change: queued, no immediate Sheet write", async () => {
+        const { sheet, worker } = setup();
+        const { passportId } = await register();
+        await prisma.sheetSyncQueue.deleteMany();
+        await addDocument(passportId, "MEDICAL");
         await worker.tick();
+        assert.deepEqual(sheet.writes(), []);
+        assert.equal((await queueRows())[0].status, "PENDING");
+    });
+
+    test("stage change: queued, no immediate Sheet write", async () => {
+        const { sheet, worker } = setup();
+        const { passportId } = await register();
+        await prisma.sheetSyncQueue.deleteMany();
+        await updateStage({ db: prisma, passportId, stage: "IVS_INTERVIEW", values: parseStageBody({ completed: true }, "IVS_INTERVIEW").values });
+        await worker.tick();
+        assert.deepEqual(sheet.writes(), []);
+        assert.equal((await queueRows())[0].status, "PENDING");
+    });
+
+    test("deleting a candidate writes nothing until the next run", async () => {
+        const { sheet, store, worker } = setup();
+        const { passportId } = await register();
+        await sync(store, worker);
+        const writes = sheet.writes().length;
+        await prisma.candidate.delete({ where: { passportId } });
+        await worker.tick();
+        assert.equal(sheet.writes().length, writes);
+    });
+});
+
+describe("scheduled and manual reconciliation", () => {
+    test("a scheduled run mirrors the current database and settles the queue rows it covered", async () => {
+        const { sheet, store, worker } = setup();
+        const { uniqueId } = await register();
+        const run = await sync(store, worker, "SCHEDULER");
+        assert.deepEqual([run.status, run.triggerSource, run.dryRun, run.summary.appended, run.summary.queueSettled], ["SUCCEEDED", "SCHEDULER", false, 1, 1]);
         const rows = rowFor(sheet, uniqueId);
         assert.equal(rows.length, 1);
         assert.equal(rows[0][B], "N1023757");
         assert.equal(rows[0][AL], "ACTIVE");
         assert.match(rows[0][AN], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
         const [item] = await queueRows();
-        assert.deepEqual([item.status, item.lastResult], ["COMPLETED", "APPENDED"]);
+        assert.deepEqual([item.status, item.lastResult], ["COMPLETED", "RECONCILED"]);
         const appendCall = sheet.writes().find((c) => c.method === "append");
         assert.deepEqual([appendCall.range, appendCall.insertDataOption, appendCall.valueInputOption], [`'${TAB}'!A:AO`, "INSERT_ROWS", "RAW"]);
         assert.ok((await state()).lastSyncSuccessAt);
     });
 
-    test("multiple rapid updates are coalesced: one queue row, one Sheet write with the latest state", async () => {
-        const { sheet, worker } = setup();
+    test("manual Sync Now (ADMIN) performs the same reconciliation immediately, from the current database", async () => {
+        const { sheet, store, worker } = setup();
+        const { passportId, uniqueId } = await register();
+        await sync(store, worker, "SCHEDULER");
+        await prisma.candidate.update({ where: { passportId }, data: { firstName: "Latest" } });
+        const run = await sync(store, worker, "ADMIN");
+        assert.deepEqual([run.status, run.triggerSource, run.summary.updated], ["SUCCEEDED", "ADMIN", 1]);
+        assert.equal(rowFor(sheet, uniqueId)[0][C], "Latest");
+        assert.equal(await prisma.sheetSyncQueue.count({ where: { status: "PENDING" } }), 0);
+    });
+
+    test("several changes between runs: one write per run, with the latest state only", async () => {
+        const { sheet, store, worker } = setup();
         const { passportId, uniqueId } = await register();
         for (const stage of ["IVS_INTERVIEW", "VISA_APPROVAL", "FINALIZING_JOB"]) {
             await updateStage({ db: prisma, passportId, stage, values: parseStageBody({ completed: true }, stage).values });
         }
-        assert.equal((await queueRows()).length, 1);
-        await worker.tick();
+        await prisma.candidate.update({ where: { passportId }, data: { firstName: "First" } });
+        await prisma.candidate.update({ where: { passportId }, data: { firstName: "Final" } });
+        assert.equal((await queueRows()).length, 1, "coalesced");
+        await sync(store, worker);
         assert.equal(sheet.writes().length, 1);
         const [row] = rowFor(sheet, uniqueId);
+        assert.equal(row[C], "Final");
         assert.deepEqual([row[col("ivsInterviewStatus")], row[col("visaApprovalStatus")], row[col("finalizingJobStatus")]], ["COMPLETED", "COMPLETED", "COMPLETED"]);
+    });
+
+    test("idempotent: running again (scheduled or manual) with no change writes nothing and keeps LAST MIRRORED AT", async () => {
+        const { sheet, store, worker } = setup();
+        const { uniqueId } = await register();
+        await sync(store, worker, "SCHEDULER");
+        const mirroredAt = rowFor(sheet, uniqueId)[0][AN];
+        const writes = sheet.writes().length;
+        const manual = await sync(store, worker, "ADMIN");
+        const scheduled = await sync(store, worker, "SCHEDULER");
+        assert.deepEqual([manual.summary.unchanged, scheduled.summary.unchanged], [1, 1]);
+        assert.equal(sheet.writes().length, writes);
+        assert.equal(rowFor(sheet, uniqueId)[0][AN], mirroredAt);
+        assert.equal(rowFor(sheet, uniqueId).length, 1, "never a duplicate row");
+    });
+
+    test("a change made while a run is in progress is not lost: its queue row stays PENDING for the next run", async () => {
+        const { store, newWorker } = setup();
+        const { passportId } = await register();
+        // Right after the run has read the open queue rows, a stage changes.
+        const racing = newWorker({
+            ...store,
+            openQueueItems: async (options) => {
+                const rows = await store.openQueueItems(options);
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                await updateStage({ db: prisma, passportId, stage: "VISA_APPROVAL", values: parseStageBody({ completed: true }, "VISA_APPROVAL").values });
+                return rows;
+            },
+        });
+        const { run } = await store.requestRun({ kind: "RECONCILE", triggerSource: "SCHEDULER" });
+        await racing.tick();
+        assert.equal((await store.getRun(run.runId)).summary.queueSettled, 0);
+        assert.equal(await prisma.sheetSyncQueue.count({ where: { status: "PENDING" } }), 1);
     });
 
     test("an existing candidate row is updated in place (found by AO, not by position or passport number)", async () => {
         const { uniqueId } = await register();
-        // The candidate's row sits below an unrelated row, with stale data.
         const stale = Array(SHEET_COLUMN_COUNT).fill("");
         stale[C] = "OLD NAME";
         stale[SYSTEM_CANDIDATE_ID_INDEX] = uniqueId;
         const other = Array(SHEET_COLUMN_COUNT).fill("x");
         other[SYSTEM_CANDIDATE_ID_INDEX] = "9999";
-        const { sheet, worker } = setup({ rows: [other, stale] });
-        await worker.tick();
-        assert.deepEqual(sheet.writes().map((c) => [c.method, c.ranges]), [["batchUpdate", [`'${TAB}'!A3:AO3`]]]);
+        other[AL] = "ACTIVE";
+        const { sheet, store, worker } = setup({ rows: [other, stale] });
+        const run = await sync(store, worker);
+        assert.equal(run.summary.updated, 1);
         assert.equal(sheet.row(3)[C], "Anusha");
-        assert.deepEqual(sheet.row(2), other, "the unrelated row is untouched");
+        assert.deepEqual(sheet.row(2), other, "the unrelated row is untouched (the deletion guard keeps it)");
         assert.equal(sheet.dataRows().length, 2, "no row was appended");
-    });
-
-    test("an unchanged row is not rewritten and keeps its LAST MIRRORED AT", async () => {
-        const { sheet, worker } = setup();
-        const { passportId, uniqueId } = await register();
-        await worker.tick();
-        const firstMirroredAt = rowFor(sheet, uniqueId)[0][AN];
-        // A change that does not alter any mirrored cell (job ID is not mirrored).
-        await updateStage({ db: prisma, passportId, stage: "TEST_DETAILS", values: parseStageBody({ jobId: "J-77" }, "TEST_DETAILS").values });
-        await worker.tick();
-        assert.equal(sheet.writes().length, 1, "only the first append wrote");
-        assert.equal(rowFor(sheet, uniqueId)[0][AN], firstMirroredAt);
-        assert.equal((await queueRows()).at(-1).lastResult, "UNCHANGED");
-    });
-
-    test("syncing the same candidate again (e.g. after a crash before completion) never appends a duplicate row", async () => {
-        const { sheet, worker, advance } = setup();
-        const { uniqueId } = await register();
-        // Claim the item, then "crash" (never settle it).
-        const store = createSheetSyncStore({ db: prisma });
-        await store.claimQueueBatch({ owner: "crashed-worker", now: new Date(), leaseMs: 1_000, limit: 10 });
-        await sheet.client.spreadsheets.values.append({ range: `'${TAB}'!A:AO`, insertDataOption: "INSERT_ROWS", valueInputOption: "RAW", requestBody: { values: [Object.assign(Array(SHEET_COLUMN_COUNT).fill(""), { [SYSTEM_CANDIDATE_ID_INDEX]: uniqueId })] } });
-        advance(WORKER_TIMINGS.queueLeaseMs + 5_000);
-        await worker.tick(); // reclaims the expired lease
-        assert.equal(rowFor(sheet, uniqueId).length, 1);
-        assert.equal(rowFor(sheet, uniqueId)[0][C], "Anusha");
-        assert.equal((await queueRows())[0].status, "COMPLETED");
-    });
-
-    test("Google write succeeds, the process dies before completing the item: the reclaim finds the row, UNCHANGED, not APPENDED", async () => {
-        const { sheet, store, worker, newWorker, advance } = setup();
-        const { uniqueId } = await register();
-        // The process dies right after Google accepted the append: nothing is
-        // settled and the leases are never released.
-        const died = () => Promise.reject(new Error("process died"));
-        const crashed = newWorker({ ...store, completeQueueItem: died, retryQueueItem: died, failQueueItem: died, releaseWriterLease: async () => {} });
-        await assert.rejects(crashed.tick(), /process died/);
-        assert.equal(rowFor(sheet, uniqueId).length, 1);
-        assert.equal((await queueRows())[0].status, "PROCESSING");
-        const appendsBefore = sheet.writes().filter((c) => c.method === "append").length;
-
-        advance(Math.max(WORKER_TIMINGS.queueLeaseMs, WORKER_TIMINGS.writerLeaseMs) + 5_000);
-        await worker.tick(); // reclaims the expired lease
-        assert.equal(rowFor(sheet, uniqueId).length, 1);
-        assert.equal(sheet.writes().filter((c) => c.method === "append").length, appendsBefore);
-        const [item] = await queueRows();
-        assert.deepEqual([item.status, item.lastResult], ["COMPLETED", "UNCHANGED"]);
     });
 
     test("a blank AO cell identifies nobody: the candidate is appended and the blank row is untouched", async () => {
         const blank = Array(SHEET_COLUMN_COUNT).fill("");
         blank[B] = "N1023757"; // same passport number, but no AO
         blank[C] = "Manual entry";
-        const { sheet, worker } = setup({ rows: [blank] });
+        const { sheet, store, worker } = setup({ rows: [blank] });
         const { uniqueId } = await register();
-        await worker.tick();
+        await sync(store, worker);
         assert.deepEqual(sheet.row(2), blank);
         assert.equal(rowFor(sheet, uniqueId).length, 1);
     });
 
-    test("duplicate AO: hard data-integrity stop, no write at all, the duplicate rows untouched, the item kept", async () => {
+    test("a manual Sheet edit is overwritten from the database; nothing from the Sheet is written to the database", async () => {
+        const { sheet, store, worker } = setup();
+        const { passportId, uniqueId } = await register();
+        await sync(store, worker);
+        const before = await prisma.candidate.findUnique({ where: { passportId } });
+        const rowNumber = sheet.dataRows().findIndex((r) => r[SYSTEM_CANDIDATE_ID_INDEX] === uniqueId) + 2;
+        sheet.setCell(rowNumber, C, "EDITED IN SHEET");
+        await sync(store, worker);
+        assert.equal(sheet.row(rowNumber)[C], "Anusha");
+        assert.deepEqual(await prisma.candidate.findUnique({ where: { passportId } }), before, "the database is unchanged");
+        assert.equal(await prisma.document.count({ where: { passportId } }), 0, "no document created or removed from Sheet content");
+    });
+});
+
+describe("failures: the database stays authoritative and unaffected", () => {
+    test("Google unavailable: registration still succeeds; the run fails with a code, the queue waits, the next run syncs", async () => {
+        const { sheet, store, worker } = setup();
+        sheet.failNext("*", googleError(503, { reason: "backendError", googleStatus: "UNAVAILABLE" }), 100);
+        const { uniqueId } = await register();
+        assert.ok(await prisma.candidate.findUnique({ where: { uniqueId } }), "the candidate is in the database");
+
+        const failed = await sync(store, worker);
+        assert.deepEqual([failed.status, failed.errorClass, failed.errorCode], ["FAILED", "GOOGLE_UNAVAILABLE", "503/UNAVAILABLE/backendError"]);
+        assert.equal((await queueRows())[0].status, "PENDING");
+
+        sheet.clearFailures();
+        const next = await sync(store, worker);
+        assert.equal(next.status, "SUCCEEDED");
+        assert.equal(rowFor(sheet, uniqueId).length, 1);
+        assert.equal((await queueRows())[0].status, "COMPLETED");
+    });
+
+    test("permanent schema error: CONFIG_ERROR, no writes; the next run after the fix resumes", async () => {
+        const header = [...SHEET_HEADERS];
+        header[5] = "RENAMED";
+        const { sheet, store, worker } = setup({ header });
+        const { uniqueId } = await register();
+        const failed = await sync(store, worker);
+        assert.deepEqual([failed.status, failed.errorClass, failed.errorCode], ["FAILED", "SCHEMA_INVALID", "MISSING:BIRTHDAY"]);
+        assert.deepEqual(sheet.writes(), []);
+        assert.equal((await state()).integrationState, "CONFIG_ERROR");
+
+        sheet.setHeader(SHEET_HEADERS);
+        await sync(store, worker);
+        assert.equal((await state()).integrationState, "OK");
+        assert.equal(rowFor(sheet, uniqueId).length, 1);
+    });
+
+    test("access denied (403) is a configuration error", async () => {
+        const { sheet, store, worker } = setup();
+        sheet.failNext("*", googleError(403, { reason: "forbidden", googleStatus: "PERMISSION_DENIED" }), 1);
+        await register();
+        await sync(store, worker);
+        const s = await state();
+        assert.deepEqual([s.integrationState, s.lastErrorClass, s.lastErrorCode], ["CONFIG_ERROR", "ACCESS_DENIED", "403/PERMISSION_DENIED/forbidden"]);
+    });
+
+    test("duplicate AO: hard data-integrity stop, no write at all, the duplicate rows untouched, the queue kept", async () => {
         const { uniqueId } = await register();
         const dup = Array(SHEET_COLUMN_COUNT).fill("");
         dup[SYSTEM_CANDIDATE_ID_INDEX] = uniqueId;
@@ -195,163 +313,55 @@ describe("incremental sync", () => {
         dupA[C] = "copy A";
         const dupB = [...dup];
         dupB[C] = "copy B";
-        const { sheet, worker } = setup({ rows: [dupA, dupB] });
-        await worker.tick();
+        const { sheet, store, worker } = setup({ rows: [dupA, dupB] });
+        const run = await sync(store, worker);
+        assert.deepEqual([run.status, run.errorClass], ["FAILED", "DUPLICATE_CANDIDATE_ID"]);
         assert.deepEqual(sheet.writes(), []);
         assert.deepEqual([sheet.row(2), sheet.row(3)], [dupA, dupB]);
-        const [item] = await queueRows();
-        assert.deepEqual([item.status, item.attempts, item.lastErrorClass], ["PENDING", 0, "DUPLICATE_CANDIDATE_ID"]);
+        assert.equal((await queueRows())[0].status, "PENDING");
         assert.equal((await state()).integrationState, "DATA_INTEGRITY");
     });
 
-    test("deleted candidate: the row is kept, RECORD STATUS becomes DELETED / INACTIVE, other cells unchanged", async () => {
-        const { sheet, worker } = setup();
-        const { passportId, uniqueId } = await register();
-        await worker.tick();
-        const before = rowFor(sheet, uniqueId)[0];
-        await prisma.candidate.delete({ where: { passportId } });
-        await worker.tick();
-        const after = rowFor(sheet, uniqueId);
-        assert.equal(after.length, 1, "never deleted");
-        assert.equal(after[0][AL], "DELETED / INACTIVE");
-        for (let i = 0; i < SHEET_COLUMN_COUNT; i++) if (i !== AL && i !== AN) assert.equal(after[0][i], before[i]);
-        assert.equal((await queueRows()).at(-1).lastResult, "MARKED_INACTIVE");
-    });
-
-    test("an unknown unique ID without a delete hint changes nothing (NOT_IN_DATABASE)", async () => {
-        const row = Array(SHEET_COLUMN_COUNT).fill("v");
-        row[SYSTEM_CANDIDATE_ID_INDEX] = "7777";
-        const { sheet, worker } = setup({ rows: [row] });
-        await prisma.sheetSyncQueue.create({ data: { uniqueId: "7777" } });
-        await worker.tick();
-        assert.deepEqual(sheet.writes(), []);
-        assert.equal((await queueRows())[0].lastResult, "NOT_IN_DATABASE");
-    });
-});
-
-describe("failures: the database stays authoritative and unaffected", () => {
-    test("Google unavailable: registration still succeeds; the item retries with backoff and later syncs", async () => {
-        const { sheet, worker, advance } = setup();
-        sheet.failNext("*", googleError(503, { reason: "backendError", googleStatus: "UNAVAILABLE" }), 100);
-        const { uniqueId } = await register();
-        assert.ok(await prisma.candidate.findUnique({ where: { uniqueId } }), "the candidate is in the database");
-
-        await worker.tick();
-        let [item] = await queueRows();
-        assert.deepEqual([item.status, item.attempts, item.lastErrorClass, item.lastErrorCode], ["PENDING", 1, "GOOGLE_UNAVAILABLE", "503/UNAVAILABLE/backendError"]);
-        assert.ok(item.nextAttemptAt.getTime() > Date.now(), "not due again at once");
-
-        sheet.clearFailures();
-        await worker.tick();
-        assert.equal(rowFor(sheet, uniqueId).length, 0, "backoff respected: nothing before the retry is due");
-        advance(20 * 60_000);
-        await worker.tick();
-        [item] = await queueRows();
-        assert.equal(item.status, "COMPLETED");
-        assert.equal(rowFor(sheet, uniqueId).length, 1);
-    });
-
-    test("429 / 5xx / network: bounded exponential backoff, then dead letter (FAILED); no endless retries", async () => {
-        const { sheet, worker, advance, tuning } = setup({ env: { SHEET_SYNC_MAX_RETRIES: "2" } });
-        assert.equal(tuning.maxAttempts, 3);
+    test("SHEET_SYNC_ENABLED=false: runs are dry runs, nothing is written and the queue stays pending", async () => {
+        const { sheet, store, worker } = setup({ enabled: false });
         await register();
-        const errors = [googleError(429, { reason: "rateLimitExceeded" }), googleError(500), Object.assign(new Error("socket hang up"), { code: "ECONNRESET" })];
-        const delays = [];
-        for (const error of errors) {
-            sheet.failNext("*", error, 1);
-            const before = Date.now();
-            await worker.tick();
-            const [item] = await queueRows();
-            if (item.status === "PENDING") delays.push(item.nextAttemptAt.getTime() - before);
-            advance(60 * 60_000);
-        }
-        const [item] = await queueRows();
-        assert.deepEqual([item.status, item.attempts, item.lastErrorClass], ["FAILED", 3, "GOOGLE_UNAVAILABLE"]);
-        assert.equal(delays.length, 2);
-        assert.ok(delays[1] > delays[0] * 2, "exponential growth");
-        const calls = sheet.calls.length;
-        await worker.tick();
-        assert.equal(sheet.calls.length, calls, "a dead-lettered item is not retried");
-        assert.equal((await prisma.sheetSyncQueue.count({ where: { status: "FAILED" } })), 1);
-    });
-
-    test("permanent schema error: CONFIG_ERROR, no writes, no attempts used, no retry loop; resumes once fixed", async () => {
-        const header = [...SHEET_HEADERS];
-        header[5] = "RENAMED";
-        const { sheet, worker, advance } = setup({ header });
-        const { uniqueId } = await register();
-        await worker.tick();
-        assert.deepEqual(sheet.writes(), []);
-        let [item] = await queueRows();
-        assert.deepEqual([item.status, item.attempts, item.lastErrorClass, item.lastErrorCode], ["PENDING", 0, "SCHEMA_INVALID", "MISSING:BIRTHDAY"]);
-        assert.equal((await state()).integrationState, "CONFIG_ERROR");
-
-        const calls = sheet.calls.length;
-        await worker.tick();
-        await worker.tick();
-        assert.equal(sheet.calls.length, calls, "halted: Google is not called again before the re-check interval");
-
-        sheet.setHeader(SHEET_HEADERS);
-        advance(WORKER_TIMINGS.configRecheckMs + 1_000);
-        await worker.tick();
-        assert.equal((await state()).integrationState, "OK");
-        [item] = await queueRows();
-        assert.equal(item.status, "COMPLETED");
-        assert.equal(rowFor(sheet, uniqueId).length, 1);
-    });
-
-    test("access denied (403) is a configuration error, never retried as transient", async () => {
-        const { sheet, worker } = setup();
-        sheet.failNext("*", googleError(403, { reason: "forbidden", googleStatus: "PERMISSION_DENIED" }), 1);
-        await register();
-        await worker.tick();
-        const s = await state();
-        assert.deepEqual([s.integrationState, s.lastErrorClass, s.lastErrorCode], ["CONFIG_ERROR", "ACCESS_DENIED", "403/PERMISSION_DENIED/forbidden"]);
-        assert.equal((await queueRows())[0].attempts, 0);
-    });
-
-    test("SHEET_SYNC_ENABLED=false: the worker never writes and leaves the queue pending", async () => {
-        const { sheet, worker } = setup({ enabled: false });
-        await register();
-        await worker.tick();
+        const run = await sync(store, worker);
+        assert.deepEqual([run.status, run.dryRun, run.summary.appended], ["SUCCEEDED", true, 1]);
         assert.deepEqual(sheet.writes(), []);
         assert.equal((await queueRows())[0].status, "PENDING");
         assert.equal((await state()).writeGate, "DISABLED");
     });
 
-    test("first-write pilot: only the listed candidate is written; others wait untouched; reconciliation is a dry run", async () => {
+    test("first-write pilot: a run writes only the listed candidate; others are left untouched and stay queued", async () => {
         const first = await register();
         const second = await register(SECOND);
-        const { sheet, worker, store } = setup({ env: { SHEET_SYNC_PILOT_CANDIDATE_IDS: first.uniqueId } });
-        await worker.tick();
+        const orphan = Object.assign(Array(SHEET_COLUMN_COUNT).fill("kept"), { [AL]: "ACTIVE", [SYSTEM_CANDIDATE_ID_INDEX]: "0800" });
+        const { sheet, store, worker } = setup({ rows: [orphan], env: { SHEET_SYNC_PILOT_CANDIDATE_IDS: first.uniqueId, SHEET_SYNC_DELETION_GUARD_MAX: "100", SHEET_SYNC_DELETION_GUARD_FRACTION: "1" } });
+        const run = await sync(store, worker);
+        assert.deepEqual([run.status, run.dryRun, run.summary.appended, run.summary.outsideScope, run.summary.markedInactive], ["SUCCEEDED", false, 1, 1, 0]);
         assert.equal(rowFor(sheet, first.uniqueId).length, 1);
         assert.equal(rowFor(sheet, second.uniqueId).length, 0);
+        assert.equal(sheet.row(2)[AL], "ACTIVE", "a pilot run never marks rows inactive");
         const waiting = await prisma.sheetSyncQueue.findFirst({ where: { uniqueId: second.uniqueId } });
-        assert.deepEqual([waiting.status, waiting.attempts], ["PENDING", 0]);
-        const writes = sheet.writes().length;
-        const { run } = await store.requestRun({ kind: "RECONCILE", triggerSource: "ADMIN" });
-        await worker.tick();
-        const done = await store.getRun(run.runId);
-        assert.deepEqual([done.status, done.dryRun, done.summary.appended], ["SUCCEEDED", true, 1]);
-        assert.equal(sheet.writes().length, writes, "no write during the pilot reconciliation");
+        assert.equal(waiting.status, "PENDING");
     });
 
-    test("another process holding the writer lease: this worker writes nothing", async () => {
-        const { sheet, worker } = setup();
+    test("another process holding the writer lease: the run is skipped and nothing is written", async () => {
+        const { sheet, store, worker } = setup();
         await register();
         await prisma.sheetSyncState.update({ where: { stateId: "sheet-sync" }, data: { writerLeaseOwner: "other-process", writerLeaseExpiresAt: new Date(Date.now() + 60_000) } });
-        await worker.tick();
+        const run = await sync(store, worker);
+        assert.deepEqual([run.status, run.errorClass], ["SKIPPED", "WRITER_BUSY"]);
         assert.deepEqual(sheet.writes(), []);
         assert.equal((await queueRows())[0].status, "PENDING");
     });
 
     test("logs carry IDs, actions and codes only: no names, passport numbers, phone numbers or Google text", async () => {
-        const { sheet, worker, lines, advance } = setup();
+        const { sheet, store, worker, lines } = setup();
         sheet.failNext("*", googleError(503), 1);
         await register();
-        await worker.tick();
-        advance(60 * 60_000);
-        await worker.tick();
+        await sync(store, worker);
+        await sync(store, worker);
         const text = lines.join("\n");
         assert.ok(lines.length > 0);
         for (const line of lines) assert.doesNotThrow(() => JSON.parse(line));
@@ -369,8 +379,7 @@ describe("reconciliation and durable runs", () => {
         const { sheet, worker, store } = setup();
         const a = await register();
         const b = await register(SECOND);
-        await worker.tick();
-        await prisma.sheetSyncQueue.deleteMany();
+        await sync(store, worker);
         const aRow = sheet.dataRows().findIndex((r) => r[SYSTEM_CANDIDATE_ID_INDEX] === a.uniqueId) + 2;
         sheet.setCell(aRow, C, "EDITED BY HAND");
         const writesBefore = sheet.writes().length;
@@ -393,7 +402,7 @@ describe("reconciliation and durable runs", () => {
     test("no drift: a second reconciliation writes nothing", async () => {
         const { sheet, worker, store } = setup();
         await register();
-        await worker.tick();
+        await sync(store, worker);
         const writes = sheet.writes().length;
         await reconcileRun(store);
         await worker.tick();
@@ -408,7 +417,7 @@ describe("reconciliation and durable runs", () => {
         // Enough identified rows that one orphan is within the 5% guard.
         const { sheet, worker, store } = setup({ rows });
         for (let i = 0; i < 20; i++) await register({ passportId: `N10000${String(i).padStart(2, "0")}`, nic: `1990000000${String(i).padStart(2, "0")}`, whatsappNumber: `+947700001${String(i).padStart(2, "0")}` });
-        await worker.tick();
+        await sync(store, worker); // the 20 candidates are in the Sheet first
         const runId = await reconcileRun(store);
         await worker.tick();
         const run = await store.getRun(runId);
@@ -422,7 +431,7 @@ describe("reconciliation and durable runs", () => {
         const orphans = ["0601", "0602", "0603"].map((id) => Object.assign(Array(SHEET_COLUMN_COUNT).fill("kept"), { [AL]: "ACTIVE", [SYSTEM_CANDIDATE_ID_INDEX]: id }));
         const { sheet, worker, store, lines } = setup({ rows: orphans.map((r) => [...r]) });
         await register();
-        await worker.tick();
+        await sync(store, worker);
         const runId = await reconcileRun(store);
         await worker.tick();
         const run = await store.getRun(runId);

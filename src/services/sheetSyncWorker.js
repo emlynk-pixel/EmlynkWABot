@@ -5,33 +5,36 @@
 // Cloud Run service emlynk-sheet-sync-worker). Never on Vercel, never in the
 // browser: closing the Admin Console changes nothing here.
 //
+// There is NO real-time synchronization. A database change only records a
+// queue row (sheet_sync_queue, by database triggers); the Sheet is written
+// only by a full RECONCILE run, requested by Cloud Scheduler at 06:00, 12:00
+// and 18:00 Asia/Colombo (POST /tasks/reconcile, SHEET_SYNC_SCHEDULE) or by
+// an ADMIN's Sync Now. Each run mirrors the CURRENT database, so several
+// changes between runs end up as the latest state, once.
+//
 // One sequential loop per process. Each tick:
 //   1. heartbeat: write gate / configured / target hint into sheet_sync_state
 //      (the Admin status page reads it from there);
 //   2. at most one durable run (sheet_sync_runs): TEST_CONNECTION (the
 //      read-only health check) or RECONCILE (full reconciliation; a dry run
-//      while SHEET_SYNC_ENABLED is off);
-//   3. one incremental batch from sheet_sync_queue, only while writes are
-//      enabled and the integration is not halted (during the first-write
-//      pilot, SHEET_SYNC_PILOT_CANDIDATE_IDS, only those candidates, and
-//      reconciliations are dry runs);
-//   4. now and then: prune old completed queue rows.
+//      while SHEET_SYNC_ENABLED is off; during the first-write pilot,
+//      SHEET_SYNC_PILOT_CANDIDATE_IDS, it writes only those candidates).
+//      A successful write reconciliation settles the queue rows it covered;
+//   3. now and then: prune old completed queue rows.
 // Google writes happen only while holding the writer lease (one writer per
 // Sheet, whatever the number of processes).
 //
-// Failures (classifySyncError):
+// Failures (classifySyncError) fail the run with a code:
 //   CONFIG          schema mismatch, access denied, sheet/tab not found, bad
-//                   request: the integration is HALTED (CONFIG_ERROR); queue
-//                   items go back to PENDING without using an attempt; the
-//                   worker re-checks the Sheet read-only every
-//                   CONFIG_RECHECK_MS and resumes when it is fine (or after a
-//                   successful Test Connection / reconciliation).
-//   DATA_INTEGRITY  duplicate candidate IDs in the _SYSTEM_CANDIDATE_ID column: halted the same way;
-//                   nothing is written until a person fixes the Sheet.
-//   RETRYABLE       429, 5xx, network: bounded exponential backoff, then the
-//   / other         item is dead-lettered (FAILED); reconciliation heals it.
+//                   request: the integration is HALTED (CONFIG_ERROR) until a
+//                   successful Test Connection or reconciliation.
+//   DATA_INTEGRITY  duplicate candidate IDs in the _SYSTEM_CANDIDATE_ID
+//                   column: halted the same way; nothing is written until a
+//                   person fixes the Sheet.
+//   RETRYABLE       429, 5xx, network: recorded; the next scheduled (or
+//   / other         manual) run tries again with the then-current database.
 // A candidate database write never depends on any of this: the triggers
-// only queue work, and this process runs elsewhere.
+// only record queue rows, and this process runs elsewhere.
 //
 // Logs: one JSON object per line, event names sheet_sync.*, with run IDs,
 // candidate unique IDs (opaque internal IDs), actions, counts and error
@@ -44,15 +47,12 @@ import { randomUUID } from "node:crypto";
 import { SheetLayoutChangedError, SheetSchemaMismatchError, SheetSyncDisabledError, SheetsAdapterError, SHEETS_ERROR_CLASS } from "./googleSheetsAdapter.js";
 import { SheetDuplicateCandidateIdError } from "./sheetSyncPlanner.js";
 import { IncompleteSnapshotError } from "./candidateAggregateReader.js";
-import { ENGINE_ACTION } from "./sheetSyncEngine.js";
-import { INTEGRATION_STATE, RUN_KIND, RUN_STATUS, backoffDelayMs } from "./sheetSyncStore.js";
+import { INTEGRATION_STATE, RUN_KIND, RUN_STATUS } from "./sheetSyncStore.js";
 
 export const WORKER_TIMINGS = Object.freeze({
-    queueLeaseMs: 2 * 60_000,
     runLeaseMs: 10 * 60_000,
     writerLeaseMs: 2 * 60_000,
     runMaxAttempts: 3,
-    configRecheckMs: 5 * 60_000,
     pruneEveryMs: 60 * 60_000,
     completedRetentionMs: 7 * 24 * 60 * 60_000,
 });
@@ -107,7 +107,6 @@ export function classifySyncError(error) {
     return { kind: "INTERNAL", errorClass: "INTERNAL", errorCode: typeof error?.code === "string" && /^[A-Z0-9_]{1,20}$/.test(error.code) ? error.code : null };
 }
 
-const HALTED = new Set([INTEGRATION_STATE.CONFIG_ERROR, INTEGRATION_STATE.DATA_INTEGRITY]);
 const haltState = (kind) => (kind === "DATA_INTEGRITY" ? INTEGRATION_STATE.DATA_INTEGRITY : INTEGRATION_STATE.CONFIG_ERROR);
 
 // store: createSheetSyncStore(...); engine: createSheetSyncEngine(...) (its
@@ -117,13 +116,11 @@ const haltState = (kind) => (kind === "DATA_INTEGRITY" ? INTEGRATION_STATE.DATA_
 export function createSheetSyncWorker({
     store, engine, healthCheck, config, tuning, targetHint = null,
     clock = () => new Date(), log = console, owner = `${os.hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`,
-    timings = WORKER_TIMINGS, random = Math.random,
+    timings = WORKER_TIMINGS,
 } = {}) {
     if (!store || !engine || !healthCheck || !config || !tuning) throw new Error("store, engine, healthCheck, config and tuning are required");
     const configured = Boolean(config.spreadsheetId && config.tabName);
-    let lastRecheckAt = 0;
     let lastPruneAt = 0;
-    let pausedLogged = false;
 
     const emit = (level, event, fields = {}) => {
         const line = JSON.stringify({ event, ...fields });
@@ -148,7 +145,6 @@ export function createSheetSyncWorker({
         const now = clock();
         if (classified.kind === "CONFIG" || classified.kind === "DATA_INTEGRITY") {
             await store.setIntegrationState({ state: haltState(classified.kind), errorClass: classified.errorClass, errorCode: classified.errorCode, now });
-            lastRecheckAt = now.getTime();
             emit("error", classified.kind === "CONFIG" ? "sheet_sync.config_error" : "sheet_sync.duplicate_key_detected", { errorClass: classified.errorClass, errorCode: classified.errorCode });
         } else if (classified.kind !== "DISABLED") {
             await store.recordTransientError({ errorClass: classified.errorClass, errorCode: classified.errorCode, now });
@@ -185,17 +181,25 @@ export function createSheetSyncWorker({
             await store.finishRun(run, { status: RUN_STATUS.FAILED, errorClass: "NOT_CONFIGURED", now: startedAt });
             return;
         }
-        // During the first-write pilot a reconciliation never writes.
-        const dryRun = config.enabled !== true || Boolean(tuning.pilotCandidateIds);
-        emit("info", "sheet_sync.reconcile_started", { runId: run.runId, trigger: run.triggerSource, dryRun, pilot: Boolean(tuning.pilotCandidateIds) });
-        const execute = () => engine.reconcile({
-            dryRun,
-            guard: { max: tuning.deletionGuardMax, fraction: tuning.deletionGuardFraction },
-            beforeWrite: async () => {
-                await renewWriterLease();
-                if (!(await store.renewRun(run, { now: clock(), leaseMs: timings.runLeaseMs }))) throw new WriterLeaseLostError();
-            },
-        });
+        const dryRun = config.enabled !== true;
+        // During the first-write pilot only the listed candidates are written.
+        const onlyUniqueIds = tuning.pilotCandidateIds ?? null;
+        emit("info", "sheet_sync.reconcile_started", { runId: run.runId, trigger: run.triggerSource, dryRun, pilot: Boolean(onlyUniqueIds) });
+        let covered = [];
+        const execute = async () => {
+            // Read before the engine reads the database: every change these
+            // rows stand for is in the snapshot the engine mirrors.
+            if (!dryRun) covered = await store.openQueueItems({ onlyUniqueIds });
+            return engine.reconcile({
+                dryRun,
+                onlyUniqueIds,
+                guard: { max: tuning.deletionGuardMax, fraction: tuning.deletionGuardFraction },
+                beforeWrite: async () => {
+                    await renewWriterLease();
+                    if (!(await store.renewRun(run, { now: clock(), leaseMs: timings.runLeaseMs }))) throw new WriterLeaseLostError();
+                },
+            });
+        };
         try {
             const outcome = dryRun ? { busy: false, value: await execute() } : await withWriterLease(execute);
             const now = clock();
@@ -205,11 +209,12 @@ export function createSheetSyncWorker({
                 return;
             }
             const summary = outcome.value;
+            if (!dryRun) summary.queueSettled = await store.settleReconciled(covered, { now });
             await store.finishRun(run, { status: RUN_STATUS.SUCCEEDED, summary, dryRun, now });
             await store.setIntegrationState({ state: INTEGRATION_STATE.OK, now });
             if (!dryRun) {
                 await store.recordSyncSuccess({ now });
-                await store.resolveFailedBefore(startedAt, now);
+                if (!onlyUniqueIds) await store.resolveFailedBefore(startedAt, now);
             }
             if (summary.deletionGuardTriggered) emit("warn", "sheet_sync.reconcile_deletion_guard", { runId: run.runId, wouldMarkInactive: summary.notInDatabase });
             emit("info", "sheet_sync.reconcile_completed", { runId: run.runId, dryRun, durationMs: now - startedAt, ...summary });
@@ -235,115 +240,18 @@ export function createSheetSyncWorker({
         return run.runId;
     }
 
-    // ------------------------------------------------------------ incremental
-
-    // Halted (CONFIG_ERROR / DATA_INTEGRITY): re-check read-only now and then.
-    async function haltedStillHalted(state) {
-        if (!HALTED.has(state?.integrationState)) return false;
-        const now = clock();
-        if (now.getTime() - lastRecheckAt < timings.configRecheckMs) return true;
-        lastRecheckAt = now.getTime();
-        try {
-            await engine.checkTarget();
-            await store.setIntegrationState({ state: INTEGRATION_STATE.OK, now: clock() });
-            emit("info", "sheet_sync.resumed", { previousState: state.integrationState });
-            return false;
-        } catch (error) {
-            await recordFailure(classifySyncError(error));
-            return true;
-        }
-    }
-
-    async function settle(items, results) {
-        const now = clock();
-        let wrote = false;
-        for (const item of items) {
-            const result = results.get(item.uniqueId);
-            if (result?.action === ENGINE_ACTION.MAPPING_FAILED) {
-                await store.failQueueItem(item, { errorClass: "MAPPING_FAILED", now });
-                emit("error", "sheet_sync.failed", { candidateRef: item.uniqueId, errorClass: "MAPPING_FAILED", attempts: item.attempts });
-                continue;
-            }
-            await store.completeQueueItem(item, { result: result?.action ?? ENGINE_ACTION.NOT_IN_DATABASE, now });
-            if ([ENGINE_ACTION.APPENDED, ENGINE_ACTION.UPDATED, ENGINE_ACTION.MARKED_INACTIVE].includes(result?.action)) wrote = true;
-        }
-        if (wrote) await store.recordSyncSuccess({ now });
-    }
-
-    async function retryOrFail(items, classified) {
-        const now = clock();
-        for (const item of items) {
-            if (classified.kind === "CONFIG" || classified.kind === "DATA_INTEGRITY" || classified.kind === "DISABLED") {
-                // Not the item's fault: given back without using an attempt.
-                await store.retryQueueItem(item, { nextAttemptAt: new Date(now.getTime() + timings.configRecheckMs), errorClass: classified.errorClass, errorCode: classified.errorCode, countAttempt: false, now });
-            } else if (item.attempts >= tuning.maxAttempts) {
-                await store.failQueueItem(item, { errorClass: classified.errorClass, errorCode: classified.errorCode, now });
-                emit("error", "sheet_sync.failed", { candidateRef: item.uniqueId, errorClass: classified.errorClass, attempts: item.attempts });
-            } else {
-                const retryInMs = backoffDelayMs(item.attempts, { random });
-                await store.retryQueueItem(item, { nextAttemptAt: new Date(now.getTime() + retryInMs), errorClass: classified.errorClass, errorCode: classified.errorCode, now });
-                emit("warn", "sheet_sync.retry_scheduled", { candidateRef: item.uniqueId, attempt: item.attempts, errorClass: classified.errorClass, errorCode: classified.errorCode, retryInMs });
-            }
-        }
-    }
-
-    async function processQueue() {
-        if (config.enabled !== true || !configured) {
-            if (!pausedLogged) emit("info", "sheet_sync.incremental_paused", { reason: configured ? "WRITES_DISABLED" : "NOT_CONFIGURED" });
-            pausedLogged = true;
-            return 0;
-        }
-        pausedLogged = false;
-        if (await haltedStillHalted(await store.getState())) return 0;
-
-        const outcome = await withWriterLease(async () => {
-            const items = await store.claimQueueBatch({ owner, now: clock(), leaseMs: timings.queueLeaseMs, limit: tuning.batchSize, onlyUniqueIds: tuning.pilotCandidateIds ?? null });
-            if (!items.length) return 0;
-            // Claimed more often than allowed (e.g. it crashed the worker
-            // each time): dead-lettered without another attempt.
-            const exhausted = items.filter((item) => item.attempts > tuning.maxAttempts);
-            for (const item of exhausted) await store.failQueueItem(item, { errorClass: "ATTEMPTS_EXHAUSTED", now: clock() });
-            const live = items.filter((item) => item.attempts <= tuning.maxAttempts);
-            if (!live.length) return items.length;
-
-            const byCandidate = new Map();
-            for (const item of live) {
-                const entry = byCandidate.get(item.uniqueId) ?? { uniqueId: item.uniqueId, candidateDeleted: false };
-                entry.candidateDeleted ||= item.candidateDeleted;
-                byCandidate.set(item.uniqueId, entry);
-            }
-            const startedAt = clock();
-            emit("info", "sheet_sync.started", { batchSize: byCandidate.size });
-            try {
-                const results = await engine.syncCandidates([...byCandidate.values()], { beforeWrite: renewWriterLease });
-                await settle(live, results);
-                const counts = {};
-                for (const { action } of results.values()) counts[action] = (counts[action] ?? 0) + 1;
-                emit("info", "sheet_sync.completed", { batchSize: byCandidate.size, durationMs: clock() - startedAt, ...counts });
-                const state = await store.getState();
-                if (state?.integrationState !== INTEGRATION_STATE.OK) await store.setIntegrationState({ state: INTEGRATION_STATE.OK, now: clock() });
-            } catch (error) {
-                const classified = classifySyncError(error);
-                await retryOrFail(live, classified);
-                await recordFailure(classified);
-            }
-            return items.length;
-        });
-        return outcome.busy ? 0 : outcome.value;
-    }
-
     // ------------------------------------------------------------ loop
 
     async function tick() {
         const now = clock();
         await store.heartbeat({ writeGate: config.gate, configured, targetHint, now });
+        // No queue processing here: queue rows wait for the next reconciliation.
         const runId = await processRun();
-        const processed = await processQueue();
         if (now.getTime() - lastPruneAt >= timings.pruneEveryMs) {
             lastPruneAt = now.getTime();
             await store.pruneCompleted(new Date(now.getTime() - timings.completedRetentionMs));
         }
-        return { runId, processed };
+        return { runId };
     }
 
     let stopped = false;
@@ -357,7 +265,7 @@ export function createSheetSyncWorker({
                 let busy = false;
                 try {
                     const result = await tick();
-                    busy = Boolean(result.runId) || result.processed > 0;
+                    busy = Boolean(result.runId);
                 } catch (error) {
                     emit("error", "sheet_sync.tick_failed", classifySyncError(error));
                 }

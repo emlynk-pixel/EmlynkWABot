@@ -15,8 +15,9 @@
 //                         SHEET_SYNC_SCHEDULER_AUDIENCE and
 //                         SHEET_SYNC_SCHEDULER_INVOKER are both set.
 //   anything else         404
-// No request body is read. The reconciliation schedule lives in Cloud
-// Scheduler, never in this process.
+// No request body is read. The reconciliation schedule (06:00, 12:00, 18:00
+// Asia/Colombo, SHEET_SYNC_SCHEDULE in src/config/sheetSync.js) lives in
+// Cloud Scheduler, never in this process.
 
 import http from "node:http";
 

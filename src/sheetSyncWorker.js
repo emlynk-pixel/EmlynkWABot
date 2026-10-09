@@ -2,9 +2,10 @@
 //
 //   node src/sheetSyncWorker.js        (npm run sheet:worker)
 //
-// Drains the durable outbox (sheet_sync_queue) into the Google Sheet, runs
-// requested reconciliations and connection tests (sheet_sync_runs), and
-// answers Cloud Scheduler's authenticated reconcile trigger. See
+// Runs requested reconciliations and connection tests (sheet_sync_runs) and
+// answers Cloud Scheduler's authenticated reconcile trigger (06:00, 12:00 and
+// 18:00 Asia/Colombo, SHEET_SYNC_SCHEDULE). Nothing is synced in real time:
+// the Sheet is written only by those scheduled runs and by Sync Now. See
 // src/services/sheetSyncWorker.js and Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md.
 //
 // Google authentication is keyless (Application Default Credentials: the

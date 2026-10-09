@@ -1,9 +1,13 @@
 // Google Sheet operational mirror: the durable PostgreSQL side (Phase 3/4).
 // (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 8.2-8.5, 9.5, 11.5.)
 //
-//   queue  sheet_sync_queue  "candidate X needs synchronization" (rows are
-//          written by database triggers, see migration
-//          20261006120000_sheet_sync_outbox; this module claims and settles them)
+//   queue  sheet_sync_queue  "candidate X changed since the last sync" (rows
+//          are written by database triggers, see migration
+//          20261006120000_sheet_sync_outbox). Nothing is synced in real time:
+//          a scheduled or manual reconciliation mirrors the whole database and
+//          then settles the rows it covered (openQueueItems /
+//          settleReconciled). The claim/settle functions of the former
+//          real-time processing are kept but no longer used by the worker.
 //   runs   sheet_sync_runs   durable RECONCILE / TEST_CONNECTION requests
 //   state  sheet_sync_state  one row: integration state, worker heartbeat,
 //          and the WRITER LEASE (one process writes to the Sheet at a time)
@@ -166,6 +170,37 @@ export function createSheetSyncStore({ db } = {}) {
         return count;
     }
 
+    // The open rows (PENDING, or PROCESSING left by an older worker) as they
+    // are now. Read BEFORE a reconciliation reads the database, so every
+    // change they stand for is in that reconciliation's snapshot.
+    // onlyUniqueIds (the first-write pilot): only these candidates.
+    function openQueueItems({ onlyUniqueIds = null } = {}) {
+        return db.sheetSyncQueue.findMany({
+            where: {
+                status: { in: [QUEUE_STATUS.PENDING, QUEUE_STATUS.PROCESSING] },
+                ...(onlyUniqueIds ? { uniqueId: { in: [...onlyUniqueIds] } } : {}),
+            },
+            select: { queueId: true, status: true, updatedAt: true },
+        });
+    }
+
+    // After a successful write reconciliation: each row from openQueueItems
+    // is settled COMPLETED (RECONCILED) only if it is unchanged since it was
+    // read. A change that arrived meanwhile (the trigger coalesces it into
+    // the PENDING row and moves updated_at) keeps its row PENDING for the
+    // next run, so no change is ever lost. Returns the number settled.
+    async function settleReconciled(rows, { now }) {
+        let settled = 0;
+        for (const row of rows) {
+            const { count } = await db.sheetSyncQueue.updateMany({
+                where: { queueId: row.queueId, status: row.status, updatedAt: row.updatedAt },
+                data: { status: QUEUE_STATUS.COMPLETED, lastResult: "RECONCILED", completedAt: now, updatedAt: now, leaseOwner: null, leaseExpiresAt: null, lastErrorClass: null, lastErrorCode: null },
+            });
+            settled += count;
+        }
+        return settled;
+    }
+
     async function pruneCompleted(before) {
         const { count } = await db.sheetSyncQueue.deleteMany({ where: { status: QUEUE_STATUS.COMPLETED, completedAt: { lt: before } } });
         return count;
@@ -275,7 +310,7 @@ export function createSheetSyncStore({ db } = {}) {
     }
 
     return Object.freeze({
-        claimQueueBatch, completeQueueItem, failQueueItem, retryQueueItem, queueCounts, resolveFailedBefore, pruneCompleted,
+        claimQueueBatch, completeQueueItem, failQueueItem, retryQueueItem, queueCounts, resolveFailedBefore, openQueueItems, settleReconciled, pruneCompleted,
         requestRun, claimRun, renewRun, finishRun, getRun, latestRun,
         getState, acquireWriterLease, releaseWriterLease, heartbeat, setIntegrationState, recordTransientError, recordSyncSuccess,
     });

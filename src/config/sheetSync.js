@@ -14,6 +14,8 @@
 // private key: GOOGLE_APPLICATION_CREDENTIALS must not be set for this
 // feature. Problems name variables only, never their values.
 
+import { BUSINESS_TIME_ZONE } from "../utils/businessDay.js";
+
 export const SHEET_SYNC_GATE = Object.freeze({ ENABLED: "ENABLED", DISABLED: "DISABLED" });
 
 // Why the gate is in its state: no value, "false", an unusable value, "true".
@@ -69,8 +71,11 @@ export const isSheetSyncEnabled = (env = process.env) => readSheetSyncConfig(env
 // Operational tunables of the sheet-sync worker (src/sheetSyncWorker.js).
 // None of them can enable writing. A missing value uses the default; an
 // unusable one also uses the default and is reported in `problems` (by
-// variable name only). The schedule of reconciliations is NOT here: it
-// belongs to Cloud Scheduler (production daily, staging ~5 minutes).
+// variable name only). The schedule of reconciliations is NOT a tunable:
+// SHEET_SYNC_SCHEDULE below, run by Cloud Scheduler.
+// SHEET_SYNC_BATCH_SIZE and SHEET_SYNC_MAX_RETRIES belonged to the real-time
+// queue processing, which the worker no longer does; they are still read so
+// an existing deployment's environment stays valid, and have no effect.
 const TUNABLES = Object.freeze({
     pollIntervalMs: { name: "SHEET_SYNC_POLL_INTERVAL_MS", default: 10_000, min: 1_000, max: 600_000, integer: true },
     batchSize: { name: "SHEET_SYNC_BATCH_SIZE", default: 25, min: 1, max: 200, integer: true },
@@ -100,12 +105,31 @@ export function readSheetSyncTuning(env = process.env) {
     return Object.freeze({ ...values, maxAttempts: values.maxRetries + 1, pilotCandidateIds: pilot.ids, problems: Object.freeze(problems) });
 }
 
+// The automatic synchronization schedule: a full database -> Sheet
+// reconciliation at 06:00, 12:00 and 18:00 Sri Lanka time, one Cloud
+// Scheduler job calling the worker's POST /tasks/reconcile (OIDC-
+// authenticated). Nothing syncs in real time: database changes wait for the
+// next scheduled run or a manual Sync Now. Asia/Colombo is the project's
+// operational time zone (src/utils/businessDay.js); Cloud Scheduler applies
+// it, so the server's own time zone never matters.
+// The deployment commands (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md,
+// Section 24.9) use exactly these values; a test keeps them in step.
+export const SHEET_SYNC_SCHEDULE = Object.freeze({
+    jobName: "emlynk-sheet-sync-reconcile",
+    cron: "0 6,12,18 * * *",
+    timeZone: BUSINESS_TIME_ZONE,
+    times: Object.freeze(["06:00", "12:00", "18:00"]),
+    httpMethod: "POST",
+    path: "/tasks/reconcile",
+});
+
 // SHEET_SYNC_PILOT_CANDIDATE_IDS: the controlled first-write pilot
 // (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 24.10). A comma-
-// separated list of candidate unique IDs. While it is set, the worker syncs
-// ONLY these candidates (every other queue item waits, untouched) and every
-// reconciliation is a dry run, so enabling writes can't mirror the whole
-// database at once. Unset = normal operation. It never enables writing.
+// separated list of candidate unique IDs. While it is set, a reconciliation
+// writes ONLY these candidates (every other candidate is compared but not
+// written, and no row is marked inactive), so enabling writes can't mirror
+// the whole database at once. Unset = normal operation. It never enables
+// writing.
 export const MAX_PILOT_CANDIDATES = 20;
 function parsePilotCandidateIds(raw) {
     if (!isSet(raw)) return { ids: null };

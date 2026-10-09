@@ -2,9 +2,14 @@
 // (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 7, 8.6 and 9.)
 //
 // Two operations, one mapper, one comparison:
-//   syncCandidates(entries)  incremental: the candidates named by queue rows
 //   reconcile()              every candidate in a complete database snapshot
-//                            against every row of the Sheet
+//                            against every row of the Sheet. This is how the
+//                            Sheet is synchronized: by the scheduled runs
+//                            (06:00, 12:00, 18:00 Asia/Colombo) and the
+//                            manual Sync Now, never in real time.
+//   syncCandidates(entries)  the same comparison for named candidates (the
+//                            former real-time path; the worker no longer
+//                            calls it)
 //
 // Direction is strictly database -> Sheet. Nothing read from the Sheet is ever
 // written to the database; the Sheet is only read to find rows (the
@@ -28,7 +33,7 @@
 //   - rows are NEVER cleared or deleted. A candidate deleted from the
 //     database keeps its row; only RECORD STATUS and LAST MIRRORED AT
 //     change, to "DELETED / INACTIVE":
-//       incremental: only when the queue row says the users row was deleted
+//       syncCandidates: only when the queue row says the candidate row was deleted
 //         (trigger delete hint) AND a fresh read confirms it is gone;
 //       reconciliation: only from a complete, count-verified snapshot, and
 //         only while the number of rows to mark stays under the deletion
@@ -159,8 +164,11 @@ export function createSheetSyncEngine({ reader, sheets, clock = () => new Date()
 
     // Full reconciliation. guard: { max, fraction } (deletion guard).
     // beforeWrite: called before each write chunk (lease renewal); throwing
-    // stops the run. Returns a summary of counts (no candidate data).
-    async function reconcile({ dryRun = false, guard, chunkSize = DEFAULT_WRITE_CHUNK, beforeWrite } = {}) {
+    // stops the run. onlyUniqueIds (the first-write pilot): only these
+    // candidates are appended/updated; every other candidate is left as it
+    // is (counted outsideScope) and no row is marked inactive.
+    // Returns a summary of counts (no candidate data).
+    async function reconcile({ dryRun = false, guard, chunkSize = DEFAULT_WRITE_CHUNK, beforeWrite, onlyUniqueIds = null } = {}) {
         if (!guard || !Number.isFinite(guard.max) || !Number.isFinite(guard.fraction)) throw new Error("A deletion guard is required");
         const layout = await sheets.readLayout();
 
@@ -178,11 +186,16 @@ export function createSheetSyncEngine({ reader, sheets, clock = () => new Date()
         const summary = {
             dryRun, sheetRows: rows.length, identifiedSheetRows: index.size, blankIdRows: blankRows, databaseCandidates: snapshotCount,
             appended: 0, updated: 0, unchanged: 0, mappingFailed: 0, markedInactive: 0, alreadyInactive: 0, notInDatabase: 0,
-            deletionGuardTriggered: false,
+            deletionGuardTriggered: false, scoped: Boolean(onlyUniqueIds), outsideScope: 0,
         };
+        const scope = onlyUniqueIds ? new Set(onlyUniqueIds) : null;
 
         for (const aggregate of aggregates) {
             const uniqueId = aggregate.user.uniqueId;
+            if (scope && !scope.has(uniqueId)) {
+                summary.outsideScope += 1;
+                continue;
+            }
             let expected;
             try {
                 expected = mapCandidateToSheetRow(aggregate, { mirroredAt });
@@ -212,7 +225,10 @@ export function createSheetSyncEngine({ reader, sheets, clock = () => new Date()
             if (isInactive(cells)) summary.alreadyInactive += 1;
             else toMark.push({ rowNumber, cells });
         }
-        if (deletionGuardAllows({ count: toMark.length, identifiedRows: index.size, snapshotCount, ...guard })) {
+        if (scope) {
+            // A scoped (pilot) run never marks rows inactive.
+            summary.notInDatabase = toMark.length;
+        } else if (deletionGuardAllows({ count: toMark.length, identifiedRows: index.size, snapshotCount, ...guard })) {
             for (const { rowNumber, cells } of toMark) updates.push({ rowNumber, cells: inactiveRow(cells, mirroredAt) });
             summary.markedInactive = toMark.length;
         } else {
