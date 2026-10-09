@@ -3,7 +3,8 @@
 // who the caller is. Matrix (routes/admin.js tiers):
 //   ALL_ACTIVE      ADMIN, MANAGER, ANALYST                     reads (overview, documents, reports, …)
 //   CANDIDATE_STAFF ADMIN, MANAGER, ANALYST, REGISTRATION_DESK  the Candidates area: list, registration,
-//                                                               details, stages, documents, call logs
+//                                                               details, stages, documents, call logs,
+//                                                               additional details
 //   ANALYSTS_UP     ADMIN, MANAGER, ANALYST                     review actions, corrections
 //   MANAGERS_UP     ADMIN, MANAGER                              police-date correction
 //   ADMINS_ONLY     ADMIN                                       users, Audit Logs, Settings
@@ -37,6 +38,8 @@ const MATRIX = [
     ["POST", `/candidates/N1023757/documents/${DOCUMENT_ID}/remove`, {}, CANDIDATE_STAFF],
     ["GET", "/candidates/N1023757/call-logs", undefined, CANDIDATE_STAFF],
     ["POST", "/candidates/N1023757/call-logs", {}, CANDIDATE_STAFF],
+    ["GET", "/candidates/N1023757/additional-details", undefined, CANDIDATE_STAFF],
+    ["PUT", "/candidates/N1023757/additional-details", {}, CANDIDATE_STAFF],
     ["GET", "/review", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
     ["POST", "/review/pending-11111111-1111-4111-8111-111111111111/keep-pending", {}, ["ADMIN", "MANAGER", "ANALYST"]],
     ["POST", `/documents/${DOCUMENT_ID}/police-date`, {}, ["ADMIN", "MANAGER"]],

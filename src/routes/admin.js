@@ -46,6 +46,7 @@ import {
 } from "../services/adminCorrectionService.js";
 import { getDailyReport, getMonthlyOverview, parseDailyReportQuery, parseMonthlyOverviewQuery } from "../services/adminReportService.js";
 import { listAuditLogs, parseAuditLogQuery } from "../services/auditLogService.js";
+import { getAdditionalDetails, parseAdditionalDetailsBody, saveAdditionalDetails } from "../services/candidateAdditionalDetailsService.js";
 import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
@@ -492,6 +493,28 @@ export function createAdminRouter({
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.status(201).json(await addCallLog({
             db: client, admin: req.user, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
+        })));
+    });
+
+    // Additional details (candidateAdditionalDetailsService.js): always the
+    // existing candidate of the passport ID in the URL; never creates one.
+    router.get("/candidates/:passportId/additional-details", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getAdditionalDetails({
+            db: client, passportId: await storedCandidateId(client, req.params.passportId),
+        })));
+    });
+
+    router.put("/candidates/:passportId/additional-details", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseAdditionalDetailsBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await saveAdditionalDetails({
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
         })));
     });
 
