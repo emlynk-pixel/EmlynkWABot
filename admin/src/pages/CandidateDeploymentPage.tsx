@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router";
 import { CANDIDATE_STAGES, getCandidate, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
-import { canReview, useAuth } from "../auth/AuthProvider";
+import { canManageCandidates, useAuth } from "../auth/AuthProvider";
 import { CallLogDialog } from "../components/candidate/CallLogDialog";
 import { CandidateStepper } from "../components/candidate/CandidateStepper";
 import { CandidateDetailsStage, DocumentSubmissionStage, NotesStage } from "../components/candidate/StagePanels";
@@ -44,7 +44,7 @@ export function CandidateDeploymentPage() {
     const requested = searchParams.get("stage");
     const current: CandidateStageKey = isStage(requested) ? requested : (details.stages.find((s) => !s.completed)?.stage ?? CANDIDATE_STAGES[0]);
     const select = (stage: CandidateStageKey) => setSearchParams({ stage }, { replace: true });
-    const canEdit = canReview(user);
+    const canEdit = canManageCandidates(user);
     const c = details.candidate;
     const panelProps = { details, canEdit, onChange: setUpdated };
     // Files registration couldn't upload, as long as they're still missing:

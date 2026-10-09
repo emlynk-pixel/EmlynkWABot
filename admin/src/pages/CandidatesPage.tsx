@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { listCandidates } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
-import { canReview, useAuth } from "../auth/AuthProvider";
+import { canManageCandidates, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
 import { StageSummary } from "../components/candidate/CandidateStepper";
 import { Icon } from "../components/Icon";
@@ -47,7 +47,7 @@ export function CandidatesPage() {
         <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <h1 id="page-title" className="text-headline-lg text-ink">Candidates</h1>
-                {canReview(user) && (
+                {canManageCandidates(user) && (
                     <Link to="/candidates/new" className={`${primaryButton} inline-flex items-center gap-1.5`}>
                         <Icon name="person_add" className="size-4" />Add candidate
                     </Link>

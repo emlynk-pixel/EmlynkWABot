@@ -2,10 +2,11 @@
 // public."user".role, read on every request; the Supabase session only says
 // who the caller is. Matrix (routes/admin.js tiers):
 //   ALL_ACTIVE      ADMIN, MANAGER, ANALYST                     reads (overview, documents, reports, …)
-//   REGISTRATION_UP ADMIN, MANAGER, ANALYST, REGISTRATION_DESK  candidate list/registration/details
-//   ANALYSTS_UP     ADMIN, MANAGER, ANALYST                     review actions, corrections, uploads
+//   CANDIDATE_STAFF ADMIN, MANAGER, ANALYST, REGISTRATION_DESK  the Candidates area: list, registration,
+//                                                               details, stages, documents, call logs
+//   ANALYSTS_UP     ADMIN, MANAGER, ANALYST                     review actions, corrections
 //   MANAGERS_UP     ADMIN, MANAGER                              police-date correction
-//   ADMINS_ONLY     ADMIN                                       users, Settings
+//   ADMINS_ONLY     ADMIN                                       users, Audit Logs, Settings
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -19,18 +20,32 @@ import { createFakeAuthAdmin, fakeVerifyAccessToken, tokenFor } from "./helpers/
 const user = (role, status = "ACTIVE") => ({ adminId: `user-${role}-${status}`, name: role, email: `${role}-${status}@example.invalid`.toLowerCase(), role, status });
 const USERS = [...ALL_ROLES.map((role) => user(role)), user("VIEWER"), user("ADMIN", "INACTIVE"), user("ANALYST", "INVITED")];
 const DOCUMENT_ID = "00000000-0000-4000-8000-000000000001";
+const CANDIDATE_STAFF = ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"];
 
 // [method, path, body, roles allowed]
 const MATRIX = [
     ["GET", "/overview", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
     ["GET", "/documents", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
     ["GET", "/reports/daily", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
-    ["GET", "/candidates", undefined, ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]],
+    ["GET", "/candidates", undefined, CANDIDATE_STAFF],
+    ["POST", "/candidates", {}, CANDIDATE_STAFF],
+    ["GET", "/candidates/N1023757", undefined, CANDIDATE_STAFF],
+    ["PUT", "/candidates/N1023757", {}, CANDIDATE_STAFF],
+    ["PUT", "/candidates/N1023757/stages/IVS_INTERVIEW", {}, CANDIDATE_STAFF],
+    ["POST", "/candidates/N1023757/documents/upload-target", {}, CANDIDATE_STAFF],
+    ["POST", "/candidates/N1023757/documents/finalize", {}, CANDIDATE_STAFF],
+    ["POST", `/candidates/N1023757/documents/${DOCUMENT_ID}/remove`, {}, CANDIDATE_STAFF],
+    ["GET", "/candidates/N1023757/call-logs", undefined, CANDIDATE_STAFF],
+    ["POST", "/candidates/N1023757/call-logs", {}, CANDIDATE_STAFF],
+    ["GET", "/review", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
     ["POST", "/review/pending-11111111-1111-4111-8111-111111111111/keep-pending", {}, ["ADMIN", "MANAGER", "ANALYST"]],
     ["POST", `/documents/${DOCUMENT_ID}/police-date`, {}, ["ADMIN", "MANAGER"]],
     ["GET", "/users", undefined, ["ADMIN"]],
     ["POST", "/users/invite", {}, ["ADMIN"]],
     ["PUT", "/users/someone/role", { role: "ANALYST" }, ["ADMIN"]],
+    ["POST", "/users/someone/deactivate", {}, ["ADMIN"]],
+    ["GET", "/audit-logs", undefined, ["ADMIN"]],
+    ["GET", "/settings/sheet-sync/status", undefined, ["ADMIN"]],
 ];
 
 let server;
@@ -121,6 +136,8 @@ describe("role matrix (backend is the boundary)", () => {
     });
 
     test("a role in the request body or query is ignored", async () => {
+        assert.equal((await call("GET", "/audit-logs?role=ADMIN", "user-REGISTRATION_DESK-ACTIVE")).status, 403);
+        assert.equal((await call("POST", "/candidates", "user-VIEWER-ACTIVE", { role: "REGISTRATION_DESK" })).status, 403);
         assert.equal((await call("GET", "/users?role=ADMIN", "user-ANALYST-ACTIVE")).status, 403);
         assert.equal((await call("POST", "/users/invite", "user-MANAGER-ACTIVE", { role: "ADMIN", actor: { role: "ADMIN" } })).status, 403);
         assert.equal(authAdmin.calls.length, 0, "no Supabase call for a refused request");

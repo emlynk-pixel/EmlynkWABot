@@ -850,6 +850,60 @@ describe("candidate routes: roles", () => {
         assert.equal((await call("UNKNOWN", "POST", "/api/admin/candidates/N1023757/call-logs", { note: "x" })).status, 403);
     });
 
+    test("REGISTRATION_DESK runs the whole candidate workflow: list, search, register, view, edit, documents, stages, call logs", async () => {
+        const db = createFakeDb();
+        const bucket = createFakeBucket();
+        const desk = (method, path, body) => call("REGISTRATION_DESK", method, `/api/admin/candidates${path}`, body, db, { bucket });
+
+        assert.equal((await desk("POST", "", VALID_BODY)).status, 201, "register");
+        const listed = await desk("GET", "?search=Anusha");
+        assert.equal(listed.status, 200, "list and search");
+        assert.deepEqual(listed.body.items.map((c) => c.passportId), ["N1023757"]);
+        assert.equal((await desk("GET", "/N1023757")).status, 200, "view");
+
+        const { passportId: _id, comment: _comment, ...details } = VALID_BODY;
+        const edited = await desk("PUT", "/N1023757", { ...details, address: "12 Galle Road, Colombo" });
+        assert.equal(edited.status, 200, "edit details");
+        assert.equal(db.state.users[0].address, "12 Galle Road, Colombo");
+
+        const first = await directUpload("REGISTRATION_DESK", "N1023757", db, bucket, { type: "PASSPORT" });
+        assert.equal(first.status, 200, "upload");
+        const replaced = await directUpload("REGISTRATION_DESK", "N1023757", db, bucket, { type: "PASSPORT", buffer: Buffer.concat([PDF, Buffer.from("rescan")]) });
+        assert.equal(replaced.status, 200, "replace");
+        assert.notEqual(replaced.body.documents.PASSPORT.documentId, first.body.documents.PASSPORT.documentId);
+        const removed = await desk("POST", `/N1023757/documents/${replaced.body.documents.PASSPORT.documentId}/remove`, { reason: "Wrong passport scanned" });
+        assert.equal(removed.status, 200, "remove");
+
+        const stage = await desk("PUT", "/N1023757/stages/IVS_INTERVIEW", { completed: true, notes: "Interview booked" });
+        assert.equal(stage.status, 200, "stage update");
+        assert.equal(stage.body.stages.find((s) => s.stage === "IVS_INTERVIEW").completed, true);
+        assert.equal((await desk("PUT", "/N1023757/stages/TEST_DETAILS", { jobId: "J-1", testResult: "PASS" })).status, 200, "test details");
+
+        assert.equal((await desk("POST", "/N1023757/call-logs", { note: "Will bring the medical" })).status, 201, "add a call");
+        const calls = await desk("GET", "/N1023757/call-logs");
+        assert.equal(calls.status, 200, "view calls");
+        assert.deepEqual(calls.body.items.map((c) => c.note), ["Will bring the medical"]);
+    });
+
+    test("REGISTRATION_DESK gets nothing outside the Candidates area", async () => {
+        for (const [method, path, body] of [
+            ["GET", "/api/admin/overview"],
+            ["GET", "/api/admin/documents"],
+            ["GET", "/api/admin/review"],
+            ["POST", "/api/admin/review/pending-11111111-1111-4111-8111-111111111111/approve", {}],
+            ["POST", "/api/admin/documents/00000000-0000-4000-8000-000000000001/police-date", {}],
+            ["GET", "/api/admin/users"],
+            ["POST", "/api/admin/users/invite", { email: "x@example.invalid", name: "X", role: "ADMIN" }],
+            ["PUT", "/api/admin/users/someone/role", { role: "ADMIN" }],
+            ["GET", "/api/admin/audit-logs"],
+            ["GET", "/api/admin/settings/sheet-sync/status"],
+        ]) {
+            const response = await call("REGISTRATION_DESK", method, path, body);
+            assert.equal(response.status, 403, `${method} ${path}`);
+            assert.deepEqual(response.body, { message: "Insufficient permissions" });
+        }
+    });
+
     test("a ANALYST can register a candidate; bad input and unknown stages are refused", async () => {
         const created = await call("ANALYST", "POST", "/api/admin/candidates", VALID_BODY);
         assert.equal(created.status, 201);

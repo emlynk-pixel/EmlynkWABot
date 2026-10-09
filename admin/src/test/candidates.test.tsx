@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import { CANDIDATE_STAGES, type CandidateDetails, type CandidateList } from "../api/candidates";
 import { stepTones } from "../components/candidate/CandidateStepper";
-import { ADMIN, renderApp, signedInBackend } from "./helpers";
+import { ADMIN, renderApp, signedInBackend, userWithRole } from "./helpers";
 
 // Synthetic candidates only.
 const stages = (done: boolean[]) => CANDIDATE_STAGES.map((stage, i) => ({ stage, completed: done[i] }));
@@ -40,8 +40,11 @@ const DETAILS: CandidateDetails = {
     requiredDocuments: (["PASSPORT", "MEDICAL", "POLICE_REPORT", "SCAN"] as const).map((documentType) => ({ documentType, included: documentType === "PASSPORT" })),
 };
 
-// A role that may see candidates but not change them (the legacy VIEWER role no longer exists).
-const VIEWER = { ...ADMIN, role: "REGISTRATION_DESK" };
+// A signed-in user without candidate permissions: the retired VIEWER role
+// (the backend refuses it too). Every application role, REGISTRATION_DESK
+// included, manages candidates; this checks the read-only rendering.
+const VIEWER = { ...ADMIN, role: "VIEWER" };
+const DESK = { ...ADMIN, role: "REGISTRATION_DESK" };
 
 // A document upload: the API issues a signed URL for one staged object
 // (upload-target), the browser PUTs the file there, straight to storage, and
@@ -970,7 +973,7 @@ describe("Candidate registration", () => {
     test("a viewer sees no registration form", async () => {
         signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates/new");
-        expect(await screen.findByText("Candidate registration needs an admin, manager or analyst account.")).toBeInTheDocument();
+        expect(await screen.findByText("Candidate registration needs a staff account with access to Candidates.")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Register candidate" })).not.toBeInTheDocument();
     });
 });
@@ -1014,4 +1017,77 @@ describe("Candidate Document Submission: Police Slip", () => {
         const row = screen.getByText("Police slip").closest("div.border") as HTMLElement;
         expect(within(row!).getByRole("button", { name: "Upload" })).toBeDisabled();
     });
+});
+
+describe("REGISTRATION_DESK: the whole Candidates area", () => {
+    const asDesk = (routes: Record<string, { status: number; body?: unknown }> = {}) =>
+        signedInBackend({ "GET /auth/me": { status: 200, body: { user: DESK } }, "GET /api/admin/candidates": { status: 200, body: LIST }, ...routes });
+    const nav = () => within(screen.getByRole("navigation", { name: "Main navigation" }));
+
+    test("sees Candidates in the sidebar and nothing ADMIN-only; no separate registration link; no Review Queue bell", async () => {
+        const { calls } = asDesk();
+        renderApp("/candidates");
+        await screen.findByRole("table", { name: "Candidates" });
+        expect(nav().getAllByRole("link").map((l) => l.textContent)).toEqual(["Candidates"]);
+        for (const name of ["Invite User", "Change Roles", "Audit Logs", "Settings", "Review Queue", "Overview"]) {
+            expect(nav().queryByRole("link", { name })).toBeNull();
+        }
+        expect(screen.queryByRole("link", { name: /register candidate|new candidate/i })).toBeNull();
+        expect(screen.queryByRole("button", { name: /notification/i })).toBeNull();
+        expect(calls.some((c) => c.path.startsWith("/api/admin/review"))).toBe(false);
+    });
+
+    test("registers from the Candidates page: Add candidate opens the registration form", async () => {
+        asDesk();
+        renderApp("/candidates");
+        const add = await screen.findByRole("link", { name: "Add candidate" });
+        expect(add).toHaveAttribute("href", "/candidates/new");
+        await userEvent.setup().click(add);
+        expect(await screen.findByRole("button", { name: "Register candidate" })).toBeEnabled();
+        expect(screen.getByLabelText("Passport ID *")).toBeEnabled();
+    });
+
+    test("can edit details, upload and remove documents and save stages", async () => {
+        const withNic: CandidateDetails = {
+            ...DETAILS,
+            documents: { ...DETAILS.documents, NIC: { documentId: "doc-n", originalFilename: "nic.pdf", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-01T00:00:00.000Z" } },
+        };
+        asDesk({ "GET /api/admin/candidates/N0000002": { status: 200, body: withNic } });
+        renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+        expect(await screen.findByLabelText("Surname *")).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
+        for (const upload of screen.getAllByRole("button", { name: /Upload|Replace/ })) expect(upload).toBeEnabled();
+
+        const user = userEvent.setup();
+        await user.click(within(screen.getByRole("navigation", { name: "Deployment stages" })).getByRole("button", { name: /^4. IVS interview/ }));
+        expect(await screen.findByRole("checkbox", { name: "Stage completed" })).toBeEnabled();
+        expect(screen.getByLabelText("Notes")).toBeEnabled();
+    });
+
+    test("can read and add calls", async () => {
+        asDesk({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
+        const dialog = await screen.findByRole("dialog", { name: "Call Logs" });
+        expect(await within(dialog).findByLabelText("What the candidate said *")).toBeEnabled();
+        expect(within(dialog).getByRole("button", { name: "Add call" })).toBeInTheDocument();
+    });
+});
+
+describe("other roles are unchanged", () => {
+    for (const role of ["ADMIN", "MANAGER", "ANALYST"]) {
+        test(`${role}: Add candidate on the Candidates page, no separate header registration link, the notification bell`, async () => {
+            signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            expect(await screen.findByRole("link", { name: "Add candidate" })).toHaveAttribute("href", "/candidates/new");
+            expect(screen.queryByRole("link", { name: /register candidate/i })).toBeNull();
+            expect(screen.getByRole("button", { name: /notification/i })).toBeInTheDocument();
+            const links = within(screen.getByRole("navigation", { name: "Main navigation" })).getAllByRole("link").map((l) => l.textContent);
+            expect(links).toContain("Review Queue");
+            expect(links.includes("Settings")).toBe(role === "ADMIN");
+        });
+    }
 });

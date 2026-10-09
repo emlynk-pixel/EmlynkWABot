@@ -6,7 +6,8 @@
 //   MANAGER            everything except user management and settings
 //   ANALYST            reads, review actions, corrections and candidate work;
 //                      not police-date corrections on stored documents
-//   REGISTRATION_DESK  candidate list, lookup, registration and details only
+//   REGISTRATION_DESK  the Candidates area only: list, lookup, registration,
+//                      details, stages, candidate documents and call logs
 //
 // The per-route tiers are in routes/admin.js. A role outside the allowed list
 // gets 403; the body never names the role or the user.

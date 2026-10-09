@@ -85,11 +85,12 @@ function contentDisposition(fileName) {
 // ANALYST: reads + review actions.
 // MANAGER: full access except user management.
 // ADMIN: full access including user management.
-// REGISTRATION_DESK: only candidate registration.
+// REGISTRATION_DESK: the whole Candidates area (registration, details,
+// stages, candidate documents, call logs); nothing else.
 const { ADMIN, MANAGER, ANALYST, REGISTRATION_DESK } = ROLES;
 // The set of roles allowed for each endpoint tier.
 const ALL_ACTIVE = [ADMIN, MANAGER, ANALYST];                   // overview, reports, etc
-const REGISTRATION_UP = [ADMIN, MANAGER, ANALYST, REGISTRATION_DESK]; // candidate basic routes
+const CANDIDATE_STAFF = [ADMIN, MANAGER, ANALYST, REGISTRATION_DESK]; // the Candidates area
 const ANALYSTS_UP = [ADMIN, MANAGER, ANALYST];                  // analyst or above
 const MANAGERS_UP = [ADMIN, MANAGER];                           // manager or above
 const ADMINS_ONLY = [ADMIN];                                    // administrators only
@@ -364,7 +365,7 @@ export function createAdminRouter({
         return passportId;
     };
 
-    router.get("/candidates", requireRole(REGISTRATION_UP), async (req, res) => {
+    router.get("/candidates", requireRole(CANDIDATE_STAFF), async (req, res) => {
         const parsed = parseCandidateListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -373,7 +374,7 @@ export function createAdminRouter({
         return res.json(await listCandidates({ db: client, params: parsed.params }));
     });
 
-    router.post("/candidates", requireRole(REGISTRATION_UP), async (req, res) => {
+    router.post("/candidates", requireRole(CANDIDATE_STAFF), async (req, res) => {
         const parsed = parseCandidateBody(req.body, { creating: true });
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
@@ -382,7 +383,7 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values: parsed.values, actor: req.user })));
     });
 
-    router.get("/candidates/:passportId", requireRole(REGISTRATION_UP), async (req, res) => {
+    router.get("/candidates/:passportId", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         // Also the registration lookup: the response carries the stored passport ID.
@@ -392,7 +393,7 @@ export function createAdminRouter({
         return res.json(candidate);
     });
 
-    router.put("/candidates/:passportId", requireRole(REGISTRATION_UP), async (req, res) => {
+    router.put("/candidates/:passportId", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseCandidateBody(req.body, { creating: false });
         if (parsed.errors) {
@@ -404,7 +405,7 @@ export function createAdminRouter({
         })));
     });
 
-    router.put("/candidates/:passportId/stages/:stage", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.put("/candidates/:passportId/stages/:stage", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         if (!isCandidateStage(req.params.stage)) return res.status(404).json({ message: "Stage not found" });
         const parsed = parseStageBody(req.body, req.params.stage);
@@ -421,7 +422,7 @@ export function createAdminRouter({
     // to this API (candidateService.js, "direct uploads"). Both requests are
     // small JSON bodies (express.json in createApp.js); no route here parses
     // a file body.
-    router.post("/candidates/:passportId/documents/upload-target", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.post("/candidates/:passportId/documents/upload-target", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseUploadTargetBody(req.body);
         if (parsed.errors) {
@@ -438,7 +439,7 @@ export function createAdminRouter({
         })));
     });
 
-    router.post("/candidates/:passportId/documents/finalize", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.post("/candidates/:passportId/documents/finalize", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseFinalizeUploadBody(req.body);
         if (parsed.errors) {
@@ -456,7 +457,7 @@ export function createAdminRouter({
 
     // Removes the candidate's current document of a type: record and file,
     // with a required reason, audited (like Remove from Review).
-    router.post("/candidates/:passportId/documents/:documentId/remove", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.post("/candidates/:passportId/documents/:documentId/remove", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         if (!isValidDocumentIdParam(req.params.documentId)) {
             return res.status(400).json({ message: "Invalid document ID", errors: [{ field: "documentId", message: "must be a document ID" }] });
@@ -476,13 +477,13 @@ export function createAdminRouter({
         })));
     });
 
-    router.get("/candidates/:passportId/call-logs", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/candidates/:passportId/call-logs", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await listCallLogs({ db: client, passportId: await storedCandidateId(client, req.params.passportId) })));
     });
 
-    router.post("/candidates/:passportId/call-logs", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.post("/candidates/:passportId/call-logs", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseCallLogBody(req.body);
         if (parsed.errors) {

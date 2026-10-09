@@ -31,7 +31,10 @@ export const hasRole = (user: WithRole, roles: readonly Role[]): boolean => Bool
 
 // Overview, documents, review queue, clients, police workflow, reports.
 export const canViewDashboard = (user: WithRole) => hasRole(user, DASHBOARD_ROLES);
-// Review actions, corrections, candidate edits and uploads.
+// The whole Candidates area: registration, details, stages, candidate
+// documents and call logs (every role, REGISTRATION_DESK included).
+export const canManageCandidates = (user: WithRole) => hasRole(user, CANDIDATE_ROLES);
+// Review actions and corrections.
 export const canReview = (user: WithRole) => hasRole(user, REVIEW_ROLES);
 // Setting or correcting a police slip's submitted date.
 export const canCorrectPoliceDates = (user: WithRole) => hasRole(user, POLICE_DATE_ROLES);
