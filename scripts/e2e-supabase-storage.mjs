@@ -124,7 +124,7 @@ const dbCleanup = [];
 {
     const s = step("2. Create dedicated test client in database");
     try {
-        await prisma.user.create({
+        await prisma.candidate.create({
             data: {
                 passportId: TEST_PASSPORT_ID,
                 uniqueId: TEST_UNIQUE_ID,
@@ -133,8 +133,8 @@ const dbCleanup = [];
                 whatsappNumber: TEST_WHATSAPP,
             },
         });
-        dbCleanup.push({ table: "user", where: { passportId: TEST_PASSPORT_ID } });
-        ok(s, `Created User passportId=${TEST_PASSPORT_ID}, uniqueId=${TEST_UNIQUE_ID}`);
+        dbCleanup.push({ table: "candidate", where: { passportId: TEST_PASSPORT_ID } });
+        ok(s, `Created Candidate passportId=${TEST_PASSPORT_ID}, uniqueId=${TEST_UNIQUE_ID}`);
     } catch (e) {
         fail(s, `DB create user: ${e.message}`);
     }
@@ -515,10 +515,10 @@ for (const { table, where } of [...dbCleanup].reverse()) {
         if (table === "document") {
             await prisma.document.delete({ where });
             console.log(`  db       ✓ deleted document ${JSON.stringify(where)}`);
-        } else if (table === "user") {
+        } else if (table === "candidate") {
             await prisma.temporaryData.deleteMany({ where: { passportId: TEST_PASSPORT_ID } });
-            await prisma.user.delete({ where });
-            console.log(`  db       ✓ deleted user ${JSON.stringify(where)}`);
+            await prisma.candidate.delete({ where });
+            console.log(`  db       ✓ deleted candidate ${JSON.stringify(where)}`);
         }
     } catch (e) {
         console.error(`  db       ✗ error deleting ${table} ${JSON.stringify(where)}: ${e.message}`);

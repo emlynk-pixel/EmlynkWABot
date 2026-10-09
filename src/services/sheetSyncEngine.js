@@ -7,10 +7,10 @@
 //                            against every row of the Sheet
 //
 // Direction is strictly database -> Sheet. Nothing read from the Sheet is ever
-// written to the database; the Sheet is only read to find rows (column AN)
+// written to the database; the Sheet is only read to find rows (column AO)
 // and to compare cells.
 //
-// Row identity is column AN (_SYSTEM_CANDIDATE_ID) = users.unique_id. Blank AN
+// Row identity is column AO (_SYSTEM_CANDIDATE_ID) = users.unique_id. Blank AO
 // cells identify nobody. A unique ID present in more than one row is a hard
 // data-integrity error (SheetDuplicateCandidateIdError): the whole operation
 // stops before any write, and none of those rows is touched; nothing guesses

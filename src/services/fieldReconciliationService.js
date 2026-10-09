@@ -222,7 +222,7 @@ export async function applyReconciliationUpdates({
             continue;
         }
 
-        const { count } = await client.user.updateMany({
+        const { count } = await client.candidate.updateMany({
             where: {
                 passportId: identity.passportId,
                 [column]: null,

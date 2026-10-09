@@ -194,9 +194,9 @@ The winner needs a score ≥ 3 from ≥ 2 indicators and a lead of ≥ 2; one ke
 
 ## Passport Field Extraction
 
-Fields extracted are those with a `users` column or listed in §12:
+Fields extracted are those with a `candidate` column or listed in §12:
 
-| Field | Source | users column |
+| Field | Source | candidate column |
 |---|---|---|
 | `passportId` | MRZ (check digit) and printed label | `passport_id` (lookup key, never overwritten) |
 | `surname` | MRZ and printed label | `other_name` (legacy OTHER NAME / surname) |
@@ -291,8 +291,8 @@ The resolved date is stored (`documents.police_submitted_date`) and drives the 2
 
 Rules followed throughout:
 
-- `users.passport_id` is the primary key and the identity.
-- `users.unique_id` is a separate reference and is never used in place of `passport_id`.
+- `candidate.passport_id` is the primary key and the identity.
+- `candidate.unique_id` is a separate reference and is never used in place of `passport_id`.
 - WhatsApp number is a signal, not an identity.
 - Users are never merged. Stored WhatsApp numbers are never changed.
 - Existing values are never overwritten.
@@ -303,7 +303,7 @@ Rules followed throughout:
 
 1. Normalizes the number: uppercase, no spaces, hyphens or `<`, 6–9 characters, at least one digit.
 2. Invalid input returns `INVALID_INPUT` without querying.
-3. Queries `users.passport_id` with an exact, case-insensitive match (in case legacy rows are lowercase).
+3. Queries `candidate.passport_id` with an exact, case-insensitive match (in case legacy rows are lowercase).
 4. Returns `FOUND`, `NOT_FOUND` or `MULTIPLE`.
 
 A passport number with field confidence below 60 is not trusted for identity, even if it matches a user (`PASSPORT_ID_UNRESOLVED`).
@@ -378,7 +378,7 @@ Why conflicts are never merged: if a passport belongs to client A but the WhatsA
 
 Comparison is by calendar day for dates, and case- and spacing-insensitive for text.
 
-| Passport field | users column (legacy name) | Auto-fill |
+| Passport field | candidate column (legacy name) | Auto-fill |
 |---|---|---|
 | `dateOfBirth` | `date_of_birth` | yes |
 | `placeOfBirth` | `place_of_birth` | yes |

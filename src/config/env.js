@@ -7,16 +7,18 @@ export const REQUIRED_ENV_VARS = Object.freeze([
     "SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
     "SUPABASE_BUCKET",
-    "JWT_SECRET",
     "META_APP_SECRET",
     "WHATSAPP_VERIFY_TOKEN",
     "WHATSAPP_ACCESS_TOKEN",
     "WHATSAPP_API_VERSION",
     "OCR_SERVICE_URL",
+    // This environment's public admin address; the only source of invitation
+    // redirects (config/appBaseUrl.js). Environment-specific.
+    "APP_BASE_URL",
 ]);
 
 // The worker-only process (src/worker.js, Step 5B) reads only these: the
-// database, storage and the OCR service. It needs no JWT, Meta or WhatsApp
+// database, storage and the OCR service. It needs no Meta or WhatsApp
 // secret, so its deployment doesn't have to hold them.
 export const WORKER_REQUIRED_ENV_VARS = Object.freeze([
     "DATABASE_URL",
@@ -28,7 +30,7 @@ export const WORKER_REQUIRED_ENV_VARS = Object.freeze([
 
 // The Google Sheet sync worker (src/sheetSyncWorker.js, Cloud Run
 // emlynk-sheet-sync-worker): the database and the Sheet target only. No
-// Supabase storage, WhatsApp, OCR or JWT secret; no Google key either (keyless
+// Supabase storage, WhatsApp or OCR secret; no Google key either (keyless
 // ADC: GOOGLE_APPLICATION_CREDENTIALS must NOT be set, see config/sheetSync.js).
 export const SHEET_SYNC_WORKER_REQUIRED_ENV_VARS = Object.freeze([
     "DATABASE_URL",
@@ -37,18 +39,30 @@ export const SHEET_SYNC_WORKER_REQUIRED_ENV_VARS = Object.freeze([
 ]);
 
 import { parseRequiredDocumentTypes } from "./requiredDocuments.js";
+import { parseAppBaseUrl } from "./appBaseUrl.js";
 import { isLoopbackUrl } from "../services/ocrClient.js";
-
-// HS256 key: shorter secrets can be brute-forced from a single token.
-export const MIN_JWT_SECRET_LENGTH = 32;
 
 // Number of reverse proxies in front of the app, from TRUST_PROXY_HOPS.
 // Unset (the default) trusts none: req.ip is the direct peer, and a client
 // can't choose its own IP for the login rate limit with X-Forwarded-For.
 // Set it to the exact hop count only when deployed behind a known proxy
 // (e.g. 1 behind a single load balancer). Never "true" (SEC-015).
-export function trustProxyHops(value = process.env.TRUST_PROXY_HOPS) {
-    if (value === undefined || value === "") return null;
+//
+// On Vercel, "unset" is the wrong default: every request to a Vercel
+// serverless function passes through exactly one hop of Vercel's own edge
+// proxy, which always sets X-Forwarded-For to the real client IP (Vercel
+// docs, "Request headers") - Express's default "trust proxy: false" then
+// reads req.ip as Vercel's internal connecting address, the same for every
+// request, so the login/API rate limiters key every client into one shared
+// bucket. Vercel sets VERCEL=1 for every deployment (production, preview and
+// dev), so that - not an app-level guess - is what selects this default; an
+// explicit TRUST_PROXY_HOPS still always wins, and the value is a specific
+// known hop count, never `true` (which would trust an attacker-supplied
+// X-Forwarded-For from anywhere).
+export function trustProxyHops(value = process.env.TRUST_PROXY_HOPS, isVercel = process.env.VERCEL === "1") {
+    if (value === undefined || value === "") {
+        return isVercel ? 1 : null;
+    }
     const hops = Number(value);
     if (!Number.isInteger(hops) || hops < 0 || hops > 10) {
         throw new Error("TRUST_PROXY_HOPS must be a whole number from 0 to 10");
@@ -79,8 +93,11 @@ export function findEnvProblems(env = process.env, { required: requiredVars = RE
     }
 
     // Format checks only for values that are set; missing ones are reported above.
-    if (isSet(env.JWT_SECRET) && env.JWT_SECRET.length < MIN_JWT_SECRET_LENGTH) {
-        problems.push(`JWT_SECRET must be at least ${MIN_JWT_SECRET_LENGTH} characters`);
+    // Base of the invitation redirect (config/appBaseUrl.js): the site
+    // address only, http(s), no path/query/credentials.
+    if (isSet(env.APP_BASE_URL)) {
+        const { problem } = parseAppBaseUrl(env.APP_BASE_URL);
+        if (problem) problems.push(problem);
     }
     if (isSet(env.SUPABASE_URL) && !isUrl(env.SUPABASE_URL, ["https:", "http:"])) {
         problems.push("SUPABASE_URL is not a valid URL");
@@ -103,7 +120,7 @@ export function findEnvProblems(env = process.env, { required: requiredVars = RE
         problems.push("PORT must be a number");
     }
     try {
-        trustProxyHops(env.TRUST_PROXY_HOPS);
+        trustProxyHops(env.TRUST_PROXY_HOPS, env.VERCEL === "1");
     } catch (error) {
         problems.push(error.message);
     }

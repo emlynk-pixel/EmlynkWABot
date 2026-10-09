@@ -36,7 +36,7 @@ export async function findUsersByPassportId(passportId, { db } = {}) {
     if (!normalized) return { status: LOOKUP_STATUS.INVALID_INPUT, users: [] };
 
     const client = await resolveDb(db);
-    const users = await client.user.findMany({
+    const users = await client.candidate.findMany({
         where: { passportId: { equals: normalized, mode: "insensitive" } },
         select: USER_LOOKUP_SELECT,
         take: 2,
@@ -53,7 +53,7 @@ export async function findUsersByWhatsappNumber(whatsappNumber, { db } = {}) {
     if (!normalized) return { status: LOOKUP_STATUS.INVALID_INPUT, users: [] };
 
     const client = await resolveDb(db);
-    const candidates = await client.user.findMany({
+    const candidates = await client.candidate.findMany({
         where: { whatsappNumber: { endsWith: normalized.slice(-4) } },
         select: USER_LOOKUP_SELECT,
     });

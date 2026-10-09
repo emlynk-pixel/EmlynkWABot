@@ -14,7 +14,7 @@ import {
     type CandidateDocumentType,
     type FailedUpload,
 } from "../api/candidates";
-import { canReview, useAuth } from "../auth/AuthProvider";
+import { canManageCandidates, useAuth } from "../auth/AuthProvider";
 import { CandidateFields, detailsFrom, emptyDetails, Field, textAreaControl, validateDetails } from "../components/candidate/CandidateFields";
 import { DocumentRow, DOCUMENT_ACCEPT, VIDEO_ACCEPT } from "../components/candidate/DocumentRow";
 import { DialogError, primaryButton, secondaryButton } from "../components/Dialog";
@@ -61,7 +61,7 @@ function FileInput({ id, label, required, accept, file, onChange, disabled, erro
 // existing candidate is loaded into the same form and saved to their record,
 // with their stored documents shown (Replace uses the normal versioning).
 export function CandidateRegistrationPage() {
-    const { admin, token } = useAuth();
+    const { user, token } = useAuth();
     const navigate = useNavigate();
     const id = useId();
     const [passportId, setPassportId] = useState("");
@@ -76,8 +76,8 @@ export function CandidateRegistrationPage() {
     // the same ID is fetched once.
     const pending = useRef<{ passportId: string; promise: Promise<CandidateDetails | null> } | null>(null);
 
-    if (!canReview(admin)) {
-        return <Card><EmptyState title="Candidate registration needs an admin or analyst account." /></Card>;
+    if (!canManageCandidates(user)) {
+        return <Card><EmptyState title="Candidate registration needs a staff account with access to Candidates." /></Card>;
     }
 
     const existing = lookup.status === "found" ? lookup.details : null;
@@ -140,7 +140,7 @@ export function CandidateRegistrationPage() {
 
     const saveExisting = async (current: CandidateDetails) => {
         if (!token) return;
-        const found = validateDetails(details);
+        const found = validateDetails(details, "registration", { whatsappLocked: Boolean(current.candidate.whatsappNumber) });
         setErrors(found);
         if (Object.keys(found).length) return;
         setBusy(true);

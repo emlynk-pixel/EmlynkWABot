@@ -4,7 +4,7 @@
 // everywhere else); registration creates that row, it never makes a second
 // record for the same person (passport ID and NIC are both unique).
 //
-// The deployment process has six stages. They are independent: any stage can
+// The deployment process has seven stages. They are independent: any stage can
 // be opened, edited and completed at any time, in any order. Two stages are
 // completed by their data (CANDIDATE_DETAILS: the required details and a
 // passport; DOCUMENT_SUBMISSION: the five required documents); the others by
@@ -41,6 +41,8 @@ export const CANDIDATE_STAGES = Object.freeze([
     "CANDIDATE_DETAILS",
     "DOCUMENT_SUBMISSION",
     "IVS_INTERVIEW",
+    // Completed by an admin, like VISA_APPROVAL (notes + completion).
+    "VISA_SUBMISSION",
     "VISA_APPROVAL",
     "FINALIZING_JOB",
 ]);
@@ -58,6 +60,9 @@ export const CANDIDATE_DOCUMENT_TYPES = Object.freeze({
     POLICE_SLIP: {},
     POLICE_REPORT: { variants: POLICE_REPORT_VARIANTS },
     SCAN: {},
+    // Uploaded in the Visa submission stage (a document type of its own, so
+    // the single SCAN stays the scan). Not part of the required submission.
+    VISA_SUBMISSION: {},
 });
 
 // The five documents a candidate's submission must include (Document
@@ -137,9 +142,12 @@ function text(body, field, errors, { required = false, max = MAX_TEXT_LENGTH } =
     return trimmed;
 }
 
-function date(body, field, errors) {
+function date(body, field, errors, { required = false } = {}) {
     const value = body[field];
-    if (value === undefined || value === null || value === "") return null;
+    if (value === undefined || value === null || value === "") {
+        if (required) errors.push({ field, message: "is required" });
+        return null;
+    }
     if (typeof value !== "string" || !DATE_PATTERN.test(value)) {
         errors.push({ field, message: "must be a date (YYYY-MM-DD)" });
         return null;
@@ -207,15 +215,16 @@ export function parseCandidateBody(body, { creating }) {
 
     values.otherName = text(body, "surname", errors, { required: true, max: MAX_NAME_LENGTH });
     values.firstName = text(body, "otherNames", errors, { required: true, max: MAX_NAME_LENGTH });
-    // Optional here (registration and saving details); required to complete
-    // Candidate Details (automaticStageMissing), like the passport document.
+    // Optional, everywhere (registration, saving details, completing Candidate Details).
     values.address = text(body, "address", errors, { max: MAX_ADDRESS_LENGTH });
     values.jobExperience = text(body, "jobExperience", errors, { required: true });
-    // Optional passport and contact details: empty is stored as NULL.
+    // Optional passport and contact details: empty is stored as NULL. The
+    // passport's issue and expiry dates are required (and count toward
+    // completing Candidate Details); older records without them still load.
     values.placeOfBirth = text(body, "placeOfBirth", errors, { max: MAX_NAME_LENGTH });
     values.dateOfBirth = date(body, "dateOfBirth", errors);
-    values.passportExpiryDate = date(body, "passportExpiryDate", errors);
-    values.passportIssueDate = date(body, "passportIssueDate", errors);
+    values.passportExpiryDate = date(body, "passportExpiryDate", errors, { required: true });
+    values.passportIssueDate = date(body, "passportIssueDate", errors, { required: true });
     if (values.passportIssueDate && values.passportExpiryDate && values.passportIssueDate >= values.passportExpiryDate) {
         errors.push({ field: "passportIssueDate", message: "must be before the passport expiry date" });
     }
@@ -347,8 +356,9 @@ export function automaticStageMissing(user, documents) {
     const details = [];
     if (isBlank(user.otherName)) details.push("surname");
     if (isBlank(user.firstName)) details.push("other names");
-    if (isBlank(user.address)) details.push("address");
     if (isBlank(user.nic)) details.push("NIC");
+    if (!user.passportIssueDate) details.push("passport issue date");
+    if (!user.passportExpiryDate) details.push("passport expiry date");
     if (!parseJobTypes(user.job).length) details.push("job type");
     if (isBlank(user.jobExperience)) details.push("job experience");
     if (isBlank(user.whatsappNumber)) details.push("WhatsApp number");
@@ -484,8 +494,8 @@ export function candidateSearchWhere(search) {
 export async function listCandidates({ db, params }) {
     const where = params.search ? candidateSearchWhere(params.search) : {};
     const [total, users] = await Promise.all([
-        db.user.count({ where }),
-        db.user.findMany({
+        db.candidate.count({ where }),
+        db.candidate.findMany({
             where,
             select: {
                 ...userSelect,
@@ -519,9 +529,9 @@ export async function listCandidates({ db, params }) {
 // one row that matches ignoring case (legacy rows may be lowercase; registration
 // compares the same way). Null when there is none, or more than one.
 export async function resolveCandidatePassportId({ db, passportId }) {
-    const exact = await db.user.findUnique({ where: { passportId }, select: { passportId: true } });
+    const exact = await db.candidate.findUnique({ where: { passportId }, select: { passportId: true } });
     if (exact) return exact.passportId;
-    const rows = await db.user.findMany({
+    const rows = await db.candidate.findMany({
         where: { passportId: { equals: passportId, mode: "insensitive" } },
         select: { passportId: true },
         take: 2,
@@ -531,7 +541,7 @@ export async function resolveCandidatePassportId({ db, passportId }) {
 
 // GET /api/admin/candidates/:passportId — null when there is no such candidate.
 export async function getCandidate({ db, passportId }) {
-    const user = await db.user.findUnique({
+    const user = await db.candidate.findUnique({
         where: { passportId },
         select: {
             ...userSelect,
@@ -589,13 +599,13 @@ const uniqueTarget = (error) => [].concat(error?.meta?.target ?? []).join(",");
 // Next free business reference: one more than the highest numeric unique ID,
 // four digits at least (0001, 0002, …), like the existing records.
 async function nextUniqueId(db) {
-    const rows = await db.user.findMany({ select: { uniqueId: true } });
+    const rows = await db.candidate.findMany({ select: { uniqueId: true } });
     const highest = rows.reduce((max, { uniqueId }) => (/^\d+$/.test(uniqueId) ? Math.max(max, Number(uniqueId)) : max), 0);
     return String(highest + 1).padStart(4, "0");
 }
 
 async function assertNicFree(db, nic, exceptPassportId) {
-    const holder = await db.user.findUnique({ where: { nic }, select: { passportId: true } });
+    const holder = await db.candidate.findUnique({ where: { nic }, select: { passportId: true } });
     if (holder && holder.passportId !== exceptPassportId) {
         throw new CandidateError(409, "NIC_EXISTS", "Another candidate is already registered with this NIC.");
     }
@@ -612,11 +622,67 @@ async function assertWhatsappFree(db, whatsappNumber, exceptPassportId) {
     }
 }
 
+// ---------------------------------------------------------------- audit
+
+// Candidate activity in the audit log (audit_logs is append-only). Who did
+// it is the signed-in application user (req.user). Only the candidate's own
+// details are ever written, by name (CANDIDATE_AUDIT_FIELDS): nothing of the
+// session, the request or the user's account. Values are cut to a bounded
+// length so one long note can't bloat the log.
+export const CANDIDATE_AUDIT_ACTION = Object.freeze({
+    CREATE_CANDIDATE: "CREATE_CANDIDATE",
+    UPDATE_CANDIDATE: "UPDATE_CANDIDATE",
+    UPDATE_STAGE: "UPDATE_STAGE",
+});
+
+export const CANDIDATE_AUDIT_FIELDS = Object.freeze([
+    "otherName", "firstName", "address", "nic", "job", "jobExperience", "whatsappNumber", "contactNumber",
+    "placeOfBirth", "dateOfBirth", "passportIssueDate", "passportExpiryDate", "nationality", "sex",
+]);
+const STAGE_AUDIT_FIELDS = Object.freeze(["completed", "notes", "jobId", "testResult", "testDate"]);
+const MAX_AUDIT_VALUE_LENGTH = 300;
+
+const isAuditBlank = (value) => value === null || value === undefined || (typeof value === "string" && value.trim() === "");
+
+// Comparable and storable: dates as YYYY-MM-DD, blanks as null, long text cut.
+function auditValue(value) {
+    if (isAuditBlank(value)) return null;
+    if (value instanceof Date) return isoDate(value);
+    if (typeof value === "boolean") return value;
+    const textValue = String(value);
+    return textValue.length > MAX_AUDIT_VALUE_LENGTH ? `${textValue.slice(0, MAX_AUDIT_VALUE_LENGTH)}…` : textValue;
+}
+
+// { before, after } of the fields `next` sets to a different value, or null
+// when none differ (a no-op save is not audited).
+function diffFields(fields, previous, next) {
+    const before = {};
+    const after = {};
+    for (const field of fields) {
+        if (next[field] === undefined) continue;
+        const from = auditValue(previous[field]);
+        const to = auditValue(next[field]);
+        if (from === to) continue;
+        before[field] = from;
+        after[field] = to;
+    }
+    return Object.keys(after).length ? { before, after } : null;
+}
+
+const stageStatus = (completed) => (completed ? "COMPLETED" : "NOT_COMPLETED");
+
+function writeCandidateAudit(tx, { actor, action, passportId, previousStatus, newStatus, reason = null, previousValue = null, newValue = null }) {
+    return tx.auditLog.create({
+        data: { auditId: crypto.randomUUID(), adminId: actor.adminId, action, passportId, previousStatus, newStatus, reason, previousValue, newValue },
+    });
+}
+
 // POST /api/admin/candidates. An existing passport ID is never registered
 // again (409 with the existing record's passport ID, so the admin can open it).
-export async function createCandidate({ db, values }) {
+// actor: the signed-in user (req.user), recorded in the audit log.
+export async function createCandidate({ db, values, actor = null }) {
     // Case-insensitive, like the passport lookup (legacy rows may be lowercase).
-    const existing = await db.user.findFirst({
+    const existing = await db.candidate.findFirst({
         where: { passportId: { equals: values.passportId, mode: "insensitive" } },
         select: { passportId: true },
     });
@@ -634,9 +700,21 @@ export async function createCandidate({ db, values }) {
         const uniqueId = await nextUniqueId(db);
         try {
             await db.$transaction(async (tx) => {
-                await tx.user.create({ data: { ...details, uniqueId } });
+                await tx.candidate.create({ data: { ...details, uniqueId } });
                 if (comment) {
                     await tx.candidateStage.create({ data: { passportId: values.passportId, stage: "CANDIDATE_DETAILS", notes: comment } });
+                }
+                if (actor) {
+                    await writeCandidateAudit(tx, {
+                        actor,
+                        action: CANDIDATE_AUDIT_ACTION.CREATE_CANDIDATE,
+                        passportId: values.passportId,
+                        previousStatus: "NONE",
+                        newStatus: "CREATED",
+                        reason: `Candidate registered (${uniqueId})`,
+                        // Which details were given, not their values.
+                        newValue: JSON.stringify({ uniqueId, fields: CANDIDATE_AUDIT_FIELDS.filter((field) => !isAuditBlank(details[field])) }),
+                    });
                 }
             });
             return { passportId: values.passportId, uniqueId };
@@ -653,7 +731,7 @@ export async function createCandidate({ db, values }) {
 }
 
 async function requireCandidate(db, passportId) {
-    const user = await db.user.findUnique({ where: { passportId }, select: userSelect });
+    const user = await db.candidate.findUnique({ where: { passportId }, select: userSelect });
     if (!user) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
     return user;
 }
@@ -666,7 +744,7 @@ async function requireCandidate(db, passportId) {
 // compared after normalizing the stored value, so an older unnormalized
 // record doesn't falsely look different from itself. A genuinely different
 // number is refused outright rather than silently kept.
-export async function updateCandidateDetails({ db, passportId, values }) {
+export async function updateCandidateDetails({ db, passportId, values, actor = null }) {
     const user = await requireCandidate(db, passportId);
     await assertNicFree(db, values.nic, passportId);
     const { whatsappNumber, ...data } = values;
@@ -678,8 +756,23 @@ export async function updateCandidateDetails({ db, passportId, values }) {
         await assertWhatsappFree(db, whatsappNumber, passportId);
         data.whatsappNumber = whatsappNumber;
     }
+    const changes = diffFields(CANDIDATE_AUDIT_FIELDS, user, data);
     try {
-        await db.user.update({ where: { passportId }, data });
+        await db.$transaction(async (tx) => {
+            await tx.candidate.update({ where: { passportId }, data });
+            if (actor && changes) {
+                await writeCandidateAudit(tx, {
+                    actor,
+                    action: CANDIDATE_AUDIT_ACTION.UPDATE_CANDIDATE,
+                    passportId,
+                    previousStatus: "CREATED",
+                    newStatus: "UPDATED",
+                    reason: `Updated ${Object.keys(changes.after).join(", ")}`,
+                    previousValue: JSON.stringify(changes.before),
+                    newValue: JSON.stringify(changes.after),
+                });
+            }
+        });
     } catch (error) {
         if (isUniqueViolation(error)) {
             const target = uniqueTarget(error);
@@ -693,7 +786,7 @@ export async function updateCandidateDetails({ db, passportId, values }) {
 
 // PUT /api/admin/candidates/:passportId/stages/:stage. Automatic stages take
 // notes only; their completion follows their data.
-export async function updateStage({ db, passportId, stage, values, now = new Date() }) {
+export async function updateStage({ db, passportId, stage, values, actor = null, now = new Date() }) {
     const candidate = await getCandidate({ db, passportId });
     if (!candidate) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
 
@@ -714,10 +807,25 @@ export async function updateStage({ db, passportId, stage, values, now = new Dat
         if (values.testDate !== undefined) data.testDate = values.testDate;
     }
 
-    await db.candidateStage.upsert({
-        where: { passportId_stage: { passportId, stage } },
-        create: { passportId, stage, completed: false, ...data },
-        update: data,
+    const changes = diffFields(STAGE_AUDIT_FIELDS, current, values);
+    await db.$transaction(async (tx) => {
+        await tx.candidateStage.upsert({
+            where: { passportId_stage: { passportId, stage } },
+            create: { passportId, stage, completed: false, ...data },
+            update: data,
+        });
+        if (actor && changes) {
+            await writeCandidateAudit(tx, {
+                actor,
+                action: CANDIDATE_AUDIT_ACTION.UPDATE_STAGE,
+                passportId,
+                previousStatus: stageStatus(current.completed),
+                newStatus: stageStatus(changes.after.completed ?? current.completed),
+                reason: "notes" in changes.after ? changes.after.notes : null,
+                previousValue: JSON.stringify({ stage, ...changes.before }),
+                newValue: JSON.stringify({ stage, ...changes.after }),
+            });
+        }
     });
     return getCandidate({ db, passportId });
 }

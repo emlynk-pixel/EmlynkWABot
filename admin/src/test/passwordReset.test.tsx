@@ -1,153 +1,127 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
-import { renderApp, stubBackend } from "./helpers";
+import { SESSION_TOKEN, fakeAuth, renderApp, stubBackend } from "./helpers";
 
-describe("Forgot Password Flow", () => {
-    test("login page renders 'Forgot password?' link leading to /forgot-password", async () => {
+describe("Forgot Password (Supabase recovery email)", () => {
+    test("the login page links to it", async () => {
         stubBackend({});
         renderApp("/login");
-
-        const link = await screen.findByRole("link", { name: "Forgot password?" });
-        expect(link).toBeInTheDocument();
-        expect(link.getAttribute("href")).toBe("/forgot-password");
+        await userEvent.setup().click(await screen.findByRole("link", { name: "Forgot password?" }));
+        expect(await screen.findByRole("heading", { name: "Reset password" })).toBeInTheDocument();
     });
 
-    test("submitting forgot password form sends POST /auth/forgot-password and shows confirmation", async () => {
-        const { calls } = stubBackend({
-            "POST /auth/forgot-password": {
-                status: 200,
-                body: { message: "If the account exists, a password reset link has been sent." },
-            },
-        });
-
+    test("asks Supabase to send the recovery email, redirecting to this app's reset page; the backend is not involved", async () => {
+        const { calls } = stubBackend({});
         renderApp("/forgot-password");
-        expect(await screen.findByRole("heading", { name: "Reset password" })).toBeInTheDocument();
-
         const user = userEvent.setup();
-        await user.type(screen.getByLabelText("Email"), "admin@example.invalid");
+        await user.type(await screen.findByLabelText("Email"), " person@example.invalid ");
         await user.click(screen.getByRole("button", { name: "Send reset link" }));
 
         expect(await screen.findByRole("heading", { name: "Check your email" })).toBeInTheDocument();
-        expect(screen.getByText(/If an active account matches that email address/i)).toBeInTheDocument();
-        expect(screen.getByRole("link", { name: "Return to sign in" })).toBeInTheDocument();
-
-        const postCall = calls.find((c) => c.method === "POST" && c.path === "/auth/forgot-password");
-        expect(postCall).toBeDefined();
-        expect(postCall?.body).toEqual({ email: "admin@example.invalid" });
+        expect(fakeAuth.calls.find((c) => c.method === "resetPasswordForEmail")?.args).toEqual([
+            "person@example.invalid",
+            { redirectTo: `${window.location.origin}/admin/reset-password` },
+        ]);
+        expect(calls).toHaveLength(0);
     });
 
-    test("forgot password shows error if submitted without email", async () => {
+    test("enumeration-safe: the same confirmation whether or not the email has an account", async () => {
+        stubBackend({});
+        for (const email of ["known@example.invalid", "unknown@example.invalid"]) {
+            const { unmount } = renderApp("/forgot-password");
+            const user = userEvent.setup();
+            await user.type(await screen.findByLabelText("Email"), email);
+            await user.click(screen.getByRole("button", { name: "Send reset link" }));
+            expect(await screen.findByText(/If an account matches that email address/)).toBeInTheDocument();
+            unmount();
+        }
+    });
+
+    test("Supabase rate limiting is reported; nothing else is", async () => {
+        fakeAuth.failures.reset = { status: 429, code: "over_email_send_rate_limit" };
         stubBackend({});
         renderApp("/forgot-password");
-        await screen.findByRole("heading", { name: "Reset password" });
-
         const user = userEvent.setup();
+        await user.type(await screen.findByLabelText("Email"), "person@example.invalid");
         await user.click(screen.getByRole("button", { name: "Send reset link" }));
+        expect(await screen.findByRole("alert")).toHaveTextContent("Too many password reset requests");
+    });
 
-        expect(await screen.findByText("Enter your email address.")).toBeInTheDocument();
+    test("an invalid email is caught before any request", async () => {
+        stubBackend({});
+        renderApp("/forgot-password");
+        const user = userEvent.setup();
+        await user.type(await screen.findByLabelText("Email"), "not-an-email");
+        await user.click(screen.getByRole("button", { name: "Send reset link" }));
+        expect(screen.getByLabelText("Email")).toHaveAttribute("aria-invalid", "true");
+        expect(fakeAuth.calls.some((c) => c.method === "resetPasswordForEmail")).toBe(false);
     });
 });
 
-describe("Reset Password Flow", () => {
-    test("validates token and displays new password inputs", async () => {
-        stubBackend({
-            "GET /auth/reset-password": {
-                status: 200,
-                body: { valid: true, message: "Reset token is valid" },
-            },
-        });
+describe("Reset Password (Supabase recovery session)", () => {
+    // The recovery link signs the user in with a recovery session.
+    function arriveFromRecovery() {
+        fakeAuth.setSession(SESSION_TOKEN);
+        return stubBackend({});
+    }
 
-        renderApp("/reset-password?token=valid-token-xyz");
+    async function submit(password = "New-Strong-Pass-1", confirm = password) {
+        const user = userEvent.setup();
+        await user.type(screen.getByLabelText("New Password"), password);
+        await user.type(screen.getByLabelText("Confirm Password"), confirm);
+        await user.click(screen.getByRole("button", { name: "Reset password" }));
+    }
 
+    test("with a recovery session: the new-password form", async () => {
+        arriveFromRecovery();
+        renderApp("/reset-password");
         expect(await screen.findByRole("heading", { name: "Set New Password" })).toBeInTheDocument();
-        expect(screen.getByLabelText("New Password")).toBeInTheDocument();
-        expect(screen.getByLabelText("Confirm Password")).toBeInTheDocument();
     });
 
-    test("displays error state when token is invalid or expired", async () => {
-        stubBackend({
-            "GET /auth/reset-password": {
-                status: 400,
-                body: { message: "Password reset link has expired", code: "EXPIRED" },
-            },
-        });
-
-        renderApp("/reset-password?token=expired-token-xyz");
-
-        expect(await screen.findByRole("heading", { name: "Reset Link Problem" })).toBeInTheDocument();
-        expect(screen.getByText("Password reset link has expired")).toBeInTheDocument();
-        expect(screen.getByRole("link", { name: "Request New Reset Link" })).toBeInTheDocument();
-        expect(screen.queryByLabelText("New Password")).not.toBeInTheDocument();
-    });
-
-    test("shows validation error when passwords do not match", async () => {
-        stubBackend({
-            "GET /auth/reset-password": {
-                status: 200,
-                body: { valid: true, message: "Reset token is valid" },
-            },
-        });
-
-        renderApp("/reset-password?token=valid-token-xyz");
+    test("updates the password with Supabase, ends the session, and asks to sign in again", async () => {
+        const { calls } = arriveFromRecovery();
+        renderApp("/reset-password");
         await screen.findByRole("heading", { name: "Set New Password" });
-
-        const user = userEvent.setup();
-        await user.type(screen.getByLabelText("New Password"), "SuperPassword123!");
-        await user.type(screen.getByLabelText("Confirm Password"), "DifferentPassword456!");
-        await user.click(screen.getByRole("button", { name: "Reset password" }));
-
-        expect(await screen.findByText("Passwords do not match.")).toBeInTheDocument();
-    });
-
-    test("shows validation error when password is under 8 characters", async () => {
-        stubBackend({
-            "GET /auth/reset-password": {
-                status: 200,
-                body: { valid: true, message: "Reset token is valid" },
-            },
-        });
-
-        renderApp("/reset-password?token=valid-token-xyz");
-        await screen.findByRole("heading", { name: "Set New Password" });
-
-        const user = userEvent.setup();
-        await user.type(screen.getByLabelText("New Password"), "short");
-        await user.type(screen.getByLabelText("Confirm Password"), "short");
-        await user.click(screen.getByRole("button", { name: "Reset password" }));
-
-        expect(await screen.findByText("Password must be at least 8 characters long.")).toBeInTheDocument();
-    });
-
-    test("submitting valid passwords sends POST /auth/reset-password and displays success state", async () => {
-        const { calls } = stubBackend({
-            "GET /auth/reset-password": {
-                status: 200,
-                body: { valid: true, message: "Reset token is valid" },
-            },
-            "POST /auth/reset-password": {
-                status: 200,
-                body: { message: "Password reset successful. You can now sign in with your new password." },
-            },
-        });
-
-        renderApp("/reset-password?token=valid-token-xyz");
-        await screen.findByRole("heading", { name: "Set New Password" });
-
-        const user = userEvent.setup();
-        await user.type(screen.getByLabelText("New Password"), "NewAwesomePassword123!");
-        await user.type(screen.getByLabelText("Confirm Password"), "NewAwesomePassword123!");
-        await user.click(screen.getByRole("button", { name: "Reset password" }));
+        await submit();
 
         expect(await screen.findByRole("heading", { name: "Password Reset Complete" })).toBeInTheDocument();
-        expect(screen.getByText(/Your password has been successfully updated/i)).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Continue to Sign In" })).toBeInTheDocument();
+        expect(fakeAuth.calls.find((c) => c.method === "updateUser")?.args).toEqual([{ password: "New-Strong-Pass-1" }]);
+        expect(fakeAuth.currentSession).toBeNull();
+        expect(calls.some((c) => c.path.includes("reset-password")), "no backend reset endpoint").toBe(false);
+        await userEvent.setup().click(screen.getByRole("button", { name: "Continue to Sign In" }));
+        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    });
 
-        const postCall = calls.find((c) => c.method === "POST" && c.path === "/auth/reset-password");
-        expect(postCall).toBeDefined();
-        expect(postCall?.body).toEqual({
-            token: "valid-token-xyz",
-            password: "NewAwesomePassword123!",
-        });
+    test("an expired or used recovery link -> 'request a new link'", async () => {
+        window.location.hash = "#error=access_denied&error_code=otp_expired";
+        stubBackend({});
+        renderApp("/reset-password");
+        expect(await screen.findByText("Reset Link Problem")).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: "Request New Reset Link" })).toBeInTheDocument();
+    });
+
+    test("no recovery session -> invalid link state", async () => {
+        stubBackend({});
+        renderApp("/reset-password");
+        expect(await screen.findByText("Reset Link Problem")).toBeInTheDocument();
+    });
+
+    test("short or mismatched passwords are caught before Supabase is called", async () => {
+        arriveFromRecovery();
+        renderApp("/reset-password");
+        await screen.findByRole("heading", { name: "Set New Password" });
+        await submit("short", "short");
+        expect(screen.getByLabelText("New Password")).toHaveAccessibleDescription("Password must be at least 8 characters long.");
+        expect(fakeAuth.calls.some((c) => c.method === "updateUser")).toBe(false);
+    });
+
+    test("a recovery session Supabase no longer accepts -> invalid link message", async () => {
+        fakeAuth.failures.update = { status: 403, code: "session_not_found" };
+        arriveFromRecovery();
+        renderApp("/reset-password");
+        await screen.findByRole("heading", { name: "Set New Password" });
+        await submit();
+        expect(await screen.findByRole("alert")).toHaveTextContent("invalid or has expired");
     });
 });

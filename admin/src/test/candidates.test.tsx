@@ -1,17 +1,18 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import { CANDIDATE_STAGES, type CandidateDetails, type CandidateList } from "../api/candidates";
+import { FIELD_HINTS, whatsappFromLocal, whatsappLocalPart } from "../components/candidate/CandidateFields";
 import { stepTones } from "../components/candidate/CandidateStepper";
-import { ADMIN, renderApp, signedInBackend } from "./helpers";
+import { ADMIN, renderApp, signedInBackend, userWithRole } from "./helpers";
 
 // Synthetic candidates only.
 const stages = (done: boolean[]) => CANDIDATE_STAGES.map((stage, i) => ({ stage, completed: done[i] }));
 
 const LIST: CandidateList = {
     items: [
-        { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", jobTypes: ["Driver", "Welder"], stages: stages([true, true, false, false, false, false]) },
-        { passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], stages: stages([false, false, false, true, true, true]) },
+        { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", jobTypes: ["Driver", "Welder"], stages: stages([true, true, false, false, false, false, false]) },
+        { passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], stages: stages([false, false, false, true, true, true, true]) },
     ],
     pagination: { page: 1, pageSize: 25, total: 2, totalPages: 1 },
     filters: { search: null },
@@ -20,10 +21,10 @@ const LIST: CandidateList = {
 const DETAILS: CandidateDetails = {
     candidate: {
         passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: "901234567V", jobTypes: ["Driver"], surname: "SILVA", otherNames: "SAMAN",
-        dateOfBirth: "1990-03-12", placeOfBirth: "COLOMBO", passportExpiryDate: "2030-05-11", passportIssueDate: null, nationality: null, sex: null,
+        dateOfBirth: "1990-03-12", placeOfBirth: "COLOMBO", passportExpiryDate: "2030-05-11", passportIssueDate: "2020-05-12", nationality: null, sex: null,
         address: "1 Main Street", jobExperience: "5 years", whatsappNumber: "94770000002", contactNumber: null,
     },
-    stages: stages([false, false, false, true, true, true]).map((s) => ({
+    stages: stages([false, false, false, true, true, true, true]).map((s) => ({
         ...s,
         completedAt: null,
         notes: null,
@@ -33,14 +34,18 @@ const DETAILS: CandidateDetails = {
         automatic: s.stage === "CANDIDATE_DETAILS" || s.stage === "DOCUMENT_SUBMISSION",
         missing: s.stage === "CANDIDATE_DETAILS" ? ["passport document"] : s.stage === "DOCUMENT_SUBMISSION" ? ["medical", "police report", "scans"] : [],
     })),
-    documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null },
+    documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null, VISA_SUBMISSION: null },
     variantDocuments: {
         POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null },
     },
     requiredDocuments: (["PASSPORT", "MEDICAL", "POLICE_REPORT", "SCAN"] as const).map((documentType) => ({ documentType, included: documentType === "PASSPORT" })),
 };
 
+// A signed-in user without candidate permissions: the retired VIEWER role
+// (the backend refuses it too). Every application role, REGISTRATION_DESK
+// included, manages candidates; this checks the read-only rendering.
 const VIEWER = { ...ADMIN, role: "VIEWER" };
+const DESK = { ...ADMIN, role: "REGISTRATION_DESK" };
 
 // A document upload: the API issues a signed URL for one staged object
 // (upload-target), the browser PUTs the file there, straight to storage, and
@@ -59,9 +64,9 @@ function directUploadRoutes(passportId: string, finalized: CandidateDetails, { s
 
 describe("stepper colours", () => {
     test("stages completed after an incomplete one are 'out of order'", () => {
-        expect(stepTones(stages([false, false, false, true, true, true]))).toEqual(["incomplete", "incomplete", "incomplete", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order"]);
-        expect(stepTones(stages([true, true, false, true, false, false]))).toEqual(["complete", "complete", "incomplete", "complete-out-of-order", "incomplete", "incomplete"]);
-        expect(stepTones(stages([true, true, true, true, true, true]))).toEqual(Array(6).fill("complete"));
+        expect(stepTones(stages([false, false, false, true, true, true, true]))).toEqual(["incomplete", "incomplete", "incomplete", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order"]);
+        expect(stepTones(stages([true, true, false, true, false, false, false]))).toEqual(["complete", "complete", "incomplete", "complete-out-of-order", "incomplete", "incomplete", "incomplete"]);
+        expect(stepTones(stages([true, true, true, true, true, true, true]))).toEqual(Array(7).fill("complete"));
     });
 });
 
@@ -74,8 +79,8 @@ describe("Candidates list", () => {
         expect(within(table).getByText("Driver")).toBeInTheDocument();
         expect(within(table).getByText("Welder")).toBeInTheDocument();
         // Current stage = first not completed; the count is completed stages.
-        expect(within(table).getByLabelText("Document submission, 2 of 6 stages completed")).toHaveTextContent("Document submission2/6");
-        expect(within(table).getByLabelText("Test details, 3 of 6 stages completed")).toHaveTextContent("Test details3/6");
+        expect(within(table).getByLabelText("Document submission, 2 of 7 stages completed")).toHaveTextContent("Document submission2/7");
+        expect(within(table).getByLabelText("Test details, 4 of 7 stages completed")).toHaveTextContent("Test details4/7");
         expect(screen.getByRole("link", { name: "Add candidate" })).toHaveAttribute("href", "/candidates/new");
 
         await userEvent.setup().type(screen.getByLabelText("Search candidates"), "901234567V{Enter}");
@@ -118,7 +123,7 @@ describe("Candidates list", () => {
     });
 
     test("a viewer cannot add candidates", async () => {
-        signedInBackend({ "GET /auth/me": { status: 200, body: { admin: VIEWER } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
+        signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
         renderApp("/candidates");
         await screen.findByRole("table", { name: "Candidates" });
         expect(screen.queryByRole("link", { name: "Add candidate" })).not.toBeInTheDocument();
@@ -131,11 +136,12 @@ describe("Candidate deployment", () => {
         renderApp("/candidates/N0000002");
         const stepper = await screen.findByRole("navigation", { name: "Deployment stages" });
         expect(within(stepper).getByRole("button", { name: "1. Test details (incomplete)" })).toHaveAttribute("aria-current", "step");
-        expect(within(stepper).getByRole("button", { name: "4. IVS interview (completed out of order)" })).toBeInTheDocument();
+        expect(within(stepper).getByRole("button", { name: "5. Visa submission (completed out of order)" })).toBeInTheDocument();
+        expect(within(stepper).getByRole("button", { name: "6. Visa approval (completed out of order)" })).toBeInTheDocument();
         expect(screen.getByRole("heading", { name: "Test details" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Call log" })).toBeInTheDocument();
 
-        await userEvent.setup().click(within(stepper).getByRole("button", { name: /^3\. Document submission/ }));
+        await userEvent.setup().click(within(stepper).getByRole("button", { name: /^4\. Document submission/ }));
         expect(await screen.findByRole("heading", { name: "Document submission" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Export PDF" })).toBeInTheDocument();
         // Completed by the documents themselves: no checkbox, no Save.
@@ -219,7 +225,7 @@ describe("Candidate deployment", () => {
         });
 
         test("a viewer sees the test details but can't change them", async () => {
-            signedInBackend({ "GET /auth/me": { status: 200, body: { admin: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withTest("PASS", "2026-09-28") } });
+            signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withTest("PASS", "2026-09-28") } });
             renderApp("/candidates/N0000002?stage=TEST_DETAILS");
             expect(await screen.findByLabelText("Test result")).toBeDisabled();
             expect(screen.getByLabelText("Test result")).toHaveValue("PASS");
@@ -309,7 +315,7 @@ describe("Candidate deployment", () => {
 
         test("a viewer sees the files but can't upload or remove", async () => {
             signedInBackend({
-                "GET /auth/me": { status: 200, body: { admin: VIEWER } },
+                "GET /auth/me": { status: 200, body: { user: VIEWER } },
                 "GET /api/admin/candidates/N0000002": { status: 200, body: withPolice({ ROMANIA: document("r", "ROMANIA", "romania.pdf") }) },
             });
             renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
@@ -436,7 +442,7 @@ describe("Candidate deployment", () => {
         });
 
         test("a viewer has no Remove", async () => {
-            signedInBackend({ "GET /auth/me": { status: 200, body: { admin: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withNic } });
+            signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withNic } });
             renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
             await screen.findByLabelText("NIC document file");
             expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
@@ -447,17 +453,18 @@ describe("Candidate deployment", () => {
         signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
         expect(await screen.findByLabelText("WhatsApp number *")).toHaveAttribute("readonly");
-        expect(screen.getByLabelText("WhatsApp number *")).toHaveValue("94770000002");
+        expect(screen.getByLabelText("WhatsApp number *")).toHaveValue("770000002");
+        expect(screen.getByLabelText("WhatsApp number *")).toHaveAccessibleDescription("Country code +94");
         expect(screen.getByText("Registered WhatsApp numbers cannot be changed.")).toBeInTheDocument();
         expect(screen.getByLabelText("Contact number")).not.toHaveAttribute("readonly");
         expect(screen.getByLabelText("Nationality")).toHaveValue("");
         expect(screen.getByLabelText("Sex")).toHaveValue("");
-        expect(screen.getByLabelText("Passport issue date")).toHaveValue("");
+        expect(screen.getByLabelText("Passport issue date *")).toHaveValue("2020-05-12");
         expect(screen.getByText("Missing: passport document")).toBeInTheDocument();
         expect(screen.queryByRole("checkbox", { name: "Stage completed" })).not.toBeInTheDocument();
     });
 
-    test("candidate details: a missing address or WhatsApp number doesn't block saving, and is shown as needed to complete the stage", async () => {
+    test("candidate details: the address is optional; a missing WhatsApp number doesn't block saving and is shown as needed to complete the stage", async () => {
         const incomplete: CandidateDetails = { ...DETAILS, candidate: { ...DETAILS.candidate, address: null, whatsappNumber: null } };
         const { calls } = signedInBackend({
             "GET /api/admin/candidates/N0000002": { status: 200, body: incomplete },
@@ -465,13 +472,14 @@ describe("Candidate deployment", () => {
         });
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
         const user = userEvent.setup();
-        expect(await screen.findByLabelText("Address *")).toHaveValue("");
+        expect(await screen.findByLabelText("Address")).toHaveValue("");
+        expect(screen.queryByLabelText("Address *")).toBeNull();
         await user.type(screen.getByLabelText("Contact number"), "0112345678");
         await user.click(screen.getByRole("button", { name: "Save changes" }));
 
         await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT" && c.path === "/api/admin/candidates/N0000002")).toBe(true));
-        expect(screen.getByLabelText("Address *")).toHaveAttribute("aria-invalid", "true");
-        expect(screen.getAllByText("Required to complete Candidate details.")).toHaveLength(2); // address and WhatsApp number
+        expect(screen.getByLabelText("Address")).toHaveAttribute("aria-invalid", "false");
+        expect(screen.getAllByText("Required to complete Candidate details.")).toHaveLength(1); // the WhatsApp number only
     });
 
     test("candidate details shows completed (stepper green) once the record has everything", async () => {
@@ -495,7 +503,7 @@ describe("Call log", () => {
     };
     const openCallLog = async () => {
         await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
-        return screen.findByRole("dialog", { name: "Call log" });
+        return screen.findByRole("dialog", { name: "Call Logs" });
     };
 
     test("shows each call's date, time (Sri Lanka) and note, newest first", async () => {
@@ -554,9 +562,133 @@ describe("Call log", () => {
         expect(calls.some((c) => c.method === "POST")).toBe(false);
     });
 
+    test("opens as a drawer on the candidate page with the candidate summary and call count", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        expect(dialog).toHaveAttribute("aria-modal", "true");
+        expect(dialog).toHaveAccessibleDescription("View and add call history for this candidate.");
+        // The candidate page stays underneath; no navigation.
+        expect(screen.getByRole("heading", { level: 1, name: "SAMAN SILVA" })).toBeInTheDocument();
+        const summary = within(dialog).getByLabelText("Candidate");
+        expect(within(summary).getByText("SAMAN SILVA")).toBeInTheDocument();
+        expect(within(summary).getByText("N0000002")).toBeInTheDocument();
+        expect(within(summary).getByText("94770000002")).toBeInTheDocument();
+        expect(within(dialog).getByRole("heading", { name: "Call History" })).toBeInTheDocument();
+        expect(await within(dialog).findByText("2 calls")).toBeInTheDocument();
+        expect(within(dialog).getByRole("heading", { name: "Add New Call Log" })).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Close call logs" })).toHaveFocus();
+    });
+
+    test("long notes wrap inside the drawer instead of scrolling sideways", async () => {
+        const long = "x".repeat(400);
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [{ callLogId: "c3", note: long, calledAt: "2026-10-01T11:15:00.000Z", adminName: "Test Admin" }] } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        const note = await within(dialog).findByText(long);
+        // jsdom has no layout, so check the wrapping rules are applied.
+        expect(note.className).toContain("whitespace-pre-wrap");
+        expect(note.className).toContain("break-words");
+        expect(note.className).toContain("[overflow-wrap:anywhere]");
+        expect(dialog.className).toContain("overflow-x-hidden");
+    });
+
+    test("shows a loading state, then an error with a retry that reloads the calls", async () => {
+        let release!: () => void;
+        let attempt = 0;
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": () => {
+                attempt += 1;
+                if (attempt > 1) return { status: 200, body: CALLS };
+                return new Promise((resolve) => {
+                    release = () => resolve({ status: 403, body: { message: "Calls could not be loaded." } });
+                });
+            },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        expect(await within(dialog).findByText("Loading calls…")).toBeInTheDocument();
+        release();
+        expect(await within(dialog).findByText("Calls could not be loaded.")).toBeInTheDocument();
+        await userEvent.setup().click(within(dialog).getByRole("button", { name: "Try again" }));
+        expect(await within(dialog).findByText("Asked about the medical")).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "GET" && c.path.endsWith("/call-logs"))).toHaveLength(2);
+    });
+
+    test("the note, date and time are required before anything is sent", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No calls logged yet.");
+        const note = within(dialog).getByLabelText("What the candidate said *");
+        await user.type(note, "   ");
+        expect(within(dialog).getByRole("button", { name: "Add call" })).toBeDisabled();
+        fireEvent.change(within(dialog).getByLabelText("Time *"), { target: { value: "" } });
+        await user.type(note, "ok");
+        await user.click(within(dialog).getByRole("button", { name: "Add call" }));
+        expect(within(dialog).getByText("Enter the date and time of the call.")).toBeInTheDocument();
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+    });
+
+    test("a call is sent once even if the form is submitted again while saving", async () => {
+        let release!: () => void;
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": () => new Promise((resolve) => {
+                release = () => resolve({ status: 201, body: CALLS });
+            }),
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No calls logged yet.");
+        fireEvent.change(within(dialog).getByLabelText("Date *"), { target: { value: "2026-10-01" } });
+        fireEvent.change(within(dialog).getByLabelText("Time *"), { target: { value: "16:45" } });
+        await userEvent.setup().type(within(dialog).getByLabelText("What the candidate said *"), "Said the police report is ready");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+        fireEvent.submit(form);
+        fireEvent.submit(form);
+        expect(await within(dialog).findByRole("button", { name: "Saving…" })).toBeDisabled();
+        expect(within(dialog).getByRole("button", { name: "Close call logs" })).toBeDisabled();
+        release();
+        expect(await within(dialog).findByText("2 calls")).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+        expect(calls.find((c) => c.method === "POST")!.body).toEqual({ note: "Said the police report is ready", calledAt: "2026-10-01T16:45:00+05:30" });
+    });
+
+    test("the close button and Escape close the drawer, staying on the page and returning focus to Call log", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        let dialog = await openCallLog();
+        await user.click(within(dialog).getByRole("button", { name: "Close call logs" }));
+        await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        await vi.waitFor(() => expect(screen.getByRole("button", { name: "Call log" })).toHaveFocus());
+
+        dialog = await openCallLog();
+        await within(dialog).findByText("Asked about the medical");
+        await user.keyboard("{Escape}");
+        await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(screen.getByRole("heading", { level: 1, name: "SAMAN SILVA" })).toBeInTheDocument();
+    });
+
     test("a viewer sees the calls but can't add one", async () => {
         signedInBackend({
-            "GET /auth/me": { status: 200, body: { admin: VIEWER } },
+            "GET /auth/me": { status: 200, body: { user: VIEWER } },
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
             "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
         });
@@ -591,6 +723,8 @@ describe("Candidate registration", () => {
         await user.type(screen.getByLabelText("Job type *"), "Driver{Enter}");
         await user.type(screen.getByLabelText("Job experience *"), "5 years");
         await user.type(screen.getByLabelText("WhatsApp number *"), "0771234567");
+        await user.type(screen.getByLabelText("Passport issue date *"), "2020-01-15");
+        await user.type(screen.getByLabelText("Passport expiry date *"), "2030-01-14");
     }
 
     async function fillRequired(user: ReturnType<typeof userEvent.setup>) {
@@ -611,7 +745,7 @@ describe("Candidate registration", () => {
         await user.click(screen.getByRole("button", { name: "Register candidate" }));
 
         expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
-        expect(calls.find((c) => c.method === "POST" && c.path === "/api/admin/candidates")!.body).toMatchObject({ address: "", whatsappNumber: "0771234567" });
+        expect(calls.find((c) => c.method === "POST" && c.path === "/api/admin/candidates")!.body).toMatchObject({ address: "", whatsappNumber: "94771234567", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14" });
         expect(calls.some((c) => c.path.includes("/documents/"))).toBe(false);
     });
 
@@ -656,7 +790,7 @@ describe("Candidate registration", () => {
         // Editing the form enables Save; saving updates the existing records (PUTs), never creates new ones.
         const postsBefore = calls.filter((c) => c.method === "POST").length;
         await user.type(screen.getByLabelText("Comment"), "Called back");
-        await user.type(screen.getByLabelText("Address *"), ", Kandy"); // required to complete Candidate details
+        await user.type(screen.getByLabelText("Address"), ", Kandy");
         expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
         await user.click(screen.getByRole("button", { name: "Save changes" }));
         await vi.waitFor(() => expect(calls.filter((c) => c.method === "PUT" && c.path.startsWith("/api/"))).toHaveLength(2));
@@ -679,8 +813,8 @@ describe("Candidate registration", () => {
 
         expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
         expect(calls.find((c) => c.method === "POST" && c.path === "/api/admin/candidates")!.body).toMatchObject({
-            nationality: "", sex: "", dateOfBirth: "", placeOfBirth: "", passportIssueDate: "", passportExpiryDate: "", contactNumber: "",
-            whatsappNumber: "0771234567",
+            nationality: "", sex: "", dateOfBirth: "", placeOfBirth: "", contactNumber: "",
+            passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14", whatsappNumber: "94771234567",
         });
         // The passport file went to storage, then was finalized; never to the API.
         expect(calls.find((c) => c.path.endsWith("/documents/upload-target"))!.body).toMatchObject({ type: "PASSPORT", mimeType: "application/pdf", fileName: "passport.pdf" });
@@ -689,18 +823,35 @@ describe("Candidate registration", () => {
         expect(calls.filter((c) => c.url.pathname.startsWith("/api/") && c.body instanceof File)).toEqual([]);
     });
 
-    test("an optional value that is given is checked: issue date before expiry, phone number format", async () => {
+    test("values are checked: issue date before expiry, the WhatsApp number after +94, the contact number", async () => {
         const { calls } = signedInBackend();
         renderApp("/candidates/new");
         const user = userEvent.setup();
         await fillRequired(user);
-        await user.type(screen.getByLabelText("Passport issue date"), "2031-01-01");
-        await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-01");
+        await user.clear(screen.getByLabelText("Passport issue date *"));
+        await user.type(screen.getByLabelText("Passport issue date *"), "2031-01-01");
+        await user.clear(screen.getByLabelText("Passport expiry date *"));
+        await user.type(screen.getByLabelText("Passport expiry date *"), "2030-01-01");
         await user.clear(screen.getByLabelText("WhatsApp number *"));
         await user.type(screen.getByLabelText("WhatsApp number *"), "12");
+        await user.type(screen.getByLabelText("Contact number"), "12");
         await user.click(screen.getByRole("button", { name: "Register candidate" }));
         expect(screen.getByText("Must be before the expiry date.")).toBeInTheDocument();
+        expect(screen.getByText("Enter the 9-digit mobile number after +94, e.g. 771234567.")).toBeInTheDocument();
         expect(screen.getByText("Enter a phone number, e.g. 0771234567.")).toBeInTheDocument();
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+    });
+
+    test("the passport issue and expiry dates are required to register", async () => {
+        const { calls } = signedInBackend();
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await fillRequired(user);
+        await user.clear(screen.getByLabelText("Passport issue date *"));
+        await user.clear(screen.getByLabelText("Passport expiry date *"));
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+        expect(screen.getByText("Enter the passport issue date.")).toBeInTheDocument();
+        expect(screen.getByText("Enter the passport expiry date.")).toBeInTheDocument();
         expect(calls.some((c) => c.method === "POST")).toBe(false);
     });
 
@@ -720,7 +871,8 @@ describe("Candidate registration", () => {
     // report on record, no NIC document or skill video, progress on stage 4.
     const EXISTING: CandidateDetails = {
         ...DETAILS,
-        candidate: { ...DETAILS.candidate, nationality: "Sri Lankan", sex: "M", contactNumber: null },
+        // Registered before the passport dates were required: no issue date.
+        candidate: { ...DETAILS.candidate, nationality: "Sri Lankan", sex: "M", contactNumber: null, passportIssueDate: null },
         documents: {
             ...DETAILS.documents,
             PASSPORT: { documentId: "doc-passport", originalFilename: "passport-scan.pdf", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-09-20T00:00:00.000Z" },
@@ -761,10 +913,10 @@ describe("Candidate registration", () => {
         expect(screen.getByLabelText("Nationality")).toHaveValue("Sri Lankan");
         expect(screen.getByLabelText("Sex")).toHaveValue("M");
         expect(screen.getByLabelText("Date of birth")).toHaveValue("1990-03-12");
-        expect(screen.getByLabelText("Passport expiry date")).toHaveValue("2030-05-11");
-        expect(screen.getByLabelText("Passport issue date")).toHaveValue("");
+        expect(screen.getByLabelText("Passport expiry date *")).toHaveValue("2030-05-11");
+        expect(screen.getByLabelText("Passport issue date *")).toHaveValue("");
         expect(screen.getByLabelText("WhatsApp number *")).toHaveAttribute("readonly");
-        expect(screen.getByLabelText("WhatsApp number *")).toHaveValue("94770000002");
+        expect(screen.getByLabelText("WhatsApp number *")).toHaveValue("770000002");
         expect(screen.getByText("Registered WhatsApp numbers cannot be changed.")).toBeInTheDocument();
         expect(screen.getByLabelText("Contact number")).toHaveValue("");
         expect(screen.getByLabelText("Comment")).toHaveValue("Prefers morning calls");
@@ -789,12 +941,17 @@ describe("Candidate registration", () => {
         await screen.findByText("Existing candidate found — details loaded.");
         await user.clear(screen.getByLabelText("Address"));
         await user.type(screen.getByLabelText("Address"), "2 Lake Road");
+        // This older record has no passport issue date: it must be filled in before saving.
+        await user.click(screen.getByRole("button", { name: "Save changes" }));
+        expect(screen.getByText("Enter the passport issue date.")).toBeInTheDocument();
+        expect(calls.some((c) => c.method === "PUT")).toBe(false);
+        await user.type(screen.getByLabelText("Passport issue date *"), "2020-05-12");
         await user.click(screen.getByRole("button", { name: "Save changes" }));
 
         expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
         const put = calls.find((c) => c.method === "PUT")!;
         expect(put.path).toBe("/api/admin/candidates/N0000002");
-        expect(put.body).toMatchObject({ address: "2 Lake Road", surname: "SILVA", nationality: "Sri Lankan", sex: "M", whatsappNumber: "94770000002" });
+        expect(put.body).toMatchObject({ address: "2 Lake Road", surname: "SILVA", nationality: "Sri Lankan", sex: "M", whatsappNumber: "94770000002", passportIssueDate: "2020-05-12" });
         expect(calls.some((c) => c.method === "POST")).toBe(false);
         expect(calls.some((c) => c.path.includes("/stages/")), "stage progress untouched (comment unchanged)").toBe(false);
     });
@@ -814,6 +971,7 @@ describe("Candidate registration", () => {
         await screen.findByText("Existing candidate found — details loaded.");
         await user.clear(screen.getByLabelText("Address"));
         await user.type(screen.getByLabelText("Address"), "2 Lake Road");
+        await user.type(screen.getByLabelText("Passport issue date *"), "2020-05-12");
         await user.click(screen.getByRole("button", { name: "Save changes" }));
 
         expect(await screen.findByText("The WhatsApp number is already set for this candidate and cannot be changed here.")).toBeInTheDocument();
@@ -843,9 +1001,9 @@ describe("Candidate registration", () => {
     });
 
     test("a viewer sees no registration form", async () => {
-        signedInBackend({ "GET /auth/me": { status: 200, body: { admin: VIEWER } } });
+        signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates/new");
-        expect(await screen.findByText("Candidate registration needs an admin or analyst account.")).toBeInTheDocument();
+        expect(await screen.findByText("Candidate registration needs a staff account with access to Candidates.")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Register candidate" })).not.toBeInTheDocument();
     });
 });
@@ -881,12 +1039,244 @@ describe("Candidate Document Submission: Police Slip", () => {
 
     test("VIEWER cannot upload a Police slip", async () => {
         signedInBackend({
-            "GET /auth/me": { status: 200, body: { admin: VIEWER } },
+            "GET /auth/me": { status: 200, body: { user: VIEWER } },
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS }
         });
         renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
         await screen.findByRole("heading", { name: "Document submission" });
         const row = screen.getByText("Police slip").closest("div.border") as HTMLElement;
         expect(within(row!).getByRole("button", { name: "Upload" })).toBeDisabled();
+    });
+});
+
+describe("REGISTRATION_DESK: the whole Candidates area", () => {
+    const asDesk = (routes: Record<string, { status: number; body?: unknown }> = {}) =>
+        signedInBackend({ "GET /auth/me": { status: 200, body: { user: DESK } }, "GET /api/admin/candidates": { status: 200, body: LIST }, ...routes });
+    const nav = () => within(screen.getByRole("navigation", { name: "Main navigation" }));
+
+    test("sees Candidates in the sidebar and nothing ADMIN-only; no separate registration link; no Review Queue bell", async () => {
+        const { calls } = asDesk();
+        renderApp("/candidates");
+        await screen.findByRole("table", { name: "Candidates" });
+        expect(nav().getAllByRole("link").map((l) => l.textContent)).toEqual(["Candidates"]);
+        for (const name of ["Invite User", "Change Roles", "Audit Logs", "Settings", "Review Queue", "Overview"]) {
+            expect(nav().queryByRole("link", { name })).toBeNull();
+        }
+        expect(screen.queryByRole("link", { name: /register candidate|new candidate/i })).toBeNull();
+        expect(screen.queryByRole("button", { name: /notification/i })).toBeNull();
+        expect(calls.some((c) => c.path.startsWith("/api/admin/review"))).toBe(false);
+    });
+
+    test("registers from the Candidates page: Add candidate opens the registration form", async () => {
+        asDesk();
+        renderApp("/candidates");
+        const add = await screen.findByRole("link", { name: "Add candidate" });
+        expect(add).toHaveAttribute("href", "/candidates/new");
+        await userEvent.setup().click(add);
+        expect(await screen.findByRole("button", { name: "Register candidate" })).toBeEnabled();
+        expect(screen.getByLabelText("Passport ID *")).toBeEnabled();
+    });
+
+    test("can edit details, upload and remove documents and save stages", async () => {
+        const withNic: CandidateDetails = {
+            ...DETAILS,
+            documents: { ...DETAILS.documents, NIC: { documentId: "doc-n", originalFilename: "nic.pdf", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-01T00:00:00.000Z" } },
+        };
+        asDesk({ "GET /api/admin/candidates/N0000002": { status: 200, body: withNic } });
+        renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+        expect(await screen.findByLabelText("Surname *")).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
+        for (const upload of screen.getAllByRole("button", { name: /Upload|Replace/ })) expect(upload).toBeEnabled();
+
+        const user = userEvent.setup();
+        await user.click(within(screen.getByRole("navigation", { name: "Deployment stages" })).getByRole("button", { name: /^6\. Visa approval/ }));
+        expect(await screen.findByRole("checkbox", { name: "Stage completed" })).toBeEnabled();
+        expect(screen.getByLabelText("Notes")).toBeEnabled();
+    });
+
+    test("can read and add calls", async () => {
+        asDesk({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
+        const dialog = await screen.findByRole("dialog", { name: "Call Logs" });
+        expect(await within(dialog).findByLabelText("What the candidate said *")).toBeEnabled();
+        expect(within(dialog).getByRole("button", { name: "Add call" })).toBeInTheDocument();
+    });
+});
+
+describe("other roles are unchanged", () => {
+    for (const role of ["ADMIN", "MANAGER", "ANALYST"]) {
+        test(`${role}: Add candidate on the Candidates page, no separate header registration link, the notification bell`, async () => {
+            signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            expect(await screen.findByRole("link", { name: "Add candidate" })).toHaveAttribute("href", "/candidates/new");
+            expect(screen.queryByRole("link", { name: /register candidate/i })).toBeNull();
+            expect(screen.getByRole("button", { name: /notification/i })).toBeInTheDocument();
+            const links = within(screen.getByRole("navigation", { name: "Main navigation" })).getAllByRole("link").map((l) => l.textContent);
+            expect(links).toContain("Review Queue");
+            expect(links.includes("Settings")).toBe(role === "ADMIN");
+        });
+    }
+});
+
+describe("WhatsApp number: fixed +94 prefix", () => {
+    test("the stored form is 94 + the 9 digits typed; a leading 0 or a pasted +94 / 0094 number never doubles the country code", () => {
+        expect(whatsappFromLocal("771234567")).toBe("94771234567");
+        expect(whatsappFromLocal("0771234567")).toBe("94771234567");
+        expect(whatsappFromLocal("+94 77 123 4567")).toBe("94771234567");
+        expect(whatsappFromLocal("0094771234567")).toBe("94771234567");
+        expect(whatsappFromLocal("77-123 4567")).toBe("94771234567");
+        expect(whatsappFromLocal("abc")).toBe("");
+        expect(whatsappFromLocal("")).toBe("");
+        expect(whatsappFromLocal("7712345678999")).toBe("94771234567");
+    });
+
+    test("stored numbers load into the prefix + local part; anything else is shown as stored", () => {
+        expect(whatsappLocalPart("94771234567")).toBe("771234567");
+        expect(whatsappLocalPart("+94771234567")).toBe("771234567");
+        expect(whatsappLocalPart("0771234567")).toBe("771234567");
+        expect(whatsappLocalPart("447700900123")).toBeNull();
+    });
+
+    test("the prefix is fixed and outside the input; the user types only the rest, and the save is in the stored form", async () => {
+        let created = false;
+        const { calls } = signedInBackend({
+            "POST /api/admin/candidates": () => { created = true; return { status: 201, body: { passportId: "N0000002", uniqueId: "0002" } }; },
+            "GET /api/admin/candidates/N0000002": () => (created ? { status: 200, body: DETAILS } : { status: 404, body: { message: "Candidate not found" } }),
+        });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        const whatsapp = await screen.findByLabelText("WhatsApp number *");
+        expect(whatsapp).toHaveAccessibleDescription("Country code +94");
+        expect(whatsapp).toHaveValue("");
+        const prefix = whatsapp.parentElement!.querySelector('[aria-hidden="true"]') as HTMLElement;
+        expect(prefix).toHaveTextContent(/^\+94$/);
+        expect(prefix.tagName).not.toBe("INPUT");
+
+        // Select-all + Delete can't remove the prefix: it isn't in the input.
+        await user.type(whatsapp, "0771234567");
+        expect(whatsapp).toHaveValue("771234567");
+        await user.clear(whatsapp);
+        expect(whatsapp).toHaveValue("");
+        expect(prefix).toHaveTextContent(/^\+94$/);
+        await user.click(whatsapp);
+        await user.paste("+94 77 123 4567");
+        expect(whatsapp).toHaveValue("771234567");
+
+        await user.type(screen.getByLabelText("Surname *"), "SILVA");
+        await user.type(screen.getByLabelText("Other names *"), "SAMAN");
+        await user.type(screen.getByLabelText("NIC *"), "901234567V");
+        await user.type(screen.getByLabelText("Passport ID *"), "N0000002");
+        await user.type(screen.getByLabelText("Job type *"), "Driver{Enter}");
+        await user.type(screen.getByLabelText("Job experience *"), "5 years");
+        await user.type(screen.getByLabelText("Passport issue date *"), "2020-01-15");
+        await user.type(screen.getByLabelText("Passport expiry date *"), "2030-01-14");
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+        await screen.findByRole("navigation", { name: "Deployment stages" });
+        expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ whatsappNumber: "94771234567" });
+    });
+
+    test("a number on record that is not a +94 number is shown exactly as stored, read-only, without the prefix", async () => {
+        const foreign: CandidateDetails = { ...DETAILS, candidate: { ...DETAILS.candidate, whatsappNumber: "447700900123" } };
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: foreign } });
+        renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+        const whatsapp = await screen.findByLabelText("WhatsApp number *");
+        expect(whatsapp).toHaveValue("447700900123");
+        expect(whatsapp).toHaveAttribute("readonly");
+        expect(screen.queryByText("+94")).toBeNull();
+    });
+
+    test("an older number on record in local format loads into the prefix and is kept unchanged on save", async () => {
+        const local: CandidateDetails = { ...DETAILS, candidate: { ...DETAILS.candidate, whatsappNumber: "0771234567" } };
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: local },
+            "PUT /api/admin/candidates/N0000002": { status: 200, body: local },
+        });
+        renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+        const user = userEvent.setup();
+        expect(await screen.findByLabelText("WhatsApp number *")).toHaveValue("771234567");
+        await user.type(screen.getByLabelText("Contact number"), "0112345678");
+        await user.click(screen.getByRole("button", { name: "Save changes" }));
+        await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+        expect(calls.find((c) => c.method === "PUT")!.body).toMatchObject({ whatsappNumber: "0771234567" });
+    });
+});
+
+describe("field hints", () => {
+    const HINTED = ["Passport ID", "WhatsApp number", "Passport issue date", "Passport expiry date"];
+
+    test("a small ! hint beside each of the four fields, with its text on hover, focus or tap", async () => {
+        signedInBackend();
+        renderApp("/candidates/new");
+        await screen.findByLabelText("Passport ID *");
+        for (const label of HINTED) {
+            const hint = screen.getByRole("button", { name: `About ${label}` });
+            expect(hint).toHaveTextContent("!");
+            expect(hint).toHaveAttribute("type", "button");
+        }
+        const user = userEvent.setup();
+        await user.hover(screen.getByRole("button", { name: "About Passport ID" }));
+        expect(screen.getByRole("tooltip")).toHaveTextContent(FIELD_HINTS.passportId);
+        await user.unhover(screen.getByRole("button", { name: "About Passport ID" }));
+        expect(screen.queryByRole("tooltip")).toBeNull();
+    });
+
+    test("keyboard: Tab focuses a hint and shows its text as the button's description; Escape hides it", async () => {
+        signedInBackend();
+        renderApp("/candidates/new");
+        await screen.findByLabelText("Passport ID *");
+        const hint = screen.getByRole("button", { name: "About WhatsApp number" });
+        act(() => hint.focus());
+        expect(hint).toHaveAccessibleDescription(FIELD_HINTS.whatsappNumber);
+        await userEvent.setup().keyboard("{Escape}");
+        expect(screen.queryByRole("tooltip")).toBeNull();
+    });
+
+    test("the hints state the rules actually applied (passport 6-9 letters and digits, no fixed prefix; +94 mobile; dates required)", () => {
+        expect(FIELD_HINTS.passportId).toMatch(/6 to 9 letters and digits/);
+        expect(FIELD_HINTS.passportId).not.toMatch(/\bPN\b/);
+        expect(FIELD_HINTS.whatsappNumber).toMatch(/\+94/);
+        expect(FIELD_HINTS.passportIssueDate).toMatch(/Required/);
+        expect(FIELD_HINTS.passportExpiryDate).toMatch(/Required/);
+    });
+});
+
+describe("Visa submission document", () => {
+    const visaFile = () => new File(["%PDF-1.4 visa"], "visa-form.pdf", { type: "application/pdf" });
+
+    test("the Visa submission stage has its own upload row; a candidate role uploads through the existing direct upload", async () => {
+        const uploaded: CandidateDetails = {
+            ...DETAILS,
+            documents: { ...DETAILS.documents, VISA_SUBMISSION: { documentId: "doc-visa", originalFilename: "N0000002 - VISA_SUBMISSION.PDF", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-09T00:00:00.000Z" } },
+        };
+        const { calls } = signedInBackend({
+            "GET /auth/me": { status: 200, body: { user: DESK } },
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            ...directUploadRoutes("N0000002", uploaded),
+        });
+        renderApp("/candidates/N0000002?stage=VISA_SUBMISSION");
+        expect(await screen.findByRole("heading", { name: "Visa submission" })).toBeInTheDocument();
+        const row = screen.getByText("Visa submission document").closest("div.rounded-lg") as HTMLElement;
+        expect(within(row).getByText(/No file uploaded/)).toBeInTheDocument();
+        expect(within(row).getByRole("button", { name: "Upload" })).toBeEnabled();
+        const completedBefore = (screen.getByRole("checkbox", { name: "Stage completed" }) as HTMLInputElement).checked;
+
+        await userEvent.setup().upload(screen.getByLabelText("Visa submission document file"), visaFile());
+        await vi.waitFor(() => expect(calls.some((c) => c.path.endsWith("/documents/finalize"))).toBe(true));
+        expect(calls.find((c) => c.path.endsWith("/documents/upload-target"))!.body).toMatchObject({ type: "VISA_SUBMISSION", mimeType: "application/pdf" });
+        expect(await within(row).findByText(/VISA_SUBMISSION\.PDF/)).toBeInTheDocument();
+        // Completion stays manual: the upload doesn't change it.
+        expect((screen.getByRole("checkbox", { name: "Stage completed" }) as HTMLInputElement).checked).toBe(completedBefore);
+    });
+
+    test("read-only for a user without candidate permissions", async () => {
+        signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+        renderApp("/candidates/N0000002?stage=VISA_SUBMISSION");
+        await screen.findByRole("heading", { name: "Visa submission" });
+        const row = screen.getByText("Visa submission document").closest("div.rounded-lg") as HTMLElement;
+        expect(within(row).getByRole("button", { name: "Upload" })).toBeDisabled();
     });
 });

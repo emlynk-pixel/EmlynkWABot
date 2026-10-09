@@ -322,7 +322,7 @@ function OverviewContent({ data }: { data: Overview }) {
 }
 
 export function OverviewPage() {
-    const { admin } = useAuth();
+    const { user } = useAuth();
     const overview = useAdminResource("overview", (token, signal) => getOverview(token, signal));
     const { syncing } = useSync();
     const [showMonthly, setShowMonthly] = useState(readMonthlyPreference);
@@ -338,7 +338,7 @@ export function OverviewPage() {
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Overview</h1>
-                    <p className="mt-1 text-body-sm text-ink-muted">Welcome{admin ? `, ${admin.name}` : ""}. Current figures; Sri Lanka time. For one day's figures see the <Link to="/reports/daily" className="text-primary hover:underline">Daily Report</Link>.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Welcome{user ? `, ${user.name}` : ""}. Current figures; Sri Lanka time. For one day's figures see the <Link to="/reports/daily" className="text-primary hover:underline">Daily Report</Link>.</p>
                 </div>
                 <div className="flex items-center gap-2">
                     <button

@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import express from "express";
-import jwt from "jsonwebtoken";
 
 import { createMessageIdCache } from "../src/utils/messageIdempotency.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { loadDocumentText } from "./helpers/fixtures.js";
 import { ocrServiceUrl } from "./helpers/localOcrService.js";
+import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 // Placeholders so the modules load without real credentials.
 Object.assign(process.env, {
@@ -17,7 +17,6 @@ Object.assign(process.env, {
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createWhatsappRouter } = await import("../src/routes/whatsapp.js");
 const { createTemporaryDocumentRecord } = await import("../src/services/temporaryDataService.js");
@@ -28,7 +27,7 @@ const { OcrResourceError, OcrServiceUnavailableError } = await import("../src/se
 const { createOcrClient, OCR_REQUEST_TIMEOUT_MS } = await import("../src/services/ocrClient.js");
 const { claimNextSubmission, drainSubmissionQueue, processClaimedSubmission, startSubmissionWorker, QUEUE_DEFAULTS } = await import("../src/services/submissionQueue.js");
 const { createAdminRouter } = await import("../src/routes/admin.js");
-const { createRequireActiveAdmin } = await import("../src/middleware/requireActiveAdmin.js");
+const { createRequireActiveUser } = await import("../src/middleware/requireActiveUser.js");
 
 // M1 — asynchronous WhatsApp processing. Synthetic data only.
 // text-passport.pdf belongs to N1234567 (unique ID 0001, WhatsApp 0771234567).
@@ -429,8 +428,8 @@ describe("M1 regression through webhook + worker", () => {
 
 // Admin API over the same fake DB (failed submissions visible, H3).
 async function adminGet(w, path) {
-    const router = createAdminRouter({ apiLimiter: (req, res, next) => next(), db: w.db.client, bucket: w.bucket, requireAdmin: createRequireActiveAdmin({ db: w.db.client }) });
-    const token = jwt.sign({ adminId: "admin-a" }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
+    const router = createAdminRouter({ apiLimiter: (req, res, next) => next(), db: w.db.client, bucket: w.bucket, requireAdmin: createRequireActiveUser({ db: w.db.client, verifyAccessToken: fakeVerifyAccessToken }) });
+    const token = tokenFor("admin-a");
     let body;
     await withServer(w.deps, async ({ base }) => {
         body = await (await fetch(`${base}/api/admin${path}`, { headers: { Authorization: `Bearer ${token}` } })).json();

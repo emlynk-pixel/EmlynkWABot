@@ -26,7 +26,7 @@
 //                   worker re-checks the Sheet read-only every
 //                   CONFIG_RECHECK_MS and resumes when it is fine (or after a
 //                   successful Test Connection / reconciliation).
-//   DATA_INTEGRITY  duplicate candidate IDs in column AN: halted the same way;
+//   DATA_INTEGRITY  duplicate candidate IDs in column AO: halted the same way;
 //                   nothing is written until a person fixes the Sheet.
 //   RETRYABLE       429, 5xx, network: bounded exponential backoff, then the
 //   / other         item is dead-lettered (FAILED); reconciliation heals it.

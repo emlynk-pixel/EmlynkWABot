@@ -1,4 +1,4 @@
-// Google Sheet mirror: the 40-column schema (sheetSchema.js). Pure, no Google.
+// Google Sheet mirror: the 41-column schema (sheetSchema.js). Pure, no Google.
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -23,38 +23,41 @@ import {
 
 const TAB = "Emlynk Candidate Operational Mirror";
 
-// The manually finalized real Sheet, A to AN.
+// The real Sheet, A to AO: the manually finalized 40 columns plus VISA
+// SUBMISSION STATUS (AI), inserted left of VISA APPROVAL STATUS.
 const FINAL_HEADERS = [
     "TEST NUMBER", "PASSPORT NUMBER", "FIRST NAME", "OTHER NAME", "TEST DATE", "BIRTHDAY", "PP EX DATE", "JOB",
     "ID NUMBER", "ADDRESS", "WHATSAPP NUM", "CONTACT NUM", "PASSPORT COPY", "POLICE REP SRI LANKA", "POLICE REP ROMANIA",
     "MEDICAL", "SCAN", "DRIVING LICIAN", "NATIONAL ID", "POLICE REPORT APPLIED", "SUBMIT DATE", "POLICE REP SRI LANKA",
     "POLICE REP FM", "VIDEOS", "PLACE OF BIRTH", "SEX", "NATIONALITY", "PASSPORT ISSUE DATE", "JOB EXPERIENCE",
     "CANDIDATE DETAILS NOTE", "TEST DETAILS STATUS", "CANDIDATE DETAILS STATUS", "DOCUMENT SUBMISSION STATUS",
-    "IVS INTERVIEW STATUS", "VISA APPROVAL STATUS", "FINALIZING JOB STATUS", "RECORD STATUS", "REGISTERED AT",
+    "IVS INTERVIEW STATUS", "VISA SUBMISSION STATUS", "VISA APPROVAL STATUS", "FINALIZING JOB STATUS", "RECORD STATUS", "REGISTERED AT",
     "LAST MIRRORED AT", "_SYSTEM_CANDIDATE_ID",
 ];
+// The 40-column header the live Sheet had before VISA SUBMISSION STATUS.
+const PREVIOUS_HEADERS = FINAL_HEADERS.filter((header) => header !== "VISA SUBMISSION STATUS");
 
 describe("Google Sheet schema", () => {
-    test("has exactly 40 columns: 39 business columns and the technical ID", () => {
-        assert.equal(SHEET_COLUMN_COUNT, 40);
-        assert.equal(SHEET_COLUMNS.length, 40);
-        assert.equal(SHEET_BUSINESS_COLUMN_COUNT, 39);
-        assert.equal(SHEET_LAST_COLUMN, "AN");
+    test("has exactly 41 columns: 40 business columns and the technical ID", () => {
+        assert.equal(SHEET_COLUMN_COUNT, 41);
+        assert.equal(SHEET_COLUMNS.length, 41);
+        assert.equal(SHEET_BUSINESS_COLUMN_COUNT, 40);
+        assert.equal(SHEET_LAST_COLUMN, "AO");
     });
 
-    test("headers are in the exact final order, A to AN", () => {
+    test("headers are in the exact final order, A to AO", () => {
         assert.deepEqual([...SHEET_HEADERS], FINAL_HEADERS);
-        assert.deepEqual(SHEET_COLUMNS.map((c) => c.column), Array.from({ length: 40 }, (_, i) => columnLetter(i)));
+        assert.deepEqual(SHEET_COLUMNS.map((c) => c.column), Array.from({ length: 41 }, (_, i) => columnLetter(i)));
         assert.equal(SHEET_COLUMNS[0].column, "A");
-        assert.equal(SHEET_COLUMNS[39].column, "AN");
+        assert.equal(SHEET_COLUMNS[40].column, "AO");
     });
 
     test("the two POLICE REP SRI LANKA headers stay distinct by position (N and V)", () => {
         const positions = SHEET_COLUMNS.filter((c) => c.header === "POLICE REP SRI LANKA");
         assert.deepEqual(positions.map((c) => [c.column, c.field]), [["N", "policeReportSriLankaVerified"], ["V", "policeReportSriLankaNormal"]]);
         // Every column has its own field name even where headers repeat.
-        assert.equal(new Set(SHEET_COLUMNS.map((c) => c.field)).size, 40);
-        assert.equal(new Set(SHEET_HEADERS).size, 39, "only POLICE REP SRI LANKA repeats");
+        assert.equal(new Set(SHEET_COLUMNS.map((c) => c.field)).size, 41);
+        assert.equal(new Set(SHEET_HEADERS).size, 40, "only POLICE REP SRI LANKA repeats");
     });
 
     test("one SCAN column only, the legacy DRIVING LICIAN spelling, no agreement/affidavit columns", () => {
@@ -66,10 +69,18 @@ describe("Google Sheet schema", () => {
         assert.equal(SHEET_HEADERS.filter((h) => h === "POLICE REP ROMANIA").length, 1);
     });
 
-    test("the technical candidate ID is the last column, AN", () => {
-        assert.equal(SYSTEM_CANDIDATE_ID_INDEX, 39);
-        assert.equal(SYSTEM_CANDIDATE_ID_COLUMN, "AN");
-        assert.equal(SHEET_HEADERS[39], "_SYSTEM_CANDIDATE_ID");
+    test("VISA SUBMISSION STATUS is AI, between IVS INTERVIEW STATUS and VISA APPROVAL STATUS", () => {
+        const at = (column) => SHEET_COLUMNS.find((c) => c.column === column);
+        assert.deepEqual([at("AH").header, at("AI").header, at("AJ").header], ["IVS INTERVIEW STATUS", "VISA SUBMISSION STATUS", "VISA APPROVAL STATUS"]);
+        assert.equal(at("AI").field, "visaSubmissionStatus");
+        // Everything before AI keeps its position from the 40-column Sheet.
+        assert.deepEqual(SHEET_HEADERS.slice(0, 34), PREVIOUS_HEADERS.slice(0, 34));
+    });
+
+    test("the technical candidate ID is the last column, AO", () => {
+        assert.equal(SYSTEM_CANDIDATE_ID_INDEX, 40);
+        assert.equal(SYSTEM_CANDIDATE_ID_COLUMN, "AO");
+        assert.equal(SHEET_HEADERS[40], "_SYSTEM_CANDIDATE_ID");
     });
 
     test("the schema can't be changed at runtime", () => {
@@ -81,12 +92,12 @@ describe("Google Sheet schema", () => {
 });
 
 describe("Google Sheet ranges", () => {
-    test("every range is A:AN on the quoted tab", () => {
-        assert.equal(headerRange(TAB), "'Emlynk Candidate Operational Mirror'!A1:AN1");
-        assert.equal(dataRange(TAB), "'Emlynk Candidate Operational Mirror'!A2:AN");
-        assert.equal(operationalRange(TAB), "'Emlynk Candidate Operational Mirror'!A:AN");
-        assert.equal(rowRange(TAB, 7), "'Emlynk Candidate Operational Mirror'!A7:AN7");
-        assert.equal(candidateIdRange(TAB), "'Emlynk Candidate Operational Mirror'!AN2:AN");
+    test("every range is A:AO on the quoted tab", () => {
+        assert.equal(headerRange(TAB), "'Emlynk Candidate Operational Mirror'!A1:AO1");
+        assert.equal(dataRange(TAB), "'Emlynk Candidate Operational Mirror'!A2:AO");
+        assert.equal(operationalRange(TAB), "'Emlynk Candidate Operational Mirror'!A:AO");
+        assert.equal(rowRange(TAB, 7), "'Emlynk Candidate Operational Mirror'!A7:AO7");
+        assert.equal(candidateIdRange(TAB), "'Emlynk Candidate Operational Mirror'!AO2:AO");
     });
 
     test("a quote in the tab name is escaped; an empty tab name is refused", () => {
@@ -119,11 +130,18 @@ describe("header validation (positional)", () => {
         renamed[17] = "DRIVING LICENSE";
         assert.deepEqual(validateHeaderRow(renamed).mismatches, [{ column: "R", position: 18, expected: "DRIVING LICIAN", actual: "DRIVING LICENSE" }]);
 
-        const missingId = FINAL_HEADERS.slice(0, 39);
-        assert.deepEqual(validateHeaderRow(missingId).mismatches.map((m) => m.column), ["AN"]);
+        const missingId = FINAL_HEADERS.slice(0, 40);
+        assert.deepEqual(validateHeaderRow(missingId).mismatches.map((m) => m.column), ["AO"]);
 
-        const shifted = ["NEW COLUMN", ...FINAL_HEADERS.slice(0, 39)];
+        const shifted = ["NEW COLUMN", ...FINAL_HEADERS.slice(0, 40)];
         assert.equal(validateHeaderRow(shifted).valid, false);
+    });
+
+    test("a live Sheet not yet given VISA SUBMISSION STATUS is invalid from AI on, so nothing is written to shifted columns", () => {
+        const result = validateHeaderRow(PREVIOUS_HEADERS);
+        assert.equal(result.valid, false);
+        assert.equal(result.mismatches[0].column, "AI");
+        assert.deepEqual(result.mismatches[0], { column: "AI", position: 35, expected: "VISA SUBMISSION STATUS", actual: "VISA APPROVAL STATUS" });
     });
 
     test("text must match exactly (no trimming, no case folding)", () => {
@@ -135,32 +153,32 @@ describe("header validation (positional)", () => {
         assert.equal(validateHeaderRow(lower).valid, false);
     });
 
-    test("a non-empty header beyond AN is reported; empty trailing cells are fine", () => {
+    test("a non-empty header beyond AO is reported; empty trailing cells are fine", () => {
         assert.equal(validateHeaderRow([...FINAL_HEADERS, ""]).valid, true);
-        assert.deepEqual(validateHeaderRow([...FINAL_HEADERS, "EXTRA"]).mismatches, [{ column: "AO", position: 41, expected: null, actual: "EXTRA" }]);
+        assert.deepEqual(validateHeaderRow([...FINAL_HEADERS, "EXTRA"]).mismatches, [{ column: "AP", position: 42, expected: null, actual: "EXTRA" }]);
     });
 
     test("an empty or missing header row is invalid", () => {
         assert.equal(validateHeaderRow([]).valid, false);
-        assert.equal(validateHeaderRow(undefined).mismatches.length, 40);
+        assert.equal(validateHeaderRow(undefined).mismatches.length, 41);
     });
 });
 
 describe("row shape", () => {
-    const row = () => Array.from({ length: 40 }, (_, i) => (i === 39 ? "0042" : ""));
+    const row = () => Array.from({ length: 41 }, (_, i) => (i === 40 ? "0042" : ""));
 
-    test("a 40-string row with a candidate ID is accepted", () => {
-        assert.equal(assertSheetRow(row()).length, 40);
+    test("a 41-string row with a candidate ID is accepted", () => {
+        assert.equal(assertSheetRow(row()).length, 41);
     });
 
     test("a wrong length, a non-string cell or a blank candidate ID is refused", () => {
-        assert.throws(() => assertSheetRow(row().slice(0, 39)), /exactly 40/);
-        assert.throws(() => assertSheetRow([...row(), ""]), /exactly 40/);
+        assert.throws(() => assertSheetRow(row().slice(0, 40)), /exactly 41/);
+        assert.throws(() => assertSheetRow([...row(), ""]), /exactly 41/);
         const withNumber = row();
         withNumber[0] = 5;
         assert.throws(() => assertSheetRow(withNumber), /string/);
         const noId = row();
-        noId[39] = " ";
+        noId[40] = " ";
         assert.throws(() => assertSheetRow(noId), /system candidate ID/);
     });
 });

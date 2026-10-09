@@ -1,4 +1,4 @@
-// Google Sheet mirror: candidate aggregate -> 40-cell row (candidateSheetMapper.js).
+// Google Sheet mirror: candidate aggregate -> 41-cell row (candidateSheetMapper.js).
 // Pure mapping only: synthetic data, no database, no Google.
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -55,22 +55,24 @@ function doc(documentType, verificationStatus = "VERIFIED", extra = {}) {
 
 const map = (aggregate, options = {}) => mapCandidateToSheetRow(aggregate, { mirroredAt: MIRRORED_AT, ...options });
 
+const atColumn = (cells, column) => cells[SHEET_COLUMNS.find((c) => c.column === column).index];
+
 describe("candidate -> Sheet row", () => {
-    test("always exactly 40 string cells, for a full and for an empty candidate", () => {
+    test("always exactly 41 string cells, for a full and for an empty candidate", () => {
         const full = map({ user: user(), stages: [], documents: [doc("PASSPORT")] });
-        assert.equal(full.length, 40);
+        assert.equal(full.length, 41);
         assert.ok(full.every((c) => typeof c === "string"));
 
         const minimal = map({ user: { uniqueId: "0007", passportId: "SYN000007", firstName: "ONLY" } });
-        assert.equal(minimal.length, 40);
+        assert.equal(minimal.length, 41);
         assert.ok(minimal.every((c) => typeof c === "string"));
     });
 
-    test("_SYSTEM_CANDIDATE_ID (AN) is users.unique_id, kept as text with leading zeros", () => {
+    test("_SYSTEM_CANDIDATE_ID (AO) is users.unique_id, kept as text with leading zeros", () => {
         const row = map({ user: user({ uniqueId: "0042" }) });
-        assert.equal(row[39], "0042");
+        assert.equal(row[40], "0042");
         assert.equal(cell(row, "systemCandidateId"), "0042");
-        assert.notEqual(row[39], "SYN000001");
+        assert.notEqual(row[40], "SYN000001");
     });
 
     test("a candidate without a unique ID is refused, never keyed on passport or NIC", () => {
@@ -153,7 +155,7 @@ describe("candidate -> Sheet row", () => {
             B: "SYN000001", C: "TEST GIVEN", D: "TESTSURNAME", E: "2026-10-03", F: "1990-01-01", G: "2030-01-01",
             H: "Job One, Job Two", I: "000000000V", J: "1 Example Road, Example Town", K: "94700000001", L: "94700000002",
             Y: "EXAMPLE TOWN", Z: "M", AA: "EXAMPLE", AB: "2020-01-01", AC: "5 years, example", AD: "Example note",
-            AK: "ACTIVE", AL: "2026-10-01T10:30:00Z", AM: "2026-10-07T09:15:30Z", AN: "0042",
+            AL: "ACTIVE", AM: "2026-10-01T10:30:00Z", AN: "2026-10-07T09:15:30Z", AO: "0042",
         };
         for (const [column, value] of Object.entries(expected)) {
             assert.equal(row[SHEET_COLUMNS.find((c) => c.column === column).index], value, column);
@@ -166,21 +168,32 @@ describe("candidate -> Sheet row", () => {
             doc("POLICE_REPORT", "VERIFIED", { documentVariant: "SL_VERIFIED" }),
             doc("POLICE_REPORT", "REVIEW_REQUIRED", { documentVariant: "ROMANIA" }),
         ];
-        const stages = [{ stage: "TEST_DETAILS", completed: true }, { stage: "VISA_APPROVAL", completed: true }, { stage: "IVS_INTERVIEW", completed: false }];
+        const stages = [{ stage: "TEST_DETAILS", completed: true }, { stage: "VISA_SUBMISSION", completed: true }, { stage: "VISA_APPROVAL", completed: true }, { stage: "IVS_INTERVIEW", completed: false }];
         const row = map({ user: user(), stages, documents: complete });
         assert.deepEqual(
-            ["testDetailsStatus", "candidateDetailsStatus", "documentSubmissionStatus", "ivsInterviewStatus", "visaApprovalStatus", "finalizingJobStatus"].map((f) => cell(row, f)),
-            ["COMPLETED", "COMPLETED", "COMPLETED", "INCOMPLETE", "COMPLETED", "INCOMPLETE"],
+            ["testDetailsStatus", "candidateDetailsStatus", "documentSubmissionStatus", "ivsInterviewStatus", "visaSubmissionStatus", "visaApprovalStatus", "finalizingJobStatus"].map((f) => cell(row, f)),
+            ["COMPLETED", "COMPLETED", "COMPLETED", "INCOMPLETE", "COMPLETED", "COMPLETED", "INCOMPLETE"],
         );
-        // Without an address, Candidate Details is not complete (same rule as the Admin page).
+        // Same rules as the Admin page: the address is optional; the passport dates are required.
         const noAddress = map({ user: user({ address: null }), documents: complete });
-        assert.equal(cell(noAddress, "candidateDetailsStatus"), "INCOMPLETE");
+        assert.equal(cell(noAddress, "candidateDetailsStatus"), "COMPLETED");
+        const noIssueDate = map({ user: user({ passportIssueDate: null }), documents: complete });
+        assert.equal(cell(noIssueDate, "candidateDetailsStatus"), "INCOMPLETE");
+    });
+
+    test("VISA SUBMISSION STATUS (AI) follows the Visa submission stage only", () => {
+        const before = map({ user: user(), stages: [{ stage: "VISA_APPROVAL", completed: true }] });
+        const after = map({ user: user(), stages: [{ stage: "VISA_APPROVAL", completed: true }, { stage: "VISA_SUBMISSION", completed: true }] });
+        assert.equal(cell(before, "visaSubmissionStatus"), "INCOMPLETE");
+        assert.equal(atColumn(after, "AI"), "COMPLETED");
+        const changed = after.map((value, i) => (value === before[i] ? null : SHEET_COLUMNS[i].column)).filter(Boolean);
+        assert.deepEqual(changed, ["AI"]);
     });
 
     test("missing optional values are blank and never shift a column", () => {
         const sparse = map({ user: user({ otherName: null, address: null, contactNumber: null, dateOfBirth: null, sex: null, nationality: null, passportIssueDate: null }) });
         const full = map({ user: user() });
-        assert.equal(sparse.length, 40);
+        assert.equal(sparse.length, 41);
         for (const field of ["otherName", "address", "contactNumber", "birthday", "sex", "nationality", "passportIssueDate"]) {
             assert.equal(cell(sparse, field), "", field);
         }

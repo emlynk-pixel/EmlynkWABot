@@ -1,10 +1,12 @@
 // Google Sheet operational mirror: the one definition of the Sheet's columns
 // (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 6).
 //
-// The real Sheet was finalized by hand: 39 business columns (A-AM) and one
-// technical identity column (AN, _SYSTEM_CANDIDATE_ID = users.unique_id),
-// 40 columns in all. Header text and position are both part of the
-// contract. "POLICE REP SRI LANKA" appears twice (N and V) on purpose, so a
+// The real Sheet was finalized by hand: 40 business columns (A-AN) and one
+// technical identity column (AO, _SYSTEM_CANDIDATE_ID = users.unique_id),
+// 41 columns in all. Header text and position are both part of the
+// contract. VISA SUBMISSION STATUS (AI) was added with the Visa submission
+// stage: the live Sheet gets it by inserting one column left of VISA
+// APPROVAL STATUS, which moves every later column (and the identity) right. "POLICE REP SRI LANKA" appears twice (N and V) on purpose, so a
 // column is only ever identified by its position or its `field` name here,
 // never by looking its header up. The legacy spelling "DRIVING LICIAN" is
 // kept as it is in the Sheet.
@@ -49,15 +51,16 @@ const COLUMNS = [
     ["AF", "CANDIDATE DETAILS STATUS", "candidateDetailsStatus"],
     ["AG", "DOCUMENT SUBMISSION STATUS", "documentSubmissionStatus"],
     ["AH", "IVS INTERVIEW STATUS", "ivsInterviewStatus"],
-    ["AI", "VISA APPROVAL STATUS", "visaApprovalStatus"],
-    ["AJ", "FINALIZING JOB STATUS", "finalizingJobStatus"],
-    ["AK", "RECORD STATUS", "recordStatus"],
-    ["AL", "REGISTERED AT", "registeredAt"],
-    ["AM", "LAST MIRRORED AT", "lastMirroredAt"],
-    ["AN", "_SYSTEM_CANDIDATE_ID", "systemCandidateId"],
+    ["AI", "VISA SUBMISSION STATUS", "visaSubmissionStatus"],
+    ["AJ", "VISA APPROVAL STATUS", "visaApprovalStatus"],
+    ["AK", "FINALIZING JOB STATUS", "finalizingJobStatus"],
+    ["AL", "RECORD STATUS", "recordStatus"],
+    ["AM", "REGISTERED AT", "registeredAt"],
+    ["AN", "LAST MIRRORED AT", "lastMirroredAt"],
+    ["AO", "_SYSTEM_CANDIDATE_ID", "systemCandidateId"],
 ];
 
-// 0 -> "A", 25 -> "Z", 26 -> "AA", 39 -> "AN".
+// 0 -> "A", 25 -> "Z", 26 -> "AA", 40 -> "AO".
 export function columnLetter(index) {
     let n = index + 1;
     let letters = "";
@@ -71,10 +74,10 @@ export function columnLetter(index) {
 
 export const SHEET_COLUMNS = Object.freeze(COLUMNS.map(([column, header, field], index) => Object.freeze({ index, column, header, field })));
 
-export const SHEET_COLUMN_COUNT = 40;
-export const SHEET_BUSINESS_COLUMN_COUNT = 39;
+export const SHEET_COLUMN_COUNT = 41;
+export const SHEET_BUSINESS_COLUMN_COUNT = 40;
 export const SHEET_FIRST_COLUMN = "A";
-export const SHEET_LAST_COLUMN = "AN";
+export const SHEET_LAST_COLUMN = "AO";
 export const SHEET_HEADER_ROW = 1;
 export const SHEET_FIRST_DATA_ROW = 2;
 
@@ -118,22 +121,22 @@ const assertRowNumber = (rowNumber) => {
     }
 };
 
-// Row 1: 'Tab'!A1:AN1
+// Row 1: 'Tab'!A1:AO1
 export const headerRange = (tabName) => `${quoteSheetName(tabName)}!${SHEET_FIRST_COLUMN}${SHEET_HEADER_ROW}:${SHEET_LAST_COLUMN}${SHEET_HEADER_ROW}`;
 
-// Every data row: 'Tab'!A2:AN
+// Every data row: 'Tab'!A2:AO
 export const dataRange = (tabName) => `${quoteSheetName(tabName)}!${SHEET_FIRST_COLUMN}${SHEET_FIRST_DATA_ROW}:${SHEET_LAST_COLUMN}`;
 
-// The operational columns, for an append: 'Tab'!A:AN
+// The operational columns, for an append: 'Tab'!A:AO
 export const operationalRange = (tabName) => `${quoteSheetName(tabName)}!${SHEET_FIRST_COLUMN}:${SHEET_LAST_COLUMN}`;
 
-// One data row: 'Tab'!A7:AN7
+// One data row: 'Tab'!A7:AO7
 export function rowRange(tabName, rowNumber) {
     assertRowNumber(rowNumber);
     return `${quoteSheetName(tabName)}!${SHEET_FIRST_COLUMN}${rowNumber}:${SHEET_LAST_COLUMN}${rowNumber}`;
 }
 
-// The candidate ID column below the header: 'Tab'!AN2:AN
+// The candidate ID column below the header: 'Tab'!AO2:AO
 export const candidateIdRange = (tabName) => `${quoteSheetName(tabName)}!${SYSTEM_CANDIDATE_ID_COLUMN}${SHEET_FIRST_DATA_ROW}:${SYSTEM_CANDIDATE_ID_COLUMN}`;
 
 // ---------------------------------------------------------------- validation
@@ -142,7 +145,7 @@ export const candidateIdRange = (tabName) => `${quoteSheetName(tabName)}!${SYSTE
 // by position and with exact text (no trimming, no case folding). Cells the
 // Sheet leaves out at the end count as empty. Returns { valid, mismatches },
 // each mismatch { column, position, expected, actual }; `expected` is null
-// for an unexpected non-empty cell beyond AN.
+// for an unexpected non-empty cell beyond AO.
 export function validateHeaderRow(actualRow) {
     const row = Array.isArray(actualRow) ? actualRow : [];
     const mismatches = [];
@@ -161,7 +164,7 @@ export function validateHeaderRow(actualRow) {
     return { valid: mismatches.length === 0, mismatches };
 }
 
-// A complete row in Sheet order: exactly 40 strings, with a non-empty
+// A complete row in Sheet order: exactly 41 strings, with a non-empty
 // system candidate ID. Throws otherwise (the caller has a bug, not the data).
 export function assertSheetRow(cells) {
     if (!Array.isArray(cells) || cells.length !== SHEET_COLUMN_COUNT) {

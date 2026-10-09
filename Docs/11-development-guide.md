@@ -23,17 +23,25 @@ docker compose up -d
 
 # 3. Configure environment
 cp .env.example .env
-# fill in DATABASE_URL, SUPABASE_*, JWT_SECRET, META_APP_SECRET, WHATSAPP_*, OCR_SERVICE_URL, SMTP_*
+# fill in DATABASE_URL, SUPABASE_*, META_APP_SECRET, WHATSAPP_*, OCR_SERVICE_URL, APP_BASE_URL
+# APP_BASE_URL is required: http://localhost:5173 locally (the admin dev server)
 
-# 4. Apply migrations and generate the Prisma client
+# 4. Configure the admin frontend (browser-safe values only)
+cp admin/.env.example admin/.env.local
+# set VITE_SUPABASE_URL=<project URL> and VITE_SUPABASE_ANON_KEY=<browser-safe anon key>
+# (Supabase dashboard > Project Settings > API). admin/.env.local is never committed.
+
+# 5. Apply migrations and generate the Prisma client
 npx prisma migrate dev
 
-# 5. (optional) seed sample data
+# 6. (optional) seed sample data
 npx prisma db seed
 
-# 6. Create the first admin account
-npm run admin:create -- --email admin@example.com --password "..." --name "..." --role ADMIN
+# 7. Create the first user (ADMIN): a Supabase Auth identity plus the application record
+npm run user:create -- --email admin@example.com --name "..." --role ADMIN
 ```
+
+Sign-in, invitations and password recovery are Supabase Auth's (`SUPABASE_AUTH.md`); the application has no `JWT_SECRET` or SMTP settings. Outgoing auth email is configured in the Supabase dashboard, and the local URLs (`http://localhost:5173/admin/setup-password` and `/admin/reset-password`) must be in its allowed redirect URLs. Without `admin/.env.local`, sign-in fails with "Sign-in is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)".
 
 ## Running It
 

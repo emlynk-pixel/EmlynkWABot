@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ApproveResult, AuditEntry, ReviewItem, ReviewQueue, ReviewQueueItem } from "../api/admin";
-import { ADMIN, CLIENT_REF, OVERVIEW as OVERVIEW_FIXTURE, TOKEN_KEY, renderApp, signedInBackend, stubBackend, type FetchRoutes } from "./helpers";
+import { ADMIN, CLIENT_REF, OVERVIEW as OVERVIEW_FIXTURE, renderApp, signedInBackend, stubBackend, type FetchRoutes, SESSION_TOKEN, renderAppSignedIn, RENDER_STEP } from "./helpers";
 
 // Synthetic review data only.
 const TEMP_ID = "11111111-1111-4111-8111-111111111111";
@@ -107,10 +107,10 @@ describe("Review Queue", () => {
     test("loading, then data", async () => {
         let release: (value: { status: number; body: unknown }) => void = () => {};
         signedInBackend({ "GET /api/admin/review": () => new Promise((resolve) => { release = resolve; }) });
-        renderApp("/review");
-        expect(await screen.findByText("Loading review queue…")).toBeInTheDocument();
+        await renderAppSignedIn("/review");
+        expect(await screen.findByText("Loading review queue…", {}, RENDER_STEP)).toBeInTheDocument();
         release({ status: 200, body: queue(TWO_ITEMS) });
-        expect(await screen.findByRole("table", { name: "Review queue" })).toBeInTheDocument();
+        expect(await screen.findByRole("table", { name: "Review queue" }, RENDER_STEP)).toBeInTheDocument();
     });
 
     test("error -> retry reloads", async () => {
@@ -183,7 +183,7 @@ describe("Review Detail", () => {
         const preview = await screen.findByRole("img", { name: "Preview of document_20260924_063000.png" });
         expect(preview).toHaveAttribute("src", "blob:preview-1");
         const fileRequest = lastRequest(calls, `/api/admin/review/pending-${TEMP_ID}/file`) as unknown as { headers: Record<string, string> };
-        expect(fileRequest.headers.Authorization).toBe(`Bearer ${window.sessionStorage.getItem(TOKEN_KEY)}`);
+        expect(fileRequest.headers.Authorization).toBe(`Bearer ${SESSION_TOKEN}`);
     });
 
     test("offers exactly Approve and Keep Pending; there is no Reject", async () => {
@@ -226,9 +226,21 @@ describe("Review Detail", () => {
         expect(await screen.findByRole("heading", { name: "Review item not found" })).toBeInTheDocument();
     });
 
-    test("VIEWER cannot see review actions but still sees the document details", async () => {
+    test("MANAGER sees the review actions (the backend allows MANAGER to review)", async () => {
         signedInBackend({
-            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "VIEWER" } } },
+            "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "MANAGER" } } },
+            [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: ITEM },
+            [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse,
+        });
+        renderApp(`/review/pending-${TEMP_ID}`);
+        expect(await screen.findByRole("heading", { name: "11111111" })).toBeInTheDocument();
+        expect(screen.getByRole("group", { name: "Review actions" })).toBeInTheDocument();
+        expect(screen.queryByText("You have view-only access and cannot review documents.")).not.toBeInTheDocument();
+    });
+
+    test("a role without review permission (defensive; no such role exists today) sees details only", async () => {
+        signedInBackend({
+            "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "UNKNOWN_ROLE" } } },
             [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: ITEM },
             [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse,
         });
@@ -271,7 +283,7 @@ describe("Review actions", () => {
             actions: { approve: { available: true, needsPoliceDate: true, code: null, message: null }, keepPending: { available: true, code: null, message: null } }
         };
         const { user, group } = await openDetail({
-            "GET /auth/me": { status: 200, body: { admin: { ...ADMIN, role: "ANALYST" } } },
+            "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "ANALYST" } } },
             [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: slipItem },
         });
         await user.click(within(group).getByRole("button", { name: "Approve" }));

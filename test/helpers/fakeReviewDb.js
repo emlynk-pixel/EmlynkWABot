@@ -10,7 +10,7 @@ import { createFakeAdminDb } from "./fakeAdminDb.js";
 
 export function createFakeReviewDb({ admins = [], users = [], temporaryData = [], documents = [], auditLogs = [], failOn = {} } = {}) {
     const tables = {
-        user: users.map((row) => ({ ...row })),
+        candidate: users.map((row) => ({ ...row })),
         temporaryData: temporaryData.map((row) => ({ ...row })),
         document: documents.map((row) => ({ ...row })),
         auditLog: auditLogs.map((row) => ({ ...row })),
@@ -20,15 +20,20 @@ export function createFakeReviewDb({ admins = [], users = [], temporaryData = []
     const failures = { ...failOn };
 
     const relations = {
-        temporaryData: { user: (r) => tables.user.find((u) => u.passportId === r.passportId) ?? null },
+        temporaryData: { user: (r) => tables.candidate.find((u) => u.passportId === r.passportId) ?? null },
         document: {
-            user: (r) => tables.user.find((u) => u.passportId === r.passportId) ?? null,
+            user: (r) => tables.candidate.find((u) => u.passportId === r.passportId) ?? null,
             temporaryData: (r) => tables.temporaryData.find((t) => t.temporaryId === r.temporaryId) ?? null,
         },
         auditLog: { admin: (r) => adminDb.rows.find((a) => a.adminId === r.adminId) ?? null },
-        user: { documents: (r) => tables.document.filter((d) => d.passportId === r.passportId) },
+        candidate: { documents: (r) => tables.document.filter((d) => d.passportId === r.passportId) },
     };
-    const relationModel = { user: "user", temporaryData: "temporaryData", admin: "admin", documents: "document" };
+    // Maps a relation FIELD name (as used in Prisma `select`/`where.is`) to
+    // the fake table/model it resolves to. Field names are unchanged by the
+    // Candidate/User model rename (see schema.prisma); only the underlying
+    // model names changed (user -> candidate for candidates, admin -> user
+    // for staff), so this is the one place that mapping must be kept in sync.
+    const relationModel = { user: "candidate", temporaryData: "temporaryData", admin: "user", documents: "document" };
 
     function matches(model, row, where) {
         if (!where) return true;
@@ -167,15 +172,15 @@ export function createFakeReviewDb({ admins = [], users = [], temporaryData = []
         const sql = strings.join("?");
         calls.push({ method: "$queryRaw", sql, values });
         const [value] = values;
-        if (/FROM "users"/.test(sql)) return tables.user.filter((u) => u.passportId === value).map((u) => ({ passport_id: u.passportId }));
+        if (/FROM "candidate"/.test(sql)) return tables.candidate.filter((u) => u.passportId === value).map((u) => ({ passport_id: u.passportId }));
         if (/FROM "temporary_data"/.test(sql)) return tables.temporaryData.filter((t) => t.temporaryId === value).map((t) => ({ temporary_id: t.temporaryId }));
         if (/FROM "documents"/.test(sql)) return tables.document.filter((d) => d.documentId === value).map((d) => ({ document_id: d.documentId }));
         throw new Error(`fakeReviewDb: unexpected raw query ${sql}`);
     }
 
     const client = {
-        admin: adminDb.admin,
-        user: model("user"),
+        user: adminDb.user,
+        candidate: model("candidate"),
         temporaryData: model("temporaryData"),
         document: model("document"),
         auditLog: model("auditLog"),

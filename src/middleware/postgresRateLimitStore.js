@@ -21,6 +21,15 @@
 //
 // If the database can't be reached, the request fails (500) instead of
 // passing unlimited: the limits keep protecting login and the admin API.
+//
+// The table is schema-qualified ("public"."rate_limits", matching the plain
+// migration's default schema) rather than left bare: a pooled connection
+// (e.g. a transaction-mode PgBouncer/Supavisor pooler) can't always be
+// relied on to carry a consistent per-session search_path across statements
+// the way a direct session connection does, and the unqualified name would
+// then resolve against whatever search_path the pooler handed this
+// particular statement, including "relation does not exist" for a table
+// that does exist. Qualifying it removes that ambiguity entirely.
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { resolveDb } from "../utils/resolveClients.js";
 
@@ -33,7 +42,7 @@ export function createPostgresRateLimitStore({ prefix, db = null, log = console 
         if (Date.now() < nextCleanupAt) return;
         nextCleanupAt = Date.now() + windowMs;
         try {
-            await client.$executeRaw`DELETE FROM "rate_limits" WHERE "reset_at" <= now()`;
+            await client.$executeRaw`DELETE FROM "public"."rate_limits" WHERE "reset_at" <= now()`;
         } catch (error) {
             // Only housekeeping: the count itself already succeeded.
             log.error("Rate-limit cleanup failed (retried later):", { errorType: error?.name ?? "Error" });
@@ -51,7 +60,7 @@ export function createPostgresRateLimitStore({ prefix, db = null, log = console 
         async increment(key) {
             const client = await resolveDb(db);
             const [row] = await client.$queryRaw`
-                INSERT INTO "rate_limits" ("key", "hits", "reset_at")
+                INSERT INTO "public"."rate_limits" ("key", "hits", "reset_at")
                 VALUES (${rowKey(key)}, 1, now() + ${windowMs}::double precision * interval '1 millisecond')
                 ON CONFLICT ("key") DO UPDATE SET
                     "hits" = CASE WHEN "rate_limits"."reset_at" <= now() THEN 1 ELSE "rate_limits"."hits" + 1 END,
@@ -66,13 +75,13 @@ export function createPostgresRateLimitStore({ prefix, db = null, log = console 
         async decrement(key) {
             const client = await resolveDb(db);
             await client.$executeRaw`
-                UPDATE "rate_limits" SET "hits" = "hits" - 1
+                UPDATE "public"."rate_limits" SET "hits" = "hits" - 1
                 WHERE "key" = ${rowKey(key)} AND "hits" > 0 AND "reset_at" > now()`;
         },
 
         async resetKey(key) {
             const client = await resolveDb(db);
-            await client.$executeRaw`DELETE FROM "rate_limits" WHERE "key" = ${rowKey(key)}`;
+            await client.$executeRaw`DELETE FROM "public"."rate_limits" WHERE "key" = ${rowKey(key)}`;
         },
     };
 }

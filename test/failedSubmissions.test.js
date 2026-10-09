@@ -1,18 +1,18 @@
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import jwt from "jsonwebtoken";
 
 import { processDocument } from "../src/services/documentProcessingService.js";
 import { OcrResourceError } from "../src/services/ocrContract.js";
 import { describeFailure, FAILURE_CODE } from "../src/services/failureReason.js";
 import { parseReviewQueueQuery } from "../src/services/adminReviewService.js";
 import { createAdminRouter } from "../src/routes/admin.js";
-import { createRequireActiveAdmin } from "../src/middleware/requireActiveAdmin.js";
+import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js";
 import { sha256Hex } from "../src/utils/fileChecksum.js";
 import { createFakePrisma } from "./helpers/fakePrisma.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { createFakeBucket } from "./helpers/fakeStorage.js";
+import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 import "./helpers/localOcrService.js";
 
 Object.assign(process.env, {
@@ -20,7 +20,6 @@ Object.assign(process.env, {
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
     DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test",
     META_APP_SECRET: "test-app-secret-placeholder",
-    JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
 });
 const { createApp } = await import("../src/createApp.js");
 
@@ -62,7 +61,7 @@ describe("H3 pipeline: failures stay recorded, nothing is stored", () => {
         assert.equal(update.passportId, undefined, "failed before identity: no client, none invented");
         assert.equal(update.documentType, undefined, "failed before classification: type stays as received");
         assert.equal(update.pendingStoragePath, undefined);
-        assert.ok(!db.calls.some((c) => c.method === "document.create" || c.method === "user.updateMany"));
+        assert.ok(!db.calls.some((c) => c.method === "document.create" || c.method === "candidate.updateMany"));
         assert.deepEqual([...bucket.objects.keys()], [`temporary/${T_PAGES}.pdf`], "only the temporary original");
         assert.equal(describeFailure(update.processingSummary).code, "PDF_TOO_MANY_PAGES");
     });
@@ -118,12 +117,12 @@ before(async () => {
     const files = { [pages.row.temporaryStoragePath]: pages.buffer, [storage.row.temporaryStoragePath]: storage.buffer };
     bucket.download = async (p) => (files[p] ? { data: files[p], error: null } : { data: null, error: { message: "not found" } });
     fixture = { db, bucket };
-    const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: db.client, bucket, requireAdmin: createRequireActiveAdmin({ db: db.client }) }) });
+    const app = createApp({ adminApiRouter: createAdminRouter({ apiLimiter: (req, res, next) => next(), db: db.client, bucket, requireAdmin: createRequireActiveUser({ db: db.client, verifyAccessToken: fakeVerifyAccessToken }) }) });
     server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
     base = `http://127.0.0.1:${server.address().port}/api/admin`;
 });
 after(() => server.close());
-const token = (adminId = "admin-active") => jwt.sign({ adminId }, process.env.JWT_SECRET, { algorithm: "HS256", expiresIn: "1h" });
+const token = (adminId = "admin-active") => tokenFor(adminId);
 async function call(method, path, { body, auth = token() } = {}) {
     const headers = auth ? { Authorization: `Bearer ${auth}` } : {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -144,7 +143,7 @@ describe("H3 admin API", () => {
         assert.deepEqual(storage.failure, { code: "STORAGE_FAILED", stage: "STORAGE" });
         const text = JSON.stringify(body);
         assert.ok(!/OCR resource limit|Storage copy failed|temporary\/|fileSha256|error"/.test(text), "no raw error text, paths or checksums");
-        assert.equal(fixture.db.tables.user.length, 1, "no client created");
+        assert.equal(fixture.db.tables.candidate.length, 1, "no client created");
     });
 
     test("the normal queue and Pending review are unchanged; failed submissions are counted on their own", async () => {
@@ -204,7 +203,7 @@ describe("H3 admin API", () => {
     test("Test 10: failed submissions need an ACTIVE admin", async () => {
         for (const path of ["/review?kind=FAILED", `/review/failed-${T_PAGES}`, `/review/failed-${T_PAGES}/file`, "/overview"]) {
             assert.equal((await call("GET", path, { auth: null })).status, 401, path);
-            assert.equal((await call("GET", path, { auth: token("admin-inactive") })).status, 401, path);
+            assert.equal((await call("GET", path, { auth: token("admin-inactive") })).status, 403, path);
         }
         assert.equal((await call("GET", "/review/failed-not-an-id")).status, 400);
         assert.equal((await call("GET", "/review/failed-99999999-9999-4999-8999-999999999999")).status, 404);

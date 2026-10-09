@@ -1,52 +1,38 @@
-// Role-Based Authorization (Phase 12, Checkpoint 1).
+// Role-based authorization. The role is public."user".role, loaded from the
+// database on every request by requireActiveUser (never a token claim), so a
+// role change applies to the next request.
 //
-// The proposal (§33) recommends three roles:
-//   ADMIN    — full access: every read and every write action
-//   ANALYST — read access + review actions (approve/keep-pending/remove/retry/
-//              replace-verified/keep-as-version/document-type/assign-client)
-//              but NOT police-date corrections, which change stored documents
-//              rather than waiting pending items
-//   VIEWER   — read-only: GET requests only, no POSTs
+//   ADMIN              everything, including user management and settings
+//   MANAGER            everything except user management and settings
+//   ANALYST            reads, review actions, corrections and candidate work;
+//                      not police-date corrections on stored documents
+//   REGISTRATION_DESK  the Candidates area only: list, lookup, registration,
+//                      details, stages, candidate documents and call logs
 //
-// The role column already exists in the admins table (created in the initial
-// migration). No new migration is needed. All existing accounts have role
-// "ADMIN" (the default from scripts/createAdmin.js), so existing behaviour
-// is fully preserved.
-//
-// The admin is always checked active before this middleware runs
-// (requireActiveAdmin.js). If the role is not in the allowed list the request
-// is refused with 403; the error body never names the role or admin details.
+// The per-route tiers are in routes/admin.js. A role outside the allowed list
+// gets 403; the body never names the role or the user.
 
-export const ADMIN_ROLES = Object.freeze({
+export const ROLES = Object.freeze({
     ADMIN: "ADMIN",
     MANAGER: "MANAGER",
     ANALYST: "ANALYST",
     REGISTRATION_DESK: "REGISTRATION_DESK",
 });
 
-// Ordered by privilege (most privileged first). Used to validate role values
-// when creating or updating admins.
-export const ALL_ROLES = Object.freeze([
-    ADMIN_ROLES.ADMIN,
-    ADMIN_ROLES.MANAGER,
-    ADMIN_ROLES.ANALYST,
-    ADMIN_ROLES.REGISTRATION_DESK,
-]);
+// Most privileged first. The only values a role may be set to.
+export const ALL_ROLES = Object.freeze([ROLES.ADMIN, ROLES.MANAGER, ROLES.ANALYST, ROLES.REGISTRATION_DESK]);
 
-const INSUFFICIENT_ROLE = { message: "Insufficient permissions" };
+export const isValidRole = (value) => ALL_ROLES.includes(value);
 
-// Returns Express middleware that allows only requests whose admin (set by
-// requireActiveAdmin) has one of the listed roles.
-//
-// Usage:
-//   router.post("/sensitive", requireRole([ADMIN_ROLES.ADMIN]), handler);
+const INSUFFICIENT_ROLE = Object.freeze({ message: "Insufficient permissions" });
+
 export function requireRole(allowedRoles) {
     return (req, res, next) => {
-        if (!req.admin) {
-            // This should never happen if requireActiveAdmin runs first.
+        if (!req.user) {
+            // Only reachable if requireActiveUser did not run first.
             return res.status(401).json({ message: "Invalid or Expired Token" });
         }
-        if (!allowedRoles.includes(req.admin.role)) {
+        if (!allowedRoles.includes(req.user.role)) {
             return res.status(403).json(INSUFFICIENT_ROLE);
         }
         return next();

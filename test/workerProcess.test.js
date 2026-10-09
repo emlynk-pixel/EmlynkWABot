@@ -170,7 +170,7 @@ describe("Step 5B: worker settings", () => {
         for (const name of WORKER_REQUIRED_ENV_VARS) assert.ok(REQUIRED_ENV_VARS.includes(name), name);
         assert.deepEqual(findEnvProblems(WORKER_ENV, { required: WORKER_REQUIRED_ENV_VARS }), []);
         // The server's own check is unchanged: the same settings are not enough for it.
-        assert.ok(findEnvProblems(WORKER_ENV).includes("JWT_SECRET is missing"));
+        assert.ok(findEnvProblems(WORKER_ENV).includes("META_APP_SECRET is missing"));
     });
 
     test("format checks still apply to the worker's settings", () => {
@@ -203,7 +203,7 @@ describe("Step 5B: the worker entry point (node src/worker.js)", () => {
         const result = spawnSync(process.execPath, [workerPath], { env, encoding: "utf8", timeout: 30_000 });
         assert.equal(result.status, 1);
         assert.match(result.stderr, /DATABASE_URL is missing/);
-        assert.ok(!/JWT_SECRET|META_APP_SECRET|WHATSAPP/.test(result.stderr), "server-only settings are not required");
+        assert.ok(!/META_APP_SECRET|WHATSAPP/.test(result.stderr), "server-only settings are not required");
         assert.ok(!result.stderr.includes(PLACEHOLDERS.SUPABASE_SERVICE_ROLE_KEY));
         assert.ok(!result.stdout.includes("Submission worker running"));
     });

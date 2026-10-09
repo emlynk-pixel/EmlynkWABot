@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { Outlet, Route, Routes } from "react-router";
+import { Navigate, Outlet, Route, Routes } from "react-router";
+import { canViewDashboard, useAuth } from "./auth/AuthProvider";
 import { RequireAuth } from "./auth/RequireAuth";
 import { AdminLayout } from "./layout/AdminLayout";
 import { CandidateDeploymentPage } from "./pages/CandidateDeploymentPage";
@@ -12,6 +13,7 @@ import { DocumentsPage } from "./pages/DocumentsPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { InvitationsPage } from "./pages/InvitationsPage";
 import { AdminRolesPage } from "./pages/AdminRolesPage";
+import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MissingDocumentsPage } from "./pages/MissingDocumentsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -38,6 +40,13 @@ function ClassicArea() {
     );
 }
 
+// The landing page: the Overview, or Candidates for a role without dashboard
+// access (REGISTRATION_DESK), which the API would otherwise refuse.
+function HomePage() {
+    const { user } = useAuth();
+    return canViewDashboard(user) ? <OverviewPage /> : <Navigate to="/candidates" replace />;
+}
+
 // Routes are relative to the /admin base (see main.tsx). Overview,
 // Documents, Review Queue, Review Detail, Client Details and Police Workflow
 // follow their Stitch screens; Clients, Missing Documents and Daily Report
@@ -56,7 +65,7 @@ export function AppRoutes() {
                     </RequireAuth>
                 }
             >
-                <Route index element={<OverviewPage />} />
+                <Route index element={<HomePage />} />
                 <Route path="documents" element={<DocumentsPage />} />
                 <Route path="review" element={<ReviewQueuePage />} />
                 <Route path="review/:id" element={<ReviewDetailPage />} />
@@ -74,6 +83,7 @@ export function AppRoutes() {
                 <Route path="reports/daily" element={<DailyReportPage />} />
                 <Route path="invitations" element={<InvitationsPage />} />
                 <Route path="roles" element={<AdminRolesPage />} />
+                <Route path="audit-logs" element={<AuditLogsPage />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="*" element={<NotFoundPage />} />
             </Route>

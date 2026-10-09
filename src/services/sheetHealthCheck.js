@@ -2,7 +2,7 @@
 // (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 11.6 and 13.2.)
 //
 // Proves that the runtime identity can reach the configured spreadsheet and
-// tab, and that row 1 is the exact 40-column header, by reading A1:AN1 and
+// tab, and that row 1 is the exact 41-column header, by reading A1:AO1 and
 // nothing else. It never appends, updates, clears, deletes, formats, creates
 // tabs or touches metadata:
 //   - the live client asks for the spreadsheets.readonly scope only, so its

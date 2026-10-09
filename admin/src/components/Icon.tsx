@@ -34,9 +34,13 @@ import visibility from "@material-symbols/svg-400/outlined/visibility.svg?raw";
 import visibilityOff from "@material-symbols/svg-400/outlined/visibility_off.svg?raw";
 import call from "@material-symbols/svg-400/outlined/call.svg?raw";
 import check from "@material-symbols/svg-400/outlined/check.svg?raw";
+import close from "@material-symbols/svg-400/outlined/close.svg?raw";
 import pictureAsPdf from "@material-symbols/svg-400/outlined/picture_as_pdf.svg?raw";
 import upload from "@material-symbols/svg-400/outlined/upload.svg?raw";
 import manageAccounts from "@material-symbols/svg-400/outlined/manage_accounts.svg?raw";
+import notifications from "@material-symbols/svg-400/outlined/notifications.svg?raw";
+import notificationsActive from "@material-symbols/svg-400/outlined/notifications_active.svg?raw";
+import history from "@material-symbols/svg-400/outlined/history.svg?raw";
 import settings from "@material-symbols/svg-400/outlined/settings.svg?raw";
 
 const ICONS = {
@@ -44,6 +48,7 @@ const ICONS = {
     call,
     cancel,
     check,
+    close,
     picture_as_pdf: pictureAsPdf,
     upload,
     check_circle: checkCircle,
@@ -67,6 +72,7 @@ const ICONS = {
     fact_check: factCheck,
     group,
     manage_accounts: manageAccounts,
+    history,
     local_police: localPolice,
     lock,
     logout,
@@ -76,6 +82,8 @@ const ICONS = {
     settings,
     visibility,
     visibility_off: visibilityOff,
+    notifications,
+    notifications_active: notificationsActive,
 } as const;
 
 export type IconName = keyof typeof ICONS;

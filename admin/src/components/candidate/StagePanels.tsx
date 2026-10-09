@@ -129,6 +129,38 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
         }
     };
 
+    const notesAndFooter = (
+        <>
+            <div className="mt-4">
+                <label htmlFor={notesId} className="mb-1 block text-label-sm text-ink-muted">Notes</label>
+                <textarea id={notesId} rows={5} maxLength={2000} value={notes} disabled={!canEdit || busy} onChange={(event) => setNotes(event.target.value)} className={textAreaControl} />
+            </div>
+            <PanelFooter
+                status={<CompletedCheckbox completed={completed} onChange={setCompleted} disabled={!canEdit || busy} />}
+                canEdit={canEdit}
+                busy={busy}
+                dirty={dirty}
+                error={error}
+                onCancel={() => { showSaved(saved); setError(null); }}
+            />
+        </>
+    );
+
+    // Visa submission also takes its document. The upload row saves on its own
+    // and sits outside the notes form (its remove dialog has a form of its own),
+    // like the uploads in Candidate details. Completion stays manual.
+    if (stage === "VISA_SUBMISSION") {
+        return (
+            <div>
+                <PanelHeading title={STAGE_LABELS[stage]} />
+                <div className="mt-4">
+                    <DocumentRow passportId={details.candidate.passportId} documentType="VISA_SUBMISSION" label="Visa submission document" description="Accepted formats: PDF, JPG, PNG." document={details.documents.VISA_SUBMISSION} readOnly={!canEdit} onUploaded={onChange} />
+                </div>
+                <form onSubmit={submit}>{notesAndFooter}</form>
+            </div>
+        );
+    }
+
     return (
         <form onSubmit={submit}>
             <PanelHeading title={STAGE_LABELS[stage]} />
@@ -157,18 +189,7 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
                     </Field>
                 </div>
             )}
-            <div className="mt-4">
-                <label htmlFor={notesId} className="mb-1 block text-label-sm text-ink-muted">Notes</label>
-                <textarea id={notesId} rows={5} maxLength={2000} value={notes} disabled={!canEdit || busy} onChange={(event) => setNotes(event.target.value)} className={textAreaControl} />
-            </div>
-            <PanelFooter
-                status={<CompletedCheckbox completed={completed} onChange={setCompleted} disabled={!canEdit || busy} />}
-                canEdit={canEdit}
-                busy={busy}
-                dirty={dirty}
-                error={error}
-                onCancel={() => { showSaved(saved); setError(null); }}
-            />
+            {notesAndFooter}
         </form>
     );
 }
@@ -194,7 +215,7 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
         if (!token) return;
         // Missing address / WhatsApp number don't block the save (the stage
         // just stays incomplete); they are shown under their fields.
-        const errors = validateDetails(form, "details");
+        const errors = validateDetails(form, "details", { whatsappLocked: Boolean(details.candidate.whatsappNumber) });
         setFieldErrors({ ...completionGaps(form), ...errors });
         if (Object.keys(errors).length) return;
         setBusy(true);
@@ -223,7 +244,7 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
             <form onSubmit={submit}>
                 <PanelHeading title="Candidate details" />
                 <div className="mt-4">
-                    <CandidateFields value={form} onChange={setForm} errors={fieldErrors} disabled={!canEdit || busy} passportId={{ value: passportId }} whatsappLocked={Boolean(details.candidate.whatsappNumber)} form="details" />
+                    <CandidateFields value={form} onChange={setForm} errors={fieldErrors} disabled={!canEdit || busy} passportId={{ value: passportId }} whatsappLocked={Boolean(details.candidate.whatsappNumber)} />
                 </div>
             </form>
             <div className="mt-6 space-y-2">

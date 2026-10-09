@@ -1,9 +1,11 @@
-import { useLocation, NavLink } from "react-router";
+import { useLocation } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
+import { ROLE_LABELS, canViewDashboard, type Role } from "../auth/roles";
 import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
 import { useTheme } from "../theme/theme";
 import { NAV_ITEMS } from "./navigation";
+import { NotificationBell } from "../components/NotificationBell";
 
 const timeFormat = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Colombo", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
@@ -15,9 +17,10 @@ function currentSectionLabel(pathname: string): string {
 }
 
 // Top utility bar (Stitch: fixed 56px): breadcrumb, Sync (reload the data
-// on screen), light/dark mode, the signed-in admin and Sign out.
+// on screen), light/dark mode, the signed-in admin and Sign out. Candidate
+// registration starts from the Candidates page ("Add candidate").
 export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuOpen: boolean }) {
-    const { admin, signOut } = useAuth();
+    const { user, signOut } = useAuth();
     const { pathname } = useLocation();
     const { syncing, result, sync } = useSync();
     const { theme, toggle } = useTheme();
@@ -70,28 +73,18 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
                     <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} className="size-4" />
                     <span className="sr-only">Dark mode</span>
                 </button>
+                {/* The bell reads the Review Queue: only for the roles that can. */}
+                {canViewDashboard(user) && <NotificationBell />}
             </div>
 
-            {admin && (
+            {user && (
                 <div className="flex items-center gap-3 border-l border-border pl-3">
-                    <NavLink
-                        to="/candidates/new"
-                        className={({ isActive }) =>
-                            `flex h-9 items-center gap-1.5 rounded-md border border-border-strong px-2.5 text-label-md ${
-                                isActive ? "bg-primary text-on-primary border-primary" : "bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"
-                            }`
-                        }
-                        title="Register Candidate"
-                    >
-                        <Icon name="person_add" className="size-4" />
-                        <span className="hidden lg:inline">Register Candidate</span>
-                    </NavLink>
                     <div className="hidden text-right sm:block">
-                        <p className="text-label-md text-ink" data-testid="admin-name">{admin.name}</p>
-                        <p className="text-label-sm text-ink-subtle">{admin.role}</p>
+                        <p className="text-label-md text-ink" data-testid="admin-name">{user.name}</p>
+                        <p className="text-label-sm text-ink-subtle">{ROLE_LABELS[user.role as Role] ?? user.role}</p>
                     </div>
                     <span className="flex size-8 items-center justify-center rounded-full bg-primary-soft text-label-md text-primary" aria-hidden="true">
-                        {admin.name.trim().charAt(0).toUpperCase() || "A"}
+                        {user.name.trim().charAt(0).toUpperCase() || "A"}
                     </span>
                     <button
                         type="button"

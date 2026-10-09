@@ -169,7 +169,7 @@ export async function assignClient({ db, admin, reviewId, reason, passportId }) 
         if (!(await lockClientRow(tx, passportId))) {
             throw new ReviewActionError(409, "CLIENT_NOT_FOUND", "No client has this passport ID. Choose an existing client; nothing was changed.");
         }
-        const client = await tx.user.findUnique({ where: { passportId }, select: { passportId: true, uniqueId: true } });
+        const client = await tx.candidate.findUnique({ where: { passportId }, select: { passportId: true, uniqueId: true } });
         await tx.temporaryData.update({
             where: { temporaryId: row.temporaryId },
             data: { passportId: client.passportId, uniqueId: client.uniqueId },

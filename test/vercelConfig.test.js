@@ -67,11 +67,11 @@ describe("Step 5D: Vercel entry point", () => {
                 SUPABASE_URL: "http://127.0.0.1:1",
                 SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
                 SUPABASE_BUCKET: "test-bucket",
-                JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
                 META_APP_SECRET: "test-app-secret-placeholder",
                 WHATSAPP_VERIFY_TOKEN: "test-verify-token-placeholder",
                 WHATSAPP_ACCESS_TOKEN: "test-access-token-placeholder",
                 WHATSAPP_API_VERSION: "v21.0",
+                APP_BASE_URL: "http://localhost:5173",
                 OCR_SERVICE_URL: "http://127.0.0.1:1",
             },
             encoding: "utf8",
@@ -157,7 +157,8 @@ describe("Step 5D: routing", () => {
         assert.match(config.buildCommand, /npm --prefix admin run build -- --outDir \.\.\/public\/admin --emptyOutDir/);
         assert.match(config.installCommand, /npm ci && npm --prefix admin (ci|install)/);
         assert.match(read("admin/vite.config.ts"), /base: "\/admin\/"/);
-        assert.match(read("admin/src/main.tsx"), /basename="\/admin"/);
+        assert.match(read("admin/src/basePath.ts"), /APP_BASE_PATH = "\/admin"/);
+        assert.match(read("admin/src/main.tsx"), /basename=\{APP_BASE_PATH\}/);
         assert.match(read(".gitignore"), /^\/public\/$/m);
     });
 });
@@ -170,7 +171,6 @@ describe("Step 5D: headers", () => {
         Object.assign(process.env, {
             SUPABASE_URL: "http://127.0.0.1:1", SUPABASE_SERVICE_ROLE_KEY: "test-service-role-placeholder",
             DATABASE_URL: "postgresql://test:test@127.0.0.1:1/test", META_APP_SECRET: "test-app-secret-placeholder",
-            JWT_SECRET: "test-jwt-secret-placeholder-0123456789",
         });
         const { createApp } = await import("../src/createApp.js");
         const server = await new Promise((resolve) => { const s = createApp().listen(0, "127.0.0.1", () => resolve(s)); });
@@ -208,6 +208,23 @@ describe("Step 5D: TRUST_PROXY_HOPS=1 on Vercel", () => {
             assert.match(direct.ip, /127\.0\.0\.1/, "without the header: the connecting address");
         } finally {
             server.close();
+        }
+    });
+
+    test("createApp() trusts exactly one hop automatically when VERCEL=1 and TRUST_PROXY_HOPS is unset", async () => {
+        const originalVercel = process.env.VERCEL;
+        const originalHops = process.env.TRUST_PROXY_HOPS;
+        delete process.env.TRUST_PROXY_HOPS;
+        process.env.VERCEL = "1";
+        try {
+            const { createApp } = await import("../src/createApp.js");
+            const app = createApp();
+            assert.equal(app.get("trust proxy"), 1);
+        } finally {
+            if (originalVercel === undefined) delete process.env.VERCEL;
+            else process.env.VERCEL = originalVercel;
+            if (originalHops === undefined) delete process.env.TRUST_PROXY_HOPS;
+            else process.env.TRUST_PROXY_HOPS = originalHops;
         }
     });
 });

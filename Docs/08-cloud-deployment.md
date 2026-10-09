@@ -101,13 +101,11 @@ Secrets (project `project-aa11e15e-a951-4e1b-a65`), each granting `roles/secretm
 |---|---|
 | `DATABASE_URL` | `DATABASE_URL` (the session pooler URL above) |
 | `SUPABASE_SERVICE_ROLE_KEY` | `SUPABASE_SERVICE_ROLE_KEY` |
-| `JWT_SECRET` | `JWT_SECRET` |
 | `META_APP_SECRET` | `META_APP_SECRET` |
 | `WHATSAPP_VERIFY_TOKEN` | `WHATSAPP_VERIFY_TOKEN` |
 | `WHATSAPP_ACCESS_TOKEN` | `WHATSAPP_ACCESS_TOKEN` |
-| `SMTP_PASS` | `SMTP_PASS` |
 
-Non-secret production values (`SUPABASE_URL`, `SUPABASE_BUCKET`, `WHATSAPP_API_VERSION`, `OCR_SERVICE_URL`, `APP_BASE_URL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `EMAIL_FROM`, `NODE_ENV`, `TRUST_PROXY_HOPS`, `REQUIRED_DOCUMENT_TYPES`) are plain Cloud Run/Vercel environment variables, not in Secret Manager.
+Non-secret production values (`SUPABASE_URL`, `SUPABASE_BUCKET`, `WHATSAPP_API_VERSION`, `OCR_SERVICE_URL`, `APP_BASE_URL`, `NODE_ENV`, `TRUST_PROXY_HOPS`, `REQUIRED_DOCUMENT_TYPES`) are plain Cloud Run/Vercel environment variables, not in Secret Manager.
 
 **OCR invocation IAM.** `emlynk-ocr-worker` (asia-south1) stays private — no `allUsers`, no `--allow-unauthenticated`. It grants `roles/run.invoker` to `emlynk-backend@…` specifically on that service (not project-wide). `ocrClient.js` needs no change: it requests a Google identity token for the service's own audience via Application Default Credentials, which on Cloud Run resolves to the attached service account automatically.
 
@@ -121,7 +119,7 @@ Architecture decided at this point: the admin UI and the stateless API/webhook r
 - New `src/httpHandler.js`: runs the same runtime and environment checks as `src/app.js` (throwing instead of `process.exit()` on failure), builds the app with the existing `createApp()` and exports it as the default request handler. It does not listen, does not start the worker, and registers no signal handlers.
 - New `test/httpHandler.test.js`: importing the handler leaves nothing running (the child process ends by itself); used as a handler it answers `/health` 200, an admin API call without login 401, webhook verification 200/403, an unsigned webhook POST 401, with security headers; a missing variable throws on import without exiting the process.
 
-**What did not change.** `src/app.js` (still the entry point for local development, Docker and Cloud Run), `src/createApp.js`, `src/services/submissionQueue.js`, WhatsApp processing, authentication and cookies, RBAC, rate limiting, OCR, storage, Prisma, the schema and migrations.
+**What did not change.** `src/app.js` (still the entry point for local development, Docker and Cloud Run), `src/createApp.js`, `src/services/submissionQueue.js`, WhatsApp processing, RBAC, rate limiting, OCR, storage, Prisma, the schema and migrations.
 
 With the Vercel handler alone, the webhook still records each submission durably and answers 200; the submission then waits in PostgreSQL until a worker process claims it. `notifySubmissionQueued()` becomes a no-op there (no worker in that process listens); the worker's own polling picks the submission up.
 
@@ -152,10 +150,10 @@ With the Vercel handler alone, the webhook still records each submission durably
 
 | Limiter | Limit / window | Counts | Routes |
 |---|---|---|---|
-| login | 5 / 15 min | failures only | `POST /auth/login` |
-| password-reset | 5 / 15 min | every request | `/auth/setup-password`, `/auth/forgot-password`, `/auth/reset-password` |
-| generic-api | 1000 / 15 min | every request | `/api/admin/*` |
+| generic-api | 1000 / 15 min | every request | `/api/admin/*`, `/auth/me`, `/auth/complete-invite` |
 | admin-frontend | 1000 / 15 min | every request | `/admin/*` (Express only) |
+
+**Superseded by Supabase Auth.** The original `login` (5 failures / 15 min) and `password-reset` limiters protected the application's own login and recovery endpoints. Those endpoints no longer exist: sign-in, password recovery and invitation email are Supabase Auth's, which applies its own rate limits (configured in the Supabase dashboard, Authentication > Rate Limits). See `SUPABASE_AUTH.md`.
 
 **Concurrency.** One statement per counted request: `INSERT … ON CONFLICT (key) DO UPDATE` that increments, or restarts an expired window, and returns the count. The primary key serializes concurrent requests for a key. Tested with 60 concurrent increments from two instances (counts 1–60, none repeated) and 20 concurrent failed logins across two apps (exactly 5 reach the login, 15 get 429); a naive read-then-write control let all 60 read the same count.
 
@@ -182,7 +180,7 @@ With the Vercel handler alone, the webhook still records each submission durably
 
 The Cloud Run worker is not routed at all.
 
-**Cookies.** Browser, admin pages and API share one origin (the Vercel domain), so the login cookie stays as it is: `HttpOnly`, `SameSite=Strict`, `Secure` when `NODE_ENV=production`, same name, no `Domain`. No CORS, no cross-origin authentication.
+**Same origin.** Browser, admin pages and API share one origin (the Vercel domain), so there is no CORS. Authentication uses a Supabase access token sent as `Authorization: Bearer` (no cookie authenticates a request; `SUPABASE_AUTH.md`). The browser talks to Supabase directly for sign-in and recovery, which is why the CSP `connect-src` allows `https://*.supabase.co`.
 
 **Headers.** The static admin pages get the same security headers Express sends through helmet (CSP, HSTS, `X-Frame-Options`, …), and `/admin/assets/*` is cached for a year, immutable, as Express serves it.
 
@@ -194,14 +192,19 @@ The Cloud Run worker is not routed at all.
 
 | | Variables |
 |---|---|
-| Secrets | `DATABASE_URL` (session pooler URL), `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECRET`, `META_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN`, `SMTP_PASS` |
-| Non-secret, required | `SUPABASE_URL`, `SUPABASE_BUCKET`, `WHATSAPP_API_VERSION`, `OCR_SERVICE_URL`, `APP_BASE_URL` (the Vercel domain, no trailing slash), `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `EMAIL_FROM`, `TRUST_PROXY_HOPS=1`, `NODEJS_HELPERS=0` |
-| Non-secret, optional | `REQUIRED_DOCUMENT_TYPES`, `ADMIN_SETUP_URL_BASE` |
+| Secrets | `DATABASE_URL` (session pooler URL), `SUPABASE_SERVICE_ROLE_KEY` (server-side only), `META_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN` |
+| Non-secret, required | `SUPABASE_URL`, `SUPABASE_BUCKET`, `WHATSAPP_API_VERSION`, `OCR_SERVICE_URL`, `APP_BASE_URL`, `TRUST_PROXY_HOPS=1`, `NODEJS_HELPERS=0` |
+| Non-secret, optional | `REQUIRED_DOCUMENT_TYPES` |
+| Build-time, public (admin build) | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (browser-safe anon / publishable key; they end up in the public bundle) |
 | Not on Vercel | `GOOGLE_APPLICATION_CREDENTIALS`, any service-account key, `PORT` |
 
-`OCR_SERVICE_URL` is only there because the startup check requires it; the handler never calls OCR. `EMAIL_FROM` is the sender variable (there is no `SMTP_EMAIL_FROM`).
+`APP_BASE_URL` is **required** and **environment-specific**: this deployment's own public address, the site origin only with no path and no trailing slash. Invitation links are built from it (`${APP_BASE_URL}/admin/setup-password`) and invitations are refused if it is missing or invalid. For the stage deployment: `https://emlynk-wa-bot-git-stage-emlynk-pixel.vercel.app` (a different value from production). Each deployment's setup and reset addresses must also be in the Supabase allowed redirect URLs (`SUPABASE_AUTH.md`).
 
-**Cloud Run worker** (unchanged from Step 5): secrets `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`; plain `SUPABASE_URL`, `SUPABASE_BUCKET`, `OCR_SERVICE_URL`. No JWT, Meta, WhatsApp or SMTP values.
+`OCR_SERVICE_URL` is only there because the startup check requires it; the handler never calls OCR.
+
+**Removed from the deployment configuration.** `JWT_SECRET`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM` and `ADMIN_SETUP_URL_BASE` are no longer used. The application sends no email and issues no tokens: Supabase Auth handles authentication, sessions, invitations and password recovery, and the SMTP server for those emails is configured in the Supabase dashboard (Authentication > SMTP Settings), not here. Remove them from Vercel and Cloud Run only after the Supabase Auth version is deployed.
+
+**Cloud Run worker** (unchanged from Step 5): secrets `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`; plain `SUPABASE_URL`, `SUPABASE_BUCKET`, `OCR_SERVICE_URL`. No Meta, WhatsApp or `APP_BASE_URL` values.
 
 **`TRUST_PROXY_HOPS = 1`.** Vercel documents `x-forwarded-for` as "the public IP address of the client that made the request" and states that it overwrites the header and does not forward external IPs, to prevent spoofing. So the header holds one address written by the platform; with one trusted hop Express uses it as `req.ip`, and a client can't supply its own. **Confirm this after the first deploy** (two clients on different networks must not share a login allowance).
 
@@ -213,7 +216,7 @@ The Cloud Run worker is not routed at all.
 
 Migration `20260930120000_phase12_rate_limits` (the `rate_limits` table, Step 6) is applied on the production database through the session pooler. Verified read-only: `prisma migrate status` up to date; the table's columns, indexes, owner and RLS match the schema exactly; `prisma migrate diff` between the live database and `schema.prisma` is empty; every existing table is present with its rows, nothing dropped or reset; a smoke test of the real rate-limit store against the production table (counting, fixed window, key isolation, concurrency, decrement, reset) passed and left no test rows behind.
 
-**Note.** `admin_invitations` and `admin_password_resets` have row level security off. They are not exposed (Supabase's `anon`/`authenticated` roles hold no rights on any table), but unlike the other tables they rely on that alone.
+**Note.** The `admin_invitations` and `admin_password_resets` tables mentioned in earlier steps were dropped by migration `20261009120000_supabase_auth_cutover` (Supabase Auth replaced them).
 
 ### Step 9 (5F) — Cloud Run submission worker deployed and verified end to end
 
