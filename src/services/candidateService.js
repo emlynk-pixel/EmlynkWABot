@@ -612,9 +612,65 @@ async function assertWhatsappFree(db, whatsappNumber, exceptPassportId) {
     }
 }
 
+// ---------------------------------------------------------------- audit
+
+// Candidate activity in the audit log (audit_logs is append-only). Who did
+// it is the signed-in application user (req.user). Only the candidate's own
+// details are ever written, by name (CANDIDATE_AUDIT_FIELDS): nothing of the
+// session, the request or the user's account. Values are cut to a bounded
+// length so one long note can't bloat the log.
+export const CANDIDATE_AUDIT_ACTION = Object.freeze({
+    CREATE_CANDIDATE: "CREATE_CANDIDATE",
+    UPDATE_CANDIDATE: "UPDATE_CANDIDATE",
+    UPDATE_STAGE: "UPDATE_STAGE",
+});
+
+export const CANDIDATE_AUDIT_FIELDS = Object.freeze([
+    "otherName", "firstName", "address", "nic", "job", "jobExperience", "whatsappNumber", "contactNumber",
+    "placeOfBirth", "dateOfBirth", "passportIssueDate", "passportExpiryDate", "nationality", "sex",
+]);
+const STAGE_AUDIT_FIELDS = Object.freeze(["completed", "notes", "jobId", "testResult", "testDate"]);
+const MAX_AUDIT_VALUE_LENGTH = 300;
+
+const isAuditBlank = (value) => value === null || value === undefined || (typeof value === "string" && value.trim() === "");
+
+// Comparable and storable: dates as YYYY-MM-DD, blanks as null, long text cut.
+function auditValue(value) {
+    if (isAuditBlank(value)) return null;
+    if (value instanceof Date) return isoDate(value);
+    if (typeof value === "boolean") return value;
+    const textValue = String(value);
+    return textValue.length > MAX_AUDIT_VALUE_LENGTH ? `${textValue.slice(0, MAX_AUDIT_VALUE_LENGTH)}…` : textValue;
+}
+
+// { before, after } of the fields `next` sets to a different value, or null
+// when none differ (a no-op save is not audited).
+function diffFields(fields, previous, next) {
+    const before = {};
+    const after = {};
+    for (const field of fields) {
+        if (next[field] === undefined) continue;
+        const from = auditValue(previous[field]);
+        const to = auditValue(next[field]);
+        if (from === to) continue;
+        before[field] = from;
+        after[field] = to;
+    }
+    return Object.keys(after).length ? { before, after } : null;
+}
+
+const stageStatus = (completed) => (completed ? "COMPLETED" : "NOT_COMPLETED");
+
+function writeCandidateAudit(tx, { actor, action, passportId, previousStatus, newStatus, reason = null, previousValue = null, newValue = null }) {
+    return tx.auditLog.create({
+        data: { auditId: crypto.randomUUID(), adminId: actor.adminId, action, passportId, previousStatus, newStatus, reason, previousValue, newValue },
+    });
+}
+
 // POST /api/admin/candidates. An existing passport ID is never registered
 // again (409 with the existing record's passport ID, so the admin can open it).
-export async function createCandidate({ db, values }) {
+// actor: the signed-in user (req.user), recorded in the audit log.
+export async function createCandidate({ db, values, actor = null }) {
     // Case-insensitive, like the passport lookup (legacy rows may be lowercase).
     const existing = await db.candidate.findFirst({
         where: { passportId: { equals: values.passportId, mode: "insensitive" } },
@@ -637,6 +693,18 @@ export async function createCandidate({ db, values }) {
                 await tx.candidate.create({ data: { ...details, uniqueId } });
                 if (comment) {
                     await tx.candidateStage.create({ data: { passportId: values.passportId, stage: "CANDIDATE_DETAILS", notes: comment } });
+                }
+                if (actor) {
+                    await writeCandidateAudit(tx, {
+                        actor,
+                        action: CANDIDATE_AUDIT_ACTION.CREATE_CANDIDATE,
+                        passportId: values.passportId,
+                        previousStatus: "NONE",
+                        newStatus: "CREATED",
+                        reason: `Candidate registered (${uniqueId})`,
+                        // Which details were given, not their values.
+                        newValue: JSON.stringify({ uniqueId, fields: CANDIDATE_AUDIT_FIELDS.filter((field) => !isAuditBlank(details[field])) }),
+                    });
                 }
             });
             return { passportId: values.passportId, uniqueId };
@@ -666,7 +734,7 @@ async function requireCandidate(db, passportId) {
 // compared after normalizing the stored value, so an older unnormalized
 // record doesn't falsely look different from itself. A genuinely different
 // number is refused outright rather than silently kept.
-export async function updateCandidateDetails({ db, passportId, values }) {
+export async function updateCandidateDetails({ db, passportId, values, actor = null }) {
     const user = await requireCandidate(db, passportId);
     await assertNicFree(db, values.nic, passportId);
     const { whatsappNumber, ...data } = values;
@@ -678,8 +746,23 @@ export async function updateCandidateDetails({ db, passportId, values }) {
         await assertWhatsappFree(db, whatsappNumber, passportId);
         data.whatsappNumber = whatsappNumber;
     }
+    const changes = diffFields(CANDIDATE_AUDIT_FIELDS, user, data);
     try {
-        await db.candidate.update({ where: { passportId }, data });
+        await db.$transaction(async (tx) => {
+            await tx.candidate.update({ where: { passportId }, data });
+            if (actor && changes) {
+                await writeCandidateAudit(tx, {
+                    actor,
+                    action: CANDIDATE_AUDIT_ACTION.UPDATE_CANDIDATE,
+                    passportId,
+                    previousStatus: "CREATED",
+                    newStatus: "UPDATED",
+                    reason: `Updated ${Object.keys(changes.after).join(", ")}`,
+                    previousValue: JSON.stringify(changes.before),
+                    newValue: JSON.stringify(changes.after),
+                });
+            }
+        });
     } catch (error) {
         if (isUniqueViolation(error)) {
             const target = uniqueTarget(error);
@@ -693,7 +776,7 @@ export async function updateCandidateDetails({ db, passportId, values }) {
 
 // PUT /api/admin/candidates/:passportId/stages/:stage. Automatic stages take
 // notes only; their completion follows their data.
-export async function updateStage({ db, passportId, stage, values, now = new Date() }) {
+export async function updateStage({ db, passportId, stage, values, actor = null, now = new Date() }) {
     const candidate = await getCandidate({ db, passportId });
     if (!candidate) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
 
@@ -714,10 +797,25 @@ export async function updateStage({ db, passportId, stage, values, now = new Dat
         if (values.testDate !== undefined) data.testDate = values.testDate;
     }
 
-    await db.candidateStage.upsert({
-        where: { passportId_stage: { passportId, stage } },
-        create: { passportId, stage, completed: false, ...data },
-        update: data,
+    const changes = diffFields(STAGE_AUDIT_FIELDS, current, values);
+    await db.$transaction(async (tx) => {
+        await tx.candidateStage.upsert({
+            where: { passportId_stage: { passportId, stage } },
+            create: { passportId, stage, completed: false, ...data },
+            update: data,
+        });
+        if (actor && changes) {
+            await writeCandidateAudit(tx, {
+                actor,
+                action: CANDIDATE_AUDIT_ACTION.UPDATE_STAGE,
+                passportId,
+                previousStatus: stageStatus(current.completed),
+                newStatus: stageStatus(changes.after.completed ?? current.completed),
+                reason: "notes" in changes.after ? changes.after.notes : null,
+                previousValue: JSON.stringify({ stage, ...changes.before }),
+                newValue: JSON.stringify({ stage, ...changes.after }),
+            });
+        }
     });
     return getCandidate({ db, passportId });
 }

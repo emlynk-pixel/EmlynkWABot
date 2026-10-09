@@ -378,7 +378,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values: parsed.values })));
+        return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values: parsed.values, actor: req.user })));
     });
 
     router.get("/candidates/:passportId", requireRole(REGISTRATION_UP), async (req, res) => {
@@ -399,7 +399,7 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await updateCandidateDetails({
-            db: client, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
         })));
     });
 
@@ -412,7 +412,7 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await updateStage({
-            db: client, passportId: await storedCandidateId(client, req.params.passportId), stage: req.params.stage, values: parsed.values,
+            db: client, passportId: await storedCandidateId(client, req.params.passportId), stage: req.params.stage, values: parsed.values, actor: req.user,
         })));
     });
 
