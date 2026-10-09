@@ -35,6 +35,8 @@ const ACTION_LABELS: Record<string, string> = {
     CREATE_CANDIDATE: "Candidate registered",
     UPDATE_CANDIDATE: "Candidate details updated",
     UPDATE_STAGE: "Stage updated",
+    CREATE_ADDITIONAL_DETAILS: "Additional details added",
+    UPDATE_ADDITIONAL_DETAILS: "Additional details updated",
     UPLOAD_DOCUMENT: "Document uploaded",
     REMOVE_DOCUMENT: "Document removed",
     DELETE_TEMPORARY_DOCUMENT: "Temporary document deleted",
@@ -77,6 +79,26 @@ const FIELD_LABELS: Record<string, string> = {
     jobId: "Job ID",
     testResult: "Test result",
     testDate: "Test date",
+    // Additional details
+    nameAsInPassport: "Name according to passport",
+    permanentAddress: "Permanent address",
+    birthday: "Birthday",
+    tshirtSize: "T-shirt size",
+    pantSize: "Pant size",
+    shoeSize: "Shoe size",
+    fatherAlive: "Father alive",
+    fatherFullName: "Father full name",
+    fatherBirthday: "Father birthday",
+    motherAlive: "Mother alive",
+    motherFullName: "Mother full name",
+    motherBirthday: "Mother birthday",
+    maritalStatus: "Marital status",
+    wifeFullName: "Wife full name",
+    wifeBirthday: "Wife birthday",
+    child1Name: "1st child name",
+    child2Name: "2nd child name",
+    child3Name: "3rd child name",
+    otherJobSkills: "Other job skills",
 };
 const fieldLabelOf = (field: string) => FIELD_LABELS[field] ?? humanize(field);
 const stageLabel = (stage: string) => STAGE_LABELS[stage as keyof typeof STAGE_LABELS] ?? humanize(stage);
@@ -302,7 +324,7 @@ const clamp = "line-clamp-3 [overflow-wrap:anywhere]";
 function displayValue(field: string, value: AuditChange["from"]): string {
     if (value === null || value === "") return "—";
     if (typeof value === "boolean") return value ? "Yes" : "No";
-    if (/Date$/.test(field) && /^\d{4}-\d{2}-\d{2}$/.test(value)) return formatDay(value);
+    if (/(Date|[bB]irthday)$/.test(field) && /^\d{4}-\d{2}-\d{2}$/.test(value)) return formatDay(value);
     if (field === "testResult") return humanize(value);
     return value;
 }

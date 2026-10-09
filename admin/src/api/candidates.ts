@@ -214,3 +214,58 @@ export function listCallLogs(token: string, passportId: string, signal?: AbortSi
 export function addCallLog(token: string, passportId: string, call: { note: string; calledAt: string }): Promise<{ items: CallLogEntry[] }> {
     return apiRequest(`${base(passportId)}/call-logs`, { method: "POST", token, body: call });
 }
+
+// ---------------------------------------------------------------- additional details
+
+// The same lists the server accepts (candidateAdditionalDetailsService.js).
+export const TSHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL"] as const;
+export const PANT_SIZE_PRESETS = ["28", "30", "32", "34", "36", "38", "40", "42", "44", "46"] as const;
+export const SHOE_SIZE_PRESETS = ["5", "6", "7", "8", "9", "10", "11", "12", "13"] as const;
+export const MARITAL_STATUS_OPTIONS = [
+    { value: "SINGLE", label: "Single" },
+    { value: "MARRIED", label: "Married" },
+    { value: "DIVORCED", label: "Divorced" },
+    { value: "WIDOWED", label: "Widowed" },
+    { value: "SEPARATED", label: "Separated" },
+] as const;
+
+// Dates as YYYY-MM-DD; every field may be null (collected over time).
+export type AdditionalDetails = {
+    nameAsInPassport: string | null;
+    permanentAddress: string | null;
+    birthday: string | null;
+    tshirtSize: string | null;
+    pantSize: string | null;
+    shoeSize: string | null;
+    fatherAlive: boolean | null;
+    fatherFullName: string | null;
+    fatherBirthday: string | null;
+    motherAlive: boolean | null;
+    motherFullName: string | null;
+    motherBirthday: string | null;
+    maritalStatus: string | null;
+    wifeFullName: string | null;
+    wifeBirthday: string | null;
+    child1Name: string | null;
+    child2Name: string | null;
+    child3Name: string | null;
+    otherJobSkills: string | null;
+};
+
+// details: null until saved. suggested: from the candidate's own record, to
+// fill a new form (only stored when saved; the candidate is never changed).
+export type AdditionalDetailsView = {
+    passportId: string;
+    details: AdditionalDetails | null;
+    suggested: { nameAsInPassport: string | null; permanentAddress: string | null; birthday: string | null };
+    updatedDate: string | null;
+};
+
+export function getAdditionalDetails(token: string, passportId: string, signal?: AbortSignal): Promise<AdditionalDetailsView> {
+    return apiRequest<AdditionalDetailsView>(`${base(passportId)}/additional-details`, { token, signal });
+}
+
+// A full replacement: a field sent as null is cleared.
+export function saveAdditionalDetails(token: string, passportId: string, body: AdditionalDetails): Promise<AdditionalDetailsView> {
+    return apiRequest<AdditionalDetailsView>(`${base(passportId)}/additional-details`, { method: "PUT", token, body });
+}

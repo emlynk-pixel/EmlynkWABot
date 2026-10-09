@@ -3,6 +3,7 @@ import { Link, useLocation, useParams, useSearchParams } from "react-router";
 import { CANDIDATE_STAGES, getCandidate, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageCandidates, useAuth } from "../auth/AuthProvider";
+import { AdditionalDetailsPanel } from "../components/candidate/AdditionalDetailsPanel";
 import { CallLogDialog } from "../components/candidate/CallLogDialog";
 import { CandidateStepper } from "../components/candidate/CandidateStepper";
 import { CandidateDetailsStage, DocumentSubmissionStage, NotesStage } from "../components/candidate/StagePanels";
@@ -13,8 +14,15 @@ import { Card, ErrorState, LoadingState } from "../components/States";
 
 const isStage = (value: string | null): value is CandidateStageKey => CANDIDATE_STAGES.includes(value as CandidateStageKey);
 
-// A candidate's deployment process: who they are, the six stages, and the
-// selected stage (?stage=…, default the first incomplete one).
+type TabKey = "deployment" | "additional";
+const TABS: { key: TabKey; label: string }[] = [
+    { key: "deployment", label: "Deployment" },
+    { key: "additional", label: "Additional Details" },
+];
+
+// A candidate's page: who they are, then two tabs. Deployment: the six
+// stages and the selected stage (?stage=…, default the first incomplete
+// one). Additional Details (?tab=additional): the extra details form.
 export function CandidateDeploymentPage() {
     const { passportId = "" } = useParams();
     const { user } = useAuth();
@@ -44,6 +52,8 @@ export function CandidateDeploymentPage() {
     const requested = searchParams.get("stage");
     const current: CandidateStageKey = isStage(requested) ? requested : (details.stages.find((s) => !s.completed)?.stage ?? CANDIDATE_STAGES[0]);
     const select = (stage: CandidateStageKey) => setSearchParams({ stage }, { replace: true });
+    const tab: TabKey = searchParams.get("tab") === "additional" ? "additional" : "deployment";
+    const selectTab = (next: TabKey) => setSearchParams(next === "additional" ? { tab: next } : {}, { replace: true });
     const canEdit = canManageCandidates(user);
     const c = details.candidate;
     const panelProps = { details, canEdit, onChange: setUpdated };
@@ -70,15 +80,42 @@ export function CandidateDeploymentPage() {
                 </p>
             )}
 
-            <Card className="px-4 py-5">
-                <CandidateStepper stages={details.stages} current={current} onSelect={select} />
-            </Card>
+            <div role="tablist" aria-label="Candidate sections" className="flex gap-1 border-b border-border">
+                {TABS.map(({ key, label }) => (
+                    <button
+                        key={key}
+                        type="button"
+                        role="tab"
+                        id={`candidate-tab-${key}`}
+                        aria-selected={tab === key}
+                        aria-controls={`candidate-panel-${key}`}
+                        onClick={() => selectTab(key)}
+                        className={`-mb-px border-b-2 px-4 py-2 text-label-md ${tab === key ? "border-primary font-semibold text-ink" : "border-transparent text-ink-muted hover:text-ink"}`}
+                    >
+                        {label}
+                    </button>
+                ))}
+            </div>
 
-            <Card className="p-6">
-                {current === "CANDIDATE_DETAILS" && <CandidateDetailsStage key={current} {...panelProps} />}
-                {current === "DOCUMENT_SUBMISSION" && <DocumentSubmissionStage key={current} {...panelProps} />}
-                {current !== "CANDIDATE_DETAILS" && current !== "DOCUMENT_SUBMISSION" && <NotesStage key={current} stage={current} {...panelProps} />}
-            </Card>
+            {tab === "deployment" ? (
+                <div role="tabpanel" id="candidate-panel-deployment" aria-labelledby="candidate-tab-deployment" className="space-y-4">
+                    <Card className="px-4 py-5">
+                        <CandidateStepper stages={details.stages} current={current} onSelect={select} />
+                    </Card>
+
+                    <Card className="p-6">
+                        {current === "CANDIDATE_DETAILS" && <CandidateDetailsStage key={current} {...panelProps} />}
+                        {current === "DOCUMENT_SUBMISSION" && <DocumentSubmissionStage key={current} {...panelProps} />}
+                        {current !== "CANDIDATE_DETAILS" && current !== "DOCUMENT_SUBMISSION" && <NotesStage key={current} stage={current} {...panelProps} />}
+                    </Card>
+                </div>
+            ) : (
+                <div role="tabpanel" id="candidate-panel-additional" aria-labelledby="candidate-tab-additional">
+                    <Card className="p-6">
+                        <AdditionalDetailsPanel passportId={c.passportId} canEdit={canEdit} />
+                    </Card>
+                </div>
+            )}
 
             {callLogOpen && <CallLogDialog passportId={c.passportId} candidate={c} canEdit={canEdit} onClose={() => setCallLogOpen(false)} />}
         </section>
