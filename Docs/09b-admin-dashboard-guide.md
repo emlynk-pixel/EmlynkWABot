@@ -11,9 +11,9 @@ The development history, per-checkpoint tests and migrations are in [`09a-admin-
 | Address | `/admin` on the backend server (e.g. `http://localhost:3000/admin/`) |
 | Sign in | Email and password (Supabase Auth); the session is refreshed automatically and ends when you sign out |
 | Who can use it | Any staff user with status `ACTIVE`. What each person can do depends on their role: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK` (section 6). |
-| Screens | Overview, Documents, Review Queue, Review Detail, Clients, Client Details, Missing Documents, Police Workflow, Daily Report |
-| Actions | Approve, Keep Pending, Remove from Review, Set Document Type, Assign Client, Set Police Slip Date |
-| Never | Reject, automatic removal of pending documents, creating clients, changing a client's WhatsApp number |
+| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Clients, Client Details, Missing Documents, Police Workflow, Daily Report, Invite User, Change Roles, Audit Logs, Settings |
+| Actions | Approve, Keep Pending, Remove from Review, Set Document Type, Assign Client, Set Police Slip Date, Upload Candidate Document, Update Candidate Stage, Invite User, Change Roles, Deactivate User |
+| Never | Reject, automatic removal of pending documents, changing a candidate's locked WhatsApp number, modifying or deleting audit logs |
 | Every action | Needs confirmation, is taken by the signed-in admin, and is written to an append-only audit log |
 | Time | Every date and "today" is Sri Lanka time (`Asia/Colombo`) |
 
@@ -34,6 +34,7 @@ The first ADMIN is created on the server with `npm run user:create` (a Supabase 
 ### Header (every page)
 
 - **Breadcrumb** with the current section.
+- **Review Queue Notification Bell**: Displays an alert bell icon in the top header with a real-time badge count of unread Review Queue submissions. Clicking the bell opens a dropdown panel listing recent pending items with quick navigation to `/admin/review/:id` and a "Mark all as read" button. Read/unread tracking is persisted in `localStorage` per staff user (`emlynk.admin.readNotifications.<userId>`).
 - **Sync** reloads the data on the current page from the server. Your filters, search and page are kept. While it runs the button shows *Syncing…* and can't be pressed again; afterwards the header shows *Synced HH:MM:SS* or *Sync failed*. Sync only reloads the page's data. It does not talk to WhatsApp or any other system.
 - **Dark mode** toggle (moon / sun icon). The choice is remembered in this browser. Light mode is the default.
 - Your name and role, and **Sign out**.
@@ -135,6 +136,95 @@ Figures for one **business day** in Sri Lanka (00:00–24:00). Pick a date (not 
 
 **Current status**, labelled with the time it was taken: completed and incomplete clients, missing documents, and police reports due soon, due today and overdue. These are always *now*, because no history of them is kept. For a past date the page says so rather than pretending they were that day's figures.
 
+### Candidates (Candidate Pool & Deployment)
+
+The primary interface for managing candidate registrations and deployment workflows (`/admin/candidates`). In the dashboard sidebar, Candidates replaces the older Clients link.
+
+- **Candidate Pool (`/admin/candidates`)**:
+  - Lists candidates from `public.candidate` with server-side pagination.
+  - Search by passport ID, unique ID, first or other name, NIC, or contact number.
+  - Candidate summary card: passport ID, business unique ID (`0001`, `0002`...), candidate name, contact numbers, and a 6-stage deployment progress overview.
+  - Action buttons: **Register Candidate** and **View/Edit Deployment**.
+- **Candidate Registration (`/admin/candidates/new`)**:
+  - Registers a new candidate into `public.candidate`.
+  - Captures: Passport ID, NIC, First Name, Other Name, Date of Birth, Place of Birth, Passport Issue Date, Passport Expiry Date, Nationality, Sex, WhatsApp Number, Contact Number, Address, Job Experience, and initial stage notes.
+  - Prevents duplicates on Passport ID, NIC, and WhatsApp number.
+- **Candidate Deployment & Stage Tracking (`/admin/candidates/:passportId`)**:
+  - Independent six-stage workflow for each candidate:
+    1. **TEST_DETAILS**: Job ID, test result (`PASS`, `FAIL`), and test date.
+    2. **CANDIDATE_DETAILS**: Bio and contact details. WhatsApp number is locked once set to maintain inbound document matching.
+    3. **DOCUMENT_SUBMISSION**: Checklist of 5 required candidate documents (`PASSPORT`, `POLICE_REPORT` [SL Verified + Romania], `MEDICAL`, `AFFIDAVIT`, `SKILL_VIDEO`).
+    4. **IVS_INTERVIEW**: Interview completion status and notes.
+    5. **VISA_APPROVAL**: Visa processing completion status and notes.
+    6. **FINALIZING_JOB**: Final deployment readiness completion status and notes.
+- **Candidate Document Uploads & Removals**:
+  - Direct browser-to-storage uploads via signed URLs (`POST /candidates/:passportId/documents/upload-target` and `POST /candidates/:passportId/documents/finalize`).
+  - Stored documents can be removed with a mandatory reason via `POST /candidates/:passportId/documents/:documentId/remove`.
+- **Candidate Call Logs**:
+  - Slide-out drawer on the deployment screen.
+  - Staff can record phone calls with timestamp, conversation notes, and staff attribution (`public.candidate_call_logs`).
+
+### Invite User (`/admin/invitations`) — ADMIN Only
+
+- Accessible exclusively to users with the `ADMIN` role.
+- Interface for inviting new console users (`/admin/invitations`).
+- **Invite Form**: Enter email, display name, and select a role (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`).
+- Backend calls the Supabase Auth Admin API to send an invitation email with a link pointing to `${APP_BASE_URL}/admin/setup-password`.
+- Displays the user list with account status: `INVITED`, `ACTIVE`, `INACTIVE`.
+- Audited under `INVITE_USER` or `REACTIVATE_USER`.
+
+### Change Roles (`/admin/roles`) — ADMIN Only
+
+- Accessible exclusively to users with the `ADMIN` role.
+- Interface for managing roles and deactivating staff users (`/admin/roles`).
+- Table lists all staff accounts from `public."user"`.
+- Role selector dropdown updates the user role via `PUT /api/admin/users/:userId/role` and applies immediately to the user's next request.
+- Deactivate button sets user status to `INACTIVE` via `POST /api/admin/users/:userId/deactivate`.
+- Self-role modification and self-deactivation are prevented.
+- Audited under `UPDATE_USER_ROLE` and `DEACTIVATE_USER`.
+
+### Audit Logs (`/admin/audit-logs`) — NEW FEATURE (ADMIN Only)
+
+A centralized, immutable audit log viewer for all system operations, candidate modifications, document decisions, and staff lifecycle events.
+
+- **Route**: `/admin/audit-logs`
+- **Access**: Strictly **ADMIN only**. Non-admin roles (`MANAGER`, `ANALYST`, `REGISTRATION_DESK`) cannot see the navigation link in the sidebar, and direct URL access renders an `<AccessRestricted />` barrier while the backend API returns `403 { message: "Insufficient permissions" }`.
+- **View-Only & Immutable**: The page provides view-only inspection. There are zero edit, delete, rollback, or clear endpoints in the system; database triggers block all row modifications.
+- **Displayed Data**:
+  - **Timestamp**: Exact event time formatted in Sri Lanka timezone (`Asia/Colombo`).
+  - **Action**: Visual semantic badge (e.g. blue for Candidate, green for Approvals, purple for Staff, amber for Removals/Deactivations).
+  - **Performed By**: Name, email, and current role of the staff member who executed the action.
+  - **Candidate**: Passport ID and Candidate Name (if associated with a candidate).
+  - **Category**: High-level classification (`Candidate`, `Documents`, `Staff`, `Review`).
+  - **Change Summary**: Transition from `previousStatus` → `newStatus`, or detailed diff of `previousValue` → `newValue`.
+  - **Reason / Notes**: Admin justification or notes entered when taking the action.
+- **Comprehensive Filters**:
+  - **Performed By (Staff)**: Dropdown filter by staff user.
+  - **Candidate Filter**: Filter by passport ID or search query.
+  - **Category Filter**: Filter by high-level category (`CANDIDATE`, `DOCUMENT`, `STAFF`, `REVIEW`).
+  - **Action Filter**: Filter by specific action code (e.g., `CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `UPDATE_STAGE`, `APPROVE`, `REMOVE_DOCUMENT`, `UPDATE_USER_ROLE`).
+  - **Date Range**: Date pickers for Start Date and End Date.
+  - **Free-Text Search**: Searches across reason, values, passport ID, and staff details.
+  - **Pagination Controls**: Selectable rows per page (10, 25, 50, 100), with Next/Previous server-side pagination.
+  - **Clear Filters**: One-click reset to default view.
+- **Audited Events**:
+  - Candidate lifecycle: `CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `UPDATE_STAGE`.
+  - Document actions: `UPLOAD_DOCUMENT`, `REMOVE_DOCUMENT`, `REPLACE_VERIFIED`, `KEEP_AS_VERSION`, `DELETE_TEMPORARY_DOCUMENT`.
+  - Review queue decisions: `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT`, `SET_POLICE_DATE`, `RETRY_PROCESSING`.
+  - Staff management: `INVITE_USER`, `REACTIVATE_USER`, `COMPLETE_INVITATION`, `UPDATE_USER_ROLE`, `DEACTIVATE_USER`.
+- **API**: `GET /api/admin/audit-logs` (requires `ADMIN` role).
+
+### Settings (`/admin/settings`) — ADMIN Only
+
+- Dedicated console section for system integrations (`/admin/settings`).
+- **Google Sheet Sync**:
+  - Current sync state (`OK`, `CONFIG_ERROR`, `DATA_INTEGRITY`, `UNKNOWN`).
+  - Target Hint: Last characters of the Google Spreadsheet ID and sheet tab name.
+  - Write Gate Toggle: Enable or disable writing to the Google Sheet.
+  - Sync Now: Immediately triggers a reconciliation run (`sheet_sync_runs`).
+  - Test Connection: Verifies Google Sheets API credentials and tab headers.
+  - Worker Heartbeat: Reports the last active heartbeat of the background sheet-sync worker.
+
 ## 3. Rules
 
 ### No reject
@@ -214,9 +304,8 @@ Other statuses: `MANUAL_REVIEW` and `CONFLICT` (held for review), `DUPLICATE` (t
 | Setting | Where | Notes |
 |---|---|---|
 | `REQUIRED_DOCUMENT_TYPES` | server environment (`.env`) | Comma-separated; must include `PASSPORT`; allowed `PASSPORT`, `POLICE_SLIP`, `POLICE_REPORT`, `MEDICAL`. Default `PASSPORT,POLICE_REPORT,MEDICAL`. An invalid value stops the server at startup with a clear message; nothing falls back silently. Restart after changing it. |
-| Dark / light mode | each admin's browser | Stored in the browser only |
-
-There is no Settings page.
+| Dark / light mode | each admin's browser | Stored in the browser only (`localStorage`) |
+| Google Sheet Sync | `/admin/settings` | Operational controls: Write Gate toggle, Sync Now, Test Connection |
 
 ```bash
 npm run admin:install   # once
@@ -253,6 +342,16 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/documents/:documentId/police-date` | ADMIN, MANAGER | Set or correct a police slip date `{ policeSubmittedDate, reason }` |
 | GET | `/clients` | ADMIN, MANAGER, ANALYST | Clients directory (`search`, `completion`, `missingType`, paging) |
 | GET | `/clients/:passportId` | ADMIN, MANAGER, ANALYST | Client details |
+| GET | `/candidates` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate list (search, filters, paging) |
+| POST | `/candidates` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate registration `{ passportId, nic, firstName, ... }` |
+| GET | `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate details and stage status |
+| PUT | `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Update candidate details |
+| PUT | `/candidates/:passportId/stages/:stage` | ADMIN, MANAGER, ANALYST | Update candidate deployment stage `{ completed, notes, ... }` |
+| POST | `/candidates/:passportId/documents/upload-target` | ADMIN, MANAGER, ANALYST | Issue signed upload URL for candidate document |
+| POST | `/candidates/:passportId/documents/finalize` | ADMIN, MANAGER, ANALYST | Finalize and verify candidate document upload |
+| POST | `/candidates/:passportId/documents/:documentId/remove` | ADMIN, MANAGER, ANALYST | Remove candidate document `{ reason }` |
+| GET | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate call logs |
+| POST | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Record call log `{ note, createdDate }` |
 | GET | `/review`, `/review/:reviewId`, `/review/:reviewId/file` | ADMIN, MANAGER, ANALYST | Review Queue, one item, its file |
 | POST | `/review/:reviewId/approve` | ADMIN, MANAGER, ANALYST | Approve `{ reason?, policeSubmittedDate? }` |
 | POST | `/review/:reviewId/keep-pending` | ADMIN, MANAGER, ANALYST | Keep Pending `{ reason }` |
@@ -264,11 +363,15 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/review/:reviewId/keep-as-version` | ADMIN, MANAGER, ANALYST | Keep document as version `{ reason? }` |
 | GET | `/police` | ADMIN, MANAGER, ANALYST | Police Workflow (`status`, `search`, `passportId`, paging) |
 | GET | `/reports/daily` | ADMIN, MANAGER, ANALYST | Daily Report (`date=YYYY-MM-DD`, default today) |
-| GET | `/candidates`, `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate list and details (registration and edits use the same roles) |
+| GET | `/audit-logs` | ADMIN | View-only audit logs (search, user/candidate filters, dates, paging) |
 | GET | `/users` | ADMIN | List staff users (under `/api/admin/users`) |
-| POST | `/users/invite` | ADMIN | Invite a user `{ name, email, role }`; the backend asks Supabase Auth to send the invitation |
+| POST | `/users/invite` | ADMIN | Invite a user `{ name, email, role }` |
 | PUT | `/users/:userId/role` | ADMIN | Change a user's role |
 | POST | `/users/:userId/deactivate` | ADMIN | Deactivate a user |
+| GET | `/sheet-sync/settings` | ADMIN | Google Sheet Sync operational status |
+| POST | `/sheet-sync/settings/write-gate` | ADMIN | Toggle Google Sheet writing `{ enabled }` |
+| POST | `/sheet-sync/sync-now` | ADMIN | Trigger immediate reconciliation sync |
+| POST | `/sheet-sync/test-connection` | ADMIN | Test Google Sheet connection |
 
 Sign-in, sign-out, password recovery and setting a password from an invitation are Supabase Auth's, called by the dashboard directly; the backend only offers `GET /auth/me` and `POST /auth/complete-invite` (activates an invited user after they set a password).
 
@@ -276,12 +379,13 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 
 ## 7. Security
 
-- Documents are in a **private** storage bucket. The dashboard never receives a storage link or credential: files are streamed through the server to signed-in admins only and shown from a local browser copy.
-- Authentication is Supabase Auth's. The dashboard sends the Supabase access token as a bearer header; no cookie authenticates a request, so CSRF protection does not apply. The server verifies the token with Supabase and that the user exists and is `ACTIVE` on every request. Only the browser-safe Supabase URL and anon key reach the browser; the service-role key stays on the server.
-- Role-based authorization (`requireRole` middleware) enforces the principle of least privilege across all endpoints.
-- Invitations (ADMIN only): the backend calls the Supabase Auth Admin invite API and Supabase sends the email, with the link returning to `${APP_BASE_URL}/admin/setup-password` (a required, per-environment setting that is never taken from a request). Invitations, completions, role changes and deactivations are written to the audit log (`INVITE_USER`, `REACTIVATE_USER`, `COMPLETE_INVITATION`, `UPDATE_USER_ROLE`, `DEACTIVATE_USER`).
-- The server's Content Security Policy allows scripts only from the dashboard itself; the dashboard loads no external fonts or scripts.
-- Responses contain no storage paths or checksums.
+- **Private Storage**: Documents reside in a private Supabase Storage bucket. The dashboard never receives raw storage credentials: files stream securely through the authenticated server. Direct uploads to candidate folders use time-limited, signed URLs issued by the API.
+- **Supabase Auth & Bearer Tokens**: All authenticated requests pass `Authorization: Bearer <token>`. The server verifies tokens directly with Supabase Auth. Browser applications hold only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. The `SUPABASE_SERVICE_ROLE_KEY` is server-only.
+- **Server-Side Authoritative RBAC**: Frontend sidebar navigation hiding is a user interface affordance only, **not** the security perimeter. The server-side `createRequireActiveUser` and `requireRole` middleware inspect the database `public."user"` row on every single request, validating `status === 'ACTIVE'` and the caller's role (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`). Unauthorized requests fail closed with `403 { message: "Insufficient permissions" }`.
+- **User Invitations & Password Lifecycle**: Invitations are managed through the Supabase Auth Admin API and dispatched via configured SMTP to `${APP_BASE_URL}/admin/setup-password`. Password recovery operates through Supabase Auth without disclosing email existence.
+- **Immutable Audit Trail**: All administrative decisions, candidate creations, candidate updates, stage progress, document uploads/removals, role updates, and user invitations are immutably recorded in `audit_logs`, protected by database triggers.
+- **Content Security Policy**: Helmet enforces strict CSP headers, preventing unauthorized script execution, frame injection, or untrusted network connections.
+- **Responses contain no storage paths or checksums**: Candidate endpoints and audit endpoints strictly omit internal storage paths and credential details.
 
 ## 8. Decisions that differ from the proposal
 
