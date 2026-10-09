@@ -17,7 +17,7 @@ import { clientSearchWhere } from "./adminClientService.js";
 // Each action belongs to a category (the page's "Category" filter). An action
 // not listed here (written by an older version) shows under OTHER.
 export const AUDIT_CATEGORIES = Object.freeze({
-    CANDIDATE: ["CREATE_CANDIDATE", "UPDATE_CANDIDATE"],
+    CANDIDATE: ["CREATE_CANDIDATE", "UPDATE_CANDIDATE", "CREATE_ADDITIONAL_DETAILS", "UPDATE_ADDITIONAL_DETAILS"],
     STAGE: ["UPDATE_STAGE"],
     DOCUMENT: ["UPLOAD_DOCUMENT", "REMOVE_DOCUMENT", "DELETE_TEMPORARY_DOCUMENT", "SET_DOCUMENT_TYPE", "ASSIGN_CLIENT", "SET_POLICE_DATE"],
     REVIEW: ["APPROVE", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "RETRY_PROCESSING", "REPLACE_VERIFIED", "KEEP_AS_VERSION"],
@@ -144,6 +144,9 @@ function auditWhere(params, candidatePassportIds) {
     return and.length ? { AND: and } : {};
 }
 
+// Entries stored as { field: before } / { field: after } of the changed fields.
+const CHANGE_ACTIONS = new Set(["UPDATE_CANDIDATE", "UPDATE_STAGE", "CREATE_ADDITIONAL_DETAILS", "UPDATE_ADDITIONAL_DETAILS"]);
+
 function parseJsonObject(value) {
     if (typeof value !== "string" || !value.startsWith("{")) return null;
     try {
@@ -167,7 +170,7 @@ function toItem(row, candidates) {
     let changes = null;
     let stage = null;
     let details = null;
-    if (row.action === "UPDATE_CANDIDATE" || row.action === "UPDATE_STAGE") {
+    if (CHANGE_ACTIONS.has(row.action)) {
         const from = withoutSensitive(before ?? {});
         const to = withoutSensitive(after ?? {});
         stage = to.stage ?? from.stage ?? null;

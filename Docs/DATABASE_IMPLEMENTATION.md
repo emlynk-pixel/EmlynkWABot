@@ -34,7 +34,7 @@ All core application tables reside in the `public` schema.
   - `contact_number` (`TEXT`, nullable), `address` (`TEXT`, nullable), `job` (`TEXT`, nullable), `job_experience` (`TEXT`, nullable).
   - `nationality` (`TEXT`, nullable), `sex` (`TEXT`, nullable: `M`, `F`, `X`).
   - `created_date` (`TIMESTAMPTZ`), `updated_date` (`TIMESTAMPTZ`).
-- **Relationships**: One-to-many with `documents`, `candidate_stages`, `candidate_call_logs`, `temporary_data`.
+- **Relationships**: One-to-many with `documents`, `candidate_stages`, `candidate_call_logs`, `temporary_data`; one-to-one (optional) with `candidate_additional_details`.
 - **Triggers**: `candidate_sheet_sync_capture` captures changes into `sheet_sync_queue`.
 
 ### 2.2 `public."user"`
@@ -176,6 +176,22 @@ All core application tables reside in the `public` schema.
   - `writer_lease_owner` (`TEXT`, nullable), `writer_lease_expires_at` (`TIMESTAMPTZ(3)`, nullable).
   - `updated_at` (`TIMESTAMPTZ(3)`).
 
+### 2.12 `public.candidate_additional_details`
+- **Purpose**: Extra details collected for a candidate in Admin > Candidates > **Additional Details**. Kept separate from `candidate`, which is never changed from that tab.
+- **Primary Key**: `passport_id` (`TEXT`), which is also the foreign key to `candidate.passport_id` (`ON DELETE CASCADE ON UPDATE CASCADE`). This makes it one-to-one: a second row for the same candidate, or a row for a candidate that doesn't exist, is impossible.
+- **Columns** (all nullable except the key and timestamps; details are collected over time):
+  - `name_as_in_passport`, `permanent_address` (`TEXT`), `birthday` (`DATE`).
+  - `tshirt_size` (`TEXT`: `XS`, `S`, `M`, `L`, `XL`, `XXL`), `pant_size`, `shoe_size` (`TEXT`: a preset or a short custom value).
+  - `father_alive` (`BOOLEAN`), `father_full_name` (`TEXT`), `father_birthday` (`DATE`); `mother_alive`, `mother_full_name`, `mother_birthday` likewise.
+  - `marital_status` (`TEXT`: `SINGLE`, `MARRIED`, `DIVORCED`, `WIDOWED`, `SEPARATED`), `wife_full_name` (`TEXT`), `wife_birthday` (`DATE`).
+  - `child_1_name`, `child_2_name`, `child_3_name`, `other_job_skills` (`TEXT`).
+  - `created_date` (`TIMESTAMP(3)`), `updated_date` (`TIMESTAMP(3)`).
+- **Rules** (enforced by `src/services/candidateAdditionalDetailsService.js`, not by database constraints):
+  - Father/mother details are kept only when that parent is alive, and the name is then required. The wife's details are kept only when married, and her name is then required.
+  - Children are filled in order. Dates are real dates from 1900 up to today.
+- **Security**: RLS enabled, all privileges revoked from `anon` and `authenticated`.
+- **Not mirrored** to the Google Sheet (no change-capture trigger).
+
 ---
 
 ## 3. Candidate Table (`public.candidate`)
@@ -197,6 +213,7 @@ The candidate table represents job applicants and client records.
 - `documents`: Stored and verified files belonging to this candidate.
 - `candidate_stages`: Six deployment tracking stages (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_APPROVAL`, `FINALIZING_JOB`).
 - `candidate_call_logs`: Telephone call notes recorded by staff.
+- `candidate_additional_details`: At most one row of extra details (passport name, sizes, family, other skills); see §2.12.
 - `temporary_data`: Unprocessed or pending review items matched to this candidate.
 
 ---
@@ -286,7 +303,13 @@ Authentication is fully delegated to **Supabase Auth**.
   ```
   *(Wrapped in conditional `to_regclass('auth.users') IS NOT NULL` for compatibility with test environments without an `auth` schema).*
 
-All migrations are applied and active on the shared database.
+Migrations 6.1 and 6.2 are applied and active on the shared database.
+
+### 6.3 `20261009150000_candidate_additional_details`
+- **Status**: committed, **not yet applied** to the shared database. Apply it through the normal migration deploy (`prisma migrate deploy`), never by hand.
+- Additive only: creates `public.candidate_additional_details` and its foreign key to `candidate`. No existing table, column or row changes; existing candidates have no details row until one is saved.
+- Enables RLS and revokes all privileges from `anon` and `authenticated` (SEC-001), like every other application table.
+- Until it is applied, the Additional Details endpoints fail on that database (the table does not exist); everything else is unaffected.
 
 ---
 
@@ -300,6 +323,7 @@ All migrations are applied and active on the shared database.
 | `public.candidate_stages.passport_id` | `public.candidate.passport_id` | `candidate_stages_passport_id_fkey` | `ON DELETE CASCADE` |
 | `public.candidate_call_logs.passport_id` | `public.candidate.passport_id` | `candidate_call_logs_passport_id_fkey`| `ON DELETE CASCADE` |
 | `public.candidate_call_logs.admin_id` | `public."user".admin_id` | `candidate_call_logs_admin_id_fkey` | `ON DELETE RESTRICT` |
+| `public.candidate_additional_details.passport_id` (also its primary key) | `public.candidate.passport_id` | `candidate_additional_details_passport_id_fkey` | `ON DELETE CASCADE ON UPDATE CASCADE` |
 | `public.audit_logs.admin_id` | `public."user".admin_id` | `audit_logs_admin_id_fkey` | `ON DELETE RESTRICT` |
 | `public.temporary_data.passport_id` | `public.candidate.passport_id` | `temporary_data_passport_id_fkey` | `RESTRICT / CASCADE` |
 
@@ -330,7 +354,7 @@ CREATE TRIGGER "audit_logs_no_truncate"
 ```
 
 ### 8.2 Logged Event Types
-- **Candidate Lifecycle**: `CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `UPDATE_STAGE`.
+- **Candidate Lifecycle**: `CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `UPDATE_STAGE`, `CREATE_ADDITIONAL_DETAILS`, `UPDATE_ADDITIONAL_DETAILS` (only the changed fields, before and after; no row for a save that changes nothing).
 - **Document Management**: `UPLOAD_DOCUMENT`, `REMOVE_DOCUMENT`, `REPLACE_VERIFIED`, `KEEP_AS_VERSION`, `DELETE_TEMPORARY_DOCUMENT`.
 - **Review Queue Actions**: `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT`, `SET_POLICE_DATE`, `RETRY_PROCESSING`.
 - **Staff User Lifecycle**: `INVITE_USER`, `REACTIVATE_USER`, `COMPLETE_INVITATION`, `UPDATE_USER_ROLE`, `DEACTIVATE_USER`.

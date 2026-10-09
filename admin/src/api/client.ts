@@ -15,15 +15,21 @@ function authorizationToken(token?: string): string | null {
     return token || currentAccessToken;
 }
 
+// fieldErrors: a 400 with { errors: [{ field, message }] } (the server's
+// validation), so a form can mark the fields to fix.
+export type FieldError = { field: string; message: string };
+
 export class ApiError extends Error {
     readonly status: number;
     readonly resetTime?: Date;
+    readonly fieldErrors: FieldError[];
 
-    constructor(status: number, message: string, resetTime?: Date) {
+    constructor(status: number, message: string, resetTime?: Date, fieldErrors: FieldError[] = []) {
         super(message);
         this.name = "ApiError";
         this.status = status;
         this.resetTime = resetTime;
+        this.fieldErrors = fieldErrors;
     }
 }
 
@@ -36,13 +42,16 @@ type RequestOptions = {
 
 const FALLBACK_MESSAGE = "Something went wrong. Please try again.";
 
-type ErrorData = { message: string | null; resetTime?: string };
+type ErrorData = { message: string | null; resetTime?: string; fieldErrors?: FieldError[] };
+const isFieldError = (value: unknown): value is FieldError =>
+    typeof (value as FieldError)?.field === "string" && typeof (value as FieldError)?.message === "string";
 async function readErrorData(response: Response): Promise<ErrorData> {
     try {
-        const data = (await response.json()) as { message?: unknown; resetTime?: unknown };
+        const data = (await response.json()) as { message?: unknown; resetTime?: unknown; errors?: unknown };
         return {
             message: typeof data?.message === "string" && data.message.length <= 200 ? data.message : null,
-            resetTime: typeof data?.resetTime === "string" ? data.resetTime : undefined
+            resetTime: typeof data?.resetTime === "string" ? data.resetTime : undefined,
+            fieldErrors: Array.isArray(data?.errors) ? data.errors.filter(isFieldError).slice(0, 50) : [],
         };
     } catch {
         return { message: null };
@@ -76,7 +85,7 @@ export async function apiRequest<T>(path: string, { method = "GET", body, signal
     if (!response.ok) {
         const data = await readErrorData(response);
         const message = response.status >= 500 && response.status !== 502 ? FALLBACK_MESSAGE : data.message ?? FALLBACK_MESSAGE;
-        throw new ApiError(response.status, message, data.resetTime ? new Date(data.resetTime) : undefined);
+        throw new ApiError(response.status, message, data.resetTime ? new Date(data.resetTime) : undefined, response.status === 400 ? data.fieldErrors : []);
     }
 
     return (await response.json()) as T;

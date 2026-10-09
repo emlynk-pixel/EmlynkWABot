@@ -111,6 +111,9 @@ model Candidate {
   passportIssueDate DateTime?          @map("passport_issue_date")
   stages            CandidateStage[]
   callLogs          CandidateCallLog[]
+  // Optional extra details (Admin > Candidates > Additional Details). A
+  // relation only: the candidate table has no column for it.
+  additionalDetails CandidateAdditionalDetails?
 
   @@map("candidate")
 }
@@ -216,6 +219,48 @@ model TemporaryData {
 // and stage once anything is saved for it; a missing row is an incomplete
 // stage without notes. Stages are independent: any can be completed in any
 // order.
+// Additional details of a candidate (Admin > Candidates > Additional
+// Details), at most one row per candidate: passport_id is both the primary
+// key and the foreign key to candidate, so a second row for the same
+// candidate, or a row for a candidate that does not exist, is impossible.
+// Every detail is optional (collected over time). The candidate's own
+// record is never changed from here; the name, address and birthday shown
+// on a new form are only suggestions from it. Values are checked by
+// candidateAdditionalDetailsService.js: father / mother details are kept
+// only when that parent is alive, the wife's only when married.
+model CandidateAdditionalDetails {
+  passportId       String    @id @map("passport_id")
+  nameAsInPassport String?   @map("name_as_in_passport")
+  permanentAddress String?   @map("permanent_address")
+  birthday         DateTime? @db.Date
+  // XS | S | M | L | XL | XXL
+  tshirtSize       String?   @map("tshirt_size")
+  // A preset (28 to 46) or a custom value
+  pantSize         String?   @map("pant_size")
+  // A preset or a custom value
+  shoeSize         String?   @map("shoe_size")
+  fatherAlive      Boolean?  @map("father_alive")
+  fatherFullName   String?   @map("father_full_name")
+  fatherBirthday   DateTime? @map("father_birthday") @db.Date
+  motherAlive      Boolean?  @map("mother_alive")
+  motherFullName   String?   @map("mother_full_name")
+  motherBirthday   DateTime? @map("mother_birthday") @db.Date
+  // SINGLE | MARRIED | DIVORCED | WIDOWED | SEPARATED
+  maritalStatus    String?   @map("marital_status")
+  wifeFullName     String?   @map("wife_full_name")
+  wifeBirthday     DateTime? @map("wife_birthday") @db.Date
+  child1Name       String?   @map("child_1_name")
+  child2Name       String?   @map("child_2_name")
+  child3Name       String?   @map("child_3_name")
+  otherJobSkills   String?   @map("other_job_skills")
+  createdDate      DateTime  @default(now()) @map("created_date")
+  updatedDate      DateTime  @updatedAt @map("updated_date")
+
+  candidate Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("candidate_additional_details")
+}
+
 model CandidateStage {
   passportId  String    @map("passport_id")
   // TEST_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION | IVS_INTERVIEW

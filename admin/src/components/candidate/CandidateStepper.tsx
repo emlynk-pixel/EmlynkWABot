@@ -1,4 +1,4 @@
-import { STAGE_LABELS, type CandidateStageKey, type StageProgress } from "../../api/candidates";
+import { STAGE_LABELS, type StageProgress } from "../../api/candidates";
 import { Icon } from "../Icon";
 
 // incomplete: red. complete: green. complete-out-of-order: light green — a
@@ -34,30 +34,34 @@ const TONE_LABEL: Record<StepTone, string> = {
     "complete-out-of-order": "completed out of order",
 };
 
-// The six deployment stages. Every stage can be opened at any time.
-export function CandidateStepper({ stages, current, onSelect }: { stages: StageProgress[]; current: CandidateStageKey; onSelect: (stage: CandidateStageKey) => void }) {
-    const tones = stepTones(stages);
+// One circle of the progress stepper: a deployment stage, or another
+// section of the candidate page (Additional details).
+export type StepperStep = { key: string; label: string; completed: boolean };
+
+// The candidate's progress steps (chosen by the page). Every step can be opened at any time.
+export function CandidateStepper({ steps, current, onSelect }: { steps: StepperStep[]; current: string | null; onSelect: (key: string) => void }) {
+    const tones = stepTones(steps);
     return (
         <nav aria-label="Deployment stages">
             <ol className="flex items-start">
-                {stages.map((stage, index) => {
-                    const active = stage.stage === current;
+                {steps.map((stage, index) => {
+                    const active = stage.key === current;
                     const tone = tones[index];
                     const circle = active ? ACTIVE_CIRCLE[tone] : CIRCLE[tone];
                     return (
-                        <li key={stage.stage} className="relative flex flex-1 flex-col items-center">
+                        <li key={stage.key} className="relative flex flex-1 flex-col items-center">
                             {index > 0 && <span aria-hidden="true" className="absolute top-4 right-1/2 h-px w-full bg-border" />}
                             <button
                                 type="button"
-                                onClick={() => onSelect(stage.stage)}
+                                onClick={() => onSelect(stage.key)}
                                 aria-current={active ? "step" : undefined}
-                                aria-label={`${index + 1}. ${STAGE_LABELS[stage.stage]} (${TONE_LABEL[tone]})`}
+                                aria-label={`${index + 1}. ${stage.label} (${TONE_LABEL[tone]})`}
                                 className="group relative z-10 flex flex-col items-center gap-2 px-1 focus:outline-none"
                             >
                                 <span className={`flex size-8 items-center justify-center rounded-full text-label-md tabular-nums ${circle} group-focus-visible:shadow-focus`}>
                                     {stage.completed ? <Icon name="check" className="size-4" /> : <span aria-hidden="true" className="font-bold">!</span>}
                                 </span>
-                                <span className={`text-center text-label-sm ${active ? "font-semibold text-ink" : "text-ink-muted"}`}>{STAGE_LABELS[stage.stage]}</span>
+                                <span className={`text-center text-label-sm ${active ? "font-semibold text-ink" : "text-ink-muted"}`}>{stage.label}</span>
                             </button>
                         </li>
                     );

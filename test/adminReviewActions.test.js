@@ -587,6 +587,7 @@ describe("security and error handling", () => {
             "POST /review/:reviewId/replace-verified", // M4 Policy B: existing verified document of the same type only
             "POST /review/:reviewId/retry", // H3: failed submissions only
             "PUT /candidates/:passportId",
+            "PUT /candidates/:passportId/additional-details",
             "PUT /candidates/:passportId/stages/:stage",
         ]);
     });

@@ -163,6 +163,14 @@ The primary interface for managing candidate registrations and deployment workfl
 - **Candidate Call Logs**:
   - Slide-out drawer on the deployment screen.
   - Staff can record phone calls with timestamp, conversation notes, and staff attribution (`public.candidate_call_logs`).
+- **Additional Details tab (`/admin/candidates/:passportId?tab=additional`)**:
+  - A second tab next to **Deployment** on every candidate page, for every role that manages candidates (REGISTRATION_DESK included).
+  - Sections: Passport & Personal Details, Clothing & Sizes, Father Details, Mother Details, Marital & Family Details, Employment / Skills.
+  - The passport number is the candidate's own passport ID (read-only), so the details always belong to the existing candidate.
+  - A new form is pre-filled from the candidate's record (name, address, date of birth). Those values are only stored when Save is pressed, and the candidate's record itself is never changed from this tab.
+  - Father / mother details appear only when that parent is alive (the name is then required). Wife details appear only when married (her name is then required).
+  - Pant and shoe sizes take a preset or a custom value.
+  - Saved in `public.candidate_additional_details`. Every change is in Audit Logs with only the changed fields.
 
 ### Invite User (`/admin/invitations`) — ADMIN Only
 
@@ -346,12 +354,14 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/candidates` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate registration `{ passportId, nic, firstName, ... }` |
 | GET | `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate details and stage status |
 | PUT | `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Update candidate details |
-| PUT | `/candidates/:passportId/stages/:stage` | ADMIN, MANAGER, ANALYST | Update candidate deployment stage `{ completed, notes, ... }` |
-| POST | `/candidates/:passportId/documents/upload-target` | ADMIN, MANAGER, ANALYST | Issue signed upload URL for candidate document |
-| POST | `/candidates/:passportId/documents/finalize` | ADMIN, MANAGER, ANALYST | Finalize and verify candidate document upload |
-| POST | `/candidates/:passportId/documents/:documentId/remove` | ADMIN, MANAGER, ANALYST | Remove candidate document `{ reason }` |
+| PUT | `/candidates/:passportId/stages/:stage` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Update candidate deployment stage `{ completed, notes, ... }` |
+| POST | `/candidates/:passportId/documents/upload-target` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Issue signed upload URL for candidate document |
+| POST | `/candidates/:passportId/documents/finalize` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Finalize and verify candidate document upload |
+| POST | `/candidates/:passportId/documents/:documentId/remove` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Remove candidate document `{ reason }` |
 | GET | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate call logs |
 | POST | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Record call log `{ note, createdDate }` |
+| GET | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Additional details `{ passportId, details, suggested, updatedDate }` |
+| PUT | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Save additional details (full replacement; audited) |
 | GET | `/review`, `/review/:reviewId`, `/review/:reviewId/file` | ADMIN, MANAGER, ANALYST | Review Queue, one item, its file |
 | POST | `/review/:reviewId/approve` | ADMIN, MANAGER, ANALYST | Approve `{ reason?, policeSubmittedDate? }` |
 | POST | `/review/:reviewId/keep-pending` | ADMIN, MANAGER, ANALYST | Keep Pending `{ reason }` |
