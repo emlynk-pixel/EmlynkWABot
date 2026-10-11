@@ -436,6 +436,55 @@ function variantDocuments(documents) {
     return result;
 }
 
+// Fields currentOf (and so documentStatusOf) reads.
+export const CURRENT_DOCUMENT_SELECT = Object.freeze({
+    documentId: true, documentType: true, originalFilename: true, verificationStatus: true,
+    documentVariant: true, receivedDate: true, createdDate: true,
+});
+
+// What documents the candidate has NOW (Call Logs, Priority Follow-Ups): one
+// entry per supported document type, and per variant for a type with
+// variants (each police report variant has its own current document). The
+// same current-document rule as the candidate page (currentOf: the newest
+// VERIFIED, otherwise the newest waiting for review; SUPERSEDED never
+// counts). A police report with no known variant (received on WhatsApp) is
+// listed only when there is one. Read-only: computed from the rows given.
+export function documentStatusOf(documents) {
+    const entry = (documentType, variant, current) => ({
+        documentType,
+        variant,
+        uploaded: Boolean(current),
+        verificationStatus: current?.verificationStatus ?? null,
+        receivedDate: current?.receivedDate ?? null,
+    });
+    const status = [];
+    for (const [type, definition] of Object.entries(CANDIDATE_DOCUMENT_TYPES)) {
+        const ofType = documents.filter((d) => d.documentType === type);
+        if (!definition.variants) {
+            status.push(entry(type, null, currentOf(ofType)));
+            continue;
+        }
+        for (const variant of definition.variants) status.push(entry(type, variant, currentOf(ofType.filter((d) => d.documentVariant === variant))));
+        const untyped = currentOf(ofType.filter((d) => !definition.variants.includes(d.documentVariant)));
+        if (untyped) status.push(entry(type, null, untyped));
+    }
+    return status;
+}
+
+// The candidates' current document status, by passport ID, in ONE query.
+export async function documentStatusByCandidate(db, passportIds) {
+    const ids = [...new Set(passportIds)];
+    const byCandidate = new Map(ids.map((id) => [id, []]));
+    if (ids.length) {
+        const rows = await db.document.findMany({
+            where: { passportId: { in: ids }, documentType: { in: Object.keys(CANDIDATE_DOCUMENT_TYPES) } },
+            select: { passportId: true, ...CURRENT_DOCUMENT_SELECT },
+        });
+        for (const row of rows) byCandidate.get(row.passportId)?.push(row);
+    }
+    return new Map([...byCandidate].map(([id, rows]) => [id, documentStatusOf(rows)]));
+}
+
 function candidateSummary(user) {
     return {
         passportId: user.passportId,
@@ -1256,15 +1305,36 @@ export async function removeCandidateDocument({ db, bucket, admin, passportId, d
 
 // candidate_call_logs.created_date holds when the call took place (the date
 // and time the admin entered, or the moment it was noted). Newest call first.
+// Each call carries its newest Priority Follow-Up (call_log_follow_up), or
+// null: OPEN while it needs attention (there is at most one OPEN per call),
+// COMPLETED once done. documentStatus: the candidate's documents NOW (not
+// when the call was made), so an old "passport not uploaded" call shows the
+// passport once it is on record.
 export async function listCallLogs({ db, passportId }) {
     await requireCandidate(db, passportId);
-    const rows = await db.candidateCallLog.findMany({
-        where: { passportId },
-        select: { callLogId: true, note: true, createdDate: true, admin: { select: { name: true } } },
-        orderBy: [{ createdDate: "desc" }, { callLogId: "asc" }],
-    });
+    const [rows, statuses] = await Promise.all([
+        db.candidateCallLog.findMany({
+            where: { passportId },
+            select: {
+                callLogId: true, note: true, createdDate: true, admin: { select: { name: true } },
+                followUps: { select: { followUpId: true, status: true, flaggedDate: true }, orderBy: [{ flaggedDate: "desc" }, { followUpId: "asc" }], take: 1 },
+            },
+            orderBy: [{ createdDate: "desc" }, { callLogId: "asc" }],
+        }),
+        documentStatusByCandidate(db, [passportId]),
+    ]);
     return {
-        items: rows.map((row) => ({ callLogId: row.callLogId, note: row.note, calledAt: row.createdDate, adminName: row.admin?.name ?? null })),
+        items: rows.map((row) => {
+            const followUp = row.followUps?.[0];
+            return {
+                callLogId: row.callLogId,
+                note: row.note,
+                calledAt: row.createdDate,
+                adminName: row.admin?.name ?? null,
+                followUp: followUp ? { followUpId: followUp.followUpId, status: followUp.status, flaggedAt: followUp.flaggedDate } : null,
+            };
+        }),
+        documentStatus: statuses.get(passportId),
     };
 }
 

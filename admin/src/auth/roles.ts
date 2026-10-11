@@ -24,6 +24,8 @@ export const REVIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER, ROLES.
 export const POLICE_DATE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
 export const CANDIDATE_ROLES: readonly Role[] = ALL_ROLES;
 export const ADMIN_ONLY: readonly Role[] = [ROLES.ADMIN];
+// Permanently deleting a Priority Follow-Up (the call log is always kept).
+export const FOLLOW_UP_DELETE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
 
 type WithRole = { role: string } | null | undefined;
 
@@ -38,5 +40,7 @@ export const canManageCandidates = (user: WithRole) => hasRole(user, CANDIDATE_R
 export const canReview = (user: WithRole) => hasRole(user, REVIEW_ROLES);
 // Setting or correcting a police slip's submitted date.
 export const canCorrectPoliceDates = (user: WithRole) => hasRole(user, POLICE_DATE_ROLES);
+// Deleting a Priority Follow-Up (flagging and completing: every Candidates role).
+export const canDeleteFollowUps = (user: WithRole) => hasRole(user, FOLLOW_UP_DELETE_ROLES);
 // User management and Settings.
 export const isAdmin = (user: WithRole) => hasRole(user, ADMIN_ONLY);

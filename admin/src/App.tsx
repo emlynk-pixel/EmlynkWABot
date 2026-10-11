@@ -19,6 +19,7 @@ import { MissingDocumentsPage } from "./pages/MissingDocumentsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { PoliceWorkflowPage } from "./pages/PoliceWorkflowPage";
+import { PriorityFollowUpsPage } from "./pages/PriorityFollowUpsPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
@@ -80,6 +81,7 @@ export function AppRoutes() {
                 <Route path="clients/:passportId" element={<ClientDetailsPage />} />
                 <Route path="missing-documents" element={<MissingDocumentsPage />} />
                 <Route path="police" element={<PoliceWorkflowPage />} />
+                <Route path="follow-ups" element={<PriorityFollowUpsPage />} />
                 <Route path="reports/daily" element={<DailyReportPage />} />
                 <Route path="invitations" element={<InvitationsPage />} />
                 <Route path="roles" element={<AdminRolesPage />} />

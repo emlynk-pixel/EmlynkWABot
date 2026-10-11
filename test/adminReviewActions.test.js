@@ -571,13 +571,16 @@ describe("security and error handling", () => {
             .filter((layer) => layer.route)
             .flatMap((layer) => Object.keys(layer.route.methods).filter((m) => m !== "get").map((m) => `${m.toUpperCase()} ${layer.route.path}`));
         assert.deepEqual(writes.sort(), [
+            "DELETE /follow-ups/:followUpId", // Priority Follow-Ups: ADMIN and MANAGER; the follow-up row only (callLogFollowUps.test.js)
             "DELETE /temporary-documents/:temporaryId",
             "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",
+            "POST /candidates/:passportId/call-logs/:callLogId/follow-up", // flag a call for follow-up, audited
             "POST /candidates/:passportId/documents/:documentId/remove", // reason required, audited
             "POST /candidates/:passportId/documents/finalize", // JSON only: the file goes browser -> storage
             "POST /candidates/:passportId/documents/upload-target",
             "POST /documents/:documentId/police-date",
+            "POST /follow-ups/:followUpId/complete", // the row is kept, audited
             "POST /review/:reviewId/approve",
             "POST /review/:reviewId/assign-client",
             "POST /review/:reviewId/document-type",

@@ -2,12 +2,14 @@ import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent 
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import { useAdminResource } from "../../api/useAdminResource";
-import { addCallLog, listCallLogs, type CallLogEntry } from "../../api/candidates";
+import { addCallLog, flagCallLog, listCallLogs, type CallLogEntry, type CallLogList } from "../../api/candidates";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { formatDate, formatTime, nowInSriLanka, sriLankaDateTime } from "../format";
 import { Icon } from "../Icon";
 import { ErrorState, LoadingState } from "../States";
+import { ToneBadge } from "../StatusBadge";
 import { Field, fieldControl, textAreaControl } from "./CandidateFields";
+import { DocumentStatusSummary } from "./DocumentStatusSummary";
 
 const NOTE_MAX_LENGTH = 500;
 // The server allows a few minutes of clock difference; so does this check.
@@ -22,12 +24,16 @@ const prefersReducedMotion = () => typeof window.matchMedia === "function" && wi
 
 // Calls made to the candidate, newest first: the date and time of the call
 // and a short note of what the candidate said. A new call defaults to now.
+// A call can be marked "Need attention": it then also appears in Priority
+// Follow-Ups (the call itself stays here, unchanged). The candidate's
+// current documents are shown above the history: what they have NOW, so an
+// old "passport not uploaded" call can be read against today's record.
 // Opens as a drawer from the right over the candidate page; Escape or Close
 // closes it, except while a call is being saved.
 export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { passportId: string; candidate?: CallLogCandidate; canEdit: boolean; onClose: () => void }) {
     const { token } = useAuth();
     const log = useAdminResource(`call-logs:${passportId}`, (t, signal) => listCallLogs(t, passportId, signal));
-    const [added, setAdded] = useState<CallLogEntry[] | null>(null);
+    const [added, setAdded] = useState<CallLogList | null>(null);
     const [when, setWhen] = useState(() => nowInSriLanka());
     const [note, setNote] = useState("");
     const [busy, setBusy] = useState(false);
@@ -35,11 +41,17 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
     const [shown, setShown] = useState(false);
     // Guards against a second submit before `busy` has re-rendered.
     const submitting = useRef(false);
+    // The call being marked for follow-up (one at a time), and any error.
+    const [flagging, setFlagging] = useState<string | null>(null);
+    const [flagError, setFlagError] = useState<{ callLogId: string; message: string } | null>(null);
+    const flaggingRef = useRef(false);
     const panelRef = useRef<HTMLDivElement>(null);
     const closeRef = useRef<HTMLButtonElement>(null);
     const titleId = useId();
     const subtitleId = useId();
-    const entries = added ?? log.data?.items ?? [];
+    const current = added ?? log.data ?? null;
+    const entries = current?.items ?? [];
+    const documentStatus = current?.documentStatus ?? [];
     const today = nowInSriLanka().date;
     const loaded = log.status === "success" || added !== null;
 
@@ -105,7 +117,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
         setBusy(true);
         setError(null);
         try {
-            setAdded((await addCallLog(token, passportId, { note: note.trim(), calledAt })).items);
+            setAdded(await addCallLog(token, passportId, { note: note.trim(), calledAt }));
             setNote("");
             setWhen(nowInSriLanka());
         } catch (caught) {
@@ -113,6 +125,34 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
         } finally {
             submitting.current = false;
             setBusy(false);
+        }
+    };
+
+    const markForFollowUp = async (entry: CallLogEntry) => {
+        if (flaggingRef.current || !token || entry.followUp?.status === "OPEN") return;
+        flaggingRef.current = true;
+        setFlagging(entry.callLogId);
+        setFlagError(null);
+        try {
+            const { followUp } = await flagCallLog(token, passportId, entry.callLogId);
+            setAdded({
+                items: entries.map((e) => (e.callLogId === entry.callLogId ? { ...e, followUp: { followUpId: followUp.followUpId, status: followUp.status, flaggedAt: followUp.flaggedAt } } : e)),
+                documentStatus,
+            });
+        } catch (caught) {
+            if (caught instanceof ApiError && caught.status === 409) {
+                // Marked already (another tab or user): show the calls as they are now.
+                try {
+                    setAdded(await listCallLogs(token, passportId));
+                } catch {
+                    setFlagError({ callLogId: entry.callLogId, message: caught.message });
+                }
+            } else {
+                setFlagError({ callLogId: entry.callLogId, message: caught instanceof ApiError ? caught.message : "The call could not be marked for follow-up." });
+            }
+        } finally {
+            flaggingRef.current = false;
+            setFlagging(null);
         }
     };
 
@@ -167,6 +207,10 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                     </dl>
                 )}
 
+                {loaded && documentStatus.length > 0 && (
+                    <DocumentStatusSummary documents={documentStatus} className="shrink-0 border-b border-border px-5 py-3 sm:px-6" />
+                )}
+
                 <section aria-labelledby={`${titleId}-history`} className="flex min-h-48 flex-1 flex-col">
                     <div className="flex shrink-0 items-center justify-between gap-3 px-5 pt-5 pb-3 sm:px-6">
                         <h3 id={`${titleId}-history`} className="text-headline-sm text-ink">Call History</h3>
@@ -199,6 +243,14 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                                     {entry.adminName && <span className="min-w-0 truncate text-label-sm text-ink-subtle">{entry.adminName}</span>}
                                                 </p>
                                                 <p className="mt-1.5 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{entry.note}</p>
+                                                <FollowUpControl
+                                                    entry={entry}
+                                                    canEdit={canEdit}
+                                                    busy={flagging === entry.callLogId}
+                                                    disabled={flagging !== null}
+                                                    error={flagError?.callLogId === entry.callLogId ? flagError.message : null}
+                                                    onMark={() => markForFollowUp(entry)}
+                                                />
                                             </li>
                                         ))}
                                     </ul>
@@ -235,6 +287,39 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                         </div>
                     )}
             </div>
+        </div>
+    );
+}
+
+// Under each call: "Needs attention" while its follow-up is open, otherwise
+// the Need attention action (for a role that can use call logs).
+function FollowUpControl({ entry, canEdit, busy, disabled, error, onMark }: {
+    entry: CallLogEntry; canEdit: boolean; busy: boolean; disabled: boolean; error: string | null; onMark: () => void;
+}) {
+    const open = entry.followUp?.status === "OPEN";
+    const completed = entry.followUp?.status === "COMPLETED";
+    if (!open && !completed && !canEdit) return null;
+    return (
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+            {completed && <span className="text-label-sm text-ink-subtle">Follow-up completed</span>}
+            {open
+                ? (
+                    <ToneBadge tone="review">
+                        <span className="inline-flex items-center gap-1"><Icon name="flag" className="size-3.5" />Needs attention</span>
+                    </ToneBadge>
+                )
+                : canEdit && (
+                    <button
+                        type="button"
+                        onClick={onMark}
+                        disabled={disabled}
+                        className="inline-flex h-7 items-center gap-1 rounded border border-border-strong bg-surface px-2.5 text-label-sm text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        <Icon name="flag" className="size-3.5" />
+                        {busy ? "Marking…" : "Need attention"}
+                    </button>
+                )}
+            {error && <p role="alert" className="w-full text-right text-label-sm text-critical">{error}</p>}
         </div>
     );
 }

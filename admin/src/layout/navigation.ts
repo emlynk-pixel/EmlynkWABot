@@ -15,6 +15,8 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/documents", label: "Documents", icon: "description", roles: DASHBOARD_ROLES },
     { to: "/review", label: "Review Queue", icon: "fact_check", roles: DASHBOARD_ROLES },
     { to: "/candidates", label: "Candidates", icon: "group", roles: CANDIDATE_ROLES },
+    // Call logs marked as needing attention (every Candidates role).
+    { to: "/follow-ups", label: "Priority Follow-Ups", icon: "flag", roles: CANDIDATE_ROLES },
     { to: "/missing-documents", label: "Missing Documents", icon: "assignment_late", roles: DASHBOARD_ROLES },
     { to: "/police", label: "Police Workflow", icon: "local_police", roles: DASHBOARD_ROLES },
     { to: "/reports/daily", label: "Daily Report", icon: "summarize", roles: DASHBOARD_ROLES },

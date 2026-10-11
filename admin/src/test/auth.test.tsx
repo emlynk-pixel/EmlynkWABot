@@ -201,7 +201,7 @@ describe("dashboard shell", () => {
 
     test("ADMIN: every section, then Invite User, Change Roles, Audit Logs and Settings", async () => {
         await signedIn();
-        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Missing Documents", "Police Workflow", "Daily Report", "Invite User", "Change Roles", "Audit Logs", "Settings"]);
+        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Priority Follow-Ups", "Missing Documents", "Police Workflow", "Daily Report", "Invite User", "Change Roles", "Audit Logs", "Settings"]);
         await userEvent.setup().click(screen.getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });
@@ -209,14 +209,14 @@ describe("dashboard shell", () => {
     test("MANAGER and ANALYST: the dashboard sections, no user management or Settings", async () => {
         for (const role of ["MANAGER", "ANALYST"]) {
             await signedIn("/", userWithRole(role));
-            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Missing Documents", "Police Workflow", "Daily Report"]);
+            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Priority Follow-Ups", "Missing Documents", "Police Workflow", "Daily Report"]);
             document.body.innerHTML = "";
         }
     });
 
-    test("REGISTRATION_DESK: Candidates only, and lands there instead of the Overview", async () => {
+    test("REGISTRATION_DESK: Candidates and Priority Follow-Ups only, and lands there instead of the Overview", async () => {
         await signedIn("/", userWithRole("REGISTRATION_DESK"));
-        expect(navLinks()).toEqual(["Candidates"]);
+        expect(navLinks()).toEqual(["Candidates", "Priority Follow-Ups"]);
         expect(await screen.findByRole("heading", { name: "Candidates", level: 1 })).toBeInTheDocument();
     });
 

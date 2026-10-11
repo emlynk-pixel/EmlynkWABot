@@ -7,6 +7,7 @@ import checkCircle from "@material-symbols/svg-400/outlined/check_circle.svg?raw
 import darkMode from "@material-symbols/svg-400/outlined/dark_mode.svg?raw";
 import edit from "@material-symbols/svg-400/outlined/edit.svg?raw";
 import event from "@material-symbols/svg-400/outlined/event.svg?raw";
+import flag from "@material-symbols/svg-400/outlined/flag.svg?raw";
 import lightMode from "@material-symbols/svg-400/outlined/light_mode.svg?raw";
 import personSearch from "@material-symbols/svg-400/outlined/person_search.svg?raw";
 import search from "@material-symbols/svg-400/outlined/search.svg?raw";
@@ -56,6 +57,7 @@ const ICONS = {
     delete: deleteIcon,
     edit,
     event,
+    flag,
     light_mode: lightMode,
     person_add: personAdd,
     person_search: personSearch,

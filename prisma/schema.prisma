@@ -30,6 +30,9 @@ model User {
   updatedDate DateTime           @updatedAt @map("updated_date")
   auditLogs   AuditLog[]
   callLogs    CandidateCallLog[]
+  // Priority Follow-Ups this user flagged / completed.
+  flaggedFollowUps   CallLogFollowUp[] @relation("FollowUpFlaggedBy")
+  completedFollowUps CallLogFollowUp[] @relation("FollowUpCompletedBy")
 
   @@map("user")
 }
@@ -296,8 +299,38 @@ model CandidateCallLog {
   user  Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
   admin User      @relation(fields: [adminId], references: [adminId], onDelete: Restrict)
 
+  followUps CallLogFollowUp[]
+
   @@index([passportId, createdDate])
   @@map("candidate_call_logs")
+}
+
+// Priority Follow-Ups (callLogFollowUpService.js): a call log marked as
+// needing attention. The call log stays the source of truth for the note,
+// the call time, the caller and the candidate; this row holds only the
+// follow-up's own state. status: OPEN | COMPLETED. Completing keeps the row
+// (completed_by / completed_date set); Delete (ADMIN and MANAGER only)
+// removes this row and never the call log.
+// At most one OPEN follow-up per call log: a partial unique index (not
+// expressible in Prisma's schema DSL), with CHECK constraints on status and
+// completion, defined in SQL by migration 20261011120000_call_log_follow_up.
+// Maintain them through a SQL migration, not this model.
+model CallLogFollowUp {
+  followUpId    String    @id @map("follow_up_id")
+  callLogId     String    @map("call_log_id")
+  status        String    @default("OPEN")
+  flaggedById   String    @map("flagged_by")
+  flaggedDate   DateTime  @default(now()) @map("flagged_date")
+  completedById String?   @map("completed_by")
+  completedDate DateTime? @map("completed_date")
+
+  callLog     CandidateCallLog @relation(fields: [callLogId], references: [callLogId], onDelete: Cascade)
+  flaggedBy   User             @relation("FollowUpFlaggedBy", fields: [flaggedById], references: [adminId], onDelete: Restrict)
+  completedBy User?            @relation("FollowUpCompletedBy", fields: [completedById], references: [adminId], onDelete: Restrict)
+
+  @@index([callLogId])
+  @@index([status, flaggedDate])
+  @@map("call_log_follow_up")
 }
 
 model RateLimit {
