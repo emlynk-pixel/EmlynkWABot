@@ -122,11 +122,60 @@ describe("Candidates list", () => {
         expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
     });
 
+    test("the header has a Register Candidate quick access that opens the registration form", async () => {
+        signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+        renderApp("/candidates");
+        await screen.findByRole("table", { name: "Candidates" });
+        const header = within(screen.getByRole("banner"));
+        const register = header.getByRole("link", { name: "Register Candidate" });
+        expect(register).toHaveAttribute("href", "/candidates/new");
+        // The existing header controls are unchanged and still there.
+        for (const name of ["Sync", "Dark mode", "Sign out"]) expect(header.getByRole("button", { name })).toBeInTheDocument();
+        await userEvent.setup().click(register);
+        expect(await screen.findByRole("button", { name: "Register candidate" })).toBeEnabled();
+        expect(screen.getByLabelText("Passport ID *")).toBeEnabled();
+        // The header (and its quick access) stays the same on the form.
+        expect(within(screen.getByRole("banner")).getByRole("link", { name: "Register Candidate" })).toHaveAttribute("href", "/candidates/new");
+    });
+
+    test("REGISTRATION_DESK gets the Register Candidate quick access too", async () => {
+        signedInBackend({ "GET /auth/me": { status: 200, body: { user: DESK } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
+        renderApp("/candidates");
+        await screen.findByRole("table", { name: "Candidates" });
+        expect(within(screen.getByRole("banner")).getByRole("link", { name: "Register Candidate" })).toHaveAttribute("href", "/candidates/new");
+    });
+
+    // One button in the shared header, so every page of the admin shell has it.
+    for (const path of ["/", "/candidates", "/follow-ups", "/reports/daily", "/settings", "/audit-logs", "/candidates/N0000002"]) {
+        test(`the Register Candidate quick access is in the shared header on ${path}, with the other header controls`, async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST }, "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+            renderApp(path);
+            await screen.findByTestId("admin-name");
+            const header = within(screen.getByRole("banner"));
+            expect(header.getAllByRole("link", { name: "Register Candidate" })).toHaveLength(1);
+            expect(header.getByRole("link", { name: "Register Candidate" })).toHaveAttribute("href", "/candidates/new");
+            for (const name of ["Sync", "Dark mode", "Sign out"]) expect(header.getByRole("button", { name })).toBeInTheDocument();
+            expect(header.getByRole("navigation", { name: "Breadcrumb" })).toBeInTheDocument();
+            expect(screen.getAllByRole("link", { name: "Register Candidate" })).toHaveLength(1);
+        });
+    }
+
+    test("from another page (Overview), Register Candidate opens the registration form", async () => {
+        signedInBackend();
+        renderApp("/");
+        const register = await screen.findByRole("link", { name: "Register Candidate" });
+        expect(screen.getByRole("banner")).toContainElement(register);
+        await userEvent.setup().click(register);
+        expect(await screen.findByRole("button", { name: "Register candidate" })).toBeEnabled();
+        expect(screen.getByLabelText("Passport ID *")).toBeEnabled();
+    });
+
     test("a viewer cannot add candidates", async () => {
         signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
         renderApp("/candidates");
         await screen.findByRole("table", { name: "Candidates" });
         expect(screen.queryByRole("link", { name: "Add candidate" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("link", { name: "Register Candidate" })).not.toBeInTheDocument();
     });
 });
 
@@ -1189,7 +1238,8 @@ describe("REGISTRATION_DESK: the whole Candidates area", () => {
         for (const name of ["Invite User", "Change Roles", "Audit Logs", "Settings", "Review Queue", "Overview"]) {
             expect(nav().queryByRole("link", { name })).toBeNull();
         }
-        expect(screen.queryByRole("link", { name: /register candidate|new candidate/i })).toBeNull();
+        // The sidebar has no separate registration entry (the header quick access is checked below).
+        expect(nav().queryByRole("link", { name: /register candidate|new candidate/i })).toBeNull();
         expect(screen.queryByRole("button", { name: /notification/i })).toBeNull();
         expect(calls.some((c) => c.path.startsWith("/api/admin/review"))).toBe(false);
     });
@@ -1236,11 +1286,12 @@ describe("REGISTRATION_DESK: the whole Candidates area", () => {
 
 describe("other roles are unchanged", () => {
     for (const role of ["ADMIN", "MANAGER", "ANALYST"]) {
-        test(`${role}: Add candidate on the Candidates page, no separate header registration link, the notification bell`, async () => {
+        test(`${role}: Add candidate on the Candidates page, the Register Candidate quick access in the header (not the sidebar), the notification bell`, async () => {
             signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
             renderApp("/candidates");
             expect(await screen.findByRole("link", { name: "Add candidate" })).toHaveAttribute("href", "/candidates/new");
-            expect(screen.queryByRole("link", { name: /register candidate/i })).toBeNull();
+            expect(within(screen.getByRole("banner")).getByRole("link", { name: "Register Candidate" })).toHaveAttribute("href", "/candidates/new");
+            expect(within(screen.getByRole("navigation", { name: "Main navigation" })).queryByRole("link", { name: /register candidate/i })).toBeNull();
             expect(screen.getByRole("button", { name: /notification/i })).toBeInTheDocument();
             const links = within(screen.getByRole("navigation", { name: "Main navigation" })).getAllByRole("link").map((l) => l.textContent);
             expect(links).toContain("Review Queue");

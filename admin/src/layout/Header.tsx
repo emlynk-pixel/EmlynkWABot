@@ -1,6 +1,6 @@
-import { useLocation } from "react-router";
+import { Link, useLocation } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
-import { ROLE_LABELS, canViewDashboard, type Role } from "../auth/roles";
+import { ROLE_LABELS, canManageCandidates, canViewDashboard, type Role } from "../auth/roles";
 import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
 import { useTheme } from "../theme/theme";
@@ -18,12 +18,16 @@ function currentSectionLabel(pathname: string): string {
 
 // Top utility bar (Stitch: fixed 56px): breadcrumb, Sync (reload the data
 // on screen), light/dark mode, the signed-in admin and Sign out. Candidate
-// registration starts from the Candidates page ("Add candidate").
+// registration starts from the Candidates page ("Add candidate"), or from
+// the Register Candidate quick access shown here on every page.
 export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuOpen: boolean }) {
     const { user, signOut } = useAuth();
     const { pathname } = useLocation();
     const { syncing, result, sync } = useSync();
     const { theme, toggle } = useTheme();
+    // Quick access to the registration form (the existing /candidates/new
+    // route) on every page, for the roles that can register candidates.
+    const showRegister = canManageCandidates(user);
     const control = "flex h-9 items-center gap-2 rounded-md border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-60";
 
     return (
@@ -59,6 +63,12 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
                         <span className="text-critical">Sync failed — some data could not be loaded</span>
                     ) : null}
                 </span>
+                {showRegister && (
+                    <Link to="/candidates/new" className={control} title="Open the candidate registration form">
+                        <Icon name="person_add" className="size-4" />
+                        <span className="sr-only sm:not-sr-only">Register Candidate</span>
+                    </Link>
+                )}
                 <button type="button" onClick={sync} disabled={syncing} aria-busy={syncing} className={control} title="Reload the data on this page from the server">
                     <Icon name={syncing ? "progress_activity" : "sync"} className={`size-4 ${syncing ? "animate-spin" : ""}`} />
                     <span className="sr-only sm:not-sr-only">{syncing ? "Syncing…" : "Sync"}</span>
