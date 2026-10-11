@@ -26,7 +26,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 # Run Job); the server itself never runs them.
 COPY prisma/migrations ./prisma/migrations
 COPY src ./src
-COPY scripts/createAdmin.js scripts/checkDatabaseConnection.js ./scripts/
+COPY scripts/checkDatabaseConnection.js ./scripts/
 
 # Cloud Run sets PORT (8080 by default); the server listens on all interfaces.
 ENV PORT=8080
