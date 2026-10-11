@@ -92,6 +92,18 @@ All core application tables reside in the `public` schema.
   - `note` (`TEXT`): Notes recorded during the telephone conversation.
   - `created_date` (`TIMESTAMPTZ`): Call timestamp.
 - **Indexes**: `(passport_id, created_date)`.
+- **Relationships**: one-to-many with `call_log_follow_up`.
+
+### 2.5.1 `public.call_log_follow_up`
+- **Purpose**: Priority Follow-Ups: a call log marked as needing attention. Holds only the follow-up's own state; the call log stays the source of truth for the note, call time, caller and candidate (nothing is copied).
+- **Primary Key**: `follow_up_id` (`TEXT`, UUID).
+- **Important Columns**:
+  - `call_log_id` (`TEXT`, FK -> `candidate_call_logs.call_log_id` `ON DELETE CASCADE`: a follow-up never outlives its call log, so none is orphaned).
+  - `status` (`TEXT`, default `OPEN`): `OPEN` or `COMPLETED` (CHECK).
+  - `flagged_by` (FK -> `"user".admin_id` `ON DELETE RESTRICT`), `flagged_date`.
+  - `completed_by` (nullable FK -> `"user".admin_id` `ON DELETE RESTRICT`), `completed_date`: both null while `OPEN`, both set when `COMPLETED` (CHECK).
+- **Indexes / constraints**: `(call_log_id)`; `(status, flagged_date)`; a partial UNIQUE index `(call_log_id) WHERE status = 'OPEN'` so a call log has at most one open follow-up (completed ones are kept as history). Defined in SQL by migration `20261011120000_call_log_follow_up` (not expressible in `schema.prisma`). Row-level security on, no access for `anon` / `authenticated`.
+- **Deletion**: ADMIN / MANAGER delete a follow-up through the API; that removes this row only. Deleting a candidate cascades to their call logs and so to their follow-ups.
 
 ### 2.6 `public.audit_logs`
 - **Purpose**: Append-only security and operational audit trail for all admin actions, candidate modifications, document operations, and staff role adjustments.
@@ -213,6 +225,7 @@ The candidate table represents job applicants and client records.
 - `documents`: Stored and verified files belonging to this candidate.
 - `candidate_stages`: Seven deployment tracking stages (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`).
 - `candidate_call_logs`: Telephone call notes recorded by staff.
+- `call_log_follow_up`: Priority Follow-Ups, one row per call marked for follow-up (see §2.5.1).
 - `candidate_additional_details`: At most one row of extra details (passport name, sizes, family, other skills); see §2.12.
 - `temporary_data`: Unprocessed or pending review items matched to this candidate.
 
@@ -323,6 +336,9 @@ Migrations 6.1 and 6.2 are applied and active on the shared database.
 | `public.candidate_stages.passport_id` | `public.candidate.passport_id` | `candidate_stages_passport_id_fkey` | `ON DELETE CASCADE` |
 | `public.candidate_call_logs.passport_id` | `public.candidate.passport_id` | `candidate_call_logs_passport_id_fkey`| `ON DELETE CASCADE` |
 | `public.candidate_call_logs.admin_id` | `public."user".admin_id` | `candidate_call_logs_admin_id_fkey` | `ON DELETE RESTRICT` |
+| `public.call_log_follow_up.call_log_id` | `public.candidate_call_logs.call_log_id` | `call_log_follow_up_call_log_id_fkey` | `ON DELETE CASCADE ON UPDATE CASCADE` |
+| `public.call_log_follow_up.flagged_by` | `public."user".admin_id` | `call_log_follow_up_flagged_by_fkey` | `ON DELETE RESTRICT ON UPDATE CASCADE` |
+| `public.call_log_follow_up.completed_by` | `public."user".admin_id` | `call_log_follow_up_completed_by_fkey` | `ON DELETE RESTRICT ON UPDATE CASCADE` |
 | `public.candidate_additional_details.passport_id` (also its primary key) | `public.candidate.passport_id` | `candidate_additional_details_passport_id_fkey` | `ON DELETE CASCADE ON UPDATE CASCADE` |
 | `public.audit_logs.admin_id` | `public."user".admin_id` | `audit_logs_admin_id_fkey` | `ON DELETE RESTRICT` |
 | `public.temporary_data.passport_id` | `public.candidate.passport_id` | `temporary_data_passport_id_fkey` | `RESTRICT / CASCADE` |

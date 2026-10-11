@@ -54,7 +54,7 @@ The Google Sheets Candidate Operational Mirror is a **one-way, eventually consis
 - One-way candidate operational mirror (PostgreSQL -> Google Sheets).
 - Change capture into a durable outbox (`sheet_sync_queue`), tracking changes waiting for the next run (no real-time Sheet writes).
 - Scheduled reconciliation at 06:00, 12:00 and 18:00 Asia/Colombo, plus on-demand Sync Now.
-- Candidate fields approved in Section 6: exactly 41 columns `A:AO`: 40 business-visible columns (`A` through `AN`, legacy operational headers first, then candidate details, stage statuses and mirror metadata) plus the technical row identity column `AO` (`_SYSTEM_CANDIDATE_ID`). `VISA SUBMISSION STATUS` (`AI`) was added to the manually finalized 40-column Sheet with the Visa submission stage (Section 6, amendment).
+- Candidate fields approved in Section 6: 41 required headers: 40 business-visible columns (legacy operational headers first, then candidate details, stage statuses and mirror metadata) plus the technical row identity column `_SYSTEM_CANDIDATE_ID`. The canonical layout is `A:AO` (identity in `AO`), but columns are resolved by **header name**, so operators may reorder them (identity in column A, in the middle or last) and add their own columns (Sections 6 and 6.4). `VISA SUBMISSION STATUS` (`AI`) was added to the manually finalized 40-column Sheet with the Visa submission stage (Section 6, amendment).
 - Document **submission dates** only (never files): each document column shows the current document's submission date, or `Not Submitted`.
 - Candidate stage statuses.
 - Preservation of rows for candidates that disappear from the application, marked `DELETED / INACTIVE`.
@@ -465,9 +465,9 @@ Why not a natural key:
 | Duplicate delivery / worker restart | Queue claims use compare-and-swap leases (Section 8.5); updates are idempotent. |
 | Concurrent candidate events | Coalesced into a single pending queue row per candidate. |
 | Concurrent workers | **Single-writer rule:** `max-instances = 1` plus an exclusive PostgreSQL writer lease (Section 9.5). |
-| Passport or NIC correction | The row is found by `AO`; the `PASSPORT NUMBER` / `ID NUMBER` cells are updated in place. |
-| Duplicate keys detected | **As built (supersedes the earlier labelling design; D-11):** a unique ID present in more than one `AO` cell is a hard data-integrity error. Every sync and reconciliation stops **before any write**; none of the duplicate rows is modified, labelled or deleted; the integration enters `DATA_INTEGRITY` (Settings, log `sheet_sync.duplicate_key_detected`) until a person fixes the Sheet. Nothing guesses which row is canonical. |
-| Staff sorting or filtering | Row numbers are never stored; keys are re-read from `AO` on every write batch. |
+| Passport or NIC correction | The row is found by its `_SYSTEM_CANDIDATE_ID` (`AO` in the canonical layout); the `PASSPORT NUMBER` / `ID NUMBER` cells are updated in place. |
+| Duplicate keys detected | **As built (supersedes the earlier labelling design; D-11):** a unique ID present in more than one `_SYSTEM_CANDIDATE_ID` cell is a hard data-integrity error. Every sync and reconciliation stops **before any write**; none of the duplicate rows is modified, labelled or deleted; the integration enters `DATA_INTEGRITY` (Settings, log `sheet_sync.duplicate_key_detected`) until a person fixes the Sheet. Nothing guesses which row is canonical. |
+| Staff sorting or filtering | Row numbers are never stored; keys are re-read from the `_SYSTEM_CANDIDATE_ID` column on every write batch. |
 
 ---
 
@@ -537,12 +537,12 @@ Guarantee (eventual latest state): the worker marks only the row it claimed as `
 
 For each batch of claimed candidates:
 
-1. **Read once:** the header row (`A1:AO1`) and the key column (Column `AO`) in a single batch read. Validate the header by exact positional match (Section 6.4); on mismatch stop with `CONFIG_ERROR`.
-2. **Build an in-memory map** `candidate key (unique_id from Col AO) -> current row number` for this batch only. No persistent row mapping is kept: staff may sort or insert rows, so stored row numbers would go stale, and the key column is cheap to re-read.
+1. **Read once:** the header row (`1:1`, full width) to build the column map, then the key column (the `_SYSTEM_CANDIDATE_ID` column, wherever it is). The header is read once per operation and never cached across runs. Validate by header name (Section 6.4: every required header exactly once, any order, extra columns allowed); on mismatch stop with `SCHEMA_INVALID` / `CONFIG_ERROR` and write nothing.
+2. **Build an in-memory map** `candidate key (unique_id from the _SYSTEM_CANDIDATE_ID column) -> current row number` for this batch only. No persistent row mapping is kept: staff may sort or insert rows, so stored row numbers would go stale, and the key column is cheap to re-read.
 3. **Read the current candidates** from the database (batched queries, not one `getCandidate` per candidate) and map each to a row of 40 business values + 1 technical key value (41 cells) with the shared mapper.
-4. **Existing key -> update** that row's cells (`A{row}:AN{row}`) in a single `batchUpdate`. **Missing key -> append** the row exactly once. Writes use `RAW` input into plain-text columns.
+4. **Existing key -> update** that row's system cells, one range per contiguous run of system columns (operator columns are never written), in a single `batchUpdate`. **Missing key -> append** the row exactly once. Writes use `RAW` input into plain-text columns.
 5. **Append-race protection:** only one sync instance writes at a time (Section 9.5), so two appends for one key cannot race. A crash between append and queue completion is harmless: the retry finds the key in Column `AO` and updates.
-6. **Candidate absent from the database** (the event carried a delete hint and the targeted read succeeded and returned no row) -> set Column `AL` (`RECORD STATUS`) to `DELETED / INACTIVE`, stamp Column `AN` (`LAST MIRRORED AT`), keep every other cell.
+6. **Candidate absent from the database** (the event carried a delete hint and the targeted read succeeded and returned no row) -> set the `RECORD STATUS` column to `DELETED / INACTIVE`, stamp `LAST MIRRORED AT`, keep every other cell (and every operator column).
 7. **Mark the queue rows `COMPLETED`** only after Google confirms the write; otherwise schedule a retry (8.7).
 8. Reconciliation detects duplicate keys and repairs or reports them (Section 9.3).
 
@@ -579,8 +579,8 @@ sequenceDiagram
         Worker->>DB: Claim due pending rows (lease, compare-and-swap)
         DB-->>Worker: Claimed candidate keys
         Worker->>DB: Read CURRENT aggregate (candidate, stages, documents)
-        Worker->>G: Read header row (A1:AO1) and key column (AO)
-        Worker->>Worker: Positional header validation, build key to row map, map aggregate to row
+        Worker->>G: Read header row (1:1) and the key column (by header name)
+        Worker->>Worker: Header-name validation, build key to row map, map aggregate to row
         alt Key exists
             Worker->>G: batchUpdate that row (A{row}:AN{row})
         else Key missing
@@ -606,7 +606,7 @@ sequenceDiagram
 flowchart TD
     A([Candidate change committed]) --> B["Pending queue row coalesced by trigger"]
     B --> C["Worker claims row with lease"]
-    C --> D["Read current aggregate and validate Sheet header (A1:AO1)"]
+    C --> D["Read current aggregate and validate Sheet header names (row 1)"]
     D --> E{"Google result"}
 
     E -->|"Success"| F["Mark COMPLETED and clear lease"]
@@ -656,15 +656,15 @@ All three create a durable `sheet_sync_runs` record and use the same engine.
 ### 9.3 Reconciliation Algorithm
 
 1. **Create/claim the run** (`sheet_sync_runs`), acquire the reconciliation lock (9.5). If it is held, record the run as `SKIPPED` and log `sheet_sync.reconcile_skipped`.
-2. **Validate the Sheet:** tab `Emlynk Candidate Operational Mirror` exists, header row `A1:AO1` matches exact positional schema (6.4). On mismatch -> `CONFIG_ERROR`, stop, no writes.
-3. **Read the Sheet** completely (`A2:AO`) as displayed strings; build `unique_id (from Col AO) -> row`, noting duplicate keys, blank keys and unknown rows.
+2. **Validate the Sheet:** tab `Emlynk Candidate Operational Mirror` exists, row 1 holds every required header exactly once (6.4; any order, extra columns allowed). On mismatch -> `SCHEMA_INVALID` / `CONFIG_ERROR`, stop, no writes.
+3. **Read the Sheet** completely (row 2 down, across the live width) as displayed strings; build `unique_id (from the _SYSTEM_CANDIDATE_ID column) -> row`, noting duplicate keys, blank keys and unknown rows.
 4. **Read the complete database snapshot** in one read-only `REPEATABLE READ` transaction (candidates with their stages and candidate documents), verifying the row count equals the count query. Any failure aborts the run (9.4).
-5. **Generate the expected row for every database candidate** with the shared mapper (40 business columns + Column AO).
+5. **Generate the expected row for every database candidate** with the shared mapper (40 business columns + the identity column).
 6. **Classify and repair:**
    - key missing from the Sheet -> **append**;
-   - key present and any compared cell (`A`–`AM` plus the key `AO`; `AN` LAST MIRRORED AT is excluded) differs -> **rewrite that row** (an unchanged row is not written, so a normal run writes almost nothing);
-   - duplicate key in Col `AO` -> **as built: the whole run stops before any write; no row is touched** (Sections 7.2, 24.5);
-   - Sheet row `ACTIVE` whose key is absent from the **complete** snapshot -> mark `DELETED / INACTIVE` in Col `AK` (subject to 9.4);
+   - key present and any compared system cell (every system column except `LAST MIRRORED AT`) differs -> **rewrite that row** (an unchanged row is not written, so a normal run writes almost nothing);
+   - duplicate key in the `_SYSTEM_CANDIDATE_ID` column -> **as built: the whole run stops before any write; no row is touched** (Sections 7.2, 24.5);
+   - Sheet row `ACTIVE` whose key is absent from the **complete** snapshot -> mark `DELETED / INACTIVE` in the `RECORD STATUS` column (subject to 9.4);
    - row already `DELETED / INACTIVE` whose key exists again in the database -> restore to `ACTIVE`, refresh data;
    - blank-key or unknown rows -> reported, not modified.
 7. **Write in chunks** (`batchUpdate`, configurable chunk size), classify errors as in 8.7.
@@ -715,8 +715,8 @@ sequenceDiagram
         DB-->>W: Not acquired
         W->>DB: Record run SKIPPED
     else Lock acquired
-        W->>G: Read header row (A1:AO1) and all data rows (A2:AO)
-        W->>W: Validate schema pos, index rows by key (AO), find duplicates
+        W->>G: Read header row (1:1) and all data rows (row 2 down, live width)
+        W->>W: Validate header names, index rows by key (_SYSTEM_CANDIDATE_ID), find duplicates
         W->>DB: Read COMPLETE snapshot (REPEATABLE READ, count verified)
         W->>W: Generate expected rows, compare every mirrored cell
         W->>G: batchUpdate changed rows and append missing rows (chunked)
@@ -910,11 +910,11 @@ SHEET_SYNC_DELETION_GUARD_MAX=10
 A separate, strictly read-only check proves runtime identity, sharing and header before any write path exists:
 
 - **Entry:** `node src/sheetSyncCheck.js` (`npm run sheet:check`), using `src/services/sheetHealthCheck.js`.
-- **Reads only `A1:AO1`** of the configured tab and validates the exact 41-column header by position. It never appends, updates, clears, deletes, formats, creates tabs or edits metadata.
+- **Reads only row 1 (`1:1`)** of the configured tab and validates the 41 required headers by name (any order, extra columns allowed). It never appends, updates, clears, deletes, formats, creates tabs or edits metadata.
 - **Defence in depth:** the token is requested with the `spreadsheets.readonly` scope; its adapter is built with writes forced off and reduced to read methods.
 - **Independent of `SHEET_SYNC_ENABLED`:** verifying access never requires enabling candidate writes. Write enablement remains a separate switch.
 - **Needs only** `SHEET_SPREADSHEET_ID` and `SHEET_TAB_NAME` (no database, no Supabase).
-- **Output:** one sanitized JSON line (`sheet_sync.health_check`): `status` (`CONNECTED`, `NOT_CONFIGURED`, `CONFIG_ERROR`, `ACCESS_DENIED`, `NOT_FOUND` (404), `BAD_REQUEST` (400; with Google's canonical `googleStatus` such as `INVALID_ARGUMENT` / `FAILED_PRECONDITION`), `UNAVAILABLE`, `FAILED`), `schema` (`SCHEMA_VALID`, `SCHEMA_INVALID`, `NOT_CHECKED`), mismatched column letters, HTTP status / Google reason code. Never tokens, credentials, Google message text, header text or Sheet data. Exit code 0 only for `CONNECTED` + `SCHEMA_VALID`.
+- **Output:** one sanitized JSON line (`sheet_sync.health_check`): `status` (`CONNECTED`, `NOT_CONFIGURED`, `CONFIG_ERROR`, `ACCESS_DENIED`, `NOT_FOUND` (404), `BAD_REQUEST` (400; with Google's canonical `googleStatus` such as `INVALID_ARGUMENT` / `FAILED_PRECONDITION`), `UNAVAILABLE`, `FAILED`), `schema` (`SCHEMA_VALID`, `SCHEMA_INVALID`, `NOT_CHECKED`), `missingHeaders` / `duplicateHeaders` (the required header names that are missing or duplicated; schema constants, never text read from the Sheet), HTTP status / Google reason code. Never tokens, credentials, Google message text, header text or Sheet data. Exit code 0 only for `CONNECTED` + `SCHEMA_VALID`.
 - **Run (performed):** a one-off Cloud Run Job (`emlynk-sheet-sync-check`) from the same image, command `node src/sheetSyncCheck.js`, running as `emlynk-sheet-sync@…`. It is kept independent of the existing submission and OCR workers so that it moves unchanged into the dedicated `emlynk-sheet-sync-worker`.
 - **Status: VERIFIED.** The Cloud Run Job returned `ok: true`, `status: CONNECTED`, `schema: SCHEMA_VALID`, `writeGate: DISABLED`, no mismatched columns, running as `emlynk-sheet-sync@…`. (An earlier run returned HTTP 400 `badRequest` because the worksheet was still named `Sheet1`; the tab was renamed to `Emlynk Candidate Operational Mirror`. That case is now reported as `BAD_REQUEST` with `googleStatus` instead of `NOT_FOUND`.)
 
@@ -1143,7 +1143,7 @@ Creates a `TEST_CONNECTION` run. The sheet-sync worker performs, **without modif
 1. Authenticate with Google (token can be obtained).
 2. Read spreadsheet metadata (the spreadsheet exists and is reachable).
 3. Confirm the configured tab exists.
-4. Confirm the service account can read the tab and that the header row `A1:AO1` matches the expected schema and version (Section 6.8).
+4. Confirm the service account can read the tab and that row 1 contains every required header exactly once (any order) (Section 6.8).
 5. **As built: no write probe.** Test Connection is strictly read-only (steps 1–4 via the Section 11.6 C check). Write permission is proven only by the controlled first-write procedure (Section 24.10), never automatically.
 
 Response: `202 { "runId": "...", "status": "QUEUED" }`. The result appears on the run record and in `GET /status`. A successful test also clears a previous `CONFIG_ERROR`.
@@ -1306,8 +1306,8 @@ The current logging utilities do **not** yet guarantee this for Google data (Sec
 | Duplicate rows | Low | Medium | Immutable `unique_id` in Column `AN`, key re-read per batch, single writer, duplicate detection and labelling |
 | Missed change (a writer path not captured) | Low (triggers) / Medium (app-level) | Low | Trigger capture; daily full comparison repairs anything missed |
 | Mass false "inactive" marking | Low | High | Complete-snapshot requirement, row-count verification, deletion guard (9.4) |
-| Schema/tab tampering in the Sheet | Medium | Medium | Positional header validation before writes (`A1:AN1`); `CONFIG_ERROR`; no auto-rebuild |
-| Duplicate header collision in validation | Medium | Medium | Positional index-based validation instead of dictionary name lookup (6.4) |
+| Schema/tab tampering in the Sheet | Medium | Medium | Header-name validation before writes (row 1, re-confirmed before each write); `SCHEMA_INVALID` / `CONFIG_ERROR`; no auto-rebuild or auto-reorder |
+| Duplicate header collision in validation | Medium | Medium | Count-based validation by header name; the intentionally duplicated `POLICE REP SRI LANKA` pair is assigned by relative left-to-right order (6.4) |
 | Manual edits by staff | Medium | Low | Viewer access; reconciliation restores authoritative values |
 | PII exposure through the Sheet | Low | High | Private sheet, named Viewers, least privilege, access review, no public link |
 | PII or secrets in logs | Medium | High | Allow-listed log fields; add and test Google credential redaction (current `safeLog` is insufficient) |
@@ -1326,8 +1326,8 @@ The implementation is **not complete** until every group below passes. Existing 
 
 ### 18.1 Unit Tests
 
-- **Mapper** (`candidateSheetMapper`): all 39 business columns in exact order + technical column `AN` (exactly 40 cells); formatting rules (6.3); null -> empty; phone digits unchanged; dates; `COMPLETED`/`INCOMPLETE`; document status vocabulary (`VERIFIED`/`REVIEW_REQUIRED`/`MISSING`); **exactly one `SCAN` column and no agreement/affidavit columns**; parity with the Admin UI's `getCandidate` output for the same fixtures.
-- **Positional header validation:** exact 40-element array match; the intentionally duplicated `POLICE REP SRI LANKA` header is distinguished by position (14 / `N` = `SL_VERIFIED`, 22 / `V` = `SL_NORMAL`); detects missing, swapped or unexpected headers.
+- **Mapper** (`candidateSheetMapper`): all 40 business columns in canonical field order + the technical identity (exactly 41 cells; the mapper is position-free, the adapter translates between field order and the live Sheet order); formatting rules (6.3); null -> empty; phone digits unchanged; dates; `COMPLETED`/`INCOMPLETE`; document status vocabulary (`VERIFIED`/`REVIEW_REQUIRED`/`MISSING`); **exactly one `SCAN` column and no agreement/affidavit columns**; parity with the Admin UI's `getCandidate` output for the same fixtures.
+- **Header-name mapping** (`sheetSchema.test.js`, `googleSheetsAdapter.test.js`, `sheetSyncReordering.test.js`): canonical order; fully reversed order; identity in A, in the middle and last; `VISA SUBMISSION STATUS` and `VISA APPROVAL STATUS` moved; several columns reordered; one or several extra columns; custom values survive DB -> Sheet updates; missing, duplicate and renamed headers give `SCHEMA_INVALID`; no value is written to a wrong column after a reorder; identity matching only by `_SYSTEM_CANDIDATE_ID`; reconciliation in arbitrary order; the header is re-read on a later run; a header change mid-run throws `SheetLayoutChangedError` without writing; worker recovery and idempotency; an unusual layout (identity in A, operator columns between system columns, statuses reordered). The intentionally duplicated `POLICE REP SRI LANKA` pair is assigned by relative order (left = SL Verified, right = SL Normal).
 - **Normalization and aggregate comparison:** identical input -> identical row; comparison ignores `LAST MIRRORED AT`; whitespace/format edge cases.
 - **Retry classification:** 429, 408, 5xx, network errors -> retryable; 401, 403 (non-rate-limit), 404, invalid ID, schema mismatch -> config/permanent.
 - **Backoff:** exponential growth, jitter bounds, cap, attempt bound.
@@ -1428,8 +1428,8 @@ flowchart TD
 
 - [ ] No candidate database write waits on Google; no Google call inside a transaction or trigger.
 - [ ] No credentials, keys or tokens committed, logged or present in Vercel; redaction tests pass.
-- [ ] Exactly 40 columns `A:AN` (39 business-visible `A`–`AM` + technical key `AN`) mapped exactly; one `SCAN` only.
-- [ ] Positional schema validation handles duplicate header names correctly.
+- [ ] All 41 required headers (40 business-visible + the technical key) mapped by header name in any order; one `SCAN` only.
+- [ ] Header-name validation rejects missing, duplicate and renamed required headers (`SCHEMA_INVALID`), allows extra columns, and handles the duplicated `POLICE REP SRI LANKA` pair by relative order.
 - [ ] Capture covers every writer in 4.4 (test enumerates them).
 - [ ] Reconciliation never marks inactive from an incomplete snapshot.
 - [ ] Settings is ONE appended sidebar item; no existing sidebar item was removed, renamed, reordered or restyled.
@@ -1552,13 +1552,13 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 
 - [ ] Architecture approved; Decisions D-17 and D-18 resolved (Phase 0).
 - [ ] Exact 40-column `A:AN` mapping (39 business + technical key `AN`) approved.
-- [ ] Sheet schema validated (exact positional headers, versioning, plain-text formatting).
+- [ ] Sheet schema validated (required headers by name, any order, extra columns allowed; plain-text formatting).
 - [ ] Credentials secure (keyless ADC runtime identity on Cloud Run; zero JSON keys; redaction verified).
 - [ ] Database migration applied safely.
 - [ ] Incremental sync works using Column `AN` row identity.
 - [ ] Stage sync works (including derived stages).
 - [ ] Document status sync works (including variants).
-- [ ] Positional schema validation handles duplicate header names without ambiguity.
+- [ ] Header-name validation handles the duplicated `POLICE REP SRI LANKA` header without ambiguity (relative order).
 - [ ] Operational Sheet safeguards active (`SHEET_SYNC_ENABLED` gate).
 - [ ] Retry and recovery work.
 - [ ] Reconciliation works (all repair classes).
@@ -1590,14 +1590,14 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 | Stage sync (incl. derived stages) | Mapper Columns `AE` through `AJ` | `candidate_stages`, `candidate`, `documents` | Component change | Same | 18.1 parity | Proposed |
 | One SCAN rule | Mapper Column `Q` (Col 17) | `documents` (`SCAN`) | n/a | Only one scan column mirrored | 18.1 (no affidavits) | **Confirmed requirement** |
 | Immutable row identity without visible ID | Technical Column `AN` (`_SYSTEM_CANDIDATE_ID`) | `User.unique_id` | Every write / reconcile | Key re-read per batch; updates in place | 18.1, 18.2 duplicate | **Confirmed (D-17 resolved)** |
-| Duplicate header handling | Positional array validation (6.4) | `A1:AN1` | Before every write batch | Positional mismatch flags `CONFIG_ERROR` | 18.1 positional test | Proposed |
+| Duplicate header handling | Count-based header-name validation (6.4) | Row 1 (`1:1`) | Before every write batch | Missing / duplicate header flags `SCHEMA_INVALID` | 18.1 header-name mapping tests | Proposed |
 | Keyless authentication | Cloud Run ADC runtime identity | GCP metadata server | Continuous | 401/403 flags `CONFIG_ERROR` | Read-only check (11.6 C); mocked tests | **Design confirmed (D-4); runtime verification pending** |
 | Real operational sheet safeguard | Environment write gate (`SHEET_SYNC_ENABLED`) | `process.env` | Worker start & sync | Non-prod writes blocked | 18.2 gate test | **Confirmed (D-9)** |
 | Google outage never blocks DB writes | Outbox decoupling | n/a | Google error | Candidate write unaffected; `FAILED`/retry | 18.3 | **Confirmed requirement** |
 | Reconciliation repairs drift | Reconciliation engine, full-cell comparison | DB snapshot vs Sheet | Scheduler or Sync Now | Run `FAILED` retried next run; lock `SKIPPED` | 18.2 | Proposed |
 | Deleted/inactive handling | Event path + guarded reconciliation | Complete snapshot | Delete event / reconcile | Incomplete snapshot -> no marking | 18.2 | Proposed |
 | Settings sidebar item and page | Admin SPA navigation and `/admin/settings` | n/a | ADMIN opens Settings | Non-ADMIN sees no Settings data | 18.5 | **Confirmed requirement** |
-| Settings Test Connection | Durable `TEST_CONNECTION` run executed by the worker | Read-only check of `A1:AN1` (no probe) | ADMIN action | Failure flags `CONFIG_ERROR` | 24.12 | Implemented |
+| Settings Test Connection | Durable `TEST_CONNECTION` run executed by the worker | Read-only check of row 1 (no probe) | ADMIN action | Failure flags `CONFIG_ERROR` | 24.12 | Implemented |
 | Candidate Pool unchanged | Scope contract | n/a | n/a | n/a | 18.4, 18.5 | **Confirmed requirement** |
 
 ---
@@ -1697,7 +1697,7 @@ Chosen after auditing every mirrored-data writer: 16 write call sites in 5 servi
 
 - Identity is **only** `AO` (`_SYSTEM_CANDIDATE_ID`) = `candidate.unique_id`, compared as exact text. Blank `AO` identifies nobody (such rows are counted, never modified). Passport number, NIC, WhatsApp number and row number are never identity.
 - **Duplicate `AO`** anywhere in the Sheet: hard `DATA_INTEGRITY` error before any write; none of the duplicate rows is modified, labelled or deleted; no guess is made (business rule, supersedes D-11 labelling).
-- Incremental upsert: validate header (`A1:AO1`) → read `AO2:AO` → read the claimed candidates in one query → `batchGet` only their existing rows → compare (all columns except `AN` LAST MIRRORED AT) → `batchUpdate` changed rows + one `append` (`INSERT_ROWS`, `RAW`) for missing candidates. Unchanged rows are not written, so `AN` changes only on a real write. A retry after a crash between append and completion finds the row by `AO` and updates it (no duplicate).
+- Incremental upsert: validate header names (row 1) → read the `_SYSTEM_CANDIDATE_ID` column → read the claimed candidates in one query → `batchGet` only their existing rows → compare (all system columns except `LAST MIRRORED AT`) → `batchUpdate` changed rows + one `append` (`INSERT_ROWS`, `RAW`) for missing candidates. Unchanged rows are not written, so `LAST MIRRORED AT` changes only on a real write. A retry after a crash between append and completion finds the row by `_SYSTEM_CANDIDATE_ID` and updates it (no duplicate).
 - **Deleted candidate:** the row is **never deleted**. Only when the trigger flagged the candidate row as deleted **and** a fresh read confirms the candidate is gone, `AL` becomes `DELETED / INACTIVE` and `AN` is stamped; every other cell is kept. If the same `unique_id` returns, the next sync restores `ACTIVE` and refreshes the row.
 - The adapter never clears, deletes rows, formats or touches other tabs.
 

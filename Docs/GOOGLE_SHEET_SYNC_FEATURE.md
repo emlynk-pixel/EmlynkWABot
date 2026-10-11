@@ -61,12 +61,12 @@ Google Sheet (`Emlynk Candidate Operational Mirror`)
 
 | Component | Repository Path | Core Responsibilities |
 | :--- | :--- | :--- |
-| **Sheet Schema** | [src/services/sheetSchema.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSchema.js) | Defines the exact 40-column contract (`A:AN`). Exports positional helpers, A1 notation range builders, strict header validation (`validateHeaderRow`), and row shape assertion (`assertSheetRow`). |
-| **Candidate Mapper** | [src/services/candidateSheetMapper.js](file:///c:/Emlynk/EmlynkWABot/src/services/candidateSheetMapper.js) | Pure mapper turning candidate aggregates into 40 deterministic string cells. Enforces identical business logic as Admin UI for document currentness and stage completeness. |
-| **Sheets Adapter** | [src/services/googleSheetsAdapter.js](file:///c:/Emlynk/EmlynkWABot/src/services/googleSheetsAdapter.js) | The only module communicating with Google Sheets API v4. Implements narrow read/write methods (`readHeader`, `validateSchema`, `readCandidateIds`, `readRows`, `readRowsByNumber`, `writeRows`, `appendRow`, `updateRow`). Enforces write gating, keyless ADC authentication, and error sanitation. Contains **zero** clear or row-deletion methods. |
+| **Sheet Schema** | [src/services/sheetSchema.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSchema.js) | Defines the 41 required headers (canonical layout `A:AO`) and resolves columns **by header name** (`readSheetLayout`: any order, extra operator columns allowed, missing or duplicate required headers give `SCHEMA_INVALID`). Exports the single column-letter helper, A1 range builders (one write range per contiguous run of system columns), `validateHeaderRow` and `assertSheetRow`. |
+| **Candidate Mapper** | [src/services/candidateSheetMapper.js](file:///c:/Emlynk/EmlynkWABot/src/services/candidateSheetMapper.js) | Pure mapper turning candidate aggregates into 41 deterministic string cells in canonical field order (position-free; the adapter translates to the live Sheet order). Enforces identical business logic as Admin UI for document currentness and stage completeness. |
+| **Sheets Adapter** | [src/services/googleSheetsAdapter.js](file:///c:/Emlynk/EmlynkWABot/src/services/googleSheetsAdapter.js) | The only module communicating with Google Sheets API v4. Implements narrow read/write methods (`readHeader`, `validateSchema`, `readLayout`, `readCandidateIds`, `readRows`, `readRowsByNumber`, `writeRows`, `appendRow`, `updateRow`). Enforces write gating, keyless ADC authentication, and error sanitation. Contains **zero** clear or row-deletion methods. |
 | **Aggregate Reader** | [src/services/candidateAggregateReader.js](file:///c:/Emlynk/EmlynkWABot/src/services/candidateAggregateReader.js) | Reads candidate aggregates (`users`, `candidate_stages`, `documents`) in single queries by `unique_id`. Supports keyset pagination and transactional `readSnapshot` (`REPEATABLE READ`) verified against exact record counts. |
-| **Sync Planner** | [src/services/sheetSyncPlanner.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSyncPlanner.js) | Read-only planning module. Indexes Sheet candidate IDs from Column AN, detects duplicate system IDs (`SheetDuplicateCandidateIdError`), diffs expected cells against actual cells (`changedColumns`), and classifies operations (`APPEND`, `UPDATE`, `UNCHANGED`, `NOT_IN_DATABASE`). |
-| **Health Check** | [src/services/sheetHealthCheck.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetHealthCheck.js) | Read-only connection and schema probe (`A1:AN1`). Validates Google API connectivity and exact header match using `spreadsheets.readonly` scope without writing. |
+| **Sync Planner** | [src/services/sheetSyncPlanner.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSyncPlanner.js) | Read-only planning module. Indexes Sheet candidate IDs from the `_SYSTEM_CANDIDATE_ID` column, detects duplicate system IDs (`SheetDuplicateCandidateIdError`), diffs expected cells against actual cells (`changedColumns`), and classifies operations (`APPEND`, `UPDATE`, `UNCHANGED`, `NOT_IN_DATABASE`). |
+| **Health Check** | [src/services/sheetHealthCheck.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetHealthCheck.js) | Read-only connection and schema probe (row 1). Validates Google API connectivity and the header-name schema (reports missing / duplicated required headers) using `spreadsheets.readonly` scope without writing. |
 | **Sync Store** | [src/services/sheetSyncStore.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSyncStore.js) | PostgreSQL persistence layer: atomic compare-and-swap (CAS) queue claiming, leases, fenced settlements, bounded exponential backoff (`15s * 4^(attempt-1)` ±20% jitter), durable run tracking (`sheet_sync_runs`), single-row integration state (`sheet_sync_state`), and distributed writer lease acquisition. |
 | **Sync Engine** | [src/services/sheetSyncEngine.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSyncEngine.js) | Implements incremental sync (`syncCandidates`) and full reconciliation (`reconcile`). Handles chunked writing (200 rows/batch), pre-write schema validation, duplicate detection, dry-run mode, and deletion guard verification. |
 | **Sync Worker** | [src/services/sheetSyncWorker.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSyncWorker.js) | Core worker loop: reports heartbeat, processes claimed runs (`TEST_CONNECTION` or `RECONCILE`), claims incremental queue batches, enforces writer lease, manages halting on configuration/data errors, and prunes aged completed queue rows. |
@@ -186,7 +186,16 @@ The operational mirror links database candidates to Sheet rows exclusively throu
 
 ## 4. Google Sheet Schema
 
-The operational mirror implements an exact **40-column contract** (`A` through `AN`). Columns `A` through `AM` (39 columns) represent human-facing operational fields; Column `AN` represents the technical identity.
+The operational mirror implements **41 required headers** (40 human-facing operational columns plus the technical identity `_SYSTEM_CANDIDATE_ID`), resolved dynamically **by header name**. Operators may reorder columns and add their own; order is irrelevant.
+
+> [!NOTE]
+> The column letters in the table below are the **canonical** layout of an earlier revision (before `VISA SUBMISSION STATUS` was added) and are kept for reference only. The authoritative, current layout and mapping is Section 6.1 of [GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md); the code never relies on a letter.
+
+### Operator guide: what is safe in the Sheet
+
+**Safe at any time:** reorder system columns; move `_SYSTEM_CANDIDATE_ID` (column A, the middle or last), `VISA SUBMISSION STATUS` and `VISA APPROVAL STATUS`; add custom columns anywhere (their values are never written, cleared or overwritten); change widths, formatting, filters, freeze panes; hide columns.
+
+**Not safe (sync halts with `SCHEMA_INVALID` / a data-integrity error):** rename, delete or duplicate a required header (text must match exactly; the only intentional duplicate is `POLICE REP SRI LANKA`, whose two columns keep their order relative to each other: left = SL Verified, right = SL Normal); edit or clear `_SYSTEM_CANDIDATE_ID` values; duplicate a candidate ID across rows; replace system IDs with passport numbers or NICs. The sync never reorders the Sheet for you and never writes while the header mapping is ambiguous.
 
 ### Complete 40-Column Field Mapping Specification
 
@@ -205,7 +214,7 @@ The operational mirror implements an exact **40-column contract** (`A` through `
 | **K** | `WHATSAPP NUM` | `users.whatsapp_number` | WhatsApp contact phone number. |
 | **L** | `CONTACT NUM` | `users.contact_number` | Alternate contact phone number. |
 | **M** | `PASSPORT COPY` | `documents` type `PASSPORT` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
-| **N** | `POLICE REP SRI LANKA` | `documents` type `POLICE_REPORT`, variant `SL_VERIFIED` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. (Identified positionally; distinct from Column V). |
+| **N** | `POLICE REP SRI LANKA` | `documents` type `POLICE_REPORT`, variant `SL_VERIFIED` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. (One of two identical headers; the left one is SL Verified, the right one SL Normal, by relative order). |
 | **O** | `POLICE REP ROMANIA` | `documents` type `POLICE_REPORT`, variant `ROMANIA` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
 | **P** | `MEDICAL` | `documents` type `MEDICAL` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
 | **Q** | `SCAN` | `documents` type `SCAN` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. **Exactly one SCAN column** exists. |
@@ -236,8 +245,8 @@ The operational mirror implements an exact **40-column contract** (`A` through `
 ### Schema Invariants
 
 - **No arbitrary columns:** No columns exist for Agreements, Affidavits, Contracts, or secondary Scan documents.
-- **Positional identity:** Columns `N` and `V` have identical header text (`POLICE REP SRI LANKA`). The system maps them strictly by ordinal position (`index 13` vs `index 21`), never by header string search.
-- **Header validation:** The worker validates `A1:AN1` before every write batch. If any column header differs or is out of order, writing is immediately aborted with `SheetSchemaMismatchError`.
+- **Relative-order identity:** The two `POLICE REP SRI LANKA` columns have identical header text; they are assigned by their order relative to each other (left = SL Verified, right = SL Normal), and may be moved anywhere in the Sheet as long as that order is kept. A different count of that header is a MISSING / DUPLICATE schema problem.
+- **Header validation:** Row 1 is read once per operation (never cached across runs) and validated by name before every write batch: every required header exactly once, any order, extra columns allowed. A missing, duplicated or renamed required header aborts with `SheetSchemaMismatchError` (`SCHEMA_INVALID`). If row 1 changes between the read and the write, the write is refused (`SheetLayoutChangedError`, retried next run).
 
 ---
 
@@ -263,8 +272,8 @@ loop Every 10 Seconds (Worker Polling)
     Worker->>Queue: Claim PENDING batch (CAS, 2-min lease)
     Queue-->>Worker: Return claimed batch
     Worker->>DB: Read Aggregates (findByUniqueIds)
-    Worker->>Google: Read Header A1:AN1 (Validate Schema)
-    Worker->>Google: Read Candidate IDs AN2:AN
+    Worker->>Google: Read header row 1:1 (build the header-name column map)
+    Worker->>Google: Read Candidate IDs (the _SYSTEM_CANDIDATE_ID column)
     Worker->>Google: batchGet Existing Rows for Batch Candidates
     Worker->>Worker: Map Candidates & Diff Cells (changedColumns)
     alt Candidate Missing in Sheet
@@ -319,9 +328,9 @@ Reconciliation provides a full-state repair mechanism to audit and heal drift be
 
 ### Detailed Reconciliation Algorithm
 
-1. **Positional Header Validation:** Reads `A1:AN1` and validates exact header match.
-2. **Full Sheet Scan:** Reads all data rows (`A2:AN`). Builds candidate row index from Column `AN`.
-3. **Duplicate Check:** If any duplicate candidate ID is found in Column `AN`, the run halts immediately with `DUPLICATE_CANDIDATE_ID`.
+1. **Header-name Validation:** Reads row 1 once and maps every required header by name (any order; extra columns allowed).
+2. **Full Sheet Scan:** Reads all data rows across the live width. Builds the candidate row index from the `_SYSTEM_CANDIDATE_ID` column.
+3. **Duplicate Check:** If any duplicate candidate ID is found in the `_SYSTEM_CANDIDATE_ID` column, the run halts immediately with `DUPLICATE_CANDIDATE_ID`.
 4. **Complete Database Snapshot:** Opens a single `REPEATABLE READ` transaction with `SNAPSHOT_TRANSACTION_TIMEOUT_MS = 120_000`. The reader executes `tx.user.count()` and reads all candidate aggregates, asserting:
    - `aggregates.length === expectedCount`
    - `uniqueIds` are distinct
@@ -588,17 +597,18 @@ The feature is covered by comprehensive automated test suites covering backend s
 
 | Test File | Component Under Test | Test Count | Status |
 | :--- | :--- | :---: | :---: |
-| [test/sheetSchema.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSchema.test.js) | Exact 40-column definition, A1 notation ranges, header validation, assertSheetRow. | 17 | **PASS** |
-| [test/candidateSheetMapper.test.js](file:///c:/Emlynk/EmlynkWABot/test/candidateSheetMapper.test.js) | Aggregate mapping, date formatting, document/stage statuses, record status, pure mapping invariants. | 15 | **PASS** |
-| [test/googleSheetsAdapter.test.js](file:///c:/Emlynk/EmlynkWABot/test/googleSheetsAdapter.test.js) | Narrow adapter methods, write gate enforcement, error classification, range quoting, live client test runner guard. | 31 | **PASS** |
-| [test/sheetSyncPhase2.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncPhase2.test.js) | Aggregate reader batching, planning actions, duplicate AN detection, read-only health checks. | 29 | **PASS** |
+| [test/sheetSchema.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSchema.test.js) | Header-name layout (any order, extra columns, missing / duplicate / renamed headers), column-letter helper, A1 ranges and write runs, assertSheetRow. | 25 | **PASS** |
+| [test/candidateSheetMapper.test.js](file:///c:/Emlynk/EmlynkWABot/test/candidateSheetMapper.test.js) | Aggregate mapping, date formatting, document/stage statuses, record status, pure mapping invariants. | 21 | **PASS** |
+| [test/googleSheetsAdapter.test.js](file:///c:/Emlynk/EmlynkWABot/test/googleSheetsAdapter.test.js) | Narrow adapter methods, write gate enforcement, error classification, range quoting, header-name reads and writes (operator columns never written), live client test runner guard. | 35 | **PASS** |
+| [test/sheetSyncPhase2.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncPhase2.test.js) | Aggregate reader batching, planning actions, duplicate ID detection, read-only health checks. | 30 | **PASS** |
 | [test/sheetSyncOutbox.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncOutbox.test.js) | Additive PostgreSQL migration on PGlite, atomic triggers, coalescing, delete hint stickiness, passport cascade. | 14 | **PASS** |
 | [test/sheetSyncEngine.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncEngine.test.js) | Incremental sync, reconciliation drift repair, deletion guard logic, duplicate stops, dry-run mode. | 13 | **PASS** |
-| [test/sheetSyncWorker.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncWorker.test.js) | Worker loop, lease management, writer lease fencing, exponential backoff, dead lettering, pilot restrictions, halted states, PII redaction. | 28 | **PASS** |
+| [test/sheetSyncReordering.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncReordering.test.js) | Dynamic column mapping regression suite: canonical, reversed and unusual layouts; identity in A / middle / last; moved VISA columns; custom columns preserved; missing, duplicate and renamed headers; no wrong-column writes; layout re-read on a later run; mid-run layout change; idempotent recovery. | 23 | **PASS** |
+| [test/sheetSyncWorker.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncWorker.test.js) | Worker loop, lease management, writer lease fencing, exponential backoff, dead lettering, pilot restrictions, halted states, schema problem codes, PII redaction. | 37 | **PASS** |
 | [test/sheetSyncSettingsApi.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncSettingsApi.test.js) | Express Settings API routes, RBAC (403 for non-admin roles), token claim validation, deduplication of active runs. | 13 | **PASS** |
 | [test/sheetSyncWorkerProcess.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncWorkerProcess.test.js) | Worker HTTP server, `/health`, Cloud Scheduler OIDC verification, operator CLI command, shutdown signals. | 7 | **PASS** |
 | [admin/src/test/settings.test.tsx](file:///c:/Emlynk/EmlynkWABot/admin/src/test/settings.test.tsx) | Admin UI Settings page, sidebar navigation, breadcrumbs, status badge rendering, action buttons, RBAC restricted card. | 12 | **PASS** |
-| **Total Verified Sheet Sync Tests** | **All core sheet sync backend & frontend suites** | **179** | **100% PASS** |
+| **Total Verified Sheet Sync Tests** | **All core sheet sync backend & frontend suites** | **230** | **100% PASS** |
 
 ### Additional Validations
 

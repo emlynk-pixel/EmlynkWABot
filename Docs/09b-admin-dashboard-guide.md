@@ -11,7 +11,7 @@ The development history, per-checkpoint tests and migrations are in [`09a-admin-
 | Address | `/admin` on the backend server (e.g. `http://localhost:3000/admin/`) |
 | Sign in | Email and password (Supabase Auth); the session is refreshed automatically and ends when you sign out |
 | Who can use it | Any staff user with status `ACTIVE`. What each person can do depends on their role: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK` (section 6). |
-| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Clients, Client Details, Missing Documents, Police Workflow, Daily Report, Invite User, Change Roles, Audit Logs, Settings |
+| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Priority Follow-Ups, Clients, Client Details, Missing Documents, Police Workflow, Daily Report, Invite User, Change Roles, Audit Logs, Settings |
 | Actions | Approve, Keep Pending, Remove from Review, Set Document Type, Assign Client, Set Police Slip Date, Upload Candidate Document, Update Candidate Stage, Invite User, Change Roles, Deactivate User |
 | Never | Reject, automatic removal of pending documents, changing a candidate's locked WhatsApp number, modifying or deleting audit logs |
 | Every action | Needs confirmation, is taken by the signed-in admin, and is written to an append-only audit log |
@@ -35,6 +35,7 @@ The first ADMIN is created on the server with `npm run user:create` (a Supabase 
 
 - **Breadcrumb** with the current section.
 - **Review Queue Notification Bell**: Displays an alert bell icon in the top header with a real-time badge count of unread Review Queue submissions. Clicking the bell opens a dropdown panel listing recent pending items with quick navigation to `/admin/review/:id` and a "Mark all as read" button. Read/unread tracking is persisted in `localStorage` per staff user (`emlynk.admin.readNotifications.<userId>`).
+- **Register Candidate** quick access (`/admin/candidates/new`): a button on every page, left of Sync, for the roles that can register candidates (ADMIN, MANAGER, ANALYST, REGISTRATION_DESK). It is the same registration form the Candidates page's *Add candidate* button opens; no other role sees it. On small screens it shows the icon only.
 - **Sync** reloads the data on the current page from the server. Your filters, search and page are kept. While it runs the button shows *Syncing…* and can't be pressed again; afterwards the header shows *Synced HH:MM:SS* or *Sync failed*. Sync only reloads the page's data. It does not talk to WhatsApp or any other system.
 - **Dark mode** toggle (moon / sun icon). The choice is remembered in this browser. Light mode is the default.
 - Your name and role, and **Sign out**.
@@ -164,6 +165,8 @@ The primary interface for managing candidate registrations and deployment workfl
 - **Candidate Call Logs**:
   - Slide-out drawer on the deployment screen.
   - Staff can record phone calls with timestamp, conversation notes, and staff attribution (`public.candidate_call_logs`).
+  - **Current documents**: a compact row of chips above the call history shows the documents the candidate has NOW (a green check for a document on record, a quiet outline for one that isn't). It is not a snapshot from the day of the call: an old call "Passport not uploaded" reads against today's record, so staff can see at once that the passport has since arrived and no new call is needed. It uses the candidate page's own current-document rule (the newest *Verified* document, otherwise the newest waiting for review; *Superseded* never counts), shows only supported document types (police reports per variant; one *Scan*), and is read-only: opening a call log never changes a document.
+  - **Need attention**: a button under each call marks it for follow-up. The call stays in the call history unchanged and shows a *Needs attention* badge; it also appears in **Priority Follow-Ups**. A call that already has an open follow-up can't be marked twice; once its follow-up is completed it can be marked again.
 - **Additional details step (`/admin/candidates/:passportId?tab=additional`)**:
   - The third circle of the candidate's progress stepper (after Candidate details), for every role that manages candidates (REGISTRATION_DESK included). IVS interview and Finalizing the job have no circle.
   - Sections: Passport & Personal Details, Clothing & Sizes, Father Details, Mother Details, Marital & Family Details, Employment / Skills.
@@ -173,6 +176,18 @@ The primary interface for managing candidate registrations and deployment workfl
   - Pant and shoe sizes take a preset or a custom value.
   - If someone else saved the same candidate's details after you opened them, your save is refused with a message; press **Sync** to load their changes and try again (what you typed is kept until then).
   - Saved in `public.candidate_additional_details`. Every change is in Audit Logs with only the changed fields.
+
+### Priority Follow-Ups (`/admin/follow-ups`)
+
+Calls marked **Need attention** in a candidate's Call Log, so important follow-ups are not lost in a long call history. In the sidebar after Candidates; visible to every role that uses call logs (ADMIN, MANAGER, ANALYST, REGISTRATION_DESK).
+
+- **By candidate**: each candidate appears once as a compact card with name, passport ID, WhatsApp (or contact) number, the number of follow-ups and the candidate's current documents. Their follow-ups are listed inside, newest first, each with the call's date and time, who called, the note, who flagged it and when. Candidates with the newest follow-up come first.
+- **Open / Completed**: *Open* (default) lists follow-ups that still need attention; *Completed* is the history, with who completed each and when.
+- **Mark complete**: every role that uses call logs can mark a follow-up complete. It leaves the Open list; it is kept (completer and time stored) and shown under *Completed*.
+- **Delete** (ADMIN and MANAGER only): permanently deletes the follow-up after a confirmation. It removes the follow-up only: the original call log, the candidate and the candidate's documents are never touched, and the call stays in the candidate's Call Log. ANALYST and REGISTRATION_DESK don't see the button, and the server refuses them with 403 whatever the dashboard shows.
+- The call note, call time and caller are always read from the original call log; the follow-up stores only its own status, who flagged and completed it, and when.
+- Marking, completing and deleting are recorded in Audit Logs (*Candidate* category: `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`).
+- Loading, empty, error and in-progress states are shown, with a confirmation message after each action.
 
 ### Invite User (`/admin/invitations`) — ADMIN Only
 
@@ -219,6 +234,7 @@ A centralized, immutable audit log viewer for all system operations, candidate m
   - **Clear Filters**: One-click reset to default view.
 - **Audited Events**:
   - Candidate lifecycle: `CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `UPDATE_STAGE`.
+  - Priority Follow-Ups: `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`.
   - Document actions: `UPLOAD_DOCUMENT`, `REMOVE_DOCUMENT`, `REPLACE_VERIFIED`, `KEEP_AS_VERSION`, `DELETE_TEMPORARY_DOCUMENT`.
   - Review queue decisions: `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT`, `SET_POLICE_DATE`, `RETRY_PROCESSING`.
   - Staff management: `INVITE_USER`, `REACTIVATE_USER`, `COMPLETE_INVITATION`, `UPDATE_USER_ROLE`, `DEACTIVATE_USER`.
@@ -360,8 +376,12 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/candidates/:passportId/documents/upload-target` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Issue signed upload URL for candidate document |
 | POST | `/candidates/:passportId/documents/finalize` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Finalize and verify candidate document upload |
 | POST | `/candidates/:passportId/documents/:documentId/remove` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Remove candidate document `{ reason }` |
-| GET | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate call logs |
+| GET | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate call logs: each call with its newest follow-up (`null`, `OPEN` or `COMPLETED`) and `documentStatus`, the candidate's current documents |
 | POST | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Record call log `{ note, createdDate }` |
+| POST | `/candidates/:passportId/call-logs/:callLogId/follow-up` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Mark a call for follow-up (201; 409 `FOLLOW_UP_EXISTS` if it already has an open one; 404 if the call isn't this candidate's). The call log is not changed |
+| GET | `/follow-ups?status` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Priority Follow-Ups grouped by candidate, each with the candidate's current documents (default `OPEN`; at most 500 follow-ups, newest first) |
+| POST | `/follow-ups/:followUpId/complete` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Complete a follow-up (409 `FOLLOW_UP_COMPLETED` if already completed); the row is kept |
+| DELETE | `/follow-ups/:followUpId` | ADMIN, MANAGER | Delete the follow-up row only; the call log, candidate and documents stay |
 | GET | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Additional details `{ passportId, details, suggested, updatedDate }` |
 | PUT | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Save additional details (full replacement; audited) |
 | GET | `/review`, `/review/:reviewId`, `/review/:reviewId/file` | ADMIN, MANAGER, ANALYST | Review Queue, one item, its file |
@@ -432,6 +452,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 - **Stored documents can't be corrected.** A *Review required* document can't be re-typed or moved to another client, because it is already in a client folder.
 - **Contrast in light mode.** The Stitch light status colours (green, amber and red badge text) have a contrast of 3.1–4.4:1, below the 4.5:1 guideline for small text. Light mode was kept unchanged as required; changing it would be a Stitch design decision. Dark mode meets 4.5:1 everywhere.
 - **Calculated in memory.** Client completeness and police statuses are calculated over all clients on each request. That is fine for thousands of clients; a much larger client base would need the calculation moved into the database.
+- **Priority Follow-Ups list is capped.** The page shows the newest 500 follow-ups (it says so when more exist); there is no paging.
 - **Not built here.** Reminders and warnings (Phase 11), roles (Phase 12), uploads, exports, global search and client editing.
 
 ## 10. Testing

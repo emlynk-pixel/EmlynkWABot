@@ -29,6 +29,7 @@
   - [document](#document)
   - [candidate_stage](#candidate_stage)
   - [call_log](#call_log)
+  - [call_log_follow_up](#call_log_follow_up)
   - [Supabase-Managed Identity (auth.users)](#supabase-managed-identity-authusers)
 - [ER Diagram](#er-diagram)
 - [Authentication & Authorization](#authentication--authorization)
@@ -51,7 +52,7 @@
   - [Multi-Sheet Configuration](#multi-sheet-configuration)
   - [Document Status Mapping](#document-status-mapping)
   - [Sync Safety Principles](#sync-safety-principles)
-- [Call Logs & Need Attention](#call-logs--need-attention)
+- [Call Logs & Priority Follow-Ups](#call-logs--priority-follow-ups)
 - [Daily Reports](#daily-reports)
 - [Settings & Administration](#settings--administration)
 - [Security](#security)
@@ -109,7 +110,7 @@ Manual processing of candidate verification documents via messaging channels pre
 - 📁 **Single-Scan Document Model**: One scan slot per candidate — no separate agreement/affidavit/contract slots to manage.
 - 🔐 **Supabase-Secured Admin Portal**: Supabase Auth identity plus backend role-based authorization (`ADMIN` / `MANAGER` / `ANALYST` / `REGISTRATION_DESK`) guards every protected route.
 - 🧭 **Candidate Progress Pipeline**: Test Details → Candidate Details → Document Submission → VISA Submission → IVS Interview → Visa Approval → Finalizing the Job.
-- 📞 **Call Logs with Need Attention**: Any call note can be escalated to a dedicated Admin "Need Attention" view without leaving the candidate's history.
+- 📞 **Call Logs with Priority Follow-Ups**: Any call can be marked **Need attention**; it then also appears on the Admin **Priority Follow-Ups** page, grouped by candidate with their current documents, without leaving the candidate's history. Every staff role can complete a follow-up; only ADMIN and MANAGER can delete one (the call log is always kept).
 - 📄 **Google Sheet Operational Mirror**: Scheduled, one-way database → Sheet sync (06:00 / 12:00 / 18:00) for staff who work from a spreadsheet.
 - 📈 **Role-Scoped Daily Reports**: Summary, Analyst, Registration Desk and Admin report views, plus a full operational export.
 
@@ -190,7 +191,11 @@ One row per candidate per pipeline stage (see [Candidate Progress Flow](#candida
 
 ### call_log
 
-Staff call notes for a candidate, with an optional `needs_attention` flag (see [Call Logs & Need Attention](#call-logs--need-attention)). Flagging a call never moves or deletes it — it stays in the candidate's history and additionally appears in the Admin "Need Attention" view.
+Staff call notes for a candidate (the source of truth for the note, call time and caller). See [Call Logs & Priority Follow-Ups](#call-logs--priority-follow-ups).
+
+### call_log_follow_up
+
+A call log marked as needing attention (`call_log_follow_up`): references the call log and holds only follow-up state: `status` (`OPEN` / `COMPLETED`), who flagged it and when, who completed it and when. At most one open follow-up per call log (partial unique index). Deleting a follow-up removes this row only.
 
 ### Supabase-Managed Identity (`auth.users`)
 
@@ -268,8 +273,17 @@ erDiagram
         string passport_id FK
         string user_id FK
         string note
-        boolean needs_attention
         datetime created_date
+    }
+
+    CALL_LOG_FOLLOW_UP {
+        string follow_up_id PK
+        string call_log_id FK
+        string status
+        string flagged_by FK
+        datetime flagged_date
+        string completed_by FK
+        datetime completed_date
     }
 
     AUTH_USERS ||--|| USER : "auth_user_id -> id"
@@ -277,6 +291,7 @@ erDiagram
     CANDIDATE ||--o{ CANDIDATE_STAGE : "progresses through"
     CANDIDATE ||--o{ CALL_LOG : "has"
     USER ||--o{ CALL_LOG : "logs"
+    CALL_LOG ||--o{ CALL_LOG_FOLLOW_UP : "flagged as"
 ```
 
 ---
@@ -529,21 +544,27 @@ This rule applies consistently across every document type mirrored to the Sheet 
 
 ---
 
-## Call Logs & Need Attention
+## Call Logs & Priority Follow-Ups
 
-The candidate Call Log records staff notes about calls made to a candidate. Any call log entry can be marked **Need Attention** for high-priority follow-up:
+The candidate Call Log records staff notes about calls made to a candidate. Any call log entry can be marked **Need attention** for high-priority follow-up:
 
 ```
 Candidate Call Log
     ->
-staff marks a call as Need Attention
+staff marks a call as Need attention
+    ->
+a separate call_log_follow_up record references the call (no data copied)
     ->
 original call log entry remains in the candidate's history
     ->
-the same entry also appears in the Admin "Need Attention" view
+the follow-up appears on the Admin "Priority Follow-Ups" page, grouped by candidate
 ```
 
-Marking a call Need Attention **never** deletes or moves the original record — it is a flag on the existing `call_log` row, surfaced in a dedicated Admin navigation view (`Need Attention`) so high-priority follow-ups are not lost in a long call history.
+- The call log stays the source of truth; marking, completing or deleting a follow-up **never** deletes or changes it.
+- **Current documents**: the Call Log drawer and each candidate group show the candidate's documents *now* (uploaded / not uploaded), using the same current-document rule as the candidate page, so an old "passport not uploaded" call shows the passport once it is on record. Read-only.
+- **Mark complete**: ADMIN, MANAGER, ANALYST, REGISTRATION_DESK. The follow-up is kept (completer and time stored) and leaves the Open list.
+- **Delete**: ADMIN and MANAGER only (enforced by the API); removes the follow-up row only.
+- Audited as `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`.
 
 ---
 
@@ -791,8 +812,11 @@ Every route requires an authenticated, active `user`; access to each route is ad
 | `GET` | `/api/admin/candidates` | Candidate directory: search, complete/incomplete, missing type, paging |
 | `GET` | `/api/admin/candidates/:passportId` | Candidate profile, documents, stage status, call logs |
 | `GET` | `/api/admin/candidates/:passportId/call-logs` | A candidate's call log history |
-| `POST` | `/api/admin/candidates/:passportId/call-logs` | Log a call; optionally flag it `needs_attention` |
-| `GET` | `/api/admin/need-attention` | Call logs flagged `needs_attention`, across all candidates |
+| `POST` | `/api/admin/candidates/:passportId/call-logs` | Log a call |
+| `POST` | `/api/admin/candidates/:passportId/call-logs/:callLogId/follow-up` | Mark a call as Need attention (creates a Priority Follow-Up) |
+| `GET` | `/api/admin/follow-ups?status` | Priority Follow-Ups grouped by candidate, with current documents (`status`: `OPEN` default, or `COMPLETED`) |
+| `POST` | `/api/admin/follow-ups/:followUpId/complete` | Complete a follow-up |
+| `DELETE` | `/api/admin/follow-ups/:followUpId` | Delete a follow-up (ADMIN, MANAGER only) |
 | `GET` | `/api/admin/reports/daily` | Daily report (`?date=YYYY-MM-DD`) — see [Daily Reports](#daily-reports) for the view breakdown |
 | `GET` | `/api/admin/review` | Review queue: waiting files and documents needing review |
 | `POST` | `/api/admin/review/:reviewId/approve` | Approve a reviewed item; audit entry |
@@ -825,7 +849,7 @@ Every route requires an authenticated, active `user`; access to each route is ad
 | **6** | Supabase Auth Migration | ⏳ Planned | Replace custom credential/session handling with Supabase Auth; migrate Invite User and password recovery to Supabase's admin functionality |
 | **7** | Candidate Progress Expansion | ⏳ Planned | Add VISA Submission stage; temporarily disable IVS Interview, Visa Approval, Finalizing the Job in the UI |
 | **8** | Scheduled Sheet Sync & Multi-Sheet Config | ⏳ Planned | Replace continuous sync with 06:00/12:00/18:00 scheduled runs; admin-configurable Sheet target; per-field submitted-date/"Not Submitted" mapping |
-| **9** | Call Logs: Need Attention | ⏳ Planned | `needs_attention` flag and dedicated Admin navigation view |
+| **9** | Call Logs: Priority Follow-Ups | ✅ Completed | Need attention action, `call_log_follow_up` table, Priority Follow-Ups page, current document status in Call Logs |
 | **10** | Daily Report Redesign | ⏳ Planned | Summary / Analyst / Registration Desk / Admin report views; full operational export |
 | **11** | Settings Consolidation | ⏳ Planned | Single Settings area for Configuration, Change Roles, Invite User, Sheet configuration |
 | **12** | Security, QA & Deployment | ⏳ Planned | Load testing, production deployment hardening |
