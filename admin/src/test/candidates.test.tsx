@@ -14,7 +14,7 @@ const LIST: CandidateList = {
         { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", jobTypes: ["Driver", "Welder"], stages: stages([true, true, false, false, false, false, false]) },
         { passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], stages: stages([false, false, false, true, true, true, true]) },
     ],
-    pagination: { page: 1, pageSize: 25, total: 2, totalPages: 1 },
+    pagination: { page: 1, pageSize: 100, total: 2, totalPages: 1 },
     filters: { search: null },
 };
 
@@ -84,7 +84,7 @@ describe("Candidates list", () => {
         expect(screen.getByRole("link", { name: "Add candidate" })).toHaveAttribute("href", "/candidates/new");
 
         await userEvent.setup().type(screen.getByLabelText("Search candidates"), "901234567V{Enter}");
-        expect(calls.at(-1)!.path).toBe("/api/admin/candidates?page=1&pageSize=25&search=901234567V");
+        expect(calls.at(-1)!.path).toBe("/api/admin/candidates?page=1&pageSize=100&search=901234567V");
     });
 
     test("a failed search shows its error and Try again, not the previous results", async () => {
@@ -105,14 +105,14 @@ describe("Candidates list", () => {
         failing = false;
         await user.click(screen.getByRole("button", { name: "Try again" }));
         expect(await screen.findByRole("table", { name: "Candidates" })).toBeInTheDocument();
-        expect(calls.at(-1)!.path).toBe("/api/admin/candidates?page=1&pageSize=25&search=nobody");
+        expect(calls.at(-1)!.path).toBe("/api/admin/candidates?page=1&pageSize=100&search=nobody");
     });
 
     test("a failed page change shows its error, not the previous page", async () => {
         signedInBackend({
             "GET /api/admin/candidates": (url) => (url.searchParams.get("page") === "2"
                 ? { status: 503, body: {} }
-                : { status: 200, body: { ...LIST, pagination: { page: 1, pageSize: 25, total: 30, totalPages: 2 } } }),
+                : { status: 200, body: { ...LIST, pagination: { page: 1, pageSize: 100, total: 130, totalPages: 2 } } }),
         });
         renderApp("/candidates");
         await screen.findByRole("table", { name: "Candidates" });

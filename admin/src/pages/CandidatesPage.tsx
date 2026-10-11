@@ -10,12 +10,15 @@ import { primaryButton } from "../components/Dialog";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { useRef } from "react";
 
-const PAGE_SIZE = 25;
+// The server returns one page at a time (at most 100 candidates).
+const PAGE_SIZE = 100;
 const th = "h-[34px] whitespace-nowrap border-b border-border bg-canvas px-4 text-left text-label-caps uppercase text-ink-subtle";
 const td = "h-11 border-b border-canvas-muted px-4 py-2 text-body-sm";
 
-// Admin > Candidates: every candidate (users), newest first. Search and page
-// live in the URL. A row opens the candidate's deployment process.
+// Admin > Candidates: every candidate (users), newest first, 100 a page,
+// paged on the server. Search and page live in the URL (?page=2), so a
+// reload, Back and Forward keep the page. A row opens the candidate's
+// deployment process.
 export function CandidatesPage() {
     const { user } = useAuth();
     const navigate = useNavigate();
@@ -34,6 +37,7 @@ export function CandidatesPage() {
         setSearchParams(next);
     };
     const open = (passportId: string) => navigate(`/candidates/${encodeURIComponent(passportId)}`);
+    const listRef = useRef<HTMLDivElement>(null);
     const wasErrorRef = useRef(false);
     if (list.status === "error") wasErrorRef.current = true;
     if (list.status === "success") wasErrorRef.current = false;
@@ -42,6 +46,18 @@ export function CandidatesPage() {
     // earlier search or page are not the results of this one.
     // If retrying after an error, keep them hidden so they don't briefly reappear.
     const data = (list.status === "error" || (list.status === "loading" && wasErrorRef.current)) ? null : list.data;
+    // Another page is loading: the current rows stay, dimmed, until it arrives.
+    const changingPage = list.status === "loading" && Boolean(data);
+    // A page past the last one (a stale link, or the last page emptied by a
+    // removal): go to the last page that exists instead of an empty list.
+    const pastLastPage = Boolean(data && data.items.length === 0 && data.pagination.total > 0 && page > data.pagination.totalPages);
+    const lastPage = data?.pagination.totalPages ?? 1;
+    useEffect(() => {
+        if (!pastLastPage) return;
+        const params = new URLSearchParams(searchParams);
+        params.set("page", String(lastPage));
+        setSearchParams(params, { replace: true });
+    }, [pastLastPage, lastPage, searchParams, setSearchParams]);
 
     return (
         <section aria-labelledby="page-title" className="space-y-4">
@@ -71,9 +87,10 @@ export function CandidatesPage() {
             </Card>
 
             <Card>
+                <div ref={listRef} className="scroll-mt-4" />
                 {list.status === "error" && <ErrorState message={list.error.message} onRetry={list.reload} />}
-                {list.status === "loading" && !data && <LoadingState label="Loading candidates…" />}
-                {data && data.items.length === 0 && (
+                {((list.status === "loading" && !data) || pastLastPage) && <LoadingState label="Loading candidates…" />}
+                {data && data.items.length === 0 && !pastLastPage && (
                     <EmptyState
                         title={search ? "No candidates match this search" : "No candidates yet"}
                         action={search ? <button type="button" onClick={() => setSearchParams(new URLSearchParams())} className="text-label-md text-primary hover:underline">Clear search</button> : undefined}
@@ -81,7 +98,8 @@ export function CandidatesPage() {
                 )}
                 {data && data.items.length > 0 && (
                     <>
-                        <div className="overflow-x-auto">
+                        {changingPage && <p role="status" className="px-4 pt-3 text-label-sm text-ink-muted">Loading page…</p>}
+                        <div aria-busy={changingPage} className={`overflow-x-auto transition-opacity ${changingPage ? "opacity-60" : ""}`}>
                             <table className="w-full border-separate border-spacing-0">
                                 <caption className="sr-only">Candidates</caption>
                                 <thead>
@@ -124,6 +142,8 @@ export function CandidatesPage() {
                                 const params = new URLSearchParams(searchParams);
                                 params.set("page", String(next));
                                 setSearchParams(params);
+                                // Back to the top of the list for the new page.
+                                listRef.current?.scrollIntoView?.({ block: "start" });
                             }}
                         />
                     </>

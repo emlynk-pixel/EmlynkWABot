@@ -68,7 +68,8 @@ export type CandidateListItem = {
 
 export type CandidateList = {
     items: CandidateListItem[];
-    pagination: { page: number; pageSize: number; total: number; totalPages: number };
+    // Server-side paging (100 a page). total and totalItems are the same count.
+    pagination: { page: number; pageSize: number; total: number; totalPages: number; totalItems?: number; hasNextPage?: boolean; hasPreviousPage?: boolean };
     filters: { search: string | null };
 };
 
