@@ -495,7 +495,9 @@ function candidateSummary(user) {
     };
 }
 
-export const CANDIDATE_LIST_DEFAULTS = Object.freeze({ page: 1, pageSize: 25 });
+// The Candidates page shows 100 candidates a page; no request gets more.
+export const CANDIDATE_LIST_PAGE_SIZE = 100;
+export const CANDIDATE_LIST_DEFAULTS = Object.freeze({ page: 1, pageSize: CANDIDATE_LIST_PAGE_SIZE });
 
 export function parseCandidateListQuery(query = {}) {
     const errors = [];
@@ -509,7 +511,7 @@ export function parseCandidateListQuery(query = {}) {
         }
         return value;
     };
-    for (const [field, max] of [["page", 10_000], ["pageSize", 100]]) {
+    for (const [field, max] of [["page", 10_000], ["pageSize", CANDIDATE_LIST_PAGE_SIZE]]) {
         const value = single(field);
         if (value === undefined) continue;
         if (!/^\d{1,6}$/.test(value) || Number(value) < 1 || Number(value) > max) {
@@ -539,7 +541,19 @@ export function candidateSearchWhere(search) {
     };
 }
 
-// GET /api/admin/candidates
+// What a list row needs: its summary (candidateSummary) and what
+// automaticStageMissing reads. The candidate page reads the full record.
+const listSelect = {
+    passportId: true, uniqueId: true, firstName: true, otherName: true, nic: true, job: true, jobExperience: true,
+    whatsappNumber: true, passportIssueDate: true, passportExpiryDate: true,
+};
+
+// GET /api/admin/candidates. Server-side paging: one COUNT and one bounded
+// query (LIMIT pageSize OFFSET (page - 1) * pageSize, at most 100 rows) whose
+// stages and required documents Prisma loads in one batched query each, never
+// per candidate. Newest first; passport ID breaks ties, so the order is the
+// same on every page (no candidate on two pages, none skipped). A page past
+// the last one is empty, with the real totals, so the page can go back.
 export async function listCandidates({ db, params }) {
     const where = params.search ? candidateSearchWhere(params.search) : {};
     const [total, users] = await Promise.all([
@@ -547,7 +561,7 @@ export async function listCandidates({ db, params }) {
         db.candidate.findMany({
             where,
             select: {
-                ...userSelect,
+                ...listSelect,
                 stages: { select: { stage: true, completed: true } },
                 documents: {
                     where: { documentType: { in: REQUIRED_SUBMISSION_DOCUMENTS } },
@@ -564,14 +578,16 @@ export async function listCandidates({ db, params }) {
             ...candidateSummary(user),
             stages: stageList(user.stages, automaticStageMissing(user, user.documents)).map(({ stage, completed }) => ({ stage, completed })),
         })),
-        pagination: {
-            page: params.page,
-            pageSize: params.pageSize,
-            total,
-            totalPages: Math.max(1, Math.ceil(total / params.pageSize)),
-        },
+        pagination: listPagination(params, total),
         filters: { search: params.search ?? null },
     };
+}
+
+// total (kept for existing callers) and totalItems are the same count.
+// totalPages is at least 1, so an empty list is "page 1 of 1".
+function listPagination({ page, pageSize }, total) {
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    return { page, pageSize, total, totalItems: total, totalPages, hasNextPage: page < totalPages, hasPreviousPage: page > 1 };
 }
 
 // The stored passport ID for a requested one: the exact row, otherwise the
