@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { NavLink, Outlet } from "react-router";
 import { ApiError } from "../api/client";
 import { getSheetSyncStatus, requestConnectionTest, requestSyncNow, type SheetSyncRun, type SheetSyncStatus } from "../api/sheetSync";
 import { useAdminResource } from "../api/useAdminResource";
@@ -6,7 +7,7 @@ import { isAdmin, useAuth } from "../auth/AuthProvider";
 import { primaryButton, secondaryButton } from "../components/Dialog";
 import { formatDateTime, formatNumber, humanize } from "../components/format";
 import { Icon } from "../components/Icon";
-import { Card, ErrorState, LoadingState, SectionHeading } from "../components/States";
+import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
 import { ToneBadge, type Tone } from "../components/StatusBadge";
 
 // While a run is queued or running, the status is refreshed this often.
@@ -15,7 +16,27 @@ export const ACTIVE_RUN_POLL_MS = 5_000;
 // Settings (/admin/settings). ADMIN only: other roles see an "Access
 // Restricted" card and no Settings data is requested. The backend enforces
 // the same rule on every Settings API route (requireRole); this page only
-// mirrors it. Future system settings are added as further sections here.
+// mirrors it.
+//
+// A row of tabs, one URL each (so reload, Back and Forward keep the tab):
+//   /settings             Configurations (general system settings)
+//   /settings/roles       Change Roles  (AdminRolesPage, unchanged)
+//   /settings/invite      Invite User   (InvitationsPage, unchanged)
+//   /settings/sheet-sync  Google Sheet Sync
+// Every tab is ADMIN only, like the pages it holds. The old /roles and
+// /invitations URLs redirect here (App.tsx).
+export const SETTINGS_TABS = [
+    { to: "/settings", label: "Configurations", end: true },
+    { to: "/settings/roles", label: "Change Roles" },
+    { to: "/settings/invite", label: "Invite User" },
+    { to: "/settings/sheet-sync", label: "Google Sheet Sync" },
+] as const;
+
+const tabClass = ({ isActive }: { isActive: boolean }) =>
+    `-mb-px whitespace-nowrap border-b-2 px-1 pb-2.5 pt-1 text-label-md transition-colors ${isActive
+        ? "border-primary font-medium text-ink"
+        : "border-transparent text-ink-muted hover:border-border-strong hover:text-ink"}`;
+
 export function SettingsPage() {
     const { user } = useAuth();
     if (!isAdmin(user)) {
@@ -37,9 +58,31 @@ export function SettingsPage() {
                 <h1 id="page-title" className="text-headline-lg text-ink">Settings</h1>
                 <p className="mt-1 text-body-sm text-ink-muted">System configuration and integrations.</p>
             </div>
-            <GoogleSheetSyncSection />
+            <nav aria-label="Settings sections" className="flex gap-6 overflow-x-auto border-b border-border">
+                {SETTINGS_TABS.map((tab) => (
+                    <NavLink key={tab.to} to={tab.to} end={"end" in tab ? tab.end : false} className={tabClass}>
+                        {tab.label}
+                    </NavLink>
+                ))}
+            </nav>
+            <Outlet />
         </section>
     );
+}
+
+// Configurations: general system settings. There are none yet besides the
+// integrations (Google Sheet Sync, its own tab).
+export function SettingsConfigurations() {
+    return (
+        <Card>
+            <EmptyState title="No configuration options yet." description="General system settings will appear here." />
+        </Card>
+    );
+}
+
+// Google Sheet Sync tab: the existing section, unchanged.
+export function SheetSyncSettings() {
+    return <GoogleSheetSyncSection />;
 }
 
 const RUN_TONES: Record<string, Tone> = { QUEUED: "pending", RUNNING: "review", SUCCEEDED: "verified", FAILED: "critical", SKIPPED: "pending" };

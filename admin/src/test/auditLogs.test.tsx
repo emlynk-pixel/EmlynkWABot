@@ -92,11 +92,11 @@ const lastQuery = (calls: { path: string; url: URL }[]) => auditCalls(calls).at(
 const navLinks = () => within(screen.getByRole("navigation", { name: "Main navigation" })).getAllByRole("link").map((l) => l.textContent);
 
 describe("Audit Logs navigation and access", () => {
-    test("ADMIN: Audit Logs sits after Change Roles and before Settings, and opens the page", async () => {
+    test("ADMIN: Audit Logs sits after Daily Report and before Settings, and opens the page", async () => {
         asRole("ADMIN", { [`GET ${PATH}`]: { status: 200, body: page([ENTRY]) } });
         renderApp("/");
         await screen.findByTestId("admin-name");
-        expect(navLinks().slice(-3)).toEqual(["Change Roles", "Audit Logs", "Settings"]);
+        expect(navLinks().slice(-3)).toEqual(["Daily Report", "Audit Logs", "Settings"]);
         await userEvent.setup().click(screen.getByRole("link", { name: "Audit Logs" }));
         expect(await screen.findByRole("heading", { name: "Audit Logs", level: 1 })).toBeInTheDocument();
         expect(screen.getByRole("link", { name: "Audit Logs" })).toHaveAttribute("aria-current", "page");

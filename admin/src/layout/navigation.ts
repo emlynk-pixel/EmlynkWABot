@@ -3,9 +3,10 @@ import { ADMIN_ONLY, CANDIDATE_ROLES, DASHBOARD_ROLES, type Role } from "../auth
 
 // Sidebar entries, in the order of the Stitch design, plus Missing Documents
 // and Daily Report (Phase 10 scope, same design language), Audit Logs
-// (ADMIN only, read-only), and Settings
-// (ADMIN only) last. Settings holds sections such as Google Sheet Sync; new
-// system settings become sections of that page, never new sidebar entries.
+// (ADMIN only, read-only), and Settings (ADMIN only) last. Settings holds
+// Configurations, Change Roles, Invite User and Google Sheet Sync as tabs
+// (SettingsPage.tsx); new system settings become tabs or sections there,
+// never new sidebar entries.
 // `roles`: who sees the entry, the same tiers the backend enforces
 // (src/routes/admin.js); the backend remains the authoritative check.
 export type NavItem = { to: string; label: string; icon: IconName; end?: boolean; roles: readonly Role[] };
@@ -20,8 +21,6 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/missing-documents", label: "Missing Documents", icon: "assignment_late", roles: DASHBOARD_ROLES },
     { to: "/police", label: "Police Workflow", icon: "local_police", roles: DASHBOARD_ROLES },
     { to: "/reports/daily", label: "Daily Report", icon: "summarize", roles: DASHBOARD_ROLES },
-    { to: "/invitations", label: "Invite User", icon: "person_add", roles: ADMIN_ONLY },
-    { to: "/roles", label: "Change Roles", icon: "manage_accounts", roles: ADMIN_ONLY },
     { to: "/audit-logs", label: "Audit Logs", icon: "history", roles: ADMIN_ONLY },
     { to: "/settings", label: "Settings", icon: "settings", roles: ADMIN_ONLY },
 ];

@@ -37,24 +37,26 @@ function asRole(role: string, routes: FetchRoutes = {}) {
 const settingsCalls = (calls: { path: string }[]) => calls.filter((c) => c.path.startsWith("/api/admin/settings"));
 
 describe("Settings navigation", () => {
-    test("ADMIN: Settings is the last sidebar item, after Change Roles and Audit Logs; active state and breadcrumb on /settings", async () => {
+    test("ADMIN: Settings is the last sidebar item, after Audit Logs; no Invite User / Change Roles items; active state and breadcrumb on /settings", async () => {
         signedInBackend({ [`GET ${STATUS_PATH}`]: { status: 200, body: STATUS } });
         renderApp("/settings");
         const nav = await screen.findByRole("navigation", { name: "Main navigation" });
         const labels = within(nav).getAllByRole("link").map((l) => l.textContent);
-        expect(labels.slice(-4)).toEqual(["Invite User", "Change Roles", "Audit Logs", "Settings"]);
+        expect(labels.slice(-3)).toEqual(["Daily Report", "Audit Logs", "Settings"]);
+        expect(within(nav).queryByRole("link", { name: "Invite User" })).toBeNull();
+        expect(within(nav).queryByRole("link", { name: "Change Roles" })).toBeNull();
         expect(within(nav).getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
-        expect(within(nav).getByRole("link", { name: "Change Roles" })).not.toHaveAttribute("aria-current");
         expect(await screen.findByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
         expect(within(screen.getByRole("navigation", { name: /breadcrumb/i })).getByText("Settings")).toBeInTheDocument();
     });
 
-    test("ADMIN: clicking Settings in the sidebar opens the page with the Google Sheet Sync section (no separate sidebar item)", async () => {
+    test("ADMIN: clicking Settings in the sidebar opens Settings; its Google Sheet Sync tab shows the section (no separate sidebar item)", async () => {
         signedInBackend({ [`GET ${STATUS_PATH}`]: { status: 200, body: STATUS } });
         renderApp("/");
         const nav = await screen.findByRole("navigation", { name: "Main navigation" });
         expect(within(nav).queryByRole("link", { name: /google sheet/i })).toBeNull();
         await userEvent.setup().click(within(nav).getByRole("link", { name: "Settings" }));
+        await userEvent.setup().click(await screen.findByRole("link", { name: "Google Sheet Sync" }));
         expect(await screen.findByRole("heading", { name: "Google Sheet Sync" })).toBeInTheDocument();
     });
 
@@ -74,7 +76,7 @@ describe("Settings navigation", () => {
 describe("Google Sheet Sync section", () => {
     test("loads and shows the status: connection, write gate (dry-run note), last runs, queue, target hint", async () => {
         signedInBackend({ [`GET ${STATUS_PATH}`]: { status: 200, body: STATUS } });
-        renderApp("/settings");
+        renderApp("/settings/sheet-sync");
         expect(await screen.findByText("Connected · schema valid")).toBeInTheDocument();
         expect(screen.getByText("Disabled")).toBeInTheDocument();
         expect(screen.getByText(/Sync Now runs a dry run/)).toBeInTheDocument();
@@ -87,7 +89,7 @@ describe("Google Sheet Sync section", () => {
     test("shows a loading state first, and an error inside the section only when the status request fails", async () => {
         let resolve: (value: { status: number; body: unknown }) => void = () => {};
         signedInBackend({ [`GET ${STATUS_PATH}`]: () => new Promise((r) => { resolve = r; }) });
-        await renderAppSignedIn("/settings");
+        await renderAppSignedIn("/settings/sheet-sync");
         expect(await screen.findByText("Loading sync status…", {}, RENDER_STEP)).toBeInTheDocument();
         resolve({ status: 503, body: { message: "Service unavailable" } });
         expect(await screen.findByRole("alert", {}, RENDER_STEP)).toBeInTheDocument();
@@ -102,7 +104,7 @@ describe("Google Sheet Sync section", () => {
             "POST /api/admin/settings/sheet-sync/run": { status: 202, body: { run: { ...RUN, status: "QUEUED" }, alreadyActive: false } },
             "POST /api/admin/settings/sheet-sync/test": { status: 202, body: { run: { ...RUN, kind: "TEST_CONNECTION", status: "QUEUED" }, alreadyActive: true } },
         });
-        renderApp("/settings");
+        renderApp("/settings/sheet-sync");
         const user = userEvent.setup();
         await user.click(await screen.findByRole("button", { name: "Sync Now" }));
         expect(await screen.findByText(/Sync requested\. It runs in the background; you can leave this page\./)).toBeInTheDocument();
@@ -118,7 +120,7 @@ describe("Google Sheet Sync section", () => {
             [`GET ${STATUS_PATH}`]: { status: 200, body: STATUS },
             "POST /api/admin/settings/sheet-sync/run": { status: 403, body: { message: "Insufficient permissions" } },
         });
-        renderApp("/settings");
+        renderApp("/settings/sheet-sync");
         await userEvent.setup().click(await screen.findByRole("button", { name: "Sync Now" }));
         expect(await screen.findByText("Insufficient permissions")).toBeInTheDocument();
         expect(screen.queryByText(/Sync requested/)).toBeNull();
@@ -126,7 +128,7 @@ describe("Google Sheet Sync section", () => {
 
     test("an active run disables its button and is shown as in progress", async () => {
         signedInBackend({ [`GET ${STATUS_PATH}`]: { status: 200, body: { ...STATUS, activeRuns: { reconcile: { ...RUN, status: "RUNNING", dryRun: null }, testConnection: null } } } });
-        renderApp("/settings");
+        renderApp("/settings/sheet-sync");
         expect(await screen.findByText("In progress")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Sync Now" })).toBeDisabled();
         expect(screen.getByRole("button", { name: "Test Connection" })).toBeEnabled();
@@ -140,7 +142,7 @@ describe("Google Sheet Sync section", () => {
                 body: { ...STATUS, worker: { online: false, lastHeartbeatAt: null }, integration: { state: "DATA_INTEGRITY", lastErrorClass: "DUPLICATE_CANDIDATE_ID", lastErrorCode: "2", lastErrorAt: "2026-10-06T08:00:00.000Z" } },
             },
         });
-        renderApp("/settings");
+        renderApp("/settings/sheet-sync");
         expect(await screen.findByText(/The sheet-sync worker is not reporting/)).toBeInTheDocument();
         expect(screen.getByText("Duplicate candidate IDs in the Sheet: sync halted")).toBeInTheDocument();
         expect(screen.getByText(/Duplicate candidate id \(2\)/)).toBeInTheDocument();
@@ -149,7 +151,7 @@ describe("Google Sheet Sync section", () => {
     test("the status is refreshed while a run is active", async () => {
         let polls = 0;
         signedInBackend({ [`GET ${STATUS_PATH}`]: () => { polls += 1; return { status: 200, body: { ...STATUS, activeRuns: { reconcile: { ...RUN, status: "QUEUED" }, testConnection: null } } }; } });
-        renderApp("/settings");
+        renderApp("/settings/sheet-sync");
         await screen.findByText("In progress");
         await waitFor(() => expect(polls).toBeGreaterThan(1), { timeout: 7_000 });
     }, 10_000);
