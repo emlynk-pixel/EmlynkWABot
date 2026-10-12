@@ -120,21 +120,55 @@ The status is calculated every time from the stored documents, and nothing about
 
 ### Daily Report
 
-Figures for one **business day** in Sri Lanka (00:00–24:00). Pick a date (not in the future) or use *Previous day*, *Next day* and *Today*.
+One **business day** in Sri Lanka (00:00–24:00 Asia/Colombo). Pick a date (not in the future) with the date picker or use *Previous day*, *Next day* and *Today*; the date controls every figure on the page and in the PDF. Date, view and role are kept in the URL. Wording is *Candidates* throughout.
 
-**Received on the chosen day:**
+Two views (tabs):
+
+- **Summary** — ADMIN, MANAGER and ANALYST (the existing Daily Report access).
+- **Summary by Roles** — ADMIN and MANAGER only; the server refuses other roles.
+
+**Summary.** Four figures for the chosen day:
 
 | Figure | Meaning |
 |---|---|
-| Documents received | WhatsApp submissions that passed the intake checks that day |
-| Successfully processed | finished without an error: stored, held for review, or recognised as a duplicate |
-| Failed processing | processing stopped with an error (and how many are still processing) |
-| Unclear documents | read with low confidence (40–59 %) or unreliably (below 40 %) |
-| Temporary documents | received that day and still waiting in pending storage |
-| By document type | passport, police slip, police report, medical, unknown |
-| Admin actions this day | approvals, keep-pending decisions, removals and corrections |
+| Candidates completed | candidates whose final stage, *Finalizing the job*, was completed that day |
+| Visa completed | candidates whose *Visa approval* stage was completed that day |
+| Calls taken | call-log entries whose call time falls on that day |
+| Documents submitted | WhatsApp files received that day plus documents uploaded by staff that day |
 
-**Current status**, labelled with the time it was taken: completed and incomplete clients, missing documents, and police reports due soon, due today and overdue. These are always *now*, because no history of them is kept. For a past date the page says so rather than pretending they were that day's figures.
+Below them:
+
+- **Documents submitted** by type: Total, WhatsApp and Manual for each candidate document type (one *Scan*; no removed types), plus *Unclassified* when WhatsApp received files the classifier could not type. A line under the table keeps the WhatsApp processing outcome: processed (stored, held for review, duplicates), failed, still processing, unclear, still in temporary storage.
+- **Completed candidates**: passport number, name, time, and whether every stage is complete *now* (a candidate can finalize while another stage is still open).
+- **Calls taken**: time, candidate, passport number, staff member and role (the first 10, then *Show all*).
+- **Review and admin actions this day**, collapsed.
+
+**Current state** (labelled with the time it was taken; it is always *now*, because no history of it is kept — for a past date the page says so):
+
+- **Incomplete candidates**: for each of the seven stages, how many candidates have it open and the main reasons, from the same rules as the candidate page. Automatic stages give the missing item (for example *Passport document missing*, *Romania police report missing*). *Test details* gives *Test failed* or *No test result recorded*. The other stages give *Not marked complete*. Stages are independent: a stage completed out of order counts as complete. *View* lists that stage's candidates with their reasons, 25 per page.
+- **Police reports**: due soon, due today, overdue, missing slip date, slip not uploaded (the 21-day police workflow, unchanged), with a link to the Police Workflow.
+
+**Summary by Roles.** Choose a role: Analyst, Manager, Admin or Registration Desk. The view shows:
+
+- the calls taken and documents uploaded that day by staff members with that role;
+- the uploads by document type;
+- each staff member's calls and uploads;
+- the activity list (time, staff member, action, candidate, passport number).
+
+Documents received on WhatsApp are never attributed to staff. A staff member is counted under their **current** role.
+
+**Export PDF** exports the open view for the chosen date (and role):
+
+- **Summary PDF:** key metrics, documents by type with the WhatsApp / manual split, completed candidates, incomplete candidates by process with the main reasons, and police status.
+- **Role PDF:** the role's calls and uploads, uploads by type, staff and activity, without the Summary sections.
+
+Both are structured tables whose header row repeats on every page; nothing is cut off, and an empty day exports cleanly.
+
+**Limitations (no history is stored for these):**
+- Incomplete candidates and police status are the current state only.
+- *Candidates completed* and *Visa completed* use the stage's stored completion time: if a stage is later marked not complete, it no longer counts on the earlier day.
+- Role figures use each staff member's current role.
+- A WhatsApp submission removed from review (its record is deleted) no longer counts as received.
 
 ### Candidates (Candidate Pool & Deployment)
 
@@ -407,7 +441,10 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/review/:reviewId/replace-verified` | ADMIN, MANAGER, ANALYST | Replace verified document `{ existingDocumentId, reason?, policeSubmittedDate? }` |
 | POST | `/review/:reviewId/keep-as-version` | ADMIN, MANAGER, ANALYST | Keep document as version `{ reason? }` |
 | GET | `/police` | ADMIN, MANAGER, ANALYST | Police Workflow (`status`, `search`, `passportId`, paging) |
-| GET | `/reports/daily` | ADMIN, MANAGER, ANALYST | Daily Report (`date=YYYY-MM-DD`, default today) |
+| GET | `/reports/daily` | ADMIN, MANAGER, ANALYST | Daily figures (`date=YYYY-MM-DD`, default today); kept for compatibility |
+| GET | `/reports/daily/summary` | ADMIN, MANAGER, ANALYST | Daily Report Summary (`date`): KPIs, documents by type, completed candidates, calls, current incomplete candidates and police status |
+| GET | `/reports/daily/incomplete` | ADMIN, MANAGER, ANALYST | Candidates with one stage open now, with reasons (`stage`, `page`; 25 per page) |
+| GET | `/reports/daily/roles` | ADMIN, MANAGER | Summary by Roles (`date`, `role` = ADMIN / MANAGER / ANALYST / REGISTRATION_DESK) |
 | GET | `/audit-logs` | ADMIN | View-only audit logs (search, user/candidate filters, dates, paging) |
 | GET | `/users` | ADMIN | List staff users (under `/api/admin/users`) |
 | POST | `/users/invite` | ADMIN | Invite a user `{ name, email, role }` |
