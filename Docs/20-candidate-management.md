@@ -406,7 +406,7 @@ An unknown stage key returns 404 `Stage not found`; malformed input returns 400 
 |---|---|---|---|
 | `page` | integer >= 1 | 1 | Page number |
 | `pageSize` | integer | 25 | Results per page |
-| `search` | string | — | Search by name, passport ID, NIC, WhatsApp number |
+| `search` | string | — | Search by name, passport ID, NIC, contact number, WhatsApp number (database-side, before paging; a phone-like word also matches its 07… / 94… form, for both numbers) |
 
 ### Upload request bodies
 

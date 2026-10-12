@@ -529,14 +529,18 @@ export function parseCandidateListQuery(query = {}) {
     return errors.length ? { errors } : { params };
 }
 
-// The clients search (passport ID, unique ID, names, WhatsApp number), plus NIC.
+// The clients search (passport ID, unique ID, names, WhatsApp number), plus NIC
+// and the contact number. The contact number takes exactly the conditions the
+// WhatsApp number has for the word (the substring and the 07… / 94… variants
+// of a phone-like word), so the two are matched the same way.
 export function candidateSearchWhere(search) {
     const where = clientSearchWhere(search);
     if (!where.AND) return where;
     return {
         AND: where.AND.map((word, index) => {
             const term = search.trim().split(/\s+/).filter(Boolean)[index];
-            return { OR: [...word.OR, { nic: { contains: term, mode: "insensitive" } }] };
+            const contact = word.OR.filter((condition) => condition.whatsappNumber).map((condition) => ({ contactNumber: condition.whatsappNumber }));
+            return { OR: [...word.OR, ...contact, { nic: { contains: term, mode: "insensitive" } }] };
         }),
     };
 }
