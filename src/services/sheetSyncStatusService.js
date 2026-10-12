@@ -9,7 +9,15 @@
 // The payload holds states, timestamps, counts and codes. Never credentials,
 // tokens, the full spreadsheet ID, candidate data or Google message text.
 
-import { RUN_KIND, RUN_STATUS, createSheetSyncStore } from "./sheetSyncStore.js";
+import { SHEET_SYNC_SCHEDULE } from "../config/sheetSync.js";
+import { RUN_KIND, RUN_STATUS, RUN_TRIGGER, createSheetSyncStore } from "./sheetSyncStore.js";
+
+// Who started a reconciliation, from the run's stored trigger_source (never
+// from the time it ran, so a late scheduled run is still automatic):
+// automatic = Cloud Scheduler; manual = Sync Now (ADMIN) or the operator
+// command (OPERATOR, npm run sheet:request).
+const AUTOMATIC_TRIGGERS = [RUN_TRIGGER.SCHEDULER];
+const MANUAL_TRIGGERS = [RUN_TRIGGER.ADMIN, RUN_TRIGGER.OPERATOR];
 
 // The worker heartbeats every poll (10 s by default); older than this means
 // it is not running, so queued runs won't progress.
@@ -36,7 +44,7 @@ export function serializeRun(run) {
 
 export async function getSheetSyncStatus({ db, now = new Date() }) {
     const store = createSheetSyncStore({ db });
-    const [state, queue, lastReconciliation, lastSuccessfulReconciliation, lastConnectionTest, activeReconcile, activeTest] = await Promise.all([
+    const [state, queue, lastReconciliation, lastSuccessfulReconciliation, lastConnectionTest, activeReconcile, activeTest, lastAutomaticSync, lastManualSync] = await Promise.all([
         store.getState(),
         store.queueCounts(),
         store.latestRun(RUN_KIND.RECONCILE, { status: { in: [RUN_STATUS.SUCCEEDED, RUN_STATUS.FAILED, RUN_STATUS.SKIPPED] } }),
@@ -44,6 +52,8 @@ export async function getSheetSyncStatus({ db, now = new Date() }) {
         store.latestRun(RUN_KIND.TEST_CONNECTION, { status: { in: [RUN_STATUS.SUCCEEDED, RUN_STATUS.FAILED] } }),
         store.latestRun(RUN_KIND.RECONCILE, { status: { in: [RUN_STATUS.QUEUED, RUN_STATUS.RUNNING] } }),
         store.latestRun(RUN_KIND.TEST_CONNECTION, { status: { in: [RUN_STATUS.QUEUED, RUN_STATUS.RUNNING] } }),
+        store.latestRun(RUN_KIND.RECONCILE, { status: RUN_STATUS.SUCCEEDED, triggerSource: { in: AUTOMATIC_TRIGGERS } }),
+        store.latestRun(RUN_KIND.RECONCILE, { status: RUN_STATUS.SUCCEEDED, triggerSource: { in: MANUAL_TRIGGERS } }),
     ]);
     const heartbeat = state?.workerHeartbeatAt ?? null;
     return {
@@ -64,6 +74,13 @@ export async function getSheetSyncStatus({ db, now = new Date() }) {
         lastSuccessfulSyncAt: iso(state?.lastSyncSuccessAt),
         lastReconciliation: serializeRun(lastReconciliation),
         lastSuccessfulReconciliationAt: iso(lastSuccessfulReconciliation?.finishedAt),
+        // The latest successful reconciliation of each source, and of either
+        // (with its trigger), so a manual run is never shown as the scheduled one.
+        lastSuccessfulReconciliation: serializeRun(lastSuccessfulReconciliation),
+        lastAutomaticSync: serializeRun(lastAutomaticSync),
+        lastManualSync: serializeRun(lastManualSync),
+        // The automatic schedule (informational; Cloud Scheduler runs it).
+        schedule: { times: [...SHEET_SYNC_SCHEDULE.times], timeZone: SHEET_SYNC_SCHEDULE.timeZone },
         lastConnectionTest: serializeRun(lastConnectionTest),
         activeRuns: { reconcile: serializeRun(activeReconcile), testConnection: serializeRun(activeTest) },
     };

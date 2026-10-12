@@ -7,7 +7,7 @@ import { isAdmin, useAuth } from "../auth/AuthProvider";
 import { primaryButton, secondaryButton } from "../components/Dialog";
 import { formatDateTime, formatNumber, humanize } from "../components/format";
 import { Icon } from "../components/Icon";
-import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
+import { Card, ErrorState, LoadingState, SectionHeading } from "../components/States";
 import { ToneBadge, type Tone } from "../components/StatusBadge";
 
 // While a run is queued or running, the status is refreshed this often.
@@ -19,14 +19,12 @@ export const ACTIVE_RUN_POLL_MS = 5_000;
 // mirrors it.
 //
 // A row of tabs, one URL each (so reload, Back and Forward keep the tab):
-//   /settings             Configurations (general system settings)
 //   /settings/roles       Change Roles  (AdminRolesPage, unchanged)
 //   /settings/invite      Invite User   (InvitationsPage, unchanged)
 //   /settings/sheet-sync  Google Sheet Sync
-// Every tab is ADMIN only, like the pages it holds. The old /roles and
-// /invitations URLs redirect here (App.tsx).
+// /settings opens the first tab (App.tsx). Every tab is ADMIN only, like the
+// pages it holds. The old /roles and /invitations URLs redirect here.
 export const SETTINGS_TABS = [
-    { to: "/settings", label: "Configurations", end: true },
     { to: "/settings/roles", label: "Change Roles" },
     { to: "/settings/invite", label: "Invite User" },
     { to: "/settings/sheet-sync", label: "Google Sheet Sync" },
@@ -60,7 +58,7 @@ export function SettingsPage() {
             </div>
             <nav aria-label="Settings sections" className="flex gap-6 overflow-x-auto border-b border-border">
                 {SETTINGS_TABS.map((tab) => (
-                    <NavLink key={tab.to} to={tab.to} end={"end" in tab ? tab.end : false} className={tabClass}>
+                    <NavLink key={tab.to} to={tab.to} className={tabClass}>
                         {tab.label}
                     </NavLink>
                 ))}
@@ -70,17 +68,7 @@ export function SettingsPage() {
     );
 }
 
-// Configurations: general system settings. There are none yet besides the
-// integrations (Google Sheet Sync, its own tab).
-export function SettingsConfigurations() {
-    return (
-        <Card>
-            <EmptyState title="No configuration options yet." description="General system settings will appear here." />
-        </Card>
-    );
-}
-
-// Google Sheet Sync tab: the existing section, unchanged.
+// Google Sheet Sync tab: the sync status and actions.
 export function SheetSyncSettings() {
     return <GoogleSheetSyncSection />;
 }
@@ -91,12 +79,65 @@ function RunBadge({ run }: { run: SheetSyncRun }) {
     return <ToneBadge tone={RUN_TONES[run.status] ?? "pending"}>{humanize(run.status)}{run.dryRun ? " (dry run)" : ""}</ToneBadge>;
 }
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
+// Who started a run, from its stored trigger (never from its time): Cloud
+// Scheduler = Scheduled; Sync Now or the operator command = Manual.
+export function triggerLabel(trigger: SheetSyncRun["trigger"]): "Scheduled" | "Manual" {
+    return trigger === "SCHEDULER" ? "Scheduled" : "Manual";
+}
+
+function SourceBadge({ run }: { run: SheetSyncRun }) {
     return (
-        <div className="flex flex-col gap-1 border-b border-border py-3 sm:flex-row sm:items-center sm:justify-between">
+        <span
+            title={run.trigger === "OPERATOR" ? "Requested with the operator command" : run.trigger === "ADMIN" ? "Requested with Sync Now" : "Run by the automatic schedule"}
+            className="inline-flex h-[22px] items-center whitespace-nowrap rounded-full border border-border-strong px-2 text-label-sm text-ink-muted"
+        >
+            {triggerLabel(run.trigger)}
+        </span>
+    );
+}
+
+// A titled group inside the card, separated by a hairline.
+function Group({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
+    return (
+        <section className="border-t border-border pt-4">
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                <h3 className="text-label-caps uppercase text-ink-subtle">{title}</h3>
+                {aside}
+            </div>
+            {children}
+        </section>
+    );
+}
+
+// A label over its value, in a grid of facts.
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+    return (
+        <div className="min-w-0">
             <dt className="text-label-md text-ink-muted">{label}</dt>
-            <dd className="text-body-sm text-ink sm:text-right">{children}</dd>
+            <dd className="mt-1 break-words text-body-sm text-ink">{children}</dd>
         </div>
+    );
+}
+
+// A small tile for the status summary.
+function StatusTile({ label, children }: { label: string; children: ReactNode }) {
+    return (
+        <div className="min-w-0 rounded-md border border-border bg-canvas px-4 py-3">
+            <dt className="text-label-md text-ink-muted">{label}</dt>
+            <dd className="mt-1.5">{children}</dd>
+        </div>
+    );
+}
+
+// When a successful reconciliation finished, with where it came from.
+function SyncTime({ run }: { run: SheetSyncRun | null | undefined }) {
+    if (!run) return <span className="text-ink-muted">Not yet run</span>;
+    return (
+        <span className="inline-flex flex-wrap items-center gap-2">
+            <span className="tabular-nums">{formatDateTime(run.finishedAt)}</span>
+            <SourceBadge run={run} />
+            {run.dryRun && <span className="text-label-sm text-ink-muted">dry run</span>}
+        </span>
     );
 }
 
@@ -137,6 +178,10 @@ const INTEGRATION: Record<SheetSyncStatus["integration"]["state"], { tone: Tone;
     DATA_INTEGRITY: { tone: "critical", label: "Duplicate candidate IDs in the Sheet: sync halted" },
 };
 
+// The configured automatic schedule (fixed; Cloud Scheduler runs it). The
+// server reports it; these are its values if an older server does not.
+const DEFAULT_SCHEDULE = { times: ["06:00", "12:00", "18:00"], timeZone: "Asia/Colombo" };
+
 function GoogleSheetSyncSection() {
     const { token } = useAuth();
     const status = useAdminResource<SheetSyncStatus>("sheet-sync-status", (t, signal) => getSheetSyncStatus(t, signal));
@@ -168,6 +213,10 @@ function GoogleSheetSyncSection() {
         }
     }
 
+    const schedule = data?.schedule ?? DEFAULT_SCHEDULE;
+    const connection = data ? connectionText(data) : null;
+    const integration = data ? INTEGRATION[data.integration.state] : null;
+
     return (
         <Card className="p-5">
             <SectionHeading
@@ -194,53 +243,81 @@ function GoogleSheetSyncSection() {
             {status.status === "loading" && !data && <LoadingState label="Loading sync status…" />}
             {status.status === "error" && !data && <ErrorState message={status.error.message} onRetry={reload} />}
 
-            {data && (
-                <>
+            {data && connection && integration && (
+                <div className="mt-4 space-y-5">
                     {status.status === "error" && (
-                        <p role="alert" className="mt-4 text-body-sm text-critical">The status could not be refreshed: {status.error.message}</p>
+                        <p role="alert" className="text-body-sm text-critical">The status could not be refreshed: {status.error.message}</p>
                     )}
                     {!data.worker.online && (
-                        <div role="alert" className="mt-4 rounded border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
+                        <div role="alert" className="rounded border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
                             The sheet-sync worker is not reporting{data.worker.lastHeartbeatAt ? ` (last seen ${formatDateTime(data.worker.lastHeartbeatAt)})` : ""}. Requests stay queued until it runs.
                         </div>
                     )}
+
+                    <dl aria-label="Status summary" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <StatusTile label="Connection"><ToneBadge tone={connection.tone}>{connection.label}</ToneBadge></StatusTile>
+                        <StatusTile label="Integration state"><ToneBadge tone={integration.tone}>{integration.label}</ToneBadge></StatusTile>
+                        <StatusTile label="Write sync">
+                            <ToneBadge tone={data.writeGate === "ENABLED" ? "verified" : "pending"}>{data.writeGate === "ENABLED" ? "Enabled" : data.writeGate === "DISABLED" ? "Disabled" : "Unknown"}</ToneBadge>
+                        </StatusTile>
+                    </dl>
                     {data.writeGate === "DISABLED" && (
-                        <p className="mt-4 text-body-sm text-ink-muted">
+                        <p className="text-body-sm text-ink-muted">
                             Write sync is disabled: nothing is written to the Sheet. Sync Now runs a dry run that compares the Sheet with the database and reports what it would change.
                         </p>
                     )}
-                    <dl className="mt-2">
-                        <Row label="Connection"><ToneBadge tone={connectionText(data).tone}>{connectionText(data).label}</ToneBadge></Row>
-                        <Row label="Integration state"><ToneBadge tone={INTEGRATION[data.integration.state].tone}>{INTEGRATION[data.integration.state].label}</ToneBadge></Row>
-                        <Row label="Write sync">
-                            <ToneBadge tone={data.writeGate === "ENABLED" ? "verified" : "pending"}>{data.writeGate === "ENABLED" ? "Enabled" : data.writeGate === "DISABLED" ? "Disabled" : "Unknown"}</ToneBadge>
-                        </Row>
-                        <Row label="Target">{data.target ?? (data.configured === false ? "Not configured" : "—")}</Row>
-                        <Row label="Last successful sync">{formatDateTime(data.lastSuccessfulSyncAt)}</Row>
-                        <Row label="Last reconciliation">
-                            {data.lastReconciliation ? (
-                                <span className="inline-flex flex-col items-start gap-1 sm:items-end">
-                                    <span className="inline-flex items-center gap-2"><RunBadge run={data.lastReconciliation} />{formatDateTime(data.lastReconciliation.finishedAt)}</span>
-                                    {reconciliationSummary(data.lastReconciliation) && <span className="text-ink-muted">{reconciliationSummary(data.lastReconciliation)}</span>}
-                                    {data.lastReconciliation.errorClass && <span className="text-critical">{failureText(data.lastReconciliation.errorClass, data.lastReconciliation.errorCode)}</span>}
-                                </span>
-                            ) : "—"}
-                        </Row>
-                        <Row label="Last successful reconciliation">{formatDateTime(data.lastSuccessfulReconciliationAt)}</Row>
-                        {(data.activeRuns.reconcile || data.activeRuns.testConnection) && (
-                            <Row label="In progress">
-                                <span className="inline-flex flex-wrap items-center gap-2">
-                                    {data.activeRuns.reconcile && <>Sync <RunBadge run={data.activeRuns.reconcile} /></>}
-                                    {data.activeRuns.testConnection && <>Connection test <RunBadge run={data.activeRuns.testConnection} /></>}
-                                </span>
-                            </Row>
-                        )}
-                        <Row label="Pending / failed candidate syncs">{formatNumber(data.queue.pending + data.queue.processing)} / {formatNumber(data.queue.failed)}</Row>
-                        <Row label="Last failure">
-                            {data.integration.lastErrorClass ? `${failureText(data.integration.lastErrorClass, data.integration.lastErrorCode)} · ${formatDateTime(data.integration.lastErrorAt)}` : "—"}
-                        </Row>
-                    </dl>
-                </>
+
+                    <Group
+                        title="Sync activity"
+                        aside={
+                            <p className="text-label-sm text-ink-muted">
+                                Automatic schedule <span className="tabular-nums text-ink-soft">{schedule.times.join(" · ")}</span> ({schedule.timeZone})
+                            </p>
+                        }
+                    >
+                        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                            <Fact label="Last automatic sync"><SyncTime run={data.lastAutomaticSync} /></Fact>
+                            <Fact label="Last manual sync"><SyncTime run={data.lastManualSync} /></Fact>
+                            <Fact label="Latest sync"><SyncTime run={data.lastSuccessfulReconciliation} /></Fact>
+                            <Fact label="Last written to the Sheet"><span className="tabular-nums">{formatDateTime(data.lastSuccessfulSyncAt)}</span></Fact>
+                            <Fact label="Pending / failed candidate syncs"><span className="tabular-nums">{formatNumber(data.queue.pending + data.queue.processing)} / {formatNumber(data.queue.failed)}</span></Fact>
+                            {(data.activeRuns.reconcile || data.activeRuns.testConnection) && (
+                                <Fact label="In progress">
+                                    <span className="inline-flex flex-wrap items-center gap-2">
+                                        {data.activeRuns.reconcile && <>Sync <RunBadge run={data.activeRuns.reconcile} /></>}
+                                        {data.activeRuns.testConnection && <>Connection test <RunBadge run={data.activeRuns.testConnection} /></>}
+                                    </span>
+                                </Fact>
+                            )}
+                        </dl>
+                    </Group>
+
+                    <Group title="Target">
+                        <dl>
+                            <Fact label="Spreadsheet">{data.target ?? (data.configured === false ? "Not configured" : "—")}</Fact>
+                        </dl>
+                    </Group>
+
+                    <Group title="Last reconciliation">
+                        {data.lastReconciliation ? (
+                            <div className="space-y-1.5 text-body-sm">
+                                <p className="flex flex-wrap items-center gap-2">
+                                    <RunBadge run={data.lastReconciliation} />
+                                    <SourceBadge run={data.lastReconciliation} />
+                                    <span className="tabular-nums text-ink-soft">{formatDateTime(data.lastReconciliation.finishedAt)}</span>
+                                </p>
+                                {reconciliationSummary(data.lastReconciliation) && <p className="text-ink-muted">{reconciliationSummary(data.lastReconciliation)}</p>}
+                                {data.lastReconciliation.errorClass && <p className="text-critical">{failureText(data.lastReconciliation.errorClass, data.lastReconciliation.errorCode)}</p>}
+                            </div>
+                        ) : <p className="text-body-sm text-ink-muted">Not yet run</p>}
+                    </Group>
+
+                    <Group title="Last failure">
+                        {data.integration.lastErrorClass
+                            ? <p className="text-body-sm text-critical">{failureText(data.integration.lastErrorClass, data.integration.lastErrorCode)} · {formatDateTime(data.integration.lastErrorAt)}</p>
+                            : <p className="text-body-sm text-ink-muted">No recent failures</p>}
+                    </Group>
+                </div>
             )}
         </Card>
     );

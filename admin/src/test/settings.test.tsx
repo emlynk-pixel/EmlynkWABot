@@ -156,3 +156,72 @@ describe("Google Sheet Sync section", () => {
         await waitFor(() => expect(polls).toBeGreaterThan(1), { timeout: 7_000 });
     }, 10_000);
 });
+
+describe("Google Sheet Sync: automatic vs manual sync", () => {
+    // 18:00:04 and 18:07 in Colombo (UTC+05:30) for the scheduled runs, 13:45 for Sync Now.
+    const SCHEDULED: SheetSyncRun = { ...RUN, trigger: "SCHEDULER", dryRun: false, createdAt: "2026-10-11T12:30:00.000Z", startedAt: "2026-10-11T12:30:01.000Z", finishedAt: "2026-10-11T12:30:04.000Z", summary: { appended: 0, updated: 1, unchanged: 6 } };
+    const MANUAL: SheetSyncRun = { ...RUN, trigger: "ADMIN", dryRun: false, createdAt: "2026-10-12T08:14:55.000Z", startedAt: "2026-10-12T08:14:56.000Z", finishedAt: "2026-10-12T08:15:00.000Z", summary: { appended: 0, updated: 1, unchanged: 6 } };
+    const LATER_SCHEDULED: SheetSyncRun = { ...SCHEDULED, runId: "00000000-0000-4000-8000-000000000009", finishedAt: "2026-10-12T12:37:00.000Z" };
+    const fact = (label: string) => within(screen.getByText(label, { selector: "dt" }).parentElement!);
+    const open = async (status: Partial<SheetSyncStatus>) => {
+        signedInBackend({ [`GET ${STATUS_PATH}`]: { status: 200, body: { ...STATUS, ...status } } });
+        renderApp("/settings/sheet-sync");
+        await screen.findByText("Sync activity");
+    };
+
+    test("16. never run: Not yet run for each, no failures, and the automatic schedule is shown", async () => {
+        await open({ lastReconciliation: null, lastSuccessfulReconciliation: null, lastAutomaticSync: null, lastManualSync: null, schedule: { times: ["06:00", "12:00", "18:00"], timeZone: "Asia/Colombo" } });
+        expect(fact("Last automatic sync").getByText("Not yet run")).toBeInTheDocument();
+        expect(fact("Last manual sync").getByText("Not yet run")).toBeInTheDocument();
+        expect(fact("Latest sync").getByText("Not yet run")).toBeInTheDocument();
+        expect(screen.getByText("No recent failures")).toBeInTheDocument();
+        expect(screen.getByText("06:00 · 12:00 · 18:00")).toBeInTheDocument();
+        expect(screen.getByText((_, el) => el?.tagName === "P" && (el.textContent ?? "").includes("(Asia/Colombo)"))).toBeInTheDocument();
+    });
+
+    test("12-14, 17-18. a scheduled run is the last automatic sync (Colombo time, Scheduled); a later Sync Now is the last manual sync (Manual) and does not replace it", async () => {
+        await open({ lastAutomaticSync: SCHEDULED, lastManualSync: MANUAL, lastSuccessfulReconciliation: MANUAL, lastReconciliation: MANUAL });
+        expect(fact("Last automatic sync").getByText(/11 Oct 2026.*18:00/)).toBeInTheDocument();
+        expect(fact("Last automatic sync").getByText("Scheduled")).toBeInTheDocument();
+        expect(fact("Last automatic sync").queryByText(/13:45/)).toBeNull();
+        expect(fact("Last manual sync").getByText(/12 Oct 2026.*13:45/)).toBeInTheDocument();
+        expect(fact("Last manual sync").getByText("Manual")).toBeInTheDocument();
+        // The latest sync is the manual one, and says so.
+        expect(fact("Latest sync").getByText(/12 Oct 2026.*13:45/)).toBeInTheDocument();
+        expect(fact("Latest sync").getByText("Manual")).toBeInTheDocument();
+    });
+
+    test("15. a later scheduled run is the new last automatic sync (a late run is still Scheduled); the manual one stays", async () => {
+        await open({ lastAutomaticSync: LATER_SCHEDULED, lastManualSync: MANUAL, lastSuccessfulReconciliation: LATER_SCHEDULED, lastReconciliation: LATER_SCHEDULED });
+        expect(fact("Last automatic sync").getByText(/12 Oct 2026.*18:07/)).toBeInTheDocument();
+        expect(fact("Last automatic sync").getByText("Scheduled")).toBeInTheDocument();
+        expect(fact("Last manual sync").getByText(/12 Oct 2026.*13:45/)).toBeInTheDocument();
+        expect(fact("Latest sync").getByText("Scheduled")).toBeInTheDocument();
+    });
+
+    test("the operator command counts as manual; a dry run is marked", async () => {
+        await open({ lastManualSync: { ...MANUAL, trigger: "OPERATOR", dryRun: true }, lastAutomaticSync: null });
+        expect(fact("Last manual sync").getByText("Manual")).toBeInTheDocument();
+        expect(fact("Last manual sync").getByText("dry run")).toBeInTheDocument();
+        expect(fact("Last automatic sync").getByText("Not yet run")).toBeInTheDocument();
+    });
+
+    test("8-11, 19. grouped sections keep every value: status, target, pending / failed, last reconciliation with its source and summary, last failure", async () => {
+        await open({
+            lastReconciliation: SCHEDULED, lastAutomaticSync: SCHEDULED, lastSuccessfulReconciliation: SCHEDULED,
+            integration: { state: "CONFIG_ERROR", lastErrorClass: "SCHEMA_INVALID", lastErrorCode: "MISSING:TEST DATE", lastErrorAt: "2026-10-12T03:00:00.000Z" },
+        });
+        const summary = within(screen.getByLabelText("Status summary"));
+        expect(summary.getByText("Connected · schema valid")).toBeInTheDocument();
+        expect(summary.getByText("Configuration error: sync halted")).toBeInTheDocument();
+        expect(summary.getByText("Disabled")).toBeInTheDocument();
+        expect(fact("Spreadsheet").getByText("…JirMpE / Emlynk Candidate Operational Mirror")).toHaveClass("break-words");
+        expect(fact("Pending / failed candidate syncs").getByText("3 / 1")).toBeInTheDocument();
+        expect(screen.getByText("0 appended · 1 updated · 6 unchanged")).toBeInTheDocument();
+        const lastRun = screen.getByText("Last reconciliation").closest("section")!;
+        expect(within(lastRun).getByText("Succeeded")).toBeInTheDocument();
+        expect(within(lastRun).getByText("Scheduled")).toBeInTheDocument();
+        expect(screen.getByText((text) => text.startsWith("Schema invalid (MISSING:TEST DATE) · 12 Oct 2026"))).toBeInTheDocument();
+        expect(screen.queryByText("No recent failures")).toBeNull();
+    });
+});

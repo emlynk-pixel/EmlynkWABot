@@ -23,7 +23,7 @@ import { PriorityFollowUpsPage } from "./pages/PriorityFollowUpsPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
-import { SettingsConfigurations, SettingsPage, SheetSyncSettings } from "./pages/SettingsPage";
+import { SettingsPage, SheetSyncSettings } from "./pages/SettingsPage";
 import { SetupPasswordPage } from "./pages/SetupPasswordPage";
 
 // The Candidates screens keep their original look; .ui-classic (index.css)
@@ -89,7 +89,9 @@ export function AppRoutes() {
                 <Route path="roles" element={<Navigate to="/settings/roles" replace />} />
                 <Route path="audit-logs" element={<AuditLogsPage />} />
                 <Route path="settings" element={<SettingsPage />}>
-                    <Route index element={<SettingsConfigurations />} />
+                    {/* Settings opens its first tab. Every tab is ADMIN only, like
+                        Settings itself, so the first one is always allowed. */}
+                    <Route index element={<Navigate to="/settings/roles" replace />} />
                     <Route path="roles" element={<AdminRolesPage embedded />} />
                     <Route path="invite" element={<InvitationsPage embedded />} />
                     <Route path="sheet-sync" element={<SheetSyncSettings />} />

@@ -31,6 +31,14 @@ export type SheetSyncStatus = {
     lastSuccessfulSyncAt: string | null;
     lastReconciliation: SheetSyncRun | null;
     lastSuccessfulReconciliationAt: string | null;
+    // The latest successful reconciliation (either source), and of each source
+    // by its stored trigger: automatic = SCHEDULER; manual = ADMIN (Sync Now)
+    // or OPERATOR (operator command). Null when there has been none.
+    lastSuccessfulReconciliation?: SheetSyncRun | null;
+    lastAutomaticSync?: SheetSyncRun | null;
+    lastManualSync?: SheetSyncRun | null;
+    // The automatic schedule, informational (Cloud Scheduler runs it).
+    schedule?: { times: string[]; timeZone: string };
     lastConnectionTest: SheetSyncRun | null;
     activeRuns: { reconcile: SheetSyncRun | null; testConnection: SheetSyncRun | null };
 };

@@ -6,8 +6,8 @@ import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth/AuthProvider";
 import { ADMIN, renderApp, signedInBackend, userWithRole } from "./helpers";
 
-// Settings tabs: Configurations | Change Roles | Invite User | Google Sheet
-// Sync. Invite User and Change Roles moved here from the sidebar; their
+// Settings tabs: Change Roles | Invite User | Google Sheet Sync (no
+// Configurations tab; /settings opens Change Roles). Invite User and Change Roles moved here from the sidebar; their
 // pages are reused unchanged (their own behaviour is in invitations.test.tsx
 // and the Sheet Sync section's in settings.test.tsx). Synthetic data only.
 
@@ -29,24 +29,27 @@ const activeTab = () => tabs().getAllByRole("link").find((l) => l.getAttribute("
 const sidebar = () => within(screen.getByRole("navigation", { name: "Main navigation" }));
 
 describe("Settings tabs", () => {
-    test("1-4, 17. the sidebar has Settings but no Invite User / Change Roles; Settings shows four tabs, Configurations by default, one page title", async () => {
+    test("1-5, 17. the sidebar has Settings but no Invite User / Change Roles; Settings shows three tabs (no Configurations) and opens Change Roles; one page title", async () => {
         signedInBackend(routes);
         renderApp("/settings");
         expect(await screen.findByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Change Roles", level: 2 })).toBeInTheDocument();
         expect(sidebar().getByRole("link", { name: "Settings" })).toBeInTheDocument();
         expect(sidebar().queryByRole("link", { name: "Invite User" })).toBeNull();
         expect(sidebar().queryByRole("link", { name: "Change Roles" })).toBeNull();
         expect(sidebar().getByRole("link", { name: "Audit Logs" })).toBeInTheDocument();
-        expect(tabLabels()).toEqual(["Configurations", "Change Roles", "Invite User", "Google Sheet Sync"]);
-        expect(activeTab()).toBe("Configurations");
-        expect(screen.getByText("No configuration options yet.")).toBeInTheDocument();
+        expect(tabLabels()).toEqual(["Change Roles", "Invite User", "Google Sheet Sync"]);
+        expect(screen.queryByRole("link", { name: "Configurations" })).toBeNull();
+        expect(screen.queryByText(/configuration options/i)).toBeNull();
+        expect(activeTab()).toBe("Change Roles");
+        expect(sidebar().getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
         expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     });
 
     test("5, 8, 17. Change Roles tab: the existing role list and role change (PUT, confirmation, success); one page title", async () => {
         const { calls } = signedInBackend({ ...routes, "PUT /api/admin/users/u-2/role": { status: 200, body: { user: { ...USERS[1], role: "MANAGER" } } } });
         vi.spyOn(window, "confirm").mockReturnValue(true);
-        renderApp("/settings");
+        renderApp("/settings/invite");
         const user = userEvent.setup();
         await user.click(await screen.findByRole("link", { name: "Change Roles" }));
         expect(await screen.findByRole("heading", { name: "Change Roles", level: 2 })).toBeInTheDocument();
@@ -91,15 +94,13 @@ describe("Settings tabs", () => {
         await user.click(screen.getByRole("button", { name: "Sync Now" }));
         expect(await screen.findByText(/Sync requested/)).toBeInTheDocument();
         expect(calls.some((c) => c.method === "POST" && c.path === "/api/admin/settings/sheet-sync/run")).toBe(true);
-        // Sheet Sync data is requested only on its own tab.
-        expect(screen.queryByText("No configuration options yet.")).toBeNull();
     });
 
-    test("Configurations requests no Sheet Sync or user data", async () => {
+    test("Sheet Sync data is requested only on its own tab", async () => {
         const { calls } = signedInBackend(routes);
         renderApp("/settings");
-        await screen.findByText("No configuration options yet.");
-        expect(calls.some((c) => c.path.startsWith("/api/admin/settings") || c.path.startsWith("/api/admin/users"))).toBe(false);
+        await screen.findByRole("heading", { name: "Change Roles", level: 2 });
+        expect(calls.some((c) => c.path.startsWith("/api/admin/settings"))).toBe(false);
     });
 
     test("16. each tab has its own URL: opening it directly (a reload) shows that tab", async () => {
@@ -151,19 +152,21 @@ describe("Settings tabs", () => {
             </MemoryRouter>,
         );
         const user = userEvent.setup();
-        await user.click(await screen.findByRole("link", { name: "Change Roles" }));
+        // /settings opened Change Roles (replacing the entry, so Back doesn't land on /settings).
         await screen.findByRole("heading", { name: "Change Roles", level: 2 });
         await user.click(screen.getByRole("link", { name: "Invite User" }));
         await screen.findByRole("heading", { name: "Invite User", level: 2 });
+        await user.click(screen.getByRole("link", { name: "Google Sheet Sync" }));
+        await screen.findByRole("heading", { name: "Google Sheet Sync" });
 
+        await user.click(screen.getByRole("button", { name: "test-back" }));
+        expect(await screen.findByRole("heading", { name: "Invite User", level: 2 })).toBeInTheDocument();
+        expect(activeTab()).toBe("Invite User");
         await user.click(screen.getByRole("button", { name: "test-back" }));
         expect(await screen.findByRole("heading", { name: "Change Roles", level: 2 })).toBeInTheDocument();
         expect(activeTab()).toBe("Change Roles");
-        await user.click(screen.getByRole("button", { name: "test-back" }));
-        expect(await screen.findByText("No configuration options yet.")).toBeInTheDocument();
-        expect(activeTab()).toBe("Configurations");
         await user.click(screen.getByRole("button", { name: "test-forward" }));
-        expect(await screen.findByRole("heading", { name: "Change Roles", level: 2 })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Invite User", level: 2 })).toBeInTheDocument();
     });
 
     for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
