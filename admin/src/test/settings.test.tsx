@@ -225,3 +225,84 @@ describe("Google Sheet Sync: automatic vs manual sync", () => {
         expect(screen.queryByText("No recent failures")).toBeNull();
     });
 });
+
+describe("Google Sheet Sync: Sync Destination", () => {
+    const OPS = { key: "operational", name: "Emlynk Candidate Operational Mirror", hint: "…JirMpE", tabName: "Emlynk Candidate Operational Mirror" };
+    const RO = { key: "romania", name: "Romania Candidates", hint: "…Ro1234", tabName: "Romania" };
+    const withDestination = (destination: SheetSyncStatus["destination"], extra: Partial<SheetSyncStatus> = {}) => ({ ...STATUS, destination, ...extra });
+    const section = () => within(screen.getByText("Sync destination").closest("section")!);
+    const open = async (body: SheetSyncStatus, routes: FetchRoutes = {}) => {
+        const backend = signedInBackend({ [`GET ${STATUS_PATH}`]: { status: 200, body }, ...routes });
+        renderApp("/settings/sheet-sync");
+        await screen.findByText("Sync destination");
+        return backend;
+    };
+
+    test("1-4, 13. renders the configured destinations only, the active one selected and described; the rest of the tab is intact", async () => {
+        await open(withDestination({ available: [OPS, RO], activeKey: "operational", requestedKey: null, lastSwitch: null }));
+        const select = section().getByRole("combobox", { name: "Google Sheet" });
+        expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Emlynk Candidate Operational Mirror", "Romania Candidates"]);
+        expect(select).toHaveValue("operational");
+        expect(within(screen.getByText("Currently syncing to").parentElement!).getByText("Emlynk Candidate Operational Mirror")).toBeInTheDocument();
+        expect(section().getByText("…JirMpE")).toBeInTheDocument();
+        expect(within(screen.getByText("Tab", { selector: "dt" }).parentElement!).getByText("Emlynk Candidate Operational Mirror")).toBeInTheDocument();
+        expect(section().queryByRole("button", { name: "Use this destination" })).toBeNull();
+        // The other groups and actions are still there; no separate Target group.
+        for (const title of ["Sync activity", "Last reconciliation", "Last failure"]) expect(screen.getByText(title)).toBeInTheDocument();
+        expect(screen.queryByText("Target", { selector: "h3" })).toBeNull();
+        expect(screen.getByRole("button", { name: "Test Connection" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Sync Now" })).toBeEnabled();
+    });
+
+    test("the current deployment: one destination, selected, nothing else offered", async () => {
+        await open(withDestination({ available: [{ ...OPS, key: "default" }], activeKey: "default", requestedKey: null, lastSwitch: null }));
+        const select = section().getByRole("combobox", { name: "Google Sheet" });
+        expect(within(select).getAllByRole("option")).toHaveLength(1);
+        expect(select).toHaveValue("default");
+        expect(section().queryByRole("button", { name: "Use this destination" })).toBeNull();
+    });
+
+    test("5-6. choosing another destination asks the server to switch (PUT); the page then shows the pending check", async () => {
+        let pending = false;
+        const { calls } = signedInBackend({
+            [`GET ${STATUS_PATH}`]: () => ({
+                status: 200,
+                body: withDestination({ available: [OPS, RO], activeKey: "operational", requestedKey: pending ? "romania" : null, lastSwitch: null }),
+            }),
+            "PUT /api/admin/settings/sheet-sync/destination": () => { pending = true; return { status: 202, body: { status: "PENDING", activeKey: "operational", requestedKey: "romania", run: null } }; },
+        });
+        renderApp("/settings/sheet-sync");
+        const user = userEvent.setup();
+        await user.selectOptions(await screen.findByRole("combobox", { name: "Google Sheet" }), "romania");
+        await user.click(section().getByRole("button", { name: "Use this destination" }));
+        expect(await screen.findByText(/Checking access and headers of Romania Candidates\. It becomes the destination once the check passes\./)).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "PUT").map((c) => [c.path, c.body])).toEqual([["/api/admin/settings/sheet-sync/destination", { key: "romania" }]]);
+        expect(await screen.findByText(/Emlynk Candidate Operational Mirror stays the destination until the check passes/)).toBeInTheDocument();
+        expect(within(screen.getByText("Currently syncing to").parentElement!).getByText("Emlynk Candidate Operational Mirror")).toBeInTheDocument();
+        expect(screen.getByRole("combobox", { name: "Google Sheet" })).toBeDisabled();
+    });
+
+    test("12. a failed switch is shown plainly; the previous destination is still the one syncing", async () => {
+        const lastSwitch = { ...RUN, kind: "TEST_CONNECTION" as const, status: "FAILED" as const, dryRun: null, errorClass: "SCHEMA_INVALID", errorCode: "MISSING:PASSPORT NUMBER", destinationKey: "romania", summary: { purpose: "DESTINATION_SWITCH" } };
+        await open(withDestination({ available: [OPS, RO], activeKey: "operational", requestedKey: null, lastSwitch }));
+        expect(screen.getByText(/Could not switch to Romania Candidates: Schema invalid \(MISSING:PASSPORT NUMBER\).*Still syncing to Emlynk Candidate Operational Mirror\./)).toBeInTheDocument();
+        expect(section().getByRole("combobox", { name: "Google Sheet" })).toHaveValue("operational");
+    });
+
+    test("a refused request shows the server's message and changes nothing", async () => {
+        await open(withDestination({ available: [OPS, RO], activeKey: "operational", requestedKey: null, lastSwitch: null }), {
+            "PUT /api/admin/settings/sheet-sync/destination": { status: 409, body: { message: "A connection test is running. Try again when it has finished.", code: "TEST_RUNNING" } },
+        });
+        const user = userEvent.setup();
+        await user.selectOptions(section().getByRole("combobox", { name: "Google Sheet" }), "romania");
+        await user.click(section().getByRole("button", { name: "Use this destination" }));
+        expect(await screen.findByText("A connection test is running. Try again when it has finished.")).toBeInTheDocument();
+        expect(within(screen.getByText("Currently syncing to").parentElement!).getByText("Emlynk Candidate Operational Mirror")).toBeInTheDocument();
+    });
+
+    test("an older server without destination data: the target is shown as before", async () => {
+        await open(STATUS);
+        expect(within(screen.getByText("Spreadsheet", { selector: "dt" }).parentElement!).getByText("…JirMpE / Emlynk Candidate Operational Mirror")).toBeInTheDocument();
+        expect(screen.queryByRole("combobox", { name: "Google Sheet" })).toBeNull();
+    });
+});

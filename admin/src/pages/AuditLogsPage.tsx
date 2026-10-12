@@ -40,6 +40,7 @@ const ACTION_LABELS: Record<string, string> = {
     FLAG_FOLLOW_UP: "Call marked for follow-up",
     COMPLETE_FOLLOW_UP: "Follow-up completed",
     DELETE_FOLLOW_UP: "Follow-up deleted",
+    SET_SHEET_DESTINATION: "Sheet sync destination changed",
     UPLOAD_DOCUMENT: "Document uploaded",
     REMOVE_DOCUMENT: "Document removed",
     DELETE_TEMPORARY_DOCUMENT: "Temporary document deleted",

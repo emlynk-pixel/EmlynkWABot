@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router";
 import { ApiError } from "../api/client";
-import { getSheetSyncStatus, requestConnectionTest, requestSyncNow, type SheetSyncRun, type SheetSyncStatus } from "../api/sheetSync";
+import { getSheetSyncStatus, requestConnectionTest, requestSyncNow, setSyncDestination, type SheetSyncRun, type SheetSyncStatus } from "../api/sheetSync";
 import { useAdminResource } from "../api/useAdminResource";
 import { isAdmin, useAuth } from "../auth/AuthProvider";
 import { primaryButton, secondaryButton } from "../components/Dialog";
 import { formatDateTime, formatNumber, humanize } from "../components/format";
+import { inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Card, ErrorState, LoadingState, SectionHeading } from "../components/States";
 import { ToneBadge, type Tone } from "../components/StatusBadge";
@@ -65,6 +66,104 @@ export function SettingsPage() {
             </nav>
             <Outlet />
         </section>
+    );
+}
+
+// Sync Destination: which configured Google Sheet the mirror writes to. Only
+// the Sheets configured on the sheet-sync worker are listed (never a full
+// spreadsheet ID). Choosing another asks the worker to check its access and
+// headers; it becomes the destination of every run (scheduled, Sync Now,
+// Test Connection) only if that check passes, otherwise the current one
+// stays. ADMIN only, like the rest of Settings.
+function SyncDestinationSection({ status, onChanged }: { status: SheetSyncStatus; onChanged: () => void }) {
+    const { token } = useAuth();
+    const [selected, setSelected] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+    const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+    const info = status.destination;
+    const available = info?.available ?? [];
+
+    // An older server, or nothing published yet: the target hint as before.
+    if (!info || available.length === 0) {
+        return (
+            <Group title="Sync destination">
+                <dl>
+                    <Fact label="Spreadsheet">{status.target ?? (status.configured === false ? "Not configured" : "—")}</Fact>
+                </dl>
+            </Group>
+        );
+    }
+
+    const nameOf = (key: string | null | undefined) => available.find((d) => d.key === key)?.name ?? key ?? "—";
+    const active = available.find((d) => d.key === info.activeKey) ?? null;
+    const pending = info.requestedKey;
+    const choice = selected ?? info.activeKey ?? available[0].key;
+    const testRunning = Boolean(status.activeRuns.testConnection);
+    const lastSwitch = info.lastSwitch;
+    const switchFailed = !pending && lastSwitch?.status === "FAILED";
+
+    async function requestSwitch() {
+        if (!token || busy || !choice) return;
+        setBusy(true);
+        setMessage(null);
+        try {
+            const result = await setSyncDestination(token, choice);
+            setMessage(result.status === "PENDING"
+                ? { tone: "ok", text: `Checking access and headers of ${nameOf(choice)}. It becomes the destination once the check passes.` }
+                : { tone: "ok", text: `${nameOf(choice)} is already the destination.` });
+            setSelected(null);
+            onChanged();
+        } catch (error) {
+            setMessage({ tone: "error", text: error instanceof ApiError ? error.message : "The destination could not be changed." });
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <Group title="Sync destination">
+            <div className="space-y-4">
+                <div className="flex flex-wrap items-end gap-3">
+                    <label className="min-w-0 flex-1 sm:max-w-md">
+                        <span className="text-label-md text-ink-muted">Google Sheet</span>
+                        <select
+                            aria-label="Google Sheet"
+                            value={choice}
+                            disabled={busy || Boolean(pending)}
+                            onChange={(event) => { setSelected(event.target.value); setMessage(null); }}
+                            className={inputClass(false, { extra: "mt-1 w-full" })}
+                        >
+                            {available.map((d) => <option key={d.key} value={d.key}>{d.name}</option>)}
+                        </select>
+                    </label>
+                    {choice !== info.activeKey && !pending && (
+                        <button type="button" className={secondaryButton} disabled={busy || testRunning} onClick={requestSwitch}>
+                            {busy ? "Requesting…" : "Use this destination"}
+                        </button>
+                    )}
+                </div>
+
+                {message && (
+                    <p role={message.tone === "error" ? "alert" : "status"} className={`text-body-sm ${message.tone === "error" ? "text-critical" : "text-ink-muted"}`}>{message.text}</p>
+                )}
+                {pending && (
+                    <p role="status" className="rounded border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
+                        Checking access and headers of {nameOf(pending)}… {active ? `${active.name} stays the destination until the check passes.` : ""}
+                    </p>
+                )}
+                {switchFailed && lastSwitch && (
+                    <p role="alert" className="text-body-sm text-critical">
+                        Could not switch to {nameOf(lastSwitch.destinationKey)}: {failureText(lastSwitch.errorClass, lastSwitch.errorCode)}{lastSwitch.finishedAt ? ` (${formatDateTime(lastSwitch.finishedAt)})` : ""}. {active ? `Still syncing to ${active.name}.` : ""}
+                    </p>
+                )}
+
+                <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-3">
+                    <Fact label="Currently syncing to">{active?.name ?? "Not configured"}</Fact>
+                    <Fact label="Spreadsheet ID"><span className="tabular-nums">{active?.hint ?? "—"}</span></Fact>
+                    <Fact label="Tab">{active?.tabName ?? "—"}</Fact>
+                </dl>
+            </div>
+        </Group>
     );
 }
 
@@ -292,11 +391,7 @@ function GoogleSheetSyncSection() {
                         </dl>
                     </Group>
 
-                    <Group title="Target">
-                        <dl>
-                            <Fact label="Spreadsheet">{data.target ?? (data.configured === false ? "Not configured" : "—")}</Fact>
-                        </dl>
-                    </Group>
+                    <SyncDestinationSection status={data} onChanged={reload} />
 
                     <Group title="Last reconciliation">
                         {data.lastReconciliation ? (
