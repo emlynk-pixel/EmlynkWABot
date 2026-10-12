@@ -127,10 +127,11 @@ Two views (tabs):
 - **Summary** — ADMIN, MANAGER and ANALYST (the existing Daily Report access).
 - **Summary by Roles** — ADMIN and MANAGER only; the server refuses other roles.
 
-**Summary.** Four figures for the chosen day:
+**Summary.** Five figures for the chosen day:
 
 | Figure | Meaning |
 |---|---|
+| Candidates registered | candidate records created that day (the registration itself; documents are not needed: a candidate registered without any document counts) |
 | Candidates completed | candidates whose final stage, *Finalizing the job*, was completed that day |
 | Visa completed | candidates whose *Visa approval* stage was completed that day |
 | Calls taken | call-log entries whose call time falls on that day |
@@ -139,6 +140,7 @@ Two views (tabs):
 Below them:
 
 - **Documents submitted** by type: Total, WhatsApp and Manual for each candidate document type (one *Scan*; no removed types), plus *Unclassified* when WhatsApp received files the classifier could not type. A line under the table keeps the WhatsApp processing outcome: processed (stored, held for review, duplicates), failed, still processing, unclear, still in temporary storage.
+- **Registered candidates**: passport number, name, registration time, *Registered by* (the staff member recorded with the registration; *—* when none was recorded), *Documents now* (documents on record now; *No documents* when there are none) and *Progress now* (stages complete now). Registration and document submission are separate activities: registering a candidate adds 1 to *Candidates registered* and nothing to *Documents submitted*.
 - **Completed candidates**: passport number, name, time, and whether every stage is complete *now* (a candidate can finalize while another stage is still open).
 - **Calls taken**: time, candidate, passport number, staff member and role (the first 10, then *Show all*).
 - **Review and admin actions this day**, collapsed.
@@ -159,7 +161,7 @@ Documents received on WhatsApp are never attributed to staff. A staff member is 
 
 **Export PDF** exports the open view for the chosen date (and role):
 
-- **Summary PDF:** key metrics, documents by type with the WhatsApp / manual split, completed candidates, incomplete candidates by process with the main reasons, and police status.
+- **Summary PDF:** key metrics (including candidates registered), registered candidates (passport number, name, time, registered by, documents, progress), documents by type with the WhatsApp / manual split, completed candidates, incomplete candidates by process with the main reasons, and police status.
 - **Role PDF:** the role's calls and uploads, uploads by type, staff and activity, without the Summary sections.
 
 Both are structured tables whose header row repeats on every page; nothing is cut off, and an empty day exports cleanly.
@@ -168,6 +170,7 @@ Both are structured tables whose header row repeats on every page; nothing is cu
 - Incomplete candidates and police status are the current state only.
 - *Candidates completed* and *Visa completed* use the stage's stored completion time: if a stage is later marked not complete, it no longer counts on the earlier day.
 - Role figures use each staff member's current role.
+- *Registered by* comes from the registration's audit entry: candidates registered before registrations were audited show *—*, and so does a candidate whose passport ID was corrected after registration (the audit entry keeps the original ID). *Documents now* and *Progress now* are the current state, not the state at registration.
 - A WhatsApp submission removed from review (its record is deleted) no longer counts as received.
 
 ### Candidates (Candidate Pool & Deployment)

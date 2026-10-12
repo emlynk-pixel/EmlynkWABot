@@ -494,12 +494,13 @@ The Daily Report page uses three read-only endpoints (`src/services/dailyReportS
 
 | Endpoint | Roles | Content |
 |---|---|---|
-| `GET /reports/daily/summary?date=` | ADMIN, MANAGER, ANALYST | `summary` (`candidatesCompleted`, `visaCompleted`, `callsTaken`, `documentsSubmitted`), `documents` (`total`, `whatsapp`, `manual`, `byType`), `whatsappProcessing`, `adminActions`, `calls` and `completedCandidates` (lists of at most 200 with `truncated`), `current`: `incomplete` (per stage: count and reasons) and `police` |
+| `GET /reports/daily/summary?date=` | ADMIN, MANAGER, ANALYST | `summary` (`candidatesRegistered`, `candidatesCompleted`, `visaCompleted`, `callsTaken`, `documentsSubmitted`), `documents` (`total`, `whatsapp`, `manual`, `byType`), `whatsappProcessing`, `adminActions`, `calls`, `registeredCandidates` and `completedCandidates` (lists of at most 200 with `total` and `truncated`), `current`: `incomplete` (per stage: count and reasons) and `police` |
 | `GET /reports/daily/incomplete?stage=&page=` | ADMIN, MANAGER, ANALYST | the candidates with that stage open now, with reasons, 25 per page |
 | `GET /reports/daily/roles?date=&role=` | ADMIN, MANAGER | `callsTaken`, `documentsUploaded`, `documentsByType`, `staff` (calls and uploads per staff member), `activity` (at most 200) |
 
 | Figure | Source |
 |---|---|
+| Candidates registered | `candidate.created_date` (set when the candidate record is created by `createCandidate`, the only registration path); never derived from documents, stages or WhatsApp activity. `registeredBy`: the `CREATE_CANDIDATE` audit entry's staff member (null when none was recorded). `documents`: documents on record now, superseded ones not counted. `stagesComplete` / `stagesTotal`: progress now |
 | Calls taken | `candidate_call_logs.created_date` (the call time); staff member `admin_id` |
 | Documents submitted (WhatsApp) | `temporary_data` rows received that day (every file, all outcomes; the classifier's type) |
 | Documents submitted (manual) | `UPLOAD_DOCUMENT` audit entries that day (uploader and type recorded) |
