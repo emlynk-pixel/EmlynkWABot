@@ -47,6 +47,15 @@ import {
 import { getDailyReport, getMonthlyOverview, parseDailyReportQuery, parseMonthlyOverviewQuery } from "../services/adminReportService.js";
 import { listAuditLogs, parseAuditLogQuery } from "../services/auditLogService.js";
 import { getAdditionalDetails, parseAdditionalDetailsBody, saveAdditionalDetails } from "../services/candidateAdditionalDetailsService.js";
+import {
+    completeFollowUp,
+    deleteFollowUp,
+    flagCallLog,
+    isValidCallLogIdParam,
+    isValidFollowUpIdParam,
+    listFollowUps,
+    parseFollowUpListQuery,
+} from "../services/callLogFollowUpService.js";
 import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
@@ -494,6 +503,42 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.status(201).json(await addCallLog({
             db: client, admin: req.user, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
         })));
+    });
+
+    // Priority Follow-Ups (callLogFollowUpService.js). Flag, list and
+    // complete: every Candidates-area role (the call log roles). Delete:
+    // ADMIN and MANAGER only, and it removes the follow-up row only — never
+    // the call log, the candidate or a document.
+    const invalidId = (res, field) => res.status(400).json({ message: `Invalid ${field}`, errors: [{ field, message: "must be an ID" }] });
+
+    router.post("/candidates/:passportId/call-logs/:callLogId/follow-up", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        if (!isValidCallLogIdParam(req.params.callLogId)) return invalidId(res, "callLogId");
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await flagCallLog({
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId), callLogId: req.params.callLogId,
+        })));
+    });
+
+    router.get("/follow-ups", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        const parsed = parseFollowUpListQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await listFollowUps({ db: client, params: parsed.params }));
+    });
+
+    router.post("/follow-ups/:followUpId/complete", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidFollowUpIdParam(req.params.followUpId)) return invalidId(res, "followUpId");
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await completeFollowUp({ db: client, actor: req.user, followUpId: req.params.followUpId })));
+    });
+
+    router.delete("/follow-ups/:followUpId", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!isValidFollowUpIdParam(req.params.followUpId)) return invalidId(res, "followUpId");
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await deleteFollowUp({ db: client, actor: req.user, followUpId: req.params.followUpId })));
     });
 
     // Additional details (candidateAdditionalDetailsService.js): always the

@@ -68,7 +68,8 @@ export type CandidateListItem = {
 
 export type CandidateList = {
     items: CandidateListItem[];
-    pagination: { page: number; pageSize: number; total: number; totalPages: number };
+    // Server-side paging (100 a page). total and totalItems are the same count.
+    pagination: { page: number; pageSize: number; total: number; totalPages: number; totalItems?: number; hasNextPage?: boolean; hasPreviousPage?: boolean };
     filters: { search: string | null };
 };
 
@@ -156,8 +157,31 @@ export type CandidateRegistration = CandidateDetailsInput & { passportId: string
 // (navigation state) until that document is on record.
 export type FailedUpload = { documentType: CandidateDocumentType; message: string };
 
+// One supported document type (and variant), as the candidate has it NOW:
+// uploaded when there is a current document (the candidate page's rule:
+// newest VERIFIED, otherwise the newest waiting for review; SUPERSEDED never
+// counts). Read-only.
+export type DocumentStatusEntry = {
+    documentType: CandidateDocumentType;
+    variant: string | null;
+    uploaded: boolean;
+    verificationStatus: string | null;
+    receivedDate: string | null;
+};
+
+export type FollowUpStatus = "OPEN" | "COMPLETED";
+
 // calledAt: when the call took place; note: what the candidate said.
-export type CallLogEntry = { callLogId: string; note: string; calledAt: string; adminName: string | null };
+// followUp: the call's newest Priority Follow-Up (OPEN = needs attention).
+export type CallLogEntry = {
+    callLogId: string;
+    note: string;
+    calledAt: string;
+    adminName: string | null;
+    followUp?: { followUpId: string; status: FollowUpStatus; flaggedAt: string } | null;
+};
+// documentStatus: the candidate's documents now, not when a call was made.
+export type CallLogList = { items: CallLogEntry[]; documentStatus?: DocumentStatusEntry[] };
 
 const base = (passportId: string) => `/api/admin/candidates/${encodeURIComponent(passportId)}`;
 
@@ -226,12 +250,18 @@ export function removeCandidateDocument(token: string, passportId: string, docum
     return apiRequest<CandidateDetails>(`${base(passportId)}/documents/${encodeURIComponent(documentId)}/remove`, { method: "POST", token, body: { reason } });
 }
 
-export function listCallLogs(token: string, passportId: string, signal?: AbortSignal): Promise<{ items: CallLogEntry[] }> {
+export function listCallLogs(token: string, passportId: string, signal?: AbortSignal): Promise<CallLogList> {
     return apiRequest(`${base(passportId)}/call-logs`, { token, signal });
 }
 
-export function addCallLog(token: string, passportId: string, call: { note: string; calledAt: string }): Promise<{ items: CallLogEntry[] }> {
+export function addCallLog(token: string, passportId: string, call: { note: string; calledAt: string }): Promise<CallLogList> {
     return apiRequest(`${base(passportId)}/call-logs`, { method: "POST", token, body: call });
+}
+
+// Marks a call as needing attention (Priority Follow-Ups). The call log
+// itself is not changed. 409 FOLLOW_UP_EXISTS: it already has an open one.
+export function flagCallLog(token: string, passportId: string, callLogId: string): Promise<{ followUp: { followUpId: string; callLogId: string; status: FollowUpStatus; flaggedAt: string } }> {
+    return apiRequest(`${base(passportId)}/call-logs/${encodeURIComponent(callLogId)}/follow-up`, { method: "POST", token });
 }
 
 // ---------------------------------------------------------------- additional details

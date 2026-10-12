@@ -14,6 +14,8 @@
 // private key: GOOGLE_APPLICATION_CREDENTIALS must not be set for this
 // feature. Problems name variables only, never their values.
 
+import { BUSINESS_TIME_ZONE } from "../utils/businessDay.js";
+
 export const SHEET_SYNC_GATE = Object.freeze({ ENABLED: "ENABLED", DISABLED: "DISABLED" });
 
 // Why the gate is in its state: no value, "false", an unusable value, "true".
@@ -36,6 +38,77 @@ function gateFrom(value) {
 
 const isSet = (value) => typeof value === "string" && value.trim() !== "";
 
+// ---------------------------------------------------------------- Sync Destination
+//
+// The Google Sheets the mirror can write to (Settings -> Google Sheet Sync ->
+// Sync Destination). Configured on the sheet-sync worker only; full
+// spreadsheet IDs never leave it (the worker publishes publicDestination()
+// metadata to sheet_sync_state for the Admin page).
+//
+//   SHEET_SYNC_DESTINATIONS  optional JSON array, first entry = default:
+//     [{"key":"operational","name":"Emlynk Candidate Operational Mirror",
+//       "spreadsheetId":"…","tabName":"Emlynk Candidate Operational Mirror"}]
+//     key: 1-40 lowercase letters, digits or "-" (stable; stored as the
+//     active destination); name: 1-100 characters (shown in Settings);
+//     tabName: matched exactly, like SHEET_TAB_NAME.
+//   Not set: one destination from SHEET_SPREADSHEET_ID / SHEET_TAB_NAME,
+//   key "default", named after its tab (the deployment before this feature).
+//
+// Which one is active is stored in sheet_sync_state.active_destination_key
+// (null = the first); an ADMIN switches it, and the worker activates the new
+// one only after validating its access and headers.
+export const DEFAULT_DESTINATION_KEY = "default";
+export const MAX_SHEET_SYNC_DESTINATIONS = 20;
+const DESTINATION_KEY = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const SPREADSHEET_ID = /^[A-Za-z0-9_-]{10,200}$/;
+export const isValidDestinationKey = (value) => typeof value === "string" && DESTINATION_KEY.test(value);
+
+function readDestinations(env) {
+    if (!isSet(env.SHEET_SYNC_DESTINATIONS)) {
+        if (!isSet(env.SHEET_SPREADSHEET_ID) || !isSet(env.SHEET_TAB_NAME)) return { destinations: [], fromList: false, problems: [] };
+        return {
+            destinations: [Object.freeze({ key: DEFAULT_DESTINATION_KEY, name: env.SHEET_TAB_NAME.trim(), spreadsheetId: env.SHEET_SPREADSHEET_ID.trim(), tabName: env.SHEET_TAB_NAME })],
+            fromList: false,
+            problems: [],
+        };
+    }
+    const invalid = (detail) => ({ destinations: [], fromList: true, problems: [`SHEET_SYNC_DESTINATIONS ${detail}`] });
+    let parsed;
+    try {
+        parsed = JSON.parse(env.SHEET_SYNC_DESTINATIONS);
+    } catch {
+        return invalid("must be a JSON array");
+    }
+    if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > MAX_SHEET_SYNC_DESTINATIONS) {
+        return invalid(`must be a JSON array of 1 to ${MAX_SHEET_SYNC_DESTINATIONS} destinations`);
+    }
+    const destinations = [];
+    for (const [index, entry] of parsed.entries()) {
+        const at = `entry ${index + 1}`;
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return invalid(`${at} must be an object`);
+        if (!isValidDestinationKey(entry.key)) return invalid(`${at}: key must be 1-40 lowercase letters, digits or "-"`);
+        if (typeof entry.name !== "string" || !entry.name.trim() || entry.name.trim().length > 100) return invalid(`${at}: name must be 1-100 characters`);
+        if (typeof entry.spreadsheetId !== "string" || !SPREADSHEET_ID.test(entry.spreadsheetId.trim())) return invalid(`${at}: spreadsheetId is not a spreadsheet ID`);
+        if (typeof entry.tabName !== "string" || !entry.tabName.trim() || entry.tabName.length > 100) return invalid(`${at}: tabName must be 1-100 characters`);
+        if (destinations.some((d) => d.key === entry.key)) return invalid(`${at}: key "${entry.key}" is used twice`);
+        destinations.push(Object.freeze({ key: entry.key, name: entry.name.trim(), spreadsheetId: entry.spreadsheetId.trim(), tabName: entry.tabName }));
+    }
+    return { destinations, fromList: true, problems: [] };
+}
+
+// What the Admin page may know about a destination: never the full ID.
+export function publicDestination(destination) {
+    return { key: destination.key, name: destination.name, hint: `…${destination.spreadsheetId.slice(-6)}`, tabName: destination.tabName };
+}
+
+// The destination for a stored key: null (nothing chosen yet) = the first
+// (default) one; a key no longer configured = null (runs then fail with
+// DESTINATION_NOT_CONFIGURED instead of writing to another Sheet).
+export function resolveDestination(destinations, key) {
+    if (key === null || key === undefined) return destinations[0] ?? null;
+    return destinations.find((d) => d.key === key) ?? null;
+}
+
 // The Sheet sync settings from the environment. Never throws; `problems`
 // lists what would stop an enabled sync from working.
 export function readSheetSyncConfig(env = process.env) {
@@ -44,10 +117,15 @@ export function readSheetSyncConfig(env = process.env) {
     if (gateReason === SHEET_SYNC_GATE_REASON.INVALID) {
         problems.push("SHEET_SYNC_ENABLED must be true or false");
     }
-    if (enabled) {
+    const destinations = readDestinations(env);
+    problems.push(...destinations.problems);
+    if (enabled && !destinations.fromList) {
         if (!isSet(env.SHEET_SPREADSHEET_ID)) problems.push("SHEET_SPREADSHEET_ID is missing");
         if (!isSet(env.SHEET_TAB_NAME)) problems.push("SHEET_TAB_NAME is missing");
     }
+    // The default destination (the first) is also the plain spreadsheetId /
+    // tabName, so every existing caller keeps working unchanged.
+    const first = destinations.destinations[0] ?? null;
     if (isSet(env.GOOGLE_APPLICATION_CREDENTIALS)) {
         problems.push("GOOGLE_APPLICATION_CREDENTIALS must not be set: the Sheet sync uses the runtime service identity, not a key file");
     }
@@ -55,9 +133,10 @@ export function readSheetSyncConfig(env = process.env) {
         enabled,
         gate: enabled ? SHEET_SYNC_GATE.ENABLED : SHEET_SYNC_GATE.DISABLED,
         gateReason,
-        spreadsheetId: isSet(env.SHEET_SPREADSHEET_ID) ? env.SHEET_SPREADSHEET_ID.trim() : null,
+        spreadsheetId: destinations.fromList ? first?.spreadsheetId ?? null : (isSet(env.SHEET_SPREADSHEET_ID) ? env.SHEET_SPREADSHEET_ID.trim() : null),
         // Not trimmed inside: the tab name must match the Sheet exactly.
-        tabName: isSet(env.SHEET_TAB_NAME) ? env.SHEET_TAB_NAME : null,
+        tabName: destinations.fromList ? first?.tabName ?? null : (isSet(env.SHEET_TAB_NAME) ? env.SHEET_TAB_NAME : null),
+        destinations: Object.freeze(destinations.destinations),
         problems: Object.freeze(problems),
     });
 }
@@ -69,8 +148,11 @@ export const isSheetSyncEnabled = (env = process.env) => readSheetSyncConfig(env
 // Operational tunables of the sheet-sync worker (src/sheetSyncWorker.js).
 // None of them can enable writing. A missing value uses the default; an
 // unusable one also uses the default and is reported in `problems` (by
-// variable name only). The schedule of reconciliations is NOT here: it
-// belongs to Cloud Scheduler (production daily, staging ~5 minutes).
+// variable name only). The schedule of reconciliations is NOT a tunable:
+// SHEET_SYNC_SCHEDULE below, run by Cloud Scheduler.
+// SHEET_SYNC_BATCH_SIZE and SHEET_SYNC_MAX_RETRIES belonged to the real-time
+// queue processing, which the worker no longer does; they are still read so
+// an existing deployment's environment stays valid, and have no effect.
 const TUNABLES = Object.freeze({
     pollIntervalMs: { name: "SHEET_SYNC_POLL_INTERVAL_MS", default: 10_000, min: 1_000, max: 600_000, integer: true },
     batchSize: { name: "SHEET_SYNC_BATCH_SIZE", default: 25, min: 1, max: 200, integer: true },
@@ -100,12 +182,31 @@ export function readSheetSyncTuning(env = process.env) {
     return Object.freeze({ ...values, maxAttempts: values.maxRetries + 1, pilotCandidateIds: pilot.ids, problems: Object.freeze(problems) });
 }
 
+// The automatic synchronization schedule: a full database -> Sheet
+// reconciliation at 06:00, 12:00 and 18:00 Sri Lanka time, one Cloud
+// Scheduler job calling the worker's POST /tasks/reconcile (OIDC-
+// authenticated). Nothing syncs in real time: database changes wait for the
+// next scheduled run or a manual Sync Now. Asia/Colombo is the project's
+// operational time zone (src/utils/businessDay.js); Cloud Scheduler applies
+// it, so the server's own time zone never matters.
+// The deployment commands (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md,
+// Section 24.9) use exactly these values; a test keeps them in step.
+export const SHEET_SYNC_SCHEDULE = Object.freeze({
+    jobName: "emlynk-sheet-sync-reconcile",
+    cron: "0 6,12,18 * * *",
+    timeZone: BUSINESS_TIME_ZONE,
+    times: Object.freeze(["06:00", "12:00", "18:00"]),
+    httpMethod: "POST",
+    path: "/tasks/reconcile",
+});
+
 // SHEET_SYNC_PILOT_CANDIDATE_IDS: the controlled first-write pilot
 // (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 24.10). A comma-
-// separated list of candidate unique IDs. While it is set, the worker syncs
-// ONLY these candidates (every other queue item waits, untouched) and every
-// reconciliation is a dry run, so enabling writes can't mirror the whole
-// database at once. Unset = normal operation. It never enables writing.
+// separated list of candidate unique IDs. While it is set, a reconciliation
+// writes ONLY these candidates (every other candidate is compared but not
+// written, and no row is marked inactive), so enabling writes can't mirror
+// the whole database at once. Unset = normal operation. It never enables
+// writing.
 export const MAX_PILOT_CANDIDATES = 20;
 function parsePilotCandidateIds(raw) {
     if (!isSet(raw)) return { ids: null };

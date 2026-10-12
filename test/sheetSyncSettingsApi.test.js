@@ -154,3 +154,62 @@ describe("existing routes are unchanged", () => {
         assert.equal(response.status, 404);
     });
 });
+
+describe("automatic vs manual sync (from each run's stored trigger)", () => {
+    let n = 0;
+    // A finished reconciliation; created a few seconds before it finished.
+    const run = (triggerSource, finishedAt, { status = "SUCCEEDED", dryRun = false } = {}) => {
+        n += 1;
+        const finished = new Date(finishedAt);
+        return prisma.sheetSyncRun.create({
+            data: {
+                runId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, kind: "RECONCILE", triggerSource, status, dryRun,
+                createdAt: new Date(finished.getTime() - 5_000), startedAt: new Date(finished.getTime() - 4_000), finishedAt: finished,
+                summary: status === "SUCCEEDED" ? { appended: 0, updated: 1, unchanged: 6 } : null,
+                errorClass: status === "FAILED" ? "RETRYABLE" : null,
+            },
+        });
+    };
+    const status = async () => (await call("GET", "/status", "admin-ADMIN")).body;
+
+    test("never run: both are null; the schedule is reported (06:00, 12:00, 18:00 Asia/Colombo)", async () => {
+        const body = await status();
+        assert.equal(body.lastAutomaticSync, null);
+        assert.equal(body.lastManualSync, null);
+        assert.equal(body.lastSuccessfulReconciliation, null);
+        assert.deepEqual(body.schedule, { times: ["06:00", "12:00", "18:00"], timeZone: "Asia/Colombo" });
+    });
+
+    test("a scheduled run is the last automatic sync; a later manual run does not replace it; a later scheduled run does", async () => {
+        await run("SCHEDULER", "2026-10-11T12:30:04.000Z"); // 18:00:04 Colombo
+        let body = await status();
+        assert.equal(body.lastAutomaticSync.trigger, "SCHEDULER");
+        assert.equal(body.lastAutomaticSync.finishedAt, "2026-10-11T12:30:04.000Z");
+        assert.equal(body.lastManualSync, null);
+
+        await run("ADMIN", "2026-10-12T08:15:00.000Z"); // 13:45 Colombo, Sync Now
+        body = await status();
+        assert.equal(body.lastAutomaticSync.finishedAt, "2026-10-11T12:30:04.000Z", "unchanged by the manual run");
+        assert.equal(body.lastManualSync.trigger, "ADMIN");
+        assert.equal(body.lastManualSync.finishedAt, "2026-10-12T08:15:00.000Z");
+        assert.equal(body.lastSuccessfulReconciliation.trigger, "ADMIN", "the latest sync is the manual one, and says so");
+
+        // A late scheduled run (18:07 Colombo) is still automatic: the trigger decides, not the time.
+        await run("SCHEDULER", "2026-10-12T12:37:00.000Z");
+        body = await status();
+        assert.equal(body.lastAutomaticSync.finishedAt, "2026-10-12T12:37:00.000Z");
+        assert.equal(body.lastManualSync.finishedAt, "2026-10-12T08:15:00.000Z");
+        assert.equal(body.lastSuccessfulReconciliation.trigger, "SCHEDULER");
+    });
+
+    test("only successful runs count; the operator command is manual; dry runs are reported as such", async () => {
+        await run("SCHEDULER", "2026-10-11T00:30:00.000Z");
+        await run("SCHEDULER", "2026-10-11T06:30:00.000Z", { status: "FAILED" });
+        await run("OPERATOR", "2026-10-11T07:00:00.000Z", { dryRun: true });
+        const body = await status();
+        assert.equal(body.lastAutomaticSync.finishedAt, "2026-10-11T00:30:00.000Z", "the failed later run is not a sync");
+        assert.equal(body.lastReconciliation.trigger, "OPERATOR", "the last reconciliation (any outcome) is still the newest run");
+        assert.equal(body.lastManualSync.trigger, "OPERATOR");
+        assert.equal(body.lastManualSync.dryRun, true);
+    });
+});

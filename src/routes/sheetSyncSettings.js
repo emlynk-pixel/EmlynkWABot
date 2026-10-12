@@ -5,6 +5,9 @@
 //   POST /test            Test Connection: durable TEST_CONNECTION run -> 202
 //   POST /run             Sync Now: durable RECONCILE run -> 202
 //   GET  /runs/:runId     one run's status and result
+//   PUT  /destination     Sync Destination: ask to switch to another
+//                         configured Sheet { key } -> 202 (pending until the
+//                         worker validated it) or 200 (already active)
 //
 // ADMIN only, enforced here by requireRole (the role is re-read from the
 // database for every request by requireActiveUser), on top of the admin
@@ -21,7 +24,8 @@ import express from "express";
 import { requireRole, ROLES } from "../middleware/requireRole.js";
 import { resolveDb } from "../utils/resolveClients.js";
 import { RUN_KIND, RUN_TRIGGER } from "../services/sheetSyncStore.js";
-import { getSheetSyncRun, getSheetSyncStatus, isValidRunId, requestSheetSyncRun } from "../services/sheetSyncStatusService.js";
+import { DestinationSwitchError, getSheetSyncRun, getSheetSyncStatus, isValidRunId, requestDestinationSwitch, requestSheetSyncRun } from "../services/sheetSyncStatusService.js";
+import { isValidDestinationKey } from "../config/sheetSync.js";
 
 const ADMINS_ONLY = [ROLES.ADMIN];
 
@@ -41,6 +45,21 @@ export function createSheetSyncSettingsRouter({ db, log = console } = {}) {
     };
     router.post("/test", request(RUN_KIND.TEST_CONNECTION));
     router.post("/run", request(RUN_KIND.RECONCILE));
+
+    router.put("/destination", async (req, res) => {
+        const key = req.body?.key;
+        if (!isValidDestinationKey(key)) {
+            return res.status(400).json({ message: "Invalid request body", errors: [{ field: "key", message: "must be a configured destination key" }] });
+        }
+        try {
+            const result = await requestDestinationSwitch({ db: await resolveDb(db), key, requestedBy: req.user.adminId });
+            log.log(JSON.stringify({ event: "sheet_sync.destination_requested", destinationKey: key, status: result.status, runId: result.run?.runId ?? null, adminId: req.user.adminId }));
+            return res.status(result.status === "PENDING" ? 202 : 200).json(result);
+        } catch (error) {
+            if (error instanceof DestinationSwitchError) return res.status(error.status).json({ message: error.message, code: error.code });
+            throw error;
+        }
+    });
 
     router.get("/runs/:runId", async (req, res) => {
         if (!isValidRunId(req.params.runId)) return res.status(400).json({ message: "Invalid run ID" });

@@ -1,10 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { NavLink, Outlet } from "react-router";
 import { ApiError } from "../api/client";
-import { getSheetSyncStatus, requestConnectionTest, requestSyncNow, type SheetSyncRun, type SheetSyncStatus } from "../api/sheetSync";
+import { getSheetSyncStatus, requestConnectionTest, requestSyncNow, setSyncDestination, type SheetSyncRun, type SheetSyncStatus } from "../api/sheetSync";
 import { useAdminResource } from "../api/useAdminResource";
 import { isAdmin, useAuth } from "../auth/AuthProvider";
 import { primaryButton, secondaryButton } from "../components/Dialog";
 import { formatDateTime, formatNumber, humanize } from "../components/format";
+import { inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Card, ErrorState, LoadingState, SectionHeading } from "../components/States";
 import { ToneBadge, type Tone } from "../components/StatusBadge";
@@ -15,7 +17,25 @@ export const ACTIVE_RUN_POLL_MS = 5_000;
 // Settings (/admin/settings). ADMIN only: other roles see an "Access
 // Restricted" card and no Settings data is requested. The backend enforces
 // the same rule on every Settings API route (requireRole); this page only
-// mirrors it. Future system settings are added as further sections here.
+// mirrors it.
+//
+// A row of tabs, one URL each (so reload, Back and Forward keep the tab):
+//   /settings/roles       Change Roles  (AdminRolesPage, unchanged)
+//   /settings/invite      Invite User   (InvitationsPage, unchanged)
+//   /settings/sheet-sync  Google Sheet Sync
+// /settings opens the first tab (App.tsx). Every tab is ADMIN only, like the
+// pages it holds. The old /roles and /invitations URLs redirect here.
+export const SETTINGS_TABS = [
+    { to: "/settings/roles", label: "Change Roles" },
+    { to: "/settings/invite", label: "Invite User" },
+    { to: "/settings/sheet-sync", label: "Google Sheet Sync" },
+] as const;
+
+const tabClass = ({ isActive }: { isActive: boolean }) =>
+    `-mb-px whitespace-nowrap border-b-2 px-1 pb-2.5 pt-1 text-label-md transition-colors ${isActive
+        ? "border-primary font-medium text-ink"
+        : "border-transparent text-ink-muted hover:border-border-strong hover:text-ink"}`;
+
 export function SettingsPage() {
     const { user } = useAuth();
     if (!isAdmin(user)) {
@@ -37,9 +57,119 @@ export function SettingsPage() {
                 <h1 id="page-title" className="text-headline-lg text-ink">Settings</h1>
                 <p className="mt-1 text-body-sm text-ink-muted">System configuration and integrations.</p>
             </div>
-            <GoogleSheetSyncSection />
+            <nav aria-label="Settings sections" className="flex gap-6 overflow-x-auto border-b border-border">
+                {SETTINGS_TABS.map((tab) => (
+                    <NavLink key={tab.to} to={tab.to} className={tabClass}>
+                        {tab.label}
+                    </NavLink>
+                ))}
+            </nav>
+            <Outlet />
         </section>
     );
+}
+
+// Sync Destination: which configured Google Sheet the mirror writes to. Only
+// the Sheets configured on the sheet-sync worker are listed (never a full
+// spreadsheet ID). Choosing another asks the worker to check its access and
+// headers; it becomes the destination of every run (scheduled, Sync Now,
+// Test Connection) only if that check passes, otherwise the current one
+// stays. ADMIN only, like the rest of Settings.
+function SyncDestinationSection({ status, onChanged }: { status: SheetSyncStatus; onChanged: () => void }) {
+    const { token } = useAuth();
+    const [selected, setSelected] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+    const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+    const info = status.destination;
+    const available = info?.available ?? [];
+
+    // An older server, or nothing published yet: the target hint as before.
+    if (!info || available.length === 0) {
+        return (
+            <Group title="Sync destination">
+                <dl>
+                    <Fact label="Spreadsheet">{status.target ?? (status.configured === false ? "Not configured" : "—")}</Fact>
+                </dl>
+            </Group>
+        );
+    }
+
+    const nameOf = (key: string | null | undefined) => available.find((d) => d.key === key)?.name ?? key ?? "—";
+    const active = available.find((d) => d.key === info.activeKey) ?? null;
+    const pending = info.requestedKey;
+    const choice = selected ?? info.activeKey ?? available[0].key;
+    const testRunning = Boolean(status.activeRuns.testConnection);
+    const lastSwitch = info.lastSwitch;
+    const switchFailed = !pending && lastSwitch?.status === "FAILED";
+
+    async function requestSwitch() {
+        if (!token || busy || !choice) return;
+        setBusy(true);
+        setMessage(null);
+        try {
+            const result = await setSyncDestination(token, choice);
+            setMessage(result.status === "PENDING"
+                ? { tone: "ok", text: `Checking access and headers of ${nameOf(choice)}. It becomes the destination once the check passes.` }
+                : { tone: "ok", text: `${nameOf(choice)} is already the destination.` });
+            setSelected(null);
+            onChanged();
+        } catch (error) {
+            setMessage({ tone: "error", text: error instanceof ApiError ? error.message : "The destination could not be changed." });
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <Group title="Sync destination">
+            <div className="space-y-4">
+                <div className="flex flex-wrap items-end gap-3">
+                    <label className="min-w-0 flex-1 sm:max-w-md">
+                        <span className="text-label-md text-ink-muted">Google Sheet</span>
+                        <select
+                            aria-label="Google Sheet"
+                            value={choice}
+                            disabled={busy || Boolean(pending)}
+                            onChange={(event) => { setSelected(event.target.value); setMessage(null); }}
+                            className={inputClass(false, { extra: "mt-1 w-full" })}
+                        >
+                            {available.map((d) => <option key={d.key} value={d.key}>{d.name}</option>)}
+                        </select>
+                    </label>
+                    {choice !== info.activeKey && !pending && (
+                        <button type="button" className={secondaryButton} disabled={busy || testRunning} onClick={requestSwitch}>
+                            {busy ? "Requesting…" : "Use this destination"}
+                        </button>
+                    )}
+                </div>
+
+                {message && (
+                    <p role={message.tone === "error" ? "alert" : "status"} className={`text-body-sm ${message.tone === "error" ? "text-critical" : "text-ink-muted"}`}>{message.text}</p>
+                )}
+                {pending && (
+                    <p role="status" className="rounded border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
+                        Checking access and headers of {nameOf(pending)}… {active ? `${active.name} stays the destination until the check passes.` : ""}
+                    </p>
+                )}
+                {switchFailed && lastSwitch && (
+                    <p role="alert" className="text-body-sm text-critical">
+                        Could not switch to {nameOf(lastSwitch.destinationKey)}: {failureText(lastSwitch.errorClass, lastSwitch.errorCode)}{lastSwitch.finishedAt ? ` (${formatDateTime(lastSwitch.finishedAt)})` : ""}. {active ? `Still syncing to ${active.name}.` : ""}
+                    </p>
+                )}
+
+                <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-3">
+                    <Fact label="Currently syncing to">{active?.name ?? "Not configured"}</Fact>
+                    <Fact label="Spreadsheet ID"><span className="tabular-nums">{active?.hint ?? "—"}</span></Fact>
+                    <Fact label="Tab">{active?.tabName ?? "—"}</Fact>
+                </dl>
+            </div>
+        </Group>
+    );
+}
+
+// Google Sheet Sync tab: the sync status and actions.
+export function SheetSyncSettings() {
+    return <GoogleSheetSyncSection />;
 }
 
 const RUN_TONES: Record<string, Tone> = { QUEUED: "pending", RUNNING: "review", SUCCEEDED: "verified", FAILED: "critical", SKIPPED: "pending" };
@@ -48,12 +178,65 @@ function RunBadge({ run }: { run: SheetSyncRun }) {
     return <ToneBadge tone={RUN_TONES[run.status] ?? "pending"}>{humanize(run.status)}{run.dryRun ? " (dry run)" : ""}</ToneBadge>;
 }
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
+// Who started a run, from its stored trigger (never from its time): Cloud
+// Scheduler = Scheduled; Sync Now or the operator command = Manual.
+export function triggerLabel(trigger: SheetSyncRun["trigger"]): "Scheduled" | "Manual" {
+    return trigger === "SCHEDULER" ? "Scheduled" : "Manual";
+}
+
+function SourceBadge({ run }: { run: SheetSyncRun }) {
     return (
-        <div className="flex flex-col gap-1 border-b border-border py-3 sm:flex-row sm:items-center sm:justify-between">
+        <span
+            title={run.trigger === "OPERATOR" ? "Requested with the operator command" : run.trigger === "ADMIN" ? "Requested with Sync Now" : "Run by the automatic schedule"}
+            className="inline-flex h-[22px] items-center whitespace-nowrap rounded-full border border-border-strong px-2 text-label-sm text-ink-muted"
+        >
+            {triggerLabel(run.trigger)}
+        </span>
+    );
+}
+
+// A titled group inside the card, separated by a hairline.
+function Group({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
+    return (
+        <section className="border-t border-border pt-4">
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                <h3 className="text-label-caps uppercase text-ink-subtle">{title}</h3>
+                {aside}
+            </div>
+            {children}
+        </section>
+    );
+}
+
+// A label over its value, in a grid of facts.
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+    return (
+        <div className="min-w-0">
             <dt className="text-label-md text-ink-muted">{label}</dt>
-            <dd className="text-body-sm text-ink sm:text-right">{children}</dd>
+            <dd className="mt-1 break-words text-body-sm text-ink">{children}</dd>
         </div>
+    );
+}
+
+// A small tile for the status summary.
+function StatusTile({ label, children }: { label: string; children: ReactNode }) {
+    return (
+        <div className="min-w-0 rounded-md border border-border bg-canvas px-4 py-3">
+            <dt className="text-label-md text-ink-muted">{label}</dt>
+            <dd className="mt-1.5">{children}</dd>
+        </div>
+    );
+}
+
+// When a successful reconciliation finished, with where it came from.
+function SyncTime({ run }: { run: SheetSyncRun | null | undefined }) {
+    if (!run) return <span className="text-ink-muted">Not yet run</span>;
+    return (
+        <span className="inline-flex flex-wrap items-center gap-2">
+            <span className="tabular-nums">{formatDateTime(run.finishedAt)}</span>
+            <SourceBadge run={run} />
+            {run.dryRun && <span className="text-label-sm text-ink-muted">dry run</span>}
+        </span>
     );
 }
 
@@ -94,6 +277,10 @@ const INTEGRATION: Record<SheetSyncStatus["integration"]["state"], { tone: Tone;
     DATA_INTEGRITY: { tone: "critical", label: "Duplicate candidate IDs in the Sheet: sync halted" },
 };
 
+// The configured automatic schedule (fixed; Cloud Scheduler runs it). The
+// server reports it; these are its values if an older server does not.
+const DEFAULT_SCHEDULE = { times: ["06:00", "12:00", "18:00"], timeZone: "Asia/Colombo" };
+
 function GoogleSheetSyncSection() {
     const { token } = useAuth();
     const status = useAdminResource<SheetSyncStatus>("sheet-sync-status", (t, signal) => getSheetSyncStatus(t, signal));
@@ -125,6 +312,10 @@ function GoogleSheetSyncSection() {
         }
     }
 
+    const schedule = data?.schedule ?? DEFAULT_SCHEDULE;
+    const connection = data ? connectionText(data) : null;
+    const integration = data ? INTEGRATION[data.integration.state] : null;
+
     return (
         <Card className="p-5">
             <SectionHeading
@@ -151,53 +342,77 @@ function GoogleSheetSyncSection() {
             {status.status === "loading" && !data && <LoadingState label="Loading sync status…" />}
             {status.status === "error" && !data && <ErrorState message={status.error.message} onRetry={reload} />}
 
-            {data && (
-                <>
+            {data && connection && integration && (
+                <div className="mt-4 space-y-5">
                     {status.status === "error" && (
-                        <p role="alert" className="mt-4 text-body-sm text-critical">The status could not be refreshed: {status.error.message}</p>
+                        <p role="alert" className="text-body-sm text-critical">The status could not be refreshed: {status.error.message}</p>
                     )}
                     {!data.worker.online && (
-                        <div role="alert" className="mt-4 rounded border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
+                        <div role="alert" className="rounded border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
                             The sheet-sync worker is not reporting{data.worker.lastHeartbeatAt ? ` (last seen ${formatDateTime(data.worker.lastHeartbeatAt)})` : ""}. Requests stay queued until it runs.
                         </div>
                     )}
+
+                    <dl aria-label="Status summary" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <StatusTile label="Connection"><ToneBadge tone={connection.tone}>{connection.label}</ToneBadge></StatusTile>
+                        <StatusTile label="Integration state"><ToneBadge tone={integration.tone}>{integration.label}</ToneBadge></StatusTile>
+                        <StatusTile label="Write sync">
+                            <ToneBadge tone={data.writeGate === "ENABLED" ? "verified" : "pending"}>{data.writeGate === "ENABLED" ? "Enabled" : data.writeGate === "DISABLED" ? "Disabled" : "Unknown"}</ToneBadge>
+                        </StatusTile>
+                    </dl>
                     {data.writeGate === "DISABLED" && (
-                        <p className="mt-4 text-body-sm text-ink-muted">
+                        <p className="text-body-sm text-ink-muted">
                             Write sync is disabled: nothing is written to the Sheet. Sync Now runs a dry run that compares the Sheet with the database and reports what it would change.
                         </p>
                     )}
-                    <dl className="mt-2">
-                        <Row label="Connection"><ToneBadge tone={connectionText(data).tone}>{connectionText(data).label}</ToneBadge></Row>
-                        <Row label="Integration state"><ToneBadge tone={INTEGRATION[data.integration.state].tone}>{INTEGRATION[data.integration.state].label}</ToneBadge></Row>
-                        <Row label="Write sync">
-                            <ToneBadge tone={data.writeGate === "ENABLED" ? "verified" : "pending"}>{data.writeGate === "ENABLED" ? "Enabled" : data.writeGate === "DISABLED" ? "Disabled" : "Unknown"}</ToneBadge>
-                        </Row>
-                        <Row label="Target">{data.target ?? (data.configured === false ? "Not configured" : "—")}</Row>
-                        <Row label="Last successful sync">{formatDateTime(data.lastSuccessfulSyncAt)}</Row>
-                        <Row label="Last reconciliation">
-                            {data.lastReconciliation ? (
-                                <span className="inline-flex flex-col items-start gap-1 sm:items-end">
-                                    <span className="inline-flex items-center gap-2"><RunBadge run={data.lastReconciliation} />{formatDateTime(data.lastReconciliation.finishedAt)}</span>
-                                    {reconciliationSummary(data.lastReconciliation) && <span className="text-ink-muted">{reconciliationSummary(data.lastReconciliation)}</span>}
-                                    {data.lastReconciliation.errorClass && <span className="text-critical">{failureText(data.lastReconciliation.errorClass, data.lastReconciliation.errorCode)}</span>}
-                                </span>
-                            ) : "—"}
-                        </Row>
-                        <Row label="Last successful reconciliation">{formatDateTime(data.lastSuccessfulReconciliationAt)}</Row>
-                        {(data.activeRuns.reconcile || data.activeRuns.testConnection) && (
-                            <Row label="In progress">
-                                <span className="inline-flex flex-wrap items-center gap-2">
-                                    {data.activeRuns.reconcile && <>Sync <RunBadge run={data.activeRuns.reconcile} /></>}
-                                    {data.activeRuns.testConnection && <>Connection test <RunBadge run={data.activeRuns.testConnection} /></>}
-                                </span>
-                            </Row>
-                        )}
-                        <Row label="Pending / failed candidate syncs">{formatNumber(data.queue.pending + data.queue.processing)} / {formatNumber(data.queue.failed)}</Row>
-                        <Row label="Last failure">
-                            {data.integration.lastErrorClass ? `${failureText(data.integration.lastErrorClass, data.integration.lastErrorCode)} · ${formatDateTime(data.integration.lastErrorAt)}` : "—"}
-                        </Row>
-                    </dl>
-                </>
+
+                    <Group
+                        title="Sync activity"
+                        aside={
+                            <p className="text-label-sm text-ink-muted">
+                                Automatic schedule <span className="tabular-nums text-ink-soft">{schedule.times.join(" · ")}</span> ({schedule.timeZone})
+                            </p>
+                        }
+                    >
+                        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                            <Fact label="Last automatic sync"><SyncTime run={data.lastAutomaticSync} /></Fact>
+                            <Fact label="Last manual sync"><SyncTime run={data.lastManualSync} /></Fact>
+                            <Fact label="Latest sync"><SyncTime run={data.lastSuccessfulReconciliation} /></Fact>
+                            <Fact label="Last written to the Sheet"><span className="tabular-nums">{formatDateTime(data.lastSuccessfulSyncAt)}</span></Fact>
+                            <Fact label="Pending / failed candidate syncs"><span className="tabular-nums">{formatNumber(data.queue.pending + data.queue.processing)} / {formatNumber(data.queue.failed)}</span></Fact>
+                            {(data.activeRuns.reconcile || data.activeRuns.testConnection) && (
+                                <Fact label="In progress">
+                                    <span className="inline-flex flex-wrap items-center gap-2">
+                                        {data.activeRuns.reconcile && <>Sync <RunBadge run={data.activeRuns.reconcile} /></>}
+                                        {data.activeRuns.testConnection && <>Connection test <RunBadge run={data.activeRuns.testConnection} /></>}
+                                    </span>
+                                </Fact>
+                            )}
+                        </dl>
+                    </Group>
+
+                    <SyncDestinationSection status={data} onChanged={reload} />
+
+                    <Group title="Last reconciliation">
+                        {data.lastReconciliation ? (
+                            <div className="space-y-1.5 text-body-sm">
+                                <p className="flex flex-wrap items-center gap-2">
+                                    <RunBadge run={data.lastReconciliation} />
+                                    <SourceBadge run={data.lastReconciliation} />
+                                    <span className="tabular-nums text-ink-soft">{formatDateTime(data.lastReconciliation.finishedAt)}</span>
+                                </p>
+                                {reconciliationSummary(data.lastReconciliation) && <p className="text-ink-muted">{reconciliationSummary(data.lastReconciliation)}</p>}
+                                {data.lastReconciliation.errorClass && <p className="text-critical">{failureText(data.lastReconciliation.errorClass, data.lastReconciliation.errorCode)}</p>}
+                            </div>
+                        ) : <p className="text-body-sm text-ink-muted">Not yet run</p>}
+                    </Group>
+
+                    <Group title="Last failure">
+                        {data.integration.lastErrorClass
+                            ? <p className="text-body-sm text-critical">{failureText(data.integration.lastErrorClass, data.integration.lastErrorCode)} · {formatDateTime(data.integration.lastErrorAt)}</p>
+                            : <p className="text-body-sm text-ink-muted">No recent failures</p>}
+                    </Group>
+                </div>
             )}
         </Card>
     );

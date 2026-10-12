@@ -26,7 +26,8 @@ const STATUS_BADGE: Record<string, { label: string; icon: "schedule" | "check_ci
 // Invite User (ADMIN only). Supabase Auth sends the invitation email and owns
 // the password; the role chosen here is stored by the backend in the
 // application account, never in the invitation itself.
-export function InvitationsPage() {
+// embedded: shown as a Settings tab (Settings owns the page title).
+export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {}) {
     const { user, token } = useAuth();
     const allowed = isAdmin(user);
 
@@ -134,7 +135,9 @@ export function InvitationsPage() {
     return (
         <div className="mx-auto max-w-6xl space-y-6">
             <div>
-                <h1 className="text-headline-lg text-ink">Invite User</h1>
+                {embedded
+                    ? <h2 className="text-headline-md text-ink">Invite User</h2>
+                    : <h1 className="text-headline-lg text-ink">Invite User</h1>}
                 <p className="mt-1 text-body-sm text-ink-muted">
                     Invite staff by email. They receive a sign-in invitation, choose their own password, and can use the console once they finish setting up.
                 </p>

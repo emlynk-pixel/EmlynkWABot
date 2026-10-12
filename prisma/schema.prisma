@@ -30,6 +30,9 @@ model User {
   updatedDate DateTime           @updatedAt @map("updated_date")
   auditLogs   AuditLog[]
   callLogs    CandidateCallLog[]
+  // Priority Follow-Ups this user flagged / completed.
+  flaggedFollowUps   CallLogFollowUp[] @relation("FollowUpFlaggedBy")
+  completedFollowUps CallLogFollowUp[] @relation("FollowUpCompletedBy")
 
   @@map("user")
 }
@@ -296,8 +299,38 @@ model CandidateCallLog {
   user  Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
   admin User      @relation(fields: [adminId], references: [adminId], onDelete: Restrict)
 
+  followUps CallLogFollowUp[]
+
   @@index([passportId, createdDate])
   @@map("candidate_call_logs")
+}
+
+// Priority Follow-Ups (callLogFollowUpService.js): a call log marked as
+// needing attention. The call log stays the source of truth for the note,
+// the call time, the caller and the candidate; this row holds only the
+// follow-up's own state. status: OPEN | COMPLETED. Completing keeps the row
+// (completed_by / completed_date set); Delete (ADMIN and MANAGER only)
+// removes this row and never the call log.
+// At most one OPEN follow-up per call log: a partial unique index (not
+// expressible in Prisma's schema DSL), with CHECK constraints on status and
+// completion, defined in SQL by migration 20261011120000_call_log_follow_up.
+// Maintain them through a SQL migration, not this model.
+model CallLogFollowUp {
+  followUpId    String    @id @map("follow_up_id")
+  callLogId     String    @map("call_log_id")
+  status        String    @default("OPEN")
+  flaggedById   String    @map("flagged_by")
+  flaggedDate   DateTime  @default(now()) @map("flagged_date")
+  completedById String?   @map("completed_by")
+  completedDate DateTime? @map("completed_date")
+
+  callLog     CandidateCallLog @relation(fields: [callLogId], references: [callLogId], onDelete: Cascade)
+  flaggedBy   User             @relation("FollowUpFlaggedBy", fields: [flaggedById], references: [adminId], onDelete: Restrict)
+  completedBy User?            @relation("FollowUpCompletedBy", fields: [completedById], references: [adminId], onDelete: Restrict)
+
+  @@index([callLogId])
+  @@index([status, flaggedDate])
+  @@map("call_log_follow_up")
 }
 
 model RateLimit {
@@ -368,6 +401,9 @@ model SheetSyncRun {
   summary        Json?
   errorClass     String?   @map("error_class")
   errorCode      String?   @map("error_code")
+  // The Sync Destination the run used (resolved when it started), or the one a
+  // destination-switch check validated.
+  destinationKey String?   @map("destination_key")
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   startedAt      DateTime? @map("started_at") @db.Timestamptz(3)
   finishedAt     DateTime? @map("finished_at") @db.Timestamptz(3)
@@ -384,22 +420,30 @@ model SheetSyncRun {
 // that keeps a single process writing to the Sheet at a time.
 // integrationState: UNKNOWN | OK | CONFIG_ERROR | DATA_INTEGRITY.
 model SheetSyncState {
-  stateId              String    @id @map("state_id")
-  integrationState     String    @default("UNKNOWN") @map("integration_state")
-  lastErrorClass       String?   @map("last_error_class")
-  lastErrorCode        String?   @map("last_error_code")
-  lastErrorAt          DateTime? @map("last_error_at") @db.Timestamptz(3)
-  lastSyncSuccessAt    DateTime? @map("last_sync_success_at") @db.Timestamptz(3)
+  stateId                 String    @id @map("state_id")
+  integrationState        String    @default("UNKNOWN") @map("integration_state")
+  lastErrorClass          String?   @map("last_error_class")
+  lastErrorCode           String?   @map("last_error_code")
+  lastErrorAt             DateTime? @map("last_error_at") @db.Timestamptz(3)
+  lastSyncSuccessAt       DateTime? @map("last_sync_success_at") @db.Timestamptz(3)
   // ENABLED | DISABLED, as the worker last read SHEET_SYNC_ENABLED.
-  writeGate            String?   @map("write_gate")
-  configured           Boolean?
+  writeGate               String?   @map("write_gate")
+  configured              Boolean?
   // Last characters of the spreadsheet ID and the tab name: enough to tell
   // which Sheet is targeted, never the full identifier.
-  targetHint           String?   @map("target_hint")
-  workerHeartbeatAt    DateTime? @map("worker_heartbeat_at") @db.Timestamptz(3)
-  writerLeaseOwner     String?   @map("writer_lease_owner")
-  writerLeaseExpiresAt DateTime? @map("writer_lease_expires_at") @db.Timestamptz(3)
-  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+  targetHint              String?   @map("target_hint")
+  // Sync Destination (src/config/sheetSync.js SHEET_SYNC_DESTINATIONS): the
+  // configured Sheets as the worker publishes them (key, name, short hint,
+  // tab name; never a full spreadsheet ID), the active one (null = the first,
+  // the default) and one an ADMIN requested, active only after the worker
+  // validated its access and headers.
+  destinations            Json?
+  activeDestinationKey    String?   @map("active_destination_key")
+  requestedDestinationKey String?   @map("requested_destination_key")
+  workerHeartbeatAt       DateTime? @map("worker_heartbeat_at") @db.Timestamptz(3)
+  writerLeaseOwner        String?   @map("writer_lease_owner")
+  writerLeaseExpiresAt    DateTime? @map("writer_lease_expires_at") @db.Timestamptz(3)
+  updatedAt               DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
 
   @@map("sheet_sync_state")
 }

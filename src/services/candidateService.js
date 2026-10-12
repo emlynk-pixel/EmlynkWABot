@@ -436,6 +436,55 @@ function variantDocuments(documents) {
     return result;
 }
 
+// Fields currentOf (and so documentStatusOf) reads.
+export const CURRENT_DOCUMENT_SELECT = Object.freeze({
+    documentId: true, documentType: true, originalFilename: true, verificationStatus: true,
+    documentVariant: true, receivedDate: true, createdDate: true,
+});
+
+// What documents the candidate has NOW (Call Logs, Priority Follow-Ups): one
+// entry per supported document type, and per variant for a type with
+// variants (each police report variant has its own current document). The
+// same current-document rule as the candidate page (currentOf: the newest
+// VERIFIED, otherwise the newest waiting for review; SUPERSEDED never
+// counts). A police report with no known variant (received on WhatsApp) is
+// listed only when there is one. Read-only: computed from the rows given.
+export function documentStatusOf(documents) {
+    const entry = (documentType, variant, current) => ({
+        documentType,
+        variant,
+        uploaded: Boolean(current),
+        verificationStatus: current?.verificationStatus ?? null,
+        receivedDate: current?.receivedDate ?? null,
+    });
+    const status = [];
+    for (const [type, definition] of Object.entries(CANDIDATE_DOCUMENT_TYPES)) {
+        const ofType = documents.filter((d) => d.documentType === type);
+        if (!definition.variants) {
+            status.push(entry(type, null, currentOf(ofType)));
+            continue;
+        }
+        for (const variant of definition.variants) status.push(entry(type, variant, currentOf(ofType.filter((d) => d.documentVariant === variant))));
+        const untyped = currentOf(ofType.filter((d) => !definition.variants.includes(d.documentVariant)));
+        if (untyped) status.push(entry(type, null, untyped));
+    }
+    return status;
+}
+
+// The candidates' current document status, by passport ID, in ONE query.
+export async function documentStatusByCandidate(db, passportIds) {
+    const ids = [...new Set(passportIds)];
+    const byCandidate = new Map(ids.map((id) => [id, []]));
+    if (ids.length) {
+        const rows = await db.document.findMany({
+            where: { passportId: { in: ids }, documentType: { in: Object.keys(CANDIDATE_DOCUMENT_TYPES) } },
+            select: { passportId: true, ...CURRENT_DOCUMENT_SELECT },
+        });
+        for (const row of rows) byCandidate.get(row.passportId)?.push(row);
+    }
+    return new Map([...byCandidate].map(([id, rows]) => [id, documentStatusOf(rows)]));
+}
+
 function candidateSummary(user) {
     return {
         passportId: user.passportId,
@@ -446,7 +495,9 @@ function candidateSummary(user) {
     };
 }
 
-export const CANDIDATE_LIST_DEFAULTS = Object.freeze({ page: 1, pageSize: 25 });
+// The Candidates page shows 100 candidates a page; no request gets more.
+export const CANDIDATE_LIST_PAGE_SIZE = 100;
+export const CANDIDATE_LIST_DEFAULTS = Object.freeze({ page: 1, pageSize: CANDIDATE_LIST_PAGE_SIZE });
 
 export function parseCandidateListQuery(query = {}) {
     const errors = [];
@@ -460,7 +511,7 @@ export function parseCandidateListQuery(query = {}) {
         }
         return value;
     };
-    for (const [field, max] of [["page", 10_000], ["pageSize", 100]]) {
+    for (const [field, max] of [["page", 10_000], ["pageSize", CANDIDATE_LIST_PAGE_SIZE]]) {
         const value = single(field);
         if (value === undefined) continue;
         if (!/^\d{1,6}$/.test(value) || Number(value) < 1 || Number(value) > max) {
@@ -490,7 +541,19 @@ export function candidateSearchWhere(search) {
     };
 }
 
-// GET /api/admin/candidates
+// What a list row needs: its summary (candidateSummary) and what
+// automaticStageMissing reads. The candidate page reads the full record.
+const listSelect = {
+    passportId: true, uniqueId: true, firstName: true, otherName: true, nic: true, job: true, jobExperience: true,
+    whatsappNumber: true, passportIssueDate: true, passportExpiryDate: true,
+};
+
+// GET /api/admin/candidates. Server-side paging: one COUNT and one bounded
+// query (LIMIT pageSize OFFSET (page - 1) * pageSize, at most 100 rows) whose
+// stages and required documents Prisma loads in one batched query each, never
+// per candidate. Newest first; passport ID breaks ties, so the order is the
+// same on every page (no candidate on two pages, none skipped). A page past
+// the last one is empty, with the real totals, so the page can go back.
 export async function listCandidates({ db, params }) {
     const where = params.search ? candidateSearchWhere(params.search) : {};
     const [total, users] = await Promise.all([
@@ -498,7 +561,7 @@ export async function listCandidates({ db, params }) {
         db.candidate.findMany({
             where,
             select: {
-                ...userSelect,
+                ...listSelect,
                 stages: { select: { stage: true, completed: true } },
                 documents: {
                     where: { documentType: { in: REQUIRED_SUBMISSION_DOCUMENTS } },
@@ -515,14 +578,16 @@ export async function listCandidates({ db, params }) {
             ...candidateSummary(user),
             stages: stageList(user.stages, automaticStageMissing(user, user.documents)).map(({ stage, completed }) => ({ stage, completed })),
         })),
-        pagination: {
-            page: params.page,
-            pageSize: params.pageSize,
-            total,
-            totalPages: Math.max(1, Math.ceil(total / params.pageSize)),
-        },
+        pagination: listPagination(params, total),
         filters: { search: params.search ?? null },
     };
+}
+
+// total (kept for existing callers) and totalItems are the same count.
+// totalPages is at least 1, so an empty list is "page 1 of 1".
+function listPagination({ page, pageSize }, total) {
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    return { page, pageSize, total, totalItems: total, totalPages, hasNextPage: page < totalPages, hasPreviousPage: page > 1 };
 }
 
 // The stored passport ID for a requested one: the exact row, otherwise the
@@ -1256,15 +1321,36 @@ export async function removeCandidateDocument({ db, bucket, admin, passportId, d
 
 // candidate_call_logs.created_date holds when the call took place (the date
 // and time the admin entered, or the moment it was noted). Newest call first.
+// Each call carries its newest Priority Follow-Up (call_log_follow_up), or
+// null: OPEN while it needs attention (there is at most one OPEN per call),
+// COMPLETED once done. documentStatus: the candidate's documents NOW (not
+// when the call was made), so an old "passport not uploaded" call shows the
+// passport once it is on record.
 export async function listCallLogs({ db, passportId }) {
     await requireCandidate(db, passportId);
-    const rows = await db.candidateCallLog.findMany({
-        where: { passportId },
-        select: { callLogId: true, note: true, createdDate: true, admin: { select: { name: true } } },
-        orderBy: [{ createdDate: "desc" }, { callLogId: "asc" }],
-    });
+    const [rows, statuses] = await Promise.all([
+        db.candidateCallLog.findMany({
+            where: { passportId },
+            select: {
+                callLogId: true, note: true, createdDate: true, admin: { select: { name: true } },
+                followUps: { select: { followUpId: true, status: true, flaggedDate: true }, orderBy: [{ flaggedDate: "desc" }, { followUpId: "asc" }], take: 1 },
+            },
+            orderBy: [{ createdDate: "desc" }, { callLogId: "asc" }],
+        }),
+        documentStatusByCandidate(db, [passportId]),
+    ]);
     return {
-        items: rows.map((row) => ({ callLogId: row.callLogId, note: row.note, calledAt: row.createdDate, adminName: row.admin?.name ?? null })),
+        items: rows.map((row) => {
+            const followUp = row.followUps?.[0];
+            return {
+                callLogId: row.callLogId,
+                note: row.note,
+                calledAt: row.createdDate,
+                adminName: row.admin?.name ?? null,
+                followUp: followUp ? { followUpId: followUp.followUpId, status: followUp.status, flaggedAt: followUp.flaggedDate } : null,
+            };
+        }),
+        documentStatus: statuses.get(passportId),
     };
 }
 

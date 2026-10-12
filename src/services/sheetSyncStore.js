@@ -1,9 +1,13 @@
 // Google Sheet operational mirror: the durable PostgreSQL side (Phase 3/4).
 // (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 8.2-8.5, 9.5, 11.5.)
 //
-//   queue  sheet_sync_queue  "candidate X needs synchronization" (rows are
-//          written by database triggers, see migration
-//          20261006120000_sheet_sync_outbox; this module claims and settles them)
+//   queue  sheet_sync_queue  "candidate X changed since the last sync" (rows
+//          are written by database triggers, see migration
+//          20261006120000_sheet_sync_outbox). Nothing is synced in real time:
+//          a scheduled or manual reconciliation mirrors the whole database and
+//          then settles the rows it covered (openQueueItems /
+//          settleReconciled). The claim/settle functions of the former
+//          real-time processing are kept but no longer used by the worker.
 //   runs   sheet_sync_runs   durable RECONCILE / TEST_CONNECTION requests
 //   state  sheet_sync_state  one row: integration state, worker heartbeat,
 //          and the WRITER LEASE (one process writes to the Sheet at a time)
@@ -166,6 +170,37 @@ export function createSheetSyncStore({ db } = {}) {
         return count;
     }
 
+    // The open rows (PENDING, or PROCESSING left by an older worker) as they
+    // are now. Read BEFORE a reconciliation reads the database, so every
+    // change they stand for is in that reconciliation's snapshot.
+    // onlyUniqueIds (the first-write pilot): only these candidates.
+    function openQueueItems({ onlyUniqueIds = null } = {}) {
+        return db.sheetSyncQueue.findMany({
+            where: {
+                status: { in: [QUEUE_STATUS.PENDING, QUEUE_STATUS.PROCESSING] },
+                ...(onlyUniqueIds ? { uniqueId: { in: [...onlyUniqueIds] } } : {}),
+            },
+            select: { queueId: true, status: true, updatedAt: true },
+        });
+    }
+
+    // After a successful write reconciliation: each row from openQueueItems
+    // is settled COMPLETED (RECONCILED) only if it is unchanged since it was
+    // read. A change that arrived meanwhile (the trigger coalesces it into
+    // the PENDING row and moves updated_at) keeps its row PENDING for the
+    // next run, so no change is ever lost. Returns the number settled.
+    async function settleReconciled(rows, { now }) {
+        let settled = 0;
+        for (const row of rows) {
+            const { count } = await db.sheetSyncQueue.updateMany({
+                where: { queueId: row.queueId, status: row.status, updatedAt: row.updatedAt },
+                data: { status: QUEUE_STATUS.COMPLETED, lastResult: "RECONCILED", completedAt: now, updatedAt: now, leaseOwner: null, leaseExpiresAt: null, lastErrorClass: null, lastErrorCode: null },
+            });
+            settled += count;
+        }
+        return settled;
+    }
+
     async function pruneCompleted(before) {
         const { count } = await db.sheetSyncQueue.deleteMany({ where: { status: QUEUE_STATUS.COMPLETED, completedAt: { lt: before } } });
         return count;
@@ -176,14 +211,16 @@ export function createSheetSyncStore({ db } = {}) {
     // A new QUEUED run, or the kind's active (QUEUED/RUNNING) run if there is
     // one already: { run, created }. The partial unique index makes this
     // safe against concurrent requests.
-    async function requestRun({ kind, triggerSource, requestedBy = null, now = new Date() }) {
+    // destinationKey: only for a destination-switch check (the destination it
+    // validates); other runs record theirs when they start (setRunDestination).
+    async function requestRun({ kind, triggerSource, requestedBy = null, destinationKey = null, now = new Date() }) {
         if (!Object.values(RUN_KIND).includes(kind)) throw new Error("Unknown run kind");
         if (!Object.values(RUN_TRIGGER).includes(triggerSource)) throw new Error("Unknown run trigger");
         for (let tries = 0; tries < 3; tries++) {
             const active = await db.sheetSyncRun.findFirst({ where: { kind, status: { in: ACTIVE_RUN_STATUSES } }, orderBy: { createdAt: "asc" } });
             if (active) return { run: active, created: false };
             try {
-                const run = await db.sheetSyncRun.create({ data: { runId: randomUUID(), kind, triggerSource, requestedBy, status: RUN_STATUS.QUEUED, createdAt: now, updatedAt: now } });
+                const run = await db.sheetSyncRun.create({ data: { runId: randomUUID(), kind, triggerSource, requestedBy, destinationKey, status: RUN_STATUS.QUEUED, createdAt: now, updatedAt: now } });
                 return { run, created: true };
             } catch (error) {
                 if (!isUniqueViolation(error)) throw error;
@@ -230,7 +267,13 @@ export function createSheetSyncStore({ db } = {}) {
         return count === 1;
     }
 
+    // The Sync Destination a run uses, resolved when it starts.
+    async function setRunDestination(run, destinationKey) {
+        await db.sheetSyncRun.updateMany({ where: runOwnedBy(run), data: { destinationKey } });
+    }
+
     const getRun = (runId) => db.sheetSyncRun.findUnique({ where: { runId } });
+    const recentRuns = (kind, take = 10) => db.sheetSyncRun.findMany({ where: { kind }, orderBy: { createdAt: "desc" }, take });
 
     const latestRun = (kind, where = {}) => db.sheetSyncRun.findFirst({ where: { kind, ...where }, orderBy: { createdAt: "desc" } });
 
@@ -254,8 +297,52 @@ export function createSheetSyncStore({ db } = {}) {
         await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID, writerLeaseOwner: owner }, data: { writerLeaseOwner: null, writerLeaseExpiresAt: null } });
     }
 
-    async function heartbeat({ writeGate, configured, targetHint, now }) {
-        await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID }, data: { writeGate, configured, targetHint, workerHeartbeatAt: now, updatedAt: now } });
+    // destinations: the configured Sync Destinations' public metadata (key,
+    // name, short hint, tab name; never a full spreadsheet ID).
+    async function heartbeat({ writeGate, configured, targetHint, destinations, now }) {
+        const data = { writeGate, configured, targetHint, workerHeartbeatAt: now, updatedAt: now };
+        if (destinations !== undefined) data.destinations = destinations;
+        await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID }, data });
+    }
+
+    // ------------------------------------------------------------ Sync Destination
+
+    // An ADMIN's switch request: recorded only when none is pending.
+    async function requestDestination({ key, now }) {
+        const { count } = await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID, requestedDestinationKey: null }, data: { requestedDestinationKey: key, updatedAt: now } });
+        return count === 1;
+    }
+
+    // A switch that won't happen (validation failed, or the request was
+    // withdrawn): the active destination is left as it is.
+    async function clearRequestedDestination({ key, now }) {
+        const { count } = await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID, requestedDestinationKey: key }, data: { requestedDestinationKey: null, updatedAt: now } });
+        return count === 1;
+    }
+
+    // A validated switch: the requested destination becomes the active one,
+    // and the change is written to the audit log (the ADMIN who asked for
+    // it), in one transaction. Only the pending request can be promoted.
+    async function promoteDestination({ key, previous, next, requestedBy, now }) {
+        return db.$transaction(async (tx) => {
+            const { count } = await tx.sheetSyncState.updateMany({
+                where: { stateId: STATE_ID, requestedDestinationKey: key },
+                data: { activeDestinationKey: key, requestedDestinationKey: null, updatedAt: now },
+            });
+            if (count !== 1) return false;
+            if (requestedBy) {
+                await tx.auditLog.create({
+                    data: {
+                        auditId: randomUUID(), adminId: requestedBy, action: "SET_SHEET_DESTINATION",
+                        previousStatus: previous?.key ?? "NONE", newStatus: key,
+                        previousValue: previous?.name ?? null, newValue: next?.name ?? null,
+                        reason: "Google Sheet sync destination changed after its access and headers were validated",
+                        createdDate: now,
+                    },
+                });
+            }
+            return true;
+        });
     }
 
     async function setIntegrationState({ state, errorClass = null, errorCode = null, now }) {
@@ -275,8 +362,9 @@ export function createSheetSyncStore({ db } = {}) {
     }
 
     return Object.freeze({
-        claimQueueBatch, completeQueueItem, failQueueItem, retryQueueItem, queueCounts, resolveFailedBefore, pruneCompleted,
-        requestRun, claimRun, renewRun, finishRun, getRun, latestRun,
+        claimQueueBatch, completeQueueItem, failQueueItem, retryQueueItem, queueCounts, resolveFailedBefore, openQueueItems, settleReconciled, pruneCompleted,
+        requestRun, claimRun, renewRun, finishRun, setRunDestination, getRun, latestRun, recentRuns,
         getState, acquireWriterLease, releaseWriterLease, heartbeat, setIntegrationState, recordTransientError, recordSyncSuccess,
+        requestDestination, clearRequestedDestination, promoteDestination,
     });
 }

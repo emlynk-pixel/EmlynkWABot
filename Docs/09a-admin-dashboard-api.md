@@ -844,7 +844,8 @@ Endpoint tiers (`src/routes/admin.js`):
 | Tier | Roles | Routes |
 |---|---|---|
 | Dashboard reads | ADMIN, MANAGER, ANALYST | overview, documents, clients, police, reports, review (read) |
-| Candidates (`CANDIDATE_STAFF`) | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | the whole Candidates area: list, registration, details, stages, candidate documents, call logs, additional details |
+| Candidates (`CANDIDATE_STAFF`) | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | the whole Candidates area: list, registration, details, stages, candidate documents, call logs, additional details; Priority Follow-Ups: flag a call (`POST /candidates/:passportId/call-logs/:callLogId/follow-up`), list (`GET /follow-ups`) and complete (`POST /follow-ups/:id/complete`) |
+| Priority Follow-Up delete | ADMIN, MANAGER | `DELETE /follow-ups/:id`: removes the follow-up row only (never the call log, candidate or documents); ANALYST and REGISTRATION_DESK get 403. The role is the signed-in user's, read from the database on every request |
 | Review and corrections | ADMIN, MANAGER, ANALYST | review actions, temporary document delete |
 | Police date correction | ADMIN, MANAGER | `POST /documents/:id/police-date` |
 | Users, Audit Logs and Settings | ADMIN | `/api/admin/users/*`, `/api/admin/audit-logs`, `/api/admin/settings/sheet-sync/*` |

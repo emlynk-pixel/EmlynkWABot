@@ -12,13 +12,26 @@
 // same functions the Admin candidate page uses (candidateService.js), never
 // from a second copy of those rules.
 //
-// Columns with no confirmed system data (TEST NUMBER, DRIVING LICIAN,
-// POLICE REP FM) are always "". There is one SCAN column only.
+// TEST NUMBER has no confirmed system data and is always "". DRIVING LICIAN
+// and POLICE REP FM are document columns with no document type in the
+// application, so no candidate can have one: they are always "Not Submitted"
+// (Sheet output only; nothing is stored). There is one SCAN column only.
+//
+// Document columns (PASSPORT COPY, POLICE REP SRI LANKA (verified), POLICE
+// REP ROMANIA, MEDICAL, SCAN, NATIONAL ID, POLICE REPORT APPLIED, POLICE REP
+// SRI LANKA (normal), VIDEOS) show the submission date of the candidate's
+// current document of that type (and variant): its received_date, as the
+// Sri Lanka calendar date YYYY-MM-DD. A replacement or re-upload is a new
+// document row (the old one is kept as SUPERSEDED), so the current
+// document's received_date is the latest submission. No current document:
+// exactly "Not Submitted". These are display values only: nothing reads them
+// back, and "Not Submitted" is never an instruction to delete anything.
 
 import { SHEET_COLUMNS, SYSTEM_CANDIDATE_ID_FIELD, assertSheetRow } from "./sheetSchema.js";
 import { CANDIDATE_DOCUMENT_TYPES, automaticStageMissing, currentOf, stageList } from "./candidateService.js";
+import { businessDateOf } from "../utils/businessDay.js";
 
-export const DOCUMENT_STATUS_MISSING = "MISSING";
+export const DOCUMENT_NOT_SUBMITTED = "Not Submitted";
 
 export const STAGE_STATUS = Object.freeze({ COMPLETED: "COMPLETED", INCOMPLETE: "INCOMPLETE" });
 
@@ -80,9 +93,17 @@ function currentDocument(documents, documentType, variant) {
     return current ? documents.find((d) => d.documentId === current.documentId) ?? null : null;
 }
 
-// VERIFIED / REVIEW_REQUIRED as stored; MISSING when there is no current document.
-const documentStatus = (documents, documentType, variant) =>
-    currentDocument(documents, documentType, variant)?.verificationStatus ?? DOCUMENT_STATUS_MISSING;
+// The current document's submission date (Sri Lanka calendar date,
+// YYYY-MM-DD), or "Not Submitted" when there is no current document.
+// received_date is required in the database; a current document without a
+// usable one can't be shown truthfully, so the candidate isn't mapped.
+function documentCell(documents, documentType, variant) {
+    const current = currentDocument(documents, documentType, variant);
+    if (!current) return DOCUMENT_NOT_SUBMITTED;
+    const submittedAt = toDate(current.receivedDate);
+    if (!submittedAt) throw new SheetMappingError("A current document has no submission date");
+    return businessDateOf(submittedAt);
+}
 
 // The 41 field-ordered cells for one candidate (canonical order).
 // options.mirroredAt (required): the LAST MIRRORED AT time, passed in so
@@ -126,18 +147,18 @@ export function mapCandidateToSheetRow(aggregate, { mirroredAt, recordStatus = R
         address: text(user.address),
         whatsappNumber: text(user.whatsappNumber),
         contactNumber: text(user.contactNumber),
-        passportCopy: documentStatus(documents, "PASSPORT"),
-        policeReportSriLankaVerified: documentStatus(documents, "POLICE_REPORT", "SL_VERIFIED"),
-        policeReportRomania: documentStatus(documents, "POLICE_REPORT", "ROMANIA"),
-        medical: documentStatus(documents, "MEDICAL"),
-        scan: documentStatus(documents, "SCAN"),
-        drivingLicence: "",
-        nationalId: documentStatus(documents, "NIC"),
-        policeReportApplied: documentStatus(documents, "POLICE_SLIP"),
+        passportCopy: documentCell(documents, "PASSPORT"),
+        policeReportSriLankaVerified: documentCell(documents, "POLICE_REPORT", "SL_VERIFIED"),
+        policeReportRomania: documentCell(documents, "POLICE_REPORT", "ROMANIA"),
+        medical: documentCell(documents, "MEDICAL"),
+        scan: documentCell(documents, "SCAN"),
+        drivingLicence: DOCUMENT_NOT_SUBMITTED,
+        nationalId: documentCell(documents, "NIC"),
+        policeReportApplied: documentCell(documents, "POLICE_SLIP"),
         submitDate: dateOnly(policeSlip?.policeSubmittedDate),
-        policeReportSriLankaNormal: documentStatus(documents, "POLICE_REPORT", "SL_NORMAL"),
-        policeReportFm: "",
-        videos: documentStatus(documents, "SKILL_VIDEO"),
+        policeReportSriLankaNormal: documentCell(documents, "POLICE_REPORT", "SL_NORMAL"),
+        policeReportFm: DOCUMENT_NOT_SUBMITTED,
+        videos: documentCell(documents, "SKILL_VIDEO"),
         placeOfBirth: text(user.placeOfBirth),
         sex: text(user.sex),
         nationality: text(user.nationality),

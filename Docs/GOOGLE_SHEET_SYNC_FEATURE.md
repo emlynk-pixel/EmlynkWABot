@@ -44,12 +44,14 @@ Google Sheet (`Emlynk Candidate Operational Mirror`)
 
 ### Core Operating Principles
 
-1. **Database is the single source of truth:** PostgreSQL (Supabase) is authoritative for all candidate data, stages, and document statuses.
+> **Current synchronization model:** there is **no real-time synchronization**. Database changes are only recorded in `sheet_sync_queue`; the Sheet is written by a full reconciliation of the current database at **06:00, 12:00 and 18:00 Asia/Colombo** (one Cloud Scheduler job, Section 12) and by an ADMIN's **Sync Now**. Statements below about incremental / near-real-time sync, queue claims and per-item retries describe the original design and are kept as history.
+
+1. **Database is the single source of truth:** PostgreSQL (Supabase) is authoritative for all candidate data, stages, and documents. Document columns show each current document's submission date (`documents.received_date`, Sri Lanka calendar date `YYYY-MM-DD`) or exactly `Not Submitted`; nothing in the Sheet is read back, and `Not Submitted` never deletes anything.
 2. **Google Sheet is an operational mirror / fallback view:** The Sheet is purely a downstream representation for human viewing and operational fallback.
-3. **Strictly one-way synchronization:** Changes in the Google Sheet are **NEVER** read back or synchronized into PostgreSQL. Any manual edit made inside the Sheet will be overwritten by the next incremental sync or daily reconciliation.
-4. **Asynchronous background processing:** Candidate registrations, document uploads, review actions, and stage updates trigger database triggers that enqueue sync events atomically. The background worker processes them asynchronously; neither candidate users nor admin users wait for Google API responses.
+3. **Strictly one-way synchronization:** Changes in the Google Sheet are **NEVER** read back or synchronized into PostgreSQL. Any manual edit made inside the Sheet will be overwritten by the next scheduled or manual reconciliation.
+4. **Asynchronous background processing:** Candidate registrations, document uploads, review actions, and stage updates trigger database triggers that record a queue row atomically. Nothing is written to the Sheet at that moment; the next scheduled (06:00, 12:00, 18:00 Asia/Colombo) or manual reconciliation mirrors the change. Neither candidate users nor admin users wait for Google API responses.
 5. **Decoupled system availability:** A Google Cloud outage, Sheets API rate limit, quota exhaustion, or network failure **CANNOT** cause a candidate database transaction to fail or roll back.
-6. **Reconciliation as a repair mechanism:** Admin "Sync Now" and automated Cloud Scheduler reconciliation perform full snapshot-to-sheet drift detection, repairing missing, stale, or manually altered rows. Normal candidate updates flow through the near-real-time incremental outbox.
+6. **Reconciliation as a repair mechanism:** Admin "Sync Now" and automated Cloud Scheduler reconciliation perform full snapshot-to-sheet drift detection, repairing missing, stale, or manually altered rows. They are the only way the Sheet is written; there is no real-time incremental sync.
 
 ---
 
@@ -59,12 +61,12 @@ Google Sheet (`Emlynk Candidate Operational Mirror`)
 
 | Component | Repository Path | Core Responsibilities |
 | :--- | :--- | :--- |
-| **Sheet Schema** | [src/services/sheetSchema.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSchema.js) | Defines the exact 40-column contract (`A:AN`). Exports positional helpers, A1 notation range builders, strict header validation (`validateHeaderRow`), and row shape assertion (`assertSheetRow`). |
-| **Candidate Mapper** | [src/services/candidateSheetMapper.js](file:///c:/Emlynk/EmlynkWABot/src/services/candidateSheetMapper.js) | Pure mapper turning candidate aggregates into 40 deterministic string cells. Enforces identical business logic as Admin UI for document currentness and stage completeness. |
-| **Sheets Adapter** | [src/services/googleSheetsAdapter.js](file:///c:/Emlynk/EmlynkWABot/src/services/googleSheetsAdapter.js) | The only module communicating with Google Sheets API v4. Implements narrow read/write methods (`readHeader`, `validateSchema`, `readCandidateIds`, `readRows`, `readRowsByNumber`, `writeRows`, `appendRow`, `updateRow`). Enforces write gating, keyless ADC authentication, and error sanitation. Contains **zero** clear or row-deletion methods. |
+| **Sheet Schema** | [src/services/sheetSchema.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSchema.js) | Defines the 41 required headers (canonical layout `A:AO`) and resolves columns **by header name** (`readSheetLayout`: any order, extra operator columns allowed, missing or duplicate required headers give `SCHEMA_INVALID`). Exports the single column-letter helper, A1 range builders (one write range per contiguous run of system columns), `validateHeaderRow` and `assertSheetRow`. |
+| **Candidate Mapper** | [src/services/candidateSheetMapper.js](file:///c:/Emlynk/EmlynkWABot/src/services/candidateSheetMapper.js) | Pure mapper turning candidate aggregates into 41 deterministic string cells in canonical field order (position-free; the adapter translates to the live Sheet order). Enforces identical business logic as Admin UI for document currentness and stage completeness. |
+| **Sheets Adapter** | [src/services/googleSheetsAdapter.js](file:///c:/Emlynk/EmlynkWABot/src/services/googleSheetsAdapter.js) | The only module communicating with Google Sheets API v4. Implements narrow read/write methods (`readHeader`, `validateSchema`, `readLayout`, `readCandidateIds`, `readRows`, `readRowsByNumber`, `writeRows`, `appendRow`, `updateRow`). Enforces write gating, keyless ADC authentication, and error sanitation. Contains **zero** clear or row-deletion methods. |
 | **Aggregate Reader** | [src/services/candidateAggregateReader.js](file:///c:/Emlynk/EmlynkWABot/src/services/candidateAggregateReader.js) | Reads candidate aggregates (`users`, `candidate_stages`, `documents`) in single queries by `unique_id`. Supports keyset pagination and transactional `readSnapshot` (`REPEATABLE READ`) verified against exact record counts. |
-| **Sync Planner** | [src/services/sheetSyncPlanner.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSyncPlanner.js) | Read-only planning module. Indexes Sheet candidate IDs from Column AN, detects duplicate system IDs (`SheetDuplicateCandidateIdError`), diffs expected cells against actual cells (`changedColumns`), and classifies operations (`APPEND`, `UPDATE`, `UNCHANGED`, `NOT_IN_DATABASE`). |
-| **Health Check** | [src/services/sheetHealthCheck.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetHealthCheck.js) | Read-only connection and schema probe (`A1:AN1`). Validates Google API connectivity and exact header match using `spreadsheets.readonly` scope without writing. |
+| **Sync Planner** | [src/services/sheetSyncPlanner.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSyncPlanner.js) | Read-only planning module. Indexes Sheet candidate IDs from the `_SYSTEM_CANDIDATE_ID` column, detects duplicate system IDs (`SheetDuplicateCandidateIdError`), diffs expected cells against actual cells (`changedColumns`), and classifies operations (`APPEND`, `UPDATE`, `UNCHANGED`, `NOT_IN_DATABASE`). |
+| **Health Check** | [src/services/sheetHealthCheck.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetHealthCheck.js) | Read-only connection and schema probe (row 1). Validates Google API connectivity and the header-name schema (reports missing / duplicated required headers) using `spreadsheets.readonly` scope without writing. |
 | **Sync Store** | [src/services/sheetSyncStore.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSyncStore.js) | PostgreSQL persistence layer: atomic compare-and-swap (CAS) queue claiming, leases, fenced settlements, bounded exponential backoff (`15s * 4^(attempt-1)` ±20% jitter), durable run tracking (`sheet_sync_runs`), single-row integration state (`sheet_sync_state`), and distributed writer lease acquisition. |
 | **Sync Engine** | [src/services/sheetSyncEngine.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSyncEngine.js) | Implements incremental sync (`syncCandidates`) and full reconciliation (`reconcile`). Handles chunked writing (200 rows/batch), pre-write schema validation, duplicate detection, dry-run mode, and deletion guard verification. |
 | **Sync Worker** | [src/services/sheetSyncWorker.js](file:///c:/Emlynk/EmlynkWABot/src/services/sheetSyncWorker.js) | Core worker loop: reports heartbeat, processes claimed runs (`TEST_CONNECTION` or `RECONCILE`), claims incremental queue batches, enforces writer lease, manages halting on configuration/data errors, and prunes aged completed queue rows. |
@@ -184,7 +186,16 @@ The operational mirror links database candidates to Sheet rows exclusively throu
 
 ## 4. Google Sheet Schema
 
-The operational mirror implements an exact **40-column contract** (`A` through `AN`). Columns `A` through `AM` (39 columns) represent human-facing operational fields; Column `AN` represents the technical identity.
+The operational mirror implements **41 required headers** (40 human-facing operational columns plus the technical identity `_SYSTEM_CANDIDATE_ID`), resolved dynamically **by header name**. Operators may reorder columns and add their own; order is irrelevant.
+
+> [!NOTE]
+> The column letters in the table below are the **canonical** layout of an earlier revision (before `VISA SUBMISSION STATUS` was added) and are kept for reference only. The authoritative, current layout and mapping is Section 6.1 of [GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md); the code never relies on a letter.
+
+### Operator guide: what is safe in the Sheet
+
+**Safe at any time:** reorder system columns; move `_SYSTEM_CANDIDATE_ID` (column A, the middle or last), `VISA SUBMISSION STATUS` and `VISA APPROVAL STATUS`; add custom columns anywhere (their values are never written, cleared or overwritten); change widths, formatting, filters, freeze panes; hide columns.
+
+**Not safe (sync halts with `SCHEMA_INVALID` / a data-integrity error):** rename, delete or duplicate a required header (text must match exactly; the only intentional duplicate is `POLICE REP SRI LANKA`, whose two columns keep their order relative to each other: left = SL Verified, right = SL Normal); edit or clear `_SYSTEM_CANDIDATE_ID` values; duplicate a candidate ID across rows; replace system IDs with passport numbers or NICs. The sync never reorders the Sheet for you and never writes while the header mapping is ambiguous.
 
 ### Complete 40-Column Field Mapping Specification
 
@@ -202,18 +213,18 @@ The operational mirror implements an exact **40-column contract** (`A` through `
 | **J** | `ADDRESS` | `users.address` | Residential address string. |
 | **K** | `WHATSAPP NUM` | `users.whatsapp_number` | WhatsApp contact phone number. |
 | **L** | `CONTACT NUM` | `users.contact_number` | Alternate contact phone number. |
-| **M** | `PASSPORT COPY` | `documents` type `PASSPORT` | Document verification status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
-| **N** | `POLICE REP SRI LANKA` | `documents` type `POLICE_REPORT`, variant `SL_VERIFIED` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. (Identified positionally; distinct from Column V). |
-| **O** | `POLICE REP ROMANIA` | `documents` type `POLICE_REPORT`, variant `ROMANIA` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
-| **P** | `MEDICAL` | `documents` type `MEDICAL` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
-| **Q** | `SCAN` | `documents` type `SCAN` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. **Exactly one SCAN column** exists. |
-| **R** | `DRIVING LICIAN` | Unmapped / Empty (`""`) | Legacy spelling preserved intentionally from manual Sheet; always empty string. |
-| **S** | `NATIONAL ID` | `documents` type `NIC` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
-| **T** | `POLICE REPORT APPLIED` | `documents` type `POLICE_SLIP` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
+| **M** | `PASSPORT COPY` | `documents` type `PASSPORT` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
+| **N** | `POLICE REP SRI LANKA` | `documents` type `POLICE_REPORT`, variant `SL_VERIFIED` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. (One of two identical headers; the left one is SL Verified, the right one SL Normal, by relative order). |
+| **O** | `POLICE REP ROMANIA` | `documents` type `POLICE_REPORT`, variant `ROMANIA` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
+| **P** | `MEDICAL` | `documents` type `MEDICAL` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
+| **Q** | `SCAN` | `documents` type `SCAN` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. **Exactly one SCAN column** exists. |
+| **R** | `DRIVING LICIAN` | No document type (Sheet output only) | Legacy spelling preserved intentionally from manual Sheet; always `Not Submitted`. |
+| **S** | `NATIONAL ID` | `documents` type `NIC` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
+| **T** | `POLICE REPORT APPLIED` | `documents` type `POLICE_SLIP` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
 | **U** | `SUBMIT DATE` | `policeSlip.policeSubmittedDate` | Submission date of active `POLICE_SLIP`: `YYYY-MM-DD`. |
-| **V** | `POLICE REP SRI LANKA` | `documents` type `POLICE_REPORT`, variant `SL_NORMAL` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. Standard unverified Sri Lankan report. |
-| **W** | `POLICE REP FM` | Unmapped / Empty (`""`) | Foreign Ministry police report column; always empty string. |
-| **X** | `VIDEOS` | `documents` type `SKILL_VIDEO` | Document status: `VERIFIED`, `REVIEW_REQUIRED`, or `MISSING`. |
+| **V** | `POLICE REP SRI LANKA` | `documents` type `POLICE_REPORT`, variant `SL_NORMAL` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. Standard unverified Sri Lankan report. |
+| **W** | `POLICE REP FM` | No document type (Sheet output only) | Foreign Ministry police report column; always `Not Submitted`. |
+| **X** | `VIDEOS` | `documents` type `SKILL_VIDEO` | Submission date (`YYYY-MM-DD`, Sri Lanka date) of the current document, or `Not Submitted`. |
 | **Y** | `PLACE OF BIRTH` | `users.place_of_birth` | String text. |
 | **Z** | `SEX` | `users.sex` | Candidate sex / gender string. |
 | **AA** | `NATIONALITY` | `users.nationality` | Nationality string. |
@@ -234,8 +245,8 @@ The operational mirror implements an exact **40-column contract** (`A` through `
 ### Schema Invariants
 
 - **No arbitrary columns:** No columns exist for Agreements, Affidavits, Contracts, or secondary Scan documents.
-- **Positional identity:** Columns `N` and `V` have identical header text (`POLICE REP SRI LANKA`). The system maps them strictly by ordinal position (`index 13` vs `index 21`), never by header string search.
-- **Header validation:** The worker validates `A1:AN1` before every write batch. If any column header differs or is out of order, writing is immediately aborted with `SheetSchemaMismatchError`.
+- **Relative-order identity:** The two `POLICE REP SRI LANKA` columns have identical header text; they are assigned by their order relative to each other (left = SL Verified, right = SL Normal), and may be moved anywhere in the Sheet as long as that order is kept. A different count of that header is a MISSING / DUPLICATE schema problem.
+- **Header validation:** Row 1 is read once per operation (never cached across runs) and validated by name before every write batch: every required header exactly once, any order, extra columns allowed. A missing, duplicated or renamed required header aborts with `SheetSchemaMismatchError` (`SCHEMA_INVALID`). If row 1 changes between the read and the write, the write is refused (`SheetLayoutChangedError`, retried next run).
 
 ---
 
@@ -261,8 +272,8 @@ loop Every 10 Seconds (Worker Polling)
     Worker->>Queue: Claim PENDING batch (CAS, 2-min lease)
     Queue-->>Worker: Return claimed batch
     Worker->>DB: Read Aggregates (findByUniqueIds)
-    Worker->>Google: Read Header A1:AN1 (Validate Schema)
-    Worker->>Google: Read Candidate IDs AN2:AN
+    Worker->>Google: Read header row 1:1 (build the header-name column map)
+    Worker->>Google: Read Candidate IDs (the _SYSTEM_CANDIDATE_ID column)
     Worker->>Google: batchGet Existing Rows for Batch Candidates
     Worker->>Worker: Map Candidates & Diff Cells (changedColumns)
     alt Candidate Missing in Sheet
@@ -303,6 +314,8 @@ Reconciliation provides a full-state repair mechanism to audit and heal drift be
 
 ### Distinctions Across Sync Modes
 
+> The "Incremental Auto-Sync" column describes the original real-time path, which the worker no longer runs. Only Scheduled Reconciliation (06:00, 12:00, 18:00 Asia/Colombo) and Sync Now write to the Sheet.
+
 | Characteristic | Incremental Auto-Sync | Scheduled Reconciliation | Admin "Sync Now" |
 | :--- | :--- | :--- | :--- |
 | **Trigger Mechanism** | Event-driven (DB triggers) | Google Cloud Scheduler | Admin UI button click |
@@ -315,9 +328,9 @@ Reconciliation provides a full-state repair mechanism to audit and heal drift be
 
 ### Detailed Reconciliation Algorithm
 
-1. **Positional Header Validation:** Reads `A1:AN1` and validates exact header match.
-2. **Full Sheet Scan:** Reads all data rows (`A2:AN`). Builds candidate row index from Column `AN`.
-3. **Duplicate Check:** If any duplicate candidate ID is found in Column `AN`, the run halts immediately with `DUPLICATE_CANDIDATE_ID`.
+1. **Header-name Validation:** Reads row 1 once and maps every required header by name (any order; extra columns allowed).
+2. **Full Sheet Scan:** Reads all data rows across the live width. Builds the candidate row index from the `_SYSTEM_CANDIDATE_ID` column.
+3. **Duplicate Check:** If any duplicate candidate ID is found in the `_SYSTEM_CANDIDATE_ID` column, the run halts immediately with `DUPLICATE_CANDIDATE_ID`.
 4. **Complete Database Snapshot:** Opens a single `REPEATABLE READ` transaction with `SNAPSHOT_TRANSACTION_TIMEOUT_MS = 120_000`. The reader executes `tx.user.count()` and reads all candidate aggregates, asserting:
    - `aggregates.length === expectedCount`
    - `uniqueIds` are distinct
@@ -497,11 +510,17 @@ POST /tasks/reconcile
    - `email_verified === true`.
 3. **Durable Request Enqueue:** A valid request records a `RECONCILE` run with trigger `SCHEDULER` and responds immediately with `202 Accepted`. The worker loop processes the reconciliation asynchronously.
 
-> [!WARNING]
-> **Final production reconciliation schedule is not yet locked/configured.**
-> During release staging, an automated testing schedule may run periodically (e.g., every 5 minutes in dry-run mode). The production schedule is intended to run once daily during off-peak hours (e.g., `0 2 * * *` UTC = 07:30 Sri Lanka time).
-> 
-> The scheduler is **NOT** responsible for normal, near-real-time candidate updates; those are handled continuously by the incremental outbox queue.
+### Schedule
+
+| Setting | Value |
+| :--- | :--- |
+| Job | `emlynk-sheet-sync-reconcile` (one Cloud Scheduler HTTP job) |
+| Schedule | `0 6,12,18 * * *`: 06:00, 12:00 and 18:00 |
+| Time zone | `Asia/Colombo` (the project's operational time zone, `src/utils/businessDay.js`; applied by Cloud Scheduler, so the server's time zone never matters) |
+| Target | `POST <worker URL>/tasks/reconcile` |
+| Authentication | OIDC token of `emlynk-sheet-sync-scheduler@…` (`roles/run.invoker` on the worker only); audience = the worker URL (`SHEET_SYNC_SCHEDULER_AUDIENCE`); invoker e-mail = `SHEET_SYNC_SCHEDULER_INVOKER` |
+
+These values are declared once in `SHEET_SYNC_SCHEDULE` (`src/config/sheetSync.js`); the exact `gcloud` commands are in `GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`, Section 24.9. The scheduled runs (and Sync Now) are the **only** automatic Sheet writes: there is no real-time sync. Each run mirrors the database as it is at that moment, so several changes between runs appear once, in their latest state.
 
 ---
 
@@ -524,7 +543,7 @@ POST /tasks/reconcile
 
 > **A Google Sheet outage or API failure MUST NEVER cause an otherwise valid candidate database write to fail.**
 > 
-> Because database change capture occurs entirely via local PostgreSQL triggers writing to `sheet_sync_queue`, the candidate registration or update transaction succeeds unconditionally. If Google is down, queue rows accumulate safely and drain automatically once connectivity resumes.
+> Because database change capture occurs entirely via local PostgreSQL triggers writing to `sheet_sync_queue`, the candidate registration or update transaction succeeds unconditionally. If Google is down, the run fails with a code and the next scheduled (or manual) run mirrors the then-current database.
 
 ---
 
@@ -565,8 +584,8 @@ The following verification steps have been **confirmed and completed**:
 The following release verification steps have **not yet been confirmed** in the current environment:
 
 - [ ] **Full Multi-Candidate Reconciliation:** Execution of the first full live reconciliation with writes enabled across all 6 database candidates.
-- [ ] **Automatic End-to-End Candidate Update:** Verification that creating or editing a new candidate in the live application automatically propagates to the Sheet within one polling interval.
-- [ ] **Production Cloud Scheduler Lock:** Cloud Scheduler recurring daily reconciliation job created, tested with OIDC authentication, and locked into production.
+- [ ] **Scheduled End-to-End Candidate Update:** Verification that a candidate created or edited in the live application appears in the Sheet after the next scheduled run (06:00, 12:00 or 18:00 Asia/Colombo) or Sync Now, and not before.
+- [ ] **Production Cloud Scheduler Lock:** Cloud Scheduler job `emlynk-sheet-sync-reconcile` (`0 6,12,18 * * *`, `Asia/Colombo`) created, tested with OIDC authentication, and locked into production.
 
 ---
 
@@ -578,17 +597,18 @@ The feature is covered by comprehensive automated test suites covering backend s
 
 | Test File | Component Under Test | Test Count | Status |
 | :--- | :--- | :---: | :---: |
-| [test/sheetSchema.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSchema.test.js) | Exact 40-column definition, A1 notation ranges, header validation, assertSheetRow. | 17 | **PASS** |
-| [test/candidateSheetMapper.test.js](file:///c:/Emlynk/EmlynkWABot/test/candidateSheetMapper.test.js) | Aggregate mapping, date formatting, document/stage statuses, record status, pure mapping invariants. | 15 | **PASS** |
-| [test/googleSheetsAdapter.test.js](file:///c:/Emlynk/EmlynkWABot/test/googleSheetsAdapter.test.js) | Narrow adapter methods, write gate enforcement, error classification, range quoting, live client test runner guard. | 31 | **PASS** |
-| [test/sheetSyncPhase2.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncPhase2.test.js) | Aggregate reader batching, planning actions, duplicate AN detection, read-only health checks. | 29 | **PASS** |
+| [test/sheetSchema.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSchema.test.js) | Header-name layout (any order, extra columns, missing / duplicate / renamed headers), column-letter helper, A1 ranges and write runs, assertSheetRow. | 25 | **PASS** |
+| [test/candidateSheetMapper.test.js](file:///c:/Emlynk/EmlynkWABot/test/candidateSheetMapper.test.js) | Aggregate mapping, date formatting, document/stage statuses, record status, pure mapping invariants. | 21 | **PASS** |
+| [test/googleSheetsAdapter.test.js](file:///c:/Emlynk/EmlynkWABot/test/googleSheetsAdapter.test.js) | Narrow adapter methods, write gate enforcement, error classification, range quoting, header-name reads and writes (operator columns never written), live client test runner guard. | 35 | **PASS** |
+| [test/sheetSyncPhase2.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncPhase2.test.js) | Aggregate reader batching, planning actions, duplicate ID detection, read-only health checks. | 30 | **PASS** |
 | [test/sheetSyncOutbox.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncOutbox.test.js) | Additive PostgreSQL migration on PGlite, atomic triggers, coalescing, delete hint stickiness, passport cascade. | 14 | **PASS** |
 | [test/sheetSyncEngine.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncEngine.test.js) | Incremental sync, reconciliation drift repair, deletion guard logic, duplicate stops, dry-run mode. | 13 | **PASS** |
-| [test/sheetSyncWorker.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncWorker.test.js) | Worker loop, lease management, writer lease fencing, exponential backoff, dead lettering, pilot restrictions, halted states, PII redaction. | 28 | **PASS** |
+| [test/sheetSyncReordering.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncReordering.test.js) | Dynamic column mapping regression suite: canonical, reversed and unusual layouts; identity in A / middle / last; moved VISA columns; custom columns preserved; missing, duplicate and renamed headers; no wrong-column writes; layout re-read on a later run; mid-run layout change; idempotent recovery. | 23 | **PASS** |
+| [test/sheetSyncWorker.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncWorker.test.js) | Worker loop, lease management, writer lease fencing, exponential backoff, dead lettering, pilot restrictions, halted states, schema problem codes, PII redaction. | 37 | **PASS** |
 | [test/sheetSyncSettingsApi.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncSettingsApi.test.js) | Express Settings API routes, RBAC (403 for non-admin roles), token claim validation, deduplication of active runs. | 13 | **PASS** |
 | [test/sheetSyncWorkerProcess.test.js](file:///c:/Emlynk/EmlynkWABot/test/sheetSyncWorkerProcess.test.js) | Worker HTTP server, `/health`, Cloud Scheduler OIDC verification, operator CLI command, shutdown signals. | 7 | **PASS** |
 | [admin/src/test/settings.test.tsx](file:///c:/Emlynk/EmlynkWABot/admin/src/test/settings.test.tsx) | Admin UI Settings page, sidebar navigation, breadcrumbs, status badge rendering, action buttons, RBAC restricted card. | 12 | **PASS** |
-| **Total Verified Sheet Sync Tests** | **All core sheet sync backend & frontend suites** | **179** | **100% PASS** |
+| **Total Verified Sheet Sync Tests** | **All core sheet sync backend & frontend suites** | **230** | **100% PASS** |
 
 ### Additional Validations
 
@@ -746,7 +766,7 @@ Use this checklist to track the final completion status for production release:
 - [ ] **Full multi-candidate live reconciliation completed successfully**
 - [ ] **Expected candidate count present in operational Google Sheet**
 - [ ] **Column `AN` IDs unique across all rows in the operational Sheet**
-- [ ] **Normal candidate update automatically synchronizes to Sheet in near-real-time**
+- [ ] **Normal candidate update reaches the Sheet at the next scheduled run (06:00 / 12:00 / 18:00 Asia/Colombo) or Sync Now, not in real time**
 - [ ] **Zero duplicate rows generated after repeated reconciliations**
 - [ ] **Deleted/inactive candidate row behavior verified live**
 - [ ] **Production Cloud Scheduler job configured, tested, and verified**

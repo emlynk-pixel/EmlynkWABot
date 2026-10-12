@@ -45,7 +45,9 @@ A candidate is stored as a row in the `candidate` table (named `users` before mi
 | `admin/src/components/candidate/StagePanels.tsx` | Stage-specific panel components |
 | `admin/src/components/candidate/DocumentRow.tsx` | Per-document upload row (used in both registration and stage 2) |
 | `admin/src/components/candidate/CandidateStepper.tsx` | Progress stepper shown across the top of the deployment page |
-| `admin/src/components/candidate/CallLogDialog.tsx` | Admin call log dialog |
+| `admin/src/components/candidate/CallLogDialog.tsx` | Admin call log drawer: call history, Need attention, current documents |
+| `admin/src/components/candidate/DocumentStatusSummary.tsx` | Compact current-document chips (Call Log and Priority Follow-Ups) |
+| `admin/src/pages/PriorityFollowUpsPage.tsx` | Priority Follow-Ups page |
 | `admin/src/components/candidate/AdditionalDetailsPanel.tsx` | Additional details form: sections, conditional fields, sizes, save |
 | `admin/src/api/candidates.ts` | Typed frontend API wrappers for all candidate endpoints |
 
@@ -183,7 +185,23 @@ Each has a free-text **Notes** field and a **Stage completed** checkbox. Changes
 
 ### 4.3 Call log
 
-Every candidate page has a **Call log** button (top right). The dialog shows a chronological log of admin call notes and allows adding new ones (`POST /api/admin/candidates/:passportId/call-logs`).
+Every candidate page has a **Call log** button (top right). The drawer shows a chronological log of admin call notes and allows adding new ones (`POST /api/admin/candidates/:passportId/call-logs`).
+
+- **Current documents.** Above the history, compact chips show the documents the candidate has *now* (green check = on record, outline = not uploaded). Not a snapshot: an old call "Passport not uploaded" shows the passport once it is uploaded, while the note itself never changes. The server computes it with the candidate page's own current-document rule (`currentOf`: newest *Verified*, else newest waiting for review, *Superseded* ignored; police reports per variant; a single *Scan*) in `documentStatusOf`, over the supported document types only. Read-only.
+- **Need attention.** Each call has a *Need attention* button. It creates a Priority Follow-Up that references the call log; the call stays in the history with a *Needs attention* badge. A call can't have two open follow-ups (partial unique index `call_log_follow_up_one_open_per_call_log`, 409 `FOLLOW_UP_EXISTS`); after completion it can be marked again. The follow-up copies nothing from the call.
+
+### 4.3.1 Priority Follow-Ups
+
+Admin page `/admin/follow-ups` (sidebar, after Candidates), grouped by candidate (one card per candidate with the candidate's current documents, follow-ups inside, newest first), with *Open* (default) and *Completed* views.
+
+| Action | Roles | Effect |
+|---|---|---|
+| Mark for follow-up | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Creates `call_log_follow_up` (`OPEN`). The call log is unchanged |
+| List | same | `GET /api/admin/follow-ups?status`: three queries however many follow-ups (follow-ups with their call logs, the candidates, their documents); newest 500 |
+| Mark complete | same | `COMPLETED` with completer and time; the row is kept and leaves the Open list |
+| Delete | ADMIN, MANAGER only (403 otherwise) | Removes the follow-up row only, after a confirmation. The call log, candidate and documents stay |
+
+Each change is audited (`FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`, Candidate category). Migration `20261011120000_call_log_follow_up` (additive).
 
 ### 4.4 Additional details (a progress step)
 
@@ -375,8 +393,12 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `POST` | `/candidates/:passportId/documents/upload-target` | Check a file's description; returns a signed upload URL (JSON only) |
 | `POST` | `/candidates/:passportId/documents/finalize` | Check the uploaded file and record it (JSON only) |
 | `POST` | `/candidates/:passportId/documents/:documentId/remove` | Delete the current document and its file; `{ reason }` required |
-| `GET` | `/candidates/:passportId/call-logs` | List call log entries |
+| `GET` | `/candidates/:passportId/call-logs` | List call log entries, each with its newest follow-up, plus the candidate's current document status |
 | `POST` | `/candidates/:passportId/call-logs` | Add a call log entry |
+| `POST` | `/candidates/:passportId/call-logs/:callLogId/follow-up` | Mark a call for follow-up |
+| `GET` | `/follow-ups?status` | Priority Follow-Ups grouped by candidate |
+| `POST` | `/follow-ups/:followUpId/complete` | Complete a follow-up |
+| `DELETE` | `/follow-ups/:followUpId` | Delete a follow-up (ADMIN, MANAGER) |
 | `GET` | `/candidates/:passportId/additional-details` | Additional details, or suggestions from the candidate record when none are saved |
 | `PUT` | `/candidates/:passportId/additional-details` | Save additional details (full replacement; audited; never creates a candidate) |
 

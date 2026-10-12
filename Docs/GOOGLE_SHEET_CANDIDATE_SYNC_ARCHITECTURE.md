@@ -2,7 +2,7 @@
 ## Architecture & Project-Scope Specification
 
 - **Feature Name:** Google Sheets Candidate Operational Mirror (operational fallback)
-- **Document Version:** 1.5.0
+- **Document Version:** 1.6.0 (adds Sync Destination, Section 25, and the as-built Settings layout, Section 12.9)
 - **Status:** IMPLEMENTED ON `dev` (Phases 1–7 code complete and locally verified; NOT deployed; `SHEET_SYNC_ENABLED=false`; no live Sheet write has ever been made). Cloud Run ADC verified with the read-only check (`CONNECTED` + `SCHEMA_VALID`, write gate `DISABLED`). **Section 24 is the as-built reference and operational runbook; where an earlier section disagrees, Section 24 wins** (earlier sections are kept as the design record and are annotated where superseded).
 - **Author:** System Architecture Team
 - **Development Branch:** `dev` (this document and all development happen on `dev`)
@@ -15,9 +15,13 @@
 - **Confirmed Dedicated Service Account:** `emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com` (Editor on the operational spreadsheet)
 - **Confirmed Authentication Direction:** Cloud Run runtime service identity with keyless Google authentication / Application Default Credentials (ADC); no downloaded service-account JSON key files
 - **Operational Sheet Constraint:** The target spreadsheet is the **real operational Sheet** (no separate dev/test spreadsheet exists by business decision); strict environment write-gating is mandatory
-- **Settings Requirement (confirmed):** a visible **Settings** item after Change Roles in the existing Admin Console sidebar, route `/admin/settings`, with **Google Sheet Sync** as a section of that page (Section 12). This overrides any older recommendation to hide the page or make it direct-URL-only.
+- **Settings Requirement (confirmed; as built in Section 12.9):** a visible **Settings** item in the Admin Console sidebar, route `/admin/settings`, with tabs Change Roles, Invite User and **Google Sheet Sync** (the first two were later consolidated into Settings from standalone sidebar entries). This overrides any older recommendation to hide the page or make it direct-URL-only.
 
 > **Table names (Database & Authentication Restructure).** Migration `20261008120000_rename_candidate_user_tables` renamed the candidate table `users` to `candidate` (trigger `candidate_sheet_sync_capture`, function `sheet_sync_capture_candidate`) and the staff table `admins` to `public."user"`. Current-state references below use the new names. Repository findings quoted from the original audit (e.g. the `/invitations` and `/admins` endpoints and CSRF protection) describe the code at that time; those endpoints and the CSRF middleware no longer exist (Supabase Auth, `SUPABASE_AUTH.md`).
+
+> **Synchronization model (current; supersedes the real-time design below).** There is **no real-time synchronization**. A candidate, stage or document change only records a row in `sheet_sync_queue` (the database triggers are unchanged); nothing is written to the Sheet at that moment. The Sheet is written only by a **full reconciliation** of the current database: automatically at **06:00, 12:00 and 18:00 Asia/Colombo** (one Cloud Scheduler job, `0 6,12,18 * * *`, time zone `Asia/Colombo`, calling the worker's OIDC-protected `POST /tasks/reconcile`; `SHEET_SYNC_SCHEDULE` in `src/config/sheetSync.js`), and on demand by an ADMIN's **Sync Now**. A successful write reconciliation settles the queue rows it covered (`RECONCILED`); a change that arrives during a run stays `PENDING` for the next one. Asia/Colombo is the project's operational time zone (`src/utils/businessDay.js`); Cloud Scheduler applies it, so the server's time zone never matters. Sections describing incremental (per-candidate, near-real-time) sync, queue claims, per-item retries and dead letters describe the original design and are kept as history. Commands: Section 24.9.
+
+> **Update (Sync Destination and Settings).** The Sheet Sync Settings UI has three tabs (Change Roles, Invite User, Google Sheet Sync), the Google Sheet Sync tab separates **automatic (scheduled)** from **manual** sync and has a **Sync Destination** section, and the worker can write to any of several configured Sheets, one active at a time. These are described as built in **Section 12.9** (UI), **Section 13** (API) and **Section 25** (Sync Destination). Where Sections 12.1-12.4 and the 13.1 example describe the earlier "single Settings card" design, they are kept as historical design context and are superseded by 12.9 and 24.7. The automatic schedule (06:00, 12:00, 18:00 Asia/Colombo), the one-way database -> Sheet rule and every safeguard in this document are unchanged.
 
 ### How to read this document
 
@@ -38,9 +42,9 @@ The Google Sheets Candidate Operational Mirror is a **one-way, eventually consis
 
 - **Source of truth:** PostgreSQL/Supabase. The Sheet is an operational fallback/mirror.
 - **Not a backup:** it does not replace PostgreSQL backups, point-in-time recovery, `pg_dump` or disaster recovery, and it holds no document files.
-- **Direction:** strictly `Database -> Backend Sync System -> Google Sheets`. Nothing ever flows from Google Sheets to the database. A manual edit in the Sheet is overwritten by the next sync or by the daily reconciliation.
+- **Direction:** strictly `Database -> Backend Sync System -> Google Sheets`. Nothing ever flows from Google Sheets to the database. A manual edit in the Sheet is overwritten by the next scheduled or manual reconciliation.
 - **Isolation:** a Google outage, quota error or misconfiguration must never block or fail a valid candidate write.
-- **Self-healing:** near-real-time incremental sync (durable outbox) plus a daily full reconciliation that repairs any drift.
+- **Self-healing:** full reconciliations at 06:00, 12:00 and 18:00 Asia/Colombo plus on-demand Sync Now; each one mirrors the current database and repairs any drift. (Originally: near-real-time incremental sync plus a daily reconciliation; superseded.)
 - **Operational Data Safety:** because the target Sheet is the live operational Sheet, test and development executions must never pollute or overwrite operational data.
 
 ---
@@ -50,10 +54,10 @@ The Google Sheets Candidate Operational Mirror is a **one-way, eventually consis
 ### IN SCOPE
 
 - One-way candidate operational mirror (PostgreSQL -> Google Sheets).
-- Incremental candidate synchronization driven by a durable outbox.
-- Daily reconciliation (plus on-demand runs and guarded staging checks).
-- Candidate fields approved in Section 6: exactly 41 columns `A:AO`: 40 business-visible columns (`A` through `AN`, legacy operational headers first, then candidate details, stage statuses and mirror metadata) plus the technical row identity column `AO` (`_SYSTEM_CANDIDATE_ID`). `VISA SUBMISSION STATUS` (`AI`) was added to the manually finalized 40-column Sheet with the Visa submission stage (Section 6, amendment).
-- Document **statuses** only (never files).
+- Change capture into a durable outbox (`sheet_sync_queue`), tracking changes waiting for the next run (no real-time Sheet writes).
+- Scheduled reconciliation at 06:00, 12:00 and 18:00 Asia/Colombo, plus on-demand Sync Now.
+- Candidate fields approved in Section 6: 41 required headers: 40 business-visible columns (legacy operational headers first, then candidate details, stage statuses and mirror metadata) plus the technical row identity column `_SYSTEM_CANDIDATE_ID`. The canonical layout is `A:AO` (identity in `AO`), but columns are resolved by **header name**, so operators may reorder them (identity in column A, in the middle or last) and add their own columns (Sections 6 and 6.4). `VISA SUBMISSION STATUS` (`AI`) was added to the manually finalized 40-column Sheet with the Visa submission stage (Section 6, amendment).
+- Document **submission dates** only (never files): each document column shows the current document's submission date, or `Not Submitted`.
 - Candidate stage statuses.
 - Preservation of rows for candidates that disappear from the application, marked `DELETED / INACTIVE`.
 - Google authentication for the backend sync service using keyless ADC / Cloud Run service identity.
@@ -151,13 +155,12 @@ Registration and the Candidate Details stage are **different concepts** and must
 - Documents waiting in `temporary_data` (unmatched or pending) are not part of a candidate and are not mirrored.
 - `police_submitted_date` (on the `POLICE_SLIP` document) is mirrored; derived countdown statuses (`PENDING`, `DUE_SOON`, ...) are not (Needs confirmation if wanted).
 
-**Sheet document status vocabulary**
+**Sheet document column values** (current; the earlier `VERIFIED` / `REVIEW_REQUIRED` / `MISSING` status values are superseded)
 
 | Sheet value | Origin | Meaning |
 | :--- | :--- | :--- |
-| `VERIFIED` | Database value | Current document is verified |
-| `REVIEW_REQUIRED` | Database value | Current document waits for admin review |
-| `MISSING` | **Generated** | No current (non-superseded) document of that type/variant |
+| `YYYY-MM-DD` | `documents.received_date` of the current document | When the current document was submitted, as the Sri Lanka (`Asia/Colombo`) calendar date. A replacement or re-upload is a new document row (the old one becomes `SUPERSEDED`), so this is the latest submission. The current document follows the application's own rule (`currentOf`): the newest `VERIFIED` one, otherwise the newest waiting for review |
+| `Not Submitted` | **Generated** | No current (non-superseded) document of that type/variant. Display only: it is never read back and never deletes anything |
 
 ### 4.3 Candidate Stages
 
@@ -349,18 +352,18 @@ Kind legend: **Auth** = authoritative value copied from PostgreSQL; **Derived** 
 | 10 | **J** | `ADDRESS` | `User.address` | Auth | text | `""` | **CONFIRMED** |
 | 11 | **K** | `WHATSAPP NUM` | `User.whatsapp_number` | Auth | digits (text) | `""` | **CONFIRMED** (stored digits, no `+`) |
 | 12 | **L** | `CONTACT NUM` | `User.contact_number` | Auth | digits (text) | `""` | **CONFIRMED** |
-| 13 | **M** | `PASSPORT COPY` | current `PASSPORT` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.2: the only Passport Copy column) |
-| 14 | **N** | `POLICE REP SRI LANKA` | current `POLICE_REPORT` variant `SL_VERIFIED` status | Derived | status | `MISSING` | **CONFIRMED** (D-18.3) |
-| 15 | **O** | `POLICE REP ROMANIA` | current `POLICE_REPORT` variant `ROMANIA` status | Derived | status | `MISSING` | **CONFIRMED** (D-18.4: the only Romania column) |
-| 16 | **P** | `MEDICAL` | current `MEDICAL` document status | Derived | status | `MISSING` | **CONFIRMED** |
-| 17 | **Q** | `SCAN` | current `SCAN` document status | Derived | status | `MISSING` | **CONFIRMED**. The one and only scan column |
-| 18 | **R** | `DRIVING LICIAN` | none (no driving-licence document type exists in the repository) | Blank | text | always `""` | **CONFIRMED BLANK** (D-18.5) |
-| 19 | **S** | `NATIONAL ID` | current `NIC` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.6; `ID NUMBER` holds the NIC value itself) |
-| 20 | **T** | `POLICE REPORT APPLIED` | current `POLICE_SLIP` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.7) |
+| 13 | **M** | `PASSPORT COPY` | current `PASSPORT` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.2: the only Passport Copy column) |
+| 14 | **N** | `POLICE REP SRI LANKA` | current `POLICE_REPORT` variant `SL_VERIFIED` submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.3) |
+| 15 | **O** | `POLICE REP ROMANIA` | current `POLICE_REPORT` variant `ROMANIA` submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.4: the only Romania column) |
+| 16 | **P** | `MEDICAL` | current `MEDICAL` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** |
+| 17 | **Q** | `SCAN` | current `SCAN` document submission date | Derived | date | `Not Submitted` | **CONFIRMED**. The one and only scan column |
+| 18 | **R** | `DRIVING LICIAN` | none (no driving-licence document type exists in the repository) | Fixed | text | always `Not Submitted` | **CONFIRMED**: no document type exists, so no candidate has one (Sheet output only; D-18.5 originally blank) |
+| 19 | **S** | `NATIONAL ID` | current `NIC` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.6; `ID NUMBER` holds the NIC value itself) |
+| 20 | **T** | `POLICE REPORT APPLIED` | current `POLICE_SLIP` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.7) |
 | 21 | **U** | `SUBMIT DATE` | `Document.police_submitted_date` of the current `POLICE_SLIP` | Auth | `YYYY-MM-DD` | `""` | **CONFIRMED** |
-| 22 | **V** | `POLICE REP SRI LANKA` | current `POLICE_REPORT` variant `SL_NORMAL` status | Derived | status | `MISSING` | **CONFIRMED** (D-18.3) |
-| 23 | **W** | `POLICE REP FM` | none (no "FM" variant exists; no Foreign Ministry/attestation logic is invented) | Blank | text | always `""` | **CONFIRMED BLANK** (D-18.8) |
-| 24 | **X** | `VIDEOS` | current `SKILL_VIDEO` document status | Derived | status | `MISSING` | **CONFIRMED** (D-18.9) |
+| 22 | **V** | `POLICE REP SRI LANKA` | current `POLICE_REPORT` variant `SL_NORMAL` submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.3) |
+| 23 | **W** | `POLICE REP FM` | none (no "FM" variant exists; no Foreign Ministry/attestation logic is invented) | Fixed | text | always `Not Submitted` | **CONFIRMED**: no FM variant exists, so no candidate has one (Sheet output only; D-18.8 originally blank) |
+| 24 | **X** | `VIDEOS` | current `SKILL_VIDEO` document submission date | Derived | date | `Not Submitted` | **CONFIRMED** (D-18.9) |
 | 25 | **Y** | `PLACE OF BIRTH` | `User.place_of_birth` | Auth | text | `""` | **CONFIRMED** |
 | 26 | **Z** | `SEX` | `User.sex` | Auth | `M` / `F` / `X` | `""` | **CONFIRMED** |
 | 27 | **AA** | `NATIONALITY` | `User.nationality` | Auth | text | `""` | **CONFIRMED** |
@@ -384,16 +387,16 @@ Kind legend: **Auth** = authoritative value copied from PostgreSQL; **Derived** 
 | Item | Decision | Repository evidence |
 | :--- | :--- | :--- |
 | `TEST NUMBER` (`A`) | Separate business field with no system mapping: always `""`. `CandidateStage.job_id` is **not** used | No `test_number` field exists |
-| `PASSPORT COPY` (`M`) | Only one column; current `PASSPORT` document status | Document type `PASSPORT` |
+| `PASSPORT COPY` (`M`) | Only one column; current `PASSPORT` document's submission date | Document type `PASSPORT` |
 | `POLICE REP SRI LANKA` (`N`) | Variant `SL_VERIFIED` | `POLICE_REPORT_VARIANTS` |
 | `POLICE REP ROMANIA` (`O`) | Only one column; variant `ROMANIA` | `POLICE_REPORT_VARIANTS` |
-| `DRIVING LICIAN` (`R`) | Always `""` (header spelling preserved) | No driving-licence type anywhere in the repository |
-| `NATIONAL ID` (`S`) | Current `NIC` document status | Document type `NIC` |
-| `POLICE REPORT APPLIED` (`T`) | Current `POLICE_SLIP` document status | Document type `POLICE_SLIP` (the application receipt that starts the 21-day wait) |
+| `DRIVING LICIAN` (`R`) | Always `Not Submitted` (header spelling preserved; no document type is created) | No driving-licence type anywhere in the repository |
+| `NATIONAL ID` (`S`) | Current `NIC` document's submission date | Document type `NIC` |
+| `POLICE REPORT APPLIED` (`T`) | Current `POLICE_SLIP` document's submission date | Document type `POLICE_SLIP` (the application receipt that starts the 21-day wait) |
 | `SUBMIT DATE` (`U`) | `police_submitted_date` of the current `POLICE_SLIP`, `YYYY-MM-DD` | `Document.police_submitted_date` |
 | `POLICE REP SRI LANKA` (`V`) | Variant `SL_NORMAL` | `POLICE_REPORT_VARIANTS` |
-| `POLICE REP FM` (`W`) | Always `""`; no Foreign Ministry / attestation logic is invented | No "FM" variant exists |
-| `VIDEOS` (`X`) | Current `SKILL_VIDEO` document status | Document type `SKILL_VIDEO` |
+| `POLICE REP FM` (`W`) | Always `Not Submitted`; no Foreign Ministry / attestation logic or variant is invented | No "FM" variant exists |
+| `VIDEOS` (`X`) | Current `SKILL_VIDEO` document's submission date | Document type `SKILL_VIDEO` |
 
 Notes:
 
@@ -409,9 +412,9 @@ Notes:
 | Timestamps | ISO-8601 UTC with `Z` suffix (`YYYY-MM-DDTHH:mm:ssZ`), whole seconds |
 | Phone numbers | Stored normalized digits only (`94700000001`); no `+` prefix is added |
 | Null / missing | An empty cell (`""`), never `null`, `undefined`, `N/A` or `-` |
-| Intentionally blank columns | `TEST NUMBER`, `DRIVING LICIAN`, `POLICE REP FM`: always `""` |
+| Intentionally blank columns | `TEST NUMBER`: always `""` |
 | Stage statuses | `COMPLETED` / `INCOMPLETE` |
-| Document status | `VERIFIED` / `REVIEW_REQUIRED` (database values) / `MISSING` (generated: no current document) |
+| Document columns | the current document's **submission date** (`received_date`, as the Sri Lanka calendar date `YYYY-MM-DD`), or exactly `Not Submitted` when there is no current (non-superseded) document of that type/variant. One format for all nine document columns. `DRIVING LICIAN` and `POLICE REP FM` have no document type in the system, so they are always `Not Submitted` (output only; nothing is stored) |
 | Writing mode | `valueInputOption=RAW` into columns formatted as **plain text**, so Sheets never coerces phone numbers, NICs or zero-padded IDs into numbers or dates |
 | Comparing mode | Reconciliation reads displayed strings and compares them with freshly generated strings using exactly the same mapper |
 
@@ -464,9 +467,9 @@ Why not a natural key:
 | Duplicate delivery / worker restart | Queue claims use compare-and-swap leases (Section 8.5); updates are idempotent. |
 | Concurrent candidate events | Coalesced into a single pending queue row per candidate. |
 | Concurrent workers | **Single-writer rule:** `max-instances = 1` plus an exclusive PostgreSQL writer lease (Section 9.5). |
-| Passport or NIC correction | The row is found by `AO`; the `PASSPORT NUMBER` / `ID NUMBER` cells are updated in place. |
-| Duplicate keys detected | **As built (supersedes the earlier labelling design; D-11):** a unique ID present in more than one `AO` cell is a hard data-integrity error. Every sync and reconciliation stops **before any write**; none of the duplicate rows is modified, labelled or deleted; the integration enters `DATA_INTEGRITY` (Settings, log `sheet_sync.duplicate_key_detected`) until a person fixes the Sheet. Nothing guesses which row is canonical. |
-| Staff sorting or filtering | Row numbers are never stored; keys are re-read from `AO` on every write batch. |
+| Passport or NIC correction | The row is found by its `_SYSTEM_CANDIDATE_ID` (`AO` in the canonical layout); the `PASSPORT NUMBER` / `ID NUMBER` cells are updated in place. |
+| Duplicate keys detected | **As built (supersedes the earlier labelling design; D-11):** a unique ID present in more than one `_SYSTEM_CANDIDATE_ID` cell is a hard data-integrity error. Every sync and reconciliation stops **before any write**; none of the duplicate rows is modified, labelled or deleted; the integration enters `DATA_INTEGRITY` (Settings, log `sheet_sync.duplicate_key_detected`) until a person fixes the Sheet. Nothing guesses which row is canonical. |
+| Staff sorting or filtering | Row numbers are never stored; keys are re-read from the `_SYSTEM_CANDIDATE_ID` column on every write batch. |
 
 ---
 
@@ -536,12 +539,12 @@ Guarantee (eventual latest state): the worker marks only the row it claimed as `
 
 For each batch of claimed candidates:
 
-1. **Read once:** the header row (`A1:AO1`) and the key column (Column `AO`) in a single batch read. Validate the header by exact positional match (Section 6.4); on mismatch stop with `CONFIG_ERROR`.
-2. **Build an in-memory map** `candidate key (unique_id from Col AO) -> current row number` for this batch only. No persistent row mapping is kept: staff may sort or insert rows, so stored row numbers would go stale, and the key column is cheap to re-read.
+1. **Read once:** the header row (`1:1`, full width) to build the column map, then the key column (the `_SYSTEM_CANDIDATE_ID` column, wherever it is). The header is read once per operation and never cached across runs. Validate by header name (Section 6.4: every required header exactly once, any order, extra columns allowed); on mismatch stop with `SCHEMA_INVALID` / `CONFIG_ERROR` and write nothing.
+2. **Build an in-memory map** `candidate key (unique_id from the _SYSTEM_CANDIDATE_ID column) -> current row number` for this batch only. No persistent row mapping is kept: staff may sort or insert rows, so stored row numbers would go stale, and the key column is cheap to re-read.
 3. **Read the current candidates** from the database (batched queries, not one `getCandidate` per candidate) and map each to a row of 40 business values + 1 technical key value (41 cells) with the shared mapper.
-4. **Existing key -> update** that row's cells (`A{row}:AN{row}`) in a single `batchUpdate`. **Missing key -> append** the row exactly once. Writes use `RAW` input into plain-text columns.
+4. **Existing key -> update** that row's system cells, one range per contiguous run of system columns (operator columns are never written), in a single `batchUpdate`. **Missing key -> append** the row exactly once. Writes use `RAW` input into plain-text columns.
 5. **Append-race protection:** only one sync instance writes at a time (Section 9.5), so two appends for one key cannot race. A crash between append and queue completion is harmless: the retry finds the key in Column `AO` and updates.
-6. **Candidate absent from the database** (the event carried a delete hint and the targeted read succeeded and returned no row) -> set Column `AL` (`RECORD STATUS`) to `DELETED / INACTIVE`, stamp Column `AN` (`LAST MIRRORED AT`), keep every other cell.
+6. **Candidate absent from the database** (the event carried a delete hint and the targeted read succeeded and returned no row) -> set the `RECORD STATUS` column to `DELETED / INACTIVE`, stamp `LAST MIRRORED AT`, keep every other cell (and every operator column).
 7. **Mark the queue rows `COMPLETED`** only after Google confirms the write; otherwise schedule a retry (8.7).
 8. Reconciliation detects duplicate keys and repairs or reports them (Section 9.3).
 
@@ -578,8 +581,8 @@ sequenceDiagram
         Worker->>DB: Claim due pending rows (lease, compare-and-swap)
         DB-->>Worker: Claimed candidate keys
         Worker->>DB: Read CURRENT aggregate (candidate, stages, documents)
-        Worker->>G: Read header row (A1:AO1) and key column (AO)
-        Worker->>Worker: Positional header validation, build key to row map, map aggregate to row
+        Worker->>G: Read header row (1:1) and the key column (by header name)
+        Worker->>Worker: Header-name validation, build key to row map, map aggregate to row
         alt Key exists
             Worker->>G: batchUpdate that row (A{row}:AN{row})
         else Key missing
@@ -605,7 +608,7 @@ sequenceDiagram
 flowchart TD
     A([Candidate change committed]) --> B["Pending queue row coalesced by trigger"]
     B --> C["Worker claims row with lease"]
-    C --> D["Read current aggregate and validate Sheet header (A1:AO1)"]
+    C --> D["Read current aggregate and validate Sheet header names (row 1)"]
     D --> E{"Google result"}
 
     E -->|"Success"| F["Mark COMPLETED and clear lease"]
@@ -633,12 +636,11 @@ flowchart TD
 
 ### 9.1 Purpose and Execution Modes
 
-Incremental sync handles the normal flow. Reconciliation guarantees **convergence** after dropped events, outages, manual Sheet edits, deleted rows, schema mistakes or any gap in change capture. It repairs: missing candidate rows, stale candidate fields, stale stage fields, stale document statuses, stale document variants, manually edited cells, missing or incomplete incremental events, and candidates absent from the database but still `ACTIVE` in the Sheet.
+Reconciliation is the only way the Sheet is written (see "Synchronization model" at the top). It guarantees **convergence** after dropped events, outages, manual Sheet edits, deleted rows, schema mistakes or any gap in change capture. It repairs: missing candidate rows, stale candidate fields, stale stage fields, stale document statuses, stale document variants, manually edited cells, missing or incomplete incremental events, and candidates absent from the database but still `ACTIVE` in the Sheet.
 
 | Mode | Trigger | Frequency |
 | :--- | :--- | :--- |
-| **Production scheduled** | Cloud Scheduler (Section 11.3) | **Once per day**; the exact clock time is a Scheduler job setting and does not need to be 12 PM |
-| **Staging scheduled** | A separate Cloud Scheduler job, or an explicit manual trigger | About every 5 minutes (testing only; never part of production logic or code) |
+| **Scheduled** | Cloud Scheduler (Section 11.3) | **06:00, 12:00 and 18:00 Asia/Colombo** (`0 6,12,18 * * *`) |
 | **Manual** | "Sync Now / Reconcile Now" on the Settings page (Section 12) | On demand |
 
 All three create a durable `sheet_sync_runs` record and use the same engine.
@@ -656,21 +658,21 @@ All three create a durable `sheet_sync_runs` record and use the same engine.
 ### 9.3 Reconciliation Algorithm
 
 1. **Create/claim the run** (`sheet_sync_runs`), acquire the reconciliation lock (9.5). If it is held, record the run as `SKIPPED` and log `sheet_sync.reconcile_skipped`.
-2. **Validate the Sheet:** tab `Emlynk Candidate Operational Mirror` exists, header row `A1:AO1` matches exact positional schema (6.4). On mismatch -> `CONFIG_ERROR`, stop, no writes.
-3. **Read the Sheet** completely (`A2:AO`) as displayed strings; build `unique_id (from Col AO) -> row`, noting duplicate keys, blank keys and unknown rows.
+2. **Validate the Sheet:** tab `Emlynk Candidate Operational Mirror` exists, row 1 holds every required header exactly once (6.4; any order, extra columns allowed). On mismatch -> `SCHEMA_INVALID` / `CONFIG_ERROR`, stop, no writes.
+3. **Read the Sheet** completely (row 2 down, across the live width) as displayed strings; build `unique_id (from the _SYSTEM_CANDIDATE_ID column) -> row`, noting duplicate keys, blank keys and unknown rows.
 4. **Read the complete database snapshot** in one read-only `REPEATABLE READ` transaction (candidates with their stages and candidate documents), verifying the row count equals the count query. Any failure aborts the run (9.4).
-5. **Generate the expected row for every database candidate** with the shared mapper (40 business columns + Column AO).
+5. **Generate the expected row for every database candidate** with the shared mapper (40 business columns + the identity column).
 6. **Classify and repair:**
    - key missing from the Sheet -> **append**;
-   - key present and any compared cell (`A`–`AM` plus the key `AO`; `AN` LAST MIRRORED AT is excluded) differs -> **rewrite that row** (an unchanged row is not written, so a normal run writes almost nothing);
-   - duplicate key in Col `AO` -> **as built: the whole run stops before any write; no row is touched** (Sections 7.2, 24.5);
-   - Sheet row `ACTIVE` whose key is absent from the **complete** snapshot -> mark `DELETED / INACTIVE` in Col `AK` (subject to 9.4);
+   - key present and any compared system cell (every system column except `LAST MIRRORED AT`) differs -> **rewrite that row** (an unchanged row is not written, so a normal run writes almost nothing);
+   - duplicate key in the `_SYSTEM_CANDIDATE_ID` column -> **as built: the whole run stops before any write; no row is touched** (Sections 7.2, 24.5);
+   - Sheet row `ACTIVE` whose key is absent from the **complete** snapshot -> mark `DELETED / INACTIVE` in the `RECORD STATUS` column (subject to 9.4);
    - row already `DELETED / INACTIVE` whose key exists again in the database -> restore to `ACTIVE`, refresh data;
    - blank-key or unknown rows -> reported, not modified.
 7. **Write in chunks** (`batchUpdate`, configurable chunk size), classify errors as in 8.7.
 8. **Housekeeping:** prune completed queue rows past retention; finish the run record with counts (no PII); release the lock.
 
-The snapshot is not a point-in-time view of live traffic. A change committed during the run is also queued by capture (8.1) and corrected by the next incremental sync, so the run is convergent, not atomic.
+The snapshot is not a point-in-time view of live traffic. A change committed during the run is also queued by capture (8.1); its queue row stays `PENDING` and the next scheduled or manual run mirrors it, so the run is convergent, not atomic.
 
 ### 9.4 Deletion / Inactive Safety (Mandatory)
 
@@ -694,7 +696,7 @@ A failed, partial or timed-out database query can therefore never mark candidate
 
 ### 9.6 Manual Edits to the Sheet
 
-The Sheet is **not a collaborative data-entry surface**. Because PostgreSQL is authoritative, a manual edit never reaches the database; incremental sync restores the cells if that candidate changes again, and the daily reconciliation restores all cells. A manually deleted row is re-appended. Staff should be given **Viewer** access; only the sync service account has write access (Section 14).
+The Sheet is **not a collaborative data-entry surface**. Because PostgreSQL is authoritative, a manual edit never reaches the database; the next scheduled (or manual) reconciliation restores all cells. A manually deleted row is re-appended. Staff should be given **Viewer** access; only the sync service account has write access (Section 14).
 
 ### 9.7 Diagram 4 — Daily Reconciliation Sequence
 
@@ -715,8 +717,8 @@ sequenceDiagram
         DB-->>W: Not acquired
         W->>DB: Record run SKIPPED
     else Lock acquired
-        W->>G: Read header row (A1:AO1) and all data rows (A2:AO)
-        W->>W: Validate schema pos, index rows by key (AO), find duplicates
+        W->>G: Read header row (1:1) and all data rows (row 2 down, live width)
+        W->>W: Validate header names, index rows by key (_SYSTEM_CANDIDATE_ID), find duplicates
         W->>DB: Read COMPLETE snapshot (REPEATABLE READ, count verified)
         W->>W: Generate expected rows, compare every mirrored cell
         W->>G: batchUpdate changed rows and append missing rows (chunked)
@@ -814,9 +816,8 @@ Reconciliation service (same process worker loop)
 ```
 
 - Vercel functions are not durable schedulers; Cloud Run instances can restart, scale down or scale out; `setInterval` or an in-process cron is not a durable trigger. Cloud Scheduler is the external durable trigger.
-- **Production:** one job, once per day, time configurable in the job.
-- **Staging/testing:** a separate job at about every 5 minutes, or a manual trigger. The 5-minute value is never hard-coded in application logic.
-- The application contains **no schedule configuration** (v1.0.0's `SHEET_SYNC_RECONCILE_SCHEDULE` is removed).
+- **Schedule:** one job, `0 6,12,18 * * *`, time zone `Asia/Colombo` (06:00, 12:00, 18:00 Sri Lanka time).
+- The application has no in-process timer. The schedule values are declared once (`SHEET_SYNC_SCHEDULE`, `src/config/sheetSync.js`) for documentation and tests, and the Cloud Scheduler job is created with exactly those values (Section 24.9).
 
 ### 11.4 Authentication of the Internal Reconciliation Endpoint
 
@@ -882,6 +883,10 @@ SHEET_TAB_NAME=Emlynk Candidate Operational Mirror
 # Candidate WRITE enablement: production only, at Phase 13. Missing/false = disabled.
 SHEET_SYNC_ENABLED=true
 
+# Optional (worker only): several Sync Destinations. When unset, the two variables
+# above are the single destination "default". See Section 25.
+# SHEET_SYNC_DESTINATIONS=[{"key":"operational","name":"...","spreadsheetId":"...","tabName":"..."}]
+
 # Operational tunables for later phases (not read by any code yet)
 SHEET_SYNC_POLL_INTERVAL_MS=10000
 SHEET_SYNC_BATCH_SIZE=25
@@ -911,11 +916,11 @@ SHEET_SYNC_DELETION_GUARD_MAX=10
 A separate, strictly read-only check proves runtime identity, sharing and header before any write path exists:
 
 - **Entry:** `node src/sheetSyncCheck.js` (`npm run sheet:check`), using `src/services/sheetHealthCheck.js`.
-- **Reads only `A1:AO1`** of the configured tab and validates the exact 41-column header by position. It never appends, updates, clears, deletes, formats, creates tabs or edits metadata.
+- **Reads only row 1 (`1:1`)** of the configured tab and validates the 41 required headers by name (any order, extra columns allowed). It never appends, updates, clears, deletes, formats, creates tabs or edits metadata.
 - **Defence in depth:** the token is requested with the `spreadsheets.readonly` scope; its adapter is built with writes forced off and reduced to read methods.
 - **Independent of `SHEET_SYNC_ENABLED`:** verifying access never requires enabling candidate writes. Write enablement remains a separate switch.
 - **Needs only** `SHEET_SPREADSHEET_ID` and `SHEET_TAB_NAME` (no database, no Supabase).
-- **Output:** one sanitized JSON line (`sheet_sync.health_check`): `status` (`CONNECTED`, `NOT_CONFIGURED`, `CONFIG_ERROR`, `ACCESS_DENIED`, `NOT_FOUND` (404), `BAD_REQUEST` (400; with Google's canonical `googleStatus` such as `INVALID_ARGUMENT` / `FAILED_PRECONDITION`), `UNAVAILABLE`, `FAILED`), `schema` (`SCHEMA_VALID`, `SCHEMA_INVALID`, `NOT_CHECKED`), mismatched column letters, HTTP status / Google reason code. Never tokens, credentials, Google message text, header text or Sheet data. Exit code 0 only for `CONNECTED` + `SCHEMA_VALID`.
+- **Output:** one sanitized JSON line (`sheet_sync.health_check`): `status` (`CONNECTED`, `NOT_CONFIGURED`, `CONFIG_ERROR`, `ACCESS_DENIED`, `NOT_FOUND` (404), `BAD_REQUEST` (400; with Google's canonical `googleStatus` such as `INVALID_ARGUMENT` / `FAILED_PRECONDITION`), `UNAVAILABLE`, `FAILED`), `schema` (`SCHEMA_VALID`, `SCHEMA_INVALID`, `NOT_CHECKED`), `missingHeaders` / `duplicateHeaders` (the required header names that are missing or duplicated; schema constants, never text read from the Sheet), HTTP status / Google reason code. Never tokens, credentials, Google message text, header text or Sheet data. Exit code 0 only for `CONNECTED` + `SCHEMA_VALID`.
 - **Run (performed):** a one-off Cloud Run Job (`emlynk-sheet-sync-check`) from the same image, command `node src/sheetSyncCheck.js`, running as `emlynk-sheet-sync@…`. It is kept independent of the existing submission and OCR workers so that it moves unchanged into the dedicated `emlynk-sheet-sync-worker`.
 - **Status: VERIFIED.** The Cloud Run Job returned `ok: true`, `status: CONNECTED`, `schema: SCHEMA_VALID`, `writeGate: DISABLED`, no mismatched columns, running as `emlynk-sheet-sync@…`. (An earlier run returned HTTP 400 `badRequest` because the worksheet was still named `Sheet1`; the tab was renamed to `Emlynk Candidate Operational Mirror`. That case is now reported as `BAD_REQUEST` with `googleStatus` instead of `NOT_FOUND`.)
 
@@ -963,6 +968,8 @@ flowchart TD
 ---
 
 ## 12. Settings / Test UI Architecture
+
+> **Superseded in part (as built: Section 12.9).** Sections 12.1-12.4 record the design written before implementation (a Settings item after Invite Admin and Change Roles, one Google Sheet Sync card). As built, Invite User and Change Roles are no longer sidebar entries: they are tabs of Settings, next to Google Sheet Sync, and the Configurations tab that briefly existed was removed. Read 12.9 for the current structure.
 
 > **Confirmed requirement (supersedes the earlier "hidden page / direct URL only" recommendation):** the Google Sheet feature adds ONE visible **Settings** item to the EXISTING Admin Console sidebar. The Google Sheet management UI is a section of the Settings page, not a separate sidebar item and not a hidden standalone page.
 
@@ -1036,12 +1043,45 @@ UX notes:
 - Not-configured and configuration-error states are shown explicitly. No secret value, private key, token or full spreadsheet ID is ever rendered.
 - Loading the status must not affect, and must not be affected by, any other Admin page.
 
+### 12.9 As Built: Settings Tabs and the Google Sheet Sync Layout (current)
+
+**Settings (`/admin/settings`, ADMIN only).** One sidebar item (Settings). Its page title is followed by a horizontal tab row, one URL per tab so reload, Back and Forward keep the tab:
+
+| Tab | Route | Content |
+| :--- | :--- | :--- |
+| Change Roles | `/settings/roles` | the existing Change Roles page, unchanged |
+| Invite User | `/settings/invite` | the existing Invite User page, unchanged |
+| Google Sheet Sync | `/settings/sheet-sync` | the Sheet Sync status and actions (below) |
+
+- `/settings` opens the first tab (Change Roles). There is **no Configurations tab** (it existed briefly and was removed) and no placeholder or general configuration page.
+- `/roles` and `/invitations` (the old sidebar routes) redirect to the matching tab, so bookmarks keep working. The standalone sidebar entries Invite User and Change Roles were consolidated into Settings.
+- This is a navigation and layout consolidation only. Every tab keeps its existing rule (ADMIN only, enforced by the backend; the page shows "Access Restricted" and requests no Settings data for any other role). No authentication, permission or API behaviour changed.
+
+**Google Sheet Sync tab, top to bottom** (same data and actions as before, grouped for scanning):
+
+1. **Title, description and the two actions:** `Test Connection` and `Sync Now` (unchanged requests; the status refreshes every 5 seconds while a run is active).
+2. **Status summary** (three tiles): Connection, Integration state, Write sync. The dry-run notice appears below them while writing is off.
+3. **Sync activity:** Last automatic sync, Last manual sync, Latest sync (each with a Scheduled or Manual badge), Last written to the Sheet, Pending / failed candidate syncs, In progress (while a run is active), and the schedule: `Automatic schedule 06:00 · 12:00 · 18:00 (Asia/Colombo)`.
+4. **Sync destination:** the Sheet the mirror writes to (Section 25.3). It replaced the former "Target" row.
+5. **Last reconciliation:** its status, Scheduled or Manual, time and the appended / updated / unchanged counts.
+6. **Last failure:** the recorded failure, or "No recent failures".
+
+**Scheduled and manual sync are shown separately.** Whether a run is automatic is decided by the run's stored trigger (`sheet_sync_runs.trigger_source`), never by comparing its time with 06:00, 12:00 or 18:00:
+
+| Shown as | Which run | Trigger |
+| :--- | :--- | :--- |
+| Last automatic sync | latest **successful** reconciliation | `SCHEDULER` (Cloud Scheduler) |
+| Last manual sync | latest **successful** reconciliation | `ADMIN` (Sync Now) or `OPERATOR` (`npm run sheet:request`) |
+| Latest sync | latest successful reconciliation of either source, with its badge | either |
+
+A manual run at 13:45 therefore never appears as "the 12:00 run" and never replaces the last automatic sync; a scheduled run that finishes late (18:07) is still automatic. A source that has never run shows "Not yet run". The status API provides these as `lastAutomaticSync`, `lastManualSync`, `lastSuccessfulReconciliation` and `schedule` (Section 24.7). Sync status (these values, the queue counts and the last failure) is **global**: it is not kept per destination.
+
 ### 12.5 The Settings UI Is Not the Sync Engine (Invariant)
 
 The Settings page is a **visibility and management interface only**:
 
 - The browser never performs synchronization, never holds Google credentials, and never calls Google.
-- Closing the Settings page or the browser has **zero effect** on incremental sync, queue processing, retries, reconciliation or scheduled synchronization. These remain backend responsibilities exactly as designed in the earlier sections.
+- Closing the Settings page or the browser has **zero effect** on change capture, reconciliation or scheduled synchronization. These remain backend responsibilities exactly as designed in the earlier sections.
 
 ### 12.6 Authorization Architecture
 
@@ -1101,6 +1141,9 @@ All endpoints live under `/api/admin/settings/sheet-sync`, run on the existing A
 | `POST` | `/test` | ADMIN | Creates a durable `TEST_CONNECTION` run request; returns `202` and its `runId` |
 | `POST` | `/run` | ADMIN | Creates a durable reconciliation run request; returns `202` and its `runId` |
 | `GET` | `/runs/:runId` | ADMIN | Status and result of one run |
+| `PUT` | `/destination` | ADMIN | Asks to switch the Sync Destination to another configured Sheet (Section 25.5); `202` pending, `200` already active |
+
+> The JSON example in 13.1 is the design-time shape. The as-built status response is described in 24.7 and, for destinations, in 25.4.
 
 Non-ADMIN callers receive `403 { "message": "Insufficient permissions" }`.
 
@@ -1144,14 +1187,14 @@ Creates a `TEST_CONNECTION` run. The sheet-sync worker performs, **without modif
 1. Authenticate with Google (token can be obtained).
 2. Read spreadsheet metadata (the spreadsheet exists and is reachable).
 3. Confirm the configured tab exists.
-4. Confirm the service account can read the tab and that the header row `A1:AO1` matches the expected schema and version (Section 6.8).
+4. Confirm the service account can read the tab and that row 1 contains every required header exactly once (any order) (Section 6.8).
 5. **As built: no write probe.** Test Connection is strictly read-only (steps 1–4 via the Section 11.6 C check). Write permission is proven only by the controlled first-write procedure (Section 24.10), never automatically.
 
 Response: `202 { "runId": "...", "status": "QUEUED" }`. The result appears on the run record and in `GET /status`. A successful test also clears a previous `CONFIG_ERROR`.
 
 ### 13.3 `POST /api/admin/settings/sheet-sync/run` (Sync Now / Reconcile Now)
 
-Creates a reconciliation run request (the on-demand equivalent of the scheduled run). There is no separate "incremental" mode: incremental sync runs continuously by itself.
+Creates a reconciliation run request (the on-demand equivalent of the scheduled run). It is the manual equivalent of the scheduled runs (06:00, 12:00, 18:00 Asia/Colombo); there is no real-time sync.
 
 ```json
 { "runId": "synthetic-run-id", "status": "QUEUED" }
@@ -1307,8 +1350,8 @@ The current logging utilities do **not** yet guarantee this for Google data (Sec
 | Duplicate rows | Low | Medium | Immutable `unique_id` in Column `AN`, key re-read per batch, single writer, duplicate detection and labelling |
 | Missed change (a writer path not captured) | Low (triggers) / Medium (app-level) | Low | Trigger capture; daily full comparison repairs anything missed |
 | Mass false "inactive" marking | Low | High | Complete-snapshot requirement, row-count verification, deletion guard (9.4) |
-| Schema/tab tampering in the Sheet | Medium | Medium | Positional header validation before writes (`A1:AN1`); `CONFIG_ERROR`; no auto-rebuild |
-| Duplicate header collision in validation | Medium | Medium | Positional index-based validation instead of dictionary name lookup (6.4) |
+| Schema/tab tampering in the Sheet | Medium | Medium | Header-name validation before writes (row 1, re-confirmed before each write); `SCHEMA_INVALID` / `CONFIG_ERROR`; no auto-rebuild or auto-reorder |
+| Duplicate header collision in validation | Medium | Medium | Count-based validation by header name; the intentionally duplicated `POLICE REP SRI LANKA` pair is assigned by relative left-to-right order (6.4) |
 | Manual edits by staff | Medium | Low | Viewer access; reconciliation restores authoritative values |
 | PII exposure through the Sheet | Low | High | Private sheet, named Viewers, least privilege, access review, no public link |
 | PII or secrets in logs | Medium | High | Allow-listed log fields; add and test Google credential redaction (current `safeLog` is insufficient) |
@@ -1327,8 +1370,8 @@ The implementation is **not complete** until every group below passes. Existing 
 
 ### 18.1 Unit Tests
 
-- **Mapper** (`candidateSheetMapper`): all 39 business columns in exact order + technical column `AN` (exactly 40 cells); formatting rules (6.3); null -> empty; phone digits unchanged; dates; `COMPLETED`/`INCOMPLETE`; document status vocabulary (`VERIFIED`/`REVIEW_REQUIRED`/`MISSING`); **exactly one `SCAN` column and no agreement/affidavit columns**; parity with the Admin UI's `getCandidate` output for the same fixtures.
-- **Positional header validation:** exact 40-element array match; the intentionally duplicated `POLICE REP SRI LANKA` header is distinguished by position (14 / `N` = `SL_VERIFIED`, 22 / `V` = `SL_NORMAL`); detects missing, swapped or unexpected headers.
+- **Mapper** (`candidateSheetMapper`): all 40 business columns in canonical field order + the technical identity (exactly 41 cells; the mapper is position-free, the adapter translates between field order and the live Sheet order); formatting rules (6.3); null -> empty; phone digits unchanged; dates; `COMPLETED`/`INCOMPLETE`; document status vocabulary (`VERIFIED`/`REVIEW_REQUIRED`/`MISSING`); **exactly one `SCAN` column and no agreement/affidavit columns**; parity with the Admin UI's `getCandidate` output for the same fixtures.
+- **Header-name mapping** (`sheetSchema.test.js`, `googleSheetsAdapter.test.js`, `sheetSyncReordering.test.js`): canonical order; fully reversed order; identity in A, in the middle and last; `VISA SUBMISSION STATUS` and `VISA APPROVAL STATUS` moved; several columns reordered; one or several extra columns; custom values survive DB -> Sheet updates; missing, duplicate and renamed headers give `SCHEMA_INVALID`; no value is written to a wrong column after a reorder; identity matching only by `_SYSTEM_CANDIDATE_ID`; reconciliation in arbitrary order; the header is re-read on a later run; a header change mid-run throws `SheetLayoutChangedError` without writing; worker recovery and idempotency; an unusual layout (identity in A, operator columns between system columns, statuses reordered). The intentionally duplicated `POLICE REP SRI LANKA` pair is assigned by relative order (left = SL Verified, right = SL Normal).
 - **Normalization and aggregate comparison:** identical input -> identical row; comparison ignores `LAST MIRRORED AT`; whitespace/format edge cases.
 - **Retry classification:** 429, 408, 5xx, network errors -> retryable; 401, 403 (non-rate-limit), 404, invalid ID, schema mismatch -> config/permanent.
 - **Backoff:** exponential growth, jitter bounds, cap, attempt bound.
@@ -1377,7 +1420,7 @@ Admin (Vitest) and backend tests must cover:
 8. **Test Connection** requires correct authorization (backend 403 for MANAGER, ANALYST, REGISTRATION_DESK; success path for ADMIN).
 9. **Sync Now / Reconcile Now** requires correct authorization (same matrix as Test Connection).
 10. The Candidate Pool (`/candidates`, `/candidates/new`, candidate details) is unchanged.
-11. Closing the Settings page or the browser does not affect backend synchronization (the queue is still drained, retried and reconciled with no browser connected).
+11. Closing the Settings page or the browser does not affect backend synchronization (scheduled reconciliations run with no browser connected).
 
 ---
 
@@ -1429,8 +1472,8 @@ flowchart TD
 
 - [ ] No candidate database write waits on Google; no Google call inside a transaction or trigger.
 - [ ] No credentials, keys or tokens committed, logged or present in Vercel; redaction tests pass.
-- [ ] Exactly 40 columns `A:AN` (39 business-visible `A`–`AM` + technical key `AN`) mapped exactly; one `SCAN` only.
-- [ ] Positional schema validation handles duplicate header names correctly.
+- [ ] All 41 required headers (40 business-visible + the technical key) mapped by header name in any order; one `SCAN` only.
+- [ ] Header-name validation rejects missing, duplicate and renamed required headers (`SCHEMA_INVALID`), allows extra columns, and handles the duplicated `POLICE REP SRI LANKA` pair by relative order.
 - [ ] Capture covers every writer in 4.4 (test enumerates them).
 - [ ] Reconciliation never marks inactive from an incomplete snapshot.
 - [ ] Settings is ONE appended sidebar item; no existing sidebar item was removed, renamed, reordered or restyled.
@@ -1553,20 +1596,20 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 
 - [ ] Architecture approved; Decisions D-17 and D-18 resolved (Phase 0).
 - [ ] Exact 40-column `A:AN` mapping (39 business + technical key `AN`) approved.
-- [ ] Sheet schema validated (exact positional headers, versioning, plain-text formatting).
+- [ ] Sheet schema validated (required headers by name, any order, extra columns allowed; plain-text formatting).
 - [ ] Credentials secure (keyless ADC runtime identity on Cloud Run; zero JSON keys; redaction verified).
 - [ ] Database migration applied safely.
 - [ ] Incremental sync works using Column `AN` row identity.
 - [ ] Stage sync works (including derived stages).
 - [ ] Document status sync works (including variants).
-- [ ] Positional schema validation handles duplicate header names without ambiguity.
+- [ ] Header-name validation handles the duplicated `POLICE REP SRI LANKA` header without ambiguity (relative order).
 - [ ] Operational Sheet safeguards active (`SHEET_SYNC_ENABLED` gate).
 - [ ] Retry and recovery work.
 - [ ] Reconciliation works (all repair classes).
 - [ ] Duplicate prevention verified.
 - [ ] Deletion / inactive behavior verified with incomplete-snapshot safety.
 - [ ] Daily production schedule prepared.
-- [ ] Settings sidebar item and Google Sheet Sync section work (visible after Change Roles; ADMIN-only; Test Connection and Sync Now durable).
+- [ ] Settings sidebar item and Google Sheet Sync tab work (ADMIN-only; Test Connection and Sync Now durable; Sync Destination, Section 25).
 - [ ] Full backend tests green.
 - [ ] Full Admin tests green.
 - [ ] Admin build green.
@@ -1591,14 +1634,14 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 | Stage sync (incl. derived stages) | Mapper Columns `AE` through `AJ` | `candidate_stages`, `candidate`, `documents` | Component change | Same | 18.1 parity | Proposed |
 | One SCAN rule | Mapper Column `Q` (Col 17) | `documents` (`SCAN`) | n/a | Only one scan column mirrored | 18.1 (no affidavits) | **Confirmed requirement** |
 | Immutable row identity without visible ID | Technical Column `AN` (`_SYSTEM_CANDIDATE_ID`) | `User.unique_id` | Every write / reconcile | Key re-read per batch; updates in place | 18.1, 18.2 duplicate | **Confirmed (D-17 resolved)** |
-| Duplicate header handling | Positional array validation (6.4) | `A1:AN1` | Before every write batch | Positional mismatch flags `CONFIG_ERROR` | 18.1 positional test | Proposed |
+| Duplicate header handling | Count-based header-name validation (6.4) | Row 1 (`1:1`) | Before every write batch | Missing / duplicate header flags `SCHEMA_INVALID` | 18.1 header-name mapping tests | Proposed |
 | Keyless authentication | Cloud Run ADC runtime identity | GCP metadata server | Continuous | 401/403 flags `CONFIG_ERROR` | Read-only check (11.6 C); mocked tests | **Design confirmed (D-4); runtime verification pending** |
 | Real operational sheet safeguard | Environment write gate (`SHEET_SYNC_ENABLED`) | `process.env` | Worker start & sync | Non-prod writes blocked | 18.2 gate test | **Confirmed (D-9)** |
 | Google outage never blocks DB writes | Outbox decoupling | n/a | Google error | Candidate write unaffected; `FAILED`/retry | 18.3 | **Confirmed requirement** |
 | Reconciliation repairs drift | Reconciliation engine, full-cell comparison | DB snapshot vs Sheet | Scheduler or Sync Now | Run `FAILED` retried next run; lock `SKIPPED` | 18.2 | Proposed |
 | Deleted/inactive handling | Event path + guarded reconciliation | Complete snapshot | Delete event / reconcile | Incomplete snapshot -> no marking | 18.2 | Proposed |
 | Settings sidebar item and page | Admin SPA navigation and `/admin/settings` | n/a | ADMIN opens Settings | Non-ADMIN sees no Settings data | 18.5 | **Confirmed requirement** |
-| Settings Test Connection | Durable `TEST_CONNECTION` run executed by the worker | Read-only check of `A1:AN1` (no probe) | ADMIN action | Failure flags `CONFIG_ERROR` | 24.12 | Implemented |
+| Settings Test Connection | Durable `TEST_CONNECTION` run executed by the worker | Read-only check of row 1 (no probe) | ADMIN action | Failure flags `CONFIG_ERROR` | 24.12 | Implemented |
 | Candidate Pool unchanged | Scope contract | n/a | n/a | n/a | 18.4, 18.5 | **Confirmed requirement** |
 
 ---
@@ -1628,10 +1671,10 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 | **D-11** | Duplicate-row policy | **RESOLVED (business rule): hard data-integrity stop; no duplicate row is modified, labelled or deleted** (Section 24.5) |
 | **D-13** | Log `unique_id` as `candidateRef` | Allowed |
 | **D-14** | Connection-test write probe location | **RESOLVED: no write probe; Test Connection is the read-only check** |
-| **D-15** | Production reconciliation time of day | Off-peak (e.g. 02:00 UTC / 07:30 Sri Lanka time) |
+| **D-15** | Production reconciliation time of day | **RESOLVED: 06:00, 12:00 and 18:00 Asia/Colombo; no real-time sync** (supersedes the daily off-peak proposal) |
 | **D-16** | Spreadsheet access review cadence | Quarterly |
 | **D-17** | Row identity implementation | **CONFIRMED / RESOLVED:** technical column `AN` (column 40) with header `_SYSTEM_CANDIDATE_ID`, storing `User.unique_id`, approved and manually added to the real Sheet (Section 7.1). Passport number and NIC are never the row identity. |
-| **D-18** | Legacy field mappings | **CONFIRMED / RESOLVED** (Section 6.2):<br/>- **D-18.1:** `TEST NUMBER` (`A`) -> always blank; `job_id` is not mapped.<br/>- **D-18.2:** one `PASSPORT COPY` column (`M`) -> current `PASSPORT` document status.<br/>- **D-18.3:** `POLICE REP SRI LANKA` `N` -> `SL_VERIFIED`; `POLICE REP SRI LANKA` `V` -> `SL_NORMAL`.<br/>- **D-18.4:** one `POLICE REP ROMANIA` column (`O`) -> `ROMANIA`.<br/>- **D-18.5:** `DRIVING LICIAN` (`R`) -> always blank (no repository mapping).<br/>- **D-18.6:** `NATIONAL ID` (`S`) -> current `NIC` document status.<br/>- **D-18.7:** `POLICE REPORT APPLIED` (`T`) -> current `POLICE_SLIP` document status; `SUBMIT DATE` (`U`) -> its `police_submitted_date`.<br/>- **D-18.8:** `POLICE REP FM` (`W`) -> always blank (no repository mapping).<br/>- **D-18.9:** `VIDEOS` (`X`) -> current `SKILL_VIDEO` document status. |
+| **D-18** | Legacy field mappings | **CONFIRMED / RESOLVED** (Section 6.2):<br/>- **D-18.1:** `TEST NUMBER` (`A`) -> always blank; `job_id` is not mapped.<br/>- **D-18.2:** one `PASSPORT COPY` column (`M`) -> current `PASSPORT` document status.<br/>- **D-18.3:** `POLICE REP SRI LANKA` `N` -> `SL_VERIFIED`; `POLICE REP SRI LANKA` `V` -> `SL_NORMAL`.<br/>- **D-18.4:** one `POLICE REP ROMANIA` column (`O`) -> `ROMANIA`.<br/>- **D-18.5:** `DRIVING LICIAN` (`R`) -> always `Not Submitted` (no document type; Sheet output only; originally blank).<br/>- **D-18.6:** `NATIONAL ID` (`S`) -> current `NIC` document status.<br/>- **D-18.7:** `POLICE REPORT APPLIED` (`T`) -> current `POLICE_SLIP` document status; `SUBMIT DATE` (`U`) -> its `police_submitted_date`.<br/>- **D-18.8:** `POLICE REP FM` (`W`) -> always `Not Submitted` (no document type or variant; Sheet output only; originally blank).<br/>- **D-18.9:** `VIDEOS` (`X`) -> current `SKILL_VIDEO` document status. |
 
 ### Non-Goals
 
@@ -1653,8 +1696,8 @@ This section describes what the code on `dev` actually does. It supersedes earli
 | `prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql` | Additive migration: tables `sheet_sync_queue`, `sheet_sync_runs`, `sheet_sync_state` (+ seed row), partial unique indexes, RLS/revokes, change-capture triggers |
 | `prisma/schema.prisma` | Models `SheetSyncQueue`, `SheetSyncRun`, `SheetSyncState` |
 | `src/services/sheetSyncStore.js` | PostgreSQL side: queue claims/leases/retries/dead letter, durable runs, state row, writer lease, backoff |
-| `src/services/sheetSyncEngine.js` | Incremental sync and full reconciliation (one mapper, one comparison), deletion guard |
-| `src/services/sheetSyncWorker.js` | The worker loop: heartbeat, runs, incremental batches, error classification, halting/resume |
+| `src/services/sheetSyncEngine.js` | Full reconciliation (and the per-candidate comparison it shares), one mapper, deletion guard |
+| `src/services/sheetSyncWorker.js` | The worker loop: heartbeat, runs (reconciliation settles the queue), error classification |
 | `src/sheetSyncWorker.js`, `src/sheetSyncWorkerProcess.js` | Cloud Run entry (`npm run sheet:worker`): env validation, keyless ADC client, `/health`, OIDC-verified `POST /tasks/reconcile`, graceful shutdown |
 | `src/sheetSyncRequest.js` | Operator command `npm run sheet:request -- reconcile|test` (records a run; never calls Google) |
 | `src/services/sheetSyncStatusService.js`, `src/routes/sheetSyncSettings.js` | Settings API (Vercel; PostgreSQL only) |
@@ -1676,6 +1719,8 @@ Chosen after auditing every mirrored-data writer: 16 write call sites in 5 servi
 
 ### 24.3 Queue model and retry semantics
 
+> **Current behaviour:** the worker no longer claims or retries queue rows (no real-time sync). Queue rows record changes waiting for the next reconciliation; a successful write reconciliation settles every row it covered as `COMPLETED` / `RECONCILED` (compare-and-swap on `updated_at`, so a change that arrived meanwhile stays `PENDING`) and resolves older `FAILED` rows. The claim / retry / dead-letter rules below describe the original real-time design.
+
 `sheet_sync_queue`: `unique_id`, `status` (`PENDING`/`PROCESSING`/`COMPLETED`/`FAILED`), `candidate_deleted`, `attempts`, `next_attempt_at`, lease (`lease_owner`, `lease_expires_at`), `last_result`, `last_error_class`/`last_error_code`. No candidate data.
 
 - **Claim:** due `PENDING` rows, or `PROCESSING` rows whose lease expired, compare-and-swap to `PROCESSING` with a 2-minute lease; `attempts` increments at claim (a crash-looping item still reaches the bound).
@@ -1690,13 +1735,13 @@ Chosen after auditing every mirrored-data writer: 16 write call sites in 5 servi
 
 - `sheet_sync_runs` (`RECONCILE` / `TEST_CONNECTION`; trigger `ADMIN` / `SCHEDULER` / `OPERATOR`; status `QUEUED` → `RUNNING` → `SUCCEEDED` / `FAILED` / `SKIPPED`; `summary` = counts and codes only). A partial unique index allows **one active run per kind**: overlapping Sync Now / scheduler requests return the active run. A run whose worker died (lease expired) is taken over; after 3 abandoned attempts it is `FAILED` (`RUN_ABANDONED`).
 - `sheet_sync_state` (one row): integration state, last error class/code/time, last successful sync, the worker's reported write gate / configured flag / target hint, heartbeat, and the **writer lease**. Every Google write happens while holding the writer lease (compare-and-swap, renewed before each write chunk; a lost lease aborts before writing). Together with `max-instances = 1` this guarantees one writer per Sheet. This replaces the advisory-lock design of 9.5.
-- The worker is one sequential loop per process: heartbeat → at most one run → one incremental batch.
+- The worker is one sequential loop per process: heartbeat → at most one run (no queue processing).
 
 ### 24.5 Row identity, upsert, duplicates, deletion
 
 - Identity is **only** `AO` (`_SYSTEM_CANDIDATE_ID`) = `candidate.unique_id`, compared as exact text. Blank `AO` identifies nobody (such rows are counted, never modified). Passport number, NIC, WhatsApp number and row number are never identity.
 - **Duplicate `AO`** anywhere in the Sheet: hard `DATA_INTEGRITY` error before any write; none of the duplicate rows is modified, labelled or deleted; no guess is made (business rule, supersedes D-11 labelling).
-- Incremental upsert: validate header (`A1:AO1`) → read `AO2:AO` → read the claimed candidates in one query → `batchGet` only their existing rows → compare (all columns except `AN` LAST MIRRORED AT) → `batchUpdate` changed rows + one `append` (`INSERT_ROWS`, `RAW`) for missing candidates. Unchanged rows are not written, so `AN` changes only on a real write. A retry after a crash between append and completion finds the row by `AO` and updates it (no duplicate).
+- Incremental upsert: validate header names (row 1) → read the `_SYSTEM_CANDIDATE_ID` column → read the claimed candidates in one query → `batchGet` only their existing rows → compare (all system columns except `LAST MIRRORED AT`) → `batchUpdate` changed rows + one `append` (`INSERT_ROWS`, `RAW`) for missing candidates. Unchanged rows are not written, so `LAST MIRRORED AT` changes only on a real write. A retry after a crash between append and completion finds the row by `_SYSTEM_CANDIDATE_ID` and updates it (no duplicate).
 - **Deleted candidate:** the row is **never deleted**. Only when the trigger flagged the candidate row as deleted **and** a fresh read confirms the candidate is gone, `AL` becomes `DELETED / INACTIVE` and `AN` is stamped; every other cell is kept. If the same `unique_id` returns, the next sync restores `ACTIVE` and refreshes the row.
 - The adapter never clears, deletes rows, formats or touches other tabs.
 
@@ -1715,14 +1760,15 @@ API (Vercel; reads PostgreSQL and inserts run requests; never calls Google; no G
 
 | Method | Path (`/api/admin/settings/sheet-sync`) | Effect |
 | :--- | :--- | :--- |
-| `GET` | `/status` | Worker online (heartbeat ≤ 2 min), write gate, target hint (`…<last 6 chars> / <tab>`), integration state + last failure category/code, queue counts, last successful sync, last / last successful reconciliation, last connection test, active runs |
+| `GET` | `/status` | Worker online (heartbeat ≤ 2 min), write gate, target hint (`…<last 6 chars> / <tab>`), integration state + last failure category/code, queue counts, last successful sync, last / last successful reconciliation, last connection test, active runs; plus `lastSuccessfulReconciliation`, `lastAutomaticSync`, `lastManualSync` (each a run with its `trigger`), `schedule` (`times`, `timeZone`) and `destination` (`available`, `activeKey`, `requestedKey`, `lastSwitch`; Section 25.4) |
 | `POST` | `/test` | Durable `TEST_CONNECTION` run → `202 { run, alreadyActive }` |
 | `POST` | `/run` | Durable `RECONCILE` run (Sync Now) → `202 { run, alreadyActive }` |
 | `GET` | `/runs/:runId` | One run (`400` malformed id, `404` unknown) |
+| `PUT` | `/destination` | `{ key }`: switch request (Section 25.5); `400` unknown / invalid key, `409` switch pending or a test running |
 
 Authorization: mounted with `requireRole(ADMINS_ONLY)` (and again inside the router), behind the existing authentication (role re-read from the database every request), rate limiter and CSRF protection. MANAGER, ANALYST and REGISTRATION_DESK get `403` on every endpoint (tested, including a token that claims ADMIN for an account whose database role is MANAGER). The MANAGER read-only view (D-1) is not implemented.
 
-UI: one **Settings** sidebar item appended after Change Roles (`adminOnly`, same component, styling and active state as the other items; breadcrumb from `NAV_ITEMS`), route `/admin/settings`, a **Google Sheet Sync** card inside it (no separate sidebar item). Non-ADMIN users see "Access Restricted" and the page requests no Settings data. The card shows the status above, the dry-run notice when writes are disabled, an offline-worker warning, and **Test Connection** / **Sync Now** buttons (disabled while a run of that kind is active). Status refreshes every 5 s while a run is active. Leaving the page changes nothing: runs are executed by the worker. No other page was changed; the Candidate Pool is untouched.
+UI: one **Settings** sidebar item (Section 12.9): a tab row Change Roles | Invite User | Google Sheet Sync, with the Google Sheet Sync tab grouped into status summary, sync activity (automatic / manual / latest), Sync Destination, last reconciliation and last failure. Non-ADMIN users see "Access Restricted" and the page requests no Settings data. Sync Now and Test Connection are the actions of that tab; the dry-run notice shows while writing is off.
 
 Test Connection = the read-only health check of 11.6 C, executed by the worker (the Vercel runtime has no ADC and none is added).
 
@@ -1746,6 +1792,8 @@ Monitoring: Settings page (operator view); Cloud Logging filter `jsonPayload.eve
 
 ### 24.9 Cloud Run worker and Cloud Scheduler
 
+> **Deploy the worker with every change to the Sheet Sync code.** The Admin API (Vercel) and the worker (Cloud Run) are deployed separately. Code that the worker must run (for example Sync Destination publishing, Section 25.8) takes effect only after the worker image is rebuilt and the service updated. See 25.9 for the symptoms of an old worker.
+
 Service `emlynk-sheet-sync-worker`, region `asia-south1`, same image as the backend (root `Dockerfile`), command `node src/sheetSyncWorker.js`, runtime identity `emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`, private (`--no-allow-unauthenticated`), `min-instances = max-instances = 1`, CPU always allocated (it polls between requests).
 
 | Variable | Secret? | Value / default |
@@ -1753,13 +1801,13 @@ Service `emlynk-sheet-sync-worker`, region `asia-south1`, same image as the back
 | `DATABASE_URL` | **Secret Manager** (`DATABASE_URL`, as for the other workers) | session-pooler URL |
 | `SHEET_SPREADSHEET_ID`, `SHEET_TAB_NAME` | no | `deploy/sheet-sync-worker.env.yaml` |
 | `SHEET_SYNC_ENABLED` | no | `false` (only the activation procedure changes it) |
-| `SHEET_SYNC_POLL_INTERVAL_MS` / `_BATCH_SIZE` / `_MAX_RETRIES` / `_DELETION_GUARD_MAX` / `_DELETION_GUARD_FRACTION` | no | 10000 / 25 / 5 / 10 / 0.05 |
+| `SHEET_SYNC_POLL_INTERVAL_MS` / `_DELETION_GUARD_MAX` / `_DELETION_GUARD_FRACTION` | no | 10000 / 10 / 0.05 (`_BATCH_SIZE` / `_MAX_RETRIES` are still accepted but have no effect: they belonged to the real-time path) |
 | `SHEET_SYNC_SCHEDULER_AUDIENCE`, `SHEET_SYNC_SCHEDULER_INVOKER` | no | worker URL; scheduler service-account e-mail (both required, else the trigger is disabled) |
 | `SHEET_SYNC_PILOT_CANDIDATE_IDS` | no | only during the first-write pilot (24.10) |
 | `DATABASE_POOL_MAX` | no | 2 |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | **must not be set** |
 
-Scheduling lives only in Cloud Scheduler: `POST <worker-url>/tasks/reconcile` with an OIDC token of a dedicated scheduler service account that has only `roles/run.invoker` on this service. Cloud Run IAM rejects other callers; the worker verifies the token again (signature, audience, verified e-mail) and only records a durable `RECONCILE` run (`202`). Testing/staging: every 5 minutes; production: once a day.
+Scheduling lives only in Cloud Scheduler, one job at **06:00, 12:00 and 18:00 Asia/Colombo** (`0 6,12,18 * * *`): `POST <worker-url>/tasks/reconcile` with an OIDC token of a dedicated scheduler service account that has only `roles/run.invoker` on this service. Cloud Run IAM rejects other callers; the worker verifies the token again (signature, audience, verified e-mail) and only records a durable `RECONCILE` run (`202`). Testing/staging: every 5 minutes; production: once a day.
 
 **Database question to settle before deploying (Needs confirmation):** whether the `stage` Vercel Preview uses the same Supabase database as production. The migration and the worker act on whichever database `DATABASE_URL` points to, and there is only one real Sheet: run exactly **one** worker per Sheet, against the database whose candidates are authoritative.
 
@@ -1796,7 +1844,7 @@ gcloud run deploy emlynk-sheet-sync-worker --project=$PROJECT --region=$REGION -
   --cpu=1 --memory=512Mi --env-vars-file=deploy/sheet-sync-worker.env.yaml \
   --set-secrets=DATABASE_URL=DATABASE_URL:latest
 gcloud run services logs read emlynk-sheet-sync-worker --project=$PROJECT --region=$REGION --limit=50
-#    expect: sheet_sync.worker_config {"writeGate":"DISABLED",...}, sheet_sync.incremental_paused
+#    expect: sheet_sync.worker_config {"writeGate":"DISABLED",...}, sheet_sync.worker_started
 # Then in Admin -> Settings: Test Connection (SUCCEEDED), Sync Now (dry run; review the counts).
 
 # 5. Scheduler identity and trigger (IAM CHANGES: approve first).
@@ -1807,10 +1855,19 @@ URL=$(gcloud run services describe emlynk-sheet-sync-worker --project=$PROJECT -
 gcloud run services update emlynk-sheet-sync-worker --project=$PROJECT --region=$REGION \
   --update-env-vars=SHEET_SYNC_SCHEDULER_AUDIENCE=$URL,SHEET_SYNC_SCHEDULER_INVOKER=$SCHED_SA
 
-# 6. Testing schedule, ~every 5 minutes (dry runs while writes are disabled).
-gcloud scheduler jobs create http emlynk-sheet-sync-reconcile-test --project=$PROJECT --location=$REGION \
-  --schedule="*/5 * * * *" --time-zone=Etc/UTC --uri="$URL/tasks/reconcile" --http-method=POST \
+# 6. The schedule: 06:00, 12:00 and 18:00 Asia/Colombo (SHEET_SYNC_SCHEDULE).
+#    While SHEET_SYNC_ENABLED=false each run is a dry run (nothing is written).
+gcloud scheduler jobs create http emlynk-sheet-sync-reconcile --project=$PROJECT --location=$REGION \
+  --schedule="0 6,12,18 * * *" --time-zone=Asia/Colombo --uri="$URL/tasks/reconcile" --http-method=POST \
   --oidc-service-account-email=$SCHED_SA --oidc-token-audience="$URL" --attempt-deadline=30s
+gcloud scheduler jobs describe emlynk-sheet-sync-reconcile --project=$PROJECT --location=$REGION
+#    expect: schedule '0 6,12,18 * * *', timeZone Asia/Colombo, httpTarget.oidcToken set
+# To start a run at once instead of waiting for the next slot:
+gcloud scheduler jobs run emlynk-sheet-sync-reconcile --project=$PROJECT --location=$REGION
+# Only where the older jobs were created (they call the same endpoint on the
+# old schedules): delete them.
+gcloud scheduler jobs delete emlynk-sheet-sync-reconcile-test --project=$PROJECT --location=$REGION
+gcloud scheduler jobs delete emlynk-sheet-sync-reconcile-daily --project=$PROJECT --location=$REGION
 ```
 
 **DATABASE MIGRATION — affects the database the application uses; approve first.** Additive only (Section 24.2); run once per database, from the same image, with the identity that already reads `DATABASE_URL`:
@@ -1830,11 +1887,8 @@ gcloud run jobs execute emlynk-db-migrate --project=$PROJECT --region=$REGION --
 # Enable writes (new revision; reverts with the same command and =false).
 gcloud run services update emlynk-sheet-sync-worker --project=$PROJECT --region=$REGION \
   --update-env-vars=SHEET_SYNC_ENABLED=true --remove-env-vars=SHEET_SYNC_PILOT_CANDIDATE_IDS
-# Daily reconciliation (02:00 UTC = 07:30 Sri Lanka), replacing the testing job.
-gcloud scheduler jobs pause emlynk-sheet-sync-reconcile-test --project=$PROJECT --location=$REGION
-gcloud scheduler jobs create http emlynk-sheet-sync-reconcile-daily --project=$PROJECT --location=$REGION \
-  --schedule="0 2 * * *" --time-zone=Etc/UTC --uri="$URL/tasks/reconcile" --http-method=POST \
-  --oidc-service-account-email=$SCHED_SA --oidc-token-audience="$URL" --attempt-deadline=30s
+# The scheduled job from step 6 (06:00, 12:00, 18:00 Asia/Colombo) needs no change:
+# from now on its runs write.
 ```
 
 ### 24.10 Controlled write activation (first live write)
@@ -1851,15 +1905,15 @@ Prerequisites, all required and recorded:
 
 Pilot:
 
-1. Deploy with `SHEET_SYNC_ENABLED=true` **and** `SHEET_SYNC_PILOT_CANDIDATE_IDS=<that unique_id>` (`gcloud run services update … --update-env-vars=SHEET_SYNC_ENABLED=true,SHEET_SYNC_PILOT_CANDIDATE_IDS=<id>`). During the pilot only that candidate can be written; every other queue item waits and every reconciliation stays a dry run.
-2. In the Admin Console open that candidate and save one stage without changing it (this queues the candidate without changing its data).
-3. Within one poll interval, verify: exactly one row has `AO = <id>`; its cells match the expected values; `AL = ACTIVE`; `AN` is set; the Sheet's version history shows one edit by `emlynk-sheet-sync@…` and no other row changed; logs show `sheet_sync.completed` with `APPENDED` or `UPDATED` and no errors.
+1. Deploy with `SHEET_SYNC_ENABLED=true` **and** `SHEET_SYNC_PILOT_CANDIDATE_IDS=<that unique_id>` (`gcloud run services update … --update-env-vars=SHEET_SYNC_ENABLED=true,SHEET_SYNC_PILOT_CANDIDATE_IDS=<id>`). During the pilot a reconciliation writes only that candidate: every other candidate is compared but not written, and no row is marked inactive.
+2. Run **Sync Now** in Settings (or `gcloud scheduler jobs run emlynk-sheet-sync-reconcile …`).
+3. When the run has finished, verify: exactly one row has `AO = <id>`; its cells match the expected values; `AL = ACTIVE`; `AN` is set; the Sheet's version history shows one edit by `emlynk-sheet-sync@…` and no other row changed; logs show `sheet_sync.reconcile_completed` (`appended` or `updated` = 1, `outsideScope` = the other candidates) and no errors.
 4. If anything is wrong: set `SHEET_SYNC_ENABLED=false` (24.11) and restore the version from prerequisite 6.
-5. If correct: remove the pilot variable (writes stay enabled), watch the queue drain in Settings, run Sync Now and review the counts, then create the daily scheduler job and pause the testing job (PRODUCTION COMMANDS above).
+5. If correct: remove the pilot variable (writes stay enabled), run Sync Now and review the counts. From then on the scheduled runs (06:00, 12:00, 18:00 Asia/Colombo) keep the Sheet in step (PRODUCTION COMMANDS above).
 
 ### 24.11 Disable, rollback, emergency switch
 
-- **Emergency switch:** `gcloud run services update emlynk-sheet-sync-worker --region=asia-south1 --update-env-vars=SHEET_SYNC_ENABLED=false`. The new revision stops all Sheet writes (and requests a read-only token). Candidate database operations are unaffected: the triggers keep queueing (bounded, one row per candidate) and the backlog syncs when writes are re-enabled. Also `gcloud scheduler jobs pause …` for the scheduler jobs.
+- **Emergency switch:** `gcloud run services update emlynk-sheet-sync-worker --region=asia-south1 --update-env-vars=SHEET_SYNC_ENABLED=false`. The new revision stops all Sheet writes (and requests a read-only token). Candidate database operations are unaffected: the triggers keep queueing (bounded, one row per candidate) and the next run after writes are re-enabled mirrors everything. Also `gcloud scheduler jobs pause …` for the scheduler jobs.
 - **Absolute stop on the Google side:** remove the service account's Editor sharing from the Sheet (business action in Google Sheets).
 - **Restore Sheet content:** Google Sheets version history, or the copy from 24.10.
 - **Stop change capture (last resort; no candidate data is changed):** `DROP TRIGGER "candidate_sheet_sync_capture" ON "candidate"; DROP TRIGGER "candidate_stages_sheet_sync_capture" ON "candidate_stages"; DROP TRIGGER "documents_sheet_sync_capture" ON "documents";` (a later reconciliation still repairs everything).
@@ -1882,6 +1936,148 @@ Pilot:
 - Not deployed; the migration is not applied to any shared database; writes have never been enabled.
 - The database time zone must be UTC (Supabase default): the Prisma pg adapter misreads `timestamptz` rendered with a non-UTC session offset (found and pinned in the test database).
 - Stage vs production database (24.9) and the PR target for `version/google-sheet-sync` (D-8) need confirmation.
-- MANAGER read-only Settings view (D-1) not implemented (ADMIN only).
+- MANAGER read-only Settings view (D-1) not implemented (ADMIN only). Sync Destination does not change this: there is no Sheet Sync viewer role.
 - Deletion-guard thresholds (D-7) use the documented defaults; the override procedure is: raise the two variables for one run after review, then restore them.
 - A 400 from Google during a write halts the integration (configuration) rather than isolating one candidate; current field limits (≤ 2000 characters) make an oversize cell impossible.
+
+---
+
+## 25. Sync Destination
+
+### 25.1 Purpose
+
+An ADMIN can choose which **configured Google Sheet** is the database -> Sheet operational mirror's destination (Settings -> Google Sheet Sync -> Sync destination). The feature is built for several Sheets (for example a second candidate Sheet), but today only the existing operational Sheet is configured:
+
+- the dropdown lists the real configured destinations only; with one destination it still renders, with that Sheet selected, and the switch action is not offered because there is nothing else to select;
+- no example or placeholder destination is ever shown;
+- adding a Sheet later is a worker configuration change (25.2), not a UI redesign.
+
+Sync Destination changes **where** the mirror writes. It does not change the schedule (06:00, 12:00, 18:00 Asia/Colombo, Cloud Scheduler untouched), the one-way rule (PostgreSQL is the source of truth; the Sheet is a mirror; **database -> Sheet only, never Sheet -> database**), the 41-column layout and header validation, candidate and document mapping (including document submission dates and `Not Submitted`), the identity column (`_SYSTEM_CANDIDATE_ID` = candidate `unique_id`), the change-tracking queue, reconciliation, the writer lease or the deletion guard. Those sections of this document apply to whichever Sheet is active.
+
+### 25.2 Configuration: `SHEET_SYNC_DESTINATIONS` (worker only)
+
+An optional JSON array on the Cloud Run sheet-sync worker. The first entry is the default. **Example only** (these Sheets are not configured production Sheets; the spreadsheet IDs are placeholders):
+
+```json
+[
+  {
+    "key": "operational",
+    "name": "Emlynk Candidate Operational Mirror",
+    "spreadsheetId": "<full ID>",
+    "tabName": "Emlynk Candidate Operational Mirror"
+  },
+  {
+    "key": "romania",
+    "name": "Romania Candidates",
+    "spreadsheetId": "<full ID>",
+    "tabName": "Romania"
+  }
+]
+```
+
+| Field | Rule |
+| :--- | :--- |
+| `key` | stable internal key; 1-40 characters: lowercase letters, digits and `-`; **must not be changed once used** (it is stored as the active destination and on runs) |
+| `name` | display name shown in Admin Settings; 1-100 characters |
+| `spreadsheetId` | the full Google Spreadsheet ID; **worker/server-side only**, never sent to the frontend |
+| `tabName` | the exact tab name |
+
+- At most **20** destinations; duplicate keys are invalid.
+- A malformed value **prevents the worker from starting**. The error names `SHEET_SYNC_DESTINATIONS` (and which entry or rule) but never prints the value.
+
+**Backward compatibility.** If `SHEET_SYNC_DESTINATIONS` is **not** set, `SHEET_SPREADSHEET_ID` and `SHEET_TAB_NAME` are converted internally into one destination with key `default` (named after its tab). The existing deployment keeps working with no environment change. When no active key is stored, the **first** configured destination is the effective active one.
+
+### 25.3 Settings UI
+
+The **Sync destination** section of the Google Sheet Sync tab shows a dropdown (`Google Sheet`) with the configured destinations and the active one selected, then `Currently syncing to` (name), `Spreadsheet ID` (a short hint such as `…a1b2c3`, never the full ID) and `Tab`.
+
+- Choosing an option **does not** switch anything. The ADMIN must then click **Use this destination**; this explicit step prevents accidental changes.
+- While a switch is being checked, the dropdown is disabled and a notice names the destination being checked and the destination that stays active until the check passes.
+- A failed check is shown with its reason and the destination still in use, for example `Could not switch to Romania Candidates: Schema invalid (MISSING:PASSPORT NUMBER). Still syncing to Emlynk Candidate Operational Mirror.`
+- If the Admin API has no destination list (an older worker, 25.9), the section falls back to the plain target row (`Spreadsheet: …a1b2c3 / <tab>`) and no dropdown is shown.
+
+### 25.4 Database (migration `20261012120000_sheet_sync_destination`)
+
+Additive only: four **nullable** columns on the existing Sheet Sync tables; no new table, no row changed. With every column empty the worker behaves as before.
+
+| Table | Column | Purpose |
+| :--- | :--- | :--- |
+| `sheet_sync_state` | `destinations` (JSON) | the configured destinations as the **worker publishes** them: key, name, short hint, tab name. Safe metadata only; the full spreadsheet ID is never stored here or sent to the frontend |
+| `sheet_sync_state` | `active_destination_key` | the destination every run uses. NULL or empty = the configured default (the first) |
+| `sheet_sync_state` | `requested_destination_key` | a switch an ADMIN asked for that is waiting for validation; cleared when the check finishes (promoted or failed) |
+| `sheet_sync_runs` | `destination_key` | the destination the run actually used (for a switch check: the destination it validated) |
+
+The status API returns `destination: { available: [{ key, name, hint, tabName }], activeKey, requestedKey, lastSwitch }`, built from these columns (`activeKey` falls back to the first available destination). `lastSwitch` is the latest finished switch check, so a failure can be shown.
+
+### 25.5 Switch flow (validation before activation)
+
+1. The ADMIN selects a configured destination and clicks **Use this destination**.
+2. `PUT /api/admin/settings/sheet-sync/destination` `key` records it as the **requested** destination and queues a `TEST_CONNECTION` run carrying that key (`destination_key`).
+3. The worker validates **that** destination: access, tab, and the header/schema check (every required header exactly once, any order, Section 6.4). It reads row 1 only; no candidate rows are read from the Sheet and nothing is copied into the database.
+4. **If validation passes:** under the writer lease the requested destination becomes the active one, the pending request is cleared, an audit entry is written (25.7) and the integration state is set to OK (unless it is halted for duplicate IDs).
+5. **If validation fails** (access denied, not found, invalid headers, or the writer lease is busy): the pending request is cleared, the **previous destination remains active**, the failed check is recorded with its error class and code, and the UI shows it. Sync continues to the previous destination.
+
+A failed destination check does **not** change the integration state: the integration state describes the active destination, which is still healthy, so a bad candidate Sheet cannot make a working integration look broken.
+
+Requests are refused with a clear message when the key is unknown (`400`), a switch is already pending (`409 SWITCH_PENDING`) or a connection test is running (`409 TEST_RUNNING`). Requesting the already-active destination returns `200` with no change.
+
+### 25.6 Run behaviour and safety
+
+- **Every run resolves its destination when it starts and records it in `sheet_sync_runs.destination_key`:** scheduled reconciliation (`SCHEDULER`), manual Sync Now (`ADMIN`) and Test Connection. A **writing** reconciliation resolves it after acquiring the writer lease.
+- **The writer lease protects switching.** A switch is applied only while holding the lease, so the destination cannot change in the middle of a writing run; if a writer holds the lease, the switch fails (`WRITER_BUSY`) and the previous destination stays.
+- **Unknown active key.** If `active_destination_key` names a destination that is no longer configured, the run fails with `DESTINATION_NOT_CONFIGURED` (a configuration error). It **never silently falls back** to another Sheet.
+- **The previous Sheet is never cleared, deleted or written** by a switch, and the database is never changed by one. A later reconciliation writes the database's current state to the newly active Sheet through the normal reconciliation path (append / update / deletion guard).
+- **Global status.** Last automatic sync, last manual sync, queue counts and the last failure remain global, not per destination, so immediately after a switch they still describe runs against the previous Sheet until the new one has run.
+
+### 25.7 Audit Log
+
+A successful switch writes one `SET_SHEET_DESTINATION` entry (category Other), in the same transaction as the switch: the ADMIN who requested it, the previous destination key and name, and the new destination key and name. It never holds a spreadsheet ID or any Google credential. Audit Logs shows it as **Sheet sync destination changed**. Failed or refused switches write no such entry.
+
+### 25.8 Worker publishing and deployment
+
+The **Cloud Run worker is the source of destination configuration**: it reads `SHEET_SYNC_DESTINATIONS` (or the single-Sheet fallback) and publishes only the safe metadata (`destinations`) on its **heartbeat** (about every 10 seconds), together with the active destination's target hint. The Admin API on Vercel and the browser never receive full spreadsheet IDs.
+
+To add a Sheet:
+
+1. Share it with the Sheet Sync Cloud Run service account (the dedicated identity in the header of this document) as **Editor**.
+2. Make sure the tab named in `tabName` exists exactly and that row 1 holds the required headers (Section 6).
+3. Add it to `SHEET_SYNC_DESTINATIONS` on the **worker** (keep the current Sheet as the first entry so it stays the default).
+4. Rebuild the worker image and update the `emlynk-sheet-sync-worker` service (below).
+5. Wait for a heartbeat to publish the new list.
+6. Select it in Settings and click **Use this destination**; the worker validates it before it becomes active.
+
+Credentials are never part of this configuration: the worker authenticates with its runtime service identity (Section 14.2).
+
+**Rebuild and update the worker.** The image is built from the root `Dockerfile` and the service is updated to it:
+
+```powershell
+docker build -t <region>-docker.pkg.dev/<project>/<repository>/emlynk-sheet-sync-worker:latest .
+docker push <region>-docker.pkg.dev/<project>/<repository>/emlynk-sheet-sync-worker:latest
+gcloud run services update emlynk-sheet-sync-worker --project=<project> --region=<region> --image=<same image>:latest
+```
+
+The `Dockerfile` copies only `scripts/checkDatabaseConnection.js` into the image (`COPY scripts/checkDatabaseConnection.js ./scripts/`). An earlier `Dockerfile` still listed `scripts/createAdmin.js`, which was **intentionally removed** during the Supabase Auth migration (the first administrator is created with `npm run user:create`), so that build failed; the stale reference was removed (`fix(deploy): remove stale createAdmin Docker reference`). Do not restore `createAdmin.js`. The migration (25.4) must be applied before the new worker starts.
+
+### 25.9 Troubleshooting: the dropdown does not appear
+
+**Symptoms (seen after the first deployment):** the section heading is **Sync destination** but only the old `Spreadsheet` row (`…<hint> / <tab>`) is shown and there is no dropdown; `sheet_sync_state.destinations`, `active_destination_key` and `requested_destination_key` are all NULL; the worker heartbeat is current.
+
+**Cause:** the frontend, the Admin API and the migration were new, but the **Cloud Run worker was still an old image**. An old worker keeps sending heartbeats but does not publish `destinations`, so the API returns no available destinations and Settings falls back to the plain target display.
+
+**Fix:** build the latest worker image and update `emlynk-sheet-sync-worker` (25.8). The first heartbeat of the new worker publishes the fallback `default` destination (when `SHEET_SYNC_DESTINATIONS` is unset) and the dropdown appears. No environment change is needed for a single Sheet.
+
+**Quick checks:** the worker log line `sheet_sync.worker_config` lists `destinations` (keys only); `sheet_sync_state.destinations` is non-NULL after a heartbeat; `sheet_sync_runs.destination_key` is filled for new runs.
+
+### 25.10 Permissions
+
+Sync Destination, like all Google Sheet Sync functions, is **ADMIN only**, enforced by the backend (`requireRole` on every Settings route; the role is re-read from the database on every request). MANAGER, ANALYST and REGISTRATION_DESK receive `403` and see "Access Restricted". There is no Sheet Sync viewer role and no new permission; none is implemented.
+
+### 25.11 Verification
+
+Backend (in-memory PostgreSQL with the real worker, store, adapter and admin router; Google replaced by an in-memory Sheet, so no test can reach a real Sheet): 19 new Sync Destination tests; full backend suite **1477 passed, 0 failed**. They cover the single-Sheet fallback, publishing of safe destination metadata, the ADMIN-only endpoint, a successful switch, a failed validation preserving the previous destination, the audit entry, writer-lease protection, an unknown active destination, no full spreadsheet ID in any response or audit entry, scheduled and manual runs recording `destination_key`, and the unchanged 06:00 / 12:00 / 18:00 schedule.
+
+Admin: 6 new Sync Destination UI tests; full frontend suite **372/372**. They cover the current destination being selected, only real destinations being listed, the single-destination case, the switch request, the pending state, a failed switch, a refused request and compatibility with an older server response. Frontend typecheck and build and `prisma validate` passed.
+
+Prisma Client regenerated; on Windows the final copy of the query-engine DLL can be blocked while Node processes are running (file lock). That is a local environment condition, not a schema or production problem.
+
+Implementation references: `92638ab` (`feat(sheet-sync): add sync destination selection`) and `78dc5b1` (`feat(settings): add sync destination section`); the Dockerfile fix above was brought into the branch before the worker was rebuilt. The commits are references only; this section is the specification.

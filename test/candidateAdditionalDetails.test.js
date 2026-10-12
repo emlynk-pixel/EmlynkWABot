@@ -94,7 +94,7 @@ const candidateRow = () => prisma.candidate.findUnique({ where: { passportId: "N
 
 describe("migration", () => {
     test("adds one table with a one-to-one foreign key, RLS on, and leaves candidate untouched", async () => {
-        assert.equal(migrationNames().at(-1), MIGRATION, "the newest migration");
+        assert.ok(migrationNames().includes(MIGRATION), "the migration is applied");
         const sql = fs.readFileSync(path.join("prisma", "migrations", MIGRATION, "migration.sql"), "utf8");
         const statements = sql.replace(/--.*$/gm, "");
         assert.doesNotMatch(statements, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+")|ALTER TABLE "candidate"\s|ALTER COLUMN|DROP COLUMN/im, "additive only");
