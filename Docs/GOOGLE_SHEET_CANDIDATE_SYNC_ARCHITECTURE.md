@@ -2,7 +2,7 @@
 ## Architecture & Project-Scope Specification
 
 - **Feature Name:** Google Sheets Candidate Operational Mirror (operational fallback)
-- **Document Version:** 1.5.0
+- **Document Version:** 1.6.0 (adds Sync Destination, Section 25, and the as-built Settings layout, Section 12.9)
 - **Status:** IMPLEMENTED ON `dev` (Phases 1–7 code complete and locally verified; NOT deployed; `SHEET_SYNC_ENABLED=false`; no live Sheet write has ever been made). Cloud Run ADC verified with the read-only check (`CONNECTED` + `SCHEMA_VALID`, write gate `DISABLED`). **Section 24 is the as-built reference and operational runbook; where an earlier section disagrees, Section 24 wins** (earlier sections are kept as the design record and are annotated where superseded).
 - **Author:** System Architecture Team
 - **Development Branch:** `dev` (this document and all development happen on `dev`)
@@ -15,11 +15,13 @@
 - **Confirmed Dedicated Service Account:** `emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com` (Editor on the operational spreadsheet)
 - **Confirmed Authentication Direction:** Cloud Run runtime service identity with keyless Google authentication / Application Default Credentials (ADC); no downloaded service-account JSON key files
 - **Operational Sheet Constraint:** The target spreadsheet is the **real operational Sheet** (no separate dev/test spreadsheet exists by business decision); strict environment write-gating is mandatory
-- **Settings Requirement (confirmed):** a visible **Settings** item after Change Roles in the existing Admin Console sidebar, route `/admin/settings`, with **Google Sheet Sync** as a section of that page (Section 12). This overrides any older recommendation to hide the page or make it direct-URL-only.
+- **Settings Requirement (confirmed; as built in Section 12.9):** a visible **Settings** item in the Admin Console sidebar, route `/admin/settings`, with tabs Change Roles, Invite User and **Google Sheet Sync** (the first two were later consolidated into Settings from standalone sidebar entries). This overrides any older recommendation to hide the page or make it direct-URL-only.
 
 > **Table names (Database & Authentication Restructure).** Migration `20261008120000_rename_candidate_user_tables` renamed the candidate table `users` to `candidate` (trigger `candidate_sheet_sync_capture`, function `sheet_sync_capture_candidate`) and the staff table `admins` to `public."user"`. Current-state references below use the new names. Repository findings quoted from the original audit (e.g. the `/invitations` and `/admins` endpoints and CSRF protection) describe the code at that time; those endpoints and the CSRF middleware no longer exist (Supabase Auth, `SUPABASE_AUTH.md`).
 
 > **Synchronization model (current; supersedes the real-time design below).** There is **no real-time synchronization**. A candidate, stage or document change only records a row in `sheet_sync_queue` (the database triggers are unchanged); nothing is written to the Sheet at that moment. The Sheet is written only by a **full reconciliation** of the current database: automatically at **06:00, 12:00 and 18:00 Asia/Colombo** (one Cloud Scheduler job, `0 6,12,18 * * *`, time zone `Asia/Colombo`, calling the worker's OIDC-protected `POST /tasks/reconcile`; `SHEET_SYNC_SCHEDULE` in `src/config/sheetSync.js`), and on demand by an ADMIN's **Sync Now**. A successful write reconciliation settles the queue rows it covered (`RECONCILED`); a change that arrives during a run stays `PENDING` for the next one. Asia/Colombo is the project's operational time zone (`src/utils/businessDay.js`); Cloud Scheduler applies it, so the server's time zone never matters. Sections describing incremental (per-candidate, near-real-time) sync, queue claims, per-item retries and dead letters describe the original design and are kept as history. Commands: Section 24.9.
+
+> **Update (Sync Destination and Settings).** The Sheet Sync Settings UI has three tabs (Change Roles, Invite User, Google Sheet Sync), the Google Sheet Sync tab separates **automatic (scheduled)** from **manual** sync and has a **Sync Destination** section, and the worker can write to any of several configured Sheets, one active at a time. These are described as built in **Section 12.9** (UI), **Section 13** (API) and **Section 25** (Sync Destination). Where Sections 12.1-12.4 and the 13.1 example describe the earlier "single Settings card" design, they are kept as historical design context and are superseded by 12.9 and 24.7. The automatic schedule (06:00, 12:00, 18:00 Asia/Colombo), the one-way database -> Sheet rule and every safeguard in this document are unchanged.
 
 ### How to read this document
 
@@ -881,6 +883,10 @@ SHEET_TAB_NAME=Emlynk Candidate Operational Mirror
 # Candidate WRITE enablement: production only, at Phase 13. Missing/false = disabled.
 SHEET_SYNC_ENABLED=true
 
+# Optional (worker only): several Sync Destinations. When unset, the two variables
+# above are the single destination "default". See Section 25.
+# SHEET_SYNC_DESTINATIONS=[{"key":"operational","name":"...","spreadsheetId":"...","tabName":"..."}]
+
 # Operational tunables for later phases (not read by any code yet)
 SHEET_SYNC_POLL_INTERVAL_MS=10000
 SHEET_SYNC_BATCH_SIZE=25
@@ -963,6 +969,8 @@ flowchart TD
 
 ## 12. Settings / Test UI Architecture
 
+> **Superseded in part (as built: Section 12.9).** Sections 12.1-12.4 record the design written before implementation (a Settings item after Invite Admin and Change Roles, one Google Sheet Sync card). As built, Invite User and Change Roles are no longer sidebar entries: they are tabs of Settings, next to Google Sheet Sync, and the Configurations tab that briefly existed was removed. Read 12.9 for the current structure.
+
 > **Confirmed requirement (supersedes the earlier "hidden page / direct URL only" recommendation):** the Google Sheet feature adds ONE visible **Settings** item to the EXISTING Admin Console sidebar. The Google Sheet management UI is a section of the Settings page, not a separate sidebar item and not a hidden standalone page.
 
 ### 12.1 Current State (Observed in the Repository)
@@ -1035,6 +1043,39 @@ UX notes:
 - Not-configured and configuration-error states are shown explicitly. No secret value, private key, token or full spreadsheet ID is ever rendered.
 - Loading the status must not affect, and must not be affected by, any other Admin page.
 
+### 12.9 As Built: Settings Tabs and the Google Sheet Sync Layout (current)
+
+**Settings (`/admin/settings`, ADMIN only).** One sidebar item (Settings). Its page title is followed by a horizontal tab row, one URL per tab so reload, Back and Forward keep the tab:
+
+| Tab | Route | Content |
+| :--- | :--- | :--- |
+| Change Roles | `/settings/roles` | the existing Change Roles page, unchanged |
+| Invite User | `/settings/invite` | the existing Invite User page, unchanged |
+| Google Sheet Sync | `/settings/sheet-sync` | the Sheet Sync status and actions (below) |
+
+- `/settings` opens the first tab (Change Roles). There is **no Configurations tab** (it existed briefly and was removed) and no placeholder or general configuration page.
+- `/roles` and `/invitations` (the old sidebar routes) redirect to the matching tab, so bookmarks keep working. The standalone sidebar entries Invite User and Change Roles were consolidated into Settings.
+- This is a navigation and layout consolidation only. Every tab keeps its existing rule (ADMIN only, enforced by the backend; the page shows "Access Restricted" and requests no Settings data for any other role). No authentication, permission or API behaviour changed.
+
+**Google Sheet Sync tab, top to bottom** (same data and actions as before, grouped for scanning):
+
+1. **Title, description and the two actions:** `Test Connection` and `Sync Now` (unchanged requests; the status refreshes every 5 seconds while a run is active).
+2. **Status summary** (three tiles): Connection, Integration state, Write sync. The dry-run notice appears below them while writing is off.
+3. **Sync activity:** Last automatic sync, Last manual sync, Latest sync (each with a Scheduled or Manual badge), Last written to the Sheet, Pending / failed candidate syncs, In progress (while a run is active), and the schedule: `Automatic schedule 06:00 · 12:00 · 18:00 (Asia/Colombo)`.
+4. **Sync destination:** the Sheet the mirror writes to (Section 25.3). It replaced the former "Target" row.
+5. **Last reconciliation:** its status, Scheduled or Manual, time and the appended / updated / unchanged counts.
+6. **Last failure:** the recorded failure, or "No recent failures".
+
+**Scheduled and manual sync are shown separately.** Whether a run is automatic is decided by the run's stored trigger (`sheet_sync_runs.trigger_source`), never by comparing its time with 06:00, 12:00 or 18:00:
+
+| Shown as | Which run | Trigger |
+| :--- | :--- | :--- |
+| Last automatic sync | latest **successful** reconciliation | `SCHEDULER` (Cloud Scheduler) |
+| Last manual sync | latest **successful** reconciliation | `ADMIN` (Sync Now) or `OPERATOR` (`npm run sheet:request`) |
+| Latest sync | latest successful reconciliation of either source, with its badge | either |
+
+A manual run at 13:45 therefore never appears as "the 12:00 run" and never replaces the last automatic sync; a scheduled run that finishes late (18:07) is still automatic. A source that has never run shows "Not yet run". The status API provides these as `lastAutomaticSync`, `lastManualSync`, `lastSuccessfulReconciliation` and `schedule` (Section 24.7). Sync status (these values, the queue counts and the last failure) is **global**: it is not kept per destination.
+
 ### 12.5 The Settings UI Is Not the Sync Engine (Invariant)
 
 The Settings page is a **visibility and management interface only**:
@@ -1100,6 +1141,9 @@ All endpoints live under `/api/admin/settings/sheet-sync`, run on the existing A
 | `POST` | `/test` | ADMIN | Creates a durable `TEST_CONNECTION` run request; returns `202` and its `runId` |
 | `POST` | `/run` | ADMIN | Creates a durable reconciliation run request; returns `202` and its `runId` |
 | `GET` | `/runs/:runId` | ADMIN | Status and result of one run |
+| `PUT` | `/destination` | ADMIN | Asks to switch the Sync Destination to another configured Sheet (Section 25.5); `202` pending, `200` already active |
+
+> The JSON example in 13.1 is the design-time shape. The as-built status response is described in 24.7 and, for destinations, in 25.4.
 
 Non-ADMIN callers receive `403 { "message": "Insufficient permissions" }`.
 
@@ -1565,7 +1609,7 @@ The planner cannot write: it only ever holds a read-only view of the adapter (`r
 - [ ] Duplicate prevention verified.
 - [ ] Deletion / inactive behavior verified with incomplete-snapshot safety.
 - [ ] Daily production schedule prepared.
-- [ ] Settings sidebar item and Google Sheet Sync section work (visible after Change Roles; ADMIN-only; Test Connection and Sync Now durable).
+- [ ] Settings sidebar item and Google Sheet Sync tab work (ADMIN-only; Test Connection and Sync Now durable; Sync Destination, Section 25).
 - [ ] Full backend tests green.
 - [ ] Full Admin tests green.
 - [ ] Admin build green.
@@ -1716,14 +1760,15 @@ API (Vercel; reads PostgreSQL and inserts run requests; never calls Google; no G
 
 | Method | Path (`/api/admin/settings/sheet-sync`) | Effect |
 | :--- | :--- | :--- |
-| `GET` | `/status` | Worker online (heartbeat ≤ 2 min), write gate, target hint (`…<last 6 chars> / <tab>`), integration state + last failure category/code, queue counts, last successful sync, last / last successful reconciliation, last connection test, active runs |
+| `GET` | `/status` | Worker online (heartbeat ≤ 2 min), write gate, target hint (`…<last 6 chars> / <tab>`), integration state + last failure category/code, queue counts, last successful sync, last / last successful reconciliation, last connection test, active runs; plus `lastSuccessfulReconciliation`, `lastAutomaticSync`, `lastManualSync` (each a run with its `trigger`), `schedule` (`times`, `timeZone`) and `destination` (`available`, `activeKey`, `requestedKey`, `lastSwitch`; Section 25.4) |
 | `POST` | `/test` | Durable `TEST_CONNECTION` run → `202 { run, alreadyActive }` |
 | `POST` | `/run` | Durable `RECONCILE` run (Sync Now) → `202 { run, alreadyActive }` |
 | `GET` | `/runs/:runId` | One run (`400` malformed id, `404` unknown) |
+| `PUT` | `/destination` | `{ key }`: switch request (Section 25.5); `400` unknown / invalid key, `409` switch pending or a test running |
 
 Authorization: mounted with `requireRole(ADMINS_ONLY)` (and again inside the router), behind the existing authentication (role re-read from the database every request), rate limiter and CSRF protection. MANAGER, ANALYST and REGISTRATION_DESK get `403` on every endpoint (tested, including a token that claims ADMIN for an account whose database role is MANAGER). The MANAGER read-only view (D-1) is not implemented.
 
-UI: one **Settings** sidebar item appended after Change Roles (`adminOnly`, same component, styling and active state as the other items; breadcrumb from `NAV_ITEMS`), route `/admin/settings`, a **Google Sheet Sync** card inside it (no separate sidebar item). Non-ADMIN users see "Access Restricted" and the page requests no Settings data. The card shows the status above, the dry-run notice when writes are disabled, an offline-worker warning, and **Test Connection** / **Sync Now** buttons (disabled while a run of that kind is active). Status refreshes every 5 s while a run is active. Leaving the page changes nothing: runs are executed by the worker. No other page was changed; the Candidate Pool is untouched.
+UI: one **Settings** sidebar item (Section 12.9): a tab row Change Roles | Invite User | Google Sheet Sync, with the Google Sheet Sync tab grouped into status summary, sync activity (automatic / manual / latest), Sync Destination, last reconciliation and last failure. Non-ADMIN users see "Access Restricted" and the page requests no Settings data. Sync Now and Test Connection are the actions of that tab; the dry-run notice shows while writing is off.
 
 Test Connection = the read-only health check of 11.6 C, executed by the worker (the Vercel runtime has no ADC and none is added).
 
@@ -1746,6 +1791,8 @@ Test Connection = the read-only health check of 11.6 C, executed by the worker (
 Monitoring: Settings page (operator view); Cloud Logging filter `jsonPayload.event=~"^sheet_sync\."` or `textPayload:"sheet_sync."`; alert on `sheet_sync.config_error`, `sheet_sync.duplicate_key_detected`, `sheet_sync.failed`, `sheet_sync.reconcile_failed`, `sheet_sync.reconcile_deletion_guard`, and on a missing `sheet_sync.worker_started`/stale heartbeat (Settings shows "worker not reporting" after 2 minutes).
 
 ### 24.9 Cloud Run worker and Cloud Scheduler
+
+> **Deploy the worker with every change to the Sheet Sync code.** The Admin API (Vercel) and the worker (Cloud Run) are deployed separately. Code that the worker must run (for example Sync Destination publishing, Section 25.8) takes effect only after the worker image is rebuilt and the service updated. See 25.9 for the symptoms of an old worker.
 
 Service `emlynk-sheet-sync-worker`, region `asia-south1`, same image as the backend (root `Dockerfile`), command `node src/sheetSyncWorker.js`, runtime identity `emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`, private (`--no-allow-unauthenticated`), `min-instances = max-instances = 1`, CPU always allocated (it polls between requests).
 
@@ -1889,6 +1936,148 @@ Pilot:
 - Not deployed; the migration is not applied to any shared database; writes have never been enabled.
 - The database time zone must be UTC (Supabase default): the Prisma pg adapter misreads `timestamptz` rendered with a non-UTC session offset (found and pinned in the test database).
 - Stage vs production database (24.9) and the PR target for `version/google-sheet-sync` (D-8) need confirmation.
-- MANAGER read-only Settings view (D-1) not implemented (ADMIN only).
+- MANAGER read-only Settings view (D-1) not implemented (ADMIN only). Sync Destination does not change this: there is no Sheet Sync viewer role.
 - Deletion-guard thresholds (D-7) use the documented defaults; the override procedure is: raise the two variables for one run after review, then restore them.
 - A 400 from Google during a write halts the integration (configuration) rather than isolating one candidate; current field limits (≤ 2000 characters) make an oversize cell impossible.
+
+---
+
+## 25. Sync Destination
+
+### 25.1 Purpose
+
+An ADMIN can choose which **configured Google Sheet** is the database -> Sheet operational mirror's destination (Settings -> Google Sheet Sync -> Sync destination). The feature is built for several Sheets (for example a second candidate Sheet), but today only the existing operational Sheet is configured:
+
+- the dropdown lists the real configured destinations only; with one destination it still renders, with that Sheet selected, and the switch action is not offered because there is nothing else to select;
+- no example or placeholder destination is ever shown;
+- adding a Sheet later is a worker configuration change (25.2), not a UI redesign.
+
+Sync Destination changes **where** the mirror writes. It does not change the schedule (06:00, 12:00, 18:00 Asia/Colombo, Cloud Scheduler untouched), the one-way rule (PostgreSQL is the source of truth; the Sheet is a mirror; **database -> Sheet only, never Sheet -> database**), the 41-column layout and header validation, candidate and document mapping (including document submission dates and `Not Submitted`), the identity column (`_SYSTEM_CANDIDATE_ID` = candidate `unique_id`), the change-tracking queue, reconciliation, the writer lease or the deletion guard. Those sections of this document apply to whichever Sheet is active.
+
+### 25.2 Configuration: `SHEET_SYNC_DESTINATIONS` (worker only)
+
+An optional JSON array on the Cloud Run sheet-sync worker. The first entry is the default. **Example only** (these Sheets are not configured production Sheets; the spreadsheet IDs are placeholders):
+
+```json
+[
+  {
+    "key": "operational",
+    "name": "Emlynk Candidate Operational Mirror",
+    "spreadsheetId": "<full ID>",
+    "tabName": "Emlynk Candidate Operational Mirror"
+  },
+  {
+    "key": "romania",
+    "name": "Romania Candidates",
+    "spreadsheetId": "<full ID>",
+    "tabName": "Romania"
+  }
+]
+```
+
+| Field | Rule |
+| :--- | :--- |
+| `key` | stable internal key; 1-40 characters: lowercase letters, digits and `-`; **must not be changed once used** (it is stored as the active destination and on runs) |
+| `name` | display name shown in Admin Settings; 1-100 characters |
+| `spreadsheetId` | the full Google Spreadsheet ID; **worker/server-side only**, never sent to the frontend |
+| `tabName` | the exact tab name |
+
+- At most **20** destinations; duplicate keys are invalid.
+- A malformed value **prevents the worker from starting**. The error names `SHEET_SYNC_DESTINATIONS` (and which entry or rule) but never prints the value.
+
+**Backward compatibility.** If `SHEET_SYNC_DESTINATIONS` is **not** set, `SHEET_SPREADSHEET_ID` and `SHEET_TAB_NAME` are converted internally into one destination with key `default` (named after its tab). The existing deployment keeps working with no environment change. When no active key is stored, the **first** configured destination is the effective active one.
+
+### 25.3 Settings UI
+
+The **Sync destination** section of the Google Sheet Sync tab shows a dropdown (`Google Sheet`) with the configured destinations and the active one selected, then `Currently syncing to` (name), `Spreadsheet ID` (a short hint such as `…a1b2c3`, never the full ID) and `Tab`.
+
+- Choosing an option **does not** switch anything. The ADMIN must then click **Use this destination**; this explicit step prevents accidental changes.
+- While a switch is being checked, the dropdown is disabled and a notice names the destination being checked and the destination that stays active until the check passes.
+- A failed check is shown with its reason and the destination still in use, for example `Could not switch to Romania Candidates: Schema invalid (MISSING:PASSPORT NUMBER). Still syncing to Emlynk Candidate Operational Mirror.`
+- If the Admin API has no destination list (an older worker, 25.9), the section falls back to the plain target row (`Spreadsheet: …a1b2c3 / <tab>`) and no dropdown is shown.
+
+### 25.4 Database (migration `20261012120000_sheet_sync_destination`)
+
+Additive only: four **nullable** columns on the existing Sheet Sync tables; no new table, no row changed. With every column empty the worker behaves as before.
+
+| Table | Column | Purpose |
+| :--- | :--- | :--- |
+| `sheet_sync_state` | `destinations` (JSON) | the configured destinations as the **worker publishes** them: key, name, short hint, tab name. Safe metadata only; the full spreadsheet ID is never stored here or sent to the frontend |
+| `sheet_sync_state` | `active_destination_key` | the destination every run uses. NULL or empty = the configured default (the first) |
+| `sheet_sync_state` | `requested_destination_key` | a switch an ADMIN asked for that is waiting for validation; cleared when the check finishes (promoted or failed) |
+| `sheet_sync_runs` | `destination_key` | the destination the run actually used (for a switch check: the destination it validated) |
+
+The status API returns `destination: { available: [{ key, name, hint, tabName }], activeKey, requestedKey, lastSwitch }`, built from these columns (`activeKey` falls back to the first available destination). `lastSwitch` is the latest finished switch check, so a failure can be shown.
+
+### 25.5 Switch flow (validation before activation)
+
+1. The ADMIN selects a configured destination and clicks **Use this destination**.
+2. `PUT /api/admin/settings/sheet-sync/destination` `key` records it as the **requested** destination and queues a `TEST_CONNECTION` run carrying that key (`destination_key`).
+3. The worker validates **that** destination: access, tab, and the header/schema check (every required header exactly once, any order, Section 6.4). It reads row 1 only; no candidate rows are read from the Sheet and nothing is copied into the database.
+4. **If validation passes:** under the writer lease the requested destination becomes the active one, the pending request is cleared, an audit entry is written (25.7) and the integration state is set to OK (unless it is halted for duplicate IDs).
+5. **If validation fails** (access denied, not found, invalid headers, or the writer lease is busy): the pending request is cleared, the **previous destination remains active**, the failed check is recorded with its error class and code, and the UI shows it. Sync continues to the previous destination.
+
+A failed destination check does **not** change the integration state: the integration state describes the active destination, which is still healthy, so a bad candidate Sheet cannot make a working integration look broken.
+
+Requests are refused with a clear message when the key is unknown (`400`), a switch is already pending (`409 SWITCH_PENDING`) or a connection test is running (`409 TEST_RUNNING`). Requesting the already-active destination returns `200` with no change.
+
+### 25.6 Run behaviour and safety
+
+- **Every run resolves its destination when it starts and records it in `sheet_sync_runs.destination_key`:** scheduled reconciliation (`SCHEDULER`), manual Sync Now (`ADMIN`) and Test Connection. A **writing** reconciliation resolves it after acquiring the writer lease.
+- **The writer lease protects switching.** A switch is applied only while holding the lease, so the destination cannot change in the middle of a writing run; if a writer holds the lease, the switch fails (`WRITER_BUSY`) and the previous destination stays.
+- **Unknown active key.** If `active_destination_key` names a destination that is no longer configured, the run fails with `DESTINATION_NOT_CONFIGURED` (a configuration error). It **never silently falls back** to another Sheet.
+- **The previous Sheet is never cleared, deleted or written** by a switch, and the database is never changed by one. A later reconciliation writes the database's current state to the newly active Sheet through the normal reconciliation path (append / update / deletion guard).
+- **Global status.** Last automatic sync, last manual sync, queue counts and the last failure remain global, not per destination, so immediately after a switch they still describe runs against the previous Sheet until the new one has run.
+
+### 25.7 Audit Log
+
+A successful switch writes one `SET_SHEET_DESTINATION` entry (category Other), in the same transaction as the switch: the ADMIN who requested it, the previous destination key and name, and the new destination key and name. It never holds a spreadsheet ID or any Google credential. Audit Logs shows it as **Sheet sync destination changed**. Failed or refused switches write no such entry.
+
+### 25.8 Worker publishing and deployment
+
+The **Cloud Run worker is the source of destination configuration**: it reads `SHEET_SYNC_DESTINATIONS` (or the single-Sheet fallback) and publishes only the safe metadata (`destinations`) on its **heartbeat** (about every 10 seconds), together with the active destination's target hint. The Admin API on Vercel and the browser never receive full spreadsheet IDs.
+
+To add a Sheet:
+
+1. Share it with the Sheet Sync Cloud Run service account (the dedicated identity in the header of this document) as **Editor**.
+2. Make sure the tab named in `tabName` exists exactly and that row 1 holds the required headers (Section 6).
+3. Add it to `SHEET_SYNC_DESTINATIONS` on the **worker** (keep the current Sheet as the first entry so it stays the default).
+4. Rebuild the worker image and update the `emlynk-sheet-sync-worker` service (below).
+5. Wait for a heartbeat to publish the new list.
+6. Select it in Settings and click **Use this destination**; the worker validates it before it becomes active.
+
+Credentials are never part of this configuration: the worker authenticates with its runtime service identity (Section 14.2).
+
+**Rebuild and update the worker.** The image is built from the root `Dockerfile` and the service is updated to it:
+
+```powershell
+docker build -t <region>-docker.pkg.dev/<project>/<repository>/emlynk-sheet-sync-worker:latest .
+docker push <region>-docker.pkg.dev/<project>/<repository>/emlynk-sheet-sync-worker:latest
+gcloud run services update emlynk-sheet-sync-worker --project=<project> --region=<region> --image=<same image>:latest
+```
+
+The `Dockerfile` copies only `scripts/checkDatabaseConnection.js` into the image (`COPY scripts/checkDatabaseConnection.js ./scripts/`). An earlier `Dockerfile` still listed `scripts/createAdmin.js`, which was **intentionally removed** during the Supabase Auth migration (the first administrator is created with `npm run user:create`), so that build failed; the stale reference was removed (`fix(deploy): remove stale createAdmin Docker reference`). Do not restore `createAdmin.js`. The migration (25.4) must be applied before the new worker starts.
+
+### 25.9 Troubleshooting: the dropdown does not appear
+
+**Symptoms (seen after the first deployment):** the section heading is **Sync destination** but only the old `Spreadsheet` row (`…<hint> / <tab>`) is shown and there is no dropdown; `sheet_sync_state.destinations`, `active_destination_key` and `requested_destination_key` are all NULL; the worker heartbeat is current.
+
+**Cause:** the frontend, the Admin API and the migration were new, but the **Cloud Run worker was still an old image**. An old worker keeps sending heartbeats but does not publish `destinations`, so the API returns no available destinations and Settings falls back to the plain target display.
+
+**Fix:** build the latest worker image and update `emlynk-sheet-sync-worker` (25.8). The first heartbeat of the new worker publishes the fallback `default` destination (when `SHEET_SYNC_DESTINATIONS` is unset) and the dropdown appears. No environment change is needed for a single Sheet.
+
+**Quick checks:** the worker log line `sheet_sync.worker_config` lists `destinations` (keys only); `sheet_sync_state.destinations` is non-NULL after a heartbeat; `sheet_sync_runs.destination_key` is filled for new runs.
+
+### 25.10 Permissions
+
+Sync Destination, like all Google Sheet Sync functions, is **ADMIN only**, enforced by the backend (`requireRole` on every Settings route; the role is re-read from the database on every request). MANAGER, ANALYST and REGISTRATION_DESK receive `403` and see "Access Restricted". There is no Sheet Sync viewer role and no new permission; none is implemented.
+
+### 25.11 Verification
+
+Backend (in-memory PostgreSQL with the real worker, store, adapter and admin router; Google replaced by an in-memory Sheet, so no test can reach a real Sheet): 19 new Sync Destination tests; full backend suite **1477 passed, 0 failed**. They cover the single-Sheet fallback, publishing of safe destination metadata, the ADMIN-only endpoint, a successful switch, a failed validation preserving the previous destination, the audit entry, writer-lease protection, an unknown active destination, no full spreadsheet ID in any response or audit entry, scheduled and manual runs recording `destination_key`, and the unchanged 06:00 / 12:00 / 18:00 schedule.
+
+Admin: 6 new Sync Destination UI tests; full frontend suite **372/372**. They cover the current destination being selected, only real destinations being listed, the single-destination case, the switch request, the pending state, a failed switch, a refused request and compatibility with an older server response. Frontend typecheck and build and `prisma validate` passed.
+
+Prisma Client regenerated; on Windows the final copy of the query-engine DLL can be blocked while Node processes are running (file lock). That is a local environment condition, not a schema or production problem.
+
+Implementation references: `92638ab` (`feat(sheet-sync): add sync destination selection`) and `78dc5b1` (`feat(settings): add sync destination section`); the Dockerfile fix above was brought into the branch before the worker was rebuilt. The commits are references only; this section is the specification.
