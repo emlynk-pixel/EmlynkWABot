@@ -45,6 +45,7 @@ import {
     setPoliceSubmittedDate,
 } from "../services/adminCorrectionService.js";
 import { getDailyReport, getMonthlyOverview, parseDailyReportQuery, parseMonthlyOverviewQuery } from "../services/adminReportService.js";
+import { getDailyRoleSummary, getDailySummary, getIncompleteCandidates, parseIncompleteQuery, parseRoleQuery } from "../services/dailyReportService.js";
 import { listAuditLogs, parseAuditLogQuery } from "../services/auditLogService.js";
 import { getAdditionalDetails, parseAdditionalDetailsBody, saveAdditionalDetails } from "../services/candidateAdditionalDetailsService.js";
 import {
@@ -178,6 +179,37 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return res.json(await getDailyReport({ db: client, date: parsed.params.date }));
+    });
+
+    // Daily Report page (dailyReportService.js). Summary: the same roles as
+    // the daily report. Summary by Roles: ADMIN and MANAGER only.
+    router.get("/reports/daily/summary", requireRole(ALL_ACTIVE), async (req, res) => {
+        const parsed = parseDailyReportQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await getDailySummary({ db: client, date: parsed.params.date }));
+    });
+
+    router.get("/reports/daily/incomplete", requireRole(ALL_ACTIVE), async (req, res) => {
+        const parsed = parseIncompleteQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await getIncompleteCandidates({ db: client, ...parsed.params }));
+    });
+
+    router.get("/reports/daily/roles", requireRole(MANAGERS_UP), async (req, res) => {
+        const date = parseDailyReportQuery(req.query);
+        const role = parseRoleQuery(req.query);
+        const errors = [...(date.errors ?? []), ...(role.errors ?? [])];
+        if (errors.length) {
+            return res.status(400).json({ message: "Invalid query parameters", errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await getDailyRoleSummary({ db: client, date: date.params.date, role: role.params.role }));
     });
 
     // Monthly overview for one business month (Sri Lanka), default this month.

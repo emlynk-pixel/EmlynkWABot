@@ -1,7 +1,7 @@
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test } from "vitest";
-import type { ClientList, ClientListItem, DailyReport, PoliceList } from "../api/admin";
+import type { ClientList, ClientListItem, PoliceList } from "../api/admin";
 import { todayInSriLanka } from "../components/format";
 import { THEME_KEY, initTheme } from "../theme/theme";
 import { readFileSync } from "node:fs";
@@ -92,64 +92,7 @@ describe("Missing Documents view", () => {
     });
 });
 
-const report = (overrides: Partial<DailyReport["daily"]> = {}, date = "2026-09-24"): DailyReport => ({
-    businessDate: date, today: todayInSriLanka(), isToday: date === todayInSriLanka(), timeZone: "Asia/Colombo",
-    range: { start: "2026-09-23T18:30:00.000Z", end: "2026-09-24T18:30:00.000Z" },
-    daily: {
-        totalReceived: 9, successfullyProcessed: 7, failed: 1, stillProcessing: 1, storedInClientFolder: 3, heldForReview: 3, duplicates: 1,
-        unclear: 2, temporary: 3, byType: { PASSPORT: 3, POLICE_SLIP: 1, POLICE_REPORT: 1, MEDICAL: 1, UNKNOWN: 3 }, byStatus: {}, adminActions: { APPROVE: 4, REMOVE_FROM_REVIEW: 1 },
-        ...overrides,
-    },
-    current: { asOf: "2026-09-25T06:00:00.000Z", clients: { total: 10, complete: 6, incomplete: 4, withMissing: 3, missingDocuments: 5, missingByType: {} }, police: { dueSoon: 2, dueToday: 1, overdue: 0, missingSlipDate: 0, notUploaded: 0 } },
-});
-
-describe("Daily Report", () => {
-    test("today by default; daily and current figures are clearly separate", async () => {
-        const { calls } = signedInBackend({ "GET /api/admin/reports/daily": { status: 200, body: report() } });
-        renderApp("/reports/daily");
-        expect(await screen.findByRole("heading", { name: /^Received on/ })).toBeInTheDocument();
-        expect(lastPath(calls, "/api/admin/reports/daily")).toBe(`/api/admin/reports/daily?date=${todayInSriLanka()}`);
-        expect(screen.getByText("Documents received").nextSibling).toHaveTextContent("9");
-        expect(screen.getByText("Failed processing").nextSibling).toHaveTextContent("1");
-        expect(within(screen.getByRole("list", { name: "Documents by type" })).getByText("Police slip")).toBeInTheDocument();
-        expect(within(screen.getByRole("list", { name: "Admin actions" })).getByText("Removed from review")).toBeInTheDocument();
-        const current = screen.getByRole("heading", { name: "Current status" }).closest("section")!;
-        expect(current).toHaveTextContent("not on");
-        expect(within(current).getByText("Completed clients").nextSibling).toHaveTextContent("6");
-        expect(within(current).getByText("Police reports due today").nextSibling).toHaveTextContent("1");
-    });
-
-    test("choosing a date requests that business day; Next day is disabled for today", async () => {
-        const { calls } = signedInBackend({ "GET /api/admin/reports/daily": (url) => ({ status: 200, body: report({}, url.searchParams.get("date") ?? todayInSriLanka()) }) });
-        renderApp("/reports/daily");
-        const user = userEvent.setup();
-        await screen.findByRole("heading", { name: /^Received on/ });
-        expect(screen.getByRole("button", { name: "Next day" })).toBeDisabled();
-        expect(screen.getByLabelText("Business date")).toHaveAttribute("max", todayInSriLanka());
-        await user.click(screen.getByRole("button", { name: "Previous day" }));
-        const yesterday = new Date(Date.parse(`${todayInSriLanka()}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
-        expect(lastPath(calls, "/api/admin/reports/daily")).toBe(`/api/admin/reports/daily?date=${yesterday}`);
-        expect(screen.getByRole("button", { name: "Today" })).toBeEnabled();
-    });
-
-    test("a day without submissions -> empty state (no all-time numbers)", async () => {
-        signedInBackend({ "GET /api/admin/reports/daily": { status: 200, body: report({ totalReceived: 0, successfullyProcessed: 0, failed: 0 }) } });
-        renderApp("/reports/daily?date=2026-09-01");
-        expect(await screen.findByText("No documents were received on this day")).toBeInTheDocument();
-        expect(screen.queryByText("Documents received")).not.toBeInTheDocument();
-    });
-
-    test("loading, then error with retry", async () => {
-        let fail = true;
-        signedInBackend({ "GET /api/admin/reports/daily": () => (fail ? { status: 500, body: {} } : { status: 200, body: report() }) });
-        renderApp("/reports/daily");
-        expect(screen.queryByText("Loading daily report…") ?? (await screen.findByRole("alert"))).toBeTruthy();
-        const alert = await screen.findByRole("alert");
-        fail = false;
-        await userEvent.setup().click(within(alert).getByRole("button", { name: "Try again" }));
-        expect(await screen.findByRole("heading", { name: /^Received on/ })).toBeInTheDocument();
-    });
-});
+// The Daily Report page is tested in dailyReport.test.tsx.
 
 describe("Police Workflow search", () => {
     const LIST: PoliceList = {

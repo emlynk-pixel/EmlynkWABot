@@ -488,7 +488,29 @@ The proposal's `GET /reports/daily` (§22 Daily Summary, §27, §35), now part o
 
 Limitations (not invented): a past day's completeness or police status would need a daily snapshot or a history of verification changes; refused (invalid) files have no record; a submission removed from review is deleted, so it no longer counts as received on its day (the removal itself counts in `adminActions`).
 
-## 4j. Sync and Dark Mode
+### 4i.1 Daily Report page — Summary and Summary by Roles (current)
+
+The Daily Report page uses three read-only endpoints (`src/services/dailyReportService.js`); `GET /reports/daily` above is unchanged and kept for compatibility. Business day: 00:00–24:00 Asia/Colombo (`businessDayRange`), never the server's or UTC's day. Daily figures come from timestamps stored when things happen; the current state is labelled as such.
+
+| Endpoint | Roles | Content |
+|---|---|---|
+| `GET /reports/daily/summary?date=` | ADMIN, MANAGER, ANALYST | `summary` (`candidatesRegistered`, `candidatesCompleted`, `visaCompleted`, `callsTaken`, `documentsSubmitted`), `documents` (`total`, `whatsapp`, `manual`, `byType`), `whatsappProcessing`, `adminActions`, `calls`, `registeredCandidates` and `completedCandidates` (lists of at most 200 with `total` and `truncated`), `current`: `incomplete` (per stage: count and reasons) and `police` |
+| `GET /reports/daily/incomplete?stage=&page=` | ADMIN, MANAGER, ANALYST | the candidates with that stage open now, with reasons, 25 per page |
+| `GET /reports/daily/roles?date=&role=` | ADMIN, MANAGER | `callsTaken`, `documentsUploaded`, `documentsByType`, `staff` (calls and uploads per staff member), `activity` (at most 200) |
+
+| Figure | Source |
+|---|---|
+| Candidates registered | `candidate.created_date` (set when the candidate record is created by `createCandidate`, the only registration path); never derived from documents, stages or WhatsApp activity. `registeredBy`: the `CREATE_CANDIDATE` audit entry's staff member (null when none was recorded). `documents`: documents on record now, superseded ones not counted. `stagesComplete` / `stagesTotal`: progress now |
+| Calls taken | `candidate_call_logs.created_date` (the call time); staff member `admin_id` |
+| Documents submitted (WhatsApp) | `temporary_data` rows received that day (every file, all outcomes; the classifier's type) |
+| Documents submitted (manual) | `UPLOAD_DOCUMENT` audit entries that day (uploader and type recorded) |
+| Visa completed | `candidate_stages.completed_at` of `VISA_APPROVAL` |
+| Candidates completed | `candidate_stages.completed_at` of `FINALIZING_JOB`; `allStagesComplete` is the current state of every stage |
+| Incomplete reasons | `automaticStageMissing` / `stageList` (the candidate page's rules); `TEST_DETAILS`: failed / no result; other manual stages: not marked complete |
+| Role attribution | the staff member's current role; WhatsApp files have no staff member and are never attributed |
+
+Bad input is `400` (`date` in the future or malformed, unknown `role` or `stage`). Queries are aggregate or bounded (counts and group-bys, lists capped), with no per-candidate queries; the incomplete figures read every candidate once with their stages and required documents.
+
 
 **Sync** (header button) means only: reload the data shown on screen from the backend. Not WhatsApp, not an external system, no background job. Every `useAdminResource` on the page reloads with its current key, so filters, search and page are kept. While it runs the button shows "Syncing…" and is disabled (a second click does nothing); afterwards the header shows "Synced HH:MM:SS" or "Sync failed — some data could not be loaded" (`admin/src/sync/SyncProvider.tsx`).
 
