@@ -185,6 +185,74 @@ export function getDailyReport(token: string, date: string | undefined, signal?:
     return apiRequest<DailyReport>(`/api/admin/reports/daily${queryString({ date })}`, { token, signal });
 }
 
+// ---------------------------------------------------------------- Daily Report page
+// Summary and Summary by Roles (src/services/dailyReportService.js). Daily
+// figures come from timestamps of that Sri Lanka day; `current` is the state
+// now (no history is kept of it).
+
+export type PoliceStatusCounts = { dueSoon: number; dueToday: number; overdue: number; missingSlipDate: number; notUploaded: number };
+export type DocumentTypeCount = { type: string; total: number; whatsapp: number; manual: number };
+export type DailyCall = { callLogId: string; calledAt: string; passportId: string; candidateName: string | null; handledBy: string | null; role: string | null };
+export type CompletedCandidate = { passportId: string; name: string | null; completedAt: string; allStagesComplete: boolean };
+export type IncompleteStage = { stage: string; count: number; reasons: { reason: string; count: number }[] };
+
+export type DailySummary = {
+    businessDate: string;
+    today: string;
+    isToday: boolean;
+    timeZone: string;
+    range: { start: string; end: string };
+    summary: { candidatesCompleted: number; visaCompleted: number; callsTaken: number; documentsSubmitted: number };
+    documents: { total: number; whatsapp: number; manual: number; byType: DocumentTypeCount[] };
+    whatsappProcessing: {
+        received: number; successfullyProcessed: number; storedInCandidateFolder: number; heldForReview: number;
+        duplicates: number; failed: number; stillProcessing: number; unclear: number; temporary: number;
+    };
+    adminActions: Record<string, number>;
+    calls: { total: number; items: DailyCall[]; truncated: boolean };
+    completedCandidates: { total: number; items: CompletedCandidate[]; truncated: boolean };
+    current: {
+        asOf: string;
+        incomplete: { asOf: string; totalCandidates: number; incompleteCandidates: number; completeCandidates: number; byStage: IncompleteStage[] };
+        police: PoliceStatusCounts;
+    };
+};
+
+export type IncompleteCandidates = {
+    stage: string;
+    asOf: string;
+    items: { passportId: string; name: string | null; reasons: string[] }[];
+    pagination: { page: number; pageSize: number; total: number; totalPages: number };
+};
+
+export type RoleActivity = { kind: "CALL" | "DOCUMENT_UPLOAD"; at: string; staff: string | null; passportId: string | null; candidateName: string | null; documentType: string | null; variant: string | null };
+export type DailyRoleSummary = {
+    businessDate: string;
+    timeZone: string;
+    range: { start: string; end: string };
+    role: string;
+    staffCount: number;
+    callsTaken: number;
+    documentsUploaded: number;
+    documentsByType: { type: string; count: number }[];
+    staff: { adminId: string; name: string; status: string; calls: number; documents: number }[];
+    activity: RoleActivity[];
+    activityTotal: number;
+    truncated: boolean;
+};
+
+export function getDailySummary(token: string, date: string | undefined, signal?: AbortSignal): Promise<DailySummary> {
+    return apiRequest<DailySummary>(`/api/admin/reports/daily/summary${queryString({ date })}`, { token, signal });
+}
+
+export function getIncompleteCandidates(token: string, stage: string, page: number, signal?: AbortSignal): Promise<IncompleteCandidates> {
+    return apiRequest<IncompleteCandidates>(`/api/admin/reports/daily/incomplete${queryString({ stage, page: String(page) })}`, { token, signal });
+}
+
+export function getDailyRoleSummary(token: string, date: string | undefined, role: string, signal?: AbortSignal): Promise<DailyRoleSummary> {
+    return apiRequest<DailyRoleSummary>(`/api/admin/reports/daily/roles${queryString({ date, role })}`, { token, signal });
+}
+
 // ---------------------------------------------------------------- monthly overview
 // Counts for one business month (Sri Lanka); months are "YYYY-MM".
 
