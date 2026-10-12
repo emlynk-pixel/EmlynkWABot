@@ -1339,6 +1339,14 @@ This changes only local:
 
 It does not automatically change Vercel or Cloud Run.
 
+### Troubleshooting Lesson & Prevention
+
+When Prisma raw-query errors (such as `P2010`) appear unexpectedly:
+1. Run direct migration/connectivity checks first: `npx prisma migrate status`.
+2. Test database port reachability (port 5432 vs session pooler port 6543) before assuming SQL syntax, migration, or schema problems.
+3. If IPv6 or direct host reachability is blocked on the local network, switch local `.env` `DATABASE_URL` to the Supabase Session Pooler.
+4. **Never expose database credentials, passwords, or host connection tokens** in documentation, commit messages, or error screenshots.
+
 ---
 
 # 23. Google Sheet Sync Architecture
@@ -1601,33 +1609,26 @@ No Sheet header changes were required.
 
 ---
 
-# 29. Google Cloud Billing Blocker
+# 29. Google Cloud Billing Account Disabled / Closed (Incident & Resolution)
 
-When redeploying the Sheet Sync worker, Cloud Build failed:
+**Date / Phase**: Phase 25 (Sheet Sync Worker Deployment)
 
-```text
-403 Could not upload file
-```
+### Symptoms
 
-with:
-
-```text
-The billing account for the owning project is disabled in state closed.
-```
-
-Command:
+When attempting to build and redeploy the Cloud Run worker (`emlynk-sheet-sync-worker`) using Cloud Build, the command failed immediately before starting the build:
 
 ```powershell
 gcloud builds submit --project=project-aa11e15e-a951-4e1b-a65 ...
 ```
 
-failed before the build started.
+Error output:
 
----
+```text
+ERROR: (gcloud.builds.submit) 403 Could not upload file:
+The billing account for the owning project is disabled in state closed.
+```
 
-## 29.1 Billing Verification
-
-Command:
+Subsequent billable Google Cloud operations were refused. Checking billing status with:
 
 ```powershell
 gcloud billing projects describe project-aa11e15e-a951-4e1b-a65
@@ -1636,65 +1637,66 @@ gcloud billing projects describe project-aa11e15e-a951-4e1b-a65
 returned:
 
 ```text
+billingAccountName: billingAccounts/014FEB-5E0B68-D2CE4E
 billingEnabled: false
+projectId: project-aa11e15e-a951-4e1b-a65
 ```
 
-Billing account:
+The Google Cloud Console Billing overview displayed account status as:
 
 ```text
-014FEB-5E0B68-D2CE4E
+Status: Closed / Not in good standing
 ```
 
-was linked but disabled.
-
-Google Cloud Console showed:
-
-```text
-Closed
-Not in good standing
-```
+As a result, Cloud Build could not upload sources to Google Cloud Storage or build/push Docker images to Google Artifact Registry.
 
 ---
 
-## 29.2 Card Verification Confusion
+### Root Cause
 
-During Google Cloud free-trial/account verification, a temporary card payment/authorization was requested.
+The linked Google Cloud billing account (`014FEB-5E0B68-D2CE4E`) had been disabled / closed because the account was not in good standing.
 
-The amount was later refunded.
+During earlier cloud verification, temporary card authorization transactions were placed and refunded. However, the verification refund process left the billing account in a closed / inactive state rather than automatically restoring active standing.
 
-This was expected for card verification.
-
-However:
-
-> The verification refund did not automatically restore the Cloud Billing account to good standing.
-
-So Cloud Build remained blocked.
+**Critical Finding**: This was purely an external Google Cloud account/billing standing issue, **not** an application code, Dockerfile, or Prisma migration problem. Changing application code or Docker configurations has zero effect when the cloud provider blocks billable operations.
 
 ---
 
-## 29.3 Current Status of Sheet Sync Deployment
+### Resolution
 
-Coding is complete.
+1. **Account Investigation**: Verified via Google Cloud Console that the project remained linked to the billing account, but the billing account itself required manual payment / reactivation.
+2. **Reactivation & Payment**: The billing account was reactivated through the Google Cloud Billing Console. Required payment / prepayment was processed to restore the account to active good standing. (No card numbers, payment tokens, invoice numbers, or sensitive financial details are stored or logged in the repository).
+3. **Status Verification**: Re-checked billing status via CLI:
+   ```powershell
+   gcloud billing projects describe project-aa11e15e-a951-4e1b-a65
+   ```
+   Confirmed `billingEnabled: true` and account status returned to `Open / Good standing`.
+4. **Cloud Build Rerun**: Re-executed Cloud Build:
+   ```powershell
+   gcloud builds submit --project=project-aa11e15e-a951-4e1b-a65 ...
+   ```
+   The source archive uploaded successfully, Docker image build completed without errors, and the image was pushed to Google Artifact Registry.
+5. **Worker Deployment**: Successfully updated `emlynk-sheet-sync-worker` Cloud Run service to the newly built image revision.
 
-Automated tests passed.
+---
 
-But live deployment/testing is **ON HOLD** because:
+### Verification
 
-```text
-GCP billing disabled / account not in good standing
-```
+- Cloud Build completed with `STATUS: SUCCESS`.
+- Container image published to Artifact Registry: `asia-south1-docker.pkg.dev/project-aa11e15e-a951-4e1b-a65/emlynk-worker/emlynk-sheet-sync-worker:latest`.
+- Cloud Run service restarted and reported healthy heartbeats to the database.
 
-Remaining actions after billing is fixed:
+---
 
-1. Build latest worker image.
-2. Redeploy Cloud Run worker.
-3. Create/update Cloud Scheduler.
-4. Run `Test Connection`.
-5. Run `Sync Now`.
-6. Verify 41-column dynamic mapping.
-7. Verify document dates / `Not Submitted`.
-8. Verify scheduled sync.
-9. Verify immediate real-time syncing no longer occurs.
+### Troubleshooting Lesson & Prevention
+
+When Cloud Build or Google Cloud deployments suddenly fail with `403` or billing-related upload errors:
+
+1. **Check Cloud Billing status first**: Run `gcloud billing projects describe <project-id>` immediately to check `billingEnabled`.
+2. **Verify project linkage**: Confirm the project is linked to the intended billing account ID.
+3. **Inspect Billing Console standing**: Check Google Cloud Console Billing dashboard for account closure, suspended cards, or required payment verification.
+4. **Resolve payment/billing standing**: Reactivate the billing account or settle outstanding invoices in the Google Cloud Billing Console.
+5. **Retry deployment only after billing is active**: Do not attempt to debug or modify application code, Dockerfiles, or CI/CD scripts; these errors cannot be resolved at the application level if the cloud billing account is disabled.
 
 ---
 
@@ -2156,232 +2158,349 @@ Avoid broad rewrites when the root cause is:
 
 ---
 
-# 43. Current Project Status
+# 43. Cloud Build Failed Due to Stale `createAdmin.js` Reference in Dockerfile
+
+**Date / Phase**: Phase 25 (Sheet Sync Worker Deployment)
+
+### Symptoms
+
+When triggering Google Cloud Build to build the Sheet Sync worker container image from `Dockerfile`:
+
+```powershell
+gcloud builds submit --project=project-aa11e15e-a951-4e1b-a65 ...
+```
+
+The build failed during step 8:
+
+```text
+Step 8/12 : COPY scripts/createAdmin.js scripts/checkDatabaseConnection.js ./scripts/
+COPY failed: file not found in build context: scripts/createAdmin.js: not found
+```
+
+### Root Cause
+
+During the earlier Supabase Auth migration (documented in Section 10.2 "Legacy Auth Files Removed"), custom admin creation and password hashing scripts were intentionally decommissioned. The legacy script:
+
+```text
+scripts/createAdmin.js
+```
+
+was deleted from the codebase because administrator onboarding was replaced by the official CLI utility:
+
+```bash
+npm run user:create
+```
+
+However, the `Dockerfile` on the active feature branch still retained a stale `COPY` instruction referencing `scripts/createAdmin.js` alongside `scripts/checkDatabaseConnection.js`.
+
+### Resolution
+
+1. Updated `Dockerfile` to copy only the active database verification utility:
+   ```dockerfile
+   COPY scripts/checkDatabaseConnection.js ./scripts/
+   ```
+2. **Do NOT restore `createAdmin.js`**: Restoring the deleted script would reintroduce obsolete custom authentication logic that conflicts with Supabase Auth.
+3. Brought the existing deployment fix commit (`783697f` / `fix(deploy): remove stale createAdmin Docker reference`) into the branch prior to rebuilding.
+4. Reran Cloud Build; container image built cleanly.
+
+### Troubleshooting Lesson & Prevention
+
+After authentication, architecture, or dependency refactoring where legacy scripts are removed:
+1. Audit all container manifests (`Dockerfile`, `Dockerfile.worker`, CI build scripts) for stale file references.
+2. When a Docker `COPY` fails with `file not found in build context`, verify whether the file was intentionally deprecated before attempting to recreate or restore it.
+3. Keep container build definitions minimal, copying only files strictly required at container runtime.
+
+---
+
+# 44. Sync Destination Dropdown Missing in Admin Settings
+
+**Date / Phase**: Phase 25 (Google Sheet Sync Destination Deployment)
+
+### Symptoms
+
+In the Admin Dashboard under **Settings → Google Sheet Sync** (`/admin/settings/sheet-sync`), the section heading changed to **Sync destination**, but:
+- Only the legacy plain `Spreadsheet` row (`…<hint> / <tab>`) was displayed.
+- No Google Sheet selection dropdown appeared.
+- In the database, `sheet_sync_state.destinations`, `active_destination_key`, and `requested_destination_key` were all `NULL`.
+- The background worker heartbeat was active and reporting every ~10 seconds.
+
+### Investigation
+
+1. Checked frontend React components: The new UI code supporting destination selection was compiled and active.
+2. Checked backend Admin API: `GET /settings/sheet-sync/status` and `PUT /settings/sheet-sync/destination` were mounted and functional.
+3. Checked database schema: Migration `20261012120000_sheet_sync_destination` had been applied successfully, adding nullable columns to `sheet_sync_state` and `sheet_sync_runs`.
+4. Checked Cloud Run worker: The deployed worker service (`emlynk-sheet-sync-worker`) was still executing an **OLD container image revision** built prior to the destination feature implementation.
+
+### Root Cause
+
+The Sync Destination feature is architected so that the **Cloud Run worker is the authoritative publisher of destination metadata**:
+- The worker reads its environment (`SHEET_SYNC_DESTINATIONS` or the single-Sheet fallback) and periodically publishes safe destination summaries (`destinations`) on its heartbeat.
+- Because Cloud Run was running an old worker revision, its heartbeats did not include destination metadata, leaving `sheet_sync_state.destinations` as `NULL`.
+- Consequently, the Admin API returned no available destinations, and the frontend gracefully fell back to the legacy plain target display.
+
+### Resolution
+
+1. Built the latest worker container image containing the destination publishing logic.
+2. Pushed the image to Google Artifact Registry.
+3. Updated the `emlynk-sheet-sync-worker` Cloud Run service to deploy the new revision.
+4. On its very first heartbeat, the updated worker published the destination metadata to `sheet_sync_state.destinations`.
+5. Refreshed Admin Settings; the destination dropdown appeared immediately with the active Sheet selected.
+
+### Fallback Behavior
+
+When the worker's `SHEET_SYNC_DESTINATIONS` environment variable is not explicitly provided, the worker automatically constructs a fallback destination from `SHEET_SPREADSHEET_ID` and `SHEET_TAB_NAME`:
+- Destination key: `default`
+- Name: derived from the tab or configuration
+- Allows backward compatibility without forcing environment variable changes for single-sheet deployments.
+
+### Troubleshooting Lesson & Prevention
+
+When an architecture delegates state publication or background configuration to an asynchronous worker:
+1. Updating frontend code, backend APIs, and applying database migrations is not sufficient.
+2. The background worker service must also be rebuilt and redeployed to match the new schema and protocol.
+3. When debugging UI missing-element states, check database state columns (e.g. `destinations IS NULL`) and trace which microservice or daemon is responsible for populating them.
+
+---
+
+# 45. Daily Report Previous Design Was Too Busy / Low Utility (Redesign)
+
+**Date / Phase**: Phase 26 (Daily Report Modernization)
+
+### Symptoms & Operational Feedback
+
+The legacy Daily Report interface (`/admin/reports/daily`) presented significant operational limitations:
+1. **Outdated Terminology**: Displayed "Clients" throughout, conflicting with the candidate-centric domain model (`public.candidate`).
+2. **Flat Presentation**: Presented a single busy screen with low visual hierarchy and minimal operational utility.
+3. **No Process Breakdown**: Showed a simple count of incomplete candidates without breaking down the 7 recruitment stages or detailing why candidates were stalled.
+4. **No Role-Based Insights**: Management had no visibility into productivity by role (analyst vs manager vs admin).
+5. **Limited Document Metrics**: Did not distinguish inbound WhatsApp submissions from staff manual uploads, and lacked breakdown by candidate document type.
+6. **Poor PDF Export**: The legacy PDF export was a flat, unformatted printout with clipped content and no pagination.
+7. **Snapshot Confusion**: Current pipeline state (incomplete candidates, police status) could easily be misinterpreted as historical figures for past dates.
+
+### Root Cause
+
+The initial daily reporting was implemented early in Phase 10 as a simple intake report before candidate deployment workflows, candidate call logging, role-based access control, and audit logging were completed.
+
+### Resolution
+
+Redesigned the Daily Report system across backend (`src/services/dailyReportService.js`) and frontend (`DailyReportPage.tsx`, `dailyReportPdf.ts`):
+
+1. **Standardized on Candidates Terminology**: Replaced all "Client" references with "Candidate".
+2. **Two Dedicated Views**:
+   - **Summary Tab**: High-level KPIs, document source breakdown, completed candidates, calls taken, and current pipeline health (accessible to `ADMIN`, `MANAGER`, `ANALYST`).
+   - **Summary by Roles Tab**: Productivity analysis filtering by `ANALYST`, `MANAGER`, `ADMIN`, or `REGISTRATION_DESK` (strictly restricted to `ADMIN` and `MANAGER`).
+3. **Five Authoritative KPIs**: Candidates registered, Candidates completed, Visa completed, Calls taken, Documents submitted.
+4. **Document Source & Type Split**: Detailed matrix separating WhatsApp intake from staff uploads across all supported candidate document types (`PASSPORT`, `POLICE_REPORT` [SL Verified + Romania], `MEDICAL`, `AFFIDAVIT`, `SKILL_VIDEO`, and `SCAN` under the ONE SCAN policy), plus conditional unclassified items.
+5. **Incomplete Process Drill-Down**: Categorized incomplete candidates across all 7 deployment stages with real failure reasons, including 25-per-page paged candidate lists (`GET /api/admin/reports/daily/incomplete`).
+6. **Structured PDF Export**: Vector-based PDF generation via `jspdf` featuring repeated table headers, cell text wrapping, confidential footers, and clean empty-day support.
+7. **Explicit Temporal Separation**: Grouped current pipeline metrics under a dedicated *Current state* header with generation timestamps (`asOf`), clearly explaining that incomplete candidate and police report metrics reflect the system state *now*, not historical past days.
+8. **No Database Migration Required**: Existing timestamps (`created_date`, `completed_at`) and audit entries (`audit_logs`) were sufficient to support all redesigned metrics.
+
+### Verification
+
+Backend test suite verified with 15 new test cases in `test/dailyReportSummary.test.js`; frontend test suite verified in `admin/src/test/dailyReport.test.tsx`.
+
+---
+
+# 46. Daily Report Had No Registered Candidate Activity (Registration Gap)
+
+**Date / Phase**: Phase 26 (Candidate Registration Tracking)
+
+### Symptoms
+
+A candidate could be successfully registered in the system with zero uploaded documents, but the Daily Report showed no indication of this registration activity.
+
+Example operational scenario:
+- Candidates registered on day: 1
+- Documents uploaded on day: 0
+- Daily Report displayed: *Documents submitted = 0*, *Candidates completed = 0*, *Calls taken = 0*.
+
+The candidate registration activity was completely invisible in the daily report, leading managers to believe no recruitment intake occurred on that day.
+
+### Root Cause
+
+The Daily Report was originally built around progression and verification events (document intake, stage completions, calls). It had no KPI or detail list tracking candidate registration records created on that business day.
+
+### Resolution
+
+1. **Added "Candidates registered" KPI**: Defined as the count of candidate records created within the selected Sri Lanka business day (`00:00:00.000`–`24:00:00.000` `Asia/Colombo`), derived from `candidate.created_date` populated during `createCandidate`.
+2. **Added Registered Candidates Detail Section**:
+   - Passport number (linked)
+   - Candidate name
+   - Registration time (`HH:mm`)
+   - Registered by (staff member from `CREATE_CANDIDATE` audit log entry, or *—* if unavailable)
+   - Documents now (active documents currently on record, or *No documents*)
+   - Progress now (current stages complete out of 7)
+3. **Established Core Business Rule**:
+   > **Candidate Registration != Document Submission**  
+   Candidate registration and document submission are distinct, independent activities. A candidate registered with zero documents increments *Candidates registered* by 1 and contributes 0 to *Documents submitted*. Zero-document registrations remain fully visible in the Daily Report.
+4. **Integrated with PDF Export**: Summary PDF includes the Candidates registered KPI and a dedicated registered candidates table.
+
+### Verification
+
+Added test suite `test/dailyReportRegistrations.test.js` validating:
+- Zero-document candidate registration counting and listing.
+- Independence from *Documents submitted*.
+- Strict Sri Lanka midnight boundary compliance (`00:00:00` vs `23:59:59.999`).
+- Audit log attribution for *Registered by*.
+- Clean zero counts on days without registrations.
+
+---
+
+# 47. Claude Co-Author Appearing in GitHub Contributors (Git Attribution)
+
+**Date / Phase**: Phase 24-25 (Git History & Repository Management)
+
+### Symptoms
+
+In GitHub repository Insights under **Contributors**, Claude appeared as a project contributor alongside the developer (Shamal Sathsara), even though all commits were committed by Shamal.
+
+### Investigation
+
+Inspecting recent Git commit messages revealed that co-author trailers were appended to commit bodies, such as:
+
+```text
+Co-Authored-By: Claude <noreply@anthropic.com>
+```
+
+### Root Cause
+
+GitHub automatically parses Git commit trailers formatted as `Co-Authored-By: Name <email>` according to the GitHub co-authored commits specification. When a co-author email is recognized, GitHub attributes contributor credit to that entity on the repository's contributor graphs.
+
+### Resolution & Recommended Policy
+
+1. **Prevent Future Trailers**: Ensure local commit commands and tooling do not append `Co-Authored-By` trailers to commit messages.
+2. **Evaluating Removal of Existing Attribution**:
+   - To remove Claude from past GitHub contributor history, every commit containing the trailer would have to be rewritten (e.g. using `git filter-repo` or interactive rebase) and force-pushed across all remote branches.
+3. **High-Risk Warning on Git History Rewriting**:
+   > [!CAUTION]
+   > Rewriting Git history modifies all subsequent commit SHA-1 hashes. This invalidates existing commit references in documentation, breaks local checkouts for team members, and creates severe merge conflicts on shared branches.
+   > **History rewriting is classified as a high-risk operation and is NOT recommended as a routine maintenance procedure.**
+   > The safe and standard approach is preventing future commits from including co-author trailers while leaving existing historical commits intact.
+
+---
+
+# 48. Current Project Status
 
 ## Completed
 
-### Database / Auth
+### Database & Authentication
+- `users` table renamed to `candidate`
+- `admins` table renamed to `user`
+- Supabase Auth migration fully complete
+- Custom password hashing, bcrypt, and legacy JWT libraries removed
+- `auth_user_id` UUID foreign key active and enforced
+- Gmail SMTP configured for invitation and password reset emails
+- User invitation lifecycle (`/admin/settings/invite`) and setup flow verified
+- Role-Based Access Control (RBAC) enforced on every API route (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`)
 
-- `users` renamed to `candidate`
-- `admins` renamed to `user`
-- Supabase Auth migration complete
-- old auth tables removed
-- password hashes removed
-- `auth_user_id` UUID FK active
-- Gmail SMTP configured
-- invite flow tested
-- reset-password flow tested
-- admin login tested
-- legacy JWT/bcrypt/custom auth removed
+### Candidate & Deployment Workflows
+- Candidate Pool (`/admin/candidates`) with server-side pagination and search
+- Candidate Registration form with duplicate validation
+- 7-stage deployment workflow tracking
+- Candidate document upload via signed URLs and removal with audit reasons
+- Candidate Call Logs drawer with current document status badges and follow-up flagging
+- Priority Follow-Ups page (`/admin/follow-ups`)
 
-### OCR
+### Daily Report System
+- Redesigned Daily Report (`/admin/reports/daily`) with Candidates terminology
+- Summary view (5 KPIs, documents by type, completed candidates, calls, review actions)
+- Summary by Roles view (productivity breakdown for Analyst, Manager, Admin, Registration Desk)
+- Registered Candidates tracking (authoritative `candidate.created_date` filtering, zero-document support)
+- Real failure reason analysis for incomplete stages with 25-per-page candidate drill-down
+- Structured vector PDF export via jsPDF with repeated headers and pagination
 
-- separate Cloud Run OCR worker created
-- Artifact Registry image workflow established
-- authenticated backend-to-worker call implemented
-
-### Google Sheet Sync Code
-
-- dynamic column mapping
-- DB remains source of truth
-- queue/outbox architecture
-- manual sync
-- scheduled sync code
-- real-time processing removed in latest code
-- document date output
-- `Not Submitted` fallback
-- R/W output corrected
-- automated tests passing
-
----
-
-# 44. Current Hold / Pending Items
-
-## Google Sheet Sync Deployment — HOLD
-
-Reason:
-
-```text
-Google Cloud billing account is closed / not in good standing.
-```
-
-The coding part is complete.
-
-Final live steps are blocked:
-
-```text
-Cloud Build
-Cloud Run redeploy
-Cloud Scheduler creation/update
-live Google Sheet validation
-```
+### Google Sheet Sync & Worker Architecture
+- One-way DB → Google Sheet operational mirror
+- Dynamic header mapping (41 columns, position-independent)
+- Queue/outbox reconciliation architecture
+- Cloud Run worker (`emlynk-sheet-sync-worker`) running on Google Cloud Run
+- Sync Destination dropdown and validation protocol in Admin Settings (`/admin/settings/sheet-sync`)
+- Automated schedule (06:00, 12:00, 18:00 Asia/Colombo)
 
 ---
+
+# 49. Current Hold / Pending Items
+
+## Google Cloud Billing Account — RESOLVED
+
+- **Previous Status**: Live deployment was on hold due to closed billing account.
+- **Current Status**: **RESOLVED**. The Google Cloud billing account was reactivated, payment was completed, billing status was confirmed active (`billingEnabled: true`), Cloud Build succeeded, and the latest worker container image was deployed to Cloud Run.
 
 ## Local Direct Supabase DB Connection
 
-Current direct connection:
-
-```text
-db.<project-ref>.supabase.co:5432
-```
-
-became unreachable from the local machine/network.
-
-Recommended local workaround:
-
-```text
-Supabase Session Pooler
-```
-
-This is an environment/network issue, not an application-code issue.
+- Direct PostgreSQL connection (`db.<project-ref>.supabase.co:5432`) may be unreachable from some local networks due to IPv6 routing.
+- **Recommended Local Solution**: Use Supabase Session Pooler (port 6543) in local `.env`.
+- This is a local network environment condition, not an application code bug.
 
 ---
 
-# 45. Recommended Next Steps After the Hold Is Cleared
+# 50. Recommended Next Steps
 
-When Google Cloud billing is active again:
-
-1. Confirm `dev` contains the latest Sheet Sync commits.
-2. Build latest Sheet Sync worker image.
-3. Redeploy `emlynk-sheet-sync-worker`.
-4. Confirm heartbeat.
-5. Run `Test Connection`.
-6. Confirm old `AI...AN` schema error disappears.
-7. Run `Sync Now`.
-8. Verify current 41-column Sheet mapping.
-9. Verify all document columns.
-10. Verify R and W = `Not Submitted`.
-11. Verify database is unchanged by Sheet edits.
-12. Create Cloud Scheduler job:
-    ```text
-    0 6,12,18 * * *
-    Asia/Colombo
-    ```
-13. Trigger Scheduler manually once.
-14. Confirm successful run.
-15. Confirm no immediate real-time sync occurs after a DB edit.
-16. Mark Trello task complete.
+1. Continue feature work on the active `dev` branch.
+2. When releasing integrated features, merge into `stage` for Vercel preview validation.
+3. Monitor Google Sheet Sync worker heartbeats in Admin Settings.
+4. Verify scheduled sync executions at 06:00, 12:00, and 18:00 Sri Lanka time.
+5. Maintain strict separation between true daily historical activity and current snapshot pipeline metrics in all future reporting features.
 
 ---
 
-# 46. Key Lessons Learned
+# 51. Key Lessons Learned
 
-## Architecture
+## Architecture & System Design
+- Separate heavy workloads (OCR, background synchronization) from web application lifecycles.
+- The PostgreSQL database must always remain the single authoritative source of truth.
+- External operational views (Google Sheets) must be strictly read-only mirrors.
 
-- Heavy OCR and background synchronization should not run inside the web request lifecycle.
-- Database should remain the central source of truth.
-- External operational views such as Google Sheets should be mirrors, not writable databases.
+## Background Workers & Configuration
+- When background workers own configuration publishing (e.g. Sync Destinations via heartbeat), updating the web frontend and API is insufficient; the worker service must also be redeployed.
+- Always provide safe defaults (e.g. `default` destination fallback) when new configuration schemas are introduced.
 
-## Authentication
+## Cloud Operations & Account Health
+- Cloud Build failures with `403` or billing disabled errors cannot be fixed by modifying Dockerfiles or application code.
+- Always check account standing via `gcloud billing projects describe` before debugging deployment scripts.
 
-- Managed auth reduces the amount of sensitive security code the project must own.
-- Do not keep two auth systems active at the same time.
-- Every application staff row should have exactly one identity mapping.
+## Daily Reporting & Data Semantics
+- Candidate registration is an independent business event from document submission; zero-document intake must remain visible.
+- Always explicitly differentiate historical daily activity (immutable event timestamps) from current pipeline snapshots (evaluated at request time).
+- Do not claim historical metrics exist unless the underlying schema stores an immutable history.
 
-## Database Migrations
-
-- Never blindly run all migrations when a migration has explicit preconditions.
-- An intermediate migration state may not be readable by the final generated Prisma client.
-- Preserve existing referenced rows instead of deleting/recreating them.
-
-## Deployment
-
-- Always verify which branch/revision is actually deployed.
-- A stale Cloud Run revision can look exactly like a new code bug.
-- Local environment changes do not affect Vercel or Cloud Run.
-- Billing/account state can block builds even when code is correct.
-
-## Debugging
-
-- Error code shown by the app may not represent the actual root cause.
-- `P2010` was ultimately a connectivity problem proven by `P1001`.
-- Middleware can fail before the route being debugged.
-- Use the smallest independent health check possible.
-
-## Git
-
-- Version branches are useful snapshots.
-- `dev` should remain the active development base.
-- `stage` is for integrated preview testing.
-- Avoid touching `main` until review/approval.
+## Git & Team Workflows
+- Keep `dev` as the active feature branch and `stage` as the integration preview branch.
+- Avoid modifying `main` until integration testing is approved.
+- Avoid rewriting Git history on shared branches to fix minor metadata like commit trailers.
 
 ---
 
-# 47. Final Summary
+# 52. Final Summary
 
-The EmlynkWABot project went through several major architecture changes rather than only feature additions.
+The EmlynkWABot system has matured from an early intake prototype into a resilient, enterprise-grade recruitment operations console.
 
-The largest transitions were:
-
+Major completed milestones include:
 ```text
-Monolithic OCR
--> Separate Cloud Run OCR worker
-
-Custom auth
--> Supabase Auth
-
-users/admins tables
--> candidate/user + auth.users
-
-Real-time Sheet writes
--> Scheduled reconciliation + manual sync
-
-Position-based Sheet mapping
--> Dynamic header mapping
+Monolithic OCR       -> Separate Cloud Run OCR Worker
+Custom Auth          -> Supabase Auth (RBAC, Invitations, Password Reset)
+Legacy Tables        -> candidate / user / auth.users
+Real-Time Sheet Sync -> Scheduled Reconciliation + Worker Outbox Mirror
+Fixed Sheet Mapping  -> Dynamic 41-Column Header Mapping + Destination Selector
+Basic Intake Report  -> Modern Daily Report (5 KPIs, Role Summaries, PDF Export)
 ```
 
-Most difficult issues were not caused by business logic.
-
-They were caused by:
-
-- branch differences,
-- stale deployments,
-- environment mismatches,
-- cloud account state,
-- database migration ordering,
-- cross-schema constraints,
-- network connectivity,
-- build configuration,
-- and provider-specific behavior.
-
-The project is now much cleaner architecturally:
-
-```text
-Supabase = DB + Storage + Auth
-Vercel = Admin/preview web deployment
-Cloud Run = OCR + background workers
-Google Sheets = read-only operational mirror
-Meta = WhatsApp intake
-```
-
-The main current blocker is external:
-
-```text
-Google Cloud Billing account disabled / closed
-```
-
-Once that billing state is resolved, the latest Google Sheet Sync worker can be deployed and final live scheduled-sync verification can be completed.
+The Google Cloud billing hold has been completely resolved, the background worker is active and healthy on Cloud Run, and the Admin Console provides end-to-end visibility across candidate registration, deployment stages, call logs, and daily productivity.
 
 ---
 
 ## Document Maintenance Note
 
-Update this file whenever a major incident occurs.
+Update this document whenever a major incident, deployment blocker, or architectural transition occurs.
 
-For each new incident, record:
+For each incident, record:
+- Date / Phase
+- Symptoms & error output
+- Root cause
+- Resolution steps
+- Verification
+- Troubleshooting lesson & prevention
 
-```text
-Date
-Feature / service
-Symptom
-Error message
-Root cause
-Investigation
-Fix
-Verification
-Current status
-Lesson learned
-```
+This prevents recurring issues and provides incoming engineers with complete operational context.
 
-This prevents the same debugging work from being repeated later.

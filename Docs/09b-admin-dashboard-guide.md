@@ -121,58 +121,209 @@ The status is calculated every time from the stored documents, and nothing about
 
 ### Daily Report
 
-One **business day** in Sri Lanka (00:00–24:00 Asia/Colombo). Pick a date (not in the future) with the date picker or use *Previous day*, *Next day* and *Today*; the date controls every figure on the page and in the PDF. Date, view and role are kept in the URL. Wording is *Candidates* throughout.
+The Daily Report (`/admin/reports/daily`) provides operational transparency into daily recruitment and intake throughput for one **business day** in Sri Lanka (`00:00:00.000`–`24:00:00.000` `Asia/Colombo`), strictly avoiding UTC or server-local boundaries. Wording uses *Candidates* throughout.
 
-Two views (tabs):
+#### Access & Role-Based Permissions (RBAC)
 
-- **Summary** — ADMIN, MANAGER and ANALYST (the existing Daily Report access).
-- **Summary by Roles** — ADMIN and MANAGER only; the server refuses other roles.
+Daily Report access is strictly enforced by the backend (`requireRole` middleware) and reflected in the user interface:
 
-**Summary.** Five figures for the chosen day:
+- **Summary View (`GET /api/admin/reports/daily/summary`)**: Accessible to `ADMIN`, `MANAGER`, and `ANALYST`.
+- **Summary by Roles View (`GET /api/admin/reports/daily/roles`)**: Accessible to `ADMIN` and `MANAGER` only. Other roles receive `403 { message: "Insufficient permissions" }` from the server, and the UI hides the tab.
+- **`REGISTRATION_DESK`**: Has **NO access** to the Daily Report. Direct API requests fail closed with `403`, and no navigation link is rendered in the dashboard.
+- Legacy endpoint `GET /api/admin/reports/daily` remains available for backwards compatibility (`ADMIN`, `MANAGER`, `ANALYST`).
 
-| Figure | Meaning |
+#### Date Navigation & Reporting Window
+
+The reporting window strictly encompasses **00:00 to 24:00 Sri Lanka time (`Asia/Colombo`)**.
+
+The interface provides agile date navigation:
+- **Today**: Quick button jumping to the current date in Sri Lanka.
+- **Previous day**: Shifts the reporting window backward by 1 day.
+- **Next day**: Shifts the reporting window forward by 1 day (disabled when viewing today; future dates are blocked).
+- **Date picker**: Allows direct selection of any valid past or current date (`<input type="date" max={today} />`).
+
+State synchronization: The chosen date (`date=YYYY-MM-DD`), active view tab (`view=summary` or `view=roles`), and selected role filter (`role=ANALYST|MANAGER|ADMIN|REGISTRATION_DESK`) are continuously synchronized with browser URL query parameters, preserving context across reloads and shares.
+
+The selected date controls:
+- Summary KPI metrics
+- Registered candidates list
+- Completed candidates list
+- Visa completions count
+- Calls taken list
+- Documents submitted table and type breakdown
+- Role-based activity and staff breakdown
+- Structured PDF export
+
+> [!IMPORTANT]
+> **True Historical Activity vs. Current Snapshot Data**
+> The Daily Report strictly differentiates between two data paradigms:
+> 1. **True Daily Historical Activity**: What actually occurred during the selected Sri Lanka business day, based on authoritative event timestamps created at execution time (candidate record creation, final stage completion timestamp, visa approval stage completion timestamp, call log creation timestamp, WhatsApp intake reception, and staff document upload audit logs).
+> 2. **Current State Snapshot**: Metrics describing the candidate pipeline *right now* as of the request time (`asOf`), specifically the **Incomplete Candidates** stage breakdown and the **Police Report Status** breakdown. Because the system does not maintain daily historical snapshots of incomplete candidate reasons or 21-day countdown timers, viewing a past date clearly labels these sections as describing the state *now*, not on the selected historical date.
+
+---
+
+#### Summary View
+
+The Summary view presents five high-level KPI tiles, detailed activity tables, document breakdowns, and the current pipeline health.
+
+##### 1. Summary KPI Metrics
+
+| Figure | Source & Definition |
 |---|---|
-| Candidates registered | candidate records created that day (the registration itself; documents are not needed: a candidate registered without any document counts) |
-| Candidates completed | candidates whose final stage, *Finalizing the job*, was completed that day |
-| Visa completed | candidates whose *Visa approval* stage was completed that day |
-| Calls taken | call-log entries whose call time falls on that day |
-| Documents submitted | WhatsApp files received that day plus documents uploaded by staff that day |
+| **Candidates registered** | Authoritative candidate record creation timestamp (`candidate.created_date`) falling within the selected Sri Lanka business day. Set when the record is created via `createCandidate`. Documents are **not** required: a candidate registered without any document counts. |
+| **Candidates completed** | Authoritative stage completion timestamp (`candidate_stages.completed_at`) for the final deployment stage, *Finalizing the job* (`FINALIZING_JOB`), falling within the selected day. |
+| **Visa completed** | Authoritative stage completion timestamp (`candidate_stages.completed_at`) for the *Visa approval* stage (`VISA_APPROVAL`) falling within the selected day. |
+| **Calls taken** | Phone call logs logged within the selected day (`candidate_call_logs.created_date`). |
+| **Documents submitted** | Combined total of WhatsApp files received on that day (`temporary_data.created_date`) plus candidate documents uploaded by staff on that day (`audit_logs.action = 'UPLOAD_DOCUMENT'`). |
 
-Below them:
+##### 2. Candidates Registered Detail
 
-- **Documents submitted** by type: Total, WhatsApp and Manual for each candidate document type (one *Scan*; no removed types), plus *Unclassified* when WhatsApp received files the classifier could not type. A line under the table keeps the WhatsApp processing outcome: processed (stored, held for review, duplicates), failed, still processing, unclear, still in temporary storage.
-- **Registered candidates**: passport number, name, registration time, *Registered by* (the staff member recorded with the registration; *—* when none was recorded), *Documents now* (documents on record now; *No documents* when there are none) and *Progress now* (stages complete now). Registration and document submission are separate activities: registering a candidate adds 1 to *Candidates registered* and nothing to *Documents submitted*.
-- **Completed candidates**: passport number, name, time, and whether every stage is complete *now* (a candidate can finalize while another stage is still open).
-- **Calls taken**: time, candidate, passport number, staff member and role (the first 10, then *Show all*).
-- **Review and admin actions this day**, collapsed.
+- **Business Rule: Candidate Registration != Document Submission**  
+  Candidate registration and document submission are independent activities. Registering a candidate increments *Candidates registered* by 1 and adds 0 to *Documents submitted*. A candidate registered with zero documents is fully visible in both the count and the registered candidates detail list.
+- **Displayed Table Fields**:
+  - **Passport number**: Clickable link navigating to `/admin/candidates/:passportId`.
+  - **Name**: Formatted candidate name (`firstName otherName` / surname).
+  - **Registered**: Exact registration time in Sri Lanka timezone (`HH:mm`).
+  - **Registered by**: Staff member who created the record, extracted from the `CREATE_CANDIDATE` audit log entry. Shows *—* when no audit entry exists (e.g. registered before registration auditing was introduced, or if passport ID was later corrected).
+  - **Documents now**: Number of active documents currently on record (verified or pending review; superseded documents are excluded). Displays *No documents* when count is 0.
+  - **Progress now**: Number of deployment stages complete now (e.g. *2 of 7 stages*).
+- **List bounding**: Displays the first 10 rows with an expandable *Show all* toggle. The server caps the list at 200 items (`DAILY_LIST_LIMIT = 200`); if truncated, a note displays *Showing the first N of M*.
 
-**Current state** (labelled with the time it was taken; it is always *now*, because no history of it is kept — for a past date the page says so):
+##### 3. Candidates Completed Detail
 
-- **Incomplete candidates**: for each of the seven stages, how many candidates have it open and the main reasons, from the same rules as the candidate page. Automatic stages give the missing item (for example *Passport document missing*, *Romania police report missing*). *Test details* gives *Test failed* or *No test result recorded*. The other stages give *Not marked complete*. Stages are independent: a stage completed out of order counts as complete. *View* lists that stage's candidates with their reasons, 25 per page.
-- **Police reports**: due soon, due today, overdue, missing slip date, slip not uploaded (the 21-day police workflow, unchanged), with a link to the Police Workflow.
+- Candidates whose final deployment stage (*Finalizing the job* / `FINALIZING_JOB`) was marked complete on the selected day (`completed_at`).
+- **Displayed Table Fields**:
+  - **Passport number**: Clickable link to candidate details.
+  - **Name**: Candidate name.
+  - **Completed**: Completion time (`HH:mm`).
+  - **All stages now**: Badge showing *Complete* (if every stage is complete now) or *Some stages open* (because deployment stages are non-linear, a candidate may have finalized the job while another stage remains open).
+- **List bounding**: Expandable preview (first 10 rows, then *Show all*), capped at 200 items with truncation notice.
+- **Historical Limitation**: Stage completions rely on the stored `completed_at` timestamp. If a stage completion is later unticked or reversed by staff, no historical record of the previous completion is preserved, so the earlier day will no longer count it.
 
-**Summary by Roles.** Choose a role: Analyst, Manager, Admin or Registration Desk. The view shows:
+##### 4. Visa Completed Metric
 
-- the calls taken and documents uploaded that day by staff members with that role;
-- the uploads by document type;
-- each staff member's calls and uploads;
-- the activity list (time, staff member, action, candidate, passport number).
+- Derived from `candidate_stages.completed_at` where `stage = 'VISA_APPROVAL'` and `completed = true` within the selected business day. Reflects official visa clearance operations.
 
-Documents received on WhatsApp are never attributed to staff. A staff member is counted under their **current** role.
+##### 5. Calls Taken Detail
 
-**Export PDF** exports the open view for the chosen date (and role):
+- Phone call logs recorded during the reporting day (`candidate_call_logs.created_date`).
+- **Displayed Table Fields**:
+  - **Time**: Exact call timestamp (`HH:mm`).
+  - **Candidate**: Candidate name (or *—*).
+  - **Passport number**: Candidate passport ID.
+  - **Handled by**: Staff member who recorded the call.
+  - **Role**: Staff member's *current* role (e.g. Analyst, Manager, Admin, Registration Desk).
+- Only stored fields are shown; call duration is not recorded in the database and is never estimated. Expandable list, capped at 200 items.
 
-- **Summary PDF:** key metrics (including candidates registered), registered candidates (passport number, name, time, registered by, documents, progress), documents by type with the WhatsApp / manual split, completed candidates, incomplete candidates by process with the main reasons, and police status.
-- **Role PDF:** the role's calls and uploads, uploads by type, staff and activity, without the Summary sections.
+##### 6. Documents Submitted & Type Breakdown
 
-Both are structured tables whose header row repeats on every page; nothing is cut off, and an empty day exports cleanly.
+- Combines both intake pipelines:
+  - **WhatsApp intake**: All inbound candidate files received on that day (`temporary_data.created_date`), regardless of processing outcome.
+  - **Manual uploads**: Staff uploads performed via the candidate dashboard on that day (`audit_logs.action = 'UPLOAD_DOCUMENT'`), attributed to the uploading staff member.
+- **Type Breakdown Table**:
+  - Displays each supported candidate document type: `Passport`, `Police report` (Sri Lanka verified and Romania variants), `Medical`, `Affidavit`, `Skill video`, and `Scan` (strictly preserving the **ONE SCAN** policy; agreements and affidavits are not duplicated).
+  - Columns: **Document type**, **Total**, **WhatsApp**, and **Manual**.
+  - **Unclassified (`UNKNOWN`)**: Displays files received via WhatsApp that automatic classification could not type. This row is only displayed when unclassified files exist for that day.
+- **WhatsApp Processing Outcome Line**:
+  A summary line under the table details processing state: processed (*stored in candidate folder*, *held for review*, *duplicates*), failed, still processing, unclear, and still in temporary storage.
 
-**Limitations (no history is stored for these):**
-- Incomplete candidates and police status are the current state only.
-- *Candidates completed* and *Visa completed* use the stage's stored completion time: if a stage is later marked not complete, it no longer counts on the earlier day.
-- Role figures use each staff member's current role.
-- *Registered by* comes from the registration's audit entry: candidates registered before registrations were audited show *—*, and so does a candidate whose passport ID was corrected after registration (the audit entry keeps the original ID). *Documents now* and *Progress now* are the current state, not the state at registration.
-- A WhatsApp submission removed from review (its record is deleted) no longer counts as received.
+##### 7. Review and Admin Actions
+
+- Collapsible section summarizing all administrative audit actions executed during the day (e.g. document approvals, corrections, stage updates, follow-up flags).
+
+---
+
+#### Current Pipeline Snapshot (Not Historical)
+
+Clearly grouped under the *Current state* header with an exact generation timestamp (`As of DD Month YYYY, HH:mm. These show the state now, not on [selected date]: no history of them is kept`):
+
+##### 1. Incomplete Candidates Breakdown
+
+Evaluates actual candidate deployment progress across all 7 independent stages:
+`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`.
+
+- **Non-Linear Stages**: Stages are independent. Candidates can complete stages out of order; completing a later stage does not artificially complete prior stages.
+- **Process Table**:
+  - **Process**: Stage name.
+  - **Candidates**: Total number of candidates with this stage currently open/incomplete.
+  - **Main reasons**: Aggregated primary reasons why the stage is incomplete:
+    - *Automatic bio stages*: Evaluated from candidate record (e.g. *Surname missing*, *Other names missing*, *NIC missing*, *Passport issue date missing*, *Passport expiry date missing*, *Job type missing*, *Job experience missing*, *WhatsApp number missing*).
+    - *Automatic document stages*: Evaluated from stored verified/pending documents (e.g. *Passport document missing*, *Medical missing*, *SL Verified police report missing*, *Romania police report missing*, *Scan missing*).
+    - *Test details*: Evaluated from test result (*Test failed* or *No test result recorded*).
+    - *Manual stages*: *Not marked complete*.
+  - **View Drill-Down**: Clicking *View* expands `<IncompleteDetails stage={stage} />`, displaying candidate passport numbers (linked), names, and specific failure reasons, paginated at **25 candidates per page** via `GET /api/admin/reports/daily/incomplete?stage=&page=`.
+
+##### 2. Police Report Status
+
+Current 21-day countdown status across all candidates, linking directly to `/admin/police`:
+- **Due soon (1–7 days)**: Countdown has 1–7 days remaining.
+- **Due today**: Exactly 0 days remaining.
+- **Overdue**: Due date has passed without a verified police report.
+- **Missing slip date**: Police slip exists on record, but submitted date is not recorded.
+- **Slip not uploaded**: No police slip on record.
+
+---
+
+#### Summary by Roles View
+
+Accessible exclusively to `ADMIN` and `MANAGER` roles. Allows management to inspect staff productivity by role for the selected day.
+
+- **Role Selector**: Options for `Analyst`, `Manager`, `Admin`, and `Registration Desk` (internal codes `ANALYST`, `MANAGER`, `ADMIN`, `REGISTRATION_DESK`).
+- **Role Activity KPIs**:
+  - **Calls taken**: Total calls logged on the day by staff members currently holding the selected role.
+  - **Documents uploaded**: Total candidate documents manually uploaded on the day by staff holding the selected role.
+  - *WhatsApp exclusion*: Files received via WhatsApp have no staff actor and are **never** attributed to a role.
+- **Documents Uploaded by Type**:
+  Breakdown table showing counts of manual uploads by candidate document type for the selected role.
+- **Staff Activity Table**:
+  Lists all staff members possessing the selected role, displaying their account status (`ACTIVE` or inactive), individual calls count, and individual uploads count, sorted by total activity.
+- **Activity Details Table**:
+  Chronological feed of all actions executed by staff in this role (Time, Staff member, Action e.g. *Call* or *Uploaded Passport (SL Verified)*, Candidate name, Passport number). Capped at 200 items with truncation notice.
+- **Current Role Attribution Rule**: Staff activity is grouped using each staff member's **current** role because historical role reassignment history is not versioned in the database.
+
+---
+
+#### Structured PDF Export
+
+Clicking **Export PDF** generates a clean, vector-rendered A4 portrait PDF using `jspdf` directly in the browser, formatted according to the active view and filters:
+
+- **Summary PDF (`daily-report-YYYY-MM-DD.pdf`)**:
+  - Header with business date, scope ("today, so far" or "full day"), Sri Lanka timezone confirmation, and generation timestamp.
+  - Key metrics table (all 5 KPIs).
+  - Documents submitted table (with WhatsApp / manual split).
+  - Registered candidates table (Passport number, Name, Registered time, Registered by, Documents now, Progress now).
+  - Completed candidates table (Passport number, Name, Completed time, All stages now).
+  - Incomplete candidates table by process with main reasons.
+  - Police report status table.
+  - Footer with page numbering (*Page X of Y*) and *Confidential* marking.
+- **Role PDF (`daily-report-YYYY-MM-DD-<role>.pdf`)**:
+  - Header tailored to the selected role and staff count.
+  - Activity summary table (calls taken, documents uploaded).
+  - Documents uploaded by type table.
+  - Staff breakdown table (staff name, status, calls, documents).
+  - Activity details table (time, staff member, action, candidate, passport number).
+  - Role-specific footer with page numbering and *Confidential* marking.
+- **Export Quality**: Structured layout (not a raster screenshot), automatic page breaks, repeated table header rows on every page, wrapped text cells to prevent clipping, and clean export support for empty days (rendering clear "None." or "No calls or uploads on this day." placeholders).
+
+---
+
+#### Performance Architecture
+
+The Daily Report endpoints are architected for high concurrency and sub-second response times:
+- **Server-Side Totals & Grouped Queries**: Aggregate totals are computed directly in PostgreSQL (`COUNT`, `groupBy`).
+- **Bounded Lists**: Detail tables (calls, registered candidates, completed candidates, role activity) enforce server-side limits (`take: 200`, role rows capped at 1000) with explicit `truncated` flags.
+- **No N+1 Queries**: Incomplete candidate analysis loads candidate bio, stage statuses, and required submission documents in a single batched query (`readProgress(db)`), evaluating stage rules in memory rather than querying the database per candidate.
+- **Single-Query Relationship Resolution**: Candidate registrations and uploader identities are batch-resolved in single `audit_logs.findMany` queries using passport ID arrays.
+
+---
+
+#### Architectural & Reporting Limitations
+
+1. **Current State Snapshots**: Incomplete candidates breakdown and police workflow statuses represent the system state *now*; no historical daily snapshots are stored.
+2. **Stage Reversal**: *Candidates completed* and *Visa completed* rely on the stage record's stored `completed_at`. If a stage is later unmarked, historical reports for that day will no longer reflect the earlier completion.
+3. **Current Role Attribution**: Staff activity in *Summary by Roles* uses each staff member's current role; historical role reassignment timelines are not preserved.
+4. **Registration Attribution**: *Registered by* is read from the `CREATE_CANDIDATE` audit log entry. Registrations made prior to audit logging or candidates whose passport ID was modified show as *—*. Current documents and progress columns reflect current state, not state at registration.
+5. **Deleted Review Items**: A WhatsApp submission removed from review (where the record is permanently deleted) no longer counts as received on its historical day.
 
 ### Candidates (Candidate Pool & Deployment)
 
@@ -464,10 +615,10 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/review/:reviewId/replace-verified` | ADMIN, MANAGER, ANALYST | Replace verified document `{ existingDocumentId, reason?, policeSubmittedDate? }` |
 | POST | `/review/:reviewId/keep-as-version` | ADMIN, MANAGER, ANALYST | Keep document as version `{ reason? }` |
 | GET | `/police` | ADMIN, MANAGER, ANALYST | Police Workflow (`status`, `search`, `passportId`, paging) |
-| GET | `/reports/daily` | ADMIN, MANAGER, ANALYST | Daily figures (`date=YYYY-MM-DD`, default today); kept for compatibility |
-| GET | `/reports/daily/summary` | ADMIN, MANAGER, ANALYST | Daily Report Summary (`date`): KPIs, documents by type, completed candidates, calls, current incomplete candidates and police status |
-| GET | `/reports/daily/incomplete` | ADMIN, MANAGER, ANALYST | Candidates with one stage open now, with reasons (`stage`, `page`; 25 per page) |
-| GET | `/reports/daily/roles` | ADMIN, MANAGER | Summary by Roles (`date`, `role` = ADMIN / MANAGER / ANALYST / REGISTRATION_DESK) |
+| GET | `/reports/daily` | ADMIN, MANAGER, ANALYST | Daily figures (`date=YYYY-MM-DD`, default today in Sri Lanka); kept for backwards compatibility |
+| GET | `/reports/daily/summary` | ADMIN, MANAGER, ANALYST | Daily Report Summary (`date=YYYY-MM-DD`): 5 KPIs (`candidatesRegistered`, `candidatesCompleted`, `visaCompleted`, `callsTaken`, `documentsSubmitted`), `documents` (totals, WhatsApp/manual split, and breakdown by candidate document type plus unclassified), WhatsApp processing metrics, `adminActions`, `calls` (capped at 200 with `truncated`), `registeredCandidates` (capped at 200 with `total` and `truncated`), `completedCandidates` (capped at 200 with `total` and `truncated`), and `current` snapshot: `incomplete` candidates per stage with reasons and `police` report status |
+| GET | `/reports/daily/incomplete` | ADMIN, MANAGER, ANALYST | Candidates with one deployment stage incomplete now (`stage`, `page`; paginated at 25 per page), with failure reasons evaluated from candidate bio, test results, and document checklist |
+| GET | `/reports/daily/roles` | ADMIN, MANAGER | Summary by Roles (`date=YYYY-MM-DD`, `role` = `ADMIN` / `MANAGER` / `ANALYST` / `REGISTRATION_DESK`): staff count, `callsTaken`, `documentsUploaded` (manual staff uploads only; WhatsApp files excluded), `documentsByType`, per-staff activity, and `activity` details list (capped at 200 with `truncated`) |
 | GET | `/audit-logs` | ADMIN | View-only audit logs (search, user/candidate filters, dates, paging) |
 | GET | `/users` | ADMIN | List staff users (under `/api/admin/users`) |
 | POST | `/users/invite` | ADMIN | Invite a user `{ name, email, role }` |
@@ -520,7 +671,11 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 
 - **Not deployed.** The five migrations above must be applied to the live database first.
 - **Failed submissions can't be retried or closed.** They stay in the *Failed processing* list; the client has to send the file again. Files refused on arrival (wrong type, too large) leave no record at all.
-- **No history for current figures.** A past day's completeness or police status can't be shown; that would need a daily snapshot or a history of verification changes.
+- **No historical snapshots for current pipeline state.** Incomplete candidate process breakdown and police status are current state snapshots evaluated at query time (`asOf`); historical day-by-day snapshots of incomplete reasons or police countdown states are not stored.
+- **Stage completion reversal affects past days.** *Candidates completed* and *Visa completed* use the stage's stored completion timestamp (`completed_at`). If a stage completion is later unticked or reversed, the historical day will no longer count it because immutable stage completion transition history is not maintained.
+- **Role attribution uses current role.** *Summary by Roles* groups staff activity by the user's current role, as historical role assignment timelines are not versioned in the database.
+- **Registration audit attribution.** *Registered by* is derived from the `CREATE_CANDIDATE` audit log entry; candidates created before registration auditing or whose passport ID was modified show as unassigned (*—*). Current documents and progress columns reflect current state, not state at registration.
+- **WhatsApp documents not attributable to staff.** Files received via WhatsApp have no staff actor and are never attributed to a role. Submissions removed from review (deleted records) no longer count as received on their day.
 - **Refused files aren't counted.** Invalid files are refused at intake and leave no record.
 - **Removed files leave only an audit entry.** A file removed from review no longer counts as received on its day, and there is no screen listing removed files.
 - **Stored documents can't be corrected.** A *Review required* document can't be re-typed or moved to another client, because it is already in a client folder.
@@ -528,17 +683,36 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 - **Calculated in memory.** Client completeness and police statuses are calculated over all clients on each request. That is fine for thousands of clients; a much larger client base would need the calculation moved into the database.
 - **Priority Follow-Ups list is capped.** The page shows the newest 500 follow-ups (it says so when more exist); there is no paging.
 - **Sheet Sync status is global.** The last automatic / manual sync, queue counts and last failure are not kept per destination; right after a destination switch they still describe runs against the previous Sheet until the new one has run.
-- **Not built here.** Reminders and warnings (Phase 11), roles (Phase 12), uploads, exports, global search and client editing.
+- **Not built here.** Automated WhatsApp reminders and warnings (Phase 11), global search across all entities, and client profile editing.
 
 ## 10. Testing
 
-Last full regression: 2026-09-27 (Phase 24) — WhatsApp-to-dashboard flow, security, admin actions, storage consistency, browser on three screen sizes in both themes; no product bugs found. Results and limitations: [`09a-admin-dashboard-api.md`](09a-admin-dashboard-api.md) §8.
+Last verified regression results:
+
+- **Backend test suite (`npm test`)**: **1492 passed, 0 failed**
+- **Frontend test suite (`npm run admin:test`)**: **372 / 372 passed**
+- Full production build (`npm run admin:build`): passing clean type-check and Vite bundling.
+
+### Daily Report Test Coverage
+
+The comprehensive Daily Report test suite (`test/dailyReportSummary.test.js`, `test/dailyReportRegistrations.test.js`, and `admin/src/test/dailyReport.test.tsx`) validates:
+
+1. **Sri Lanka Midnight Boundaries**: Strict enforcement of `00:00:00.000` to `24:00:00.000` `Asia/Colombo` time range. Edge timestamps (e.g. `23:59:59.999` belongs to the day; `00:00:00.000` on the next day belongs to the next day).
+2. **Summary KPI Counts**: Authoritative counts for all five metrics (`candidatesRegistered`, `candidatesCompleted`, `visaCompleted`, `callsTaken`, `documentsSubmitted`).
+3. **Document Source & Type Splits**: Full aggregation and separation of WhatsApp intake vs. staff manual uploads across all supported candidate document types, preserving the **ONE SCAN** policy and conditionally displaying unclassified items.
+4. **Incomplete Reasons Evaluation**: In-memory stage evaluation across candidate bio fields (surname, NIC, WhatsApp, etc.), document submission checklists (passport, medical, police reports, scans), test outcomes (*Test failed*, *No test result recorded*), and manual stages (*Not marked complete*), supporting non-linear / out-of-order stage completion.
+5. **Role Attribution & Isolation**: Correct attribution of calls and manual document uploads to the staff user's current role; complete exclusion of WhatsApp files from staff role metrics.
+6. **Role-Based Access Control (RBAC)**: Summary view accessible to `ADMIN`, `MANAGER`, and `ANALYST`; Summary by Roles strictly restricted to `ADMIN` and `MANAGER` (403 for `ANALYST`); `REGISTRATION_DESK` fully blocked from both Daily Report endpoints (403).
+7. **Empty Day Handling**: Verified clean zero-count responses and empty lists for days with zero activity without runtime errors or crashes.
+8. **Registered Candidate with Zero Documents**: Independent verification that registering a candidate increments *Candidates registered* by 1 while *Documents submitted* remains 0; listed with *No documents* and appropriate stage progress.
+9. **Structured PDF Export**: jsPDF generation in portrait A4 format for both Summary and Role views; verification of repeated table header rows across page breaks, cell wrapping, and confidential footers.
+10. **Selected Date Behavior**: Navigation via *Today*, *Previous day*, *Next day*, and date picker; query validation blocking future dates; complete synchronization with URL query parameters.
 
 | Command | What it runs |
 |---|---|
-| `npm test` | Backend tests (API, actions, corrections, audit, reports, rules) |
+| `npm test` | Backend tests (API, actions, corrections, audit, reports, rules, candidate registrations) |
 | `set RUN_OCR_TESTS=1&& npm test` | The same, plus the OCR tests on real files (Windows `cmd`) |
-| `npm run admin:test` | Dashboard tests (screens, dialogs, Sync, dark mode and colour contrast) |
+| `npm run admin:test` | Dashboard tests (screens, dialogs, Daily Report, Sync, dark mode and colour contrast) |
 | `npm run admin:build` | Type-check and production build |
 
 The finished dashboard was also checked on a throwaway PostgreSQL database with the real database client, and in headless Chrome against the production build: every screen and action, in light and dark mode, with the contrast of every visible text measured. Details are in [`09a-admin-dashboard-api.md`](09a-admin-dashboard-api.md) §8.
