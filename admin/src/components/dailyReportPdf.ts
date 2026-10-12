@@ -132,12 +132,13 @@ async function newDoc(): Promise<Doc> {
 export async function exportSummaryPdf(report: DailySummary) {
     const doc = await newDoc();
     const w = createWriter(doc);
-    const { summary, documents, completedCandidates, current } = report;
+    const { summary, documents, registeredCandidates, completedCandidates, current } = report;
 
     w.header("Daily Report — Summary", report.businessDate, report.isToday ? "today, so far" : "full day");
 
     w.heading("Key metrics");
     w.table([{ title: "Metric", width: 3 }, { title: "Count", width: 1, align: "right" }], [
+        ["Candidates registered", formatNumber(summary.candidatesRegistered)],
         ["Candidates completed (final stage completed)", formatNumber(summary.candidatesCompleted)],
         ["Visa completed (visa approval completed)", formatNumber(summary.visaCompleted)],
         ["Calls taken", formatNumber(summary.callsTaken)],
@@ -149,6 +150,14 @@ export async function exportSummaryPdf(report: DailySummary) {
         [{ title: "Document type", width: 3 }, { title: "Total", width: 1, align: "right" }, { title: "WhatsApp", width: 1, align: "right" }, { title: "Manual", width: 1, align: "right" }],
         documents.byType.map((r) => [reportTypeLabel(r.type), formatNumber(r.total), formatNumber(r.whatsapp), formatNumber(r.manual)]),
     );
+
+    w.heading("Registered candidates", `${formatNumber(registeredCandidates.total)} candidate(s) registered on this day, with or without documents. Documents and progress are as they are now.`);
+    w.table(
+        [{ title: "Passport number", width: 1.3 }, { title: "Name", width: 2 }, { title: "Registered", width: 0.9 }, { title: "Registered by", width: 1.5 }, { title: "Documents", width: 1 }, { title: "Progress", width: 1 }],
+        registeredCandidates.items.map((c) => [c.passportId, c.name ?? "—", formatTime(c.registeredAt), c.registeredBy ?? "—", c.documents ? formatNumber(c.documents) : "No documents", `${c.stagesComplete} of ${c.stagesTotal} stages`]),
+        "No candidate was registered on this day.",
+    );
+    if (registeredCandidates.truncated) w.text(`Showing the first ${formatNumber(registeredCandidates.items.length)} of ${formatNumber(registeredCandidates.total)}.`, { size: 8.5, color: 110 });
 
     w.heading("Completed candidates", `${formatNumber(completedCandidates.total)} candidate(s) had their final stage (Finalizing the job) completed on this day.`);
     w.table(

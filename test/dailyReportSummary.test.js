@@ -76,6 +76,9 @@ const stage = (passportId, name, data) => prisma.candidateStage.upsert({
 });
 
 async function seed() {
+    // Registered on a fixed day well before the report days (registrations
+    // themselves are tested in dailyReportRegistrations.test.js).
+    await prisma.candidate.updateMany({ where: { passportId: { in: [A, B, C] } }, data: { createdDate: new Date("2026-01-01T06:00:00Z") } });
     // Calls: 4 on the day (both edges included), 2 outside it.
     await call(A, STAFF.ANALYST.adminId, START);
     await call(A, STAFF.ANALYST2.adminId, "2026-10-10T05:00:00Z");
@@ -130,13 +133,13 @@ describe("Summary: daily figures on Sri Lanka day boundaries", () => {
         assert.equal(report.businessDate, DAY);
         assert.equal(report.timeZone, "Asia/Colombo");
         assert.deepEqual(report.range, { start: START, end: NEXT });
-        assert.deepEqual(report.summary, { candidatesCompleted: 1, visaCompleted: 2, callsTaken: 4, documentsSubmitted: 6 });
+        assert.deepEqual(report.summary, { candidatesRegistered: 0, candidatesCompleted: 1, visaCompleted: 2, callsTaken: 4, documentsSubmitted: 6 });
         assert.deepEqual([report.documents.total, report.documents.whatsapp, report.documents.manual], [6, 3, 3]);
     });
 
     test("the previous day is a different report (same boundaries applied)", async () => {
         const report = await getDailySummary({ db: prisma, date: "2026-10-09", now: NOW });
-        assert.deepEqual(report.summary, { candidatesCompleted: 1, visaCompleted: 1, callsTaken: 1, documentsSubmitted: 1 });
+        assert.deepEqual(report.summary, { candidatesRegistered: 0, candidatesCompleted: 1, visaCompleted: 1, callsTaken: 1, documentsSubmitted: 1 });
         assert.deepEqual(report.completedCandidates.items.map((c) => c.passportId), [C]);
     });
 
@@ -285,7 +288,7 @@ describe("API and permissions", () => {
 
     test("an empty day returns zeros and empty lists", async () => {
         const report = await getDailySummary({ db: prisma, date: "2026-09-01", now: NOW });
-        assert.deepEqual(report.summary, { candidatesCompleted: 0, visaCompleted: 0, callsTaken: 0, documentsSubmitted: 0 });
+        assert.deepEqual(report.summary, { candidatesRegistered: 0, candidatesCompleted: 0, visaCompleted: 0, callsTaken: 0, documentsSubmitted: 0 });
         assert.deepEqual([report.calls.items, report.completedCandidates.items], [[], []]);
     });
 });

@@ -11,6 +11,10 @@
 //                          received); manual: UPLOAD_DOCUMENT audit entries
 //                          (the staff upload, with its uploader)
 //     visa completed       candidate_stages.completed_at of VISA_APPROVAL
+//     candidates registered candidate.created_date (set when the candidate
+//                          record is created; nothing else, so a candidate
+//                          registered without any document counts too);
+//                          registered by = the CREATE_CANDIDATE audit entry
 //     candidates completed candidate_stages.completed_at of FINALIZING_JOB,
 //                          the final stage (a candidate's own completion has
 //                          no timestamp: two stages complete automatically
@@ -114,6 +118,11 @@ function incompleteStages(candidate) {
 }
 
 const allStagesComplete = (candidate) => incompleteStages(candidate).length === 0;
+const stagesComplete = (candidate) => CANDIDATE_STAGES.length - incompleteStages(candidate).length;
+
+// Written by candidateService.createCandidate with the staff member who
+// registered the candidate (same transaction as the candidate row).
+const REGISTRATION_ACTION = "CREATE_CANDIDATE";
 
 // Current snapshot of every candidate: one query with their stages and
 // required documents, evaluated with the candidate page's stage rules.
@@ -184,7 +193,8 @@ export async function getDailySummary({ db, date, now = new Date() }) {
     const inDay = { gte: start, lt: end };
     const finalWhere = { stage: "FINALIZING_JOB", completed: true, completedAt: inDay };
 
-    const [base, calls, callTotal, uploadGroups, finalized, finalizedTotal, visaCompleted, candidates] = await Promise.all([
+    const registeredWhere = { createdDate: inDay };
+    const [base, calls, callTotal, uploadGroups, finalized, finalizedTotal, visaCompleted, candidates, registered, registeredTotal] = await Promise.all([
         // WhatsApp files received that day, their processing outcomes and
         // types; admin actions; police status (current).
         getDailyReport({ db, date, now }),
@@ -205,7 +215,29 @@ export async function getDailySummary({ db, date, now = new Date() }) {
         db.candidateStage.count({ where: finalWhere }),
         db.candidateStage.count({ where: { stage: "VISA_APPROVAL", completed: true, completedAt: inDay } }),
         readProgress(db),
+        // Candidates registered that day (by their record's creation time),
+        // with their stages and how many documents they have now.
+        db.candidate.findMany({
+            where: registeredWhere,
+            select: {
+                ...CANDIDATE_FIELDS, createdDate: true, ...PROGRESS_FIELDS,
+                _count: { select: { documents: { where: { verificationStatus: { not: "SUPERSEDED" } } } } },
+            },
+            orderBy: [{ createdDate: "desc" }, { passportId: "asc" }],
+            take: DAILY_LIST_LIMIT,
+        }),
+        db.candidate.count({ where: registeredWhere }),
     ]);
+
+    // Who registered them: the registration audit entries, in one query.
+    const registeredIds = registered.map((c) => c.passportId);
+    const registrations = registeredIds.length
+        ? await db.auditLog.findMany({
+            where: { action: REGISTRATION_ACTION, passportId: { in: registeredIds } },
+            select: { passportId: true, admin: { select: { name: true, role: true } } },
+        })
+        : [];
+    const registeredBy = new Map(registrations.map((r) => [r.passportId, r.admin]));
 
     // Documents: WhatsApp files received + staff uploads, by type.
     const whatsappByType = base.daily.byType;
@@ -229,6 +261,7 @@ export async function getDailySummary({ db, date, now = new Date() }) {
         timeZone: base.timeZone,
         range: base.range,
         summary: {
+            candidatesRegistered: registeredTotal,
             candidatesCompleted: finalizedTotal,
             visaCompleted,
             callsTaken: callTotal,
@@ -249,6 +282,23 @@ export async function getDailySummary({ db, date, now = new Date() }) {
         },
         adminActions: base.daily.adminActions,
         calls: { total: callTotal, items: calls.map(callView), truncated: callTotal > calls.length },
+        // registeredBy: null when no registration entry exists (registered
+        // before registrations were audited). documents: documents on record
+        // NOW (superseded ones not counted); 0 is shown as "No documents".
+        registeredCandidates: {
+            total: registeredTotal,
+            items: registered.map((c) => ({
+                passportId: c.passportId,
+                name: clientName(c),
+                registeredAt: c.createdDate,
+                registeredBy: registeredBy.get(c.passportId)?.name ?? null,
+                registeredByRole: registeredBy.get(c.passportId)?.role ?? null,
+                documents: c._count?.documents ?? 0,
+                stagesComplete: stagesComplete(c),
+                stagesTotal: CANDIDATE_STAGES.length,
+            })),
+            truncated: registeredTotal > registered.length,
+        },
         completedCandidates: {
             total: finalizedTotal,
             items: finalized.map((row) => ({

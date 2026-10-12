@@ -193,6 +193,12 @@ export function getDailyReport(token: string, date: string | undefined, signal?:
 export type PoliceStatusCounts = { dueSoon: number; dueToday: number; overdue: number; missingSlipDate: number; notUploaded: number };
 export type DocumentTypeCount = { type: string; total: number; whatsapp: number; manual: number };
 export type DailyCall = { callLogId: string; calledAt: string; passportId: string; candidateName: string | null; handledBy: string | null; role: string | null };
+// registeredBy: null when the registration was not recorded with a staff
+// member. documents: documents on record now.
+export type RegisteredCandidate = {
+    passportId: string; name: string | null; registeredAt: string; registeredBy: string | null; registeredByRole: string | null;
+    documents: number; stagesComplete: number; stagesTotal: number;
+};
 export type CompletedCandidate = { passportId: string; name: string | null; completedAt: string; allStagesComplete: boolean };
 export type IncompleteStage = { stage: string; count: number; reasons: { reason: string; count: number }[] };
 
@@ -202,7 +208,7 @@ export type DailySummary = {
     isToday: boolean;
     timeZone: string;
     range: { start: string; end: string };
-    summary: { candidatesCompleted: number; visaCompleted: number; callsTaken: number; documentsSubmitted: number };
+    summary: { candidatesRegistered: number; candidatesCompleted: number; visaCompleted: number; callsTaken: number; documentsSubmitted: number };
     documents: { total: number; whatsapp: number; manual: number; byType: DocumentTypeCount[] };
     whatsappProcessing: {
         received: number; successfullyProcessed: number; storedInCandidateFolder: number; heldForReview: number;
@@ -210,6 +216,7 @@ export type DailySummary = {
     };
     adminActions: Record<string, number>;
     calls: { total: number; items: DailyCall[]; truncated: boolean };
+    registeredCandidates: { total: number; items: RegisteredCandidate[]; truncated: boolean };
     completedCandidates: { total: number; items: CompletedCandidate[]; truncated: boolean };
     current: {
         asOf: string;

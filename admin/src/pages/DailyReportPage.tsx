@@ -106,6 +106,35 @@ function DocumentsPanel({ report }: { report: DailySummary }) {
     );
 }
 
+function RegisteredPanel({ report }: { report: DailySummary }) {
+    const { registeredCandidates: r } = report;
+    const { shown, toggle } = useExpandable(r.items);
+    return (
+        <Panel title="Registered candidates" description="Candidates registered on this day, with or without documents." aside={toggle}>
+            {r.items.length === 0 ? <Empty>No candidate was registered on this day.</Empty> : (
+                <div className="overflow-x-auto">
+                    <table aria-label="Registered candidates" className="w-full border-collapse">
+                        <thead><tr><th className={th}>Passport number</th><th className={th}>Name</th><th className={th}>Registered</th><th className={th}>Registered by</th><th className={thRight}>Documents now</th><th className={th}>Progress now</th></tr></thead>
+                        <tbody>
+                            {shown.map((row) => (
+                                <tr key={row.passportId}>
+                                    <td className={`${td} tabular-nums`}><Link to={`/candidates/${encodeURIComponent(row.passportId)}`} className="text-primary hover:underline">{row.passportId}</Link></td>
+                                    <td className={td}>{row.name ?? "—"}</td>
+                                    <td className={`${td} tabular-nums`}>{formatTime(row.registeredAt)}</td>
+                                    <td className={td}>{row.registeredBy ?? "—"}</td>
+                                    <td className={row.documents ? tdRight : `${tdRight} text-ink-muted`}>{row.documents ? formatNumber(row.documents) : "No documents"}</td>
+                                    <td className={`${td} text-ink-muted`}>{row.stagesComplete} of {row.stagesTotal} stages</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+            {r.truncated && <p className="px-3 py-2 text-label-sm text-ink-muted">Showing the first {formatNumber(r.items.length)} of {formatNumber(r.total)}.</p>}
+        </Panel>
+    );
+}
+
 function CompletedPanel({ report }: { report: DailySummary }) {
     const { completedCandidates: c } = report;
     const { shown, toggle } = useExpandable(c.items);
@@ -265,17 +294,21 @@ function SummaryView({ report }: { report: DailySummary }) {
     const actions = Object.entries(report.adminActions);
     return (
         <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+                <Kpi label="Candidates registered" value={summary.candidatesRegistered} hint="New candidate records" />
                 <Kpi label="Candidates completed" value={summary.candidatesCompleted} hint="Final stage completed" />
                 <Kpi label="Visa completed" value={summary.visaCompleted} hint="Visa approval completed" />
                 <Kpi label="Calls taken" value={summary.callsTaken} />
                 <Kpi label="Documents submitted" value={summary.documentsSubmitted} hint={`${formatNumber(documents.whatsapp)} WhatsApp · ${formatNumber(documents.manual)} manual`} />
             </div>
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                <DocumentsPanel report={report} />
+                <RegisteredPanel report={report} />
                 <CompletedPanel report={report} />
             </div>
-            <CallsPanel report={report} />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <DocumentsPanel report={report} />
+                <CallsPanel report={report} />
+            </div>
             {actions.length > 0 && (
                 <details className="rounded-lg border border-border bg-surface px-4 py-3 text-body-sm">
                     <summary className="cursor-pointer text-label-md text-ink-soft">Review and admin actions this day ({formatNumber(actions.reduce((sum, [, n]) => sum + n, 0))})</summary>

@@ -41,7 +41,7 @@ const DATE = "2026-10-10";
 const summary = (date = DATE, overrides: Partial<DailySummary> = {}): DailySummary => ({
     businessDate: date, today: todayInSriLanka(), isToday: date === todayInSriLanka(), timeZone: "Asia/Colombo",
     range: { start: "2026-10-09T18:30:00.000Z", end: "2026-10-10T18:30:00.000Z" },
-    summary: { candidatesCompleted: 1, visaCompleted: 2, callsTaken: 4, documentsSubmitted: 6 },
+    summary: { candidatesRegistered: 2, candidatesCompleted: 1, visaCompleted: 2, callsTaken: 4, documentsSubmitted: 6 },
     documents: {
         total: 6, whatsapp: 3, manual: 3,
         byType: [
@@ -65,6 +65,13 @@ const summary = (date = DATE, overrides: Partial<DailySummary> = {}): DailySumma
             { callLogId: "c1", calledAt: "2026-10-10T05:00:00.000Z", passportId: "N1000001", candidateName: "Anil Silva", handledBy: "Ann Analyst", role: "ANALYST" },
         ],
     },
+    registeredCandidates: {
+        total: 2, truncated: false,
+        items: [
+            { passportId: "R0000002", name: "Sunil Perera", registeredAt: "2026-10-10T05:00:00.000Z", registeredBy: "Ann Analyst", registeredByRole: "ANALYST", documents: 2, stagesComplete: 1, stagesTotal: 7 },
+            { passportId: "R0000001", name: "Nimal Perera", registeredAt: "2026-10-09T18:30:00.000Z", registeredBy: null, registeredByRole: null, documents: 0, stagesComplete: 0, stagesTotal: 7 },
+        ],
+    },
     completedCandidates: { total: 1, truncated: false, items: [{ passportId: "N1000001", name: "Anil Silva", completedAt: "2026-10-10T10:00:00.000Z", allStagesComplete: false }] },
     current: {
         asOf: "2026-10-11T06:00:00.000Z",
@@ -85,11 +92,12 @@ const summary = (date = DATE, overrides: Partial<DailySummary> = {}): DailySumma
 
 const empty = (date = DATE): DailySummary => ({
     ...summary(date),
-    summary: { candidatesCompleted: 0, visaCompleted: 0, callsTaken: 0, documentsSubmitted: 0 },
+    summary: { candidatesRegistered: 0, candidatesCompleted: 0, visaCompleted: 0, callsTaken: 0, documentsSubmitted: 0 },
     documents: { total: 0, whatsapp: 0, manual: 0, byType: summary(date).documents.byType.filter((r) => r.type !== "UNKNOWN").map((r) => ({ ...r, total: 0, whatsapp: 0, manual: 0 })) },
     whatsappProcessing: { ...summary(date).whatsappProcessing, received: 0 },
     adminActions: {},
     calls: { total: 0, items: [], truncated: false },
+    registeredCandidates: { total: 0, items: [], truncated: false },
     completedCandidates: { total: 0, items: [], truncated: false },
 });
 
@@ -121,6 +129,7 @@ describe("Daily Report: Summary", () => {
         renderApp("/reports/daily");
         expect(await screen.findByText("Candidates completed", {}, RENDER_STEP)).toBeInTheDocument();
         expect(requests(calls, "/api/admin/reports/daily/summary")).toEqual([`/api/admin/reports/daily/summary?date=${todayInSriLanka()}`]);
+        expect(kpi("Candidates registered")).toHaveTextContent("2");
         expect(kpi("Candidates completed")).toHaveTextContent("1");
         expect(kpi("Visa completed")).toHaveTextContent("2");
         expect(kpi("Calls taken")).toHaveTextContent("4");
@@ -158,6 +167,18 @@ describe("Daily Report: Summary", () => {
         expect(within(calls).getByText("N1000002")).toBeInTheDocument();
     });
 
+    test("Candidates registered: passport number, name, time, who registered, documents now ('No documents' when none) and progress", async () => {
+        signedInBackend({ ...summaryRoute() });
+        renderApp(`/reports/daily?date=${DATE}`);
+        const table = await screen.findByRole("table", { name: "Registered candidates" }, RENDER_STEP);
+        const rows = within(table).getAllByRole("row").slice(1).map((r) => [...r.querySelectorAll("td")].map((c) => c.textContent));
+        expect(rows).toEqual([
+            ["R0000002", "Sunil Perera", "10:30", "Ann Analyst", "2", "1 of 7 stages"],
+            ["R0000001", "Nimal Perera", "00:00", "—", "No documents", "0 of 7 stages"],
+        ]);
+        expect(within(table).getByRole("link", { name: "R0000001" })).toHaveAttribute("href", "/candidates/R0000001");
+    });
+
     test("16-17. incomplete candidates (current state): count and reasons per process; View loads that process's candidates", async () => {
         const { calls } = signedInBackend({
             ...summaryRoute(),
@@ -193,6 +214,8 @@ describe("Daily Report: Summary", () => {
         signedInBackend({ ...summaryRoute(empty) });
         renderApp(`/reports/daily?date=${DATE}`);
         expect(await screen.findByText("No candidate completed on this day.", {}, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.getByText("No candidate was registered on this day.")).toBeInTheDocument();
+        expect(kpi("Candidates registered")).toHaveTextContent("0");
         expect(screen.getByText("No calls were logged on this day.")).toBeInTheDocument();
         expect(kpi("Documents submitted")).toHaveTextContent("0");
     });
@@ -280,7 +303,7 @@ describe("Daily Report: PDF", () => {
         expect(text).toContain("Daily Report — Summary");
         expect(text).toContain("10 Oct 2026");
         expect(text).toContain("Asia/Colombo");
-        for (const label of ["Candidates completed (final stage completed)", "Visa completed (visa approval completed)", "Calls taken", "Documents submitted", "Passport", "Unclassified", "N1000001", "Anil Silva", "Incomplete candidates (current state)", "Police reports (current state)"]) {
+        for (const label of ["Candidates registered", "Registered candidates", "R0000001", "Nimal Perera", "No documents", "Ann Analyst", "Candidates completed (final stage completed)", "Visa completed (visa approval completed)", "Calls taken", "Documents submitted", "Passport", "Unclassified", "N1000001", "Anil Silva", "Incomplete candidates (current state)", "Police reports (current state)"]) {
             expect(text).toContain(label);
         }
         expect(text).not.toMatch(/client/i);
@@ -310,6 +333,7 @@ describe("Daily Report: PDF", () => {
         await userEvent.setup().click(screen.getByRole("button", { name: "Export PDF" }));
         await vi.waitFor(() => expect(pdf.saved).toEqual([`daily-report-${DATE}.pdf`]));
         expect(pdf.texts.join("\n")).toContain("No candidate completed on this day.");
+        expect(pdf.texts.join("\n")).toContain("No candidate was registered on this day.");
     });
 
     test("Export PDF is disabled until the report has loaded", async () => {
