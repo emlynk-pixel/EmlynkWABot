@@ -24,6 +24,15 @@
 // Google writes happen only while holding the writer lease (one writer per
 // Sheet, whatever the number of processes).
 //
+// Sync Destination: every run resolves the ACTIVE destination when it starts
+// (sheet_sync_state.active_destination_key; null = the first configured one)
+// and records it on the run (destination_key). A writing reconciliation
+// resolves it inside the writer lease, and a switch is applied only under the
+// same lease, so the destination never changes in the middle of a run. A
+// switch an ADMIN requested is a TEST_CONNECTION run carrying the requested
+// destination: it checks that Sheet's access and headers, and only if both
+// pass makes it active (with an audit entry); otherwise the active one stays.
+//
 // Failures (classifySyncError) fail the run with a code:
 //   CONFIG          schema mismatch, access denied, sheet/tab not found, bad
 //                   request: the integration is HALTED (CONFIG_ERROR) until a
@@ -48,6 +57,7 @@ import { SheetLayoutChangedError, SheetSchemaMismatchError, SheetSyncDisabledErr
 import { SheetDuplicateCandidateIdError } from "./sheetSyncPlanner.js";
 import { IncompleteSnapshotError } from "./candidateAggregateReader.js";
 import { INTEGRATION_STATE, RUN_KIND, RUN_STATUS } from "./sheetSyncStore.js";
+import { DEFAULT_DESTINATION_KEY, publicDestination, resolveDestination, sheetTargetHint } from "../config/sheetSync.js";
 
 export const WORKER_TIMINGS = Object.freeze({
     runLeaseMs: 10 * 60_000,
@@ -63,6 +73,17 @@ export class WriterLeaseLostError extends Error {
         this.name = "WriterLeaseLostError";
     }
 }
+
+// The active destination key names a destination that is no longer
+// configured: nothing is synced until an ADMIN picks a configured one.
+export class DestinationNotConfiguredError extends Error {
+    constructor() {
+        super("The active Google Sheet sync destination is not configured");
+        this.name = "DestinationNotConfiguredError";
+    }
+}
+
+export const SWITCH_PURPOSE = "DESTINATION_SWITCH";
 
 const SAFE_CODE = /^[A-Za-z_]{1,40}$/;
 
@@ -92,6 +113,7 @@ export function classifySyncError(error) {
         return { kind: "DATA_INTEGRITY", errorClass: "DUPLICATE_CANDIDATE_ID", errorCode: String(error.duplicates?.length ?? 0) };
     }
     if (error instanceof SheetSyncDisabledError) return { kind: "DISABLED", errorClass: "WRITES_DISABLED", errorCode: null };
+    if (error instanceof DestinationNotConfiguredError) return { kind: "CONFIG", errorClass: "DESTINATION_NOT_CONFIGURED", errorCode: null };
     if (error instanceof IncompleteSnapshotError) return { kind: "RETRYABLE", errorClass: "SNAPSHOT_INCOMPLETE", errorCode: null };
     if (error instanceof SheetsAdapterError) {
         const errorCode = googleCode(error);
@@ -109,17 +131,38 @@ export function classifySyncError(error) {
 
 const haltState = (kind) => (kind === "DATA_INTEGRITY" ? INTEGRATION_STATE.DATA_INTEGRITY : INTEGRATION_STATE.CONFIG_ERROR);
 
-// store: createSheetSyncStore(...); engine: createSheetSyncEngine(...) (its
-// Sheets adapter was built from the same `config`); healthCheck: () => the
-// read-only check's result (runSheetHealthCheck); config:
-// readSheetSyncConfig(); tuning: readSheetSyncTuning(); targetHint: string.
+// A test connection's failure as { errorClass, errorCode } (codes only).
+function testFailure(result) {
+    const schemaInvalid = result.schema === "SCHEMA_INVALID";
+    return {
+        errorClass: schemaInvalid ? "SCHEMA_INVALID" : result.status,
+        errorCode: schemaInvalid
+            ? schemaProblemCode([...(result.missingHeaders ?? []).map((header) => ({ problem: "MISSING", header })), ...(result.duplicateHeaders ?? []).map((header) => ({ problem: "DUPLICATE", header }))])
+            : (result.httpStatus ? String(result.httpStatus) : null),
+    };
+}
+
+// store: createSheetSyncStore(...); config: readSheetSyncConfig(); tuning:
+// readSheetSyncTuning().
+// destinations: the configured Sync Destinations (config.destinations by
+// default; else the one in config.spreadsheetId / tabName).
+// forDestination(destination) -> { engine, healthCheck } for that Sheet; or,
+// with a single Sheet, engine (createSheetSyncEngine(...)) and healthCheck
+// (() => runSheetHealthCheck(...)) used for every run.
+// targetHint: fixed hint to publish (default: the active destination's).
 export function createSheetSyncWorker({
-    store, engine, healthCheck, config, tuning, targetHint = null,
+    store, engine, healthCheck, forDestination = null, destinations = null, config, tuning, targetHint = null,
     clock = () => new Date(), log = console, owner = `${os.hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`,
     timings = WORKER_TIMINGS,
 } = {}) {
-    if (!store || !engine || !healthCheck || !config || !tuning) throw new Error("store, engine, healthCheck, config and tuning are required");
-    const configured = Boolean(config.spreadsheetId && config.tabName);
+    if (!store || !config || !tuning || (!forDestination && (!engine || !healthCheck))) {
+        throw new Error("store, config, tuning and either forDestination or engine and healthCheck are required");
+    }
+    const destinationList = destinations ?? config.destinations
+        ?? (config.spreadsheetId && config.tabName ? [{ key: DEFAULT_DESTINATION_KEY, name: config.tabName, spreadsheetId: config.spreadsheetId, tabName: config.tabName }] : []);
+    const configured = destinationList.length > 0;
+    const runnerFor = (destination) => (forDestination ? forDestination(destination) : { engine, healthCheck });
+    const activeDestination = async () => resolveDestination(destinationList, (await store.getState())?.activeDestinationKey ?? null);
     let lastPruneAt = 0;
 
     const emit = (level, event, fields = {}) => {
@@ -153,24 +196,69 @@ export function createSheetSyncWorker({
 
     // ------------------------------------------------------------ runs
 
+    const testSummary = (result, purpose) => ({
+        status: result.status, schema: result.schema, mismatchedColumns: result.mismatchedColumns ?? [],
+        missingHeaders: result.missingHeaders ?? [], duplicateHeaders: result.duplicateHeaders ?? [],
+        httpStatus: result.httpStatus ?? null, reason: result.reason ?? null, googleStatus: result.googleStatus ?? null, writeGate: config.gate, purpose,
+    });
+
+    // A switch to run.destinationKey: validate that Sheet; activate it only
+    // if access and headers pass. The integration state (which describes the
+    // ACTIVE destination) is not changed by a failed switch.
+    async function runDestinationSwitch(run) {
+        const key = run.destinationKey;
+        const target = destinationList.find((d) => d.key === key) ?? null;
+        if (!target) {
+            await store.finishRun(run, { status: RUN_STATUS.FAILED, summary: { status: "NOT_CONFIGURED", purpose: SWITCH_PURPOSE }, errorClass: "DESTINATION_NOT_CONFIGURED", now: clock() });
+            await store.clearRequestedDestination({ key, now: clock() });
+            emit("warn", "sheet_sync.destination_switch_failed", { runId: run.runId, destinationKey: key, errorClass: "DESTINATION_NOT_CONFIGURED" });
+            return;
+        }
+        const result = await runnerFor(target).healthCheck();
+        const summary = testSummary(result, SWITCH_PURPOSE);
+        if (!result.ok) {
+            const failure = testFailure(result);
+            await store.finishRun(run, { status: RUN_STATUS.FAILED, summary, ...failure, now: clock() });
+            await store.clearRequestedDestination({ key, now: clock() });
+            emit("warn", "sheet_sync.destination_switch_failed", { runId: run.runId, destinationKey: key, errorClass: failure.errorClass, errorCode: failure.errorCode });
+            return;
+        }
+        const state = await store.getState();
+        const previous = resolveDestination(destinationList, state?.activeDestinationKey ?? null);
+        // Under the writer lease: never while a reconciliation is writing.
+        const outcome = await withWriterLease(() => store.promoteDestination({ key, previous, next: target, requestedBy: run.requestedBy ?? null, now: clock() }));
+        const now = clock();
+        if (outcome.busy) {
+            await store.finishRun(run, { status: RUN_STATUS.FAILED, summary, errorClass: "WRITER_BUSY", now });
+            await store.clearRequestedDestination({ key, now });
+            emit("warn", "sheet_sync.destination_switch_failed", { runId: run.runId, destinationKey: key, errorClass: "WRITER_BUSY" });
+            return;
+        }
+        await store.finishRun(run, { status: RUN_STATUS.SUCCEEDED, summary: { ...summary, promoted: outcome.value }, now });
+        if (outcome.value && state?.integrationState !== INTEGRATION_STATE.DATA_INTEGRITY) await store.setIntegrationState({ state: INTEGRATION_STATE.OK, now });
+        emit("info", "sheet_sync.destination_switched", { runId: run.runId, destinationKey: key, previousKey: previous?.key ?? null, promoted: outcome.value });
+    }
+
     async function runTestConnection(run) {
-        const result = await healthCheck();
-        const summary = {
-            status: result.status, schema: result.schema, mismatchedColumns: result.mismatchedColumns ?? [],
-            missingHeaders: result.missingHeaders ?? [], duplicateHeaders: result.duplicateHeaders ?? [],
-            httpStatus: result.httpStatus ?? null, reason: result.reason ?? null, googleStatus: result.googleStatus ?? null, writeGate: config.gate,
-        };
+        if (run.destinationKey) return runDestinationSwitch(run);
+        const destination = await activeDestination();
+        if (!destination) {
+            const now = clock();
+            await store.finishRun(run, { status: RUN_STATUS.FAILED, summary: { status: "NOT_CONFIGURED", purpose: "CONNECTION_TEST" }, errorClass: configured ? "DESTINATION_NOT_CONFIGURED" : "NOT_CONFIGURED", now });
+            if (configured) await recordFailure({ kind: "CONFIG", errorClass: "DESTINATION_NOT_CONFIGURED", errorCode: null });
+            return;
+        }
+        await store.setRunDestination(run, destination.key);
+        const result = await runnerFor(destination).healthCheck();
+        const summary = testSummary(result, "CONNECTION_TEST");
         const now = clock();
         await store.finishRun(run, { status: result.ok ? RUN_STATUS.SUCCEEDED : RUN_STATUS.FAILED, summary, errorClass: result.ok ? null : result.status, now });
         const state = await store.getState();
         if (result.ok && state?.integrationState !== INTEGRATION_STATE.DATA_INTEGRITY) {
             await store.setIntegrationState({ state: INTEGRATION_STATE.OK, now });
         } else if (!result.ok && result.status !== "UNAVAILABLE") {
-            const schemaInvalid = result.schema === "SCHEMA_INVALID";
-            const errorCode = schemaInvalid
-                ? schemaProblemCode([...(result.missingHeaders ?? []).map((header) => ({ problem: "MISSING", header })), ...(result.duplicateHeaders ?? []).map((header) => ({ problem: "DUPLICATE", header }))])
-                : (result.httpStatus ? String(result.httpStatus) : null);
-            await store.setIntegrationState({ state: INTEGRATION_STATE.CONFIG_ERROR, errorClass: schemaInvalid ? "SCHEMA_INVALID" : result.status, errorCode, now });
+            const failure = testFailure(result);
+            await store.setIntegrationState({ state: INTEGRATION_STATE.CONFIG_ERROR, errorClass: failure.errorClass, errorCode: failure.errorCode, now });
         }
         emit(result.ok ? "info" : "warn", "sheet_sync.connection_test", { runId: run.runId, status: result.status, schema: result.schema, httpStatus: summary.httpStatus, googleStatus: summary.googleStatus });
     }
@@ -186,11 +274,17 @@ export function createSheetSyncWorker({
         const onlyUniqueIds = tuning.pilotCandidateIds ?? null;
         emit("info", "sheet_sync.reconcile_started", { runId: run.runId, trigger: run.triggerSource, dryRun, pilot: Boolean(onlyUniqueIds) });
         let covered = [];
+        let destination = null;
         const execute = async () => {
+            // The active destination, resolved now (inside the writer lease
+            // when writing, so a switch can't happen during the run).
+            destination = await activeDestination();
+            if (!destination) throw new DestinationNotConfiguredError();
+            await store.setRunDestination(run, destination.key);
             // Read before the engine reads the database: every change these
             // rows stand for is in the snapshot the engine mirrors.
             if (!dryRun) covered = await store.openQueueItems({ onlyUniqueIds });
-            return engine.reconcile({
+            return runnerFor(destination).engine.reconcile({
                 dryRun,
                 onlyUniqueIds,
                 guard: { max: tuning.deletionGuardMax, fraction: tuning.deletionGuardFraction },
@@ -217,7 +311,7 @@ export function createSheetSyncWorker({
                 if (!onlyUniqueIds) await store.resolveFailedBefore(startedAt, now);
             }
             if (summary.deletionGuardTriggered) emit("warn", "sheet_sync.reconcile_deletion_guard", { runId: run.runId, wouldMarkInactive: summary.notInDatabase });
-            emit("info", "sheet_sync.reconcile_completed", { runId: run.runId, dryRun, durationMs: now - startedAt, ...summary });
+            emit("info", "sheet_sync.reconcile_completed", { runId: run.runId, destinationKey: destination?.key ?? null, dryRun, durationMs: now - startedAt, ...summary });
         } catch (error) {
             const classified = classifySyncError(error);
             await store.finishRun(run, { status: RUN_STATUS.FAILED, errorClass: classified.errorClass, errorCode: classified.errorCode, dryRun, now: clock() });
@@ -244,7 +338,12 @@ export function createSheetSyncWorker({
 
     async function tick() {
         const now = clock();
-        await store.heartbeat({ writeGate: config.gate, configured, targetHint, now });
+        const active = await activeDestination();
+        await store.heartbeat({
+            writeGate: config.gate, configured, now,
+            targetHint: targetHint ?? (active ? sheetTargetHint(active) : null),
+            destinations: destinationList.map(publicDestination),
+        });
         // No queue processing here: queue rows wait for the next reconciliation.
         const runId = await processRun();
         if (now.getTime() - lastPruneAt >= timings.pruneEveryMs) {

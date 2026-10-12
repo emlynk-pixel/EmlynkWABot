@@ -9,8 +9,11 @@
 // The payload holds states, timestamps, counts and codes. Never credentials,
 // tokens, the full spreadsheet ID, candidate data or Google message text.
 
-import { SHEET_SYNC_SCHEDULE } from "../config/sheetSync.js";
+import { SHEET_SYNC_SCHEDULE, isValidDestinationKey } from "../config/sheetSync.js";
 import { RUN_KIND, RUN_STATUS, RUN_TRIGGER, createSheetSyncStore } from "./sheetSyncStore.js";
+
+// The summary purpose of a destination-switch check (sheetSyncWorker.js).
+const SWITCH_PURPOSE = "DESTINATION_SWITCH";
 
 // Who started a reconciliation, from the run's stored trigger_source (never
 // from the time it ran, so a late scheduled run is still automatic):
@@ -39,7 +42,17 @@ export function serializeRun(run) {
         errorClass: run.errorClass ?? null,
         errorCode: run.errorCode ?? null,
         summary: run.summary ?? null,
+        destinationKey: run.destinationKey ?? null,
     };
+}
+
+// The destinations as the worker published them: only the safe fields
+// (key, name, short hint, tab name), never a full spreadsheet ID.
+function publishedDestinations(state) {
+    if (!Array.isArray(state?.destinations)) return [];
+    return state.destinations
+        .filter((d) => d && isValidDestinationKey(d.key) && typeof d.name === "string")
+        .map((d) => ({ key: d.key, name: d.name, hint: typeof d.hint === "string" ? d.hint : null, tabName: typeof d.tabName === "string" ? d.tabName : null }));
 }
 
 export async function getSheetSyncStatus({ db, now = new Date() }) {
@@ -56,6 +69,8 @@ export async function getSheetSyncStatus({ db, now = new Date() }) {
         store.latestRun(RUN_KIND.RECONCILE, { status: RUN_STATUS.SUCCEEDED, triggerSource: { in: MANUAL_TRIGGERS } }),
     ]);
     const heartbeat = state?.workerHeartbeatAt ?? null;
+    const available = publishedDestinations(state);
+    const lastSwitch = (await store.recentRuns(RUN_KIND.TEST_CONNECTION, 10)).find((run) => run.summary?.purpose === SWITCH_PURPOSE) ?? null;
     return {
         worker: {
             online: Boolean(heartbeat) && now.getTime() - new Date(heartbeat).getTime() <= WORKER_STALE_MS,
@@ -79,6 +94,15 @@ export async function getSheetSyncStatus({ db, now = new Date() }) {
         lastSuccessfulReconciliation: serializeRun(lastSuccessfulReconciliation),
         lastAutomaticSync: serializeRun(lastAutomaticSync),
         lastManualSync: serializeRun(lastManualSync),
+        // Sync Destination: the configured Sheets (safe metadata), the active
+        // one (null key = the first), a switch waiting for its validation, and
+        // the last finished switch check (its error when one failed).
+        destination: {
+            available,
+            activeKey: state?.activeDestinationKey ?? available[0]?.key ?? null,
+            requestedKey: state?.requestedDestinationKey ?? null,
+            lastSwitch: serializeRun(lastSwitch),
+        },
         // The automatic schedule (informational; Cloud Scheduler runs it).
         schedule: { times: [...SHEET_SYNC_SCHEDULE.times], timeZone: SHEET_SYNC_SCHEDULE.timeZone },
         lastConnectionTest: serializeRun(lastConnectionTest),
@@ -91,6 +115,39 @@ export async function getSheetSyncStatus({ db, now = new Date() }) {
 export async function requestSheetSyncRun({ db, kind, triggerSource, requestedBy = null, now = new Date() }) {
     const { run, created } = await createSheetSyncStore({ db }).requestRun({ kind, triggerSource, requestedBy, now });
     return { run: serializeRun(run), created };
+}
+
+export class DestinationSwitchError extends Error {
+    constructor(status, code, message) {
+        super(message);
+        this.name = "DestinationSwitchError";
+        this.status = status;
+        this.code = code;
+    }
+}
+
+// An ADMIN's switch to another configured destination. Recorded as pending
+// (requested_destination_key) with a durable TEST_CONNECTION run for that
+// destination; the worker validates its access and headers and only then
+// makes it active. Nothing is synced, read back or deleted by the request.
+export async function requestDestinationSwitch({ db, key, requestedBy, now = new Date() }) {
+    const store = createSheetSyncStore({ db });
+    const state = await store.getState();
+    const available = publishedDestinations(state);
+    if (!available.some((d) => d.key === key)) throw new DestinationSwitchError(400, "UNKNOWN_DESTINATION", "This destination is not configured.");
+    const activeKey = state?.activeDestinationKey ?? available[0]?.key ?? null;
+    if (state?.requestedDestinationKey) throw new DestinationSwitchError(409, "SWITCH_PENDING", "A destination change is already being checked.");
+    if (key === activeKey) return { status: "ALREADY_ACTIVE", activeKey, run: null };
+    const activeTest = await store.latestRun(RUN_KIND.TEST_CONNECTION, { status: { in: [RUN_STATUS.QUEUED, RUN_STATUS.RUNNING] } });
+    if (activeTest) throw new DestinationSwitchError(409, "TEST_RUNNING", "A connection test is running. Try again when it has finished.");
+    if (!(await store.requestDestination({ key, now }))) throw new DestinationSwitchError(409, "SWITCH_PENDING", "A destination change is already being checked.");
+    const { run, created } = await store.requestRun({ kind: RUN_KIND.TEST_CONNECTION, triggerSource: RUN_TRIGGER.ADMIN, requestedBy, destinationKey: key, now });
+    if (!created) {
+        // Another test started in between: withdraw rather than wait on a check that won't run.
+        await store.clearRequestedDestination({ key, now });
+        throw new DestinationSwitchError(409, "TEST_RUNNING", "A connection test is running. Try again when it has finished.");
+    }
+    return { status: "PENDING", activeKey, requestedKey: key, run: serializeRun(run) };
 }
 
 export async function getSheetSyncRun({ db, runId }) {

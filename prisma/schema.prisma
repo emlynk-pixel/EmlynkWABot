@@ -401,6 +401,9 @@ model SheetSyncRun {
   summary        Json?
   errorClass     String?   @map("error_class")
   errorCode      String?   @map("error_code")
+  // The Sync Destination the run used (resolved when it started), or the one a
+  // destination-switch check validated.
+  destinationKey String?   @map("destination_key")
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   startedAt      DateTime? @map("started_at") @db.Timestamptz(3)
   finishedAt     DateTime? @map("finished_at") @db.Timestamptz(3)
@@ -417,22 +420,30 @@ model SheetSyncRun {
 // that keeps a single process writing to the Sheet at a time.
 // integrationState: UNKNOWN | OK | CONFIG_ERROR | DATA_INTEGRITY.
 model SheetSyncState {
-  stateId              String    @id @map("state_id")
-  integrationState     String    @default("UNKNOWN") @map("integration_state")
-  lastErrorClass       String?   @map("last_error_class")
-  lastErrorCode        String?   @map("last_error_code")
-  lastErrorAt          DateTime? @map("last_error_at") @db.Timestamptz(3)
-  lastSyncSuccessAt    DateTime? @map("last_sync_success_at") @db.Timestamptz(3)
+  stateId                 String    @id @map("state_id")
+  integrationState        String    @default("UNKNOWN") @map("integration_state")
+  lastErrorClass          String?   @map("last_error_class")
+  lastErrorCode           String?   @map("last_error_code")
+  lastErrorAt             DateTime? @map("last_error_at") @db.Timestamptz(3)
+  lastSyncSuccessAt       DateTime? @map("last_sync_success_at") @db.Timestamptz(3)
   // ENABLED | DISABLED, as the worker last read SHEET_SYNC_ENABLED.
-  writeGate            String?   @map("write_gate")
-  configured           Boolean?
+  writeGate               String?   @map("write_gate")
+  configured              Boolean?
   // Last characters of the spreadsheet ID and the tab name: enough to tell
   // which Sheet is targeted, never the full identifier.
-  targetHint           String?   @map("target_hint")
-  workerHeartbeatAt    DateTime? @map("worker_heartbeat_at") @db.Timestamptz(3)
-  writerLeaseOwner     String?   @map("writer_lease_owner")
-  writerLeaseExpiresAt DateTime? @map("writer_lease_expires_at") @db.Timestamptz(3)
-  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+  targetHint              String?   @map("target_hint")
+  // Sync Destination (src/config/sheetSync.js SHEET_SYNC_DESTINATIONS): the
+  // configured Sheets as the worker publishes them (key, name, short hint,
+  // tab name; never a full spreadsheet ID), the active one (null = the first,
+  // the default) and one an ADMIN requested, active only after the worker
+  // validated its access and headers.
+  destinations            Json?
+  activeDestinationKey    String?   @map("active_destination_key")
+  requestedDestinationKey String?   @map("requested_destination_key")
+  workerHeartbeatAt       DateTime? @map("worker_heartbeat_at") @db.Timestamptz(3)
+  writerLeaseOwner        String?   @map("writer_lease_owner")
+  writerLeaseExpiresAt    DateTime? @map("writer_lease_expires_at") @db.Timestamptz(3)
+  updatedAt               DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
 
   @@map("sheet_sync_state")
 }

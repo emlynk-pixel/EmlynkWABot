@@ -21,7 +21,7 @@
 import "dotenv/config";
 import { assertValidEnv, SHEET_SYNC_WORKER_REQUIRED_ENV_VARS } from "./config/env.js";
 import { assertValidRuntime } from "./config/runtime.js";
-import { readSheetSyncConfig, readSheetSyncTuning, sheetTargetHint } from "./config/sheetSync.js";
+import { readSheetSyncConfig, readSheetSyncTuning } from "./config/sheetSync.js";
 
 let config;
 let tuning;
@@ -50,16 +50,26 @@ const { createOidcVerifier, createSheetSyncHttpServer, startSheetSyncWorkerProce
 
 try {
     const scopes = config.enabled ? [SHEETS_SCOPE] : [SHEETS_READONLY_SCOPE];
-    const sheets = createGoogleSheetsAdapter({ config, sheetsClient: () => createLiveSheetsClient({ scopes }) });
+    const reader = createCandidateAggregateReader({ db: prisma });
+    // One adapter + engine per Sync Destination (SHEET_SYNC_DESTINATIONS, or
+    // SHEET_SPREADSHEET_ID / SHEET_TAB_NAME), built when first used; each
+    // run picks the active one when it starts.
+    const runners = new Map();
+    const forDestination = (destination) => {
+        if (!runners.has(destination.key)) {
+            const sheets = createGoogleSheetsAdapter({
+                config: { ...config, spreadsheetId: destination.spreadsheetId, tabName: destination.tabName },
+                sheetsClient: () => createLiveSheetsClient({ scopes }),
+            });
+            runners.set(destination.key, {
+                engine: createSheetSyncEngine({ reader, sheets }),
+                healthCheck: () => runSheetHealthCheck({ env: process.env, destination }),
+            });
+        }
+        return runners.get(destination.key);
+    };
     const store = createSheetSyncStore({ db: prisma });
-    const worker = createSheetSyncWorker({
-        store,
-        engine: createSheetSyncEngine({ reader: createCandidateAggregateReader({ db: prisma }), sheets }),
-        healthCheck: () => runSheetHealthCheck({ env: process.env }),
-        config,
-        tuning,
-        targetHint: sheetTargetHint(config),
-    });
+    const worker = createSheetSyncWorker({ store, forDestination, destinations: config.destinations, config, tuning });
 
     let verifyScheduler = null;
     if (process.env.SHEET_SYNC_SCHEDULER_AUDIENCE && process.env.SHEET_SYNC_SCHEDULER_INVOKER) {
@@ -78,7 +88,7 @@ try {
         },
     });
 
-    console.log(JSON.stringify({ event: "sheet_sync.worker_config", writeGate: config.gate, gateReason: config.gateReason, schedulerTrigger: Boolean(verifyScheduler), batchSize: tuning.batchSize, pollIntervalMs: tuning.pollIntervalMs, pilotCandidates: tuning.pilotCandidateIds?.length ?? 0 }));
+    console.log(JSON.stringify({ event: "sheet_sync.worker_config", writeGate: config.gate, gateReason: config.gateReason, schedulerTrigger: Boolean(verifyScheduler), batchSize: tuning.batchSize, pollIntervalMs: tuning.pollIntervalMs, pilotCandidates: tuning.pilotCandidateIds?.length ?? 0, destinations: config.destinations.map((d) => d.key) }));
     await startSheetSyncWorkerProcess({ worker, server, createShutdown, db: prisma });
 } catch (error) {
     console.error(JSON.stringify({ event: "sheet_sync.worker_start_failed", errorType: error?.name ?? "Error", code: typeof error?.code === "string" ? error.code : null }));
