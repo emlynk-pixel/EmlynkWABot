@@ -11,7 +11,7 @@ The development history, per-checkpoint tests and migrations are in [`09a-admin-
 | Address | `/admin` on the backend server (e.g. `http://localhost:3000/admin/`) |
 | Sign in | Email and password (Supabase Auth); the session is refreshed automatically and ends when you sign out |
 | Who can use it | Any staff user with status `ACTIVE`. What each person can do depends on their role: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK` (section 6). |
-| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Priority Follow-Ups, Clients, Client Details, Missing Documents, Police Workflow, Daily Report, Invite User, Change Roles, Audit Logs, Settings |
+| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Priority Follow-Ups, Clients, Client Details, Missing Documents, Police Workflow, Daily Report, Audit Logs, Settings (tabs: Change Roles, Invite User, Google Sheet Sync) |
 | Actions | Approve, Keep Pending, Remove from Review, Set Document Type, Assign Client, Set Police Slip Date, Upload Candidate Document, Update Candidate Stage, Invite User, Change Roles, Deactivate User |
 | Never | Reject, automatic removal of pending documents, changing a candidate's locked WhatsApp number, modifying or deleting audit logs |
 | Every action | Needs confirmation, is taken by the signed-in admin, and is written to an append-only audit log |
@@ -25,7 +25,7 @@ The development history, per-checkpoint tests and migrations are in [`09a-admin-
 
 **Forgot your password?** Use *Forgot password* on the sign-in page and enter your email. Supabase Auth sends a reset link (the page gives the same answer whether or not the email has an account); it opens `/admin/reset-password`, where you choose a new password and sign in again. If the link has expired or was already used, request a new one.
 
-**First sign-in (invited users).** An `ADMIN` invites you from *Invite User*. Supabase Auth emails you an invitation link that opens `/admin/setup-password`, where you set your password and your account becomes `ACTIVE`. Outgoing auth emails use the SMTP server configured in the Supabase dashboard, not the application.
+**First sign-in (invited users).** An `ADMIN` invites you from *Settings → Invite User*. Supabase Auth emails you an invitation link that opens `/admin/setup-password`, where you set your password and your account becomes `ACTIVE`. Outgoing auth emails use the SMTP server configured in the Supabase dashboard, not the application.
 
 The first ADMIN is created on the server with `npm run user:create` (a Supabase Auth identity plus the application profile); everyone else is invited from the dashboard ([`SUPABASE_AUTH.md`](SUPABASE_AUTH.md)).
 
@@ -189,19 +189,19 @@ Calls marked **Need attention** in a candidate's Call Log, so important follow-u
 - Marking, completing and deleting are recorded in Audit Logs (*Candidate* category: `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`).
 - Loading, empty, error and in-progress states are shown, with a confirmation message after each action.
 
-### Invite User (`/admin/invitations`) — ADMIN Only
+### Invite User (Settings tab, `/admin/settings/invite`) — ADMIN Only
 
-- Accessible exclusively to users with the `ADMIN` role.
-- Interface for inviting new console users (`/admin/invitations`).
+- Accessible exclusively to users with the `ADMIN` role. It is the **Invite User** tab of Settings; it is no longer a sidebar entry, and the old `/admin/invitations` URL redirects to this tab.
+- Interface for inviting new console users.
 - **Invite Form**: Enter email, display name, and select a role (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`).
 - Backend calls the Supabase Auth Admin API to send an invitation email with a link pointing to `${APP_BASE_URL}/admin/setup-password`.
 - Displays the user list with account status: `INVITED`, `ACTIVE`, `INACTIVE`.
 - Audited under `INVITE_USER` or `REACTIVATE_USER`.
 
-### Change Roles (`/admin/roles`) — ADMIN Only
+### Change Roles (Settings tab, `/admin/settings/roles`) — ADMIN Only
 
-- Accessible exclusively to users with the `ADMIN` role.
-- Interface for managing roles and deactivating staff users (`/admin/roles`).
+- Accessible exclusively to users with the `ADMIN` role. It is the **Change Roles** tab of Settings (the first tab; `/admin/settings` opens it); it is no longer a sidebar entry, and the old `/admin/roles` URL redirects to this tab.
+- Interface for managing roles and deactivating staff users.
 - Table lists all staff accounts from `public."user"`.
 - Role selector dropdown updates the user role via `PUT /api/admin/users/:userId/role` and applies immediately to the user's next request.
 - Deactivate button sets user status to `INACTIVE` via `POST /api/admin/users/:userId/deactivate`.
@@ -238,18 +238,51 @@ A centralized, immutable audit log viewer for all system operations, candidate m
   - Document actions: `UPLOAD_DOCUMENT`, `REMOVE_DOCUMENT`, `REPLACE_VERIFIED`, `KEEP_AS_VERSION`, `DELETE_TEMPORARY_DOCUMENT`.
   - Review queue decisions: `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT`, `SET_POLICE_DATE`, `RETRY_PROCESSING`.
   - Staff management: `INVITE_USER`, `REACTIVATE_USER`, `COMPLETE_INVITATION`, `UPDATE_USER_ROLE`, `DEACTIVATE_USER`.
+  - Google Sheet Sync: `SET_SHEET_DESTINATION` (a validated destination switch; no spreadsheet ID is recorded).
 - **API**: `GET /api/admin/audit-logs` (requires `ADMIN` role).
 
 ### Settings (`/admin/settings`) — ADMIN Only
 
-- Dedicated console section for system integrations (`/admin/settings`).
-- **Google Sheet Sync**:
-  - Current sync state (`OK`, `CONFIG_ERROR`, `DATA_INTEGRITY`, `UNKNOWN`).
-  - Target Hint: Last characters of the Google Spreadsheet ID and sheet tab name.
-  - Write Gate Toggle: Enable or disable writing to the Google Sheet.
-  - Sync Now: Immediately triggers a reconciliation run (`sheet_sync_runs`).
-  - Test Connection: Verifies Google Sheets API credentials and tab headers.
-  - Worker Heartbeat: Reports the last active heartbeat of the background sheet-sync worker.
+Settings is one sidebar item. Under the page title a horizontal tab row holds the administrator functions, one URL per tab (reload, Back and Forward keep the tab):
+
+| Tab | Route | What it is |
+|---|---|---|
+| Change Roles | `/admin/settings/roles` | the Change Roles page described above |
+| Invite User | `/admin/settings/invite` | the Invite User page described above |
+| Google Sheet Sync | `/admin/settings/sheet-sync` | Sheet Sync status, actions and destination (below) |
+
+- `/admin/settings` opens the first tab, Change Roles.
+- **No Configurations tab.** It existed briefly and was removed; there is no general configuration or placeholder page. New system settings become tabs or sections here, not sidebar entries.
+- **History.** Invite User and Change Roles used to be standalone sidebar entries; they were consolidated into Settings to reduce sidebar clutter. The old `/admin/invitations` and `/admin/roles` URLs redirect to the matching tab, so bookmarks keep working.
+- **Permissions did not change.** Every tab is ADMIN only, as the pages were before; the backend enforces it on every API call. For any other role the sidebar has no Settings entry and every Settings URL (including the old ones) shows *Access Restricted* and requests no data. This consolidation changed navigation only: no authentication, permission or API behaviour.
+
+#### Google Sheet Sync tab
+
+One-way operational mirror of candidate data from the database to a Google Sheet (database → Sheet only; the database is the source of truth and Sheet edits are never read back). The tab groups its information, top to bottom:
+
+- **Test Connection** and **Sync Now** (top right). Test Connection checks the active Sheet's access and headers without changing anything; Sync Now requests a reconciliation. Both run in the background on the worker.
+- **Status summary:** *Connection* (for example *Connected · schema valid*), *Integration state* (OK, Not checked yet, Configuration error, or duplicate IDs: sync halted) and *Write sync* (Enabled or Disabled; while disabled, Sync Now runs a dry run). A notice appears if the background worker is not reporting.
+- **Sync activity:** *Last automatic sync*, *Last manual sync*, *Latest sync* (each with a **Scheduled** or **Manual** badge), *Last written to the Sheet*, *Pending / failed candidate syncs*, and *In progress* while a run is active. The automatic schedule is shown next to the heading: **06:00 · 12:00 · 18:00 (Asia/Colombo)**.
+- **Sync destination:** which Google Sheet the mirror writes to (below).
+- **Last reconciliation:** its status, Scheduled or Manual, time and counts (appended / updated / unchanged, marked inactive).
+- **Last failure:** the latest failure, or *No recent failures*.
+
+The layout is grouped with subtle dividers and compact status tiles so state can be scanned quickly; every value and action that was on the page before is still there.
+
+**Scheduled and manual sync are shown separately.**
+- The automatic schedule did not change: 06:00, 12:00 and 18:00 Asia/Colombo (Cloud Scheduler).
+- Whether a run is *automatic* comes from the run's recorded source (the scheduler), never from its clock time. Sync Now (and the operator command) runs are tracked as *manual*.
+- So a manual sync at 13:45 is shown as the last manual sync; it does not appear to be the 12:00 run and does not replace the last automatic sync. A scheduled run that finishes a few minutes late is still automatic.
+- A source that has never run shows *Not yet run*.
+- This status is **global**: it is shared by every destination, not kept per destination.
+
+**Sync destination.** A dropdown (*Google Sheet*) lists the Sheets configured for the worker, with the active one selected, followed by *Currently syncing to*, a short *Spreadsheet ID* hint and the *Tab*. Full spreadsheet IDs are never shown.
+- **Today** only the existing operational Sheet is configured, so the dropdown has one option, already selected, and no switch action is offered. No example or placeholder Sheets are listed.
+- **When more Sheets are configured** (a worker configuration change; see the Google Sheet Sync architecture document, Sync Destination): choose a Sheet, then click **Use this destination**. Choosing alone changes nothing; the explicit click prevents accidental changes.
+- The server records the choice as *pending*; the worker then validates that Sheet (connection, tab, headers). Only if the check passes does it become the destination of every run (scheduled, Sync Now, Test Connection), and the change is written to Audit Logs (*Sheet sync destination changed*). If the check fails, the previous destination stays in use and the page shows the reason; a failed check does not make the working integration look broken.
+- Switching never copies Sheet data into the database and never clears the previous Sheet.
+- If the dropdown is missing and only the plain *Spreadsheet* row shows, the Cloud Run worker is still an old version that does not publish destinations; update the worker (see the troubleshooting section of the Sheet Sync document).
+- Changing the destination is ADMIN only like the rest of Settings; there is no view-only role.
 
 ## 3. Rules
 
@@ -331,7 +364,7 @@ Other statuses: `MANUAL_REVIEW` and `CONFLICT` (held for review), `DUPLICATE` (t
 |---|---|---|
 | `REQUIRED_DOCUMENT_TYPES` | server environment (`.env`) | Comma-separated; must include `PASSPORT`; allowed `PASSPORT`, `POLICE_SLIP`, `POLICE_REPORT`, `MEDICAL`. Default `PASSPORT,POLICE_REPORT,MEDICAL`. An invalid value stops the server at startup with a clear message; nothing falls back silently. Restart after changing it. |
 | Dark / light mode | each admin's browser | Stored in the browser only (`localStorage`) |
-| Google Sheet Sync | `/admin/settings` | Operational controls: Write Gate toggle, Sync Now, Test Connection |
+| Google Sheet Sync | `/admin/settings/sheet-sync` | Status, Sync Now, Test Connection and Sync Destination (ADMIN). Writing to the Sheet is switched by the worker's `SHEET_SYNC_ENABLED` environment variable, not from the dashboard; the configured Sheets by the worker's `SHEET_SYNC_DESTINATIONS` (or `SHEET_SPREADSHEET_ID` / `SHEET_TAB_NAME`) |
 
 ```bash
 npm run admin:install   # once
@@ -400,10 +433,11 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/users/invite` | ADMIN | Invite a user `{ name, email, role }` |
 | PUT | `/users/:userId/role` | ADMIN | Change a user's role |
 | POST | `/users/:userId/deactivate` | ADMIN | Deactivate a user |
-| GET | `/sheet-sync/settings` | ADMIN | Google Sheet Sync operational status |
-| POST | `/sheet-sync/settings/write-gate` | ADMIN | Toggle Google Sheet writing `{ enabled }` |
-| POST | `/sheet-sync/sync-now` | ADMIN | Trigger immediate reconciliation sync |
-| POST | `/sheet-sync/test-connection` | ADMIN | Test Google Sheet connection |
+| GET | `/settings/sheet-sync/status` | ADMIN | Sheet Sync status: connection, integration state, write gate, last automatic / manual / latest sync, queue counts, last reconciliation and failure, schedule, and the Sync Destination (`destination.available / activeKey / requestedKey`; short hints only) |
+| POST | `/settings/sheet-sync/test` | ADMIN | Test Connection: queues a read-only check on the worker (202) |
+| POST | `/settings/sheet-sync/run` | ADMIN | Sync Now: queues a reconciliation (202) |
+| PUT | `/settings/sheet-sync/destination` | ADMIN | Ask to switch the Sync Destination `{ key }`; validated by the worker before it takes effect (202 pending, 200 already active, 400 unknown, 409 busy) |
+| GET | `/settings/sheet-sync/runs/:runId` | ADMIN | One run's status and result |
 
 Sign-in, sign-out, password recovery and setting a password from an invitation are Supabase Auth's, called by the dashboard directly; the backend only offers `GET /auth/me` and `POST /auth/complete-invite` (activates an invited user after they set a password).
 
@@ -453,6 +487,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 - **Contrast in light mode.** The Stitch light status colours (green, amber and red badge text) have a contrast of 3.1–4.4:1, below the 4.5:1 guideline for small text. Light mode was kept unchanged as required; changing it would be a Stitch design decision. Dark mode meets 4.5:1 everywhere.
 - **Calculated in memory.** Client completeness and police statuses are calculated over all clients on each request. That is fine for thousands of clients; a much larger client base would need the calculation moved into the database.
 - **Priority Follow-Ups list is capped.** The page shows the newest 500 follow-ups (it says so when more exist); there is no paging.
+- **Sheet Sync status is global.** The last automatic / manual sync, queue counts and last failure are not kept per destination; right after a destination switch they still describe runs against the previous Sheet until the new one has run.
 - **Not built here.** Reminders and warnings (Phase 11), roles (Phase 12), uploads, exports, global search and client editing.
 
 ## 10. Testing

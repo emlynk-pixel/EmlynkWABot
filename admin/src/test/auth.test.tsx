@@ -199,9 +199,9 @@ describe("dashboard shell", () => {
     }
     const navLinks = () => within(screen.getByRole("navigation", { name: "Main navigation" })).getAllByRole("link").map((link) => link.textContent);
 
-    test("ADMIN: every section, then Invite User, Change Roles, Audit Logs and Settings", async () => {
+    test("ADMIN: every section, then Audit Logs and Settings (Invite User and Change Roles are Settings tabs)", async () => {
         await signedIn();
-        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Priority Follow-Ups", "Missing Documents", "Police Workflow", "Daily Report", "Invite User", "Change Roles", "Audit Logs", "Settings"]);
+        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Priority Follow-Ups", "Missing Documents", "Police Workflow", "Daily Report", "Audit Logs", "Settings"]);
         await userEvent.setup().click(screen.getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });

@@ -38,6 +38,77 @@ function gateFrom(value) {
 
 const isSet = (value) => typeof value === "string" && value.trim() !== "";
 
+// ---------------------------------------------------------------- Sync Destination
+//
+// The Google Sheets the mirror can write to (Settings -> Google Sheet Sync ->
+// Sync Destination). Configured on the sheet-sync worker only; full
+// spreadsheet IDs never leave it (the worker publishes publicDestination()
+// metadata to sheet_sync_state for the Admin page).
+//
+//   SHEET_SYNC_DESTINATIONS  optional JSON array, first entry = default:
+//     [{"key":"operational","name":"Emlynk Candidate Operational Mirror",
+//       "spreadsheetId":"…","tabName":"Emlynk Candidate Operational Mirror"}]
+//     key: 1-40 lowercase letters, digits or "-" (stable; stored as the
+//     active destination); name: 1-100 characters (shown in Settings);
+//     tabName: matched exactly, like SHEET_TAB_NAME.
+//   Not set: one destination from SHEET_SPREADSHEET_ID / SHEET_TAB_NAME,
+//   key "default", named after its tab (the deployment before this feature).
+//
+// Which one is active is stored in sheet_sync_state.active_destination_key
+// (null = the first); an ADMIN switches it, and the worker activates the new
+// one only after validating its access and headers.
+export const DEFAULT_DESTINATION_KEY = "default";
+export const MAX_SHEET_SYNC_DESTINATIONS = 20;
+const DESTINATION_KEY = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const SPREADSHEET_ID = /^[A-Za-z0-9_-]{10,200}$/;
+export const isValidDestinationKey = (value) => typeof value === "string" && DESTINATION_KEY.test(value);
+
+function readDestinations(env) {
+    if (!isSet(env.SHEET_SYNC_DESTINATIONS)) {
+        if (!isSet(env.SHEET_SPREADSHEET_ID) || !isSet(env.SHEET_TAB_NAME)) return { destinations: [], fromList: false, problems: [] };
+        return {
+            destinations: [Object.freeze({ key: DEFAULT_DESTINATION_KEY, name: env.SHEET_TAB_NAME.trim(), spreadsheetId: env.SHEET_SPREADSHEET_ID.trim(), tabName: env.SHEET_TAB_NAME })],
+            fromList: false,
+            problems: [],
+        };
+    }
+    const invalid = (detail) => ({ destinations: [], fromList: true, problems: [`SHEET_SYNC_DESTINATIONS ${detail}`] });
+    let parsed;
+    try {
+        parsed = JSON.parse(env.SHEET_SYNC_DESTINATIONS);
+    } catch {
+        return invalid("must be a JSON array");
+    }
+    if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > MAX_SHEET_SYNC_DESTINATIONS) {
+        return invalid(`must be a JSON array of 1 to ${MAX_SHEET_SYNC_DESTINATIONS} destinations`);
+    }
+    const destinations = [];
+    for (const [index, entry] of parsed.entries()) {
+        const at = `entry ${index + 1}`;
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return invalid(`${at} must be an object`);
+        if (!isValidDestinationKey(entry.key)) return invalid(`${at}: key must be 1-40 lowercase letters, digits or "-"`);
+        if (typeof entry.name !== "string" || !entry.name.trim() || entry.name.trim().length > 100) return invalid(`${at}: name must be 1-100 characters`);
+        if (typeof entry.spreadsheetId !== "string" || !SPREADSHEET_ID.test(entry.spreadsheetId.trim())) return invalid(`${at}: spreadsheetId is not a spreadsheet ID`);
+        if (typeof entry.tabName !== "string" || !entry.tabName.trim() || entry.tabName.length > 100) return invalid(`${at}: tabName must be 1-100 characters`);
+        if (destinations.some((d) => d.key === entry.key)) return invalid(`${at}: key "${entry.key}" is used twice`);
+        destinations.push(Object.freeze({ key: entry.key, name: entry.name.trim(), spreadsheetId: entry.spreadsheetId.trim(), tabName: entry.tabName }));
+    }
+    return { destinations, fromList: true, problems: [] };
+}
+
+// What the Admin page may know about a destination: never the full ID.
+export function publicDestination(destination) {
+    return { key: destination.key, name: destination.name, hint: `…${destination.spreadsheetId.slice(-6)}`, tabName: destination.tabName };
+}
+
+// The destination for a stored key: null (nothing chosen yet) = the first
+// (default) one; a key no longer configured = null (runs then fail with
+// DESTINATION_NOT_CONFIGURED instead of writing to another Sheet).
+export function resolveDestination(destinations, key) {
+    if (key === null || key === undefined) return destinations[0] ?? null;
+    return destinations.find((d) => d.key === key) ?? null;
+}
+
 // The Sheet sync settings from the environment. Never throws; `problems`
 // lists what would stop an enabled sync from working.
 export function readSheetSyncConfig(env = process.env) {
@@ -46,10 +117,15 @@ export function readSheetSyncConfig(env = process.env) {
     if (gateReason === SHEET_SYNC_GATE_REASON.INVALID) {
         problems.push("SHEET_SYNC_ENABLED must be true or false");
     }
-    if (enabled) {
+    const destinations = readDestinations(env);
+    problems.push(...destinations.problems);
+    if (enabled && !destinations.fromList) {
         if (!isSet(env.SHEET_SPREADSHEET_ID)) problems.push("SHEET_SPREADSHEET_ID is missing");
         if (!isSet(env.SHEET_TAB_NAME)) problems.push("SHEET_TAB_NAME is missing");
     }
+    // The default destination (the first) is also the plain spreadsheetId /
+    // tabName, so every existing caller keeps working unchanged.
+    const first = destinations.destinations[0] ?? null;
     if (isSet(env.GOOGLE_APPLICATION_CREDENTIALS)) {
         problems.push("GOOGLE_APPLICATION_CREDENTIALS must not be set: the Sheet sync uses the runtime service identity, not a key file");
     }
@@ -57,9 +133,10 @@ export function readSheetSyncConfig(env = process.env) {
         enabled,
         gate: enabled ? SHEET_SYNC_GATE.ENABLED : SHEET_SYNC_GATE.DISABLED,
         gateReason,
-        spreadsheetId: isSet(env.SHEET_SPREADSHEET_ID) ? env.SHEET_SPREADSHEET_ID.trim() : null,
+        spreadsheetId: destinations.fromList ? first?.spreadsheetId ?? null : (isSet(env.SHEET_SPREADSHEET_ID) ? env.SHEET_SPREADSHEET_ID.trim() : null),
         // Not trimmed inside: the tab name must match the Sheet exactly.
-        tabName: isSet(env.SHEET_TAB_NAME) ? env.SHEET_TAB_NAME : null,
+        tabName: destinations.fromList ? first?.tabName ?? null : (isSet(env.SHEET_TAB_NAME) ? env.SHEET_TAB_NAME : null),
+        destinations: Object.freeze(destinations.destinations),
         problems: Object.freeze(problems),
     });
 }

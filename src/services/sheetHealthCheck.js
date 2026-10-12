@@ -63,8 +63,12 @@ function failureStatus(error) {
 // sheetsClient: injected client or factory (tests); defaults to the live
 //   client with the read-only scope (Application Default Credentials).
 // clock: () => Date for checkedAt.
-export async function runSheetHealthCheck({ env = process.env, sheetsClient, clock = () => new Date() } = {}) {
-    const config = readSheetSyncConfig(env);
+// destination: a Sync Destination ({ spreadsheetId, tabName }) to check
+//   instead of the default one (the worker checks the active destination, or
+//   the one an ADMIN asked to switch to).
+export async function runSheetHealthCheck({ env = process.env, sheetsClient, clock = () => new Date(), destination = null } = {}) {
+    const base = readSheetSyncConfig(env);
+    const config = destination ? { ...base, spreadsheetId: destination.spreadsheetId, tabName: destination.tabName } : base;
     const result = (fields) => Object.freeze({
         ok: fields.status === HEALTH_STATUS.CONNECTED && fields.schema === SCHEMA_STATUS.VALID,
         schema: SCHEMA_STATUS.NOT_CHECKED,

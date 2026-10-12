@@ -16,7 +16,8 @@ const dateFormat = new Intl.DateTimeFormat("en-GB", {
     hour12: false,
 });
 
-export function AdminRolesPage() {
+// embedded: shown as a Settings tab (Settings owns the page title).
+export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}) {
     const { user, token } = useAuth();
     const isAdmin = hasAdminRole(user);
 
@@ -84,7 +85,9 @@ export function AdminRolesPage() {
         <div className="mx-auto max-w-6xl space-y-6">
             <header className="flex flex-wrap items-end justify-between gap-4">
                 <div>
-                    <h1 id="page-title" className="text-headline-lg text-ink">Change Roles</h1>
+                    {embedded
+                        ? <h2 className="text-headline-md text-ink">Change Roles</h2>
+                        : <h1 id="page-title" className="text-headline-lg text-ink">Change Roles</h1>}
                     <p className="mt-1 text-body-md text-ink-subtle">
                         Manage the roles of console users. A change applies to their very next request.
                     </p>

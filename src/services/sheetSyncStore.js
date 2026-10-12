@@ -211,14 +211,16 @@ export function createSheetSyncStore({ db } = {}) {
     // A new QUEUED run, or the kind's active (QUEUED/RUNNING) run if there is
     // one already: { run, created }. The partial unique index makes this
     // safe against concurrent requests.
-    async function requestRun({ kind, triggerSource, requestedBy = null, now = new Date() }) {
+    // destinationKey: only for a destination-switch check (the destination it
+    // validates); other runs record theirs when they start (setRunDestination).
+    async function requestRun({ kind, triggerSource, requestedBy = null, destinationKey = null, now = new Date() }) {
         if (!Object.values(RUN_KIND).includes(kind)) throw new Error("Unknown run kind");
         if (!Object.values(RUN_TRIGGER).includes(triggerSource)) throw new Error("Unknown run trigger");
         for (let tries = 0; tries < 3; tries++) {
             const active = await db.sheetSyncRun.findFirst({ where: { kind, status: { in: ACTIVE_RUN_STATUSES } }, orderBy: { createdAt: "asc" } });
             if (active) return { run: active, created: false };
             try {
-                const run = await db.sheetSyncRun.create({ data: { runId: randomUUID(), kind, triggerSource, requestedBy, status: RUN_STATUS.QUEUED, createdAt: now, updatedAt: now } });
+                const run = await db.sheetSyncRun.create({ data: { runId: randomUUID(), kind, triggerSource, requestedBy, destinationKey, status: RUN_STATUS.QUEUED, createdAt: now, updatedAt: now } });
                 return { run, created: true };
             } catch (error) {
                 if (!isUniqueViolation(error)) throw error;
@@ -265,7 +267,13 @@ export function createSheetSyncStore({ db } = {}) {
         return count === 1;
     }
 
+    // The Sync Destination a run uses, resolved when it starts.
+    async function setRunDestination(run, destinationKey) {
+        await db.sheetSyncRun.updateMany({ where: runOwnedBy(run), data: { destinationKey } });
+    }
+
     const getRun = (runId) => db.sheetSyncRun.findUnique({ where: { runId } });
+    const recentRuns = (kind, take = 10) => db.sheetSyncRun.findMany({ where: { kind }, orderBy: { createdAt: "desc" }, take });
 
     const latestRun = (kind, where = {}) => db.sheetSyncRun.findFirst({ where: { kind, ...where }, orderBy: { createdAt: "desc" } });
 
@@ -289,8 +297,52 @@ export function createSheetSyncStore({ db } = {}) {
         await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID, writerLeaseOwner: owner }, data: { writerLeaseOwner: null, writerLeaseExpiresAt: null } });
     }
 
-    async function heartbeat({ writeGate, configured, targetHint, now }) {
-        await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID }, data: { writeGate, configured, targetHint, workerHeartbeatAt: now, updatedAt: now } });
+    // destinations: the configured Sync Destinations' public metadata (key,
+    // name, short hint, tab name; never a full spreadsheet ID).
+    async function heartbeat({ writeGate, configured, targetHint, destinations, now }) {
+        const data = { writeGate, configured, targetHint, workerHeartbeatAt: now, updatedAt: now };
+        if (destinations !== undefined) data.destinations = destinations;
+        await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID }, data });
+    }
+
+    // ------------------------------------------------------------ Sync Destination
+
+    // An ADMIN's switch request: recorded only when none is pending.
+    async function requestDestination({ key, now }) {
+        const { count } = await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID, requestedDestinationKey: null }, data: { requestedDestinationKey: key, updatedAt: now } });
+        return count === 1;
+    }
+
+    // A switch that won't happen (validation failed, or the request was
+    // withdrawn): the active destination is left as it is.
+    async function clearRequestedDestination({ key, now }) {
+        const { count } = await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID, requestedDestinationKey: key }, data: { requestedDestinationKey: null, updatedAt: now } });
+        return count === 1;
+    }
+
+    // A validated switch: the requested destination becomes the active one,
+    // and the change is written to the audit log (the ADMIN who asked for
+    // it), in one transaction. Only the pending request can be promoted.
+    async function promoteDestination({ key, previous, next, requestedBy, now }) {
+        return db.$transaction(async (tx) => {
+            const { count } = await tx.sheetSyncState.updateMany({
+                where: { stateId: STATE_ID, requestedDestinationKey: key },
+                data: { activeDestinationKey: key, requestedDestinationKey: null, updatedAt: now },
+            });
+            if (count !== 1) return false;
+            if (requestedBy) {
+                await tx.auditLog.create({
+                    data: {
+                        auditId: randomUUID(), adminId: requestedBy, action: "SET_SHEET_DESTINATION",
+                        previousStatus: previous?.key ?? "NONE", newStatus: key,
+                        previousValue: previous?.name ?? null, newValue: next?.name ?? null,
+                        reason: "Google Sheet sync destination changed after its access and headers were validated",
+                        createdDate: now,
+                    },
+                });
+            }
+            return true;
+        });
     }
 
     async function setIntegrationState({ state, errorClass = null, errorCode = null, now }) {
@@ -311,7 +363,8 @@ export function createSheetSyncStore({ db } = {}) {
 
     return Object.freeze({
         claimQueueBatch, completeQueueItem, failQueueItem, retryQueueItem, queueCounts, resolveFailedBefore, openQueueItems, settleReconciled, pruneCompleted,
-        requestRun, claimRun, renewRun, finishRun, getRun, latestRun,
+        requestRun, claimRun, renewRun, finishRun, setRunDestination, getRun, latestRun, recentRuns,
         getState, acquireWriterLease, releaseWriterLease, heartbeat, setIntegrationState, recordTransientError, recordSyncSuccess,
+        requestDestination, clearRequestedDestination, promoteDestination,
     });
 }
