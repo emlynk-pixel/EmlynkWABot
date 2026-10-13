@@ -63,9 +63,9 @@ describe("Need Attention page", () => {
         renderApp("/follow-ups");
         expect(await screen.findByRole("heading", { level: 1, name: "Need Attention" })).toBeInTheDocument();
         expect(screen.getByText("Calls and candidate follow-ups that require action.")).toBeInTheDocument();
-        expect(calls.some((c) => c.path === "/api/admin/follow-ups?status=OPEN")).toBe(true);
 
         const candidates = await screen.findByRole("list", { name: "Candidates" });
+        expect(calls.some((c) => c.path === "/api/admin/follow-ups?status=OPEN")).toBe(true);
         expect(within(candidates).getAllByRole("listitem", { name: /SILVA|PERERA/ })).toHaveLength(2);
 
         const saman = await group("SAMAN SILVA");
