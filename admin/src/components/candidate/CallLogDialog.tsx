@@ -19,7 +19,14 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), texta
 
 export type CallLogCandidate = { name: string | null; passportId: string; whatsappNumber: string | null; contactNumber: string | null };
 
-const prefersReducedMotion = () => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+// The drawer's denser controls: the shared field and button styles, one
+// step shorter (36px fields, 32px buttons) so Candidate History keeps most
+// of the height. Text sizes are unchanged.
+const compactField = fieldControl.replace("h-10", "h-9");
+const compactTextArea = textAreaControl.replace("py-2", "py-1.5");
+const compactButton = (style: string) => style.replace("h-9", "h-8").replace("px-4", "px-3");
+
+const prefersReducedMotion =() => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // Candidate History: the calls made to the candidate (date and time, who
 // called, a short note of what the candidate said) and what happened to the
@@ -178,6 +185,12 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                 }}
                 className={`absolute inset-0 bg-overlay transition-opacity duration-200 motion-reduce:transition-none ${shown ? "opacity-100" : "opacity-0"}`}
             />
+            {/* Full viewport height (dvh: the visible height on mobile browsers). Width:
+                the whole screen on a phone, 92% of a small screen, at most 600px from a
+                laptop up, 640px on a very wide monitor. Candidate History takes the height
+                left between the header and the compact form, scrolling on its own; on a
+                very short screen the whole drawer scrolls instead, so the form is never
+                out of reach. */}
             <div
                 ref={panelRef}
                 role="dialog"
@@ -185,10 +198,10 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                 aria-labelledby={titleId}
                 aria-describedby={subtitleId}
                 onKeyDown={trapFocus}
-                className={`relative flex h-full w-full flex-col overflow-x-hidden overflow-y-auto border-border bg-surface shadow-modal transition-transform duration-200 ease-out motion-reduce:transition-none sm:w-[min(640px,88vw)] sm:rounded-l-xl sm:border-l ${shown ? "translate-x-0" : "translate-x-full"}`}
+                className={`relative flex h-full max-h-dvh w-full flex-col overflow-x-hidden overflow-y-auto border-border bg-surface shadow-modal transition-transform duration-200 ease-out motion-reduce:transition-none sm:w-[min(92vw,600px)] sm:rounded-l-xl sm:border-l 2xl:w-[640px] ${shown ? "translate-x-0" : "translate-x-full"}`}
             >
-                <header className="flex shrink-0 items-start gap-3 border-b border-border px-5 py-4 sm:px-6">
-                    <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
+                <header className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3 sm:px-5">
+                    <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
                         <Icon name="call" className="size-5" />
                     </span>
                     <div className="min-w-0 flex-1">
@@ -208,8 +221,8 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                 </header>
 
                 {candidate && (
-                    <dl aria-label="Candidate" className="grid shrink-0 grid-cols-1 gap-x-6 gap-y-2 border-b border-border bg-canvas px-5 py-3 text-body-sm sm:grid-cols-3 sm:px-6">
-                        <div className="min-w-0">
+                    <dl aria-label="Candidate" className="grid shrink-0 grid-cols-2 gap-x-5 gap-y-1.5 border-b border-border bg-canvas px-4 py-2.5 text-body-sm min-[480px]:grid-cols-3 sm:px-5">
+                        <div className="col-span-2 min-w-0 min-[480px]:col-span-1">
                             <dt className="text-label-caps uppercase text-ink-subtle">Candidate</dt>
                             <dd className="truncate font-medium text-ink">{candidate.name ?? "—"}</dd>
                         </div>
@@ -224,22 +237,22 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                     </dl>
                 )}
 
-                <section aria-labelledby={`${titleId}-history`} className="flex min-h-48 flex-1 flex-col">
-                    <div className="flex shrink-0 items-center justify-between gap-3 px-5 pt-5 pb-3 sm:px-6">
-                        <h3 id={`${titleId}-history`} className="text-headline-sm text-ink">Candidate History</h3>
+                <section aria-labelledby={`${titleId}-history`} className="flex min-h-40 flex-1 flex-col">
+                    <div className="flex shrink-0 items-center justify-between gap-3 px-4 pt-3 pb-2 sm:px-5">
+                        <h3 id={`${titleId}-history`} className="text-body-lg font-semibold text-ink">Candidate History</h3>
                         {loaded && entries.length > 0 && (
                             <span className="rounded-full border border-border bg-canvas px-2.5 py-0.5 text-label-sm text-ink-muted tabular-nums">
                                 {entries.length} {entries.length === 1 ? "call" : "calls"}
                             </span>
                         )}
                     </div>
-                    <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 pb-5 sm:px-6">
+                    <div data-testid="candidate-history-scroll" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pb-3 sm:px-5">
                         {log.status === "loading" && !added && <LoadingState label="Loading history…" />}
                         {log.status === "error" && !added && <ErrorState message={log.error.message} onRetry={log.reload} />}
                         {loaded && (
                             timeline.length === 0
                                 ? (
-                                    <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border-strong px-4 py-10 text-center">
+                                    <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-border-strong px-4 py-8 text-center">
                                         <Icon name="history" className="size-7 text-ink-subtle" />
                                         <p className="text-headline-sm text-ink">No candidate history yet.</p>
                                         <p className="text-body-sm text-ink-muted">Add a call log or wait for candidate activity to appear.</p>
@@ -247,7 +260,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                 )
                                 : (
                                     <>
-                                        <ul aria-label="Candidate history" className="space-y-2.5">
+                                        <ul aria-label="Candidate history" className="space-y-2">
                                             {timeline.map((item) => item.type === "CALL_LOG"
                                                 ? (
                                                     <CallItem
@@ -273,22 +286,24 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
 
                 {canEdit
                     ? (
-                        <form onSubmit={submit} noValidate aria-labelledby={`${titleId}-add`} className="shrink-0 space-y-3 border-t border-border bg-surface px-5 py-4 sm:px-6">
-                            <h3 id={`${titleId}-add`} className="text-headline-sm text-ink">Add New Call Log</h3>
-                            <div className="grid grid-cols-2 gap-3">
+                        <form onSubmit={submit} noValidate aria-labelledby={`${titleId}-add`} className="shrink-0 space-y-2 border-t border-border bg-surface px-4 pt-2.5 pb-3 sm:px-5">
+                            <h3 id={`${titleId}-add`} className="text-body-lg font-semibold text-ink">Add New Call Log</h3>
+                            {/* Date and time side by side; stacked only below 340px, where both inputs no longer fit. */}
+                            <div data-testid="call-log-when" className="grid grid-cols-1 gap-2 min-[340px]:grid-cols-2 sm:gap-3">
                                 <Field label="Date" required htmlFor="call-log-date">
-                                    <input id="call-log-date" type="date" required max={today} value={when.date} disabled={busy} onChange={(event) => setWhen((w) => ({ ...w, date: event.target.value }))} className={fieldControl} />
+                                    <input id="call-log-date" type="date" required max={today} value={when.date} disabled={busy} onChange={(event) => setWhen((w) => ({ ...w, date: event.target.value }))} className={compactField} />
                                 </Field>
                                 <Field label="Time" required htmlFor="call-log-time">
-                                    <input id="call-log-time" type="time" required value={when.time} disabled={busy} onChange={(event) => setWhen((w) => ({ ...w, time: event.target.value }))} className={fieldControl} />
+                                    <input id="call-log-time" type="time" required value={when.time} disabled={busy} onChange={(event) => setWhen((w) => ({ ...w, time: event.target.value }))} className={compactField} />
                                 </Field>
                             </div>
+                            {/* Two lines by default, three on a tall screen; it can still be dragged taller. */}
                             <Field label="What the candidate said" required htmlFor="call-log-note">
-                                <textarea id="call-log-note" rows={3} maxLength={NOTE_MAX_LENGTH} value={note} disabled={busy} onChange={(event) => setNote(event.target.value)} placeholder="Short note…" className={`${textAreaControl} resize-y`} />
+                                <textarea id="call-log-note" rows={2} maxLength={NOTE_MAX_LENGTH} value={note} disabled={busy} onChange={(event) => setNote(event.target.value)} placeholder="Short note…" className={`${compactTextArea} block min-h-14 resize-y [@media(min-height:900px)]:min-h-20`} />
                             </Field>
                             <DialogError message={error} />
-                            <div className="flex flex-wrap justify-end gap-2">
-                                <button type="button" onClick={requestClose} disabled={busy} className={secondaryButton}>Close</button>
+                            <div className="flex flex-wrap justify-end gap-2 pt-0.5">
+                                <button type="button" onClick={requestClose} disabled={busy} className={compactButton(secondaryButton)}>Close</button>
                                 {/* Marks the NEW call for follow-up when it is added (one request: the call and its follow-up together). */}
                                 <button
                                     type="button"
@@ -296,18 +311,18 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                     onClick={() => setNeedsAttention((on) => !on)}
                                     disabled={busy}
                                     title={needsAttention ? "This call will be marked as needs attention" : "Mark this call as needs attention"}
-                                    className={`${buttonBase} inline-flex items-center gap-1.5 border ${needsAttention ? "border-review-border bg-review-bg text-review" : "border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"}`}
+                                    className={`${compactButton(buttonBase)} inline-flex items-center gap-1.5 border ${needsAttention ? "border-review-border bg-review-bg text-review" : "border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"}`}
                                 >
                                     <Icon name={needsAttention ? "flag_fill" : "flag"} className="size-4" />
                                     Need Attention
                                 </button>
-                                <button type="submit" disabled={busy || !note.trim()} className={primaryButton}>{busy ? "Saving…" : "Add call"}</button>
+                                <button type="submit" disabled={busy || !note.trim()} className={compactButton(primaryButton)}>{busy ? "Saving…" : "Add call"}</button>
                             </div>
                         </form>
                     )
                     : (
-                        <div className="flex shrink-0 justify-end border-t border-border px-5 py-4 sm:px-6">
-                            <button type="button" onClick={requestClose} className={secondaryButton}>Close</button>
+                        <div className="flex shrink-0 justify-end border-t border-border px-4 py-2.5 sm:px-5">
+                            <button type="button" onClick={requestClose} className={compactButton(secondaryButton)}>Close</button>
                         </div>
                     )}
             </div>
@@ -322,21 +337,22 @@ function CallItem({ entry, canEdit, busy, disabled, error, onMark }: {
     entry: CallLogEntry; canEdit: boolean; busy: boolean; disabled: boolean; error: string | null; onMark: () => void;
 }) {
     return (
-        <li data-kind="call-log" className="min-w-0 rounded-lg border border-border bg-surface px-4 py-3">
-            <div className="flex items-start justify-between gap-3">
-                <p className="min-w-0">
-                    <span className="text-label-md font-semibold text-ink tabular-nums">
+        <li data-kind="call-log" className="min-w-0 rounded-lg border border-border bg-surface px-3.5 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+                <p className="flex min-w-min flex-1 flex-wrap items-baseline gap-x-2">
+                    <span className="whitespace-nowrap text-label-md font-semibold text-ink tabular-nums">
                         {formatDate(entry.calledAt)} <span className="font-normal text-ink-subtle">·</span> {formatTime(entry.calledAt)}
                     </span>
-                    <span className={`ml-2 ${kindLabel}`}>Call log</span>
+                    <span className={`whitespace-nowrap ${kindLabel}`}>Call log</span>
                 </p>
-                <div className="flex min-w-0 shrink-0 items-center gap-1.5">
-                    {entry.adminName && <span className="max-w-40 truncate text-label-sm text-ink-subtle">{entry.adminName}</span>}
+                {/* -my-1: the flag's 28px hit area doesn't make the row taller than its text. */}
+                <div className="-my-1 flex min-w-0 max-w-[50%] items-center gap-1.5">
+                    {entry.adminName && <span title={entry.adminName} className="min-w-0 max-w-40 truncate text-label-sm text-ink-subtle">{entry.adminName}</span>}
                     <FollowUpFlag entry={entry} canEdit={canEdit} busy={busy} disabled={disabled} onMark={onMark} />
                 </div>
             </div>
-            <p className="mt-1.5 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{entry.note}</p>
-            {error && <p role="alert" className="mt-1.5 text-right text-label-sm text-critical">{error}</p>}
+            <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{entry.note}</p>
+            {error && <p role="alert" className="mt-1 text-right text-label-sm text-critical">{error}</p>}
         </li>
     );
 }
@@ -396,13 +412,13 @@ const ACTIVITY_ICON: Record<CandidateActivity["kind"], IconName> = {
 function ActivityItem({ activity }: { activity: CandidateActivity }) {
     const { title, detail, byline } = describeActivity(activity);
     return (
-        <li data-kind="candidate-activity" className="flex min-w-0 items-start gap-2.5 rounded-lg bg-canvas px-4 py-2.5">
+        <li data-kind="candidate-activity" className="flex min-w-0 items-start gap-2.5 rounded-lg bg-canvas px-3.5 py-2">
             <Icon name={ACTIVITY_ICON[activity.kind] ?? "history"} className="mt-0.5 size-4 text-ink-subtle" />
             <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                    <span className="text-label-sm text-ink-muted tabular-nums">
-                        {formatDate(activity.occurredAt)} <span className="text-ink-subtle">·</span> {formatTime(activity.occurredAt)}
-                        <span className={`ml-2 ${kindLabel}`}>Candidate activity</span>
+                    <span className="flex flex-wrap items-baseline gap-x-2 text-label-sm text-ink-muted tabular-nums">
+                        <span className="whitespace-nowrap">{formatDate(activity.occurredAt)} <span className="text-ink-subtle">·</span> {formatTime(activity.occurredAt)}</span>
+                        <span className={`whitespace-nowrap ${kindLabel}`}>Candidate activity</span>
                     </span>
                     {byline && <span className="min-w-0 truncate text-label-sm text-ink-subtle">{byline}</span>}
                 </p>

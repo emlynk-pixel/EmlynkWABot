@@ -1021,6 +1021,36 @@ describe("Call log drawer: closing", () => {
         await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     });
 
+    test("layout: history takes the free height and scrolls on its own; the compact form keeps every field and button; responsive width and date/time", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("Asked about the medical");
+        // jsdom has no layout: check the layout rules are applied (real sizes were checked in a browser).
+        const classes = (element: Element) => element.className.split(/\s+/);
+        expect(classes(dialog)).toEqual(expect.arrayContaining(["h-full", "max-h-dvh", "flex-col", "overflow-x-hidden", "w-full", "sm:w-[min(92vw,600px)]", "2xl:w-[640px]"]));
+
+        const history = screen.getByTestId("candidate-history-scroll");
+        expect(history).toContainElement(within(dialog).getByRole("list", { name: "Candidate history" }));
+        expect(classes(history)).toEqual(expect.arrayContaining(["min-h-0", "flex-1", "overflow-y-auto", "overflow-x-hidden"]));
+        expect(classes(history.closest("section")!)).toContain("flex-1");
+        expect(within(dialog).queryByRole("list", { name: "Current documents" })).toBeNull();
+
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+        expect(classes(form)).toContain("shrink-0");
+        expect(within(form).getByRole("heading", { name: "Add New Call Log" })).toBeInTheDocument();
+        for (const label of ["Date *", "Time *", "What the candidate said *"]) expect(within(form).getByLabelText(label)).toBeInTheDocument();
+        expect(within(form).getByLabelText("What the candidate said *")).toHaveAttribute("rows", "2");
+        expect(classes(within(form).getByLabelText("Date *"))).toContain("h-9");
+        // Date and time side by side, stacked only on a very narrow screen.
+        expect(classes(screen.getByTestId("call-log-when"))).toEqual(expect.arrayContaining(["grid-cols-1", "min-[340px]:grid-cols-2"]));
+        // Every button keeps its name and a 32px height.
+        for (const name of ["Close", "Need Attention", "Add call"]) expect(classes(within(form).getByRole("button", { name }))).toContain("h-8");
+    });
+
     test("29. the backdrop does not close the drawer while a call is being saved", async () => {
         let release!: () => void;
         signedInBackend({
