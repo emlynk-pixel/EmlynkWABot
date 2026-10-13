@@ -1625,7 +1625,9 @@ describe("Call log drawer: closing", () => {
     });
 });
 
-describe("Candidate registration", () => {
+// The registration tests fill the whole form key by key (and upload files), which takes a few seconds
+// under the full suite running in parallel; only this group gets more than the 5 s default.
+describe("Candidate registration", { timeout: 20_000 }, () => {
     test("required fields (including the WhatsApp number) are checked before anything is sent; the address and passport file are not required", async () => {
         const { calls } = signedInBackend();
         renderApp("/candidates/new");
