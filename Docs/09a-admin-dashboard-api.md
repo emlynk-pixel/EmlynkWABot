@@ -687,6 +687,34 @@ The body holds the fields `nameAsInPassport, permanentAddress, birthday, tshirtS
   - `previous_value` / `new_value` hold only the changed fields as JSON, and the actor is `req.user`.
   - A save that changes nothing (or an empty form with nothing saved) writes no row and no audit entry.
 
+## 4p. Work Allocation
+
+ADMIN and MANAGER only (`requireRole`): every other role gets 403. Rules: `Docs/20-candidate-management.md` §4.5.
+
+### `GET /api/admin/work-allocation/candidates?status=&analystId=&search=&page=`
+
+- `status`: `UNALLOCATED` (default) or `ALLOCATED`. `analystId` (with `ALLOCATED`): one Analyst's candidates. `search`: as `GET /candidates`. `page`: 100 a page, newest registered first.
+- Each item: `passportId, uniqueId, name, nic, jobTypes, whatsappNumber, contactNumber, registeredDate, stagesCompleted, stagesTotal, currentStage, analyst ({ analystId, name, active } or null), assignedDate`, plus `pagination` and `filters`.
+
+### `GET /api/admin/work-allocation/analysts`
+
+`{ analysts: [{ analystId, name, email, assignedCount }], unavailableAnalysts: [{ analystId, name, assignedCount }], unallocatedCount }`. `analysts` holds the ACTIVE Analysts, the only valid targets. `unavailableAnalysts` holds users who still have candidates but are no longer active Analysts. The counts come from one grouped query.
+
+### `POST /api/admin/work-allocation/assign`
+
+Body `{ candidateIds: [passportId…], allocations: [{ analystId, count }…], reassign?: boolean }`. One transaction, all or nothing. Responds `{ assigned, reassigned, unchanged, byAnalyst: [{ analystId, name, count }] }`.
+
+- 400: empty or repeated `candidateIds` (at most 500), counts that aren't whole numbers ≥ 0, an Analyst listed twice, or counts that don't add up to the number of candidates (`code: "COUNT_MISMATCH"` on the error).
+- 409: `CANDIDATE_NOT_AVAILABLE`, `ANALYST_NOT_FOUND`, `NOT_AN_ANALYST`, `ANALYST_INACTIVE`, or `ALREADY_ALLOCATED` (allocated candidates without `reassign: true`).
+
+### `POST /api/admin/work-allocation/unassign`
+
+Body `{ candidateIds: [passportId…], confirm: true }`. Responds `{ unassigned, alreadyUnallocated }`. 400 without `confirm: true`.
+
+### Analyst scoping of the other endpoints
+
+For `ANALYST` the server limits these to the candidates allocated to them: `GET /candidates` (search and totals included), every `/candidates/:passportId/...` route (404 *Candidate not found* otherwise), `GET /clients/:passportId` (404), `GET /follow-ups`, `POST /follow-ups/:id/complete` (404), `GET /clients`, `GET /documents`, `GET /documents/missing`, `GET /police`, and `POST /review/:id/assign-client` (409 `CLIENT_NOT_FOUND` for any other candidate). `POST /candidates` (registration) is ADMIN, MANAGER and REGISTRATION_DESK only. The review queue, overview and daily report endpoints are not scoped.
+
 ## 5. Pages and data
 
 | Page | API | Shows |
@@ -867,6 +895,8 @@ Endpoint tiers (`src/routes/admin.js`):
 |---|---|---|
 | Dashboard reads | ADMIN, MANAGER, ANALYST | overview, documents, clients, police, reports, review (read) |
 | Candidates (`CANDIDATE_STAFF`) | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | the whole Candidates area: list, registration, details, stages, candidate documents, call logs, additional details; Priority Follow-Ups: flag a call (`POST /candidates/:passportId/call-logs/:callLogId/follow-up`), list (`GET /follow-ups`) and complete (`POST /follow-ups/:id/complete`) |
+| Work Allocation | ADMIN, MANAGER | `/work-allocation/*` (section 4p) |
+| Registration | ADMIN, MANAGER, REGISTRATION_DESK | `POST /candidates` |
 | Follow-up delete (Need Attention page) | ADMIN, MANAGER | `DELETE /follow-ups/:id`: removes the follow-up row only (never the call log, candidate or documents); ANALYST and REGISTRATION_DESK get 403. The role is the signed-in user's, read from the database on every request |
 | Review and corrections | ADMIN, MANAGER, ANALYST | review actions, temporary document delete |
 | Police date correction | ADMIN, MANAGER | `POST /documents/:id/police-date` |

@@ -382,6 +382,20 @@ Formerly *Priority Follow-Ups*. Calls flagged **Need attention** in a candidate'
 - Marking, completing and deleting are recorded in Audit Logs (*Candidate* category: `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`).
 - Loading, empty, error and in-progress states are shown, with a confirmation message after each action.
 
+### Work Allocation (`/admin/work-allocation`) — ADMIN and MANAGER
+
+Assigns candidates to Analysts. In the sidebar after Need Attention, for ADMIN and MANAGER only. For ANALYST and REGISTRATION_DESK the link is hidden, the URL shows *Access Restricted* and requests nothing, and the API answers 403.
+
+- **Views:** *Unallocated* (default, with its count) and *Allocated* (with an Analyst filter). Both have a server-side search (name, passport ID, contact or WhatsApp number, as on Candidates) and 100 candidates a page, newest registered first.
+- **Table:** checkbox, passport number (opens the candidate), candidate name, contact / WhatsApp, registered date, current stage (and stages done), Analyst (marked *inactive* when that user is no longer active), status.
+- **Selection:** individual checkboxes, **Select all on this page** and **Clear selection**. Selection is per page: changing the page, view or search clears it, so a selection is never larger than what is on screen.
+- **Allocate panel:** every active Analyst with their current number of candidates. Type how many of the selection each one gets; the panel previews the resulting count (*42 candidates → 52*) and the total (*30 / 30*). **All** gives the whole selection to one Analyst. **Assign** stays disabled until the counts are whole numbers that add up exactly to the selection.
+- **Reassign:** when the selection includes allocated candidates, the button reads *Reassign N candidates* and a confirmation lists each candidate's current Analyst before anything is sent.
+- **Unassign:** *Unassign N* (allocated candidates in the selection) asks for confirmation, then returns them to Unallocated.
+- After a change, a summary is shown (*Allocated 30 candidates: Kamal 10, Nimal 12, Saman 8.*) and the list and counts reload. Server errors are shown as they are (for example *Ann Analyst is not an active user. Nothing was changed.*); nothing is partly applied.
+- **Empty states:** *All candidates are currently allocated.*, *No active Analysts are available for allocation.*, *No candidates match this search.*
+- **What an Analyst then sees:** only their allocated candidates, in Candidates, Need Attention, Clients, Documents, Missing Documents and Police Workflow. Any other candidate's URL answers *Candidate not found*. Analysts no longer register candidates. Rules, audit and the remaining global pages: `Docs/20-candidate-management.md` §4.5.
+
 ### Invite User (Settings tab, `/admin/settings/invite`) — ADMIN Only
 
 - Accessible exclusively to users with the `ADMIN` role. It is the **Invite User** tab of Settings; it is no longer a sidebar entry, and the old `/admin/invitations` URL redirects to this tab.
@@ -616,7 +630,7 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | GET | `/clients` | ADMIN, MANAGER, ANALYST | Clients directory (`search`, `completion`, `missingType`, paging) |
 | GET | `/clients/:passportId` | ADMIN, MANAGER, ANALYST | Client details |
 | GET | `/candidates` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate list (search, filters, paging) |
-| POST | `/candidates` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate registration `{ passportId, nic, firstName, ... }` |
+| POST | `/candidates` | ADMIN, MANAGER, REGISTRATION_DESK | Candidate registration `{ passportId, nic, firstName, ... }` (not ANALYST: a new candidate is unallocated) |
 | GET | `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate details and stage status |
 | PUT | `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Update candidate details |
 | PUT | `/candidates/:passportId/stages/:stage` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Update candidate deployment stage `{ completed, notes, ... }` |
@@ -626,6 +640,10 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | GET | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate call logs and candidate activity (Candidate History) |
 | POST | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Record call log `{ note, calledAt, needsAttention?, outcome? }` (`outcome: "NO_ANSWER"`: no note needed) |
 | POST | `/candidates/:passportId/call-logs/:callLogId/follow-up` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Mark a call for follow-up (201; 409 `FOLLOW_UP_EXISTS` if it already has an open one; 404 if the call isn't this candidate's). The call log is not changed |
+| GET | `/work-allocation/candidates?status&analystId&search&page` | ADMIN, MANAGER | Work Allocation list: Unallocated or Allocated candidates, 100 a page |
+| GET | `/work-allocation/analysts` | ADMIN, MANAGER | Active Analysts with their candidate counts |
+| POST | `/work-allocation/assign` | ADMIN, MANAGER | Assign / distribute / reassign `{ candidateIds, allocations: [{ analystId, count }], reassign? }` (all or nothing) |
+| POST | `/work-allocation/unassign` | ADMIN, MANAGER | Return candidates to Unallocated `{ candidateIds, confirm: true }` |
 | GET | `/follow-ups?status` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Need Attention follow-ups grouped by candidate (default `OPEN`; at most 500 follow-ups, newest first). Each group still carries `documentStatus`; the page does not render it |
 | POST | `/follow-ups/:followUpId/complete` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Complete a follow-up (409 `FOLLOW_UP_COMPLETED` if already completed); the row is kept |
 | DELETE | `/follow-ups/:followUpId` | ADMIN, MANAGER | Delete the follow-up row only; the call log, candidate and documents stay |
