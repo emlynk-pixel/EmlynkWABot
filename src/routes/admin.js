@@ -57,6 +57,16 @@ import {
     listFollowUps,
     parseFollowUpListQuery,
 } from "../services/callLogFollowUpService.js";
+import { accessiblePassportIds, ALLOCATION_MANAGER_ROLES, canAccessCandidate, candidateScope } from "../services/candidateAccess.js";
+import {
+    assignCandidates,
+    listAllocationAnalysts,
+    listAllocationCandidates,
+    parseAllocationListQuery,
+    parseAssignBody,
+    parseUnassignBody,
+    unassignCandidates,
+} from "../services/workAllocationService.js";
 import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
@@ -98,6 +108,9 @@ function contentDisposition(fileName) {
 // ADMIN: full access including user management.
 // REGISTRATION_DESK: the whole Candidates area (registration, details,
 // stages, candidate documents, call logs); nothing else.
+// Work Allocation: an ANALYST only sees and changes the candidates allocated
+// to them (services/candidateAccess.js), on every candidate route and in the
+// lists that name candidates; ADMIN, MANAGER and REGISTRATION_DESK see all.
 const { ADMIN, MANAGER, ANALYST, REGISTRATION_DESK } = ROLES;
 // The set of roles allowed for each endpoint tier.
 const ALL_ACTIVE = [ADMIN, MANAGER, ANALYST];                   // overview, reports, etc
@@ -105,6 +118,9 @@ const CANDIDATE_STAFF = [ADMIN, MANAGER, ANALYST, REGISTRATION_DESK]; // the Can
 const ANALYSTS_UP = [ADMIN, MANAGER, ANALYST];                  // analyst or above
 const MANAGERS_UP = [ADMIN, MANAGER];                           // manager or above
 const ADMINS_ONLY = [ADMIN];                                    // administrators only
+const REGISTRATION_STAFF = [ADMIN, MANAGER, REGISTRATION_DESK]; // registering a new candidate
+// (an ANALYST works only on candidates allocated to them, and a new
+// candidate is unallocated, so registration is not an Analyst action)
 
 // Admin dashboard API, mounted at /api/admin (Phase 10). Read-only except
 // the review actions (approve, keep pending, remove from review) and the
@@ -149,7 +165,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await listMissingDocuments({ db: client, params: parsed.params }));
+        return res.json(await listMissingDocuments({ db: client, params: parsed.params, scope: candidateScope(req.user) }));
     });
 
     router.get("/documents", requireRole(ALL_ACTIVE), async (req, res) => {
@@ -158,7 +174,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await listDocuments({ db: client, params: parsed.params }));
+        return res.json(await listDocuments({ db: client, params: parsed.params, scope: candidateScope(req.user) }));
     });
 
     // Clients directory: search, complete/incomplete, missing type.
@@ -168,7 +184,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await listClients({ db: client, params: parsed.params }));
+        return res.json(await listClients({ db: client, params: parsed.params, scope: candidateScope(req.user) }));
     });
 
     // Daily report for one business day (Sri Lanka), default today.
@@ -231,6 +247,10 @@ export function createAdminRouter({
             });
         }
         const client = await resolveDb(db);
+        // A candidate outside the user's scope is "not found", like a missing one.
+        if (!(await canAccessCandidate(client, req.user, passportId))) {
+            return res.status(404).json({ message: "Client not found" });
+        }
         const details = await getClientDetails({ db: client, passportId });
         if (!details) {
             return res.status(404).json({ message: "Client not found" });
@@ -254,7 +274,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await listPoliceWorkflow({ db: client, params: parsed.params }));
+        return res.json(await listPoliceWorkflow({ db: client, params: parsed.params, allowedPassportIds: await accessiblePassportIds(client, req.user) }));
     });
 
     const invalidReviewId = (res) => res.status(400).json({
@@ -340,7 +360,15 @@ export function createAdminRouter({
 
     // Corrections of a waiting file; it stays pending and in the queue.
     router.post("/review/:reviewId/document-type", requireRole(ANALYSTS_UP), reviewAction(setDocumentType, { needsBucket: false, parse: parseSetDocumentTypeBody }));
-    router.post("/review/:reviewId/assign-client", requireRole(ANALYSTS_UP), reviewAction(assignClient, { needsBucket: false, parse: parseAssignClientBody }));
+    // A scoped user (ANALYST) may only link a file to a candidate allocated to
+    // them; any other passport ID gets the same answer as one that does not exist.
+    const assignClientInScope = async ({ db: client, admin, passportId, ...rest }) => {
+        if (passportId && !(await canAccessCandidate(client, admin, passportId))) {
+            throw new ReviewActionError(409, "CLIENT_NOT_FOUND", "No client has this passport ID. Choose an existing client; nothing was changed.");
+        }
+        return assignClient({ db: client, admin, passportId, ...rest });
+    };
+    router.post("/review/:reviewId/assign-client", requireRole(ANALYSTS_UP), reviewAction(assignClientInScope, { needsBucket: false, parse: parseAssignClientBody }));
 
     // ---------------------------------------------------------------- temporary documents deletion (ANALYSTS_UP)
     
@@ -401,8 +429,11 @@ export function createAdminRouter({
     // The stored passport ID for the one in the URL, resolved like the GET
     // below (exact, else the single case-insensitive match; never a guess
     // between two rows). Every candidate action runs on the stored ID.
-    const storedCandidateId = async (client, requested) => {
-        const passportId = await resolveCandidatePassportId({ db: client, passportId: requested });
+    // Only within the user's candidates (candidateAccess.js): for an Analyst,
+    // a candidate that is not allocated to them is 404, exactly like one that
+    // does not exist, before anything about it is read or changed.
+    const storedCandidateId = async (client, requested, user) => {
+        const passportId = await resolveCandidatePassportId({ db: client, passportId: requested, scope: candidateScope(user) });
         if (!passportId) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
         return passportId;
     };
@@ -413,10 +444,10 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await listCandidates({ db: client, params: parsed.params }));
+        return res.json(await listCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) }));
     });
 
-    router.post("/candidates", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.post("/candidates", requireRole(REGISTRATION_STAFF), async (req, res) => {
         const parsed = parseCandidateBody(req.body, { creating: true });
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
@@ -429,7 +460,7 @@ export function createAdminRouter({
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         // Also the registration lookup: the response carries the stored passport ID.
-        const passportId = await resolveCandidatePassportId({ db: client, passportId: req.params.passportId });
+        const passportId = await resolveCandidatePassportId({ db: client, passportId: req.params.passportId, scope: candidateScope(req.user) });
         const candidate = passportId && await getCandidate({ db: client, passportId });
         if (!candidate) return res.status(404).json({ message: "Candidate not found" });
         return res.json(candidate);
@@ -443,7 +474,7 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await updateCandidateDetails({
-            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), values: parsed.values,
         })));
     });
 
@@ -456,7 +487,7 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await updateStage({
-            db: client, passportId: await storedCandidateId(client, req.params.passportId), stage: req.params.stage, values: parsed.values, actor: req.user,
+            db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user), stage: req.params.stage, values: parsed.values, actor: req.user,
         })));
     });
 
@@ -474,7 +505,7 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await createUploadTarget({
             db: client,
             bucket: storage,
-            passportId: await storedCandidateId(client, req.params.passportId),
+            passportId: await storedCandidateId(client, req.params.passportId, req.user),
             documentType: parsed.values.documentType,
             mimeType: parsed.values.mimeType,
             fileSize: parsed.values.fileSize,
@@ -492,7 +523,7 @@ export function createAdminRouter({
             db: client,
             bucket: storage,
             admin: req.user,
-            passportId: await storedCandidateId(client, req.params.passportId),
+            passportId: await storedCandidateId(client, req.params.passportId, req.user),
             ...parsed.values,
         })));
     });
@@ -513,7 +544,7 @@ export function createAdminRouter({
             db: client,
             bucket: storage,
             admin: req.user,
-            passportId: await storedCandidateId(client, req.params.passportId),
+            passportId: await storedCandidateId(client, req.params.passportId, req.user),
             documentId: req.params.documentId,
             reason: parsed.values.reason,
         })));
@@ -522,7 +553,7 @@ export function createAdminRouter({
     router.get("/candidates/:passportId/call-logs", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.json(await listCallLogs({ db: client, passportId: await storedCandidateId(client, req.params.passportId) })));
+        return candidateAction(res, async () => res.json(await listCallLogs({ db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user) })));
     });
 
     router.post("/candidates/:passportId/call-logs", requireRole(CANDIDATE_STAFF), async (req, res) => {
@@ -533,7 +564,7 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.status(201).json(await addCallLog({
-            db: client, admin: req.user, passportId: await storedCandidateId(client, req.params.passportId), values: parsed.values,
+            db: client, admin: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), values: parsed.values,
         })));
     });
 
@@ -548,7 +579,7 @@ export function createAdminRouter({
         if (!isValidCallLogIdParam(req.params.callLogId)) return invalidId(res, "callLogId");
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.status(201).json(await flagCallLog({
-            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId), callLogId: req.params.callLogId,
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), callLogId: req.params.callLogId,
         })));
     });
 
@@ -558,13 +589,13 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await listFollowUps({ db: client, params: parsed.params }));
+        return res.json(await listFollowUps({ db: client, params: parsed.params, scope: candidateScope(req.user) }));
     });
 
     router.post("/follow-ups/:followUpId/complete", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidFollowUpIdParam(req.params.followUpId)) return invalidId(res, "followUpId");
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.json(await completeFollowUp({ db: client, actor: req.user, followUpId: req.params.followUpId })));
+        return candidateAction(res, async () => res.json(await completeFollowUp({ db: client, actor: req.user, followUpId: req.params.followUpId, scope: candidateScope(req.user) })));
     });
 
     router.delete("/follow-ups/:followUpId", requireRole(MANAGERS_UP), async (req, res) => {
@@ -579,7 +610,7 @@ export function createAdminRouter({
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await getAdditionalDetails({
-            db: client, passportId: await storedCandidateId(client, req.params.passportId),
+            db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user),
         })));
     });
 
@@ -591,9 +622,45 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await saveAdditionalDetails({
-            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId),
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user),
             values: parsed.values, expectedUpdatedDate: parsed.expectedUpdatedDate,
         })));
+    });
+
+    // ---------------------------------------------------------------- Work Allocation (ADMIN and MANAGER)
+    // Which Analyst each candidate is assigned to (workAllocationService.js).
+    // Every change is one transaction (all or nothing) and audited.
+
+    router.get("/work-allocation/candidates", requireRole(ALLOCATION_MANAGER_ROLES), async (req, res) => {
+        const parsed = parseAllocationListQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await listAllocationCandidates({ db: client, params: parsed.params }));
+    });
+
+    router.get("/work-allocation/analysts", requireRole(ALLOCATION_MANAGER_ROLES), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json(await listAllocationAnalysts({ db: client }));
+    });
+
+    router.post("/work-allocation/assign", requireRole(ALLOCATION_MANAGER_ROLES), async (req, res) => {
+        const parsed = parseAssignBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await assignCandidates({ db: client, actor: req.user, ...parsed.values })));
+    });
+
+    router.post("/work-allocation/unassign", requireRole(ALLOCATION_MANAGER_ROLES), async (req, res) => {
+        const parsed = parseUnassignBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await unassignCandidates({ db: client, actor: req.user, ...parsed.values })));
     });
 
     // ---------------------------------------------------------------- audit logs (ADMIN only, read-only)

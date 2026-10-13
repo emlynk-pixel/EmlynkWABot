@@ -26,6 +26,11 @@ export const CANDIDATE_ROLES: readonly Role[] = ALL_ROLES;
 export const ADMIN_ONLY: readonly Role[] = [ROLES.ADMIN];
 // Permanently deleting a Priority Follow-Up (the call log is always kept).
 export const FOLLOW_UP_DELETE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
+// Work Allocation: assigning candidates to Analysts.
+export const ALLOCATION_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
+// Registering a new candidate. Not ANALYST: an Analyst works only on the
+// candidates allocated to them, and a new candidate is unallocated.
+export const REGISTRATION_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER, ROLES.REGISTRATION_DESK];
 
 type WithRole = { role: string } | null | undefined;
 
@@ -42,5 +47,9 @@ export const canReview = (user: WithRole) => hasRole(user, REVIEW_ROLES);
 export const canCorrectPoliceDates = (user: WithRole) => hasRole(user, POLICE_DATE_ROLES);
 // Deleting a Priority Follow-Up (flagging and completing: every Candidates role).
 export const canDeleteFollowUps = (user: WithRole) => hasRole(user, FOLLOW_UP_DELETE_ROLES);
+// Work Allocation (the page and its API).
+export const canManageAllocations = (user: WithRole) => hasRole(user, ALLOCATION_ROLES);
+// Registering a new candidate.
+export const canRegisterCandidates = (user: WithRole) => hasRole(user, REGISTRATION_ROLES);
 // User management and Settings.
 export const isAdmin = (user: WithRole) => hasRole(user, ADMIN_ONLY);

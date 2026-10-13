@@ -1930,7 +1930,7 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
     test("a viewer sees no registration form", async () => {
         signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates/new");
-        expect(await screen.findByText("Candidate registration needs a staff account with access to Candidates.")).toBeInTheDocument();
+        expect(await screen.findByText(/Candidate registration is done by the Registration Desk, a Manager or an Admin/)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Register candidate" })).not.toBeInTheDocument();
     });
 });
@@ -2036,7 +2036,15 @@ describe("REGISTRATION_DESK: the whole Candidates area", () => {
 });
 
 describe("other roles are unchanged", () => {
-    for (const role of ["ADMIN", "MANAGER", "ANALYST"]) {
+    test("ANALYST: no Add candidate and no Register Candidate quick access (a new candidate is unallocated; the server refuses it too)", async () => {
+        signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole("ANALYST") } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
+        renderApp("/candidates");
+        await screen.findByRole("table", { name: "Candidates" });
+        expect(screen.queryByRole("link", { name: "Add candidate" })).toBeNull();
+        expect(within(screen.getByRole("banner")).queryByRole("link", { name: "Register Candidate" })).toBeNull();
+    });
+
+    for (const role of ["ADMIN", "MANAGER"]) {
         test(`${role}: Add candidate on the Candidates page, the Register Candidate quick access in the header (not the sidebar), the notification bell`, async () => {
             signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
             renderApp("/candidates");

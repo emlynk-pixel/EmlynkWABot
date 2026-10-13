@@ -29,7 +29,12 @@ const MATRIX = [
     ["GET", "/documents", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
     ["GET", "/reports/daily", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
     ["GET", "/candidates", undefined, CANDIDATE_STAFF],
-    ["POST", "/candidates", {}, CANDIDATE_STAFF],
+    // Registering is not an Analyst action: a new candidate is unallocated (Work Allocation).
+    ["POST", "/candidates", {}, ["ADMIN", "MANAGER", "REGISTRATION_DESK"]],
+    // Work Allocation: ADMIN and MANAGER only (an invalid request, so the allowed roles get 400).
+    ["GET", "/work-allocation/candidates?status=NOPE", undefined, ["ADMIN", "MANAGER"]],
+    ["POST", "/work-allocation/assign", {}, ["ADMIN", "MANAGER"]],
+    ["POST", "/work-allocation/unassign", {}, ["ADMIN", "MANAGER"]],
     ["GET", "/candidates/N1023757", undefined, CANDIDATE_STAFF],
     ["PUT", "/candidates/N1023757", {}, CANDIDATE_STAFF],
     ["PUT", "/candidates/N1023757/stages/IVS_INTERVIEW", {}, CANDIDATE_STAFF],

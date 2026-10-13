@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
-import { ROLE_LABELS, canManageCandidates, canViewDashboard, type Role } from "../auth/roles";
+import { ROLE_LABELS, canRegisterCandidates, canViewDashboard, type Role } from "../auth/roles";
 import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
 import { useTheme } from "../theme/theme";
@@ -27,7 +27,7 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
     const { theme, toggle } = useTheme();
     // Quick access to the registration form (the existing /candidates/new
     // route) on every page, for the roles that can register candidates.
-    const showRegister = canManageCandidates(user);
+    const showRegister = canRegisterCandidates(user);
     const control = "flex h-9 items-center gap-2 rounded-md border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-60";
 
     return (

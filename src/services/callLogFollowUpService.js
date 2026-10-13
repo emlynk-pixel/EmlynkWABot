@@ -110,10 +110,12 @@ const followUpSelect = {
 // each candidate once, with its current document status and its follow-ups
 // (newest first: flagged date for OPEN, completed date for COMPLETED).
 // Candidates are ordered by their newest follow-up.
-export async function listFollowUps({ db, params }) {
+// scope: the signed-in user's candidates (candidateAccess.js); an Analyst
+// only sees follow-ups of the candidates allocated to them, in the query.
+export async function listFollowUps({ db, params, scope = {} }) {
     const completed = params.status === FOLLOW_UP_STATUS.COMPLETED;
     const rows = await db.callLogFollowUp.findMany({
-        where: { status: params.status },
+        where: Object.keys(scope).length ? { status: params.status, callLog: { user: scope } } : { status: params.status },
         select: followUpSelect,
         orderBy: completed
             ? [{ completedDate: "desc" }, { flaggedDate: "desc" }, { followUpId: "asc" }]
@@ -182,10 +184,15 @@ function followUpView(row) {
 
 // POST /api/admin/follow-ups/:followUpId/complete. Only an OPEN follow-up is
 // completed (409 FOLLOW_UP_COMPLETED otherwise); the row is kept.
-export async function completeFollowUp({ db, actor, followUpId, now = new Date() }) {
+// scope: as for the list; a follow-up of a candidate outside it is "not found".
+export async function completeFollowUp({ db, actor, followUpId, scope = {}, now = new Date() }) {
     return db.$transaction(async (tx) => {
         const existing = await tx.callLogFollowUp.findUnique({ where: { followUpId }, select: { status: true, callLog: { select: { passportId: true } } } });
         if (!existing) throw notFound();
+        if (Object.keys(scope).length) {
+            const allowed = await tx.candidate.findFirst({ where: { AND: [{ passportId: existing.callLog.passportId }, scope] }, select: { passportId: true } });
+            if (!allowed) throw notFound();
+        }
         const { count } = await tx.callLogFollowUp.updateMany({
             where: { followUpId, status: FOLLOW_UP_STATUS.OPEN },
             data: { status: FOLLOW_UP_STATUS.COMPLETED, completedById: actor.adminId, completedDate: now },

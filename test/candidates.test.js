@@ -60,12 +60,22 @@ const VALID_BODY = Object.freeze({
 });
 
 // Just enough of Prisma for candidateService.js.
-function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], admins = [ADMIN] } = {}) {
+// allocatedTo: the Analyst every candidate here is allocated to (Work
+// Allocation). By default the signed-in test user, so the ANALYST cases below
+// exercise the candidate behaviour itself; the scoping (an Analyst never
+// reaches a candidate that is not theirs) is tested on PostgreSQL in
+// workAllocation.test.js. null: no candidate is allocated.
+function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], admins = [ADMIN], allocatedTo = ADMIN.adminId } = {}) {
     const state = { users: users.map((u) => ({ ...u })), documents: [...documents], stages: [...stages], callLogs: [...callLogs], auditLogs: [], admins };
     const unique = (code, target) => Object.assign(new Error("Unique constraint failed"), { code, meta: { target } });
     const matches = (row, where = {}) => Object.entries(where).every(([key, condition]) => {
         if (key === "OR") return condition.some((c) => matches(row, c));
         if (key === "AND") return condition.every((c) => matches(row, c));
+        if (key === "allocation") {
+            if (condition.is === null) return allocatedTo === null;
+            if (condition.isNot === null) return allocatedTo !== null;
+            return allocatedTo !== null && allocatedTo === condition.is?.analystId;
+        }
         const value = row[key];
         if (condition && typeof condition === "object" && !(condition instanceof Date)) {
             if ("in" in condition) return condition.in.includes(value);
@@ -1027,11 +1037,12 @@ describe("candidate routes: roles", () => {
         });
     });
 
-    test("a ANALYST can register a candidate; bad input and unknown stages are refused", async () => {
-        const created = await call("ANALYST", "POST", "/api/admin/candidates", VALID_BODY);
+    test("REGISTRATION_DESK can register a candidate, an ANALYST cannot (403: a new candidate is unallocated); bad input and unknown stages are refused", async () => {
+        const created = await call("REGISTRATION_DESK", "POST", "/api/admin/candidates", VALID_BODY);
         assert.equal(created.status, 201);
         assert.equal(created.body.passportId, "N1023757");
-        assert.equal((await call("ANALYST", "POST", "/api/admin/candidates", { surname: "x" })).status, 400);
+        assert.equal((await call("ANALYST", "POST", "/api/admin/candidates", VALID_BODY)).status, 403);
+        assert.equal((await call("REGISTRATION_DESK", "POST", "/api/admin/candidates", { surname: "x" })).status, 400);
         assert.equal((await call("ADMIN", "PUT", "/api/admin/candidates/N1023757/stages/NOT_A_STAGE", { completed: true })).status, 404);
         assert.equal((await call("ADMIN", "GET", "/api/admin/candidates/N1023757")).status, 404, "this fake starts empty per request");
     });

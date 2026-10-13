@@ -192,6 +192,8 @@ describe("candidate activity is audited", () => {
             assert.equal((await call("/candidates", { method: "POST", body: REGISTRATION })).status, 201);
             assert.equal((await call("/candidates/N1023757", { method: "PUT", body: { ...REGISTRATION, address: "Kandy" } })).status, 200);
         });
+        // An Analyst works on the candidates allocated to them (Work Allocation).
+        await prisma.candidateAllocation.create({ data: { passportId: "N1023757", analystId: USERS.ANALYST.adminId } });
         await withServer("ANALYST", async (call) => {
             assert.equal((await call("/candidates/N1023757/stages/FINALIZING_JOB", { method: "PUT", body: { completed: true } })).status, 200);
         });

@@ -146,10 +146,13 @@ export function matchesPoliceSearch(row, search) {
 // GET /api/admin/police: every client's status, filtered, most urgent first.
 // The summary counts the clients in scope (passport ID / search), before
 // the status filter.
-export async function listPoliceWorkflow({ db, params, now = new Date() }) {
+// allowedPassportIds: null for every candidate, else the set the signed-in
+// user may see (candidateAccess.js accessiblePassportIds).
+export async function listPoliceWorkflow({ db, params, allowedPassportIds = null, now = new Date() }) {
     const today = businessDateOf(now);
     const all = await loadPoliceStatuses({ db, today });
     const scoped = all
+        .filter((row) => !allowedPassportIds || allowedPassportIds.has(row.client.passportId))
         .filter((row) => !params.passportId || row.client.passportId === params.passportId)
         .filter((row) => !params.search || matchesPoliceSearch(row, params.search));
     const filtered = (params.status ? scoped.filter((row) => row.status === params.status) : scoped).sort(compareRows);

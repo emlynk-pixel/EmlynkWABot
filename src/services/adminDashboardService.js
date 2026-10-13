@@ -284,8 +284,12 @@ export function buildDocumentListArgs(params) {
     };
 }
 
-export async function listDocuments({ db, params }) {
-    const args = buildDocumentListArgs(params);
+// scope: the signed-in user's candidates (candidateAccess.js); a document
+// is listed only when its candidate is in it. Applied in the query.
+export async function listDocuments({ db, params, scope = {} }) {
+    const built = buildDocumentListArgs(params);
+    const scoped = (where) => (Object.keys(scope).length ? { AND: [where ?? {}, { user: scope }] } : where);
+    const args = { ...built, where: scoped(built.where), whereWithoutVerification: scoped(built.whereWithoutVerification) };
     const [total, rows, verificationGroups] = await Promise.all([
         db.document.count({ where: args.where }),
         db.document.findMany({ where: args.where, select: documentSelect, orderBy: args.orderBy, skip: args.skip, take: args.take }),
