@@ -9,6 +9,11 @@ import { ADMIN, RENDER_STEP, renderApp, renderAppSignedIn, signedInBackend } fro
 // are in test/candidateListPagination.test.js).
 
 const PAGE_SIZE = 100;
+// Every test here renders pages of 100 rows and queries them by role (up to about 2 s on its own);
+// with the whole suite running in parallel any of them can pass the 5 s default. Only this file gets
+// more time (see the describe below), and its findBy* waits use RENDER_STEP (5 s instead of 1 s,
+// still failing if the element never appears); the global timeout is unchanged.
+const PAGING_TEST_TIMEOUT = 20_000;
 const candidate = (n: number): CandidateListItem => ({
     passportId: `P${String(n).padStart(7, "0")}`,
     uniqueId: String(n).padStart(4, "0"),
@@ -36,11 +41,11 @@ const rows = () => within(screen.getByRole("table", { name: "Candidates" })).get
 const pager = () => within(screen.getByRole("navigation", { name: "Pagination" }));
 const listRequests = (calls: { path: string }[]) => calls.filter((c) => c.path.startsWith("/api/admin/candidates?")).map((c) => c.path);
 
-describe("Candidates page: server-side paging", () => {
+describe("Candidates page: server-side paging", { timeout: PAGING_TEST_TIMEOUT }, () => {
     test("1-2, 5-6. loads page 1 only: the first 100 candidates; Page 1 of 3; Previous disabled", async () => {
         const { calls } = pagedBackend(247);
         renderApp("/candidates");
-        await screen.findByRole("table", { name: "Candidates" });
+        await screen.findByRole("table", { name: "Candidates" }, RENDER_STEP);
         expect(listRequests(calls)).toEqual(["/api/admin/candidates?page=1&pageSize=100"]);
         expect(rows()).toHaveLength(100);
         expect(screen.getByRole("link", { name: "CANDIDATE 247" })).toBeInTheDocument();
@@ -54,25 +59,27 @@ describe("Candidates page: server-side paging", () => {
     test("3-4, 7, 14. Next loads page 2 (and puts it in the URL); the last page disables Next; Previous goes back", async () => {
         const { calls } = pagedBackend(247);
         renderApp("/candidates");
-        await screen.findByRole("table", { name: "Candidates" });
+        await screen.findByRole("table", { name: "Candidates" }, RENDER_STEP);
         const user = userEvent.setup();
 
         await user.click(pager().getByRole("button", { name: "Next" }));
-        expect(await screen.findByRole("link", { name: "CANDIDATE 147" })).toBeInTheDocument();
+        expect(await screen.findByRole("link", { name: "CANDIDATE 147" }, RENDER_STEP)).toBeInTheDocument();
         expect(screen.queryByRole("link", { name: "CANDIDATE 247" })).toBeNull();
         expect(rows()).toHaveLength(100);
         expect(pager().getByText("Page 2 of 3")).toBeInTheDocument();
         expect(listRequests(calls).at(-1)).toBe("/api/admin/candidates?page=2&pageSize=100");
 
         await user.click(pager().getByRole("button", { name: "Next" }));
-        expect(await screen.findByRole("link", { name: "CANDIDATE 47" })).toBeInTheDocument();
+        expect(await screen.findByRole("link", { name: "CANDIDATE 47" }, RENDER_STEP)).toBeInTheDocument();
         expect(rows()).toHaveLength(47);
         expect(pager().getByText("Page 3 of 3")).toBeInTheDocument();
         expect(pager().getByRole("button", { name: "Next" })).toBeDisabled();
 
         await user.click(pager().getByRole("button", { name: "Previous" }));
-        await user.click(await screen.findByRole("button", { name: "Previous" }));
-        expect(await screen.findByRole("link", { name: "CANDIDATE 247" })).toBeInTheDocument();
+        // Wait for page 2 to be shown before going back again, so the second click is on a settled page.
+        expect(await screen.findByText("Page 2 of 3", {}, RENDER_STEP)).toBeInTheDocument();
+        await user.click(pager().getByRole("button", { name: "Previous" }));
+        expect(await screen.findByRole("link", { name: "CANDIDATE 247" }, RENDER_STEP)).toBeInTheDocument();
         expect(pager().getByText("Page 1 of 3")).toBeInTheDocument();
         expect(listRequests(calls)).toEqual([1, 2, 3, 2, 1].map((p) => `/api/admin/candidates?page=${p}&pageSize=100`));
     });
@@ -80,7 +87,7 @@ describe("Candidates page: server-side paging", () => {
     test("14. ?page=2 in the URL opens page 2 directly (a reload keeps the page)", async () => {
         const { calls } = pagedBackend(247);
         renderApp("/candidates?page=2");
-        expect(await screen.findByRole("link", { name: "CANDIDATE 147" })).toBeInTheDocument();
+        expect(await screen.findByRole("link", { name: "CANDIDATE 147" }, RENDER_STEP)).toBeInTheDocument();
         expect(listRequests(calls)).toEqual(["/api/admin/candidates?page=2&pageSize=100"]);
         expect(pager().getByText("Page 2 of 3")).toBeInTheDocument();
     });
@@ -96,12 +103,12 @@ describe("Candidates page: server-side paging", () => {
             },
         });
         renderApp("/candidates");
-        await screen.findByRole("table", { name: "Candidates" });
+        await screen.findByRole("table", { name: "Candidates" }, RENDER_STEP);
         await userEvent.setup().click(pager().getByRole("button", { name: "Next" }));
         expect(await screen.findByText("Loading page…", {}, RENDER_STEP)).toBeInTheDocument();
         expect(screen.getByRole("table", { name: "Candidates" }).closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
         release!();
-        expect(await screen.findByRole("link", { name: "CANDIDATE 147" })).toBeInTheDocument();
+        expect(await screen.findByRole("link", { name: "CANDIDATE 147" }, RENDER_STEP)).toBeInTheDocument();
         expect(screen.queryByText("Loading page…")).toBeNull();
     });
 
@@ -115,24 +122,24 @@ describe("Candidates page: server-side paging", () => {
         let failing = true;
         signedInBackend({ "GET /api/admin/candidates": (url) => (failing ? { status: 503, body: {} } : { status: 200, body: pageOf(247, Number(url.searchParams.get("page"))) }) });
         renderApp("/candidates?page=2");
-        expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
+        expect(await screen.findByText("Something went wrong. Please try again.", {}, RENDER_STEP)).toBeInTheDocument();
         expect(screen.queryByRole("table", { name: "Candidates" })).toBeNull();
         failing = false;
         await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
-        expect(await screen.findByRole("link", { name: "CANDIDATE 147" })).toBeInTheDocument();
+        expect(await screen.findByRole("link", { name: "CANDIDATE 147" }, RENDER_STEP)).toBeInTheDocument();
     });
 
     test("10. no candidates: the empty state, no table", async () => {
         pagedBackend(0);
         renderApp("/candidates");
-        expect(await screen.findByText("No candidates yet")).toBeInTheDocument();
+        expect(await screen.findByText("No candidates yet", {}, RENDER_STEP)).toBeInTheDocument();
         expect(screen.queryByRole("table", { name: "Candidates" })).toBeNull();
     });
 
     test("exactly 100 candidates: one page, Next disabled; 101: two pages", async () => {
         pagedBackend(100);
         const { unmount } = renderApp("/candidates");
-        await screen.findByRole("table", { name: "Candidates" });
+        await screen.findByRole("table", { name: "Candidates" }, RENDER_STEP);
         expect(rows()).toHaveLength(100);
         expect(pager().getByText("Page 1 of 1")).toBeInTheDocument();
         expect(pager().getByRole("button", { name: "Next" })).toBeDisabled();
@@ -140,17 +147,17 @@ describe("Candidates page: server-side paging", () => {
 
         pagedBackend(101);
         renderApp("/candidates");
-        await screen.findByRole("table", { name: "Candidates" });
+        await screen.findByRole("table", { name: "Candidates" }, RENDER_STEP);
         expect(pager().getByText("Page 1 of 2")).toBeInTheDocument();
         await userEvent.setup().click(pager().getByRole("button", { name: "Next" }));
-        expect(await screen.findByRole("link", { name: "CANDIDATE 1" })).toBeInTheDocument();
+        expect(await screen.findByRole("link", { name: "CANDIDATE 1" }, RENDER_STEP)).toBeInTheDocument();
         expect(rows()).toHaveLength(1);
     });
 
     test("a page past the last one (stale link, or the last page emptied) goes to the last page", async () => {
         const { calls } = pagedBackend(150);
         renderApp("/candidates?page=5");
-        expect(await screen.findByRole("link", { name: "CANDIDATE 50" })).toBeInTheDocument();
+        expect(await screen.findByRole("link", { name: "CANDIDATE 50" }, RENDER_STEP)).toBeInTheDocument();
         expect(pager().getByText("Page 2 of 2")).toBeInTheDocument();
         expect(screen.queryByText("No candidates yet")).toBeNull();
         expect(listRequests(calls)).toEqual(["/api/admin/candidates?page=5&pageSize=100", "/api/admin/candidates?page=2&pageSize=100"]);
@@ -159,27 +166,31 @@ describe("Candidates page: server-side paging", () => {
     test("search keeps paging on the server and starts again at page 1", async () => {
         const { calls } = pagedBackend(247);
         renderApp("/candidates?page=2");
-        await screen.findByRole("link", { name: "CANDIDATE 147" });
+        await screen.findByRole("link", { name: "CANDIDATE 147" }, RENDER_STEP);
         await userEvent.setup().type(screen.getByLabelText("Search candidates"), "Kamal{Enter}");
-        await screen.findByRole("table", { name: "Candidates" });
+        await screen.findByRole("table", { name: "Candidates" }, RENDER_STEP);
         expect(listRequests(calls).at(-1)).toBe("/api/admin/candidates?page=1&pageSize=100&search=Kamal");
     });
 
     test("contact number search: the placeholder names it; the term goes to the server (page 1), is kept while paging, and no row is filtered in the browser", async () => {
         const { calls } = pagedBackend(247);
         renderApp("/candidates");
-        await screen.findByRole("table", { name: "Candidates" });
+        await screen.findByRole("table", { name: "Candidates" }, RENDER_STEP);
         const box = screen.getByLabelText("Search candidates");
         expect(box).toHaveAttribute("placeholder", "Search by name, passport ID, NIC, contact or WhatsApp number…");
         const user = userEvent.setup();
-        await user.type(box, "0771234567{Enter}");
-        await screen.findByRole("table", { name: "Candidates" });
+        // Pasted, not typed key by key: the page re-renders its 100 rows on every keystroke, which is
+        // what made this test slow under load; what is tested is the submitted term, not the typing.
+        await user.click(box);
+        await user.paste("0771234567");
+        await user.keyboard("{Enter}");
+        await screen.findByRole("table", { name: "Candidates" }, RENDER_STEP);
         expect(listRequests(calls).at(-1)).toBe("/api/admin/candidates?page=1&pageSize=100&search=0771234567");
         // The stub ignores the term, like the real server would return its matches: whatever it
         // returns is shown as is (100 rows), not filtered again by the page.
         expect(rows()).toHaveLength(100);
         await user.click(pager().getByRole("button", { name: "Next" }));
-        expect(await screen.findByRole("link", { name: "CANDIDATE 147" })).toBeInTheDocument();
+        expect(await screen.findByRole("link", { name: "CANDIDATE 147" }, RENDER_STEP)).toBeInTheDocument();
         expect(listRequests(calls).at(-1)).toBe("/api/admin/candidates?page=2&pageSize=100&search=0771234567");
     });
 
@@ -190,27 +201,27 @@ describe("Candidates page: server-side paging", () => {
         });
         const first = renderApp("/candidates?page=2");
         const user = userEvent.setup();
-        await user.click(await screen.findByRole("link", { name: "CANDIDATE 147" }));
-        expect(await screen.findByText(/Candidate not found|No candidate/i)).toBeInTheDocument();
+        await user.click(await screen.findByRole("link", { name: "CANDIDATE 147" }, RENDER_STEP));
+        expect(await screen.findByText(/Candidate not found|No candidate/i, {}, RENDER_STEP)).toBeInTheDocument();
         first.unmount();
 
         renderApp("/candidates?page=2");
         // A click anywhere on the row (here its passport ID) opens the candidate too.
-        await user.click(await screen.findByText("P0000146"));
-        expect(await screen.findByText(/Candidate not found|No candidate/i)).toBeInTheDocument();
+        await user.click(await screen.findByText("P0000146", {}, RENDER_STEP));
+        expect(await screen.findByText(/Candidate not found|No candidate/i, {}, RENDER_STEP)).toBeInTheDocument();
         expect(screen.queryByRole("table", { name: "Candidates" })).toBeNull();
     });
 
     test("13. roles unchanged: Add candidate for a candidate role, not for the retired VIEWER; paging works for both", async () => {
         pagedBackend(247);
         const { unmount } = renderApp("/candidates?page=2");
-        await screen.findByRole("link", { name: "CANDIDATE 147" });
+        await screen.findByRole("link", { name: "CANDIDATE 147" }, RENDER_STEP);
         expect(screen.getByRole("link", { name: "Add candidate" })).toHaveAttribute("href", "/candidates/new");
         unmount();
 
         pagedBackend(247, { "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "VIEWER" } } } });
         renderApp("/candidates?page=2");
-        await screen.findByRole("link", { name: "CANDIDATE 147" });
+        await screen.findByRole("link", { name: "CANDIDATE 147" }, RENDER_STEP);
         expect(screen.queryByRole("link", { name: "Add candidate" })).toBeNull();
     });
 });
