@@ -202,6 +202,7 @@ The primary interface for managing candidate registrations and deployment workfl
   - Slide-out drawer on the deployment screen. It closes with X, Close, Escape, or a click outside it.
   - Staff can record phone calls with timestamp, conversation notes, and staff attribution (`public.candidate_call_logs`).
   - **Candidate History** (formerly Call History) shows the calls and the candidate's activity (documents received or verified, details and stages saved) as one timeline, newest first. The Current Documents block is no longer shown in the drawer. See `Docs/20-candidate-management.md` §4.3 for the event types and limits.
+  - **No Answer** (in the add form) records an unanswered call attempt with no note; it shows in Candidate History as a No Answer badge and counts as a call in the Daily Report.
   - A compact flag beside the caller marks a call as needing attention (Priority Follow-Ups). **Need Attention** in the add form marks the new call when it is added.
 - **Additional details step (`/admin/candidates/:passportId?tab=additional`)**:
   - The third circle of the candidate's progress stepper (after Candidate details), for every role that manages candidates (REGISTRATION_DESK included). IVS interview and Finalizing the job have no circle.
@@ -433,7 +434,7 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/candidates/:passportId/documents/finalize` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Finalize and verify candidate document upload |
 | POST | `/candidates/:passportId/documents/:documentId/remove` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Remove candidate document `{ reason }` |
 | GET | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate call logs and candidate activity (Candidate History) |
-| POST | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Record call log `{ note, calledAt, needsAttention? }` |
+| POST | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Record call log `{ note, calledAt, needsAttention?, outcome? }` (`outcome: "NO_ANSWER"`: no note needed) |
 | GET | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Additional details `{ passportId, details, suggested, updatedDate }` |
 | PUT | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Save additional details (full replacement; audited) |
 | GET | `/review`, `/review/:reviewId`, `/review/:reviewId/file` | ADMIN, MANAGER, ANALYST | Review Queue, one item, its file |

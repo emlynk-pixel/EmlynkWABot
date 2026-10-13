@@ -221,7 +221,14 @@ Limitations:
 
 Roles that can only view see the state, not the button.
 
-The add form's buttons are **Close**, **Need Attention** (a toggle) and **Add call**. With Need Attention on, the one request (`POST …/call-logs` with `needsAttention: true`) creates the call and its OPEN follow-up, with its `FLAG_FOLLOW_UP` audit entry, in one transaction. You get one call, never two.
+**No Answer.** When the candidate does not pick up, **No Answer** records the attempt at the selected date and time, signed with the staff member, with no note. It is a call log row like any other: `candidate_call_logs.call_outcome = 'NO_ANSWER'` (migration `20261013120000_call_log_outcome`; every earlier call is `ANSWERED`) and an empty `note`. Candidate History shows it as a small neutral **No Answer** badge with no note body, in the same time order. It counts in the Daily Report's Calls Taken (that count is of call rows). It does not open a follow-up by itself; flag it with the flag icon, or turn **Need Attention** on before pressing No Answer. A note typed in the box is not sent with No Answer and is kept for the next call.
+
+| | **Add call** | **No Answer** |
+|---|---|---|
+| Request | `POST …/call-logs { note, calledAt }` | `POST …/call-logs { outcome: "NO_ANSWER", calledAt }` |
+| Note | required (the database enforces it too) | not needed; one sent is ignored |
+
+The add form's buttons are **Close**, **No Answer**, **Need Attention** (a toggle) and **Add call**. With Need Attention on, the one request (`POST …/call-logs` with `needsAttention: true`) creates the call and its OPEN follow-up, with its `FLAG_FOLLOW_UP` audit entry, in one transaction. You get one call, never two.
 
 **Closing.** The drawer closes with X, Close, Escape, or a click on the page outside it. A click only counts when the press started outside too, so a text selection dragged out of the drawer doesn't close it. Nothing closes the drawer while a call is being saved.
 
@@ -416,7 +423,7 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `POST` | `/candidates/:passportId/documents/finalize` | Check the uploaded file and record it (JSON only) |
 | `POST` | `/candidates/:passportId/documents/:documentId/remove` | Delete the current document and its file; `{ reason }` required |
 | `GET` | `/candidates/:passportId/call-logs` | Call log entries, `documentStatus`, and `activity` (Candidate History, newest first, at most 100; `activityTruncated`) |
-| `POST` | `/candidates/:passportId/call-logs` | Add a call log entry `{ note, calledAt?, needsAttention? }`; `needsAttention: true` also opens its follow-up (one transaction) |
+| `POST` | `/candidates/:passportId/call-logs` | Add a call log entry `{ note, calledAt?, needsAttention?, outcome? }`; `needsAttention: true` also opens its follow-up (one transaction); `outcome: "NO_ANSWER"` needs no note (default `ANSWERED`: note required). Each call in the responses carries `outcome` |
 | `GET` | `/candidates/:passportId/additional-details` | Additional details, or suggestions from the candidate record when none are saved |
 | `PUT` | `/candidates/:passportId/additional-details` | Save additional details (full replacement; audited; never creates a candidate) |
 

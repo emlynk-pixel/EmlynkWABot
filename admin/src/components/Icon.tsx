@@ -9,6 +9,7 @@ import edit from "@material-symbols/svg-400/outlined/edit.svg?raw";
 import event from "@material-symbols/svg-400/outlined/event.svg?raw";
 import flag from "@material-symbols/svg-400/outlined/flag.svg?raw";
 import flagFill from "@material-symbols/svg-400/outlined/flag-fill.svg?raw";
+import phoneMissed from "@material-symbols/svg-400/outlined/phone_missed.svg?raw";
 import editNote from "@material-symbols/svg-400/outlined/edit_note.svg?raw";
 import taskAlt from "@material-symbols/svg-400/outlined/task_alt.svg?raw";
 import uploadFile from "@material-symbols/svg-400/outlined/upload_file.svg?raw";
@@ -64,6 +65,7 @@ const ICONS = {
     flag,
     flag_fill: flagFill,
     edit_note: editNote,
+    phone_missed: phoneMissed,
     task_alt: taskAlt,
     upload_file: uploadFile,
     light_mode: lightMode,

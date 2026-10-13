@@ -137,6 +137,21 @@ describe("Summary: daily figures on Sri Lanka day boundaries", () => {
         assert.deepEqual([report.documents.total, report.documents.whatsapp, report.documents.manual], [6, 3, 3]);
     });
 
+    test("14. a No Answer call (no note) is a call attempt: it counts in Calls Taken, in the summary and per role", async () => {
+        const before = await getDailySummary({ db: prisma, date: DAY, now: NOW });
+        const callLogId = crypto.randomUUID();
+        await prisma.candidateCallLog.create({
+            data: { callLogId, passportId: A, adminId: STAFF.ANALYST.adminId, note: "", callOutcome: "NO_ANSWER", createdDate: new Date("2026-10-10T07:00:00Z") },
+        });
+        try {
+            const after = await getDailySummary({ db: prisma, date: DAY, now: NOW });
+            assert.equal(after.summary.callsTaken, before.summary.callsTaken + 1);
+            assert.ok(after.calls.items.some((c) => c.callLogId === callLogId), "listed with the day's calls");
+        } finally {
+            await prisma.candidateCallLog.delete({ where: { callLogId } });
+        }
+    });
+
     test("the previous day is a different report (same boundaries applied)", async () => {
         const report = await getDailySummary({ db: prisma, date: "2026-10-09", now: NOW });
         assert.deepEqual(report.summary, { candidatesRegistered: 0, candidatesCompleted: 1, visaCompleted: 1, callsTaken: 1, documentsSubmitted: 1 });

@@ -113,9 +113,12 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
         }
     };
 
-    const submit = async (event: FormEvent) => {
-        event.preventDefault();
-        if (submitting.current || !note.trim() || !token) return;
+    // Add call (a note is required) and No Answer (the candidate did not pick
+    // up: no note) share this one path: one request, one call. The ref blocks
+    // a second click or submit before `busy` has re-rendered.
+    const save = async ({ noAnswer }: { noAnswer: boolean }) => {
+        if (submitting.current || !token) return;
+        if (!noAnswer && !note.trim()) return;
         if (!when.date || !when.time) {
             setError("Enter the date and time of the call.");
             return;
@@ -129,8 +132,13 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
         setBusy(true);
         setError(null);
         try {
-            setAdded(await addCallLog(token, passportId, { note: note.trim(), calledAt, ...(needsAttention ? { needsAttention: true as const } : {}) }));
-            setNote("");
+            setAdded(await addCallLog(token, passportId, {
+                ...(noAnswer ? { outcome: "NO_ANSWER" as const } : { note: note.trim() }),
+                calledAt,
+                ...(needsAttention ? { needsAttention: true as const } : {}),
+            }));
+            // A note typed for the next call is kept when only a No Answer was recorded.
+            if (!noAnswer) setNote("");
             setNeedsAttention(false);
             setWhen(nowInSriLanka());
         } catch (caught) {
@@ -139,6 +147,11 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
             submitting.current = false;
             setBusy(false);
         }
+    };
+
+    const submit = (event: FormEvent) => {
+        event.preventDefault();
+        void save({ noAnswer: false });
     };
 
     const markForFollowUp = async (entry: CallLogEntry) => {
@@ -304,6 +317,17 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                             <DialogError message={error} />
                             <div className="flex flex-wrap justify-end gap-2 pt-0.5">
                                 <button type="button" onClick={requestClose} disabled={busy} className={compactButton(secondaryButton)}>Close</button>
+                                {/* The candidate did not pick up: records the attempt at the date and time above, with no note. */}
+                                <button
+                                    type="button"
+                                    onClick={() => void save({ noAnswer: true })}
+                                    disabled={busy}
+                                    title="Record that the candidate did not answer (uses the date and time above)"
+                                    className={`${compactButton(secondaryButton)} inline-flex items-center gap-1.5`}
+                                >
+                                    <Icon name="phone_missed" className="size-4" />
+                                    No Answer
+                                </button>
                                 {/* Marks the NEW call for follow-up when it is added (one request: the call and its follow-up together). */}
                                 <button
                                     type="button"
@@ -351,7 +375,17 @@ function CallItem({ entry, canEdit, busy, disabled, error, onMark }: {
                     <FollowUpFlag entry={entry} canEdit={canEdit} busy={busy} disabled={disabled} onMark={onMark} />
                 </div>
             </div>
-            <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{entry.note}</p>
+            {entry.outcome === "NO_ANSWER"
+                // An outcome, not an error: a quiet neutral badge (icon and text), and no note body.
+                ? (
+                    <p className="mt-1.5">
+                        <span data-outcome="NO_ANSWER" className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-canvas px-2 py-0.5 text-label-sm text-ink-muted">
+                            <Icon name="phone_missed" className="size-3.5" />
+                            No Answer
+                        </span>
+                    </p>
+                )
+                : <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{entry.note}</p>}
             {error && <p role="alert" className="mt-1 text-right text-label-sm text-critical">{error}</p>}
         </li>
     );

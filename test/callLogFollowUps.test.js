@@ -657,6 +657,105 @@ describe("adding a call with Need Attention", () => {
     });
 });
 
+describe("No Answer calls", () => {
+    const add = (body, role = "ANALYST") => as(role, `/candidates/${A}/call-logs`, { method: "POST", body });
+    const rows = () => prisma.candidateCallLog.findMany({ where: { passportId: A } });
+
+    test("1-6. one call with the selected date and time and the signed-in user; no note needed, no fake note stored", async () => {
+        const response = await add({ outcome: "NO_ANSWER", calledAt: "2026-10-12T09:36:00+05:30" });
+        assert.equal(response.status, 201, JSON.stringify(response.body));
+        const stored = await rows();
+        assert.equal(stored.length, 1, "exactly one call log");
+        assert.equal(stored[0].callOutcome, "NO_ANSWER");
+        assert.equal(stored[0].note, "", "an empty note, not '-' or 'No answer'");
+        assert.equal(stored[0].adminId, USERS.ANALYST.adminId);
+        // The minute is the selected one (seconds are stamped by the server, as for any call).
+        assert.equal(stored[0].createdDate.toISOString().slice(0, 16), "2026-10-12T04:06");
+        const [call] = response.body.items;
+        assert.deepEqual([call.outcome, call.note, call.adminName, call.followUp], ["NO_ANSWER", "", USERS.ANALYST.name, null]);
+    });
+
+    test("a note sent with No Answer is ignored: the call is stored without one", async () => {
+        assert.equal((await add({ outcome: "NO_ANSWER", note: "should not be kept" })).status, 201);
+        assert.equal((await rows())[0].note, "");
+    });
+
+    test("10-11. a normal call still needs a note, with or without an outcome; its behaviour is unchanged", async () => {
+        for (const body of [{}, { note: "" }, { note: "   " }, { outcome: "ANSWERED" }, { outcome: "ANSWERED", note: "  " }]) {
+            const response = await add(body);
+            assert.equal(response.status, 400, JSON.stringify(body));
+            assert.ok(response.body.errors.some((e) => e.field === "note"));
+        }
+        assert.equal((await rows()).length, 0, "nothing stored");
+        const ok = await add({ note: "Said hello" });
+        assert.equal(ok.status, 201);
+        assert.deepEqual([ok.body.items[0].outcome, ok.body.items[0].note], ["ANSWERED", "Said hello"]);
+        assert.equal((await rows())[0].callOutcome, "ANSWERED");
+    });
+
+    test("an unknown outcome is refused and writes nothing", async () => {
+        const response = await add({ outcome: "BUSY", note: "x" });
+        assert.equal(response.status, 400);
+        assert.ok(response.body.errors.some((e) => e.field === "outcome"));
+        assert.equal((await rows()).length, 0);
+    });
+
+    test("12. no follow-up unless Need Attention is on; with it, one call and one follow-up", async () => {
+        const plain = await add({ outcome: "NO_ANSWER" });
+        assert.equal(plain.body.items[0].followUp, null);
+        assert.equal(await prisma.callLogFollowUp.count(), 0);
+        assert.deepEqual(await followUpAudit(), []);
+
+        const flaggedAtOnce = await add({ outcome: "NO_ANSWER", needsAttention: true });
+        assert.equal(flaggedAtOnce.status, 201);
+        assert.equal((await rows()).length, 2);
+        assert.equal(await prisma.callLogFollowUp.count(), 1);
+        assert.equal(flaggedAtOnce.body.items.filter((i) => i.followUp?.status === "OPEN").length, 1);
+    });
+
+    test("13. a No Answer call can be flagged, completed and deleted like any call, and always stays in the history", async () => {
+        const created = await add({ outcome: "NO_ANSWER" });
+        const { callLogId } = created.body.items[0];
+        const flagged = await flag("REGISTRATION_DESK", A, callLogId);
+        assert.equal(flagged.status, 201, JSON.stringify(flagged.body));
+        const group = (await list("ANALYST")).body.groups.find((g) => g.candidate.passportId === A);
+        assert.deepEqual([group.followUps[0].callLog.outcome, group.followUps[0].callLog.note], ["NO_ANSWER", ""]);
+        assert.equal((await complete("ANALYST", flagged.body.followUp.followUpId)).status, 200);
+        assert.equal((await remove("MANAGER", flagged.body.followUp.followUpId)).status, 200);
+        assert.equal((await rows()).length, 1, "the call log is kept");
+        assert.equal((await callLogRow(callLogId)).callOutcome, "NO_ANSWER");
+    });
+
+    test("6, 15. sent twice at once it is two requests (the form guards against double clicks); each makes exactly one row", async () => {
+        const [one, two] = await Promise.all([add({ outcome: "NO_ANSWER" }), add({ outcome: "NO_ANSWER" })]);
+        assert.deepEqual([one.status, two.status], [201, 201]);
+        assert.equal((await rows()).length, 2);
+    });
+
+    test("existing calls and the database rules: a call without an outcome is ANSWERED; the CHECKs hold", async () => {
+        const callLogId = await logCall(A, "Old style call");
+        assert.equal((await callLogRow(callLogId)).callOutcome, "ANSWERED");
+        const insert = (note, outcome) => pg.query(`INSERT INTO "candidate_call_logs" (call_log_id, passport_id, admin_id, note, call_outcome) VALUES ($1, $2, $3, $4, $5)`, [crypto.randomUUID(), A, USERS.ADMIN.adminId, note, outcome]);
+        await assert.rejects(insert("x", "BUSY"), /call_outcome_check/);
+        await assert.rejects(insert("", "ANSWERED"), /note_required_check/);
+        await assert.rejects(insert("   ", "ANSWERED"), /note_required_check/);
+        await insert("", "NO_ANSWER");
+    });
+
+    test("32. permissions are unchanged: every Candidates-area role can record one; others can't", async () => {
+        for (const role of STAFF_ROLES) assert.equal((await add({ outcome: "NO_ANSWER" }, role)).status, 201, role);
+        assert.equal((await add({ outcome: "NO_ANSWER" }, "VIEWER")).status, 403);
+    });
+
+    test("it sorts with the call logs by its time; reading history writes nothing", async () => {
+        await logCall(A, "Earlier", "2026-10-01T10:00:00Z");
+        await add({ outcome: "NO_ANSWER", calledAt: "2026-10-05T10:00:00+05:30" });
+        await logCall(A, "Later", "2026-10-09T10:00:00Z");
+        const items = (await as("ADMIN", `/candidates/${A}/call-logs`)).body.items;
+        assert.deepEqual(items.map((i) => i.outcome === "NO_ANSWER" ? "No answer" : i.note), ["Later", "No answer", "Earlier"]);
+    });
+});
+
 describe("integrity", () => {
     test("35-36. foreign keys: no follow-up for a missing call log or user; removing a candidate removes its call logs and follow-ups (no orphans); a user who flagged can't be deleted", async () => {
         await assert.rejects(prisma.callLogFollowUp.create({ data: { followUpId: crypto.randomUUID(), callLogId: crypto.randomUUID(), flaggedById: USERS.ADMIN.adminId } }));

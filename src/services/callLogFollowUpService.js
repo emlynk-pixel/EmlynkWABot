@@ -103,7 +103,7 @@ const followUpSelect = {
     followUpId: true, status: true, flaggedDate: true, completedDate: true,
     flaggedBy: { select: { name: true } },
     completedBy: { select: { name: true } },
-    callLog: { select: { callLogId: true, passportId: true, note: true, createdDate: true, admin: { select: { name: true } } } },
+    callLog: { select: { callLogId: true, passportId: true, note: true, callOutcome: true, createdDate: true, admin: { select: { name: true } } } },
 };
 
 // GET /api/admin/follow-ups?status=OPEN|COMPLETED. Grouped by candidate:
@@ -173,6 +173,7 @@ function followUpView(row) {
         callLog: {
             callLogId: row.callLog.callLogId,
             note: row.callLog.note,
+            outcome: row.callLog.callOutcome ?? "ANSWERED",
             calledAt: row.callLog.createdDate,
             adminName: row.callLog.admin?.name ?? null,
         },

@@ -248,7 +248,16 @@ function FollowUpRow({ item, canDelete, busy, disabled, error, onComplete, onDel
                         </span>
                         {item.callLog.adminName && <span className="text-label-sm text-ink-subtle">Called by {item.callLog.adminName}</span>}
                     </p>
-                    <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{item.callLog.note}</p>
+                    {item.callLog.outcome === "NO_ANSWER"
+                        ? (
+                            <p className="mt-1">
+                                <span className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-canvas px-2 py-0.5 text-label-sm text-ink-muted">
+                                    <Icon name="phone_missed" className="size-3.5" />
+                                    No Answer
+                                </span>
+                            </p>
+                        )
+                        : <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{item.callLog.note}</p>}
                     <p className="mt-1.5 text-label-sm text-ink-subtle">
                         Flagged {formatDateTime(item.flaggedAt)}{item.flaggedByName ? ` by ${item.flaggedByName}` : ""}
                         {item.completedAt && <> · Completed {formatDateTime(item.completedAt)}{item.completedByName ? ` by ${item.completedByName}` : ""}</>}

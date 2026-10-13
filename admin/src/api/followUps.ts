@@ -1,5 +1,5 @@
 import { apiRequest } from "./client";
-import type { DocumentStatusEntry, FollowUpStatus } from "./candidates";
+import type { CallOutcome, DocumentStatusEntry, FollowUpStatus } from "./candidates";
 
 // Priority Follow-Ups (src/routes/admin.js, /api/admin/follow-ups): call
 // logs marked as needing attention, grouped by candidate. Listing and
@@ -14,7 +14,8 @@ export type FollowUpItem = {
     completedAt: string | null;
     completedByName: string | null;
     // The original call log (the source of truth for the note and the call).
-    callLog: { callLogId: string; note: string; calledAt: string; adminName: string | null };
+    // outcome NO_ANSWER: the candidate did not pick up (the note is empty).
+    callLog: { callLogId: string; note: string; outcome?: CallOutcome; calledAt: string; adminName: string | null };
 };
 
 export type FollowUpGroup = {

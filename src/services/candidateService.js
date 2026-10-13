@@ -315,12 +315,23 @@ function parseCallTime(value) {
     return new Date(value);
 }
 
+// outcome (optional): ANSWERED (the default: a note is required) or NO_ANSWER
+// (the candidate did not pick up: no note; one sent is ignored, and the call
+// is stored with an empty note).
+export const CALL_OUTCOME = Object.freeze({ ANSWERED: "ANSWERED", NO_ANSWER: "NO_ANSWER" });
+
 export function parseCallLogBody(body, { now = new Date() } = {}) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
         return { errors: [{ field: "body", message: "must be a JSON object" }] };
     }
     const errors = [];
-    const note = text(body, "note", errors, { required: true, max: CALL_NOTE_MAX_LENGTH });
+    let outcome = CALL_OUTCOME.ANSWERED;
+    if (body.outcome !== undefined && body.outcome !== null) {
+        if (!Object.values(CALL_OUTCOME).includes(body.outcome)) errors.push({ field: "outcome", message: `must be one of ${Object.values(CALL_OUTCOME).join(", ")}` });
+        else outcome = body.outcome;
+    }
+    const noAnswer = outcome === CALL_OUTCOME.NO_ANSWER;
+    const note = noAnswer ? "" : text(body, "note", errors, { required: true, max: CALL_NOTE_MAX_LENGTH });
     let calledAt = null;
     if (body.calledAt !== undefined && body.calledAt !== null && body.calledAt !== "") {
         const parsed = parseCallTime(body.calledAt);
@@ -331,7 +342,7 @@ export function parseCallLogBody(body, { now = new Date() } = {}) {
     if (body.needsAttention !== undefined && body.needsAttention !== null && typeof body.needsAttention !== "boolean") {
         errors.push({ field: "needsAttention", message: "must be true or false" });
     }
-    return errors.length ? { errors } : { values: { note, calledAt, needsAttention: body.needsAttention === true } };
+    return errors.length ? { errors } : { values: { note, calledAt, needsAttention: body.needsAttention === true, outcome } };
 }
 
 // ---------------------------------------------------------------- reading
@@ -1342,7 +1353,7 @@ export async function listCallLogs({ db, passportId }) {
         db.candidateCallLog.findMany({
             where: { passportId },
             select: {
-                callLogId: true, note: true, createdDate: true, admin: { select: { name: true } },
+                callLogId: true, note: true, callOutcome: true, createdDate: true, admin: { select: { name: true } },
                 followUps: { select: { followUpId: true, status: true, flaggedDate: true }, orderBy: [{ flaggedDate: "desc" }, { followUpId: "asc" }], take: 1 },
             },
             orderBy: [{ createdDate: "desc" }, { callLogId: "asc" }],
@@ -1375,6 +1386,7 @@ export async function listCallLogs({ db, passportId }) {
             return {
                 callLogId: row.callLogId,
                 note: row.note,
+                outcome: row.callOutcome ?? CALL_OUTCOME.ANSWERED,
                 calledAt: row.createdDate,
                 adminName: row.admin?.name ?? null,
                 followUp: followUp ? { followUpId: followUp.followUpId, status: followUp.status, flaggedAt: followUp.flaggedDate } : null,
@@ -1513,7 +1525,14 @@ export async function addCallLog({ db, admin, passportId, values }) {
         storedDate = entered;
     }
     const callLogId = crypto.randomUUID();
-    const data = { callLogId, passportId, adminId: admin.adminId, note: values.note, ...(storedDate ? { createdDate: storedDate } : {}) };
+    const noAnswer = values.outcome === CALL_OUTCOME.NO_ANSWER;
+    const data = {
+        callLogId, passportId, adminId: admin.adminId,
+        note: noAnswer ? "" : values.note,
+        // Omitted for an answered call: the column's default, as before.
+        ...(noAnswer ? { callOutcome: CALL_OUTCOME.NO_ANSWER } : {}),
+        ...(storedDate ? { createdDate: storedDate } : {}),
+    };
     if (values.needsAttention) {
         // One call, and its follow-up with it, or neither.
         await db.$transaction(async (tx) => {

@@ -839,7 +839,7 @@ describe("candidate list and call log", () => {
     test("call note validation: a short note is required; the time must be a real date and time, not in the future", () => {
         const now = new Date("2026-10-02T09:00:00Z");
         const fields = (body) => parseCallLogBody(body, { now }).errors?.map((e) => e.field);
-        assert.deepEqual(parseCallLogBody({ note: "  Will send medical  " }, { now }).values, { note: "Will send medical", calledAt: null, needsAttention: false });
+        assert.deepEqual(parseCallLogBody({ note: "  Will send medical  " }, { now }).values, { note: "Will send medical", calledAt: null, needsAttention: false, outcome: "ANSWERED" });
         assert.equal(parseCallLogBody({ note: "x", needsAttention: true }, { now }).values.needsAttention, true);
         assert.deepEqual(fields({ note: "x", needsAttention: "yes" }), ["needsAttention"]);
         assert.deepEqual(fields({}), ["note"]);

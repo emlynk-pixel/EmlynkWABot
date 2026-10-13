@@ -172,10 +172,13 @@ export type DocumentStatusEntry = {
 export type FollowUpStatus = "OPEN" | "COMPLETED";
 
 // calledAt: when the call took place; note: what the candidate said.
+// outcome: ANSWERED, or NO_ANSWER (the candidate did not pick up; no note).
 // followUp: the call's newest Priority Follow-Up (OPEN = needs attention).
+export type CallOutcome = "ANSWERED" | "NO_ANSWER";
 export type CallLogEntry = {
     callLogId: string;
     note: string;
+    outcome?: CallOutcome;
     calledAt: string;
     adminName: string | null;
     followUp?: { followUpId: string; status: FollowUpStatus; flaggedAt: string } | null;
@@ -259,7 +262,8 @@ export function listCallLogs(token: string, passportId: string, signal?: AbortSi
 }
 
 // needsAttention: also mark the new call for follow-up, in the same request.
-export function addCallLog(token: string, passportId: string, call: { note: string; calledAt: string; needsAttention?: true }): Promise<CallLogList> {
+// outcome NO_ANSWER: record the attempt with no note.
+export function addCallLog(token: string, passportId: string, call: { note?: string; calledAt: string; needsAttention?: true; outcome?: "NO_ANSWER" }): Promise<CallLogList> {
     return apiRequest(`${base(passportId)}/call-logs`, { method: "POST", token, body: call });
 }
 

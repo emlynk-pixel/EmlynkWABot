@@ -856,7 +856,7 @@ describe("Call log: Need attention and current documents", () => {
         expect(posts[0].body).not.toHaveProperty("needsAttention");
     });
 
-    test("21, 23-24. Need Attention sits between Close and Add call; with it the one request creates the call and its follow-up", async () => {
+    test("21, 23-24. Need Attention sits between No Answer and Add call; with it the one request creates the call and its follow-up", async () => {
         const { calls } = signedInBackend({
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
             "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
@@ -871,7 +871,7 @@ describe("Call log: Need attention and current documents", () => {
         await within(dialog).findByText("No candidate history yet.");
         const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
         const footer = within(form).getByRole("button", { name: "Add call" }).parentElement!;
-        expect(within(footer).getAllByRole("button").map((b) => b.textContent)).toEqual(["Close", "Need Attention", "Add call"]);
+        expect(within(footer).getAllByRole("button").map((b) => b.textContent)).toEqual(["Close", "No Answer", "Need Attention", "Add call"]);
 
         const toggle = within(form).getByRole("button", { name: "Need Attention" });
         expect(toggle).toHaveAttribute("aria-pressed", "false");
@@ -980,6 +980,207 @@ describe("Candidate History: calls and candidate activity", () => {
     });
 });
 
+describe("Call log: No Answer", () => {
+    const WITH_NO_ANSWER = {
+        items: [
+            { callLogId: "n1", note: "", outcome: "NO_ANSWER", calledAt: "2026-10-13T04:06:00.000Z", adminName: "Shamal Sathsara", followUp: null },
+            { callLogId: "c1", note: "Asked about the medical", outcome: "ANSWERED", calledAt: "2026-10-12T04:45:00.000Z", adminName: "Test Admin", followUp: null },
+        ],
+        activity: [
+            { activityId: "document:d1", kind: "DOCUMENT_RECEIVED", occurredAt: "2026-10-12T10:12:00.000Z", actorName: null, source: "WHATSAPP", documentType: "PASSPORT", variant: null, stage: null, fields: [] },
+        ],
+    };
+    const openCallLog = async () => {
+        await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
+        return screen.findByRole("dialog", { name: "Call Logs" });
+    };
+    const posts = (calls: { method: string; path: string; body: unknown }[]) => calls.filter((c) => c.method === "POST");
+
+    test("1. the No Answer button is in Add New Call Log, between Close and Need Attention, with an accessible name and a visible label", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+        const button = within(form).getByRole("button", { name: "No Answer" });
+        expect(button).toBeEnabled();
+        expect(button.textContent).toBe("No Answer");
+        expect(within(form).getAllByRole("button").map((b) => b.textContent)).toEqual(["Close", "No Answer", "Need Attention", "Add call"]);
+        // Secondary, not the primary action.
+        expect(button.className).not.toContain("bg-primary");
+        expect(within(form).getByRole("button", { name: "Add call" }).className).toContain("bg-primary");
+    });
+
+    test("2-4, 6, 12. No Answer needs no note; it sends the selected date and time and nothing else; one request, one call, no follow-up", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": { status: 201, body: { items: [WITH_NO_ANSWER.items[0]] } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        fireEvent.change(within(dialog).getByLabelText("Date *"), { target: { value: "2026-10-12" } });
+        fireEvent.change(within(dialog).getByLabelText("Time *"), { target: { value: "09:36" } });
+        expect(within(dialog).getByLabelText("What the candidate said *")).toHaveValue("");
+        await userEvent.setup().click(within(dialog).getByRole("button", { name: "No Answer" }));
+
+        await vi.waitFor(() => expect(within(dialog).getByText("No Answer", { selector: "[data-outcome]" })).toBeInTheDocument());
+        expect(posts(calls)).toHaveLength(1);
+        expect(posts(calls)[0].path).toBe("/api/admin/candidates/N0000002/call-logs");
+        expect(posts(calls)[0].body).toEqual({ outcome: "NO_ANSWER", calledAt: "2026-10-12T09:36:00+05:30" });
+        expect(calls.some((c) => c.path.endsWith("/follow-up"))).toBe(false);
+        expect(within(dialog).queryByText("Enter the date and time of the call.")).toBeNull();
+    });
+
+    test("15. two quick clicks send one request; the buttons are disabled while it saves", async () => {
+        let release!: () => void;
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": () => new Promise((resolve) => {
+                release = () => resolve({ status: 201, body: { items: [WITH_NO_ANSWER.items[0]] } });
+            }),
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const button = within(dialog).getByRole("button", { name: "No Answer" });
+        fireEvent.click(button);
+        fireEvent.click(button);
+        await vi.waitFor(() => expect(within(dialog).getByRole("button", { name: "No Answer" })).toBeDisabled());
+        expect(within(dialog).getByRole("button", { name: "Saving…" })).toBeDisabled();
+        expect(within(dialog).getByRole("button", { name: "Need Attention" })).toBeDisabled();
+        release();
+        await vi.waitFor(() => expect(within(dialog).getByRole("button", { name: "No Answer" })).toBeEnabled());
+        expect(posts(calls)).toHaveLength(1);
+    });
+
+    test("7-9. the history shows a compact No Answer (icon and text, neutral), with no note body, sorted by time with the calls and activity", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: WITH_NO_ANSWER },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        const items = within(await within(dialog).findByRole("list", { name: "Candidate history" })).getAllByRole("listitem");
+        expect(items.map((item) => item.textContent)).toEqual([
+            "13 Oct 2026 · 09:36Call logShamal SathsaraNo Answer",
+            "12 Oct 2026 · 15:42Candidate activityvia WhatsAppPassport uploaded",
+            "12 Oct 2026 · 10:15Call logTest AdminAsked about the medical",
+        ]);
+        const badge = within(items[0]).getByText("No Answer");
+        expect(badge).toHaveAttribute("data-outcome", "NO_ANSWER");
+        expect(badge.querySelector("svg")).not.toBeNull();
+        // An outcome, not an error: no critical colours; no note paragraph.
+        expect(badge.className).not.toMatch(/critical|red/);
+        // Two lines only: the date row and the badge (a note would be a third).
+        expect(items[0].querySelectorAll("p")).toHaveLength(2);
+    });
+
+    test("13. a No Answer call can be flagged with the same flag as any call", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: WITH_NO_ANSWER },
+            "POST /api/admin/candidates/N0000002/call-logs/n1/follow-up": { status: 201, body: { followUp: { followUpId: "f-1", callLogId: "n1", status: "OPEN", flaggedAt: "2026-10-13T05:00:00.000Z" } } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        const item = (await within(dialog).findAllByRole("listitem")).find((i) => i.textContent?.includes("No Answer"))!;
+        await userEvent.setup().click(within(item).getByRole("button", { name: "Mark as needs attention" }));
+        expect(await within(item).findByRole("img", { name: "Needs attention" })).toBeInTheDocument();
+        expect(posts(calls).map((c) => c.path)).toEqual(["/api/admin/candidates/N0000002/call-logs/n1/follow-up"]);
+        // Still in the history, with no note.
+        expect(within(item).getByText("No Answer")).toBeInTheDocument();
+    });
+
+    test("12. with Need Attention on, No Answer sends it in the same single request", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": { status: 201, body: { items: [{ ...WITH_NO_ANSWER.items[0], followUp: { followUpId: "f-1", status: "OPEN", flaggedAt: "2026-10-13T05:00:00.000Z" } }] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        await user.click(within(dialog).getByRole("button", { name: "Need Attention" }));
+        await user.click(within(dialog).getByRole("button", { name: "No Answer" }));
+        expect(await within(dialog).findByRole("img", { name: "Needs attention" })).toBeInTheDocument();
+        expect(posts(calls)).toHaveLength(1);
+        expect(posts(calls)[0].body).toMatchObject({ outcome: "NO_ANSWER", needsAttention: true });
+        expect(posts(calls)[0].body).not.toHaveProperty("note");
+    });
+
+    test("10-11. Add call still needs a note and sends it without an outcome; a note typed before No Answer is kept for the next call", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": { status: 201, body: WITH_NO_ANSWER },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const addCall = within(dialog).getByRole("button", { name: "Add call" });
+        expect(addCall).toBeDisabled();
+        fireEvent.submit(within(dialog).getByRole("form", { name: "Add New Call Log" }));
+        expect(posts(calls)).toHaveLength(0);
+
+        await user.type(within(dialog).getByLabelText("What the candidate said *"), "Will bring the medical");
+        await user.click(within(dialog).getByRole("button", { name: "No Answer" }));
+        await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
+        expect(posts(calls)[0].body).not.toHaveProperty("note");
+        expect(within(dialog).getByLabelText("What the candidate said *")).toHaveValue("Will bring the medical");
+
+        await user.click(within(dialog).getByRole("button", { name: "Add call" }));
+        await vi.waitFor(() => expect(posts(calls)).toHaveLength(2));
+        expect(posts(calls)[1].body).toMatchObject({ note: "Will bring the medical" });
+        expect(posts(calls)[1].body).not.toHaveProperty("outcome");
+    });
+
+    test("No Answer is refused before anything is sent when the date is in the future", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        fireEvent.change(within(dialog).getByLabelText("Date *"), { target: { value: "2099-01-01" } });
+        await userEvent.setup().click(within(dialog).getByRole("button", { name: "No Answer" }));
+        expect(within(dialog).getByText("The call can't be in the future.")).toBeInTheDocument();
+        expect(posts(calls)).toHaveLength(0);
+    });
+
+    test("a viewer has no form, so no No Answer button", async () => {
+        signedInBackend({
+            "GET /auth/me": { status: 200, body: { user: VIEWER } },
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: WITH_NO_ANSWER },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("Asked about the medical");
+        expect(within(dialog).queryByRole("button", { name: "No Answer" })).toBeNull();
+    });
+
+    test("the Need Attention page shows a flagged No Answer call as No Answer, not as an empty row", async () => {
+        // Same data shape as GET /api/admin/follow-ups; rendered through the real page.
+        const item = { followUpId: "f-1", status: "OPEN", flaggedAt: "2026-10-13T05:00:00.000Z", flaggedByName: "Test Admin", completedAt: null, completedByName: null, callLog: { callLogId: "n1", note: "", outcome: "NO_ANSWER", calledAt: "2026-10-13T04:06:00.000Z", adminName: "Shamal Sathsara" } };
+        signedInBackend({
+            "GET /api/admin/follow-ups": { status: 200, body: { status: "OPEN", total: 1, truncated: false, groups: [{ candidate: { passportId: "N0000002", uniqueId: "U2", name: "SAMAN SILVA", whatsappNumber: null, contactNumber: null }, documentStatus: [], followUps: [item] }] } },
+        });
+        renderApp("/follow-ups");
+        const row = (await screen.findAllByText("No Answer"))[0].closest("li")!;
+        expect(row.textContent).toContain("No Answer");
+        expect(row.querySelectorAll("p")[1]?.textContent).toContain("No Answer");
+    });
+});
+
 describe("Call log drawer: closing", () => {
     const openCallLog = async () => {
         await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
@@ -1048,7 +1249,7 @@ describe("Call log drawer: closing", () => {
         // Date and time side by side, stacked only on a very narrow screen.
         expect(classes(screen.getByTestId("call-log-when"))).toEqual(expect.arrayContaining(["grid-cols-1", "min-[340px]:grid-cols-2"]));
         // Every button keeps its name and a 32px height.
-        for (const name of ["Close", "Need Attention", "Add call"]) expect(classes(within(form).getByRole("button", { name }))).toContain("h-8");
+        for (const name of ["Close", "No Answer", "Need Attention", "Add call"]) expect(classes(within(form).getByRole("button", { name }))).toContain("h-8");
     });
 
     test("29. the backdrop does not close the drawer while a call is being saved", async () => {
