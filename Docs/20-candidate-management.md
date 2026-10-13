@@ -183,7 +183,47 @@ Each has a free-text **Notes** field and a **Stage completed** checkbox. Changes
 
 ### 4.3 Call log
 
-Every candidate page has a **Call log** button (top right). The dialog shows a chronological log of admin call notes and allows adding new ones (`POST /api/admin/candidates/:passportId/call-logs`).
+Every candidate page has a **Call log** button (top right). It opens a drawer from the right: the candidate summary (name, passport ID, WhatsApp), **Candidate History**, and the **Add New Call Log** form at the bottom.
+
+**Candidate History** (formerly *Call History*) is one timeline, newest first by when each thing happened, of:
+
+- **Call logs**: date and time, who called, the note. White card, *Call log* label.
+- **Candidate activity**: one short line on a muted background with a small icon, *Candidate activity* label.
+
+The drawer no longer shows the *Current documents* block. Document status is still on the candidate page and in Priority Follow-Ups, and `documentStatus` is still returned by the API.
+
+Candidate activity is built only from what is already on record. There is no new table and no migration, and nothing is reconstructed or guessed:
+
+| Activity | Source | Shown as |
+|---|---|---|
+| Document received | `documents` (every row of a candidate type, superseded ones too) at `received_date` | *Passport uploaded* / *Police report - SL Verified uploaded*, **by &lt;staff&gt;** (an `UPLOAD_DOCUMENT` audit entry), **via WhatsApp** (stored from a WhatsApp submission), or with no byline when neither is known |
+| Document verified | `APPROVE` / `REPLACE_VERIFIED` audit entries | *Medical verified*, by &lt;staff&gt; |
+| Document removed | `REMOVE_DOCUMENT` audit entries | *Scan removed*, by &lt;staff&gt; |
+| Candidate registered | `CREATE_CANDIDATE` | *Candidate registered* |
+| Details updated | `UPDATE_CANDIDATE` (field **names** only; old and new values are never sent) | *Address updated*, *WhatsApp number updated*, *Passport details updated*, or *Candidate details updated* with the field names |
+| Additional details | `CREATE_` / `UPDATE_ADDITIONAL_DETAILS` | *Additional details updated* |
+| Stage saved by an admin | `UPDATE_STAGE` | *IVS interview marked complete* / *marked incomplete* / *updated* (notes are not repeated) |
+| Older stage completion | `candidate_stages.completed_at` when no audited save matches it | *Visa approval marked complete* (no byline) |
+
+Limitations:
+
+- **Automatic stages:** Candidate details and Document submission keep no completion history, so their completion never appears.
+- **Earlier stage completions:** for a manual stage, only its current `completed_at` exists from before stage saves were audited. Earlier completions, and reopenings, are not on record.
+- **Approvals of removed documents:** an approval whose document was removed later is not shown. The audit entry has no document type to name it by.
+- **Unattributed documents:** a document stored before submissions were linked (`temporary_id`) and without an upload audit entry has no "by" or "via" line.
+- **Activity limit:** the latest 100 activity entries are returned. *Showing the latest candidate activity only* appears when there are more. Call logs are not limited.
+
+**Need Attention.** Each call shows a compact flag beside the caller's name, using the existing Priority Follow-Up:
+
+- **Outline flag:** a button, *Mark as needs attention*.
+- **Filled flag:** *Needs attention*, while the follow-up is open. There is no second flag.
+- **Completed check:** *Follow-up completed*. The call can be marked again.
+
+Roles that can only view see the state, not the button.
+
+The add form's buttons are **Close**, **Need Attention** (a toggle) and **Add call**. With Need Attention on, the one request (`POST …/call-logs` with `needsAttention: true`) creates the call and its OPEN follow-up, with its `FLAG_FOLLOW_UP` audit entry, in one transaction. You get one call, never two.
+
+**Closing.** The drawer closes with X, Close, Escape, or a click on the page outside it. A click only counts when the press started outside too, so a text selection dragged out of the drawer doesn't close it. Nothing closes the drawer while a call is being saved.
 
 ### 4.4 Additional details (a progress step)
 
@@ -375,8 +415,8 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `POST` | `/candidates/:passportId/documents/upload-target` | Check a file's description; returns a signed upload URL (JSON only) |
 | `POST` | `/candidates/:passportId/documents/finalize` | Check the uploaded file and record it (JSON only) |
 | `POST` | `/candidates/:passportId/documents/:documentId/remove` | Delete the current document and its file; `{ reason }` required |
-| `GET` | `/candidates/:passportId/call-logs` | List call log entries |
-| `POST` | `/candidates/:passportId/call-logs` | Add a call log entry |
+| `GET` | `/candidates/:passportId/call-logs` | Call log entries, `documentStatus`, and `activity` (Candidate History, newest first, at most 100; `activityTruncated`) |
+| `POST` | `/candidates/:passportId/call-logs` | Add a call log entry `{ note, calledAt?, needsAttention? }`; `needsAttention: true` also opens its follow-up (one transaction) |
 | `GET` | `/candidates/:passportId/additional-details` | Additional details, or suggestions from the candidate record when none are saved |
 | `PUT` | `/candidates/:passportId/additional-details` | Save additional details (full replacement; audited; never creates a candidate) |
 
