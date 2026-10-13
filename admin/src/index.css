@@ -27,9 +27,9 @@
     --color-canvas: #f3f5f8;
     --color-canvas-muted: #ecf0f4;
     --color-surface: #ffffff;
-    --color-border: #d5dce5;
-    --color-border-strong: #b6c0cd;
-    --color-border-focus: #8494a8;
+    --color-border: #c9d1dc;
+    --color-border-strong: #a9b5c4;
+    --color-border-focus: #7a8ba1;
     --color-ink: #0f172a;
     --color-ink-soft: #1e293b;
     --color-ink-muted: #475569;
@@ -238,9 +238,9 @@
 :root:not([data-theme="dark"]) .ui-classic {
     --color-canvas: #f8fafc;
     --color-canvas-muted: #f1f5f9;
-    --color-border: #e2e8f0;
-    --color-border-strong: #cbd5e1;
-    --color-border-focus: #94a3b8;
+    --color-border: #c9d1dc;
+    --color-border-strong: #a9b5c4;
+    --color-border-focus: #7a8ba1;
     --color-ink-subtle: #64748b;
 }
 

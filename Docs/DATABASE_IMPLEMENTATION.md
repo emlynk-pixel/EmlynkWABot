@@ -89,13 +89,14 @@ All core application tables reside in the `public` schema.
 - **Important Columns**:
   - `passport_id` (`TEXT`, FK -> `candidate.passport_id` `ON DELETE CASCADE`).
   - `admin_id` (`TEXT`, FK -> `"user".admin_id` `ON DELETE RESTRICT`).
-  - `note` (`TEXT`): Notes recorded during the telephone conversation.
+  - `note` (`TEXT`): Notes recorded during the telephone conversation. A `NO_ANSWER` call stores an empty string.
+  - `call_outcome` (`TEXT`, default `ANSWERED`): `ANSWERED` or `NO_ANSWER` (check constraint). An answered call still needs a non-blank note, enforced by a second check constraint. Migration `20261013120000_call_log_outcome` (additive; every earlier call is `ANSWERED`).
   - `created_date` (`TIMESTAMPTZ`): Call timestamp.
 - **Indexes**: `(passport_id, created_date)`.
 - **Relationships**: one-to-many with `call_log_follow_up`.
 
 ### 2.5.1 `public.call_log_follow_up`
-- **Purpose**: Priority Follow-Ups: a call log marked as needing attention. Holds only the follow-up's own state; the call log stays the source of truth for the note, call time, caller and candidate (nothing is copied).
+- **Purpose**: Follow-ups (shown as **Need Attention** in the dashboard; the table keeps its name): a call log marked as needing attention. Holds only the follow-up's own state; the call log stays the source of truth for the note, call time, caller and candidate (nothing is copied).
 - **Primary Key**: `follow_up_id` (`TEXT`, UUID).
 - **Important Columns**:
   - `call_log_id` (`TEXT`, FK -> `candidate_call_logs.call_log_id` `ON DELETE CASCADE`: a follow-up never outlives its call log, so none is orphaned).
@@ -225,7 +226,7 @@ The candidate table represents job applicants and client records.
 - `documents`: Stored and verified files belonging to this candidate.
 - `candidate_stages`: Seven deployment tracking stages (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`).
 - `candidate_call_logs`: Telephone call notes recorded by staff.
-- `call_log_follow_up`: Priority Follow-Ups, one row per call marked for follow-up (see §2.5.1).
+- `call_log_follow_up`: follow-ups (the dashboard's Need Attention page), one row per call marked for follow-up (see §2.5.1).
 - `candidate_additional_details`: At most one row of extra details (passport name, sizes, family, other skills); see §2.12.
 - `temporary_data`: Unprocessed or pending review items matched to this candidate.
 

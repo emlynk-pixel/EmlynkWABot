@@ -46,12 +46,12 @@ function formFrom(details: AdditionalDetails): Form {
 }
 
 // What is saved: blanks as null, and details that go with a hidden answer
-// (a parent not alive, not married) cleared rather than kept out of sight.
+// (a wife when not married, children when single) cleared rather than kept out of sight.
 function payloadOf(form: Form): AdditionalDetails {
     const value = (key: Key) => form[key].trim() || null;
     const payload = Object.fromEntries(KEYS.map((key) => [key, BOOLEAN_KEYS.includes(key) ? (form[key] ? form[key] === "yes" : null) : value(key)])) as AdditionalDetails;
-    if (form.fatherAlive !== "yes") Object.assign(payload, { fatherFullName: null, fatherBirthday: null });
-    if (form.motherAlive !== "yes") Object.assign(payload, { motherFullName: null, motherBirthday: null });
+    // A parent's name and birthday are kept whatever the alive answer.
+    if (form.maritalStatus === "SINGLE") Object.assign(payload, { child1Name: null, child2Name: null, child3Name: null });
     if (form.maritalStatus !== "MARRIED") Object.assign(payload, { wifeFullName: null, wifeBirthday: null });
     return payload;
 }
@@ -63,8 +63,9 @@ export function validateAdditionalDetails(form: Form, today = todayInSriLanka())
     if (form.fatherAlive === "yes" && !form.fatherFullName.trim()) errors.fatherFullName = "Enter the father's full name.";
     if (form.motherAlive === "yes" && !form.motherFullName.trim()) errors.motherFullName = "Enter the mother's full name.";
     if (form.maritalStatus === "MARRIED" && !form.wifeFullName.trim()) errors.wifeFullName = "Enter the wife's full name.";
-    if (form.child2Name.trim() && !form.child1Name.trim()) errors.child2Name = "Enter the 1st child's name first.";
-    if (form.child3Name.trim() && !form.child2Name.trim()) errors.child3Name = "Enter the 2nd child's name first.";
+    const children = form.maritalStatus !== "SINGLE";
+    if (children && form.child2Name.trim() && !form.child1Name.trim()) errors.child2Name = "Enter the 1st child's name first.";
+    if (children && form.child3Name.trim() && !form.child2Name.trim()) errors.child3Name = "Enter the 2nd child's name first.";
     for (const key of ["pantSize", "shoeSize"] as const) {
         if (form[key].trim() && !CUSTOM_SIZE.test(form[key].trim())) errors[key] = "Up to 10 letters, digits, spaces, dots, slashes or dashes.";
     }
@@ -220,22 +221,14 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved }: {
 
             <Section title="Father details">
                 {yesNo("fatherAlive", "Is father alive?")}
-                {form.fatherAlive === "yes" && (
-                    <>
-                        {text("fatherFullName", "Father full name", { required: true })}
-                        {dateField("fatherBirthday", "Father birthday")}
-                    </>
-                )}
+                {text("fatherFullName", "Father full name", { required: form.fatherAlive === "yes" })}
+                {dateField("fatherBirthday", "Father birthday")}
             </Section>
 
             <Section title="Mother details">
                 {yesNo("motherAlive", "Is mother alive?")}
-                {form.motherAlive === "yes" && (
-                    <>
-                        {text("motherFullName", "Mother full name", { required: true })}
-                        {dateField("motherBirthday", "Mother birthday")}
-                    </>
-                )}
+                {text("motherFullName", "Mother full name", { required: form.motherAlive === "yes" })}
+                {dateField("motherBirthday", "Mother birthday")}
             </Section>
 
             <Section title="Marital & family details">
@@ -251,9 +244,19 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved }: {
                         {dateField("wifeBirthday", "Wife birthday")}
                     </>
                 )}
-                {text("child1Name", "1st child name")}
-                {text("child2Name", "2nd child name")}
-                {text("child3Name", "3rd child name")}
+                {form.maritalStatus === "SINGLE" ? (
+                    (form.child1Name || form.child2Name || form.child3Name) && (
+                        <p className="text-body-sm text-ink-muted sm:col-span-2">
+                            Child names on record will be removed when you save, because the marital status is Single.
+                        </p>
+                    )
+                ) : (
+                    <>
+                        {text("child1Name", "1st child name")}
+                        {text("child2Name", "2nd child name")}
+                        {text("child3Name", "3rd child name")}
+                    </>
+                )}
             </Section>
 
             <Section title="Employment / skills">

@@ -6,7 +6,7 @@ import { CANDIDATE_STAGES } from "../api/candidates";
 import type { FollowUpGroup, FollowUpItem, FollowUpList } from "../api/followUps";
 import { ADMIN, RENDER_STEP, renderApp, renderAppSignedIn, signedInBackend } from "./helpers";
 
-// Priority Follow-Ups page. Synthetic candidates and calls only; the backend
+// Need Attention page (the Priority Follow-Ups feature). Synthetic candidates and calls only; the backend
 // is a stub (the API's own rules are in test/callLogFollowUps.test.js).
 
 const asRole = (role: string) => ({ "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role } } } });
@@ -57,14 +57,15 @@ const group = (name: string) => screen.findByRole("listitem", { name });
 const rowWith = (container: HTMLElement, note: string) =>
     within(within(container).getByRole("list", { name: /^Follow-ups for/ })).getAllByRole("listitem").find((li) => li.textContent?.includes(note))!;
 
-describe("Priority Follow-Ups page", () => {
-    test("8, 12-15. loads candidate groups: one card per candidate, its follow-ups inside, its current documents", async () => {
+describe("Need Attention page", () => {
+    test("1, 4, 8, 15-16. loads candidate groups: one card per candidate, its follow-ups inside, no documents block", async () => {
         const { calls } = signedInBackend({ ...listRoute() });
         renderApp("/follow-ups");
-        expect(await screen.findByRole("heading", { level: 1, name: "Priority Follow-Ups" })).toBeInTheDocument();
-        expect(calls.some((c) => c.path === "/api/admin/follow-ups?status=OPEN")).toBe(true);
+        expect(await screen.findByRole("heading", { level: 1, name: "Need Attention" })).toBeInTheDocument();
+        expect(screen.getByText("Calls and candidate follow-ups that require action.")).toBeInTheDocument();
 
         const candidates = await screen.findByRole("list", { name: "Candidates" });
+        expect(calls.some((c) => c.path === "/api/admin/follow-ups?status=OPEN")).toBe(true);
         expect(within(candidates).getAllByRole("listitem", { name: /SILVA|PERERA/ })).toHaveLength(2);
 
         const saman = await group("SAMAN SILVA");
@@ -76,16 +77,15 @@ describe("Priority Follow-Ups page", () => {
         expect(samanRows.map((row) => within(row).getByText(/not uploaded/).textContent)).toEqual(["Medical not uploaded yet", "Passport not uploaded"]);
         expect(within(samanRows[0]).getByText("Called by Dee Desk")).toBeInTheDocument();
         expect(within(samanRows[0]).getByText(/Flagged .* by Ann Analyst/)).toBeInTheDocument();
-        expect(within(samanRows[0]).getByText("Needs attention")).toBeInTheDocument();
-
-        const samanDocs = within(saman).getByRole("list", { name: "Current documents" });
-        expect(within(samanDocs).getByRole("listitem", { name: "Passport: uploaded" })).toHaveAttribute("data-uploaded", "true");
-        expect(within(samanDocs).getByRole("listitem", { name: "Medical: not uploaded" })).toHaveAttribute("data-uploaded", "false");
+        expect(within(samanRows[0]).getByRole("img", { name: "Needs attention" })).toBeInTheDocument();
+        // 4. The Current Documents block is not on this page (the API still sends documentStatus).
+        expect(screen.queryByRole("list", { name: "Current documents" })).toBeNull();
+        expect(screen.queryByText(/of \d+ uploaded/)).toBeNull();
+        expect(screen.queryByText("Current documents")).toBeNull();
 
         const kamal = await group("KAMAL PERERA");
         expect(within(kamal).getByText("1 follow-up")).toBeInTheDocument();
         expect(within(kamal).getByText("0112345678")).toBeInTheDocument();
-        expect(within(within(kamal).getByRole("list", { name: "Current documents" })).getByRole("listitem", { name: "Medical: uploaded" })).toBeInTheDocument();
         expect(within(kamal).queryByText("Passport not uploaded")).toBeNull();
         expect(screen.getByText("3 follow-ups · 2 candidates")).toBeInTheDocument();
     });
@@ -239,16 +239,118 @@ describe("Priority Follow-Ups page", () => {
         await user.click(await screen.findByRole("button", { name: "Call log" }));
         const dialog = await screen.findByRole("dialog", { name: "Call Logs" });
         expect(await within(dialog).findByText("Passport not uploaded")).toBeInTheDocument();
-        expect(within(dialog).getByRole("button", { name: "Need attention" })).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Mark as needs attention" })).toBeInTheDocument();
     });
 
-    test("28. the sidebar has Priority Follow-Ups after Candidates and it opens the page", async () => {
+    test("2-3. the sidebar says Need Attention after Candidates and opens the page; \"Priority Follow-Ups\" is shown nowhere", async () => {
         signedInBackend({ ...listRoute() });
         renderApp("/");
         const nav = within(await screen.findByRole("navigation", { name: "Main navigation" }));
         const links = nav.getAllByRole("link").map((l) => l.textContent);
-        expect(links.indexOf("Priority Follow-Ups")).toBe(links.indexOf("Candidates") + 1);
-        await userEvent.setup().click(nav.getByRole("link", { name: "Priority Follow-Ups" }));
-        expect(await screen.findByRole("heading", { level: 1, name: "Priority Follow-Ups" })).toBeInTheDocument();
+        expect(links.indexOf("Need Attention")).toBe(links.indexOf("Candidates") + 1);
+        expect(links).not.toContain("Priority Follow-Ups");
+        const link = nav.getByRole("link", { name: "Need Attention" });
+        // The route is unchanged: only the label is new.
+        expect(link).toHaveAttribute("href", "/follow-ups");
+        await userEvent.setup().click(link);
+        expect(await screen.findByRole("heading", { level: 1, name: "Need Attention" })).toBeInTheDocument();
+        await group("SAMAN SILVA");
+        expect(document.body.textContent).not.toMatch(/Priority Follow-Ups?/);
+    });
+
+    test("5-9. no Need Attention text button or badge: each open follow-up has one compact flag (named, with a tooltip); Mark complete stays", async () => {
+        signedInBackend({ ...asRole("ANALYST"), ...listRoute() });
+        renderApp("/follow-ups");
+        const saman = await group("SAMAN SILVA");
+        const row = rowWith(saman, "Passport not uploaded");
+        expect(within(row).queryByRole("button", { name: /need.* attention/i })).toBeNull();
+        expect(within(row).queryByText(/needs? attention/i)).toBeNull();
+        const flag = within(row).getByRole("img", { name: "Needs attention" });
+        expect(flag).toHaveAttribute("title", "Needs attention");
+        expect(flag.textContent).toBe("");
+        expect(flag.querySelector("svg")).not.toBeNull();
+        // At the top right of the row, beside who called, not in the actions.
+        expect(flag.parentElement).toContainElement(within(row).getByText("Called by Dee Desk"));
+        expect(within(row).getByRole("button", { name: "Mark complete" })).toBeInTheDocument();
+        expect(within(saman).getAllByRole("img", { name: "Needs attention" })).toHaveLength(2);
+    });
+
+    test("9-10, 12. a completed follow-up shows the muted completed icon, who completed it and when, and no Mark complete; it stays in the history", async () => {
+        signedInBackend({ ...listRoute() });
+        renderApp("/follow-ups");
+        await group("SAMAN SILVA");
+        await userEvent.setup().click(screen.getByRole("button", { name: "Completed" }));
+        const kamal = await group("KAMAL PERERA");
+        const row = rowWith(kamal, "Scan was missing");
+        const icon = within(row).getByRole("img", { name: "Follow-up completed" });
+        expect(icon).toHaveAttribute("title", "Follow-up completed");
+        expect(icon.className).toContain("text-ink-subtle");
+        expect(icon.className).not.toContain("text-review");
+        // The state is not carried by colour alone: another icon shape and another name.
+        expect(within(row).queryByRole("img", { name: "Needs attention" })).toBeNull();
+        expect(within(row).getByText(/Completed .* by Max Manager/)).toBeInTheDocument();
+        expect(within(row).queryByRole("button", { name: "Mark complete" })).toBeNull();
+        expect(within(row).queryByText(/needs? attention/i)).toBeNull();
+        // 4. Resolved reads as quieter: a soft neutral wash, a muted note; an open row has neither.
+        expect(row).toHaveAttribute("data-state", "completed");
+        expect(row.className).toContain("bg-canvas/50");
+        expect(within(row).getByText("Scan was missing").className).toContain("text-ink-muted");
+    });
+
+    test("5. an open follow-up is not washed out, and its flag is amber", async () => {
+        signedInBackend({ ...listRoute() });
+        renderApp("/follow-ups");
+        const row = rowWith(await group("SAMAN SILVA"), "Passport not uploaded");
+        expect(row).toHaveAttribute("data-state", "open");
+        expect(row.className).not.toContain("bg-canvas");
+        expect(within(row).getByText("Passport not uploaded").className).toContain("text-ink-soft");
+        expect(within(row).getByRole("img", { name: "Needs attention" }).className).toContain("text-review");
+    });
+
+    test("a flagged No Answer call reads as No Answer, not as an empty row", async () => {
+        const noAnswer = item("f-5", "", { callLog: { callLogId: "call-f-5", note: "", outcome: "NO_ANSWER", calledAt: "2026-10-13T04:06:00.000Z", adminName: "Dee Desk" } });
+        signedInBackend({ ...listRoute({ OPEN: { status: "OPEN", total: 1, truncated: false, groups: [{ ...SAMAN, followUps: [noAnswer] }] } }) });
+        renderApp("/follow-ups");
+        const row = within(within(await group("SAMAN SILVA")).getByRole("list", { name: /^Follow-ups for/ })).getByRole("listitem");
+        // The same badge as in Candidate History: red icon and outline, normal text colour.
+        const badge = within(row).getByText("No Answer");
+        expect(badge).toHaveAttribute("data-outcome", "NO_ANSWER");
+        expect(badge.className).toContain("border-critical-border");
+        expect(badge.className).toContain("text-ink-soft");
+        expect(badge.querySelector(".text-critical")).not.toBeNull();
+        expect(within(row).getByRole("img", { name: "Needs attention" })).toBeInTheDocument();
+    });
+
+    test("18-19. long call notes wrap inside the card; the row, flag and actions are laid out to wrap without overlap", async () => {
+        const long = "x".repeat(400);
+        signedInBackend({ ...asRole("MANAGER"), ...listRoute({ OPEN: { status: "OPEN", total: 1, truncated: false, groups: [{ ...SAMAN, followUps: [item("f-7", long)] }] } }) });
+        renderApp("/follow-ups");
+        const row = within(within(await group("SAMAN SILVA")).getByRole("list", { name: /^Follow-ups for/ })).getByRole("listitem");
+        // jsdom has no layout: check the wrapping rules are applied.
+        const note = within(row).getByText(long);
+        for (const rule of ["whitespace-pre-wrap", "break-words", "[overflow-wrap:anywhere]"]) expect(note.className).toContain(rule);
+        // Metadata and actions wrap onto a second line instead of overflowing; the flag never shrinks.
+        const actions = within(row).getByRole("button", { name: "Mark complete" }).parentElement!;
+        expect(actions.parentElement!.className).toContain("flex-wrap");
+        expect(actions.className).toContain("shrink-0");
+        expect(within(row).getByRole("img", { name: "Needs attention" }).className).toContain("shrink-0");
+        // Both actions are present for a MANAGER.
+        expect(within(actions).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Mark complete", "Delete follow-up"]);
+    });
+
+    test("an empty list uses the new wording", async () => {
+        signedInBackend({ ...listRoute({}) });
+        renderApp("/follow-ups");
+        expect(await screen.findByText("No open follow-ups.")).toBeInTheDocument();
+        expect(screen.getByText("Calls flagged as needing attention in a candidate's history appear here.")).toBeInTheDocument();
+        expect(document.body.textContent).not.toMatch(/Priority Follow-Ups?/);
+    });
+
+    test("the delete confirmation names Need Attention and still says the call log, candidate and documents are kept", async () => {
+        signedInBackend({ ...asRole("ADMIN"), ...listRoute() });
+        renderApp("/follow-ups");
+        await userEvent.setup().click(within(rowWith(await group("SAMAN SILVA"), "Passport not uploaded")).getByRole("button", { name: "Delete follow-up" }));
+        const dialog = await screen.findByRole("dialog", { name: "Delete this follow-up?" });
+        expect(dialog).toHaveTextContent("The follow-up is removed from Need Attention permanently. The original call log, the candidate and their documents are kept.");
     });
 });

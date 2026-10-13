@@ -165,6 +165,24 @@ describe("Candidates page: server-side paging", () => {
         expect(listRequests(calls).at(-1)).toBe("/api/admin/candidates?page=1&pageSize=100&search=Kamal");
     });
 
+    test("contact number search: the placeholder names it; the term goes to the server (page 1), is kept while paging, and no row is filtered in the browser", async () => {
+        const { calls } = pagedBackend(247);
+        renderApp("/candidates");
+        await screen.findByRole("table", { name: "Candidates" });
+        const box = screen.getByLabelText("Search candidates");
+        expect(box).toHaveAttribute("placeholder", "Search by name, passport ID, NIC, contact or WhatsApp number…");
+        const user = userEvent.setup();
+        await user.type(box, "0771234567{Enter}");
+        await screen.findByRole("table", { name: "Candidates" });
+        expect(listRequests(calls).at(-1)).toBe("/api/admin/candidates?page=1&pageSize=100&search=0771234567");
+        // The stub ignores the term, like the real server would return its matches: whatever it
+        // returns is shown as is (100 rows), not filtered again by the page.
+        expect(rows()).toHaveLength(100);
+        await user.click(pager().getByRole("button", { name: "Next" }));
+        expect(await screen.findByRole("link", { name: "CANDIDATE 147" })).toBeInTheDocument();
+        expect(listRequests(calls).at(-1)).toBe("/api/admin/candidates?page=2&pageSize=100&search=0771234567");
+    });
+
     test("11-12. on page 2 a row still opens the candidate (link and row click)", async () => {
         pagedBackend(247, {
             "GET /api/admin/candidates/P0000147": { status: 404, body: { message: "Candidate not found" } },

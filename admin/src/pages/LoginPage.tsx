@@ -101,7 +101,7 @@ export function LoginPage() {
                 <div className="mb-6 flex items-center gap-3">
                     <span className="flex size-10 items-center justify-center rounded-lg bg-sidebar text-headline-sm text-sidebar-text-active">E</span>
                     <div>
-                        <p className="text-headline-sm text-ink">EmlynkWABot</p>
+                        <p className="text-headline-sm text-ink">Data Collector</p>
                         <p className="text-label-caps uppercase text-ink-subtle">Admin Console</p>
                     </div>
                 </div>

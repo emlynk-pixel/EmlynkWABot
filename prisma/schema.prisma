@@ -291,8 +291,11 @@ model CandidateCallLog {
   callLogId   String   @id @map("call_log_id")
   passportId  String   @map("passport_id")
   adminId     String   @map("admin_id")
-  // What the candidate said (a short note).
+  // What the candidate said (a short note). Empty for a NO_ANSWER call.
   note        String
+  // ANSWERED | NO_ANSWER (CHECK constraints in SQL, migration
+  // 20261013120000_call_log_outcome: a note is required unless NO_ANSWER).
+  callOutcome String   @default("ANSWERED") @map("call_outcome")
   // When the call took place: the date and time the admin entered, or now.
   createdDate DateTime @default(now()) @map("created_date")
 

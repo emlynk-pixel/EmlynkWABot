@@ -562,10 +562,10 @@ describe("Call log", () => {
         });
         renderApp("/candidates/N0000002");
         const dialog = await openCallLog();
-        const items = within(await within(dialog).findByRole("list", { name: "Calls" })).getAllByRole("listitem");
+        const items = within(await within(dialog).findByRole("list", { name: "Candidate history" })).getAllByRole("listitem");
         expect(items.map((item) => item.textContent)).toEqual([
-            "01 Oct 2026 · 16:45Test AdminSaid the police report is readyNeed attention",
-            "30 Sept 2026 · 10:15Asked about the medicalNeed attention",
+            "01 Oct 2026 · 16:45Call logTest AdminSaid the police report is ready",
+            "30 Sept 2026 · 10:15Call logAsked about the medical",
         ]);
     });
 
@@ -577,7 +577,7 @@ describe("Call log", () => {
         });
         renderApp("/candidates/N0000002");
         const dialog = await openCallLog();
-        expect(await within(dialog).findByText("No calls logged yet.")).toBeInTheDocument();
+        expect(await within(dialog).findByText("No candidate history yet.")).toBeInTheDocument();
 
         const date = within(dialog).getByLabelText("Date *");
         const time = within(dialog).getByLabelText("Time *");
@@ -603,7 +603,7 @@ describe("Call log", () => {
         });
         renderApp("/candidates/N0000002");
         const dialog = await openCallLog();
-        await within(dialog).findByText("No calls logged yet.");
+        await within(dialog).findByText("No candidate history yet.");
         fireEvent.change(within(dialog).getByLabelText("Date *"), { target: { value: "2099-01-01" } });
         await userEvent.setup().type(within(dialog).getByLabelText("What the candidate said *"), "x");
         await userEvent.setup().click(within(dialog).getByRole("button", { name: "Add call" }));
@@ -619,14 +619,14 @@ describe("Call log", () => {
         renderApp("/candidates/N0000002");
         const dialog = await openCallLog();
         expect(dialog).toHaveAttribute("aria-modal", "true");
-        expect(dialog).toHaveAccessibleDescription("View and add call history for this candidate.");
+        expect(dialog).toHaveAccessibleDescription("Calls and candidate activity, newest first.");
         // The candidate page stays underneath; no navigation.
         expect(screen.getByRole("heading", { level: 1, name: "SAMAN SILVA" })).toBeInTheDocument();
         const summary = within(dialog).getByLabelText("Candidate");
         expect(within(summary).getByText("SAMAN SILVA")).toBeInTheDocument();
         expect(within(summary).getByText("N0000002")).toBeInTheDocument();
         expect(within(summary).getByText("94770000002")).toBeInTheDocument();
-        expect(within(dialog).getByRole("heading", { name: "Call History" })).toBeInTheDocument();
+        expect(within(dialog).getByRole("heading", { name: "Candidate History" })).toBeInTheDocument();
         expect(await within(dialog).findByText("2 calls")).toBeInTheDocument();
         expect(within(dialog).getByRole("heading", { name: "Add New Call Log" })).toBeInTheDocument();
         expect(within(dialog).getByRole("button", { name: "Close call logs" })).toHaveFocus();
@@ -663,7 +663,7 @@ describe("Call log", () => {
         });
         renderApp("/candidates/N0000002");
         const dialog = await openCallLog();
-        expect(await within(dialog).findByText("Loading calls…")).toBeInTheDocument();
+        expect(await within(dialog).findByText("Loading history…")).toBeInTheDocument();
         release();
         expect(await within(dialog).findByText("Calls could not be loaded.")).toBeInTheDocument();
         await userEvent.setup().click(within(dialog).getByRole("button", { name: "Try again" }));
@@ -679,7 +679,7 @@ describe("Call log", () => {
         renderApp("/candidates/N0000002");
         const user = userEvent.setup();
         const dialog = await openCallLog();
-        await within(dialog).findByText("No calls logged yet.");
+        await within(dialog).findByText("No candidate history yet.");
         const note = within(dialog).getByLabelText("What the candidate said *");
         await user.type(note, "   ");
         expect(within(dialog).getByRole("button", { name: "Add call" })).toBeDisabled();
@@ -701,7 +701,7 @@ describe("Call log", () => {
         });
         renderApp("/candidates/N0000002");
         const dialog = await openCallLog();
-        await within(dialog).findByText("No calls logged yet.");
+        await within(dialog).findByText("No candidate history yet.");
         fireEvent.change(within(dialog).getByLabelText("Date *"), { target: { value: "2026-10-01" } });
         fireEvent.change(within(dialog).getByLabelText("Time *"), { target: { value: "16:45" } });
         await userEvent.setup().type(within(dialog).getByLabelText("What the candidate said *"), "Said the police report is ready");
@@ -735,6 +735,7 @@ describe("Call log", () => {
         expect(screen.getByRole("heading", { level: 1, name: "SAMAN SILVA" })).toBeInTheDocument();
     });
 
+
     test("a viewer sees the calls but can't add one", async () => {
         signedInBackend({
             "GET /auth/me": { status: 200, body: { user: VIEWER } },
@@ -747,7 +748,234 @@ describe("Call log", () => {
         expect(within(dialog).queryByLabelText("What the candidate said *")).not.toBeInTheDocument();
         expect(within(dialog).queryByRole("button", { name: "Add call" })).not.toBeInTheDocument();
     });
+
+    test("collapse: form is expanded by default when the drawer opens", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+        expect(within(form).getByLabelText("Date *")).toBeInTheDocument();
+        expect(within(form).getByLabelText("Time *")).toBeInTheDocument();
+        expect(within(form).getByLabelText("What the candidate said *")).toBeInTheDocument();
+        const toggle = within(form).getByRole("button", { name: "Collapse call form" });
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+    });
+
+    test("collapse: collapse button hides Date, Time and note fields; action buttons stay visible", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+
+        expect(within(form).queryByLabelText("Date *")).not.toBeInTheDocument();
+        expect(within(form).queryByLabelText("Time *")).not.toBeInTheDocument();
+        expect(within(form).queryByLabelText("What the candidate said *")).not.toBeInTheDocument();
+        // Action buttons always remain visible.
+        expect(within(form).getByRole("button", { name: "Close" })).toBeInTheDocument();
+        expect(within(form).getByRole("button", { name: "No Answer" })).toBeInTheDocument();
+        expect(within(form).getByRole("button", { name: "Need Attention" })).toBeInTheDocument();
+        expect(within(form).getByRole("button", { name: "Add call" })).toBeInTheDocument();
+    });
+
+    test("collapse: expand button restores the fields", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        expect(within(form).queryByLabelText("Date *")).not.toBeInTheDocument();
+
+        await user.click(within(form).getByRole("button", { name: "Expand call form" }));
+        expect(within(form).getByLabelText("Date *")).toBeInTheDocument();
+        expect(within(form).getByLabelText("Time *")).toBeInTheDocument();
+        expect(within(form).getByLabelText("What the candidate said *")).toBeInTheDocument();
+        expect(within(form).getByRole("button", { name: "Collapse call form" })).toHaveAttribute("aria-expanded", "true");
+    });
+
+    test("collapse: typed note survives collapse/expand", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        await user.type(within(form).getByLabelText("What the candidate said *"), "Police report ready");
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        await user.click(within(form).getByRole("button", { name: "Expand call form" }));
+
+        expect(within(form).getByLabelText("What the candidate said *")).toHaveValue("Police report ready");
+    });
+
+    test("collapse: date value survives collapse/expand", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        fireEvent.change(within(form).getByLabelText("Date *"), { target: { value: "2026-09-15" } });
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        await user.click(within(form).getByRole("button", { name: "Expand call form" }));
+
+        expect(within(form).getByLabelText("Date *")).toHaveValue("2026-09-15");
+    });
+
+    test("collapse: time value survives collapse/expand", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        fireEvent.change(within(form).getByLabelText("Time *"), { target: { value: "14:30" } });
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        await user.click(within(form).getByRole("button", { name: "Expand call form" }));
+
+        expect(within(form).getByLabelText("Time *")).toHaveValue("14:30");
+    });
+
+    test("collapse: Need Attention toggle state survives collapse/expand", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        await user.click(within(form).getByRole("button", { name: "Need Attention" }));
+        expect(within(form).getByRole("button", { name: "Need Attention" })).toHaveAttribute("aria-pressed", "true");
+
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        // Still visible and pressed while collapsed.
+        expect(within(form).getByRole("button", { name: "Need Attention" })).toHaveAttribute("aria-pressed", "true");
+
+        await user.click(within(form).getByRole("button", { name: "Expand call form" }));
+        expect(within(form).getByRole("button", { name: "Need Attention" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    test("collapse: No Answer still sends the current date/time while the form is collapsed", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": { status: 201, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        // Set a specific date/time while expanded, then collapse.
+        fireEvent.change(within(form).getByLabelText("Date *"), { target: { value: "2026-10-01" } });
+        fireEvent.change(within(form).getByLabelText("Time *"), { target: { value: "09:00" } });
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+
+        // No Answer is still visible and functional.
+        await user.click(within(form).getByRole("button", { name: "No Answer" }));
+        await within(dialog).findByText("Said the police report is ready");
+        const post = calls.find((c) => c.method === "POST")!;
+        expect(post.body).toMatchObject({ outcome: "NO_ANSWER", calledAt: "2026-10-01T09:00:00+05:30" });
+    });
+
+    test("collapse: Add call validates the note even when the textarea is collapsed", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        // Collapse without typing anything: Add call stays disabled (note is empty).
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        expect(within(form).getByRole("button", { name: "Add call" })).toBeDisabled();
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+    });
+
+    test("collapse: Add call with a pre-typed note still submits while collapsed", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": { status: 201, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        await user.type(within(form).getByLabelText("What the candidate said *"), "Medical ready");
+        // Collapse and then submit.
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        await user.click(within(form).getByRole("button", { name: "Add call" }));
+
+        await within(dialog).findByText("Said the police report is ready");
+        const post = calls.find((c) => c.method === "POST")!;
+        expect(post.body).toMatchObject({ note: "Medical ready" });
+    });
+
+    test("collapse: aria-expanded is false on the toggle while collapsed, true while expanded; tooltip and keyboard activation work", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        const toggle = within(form).getByRole("button", { name: "Collapse call form" });
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+        expect(toggle).toHaveAttribute("title", "Collapse call form");
+
+        await user.click(toggle);
+        const expandToggle = within(form).getByRole("button", { name: "Expand call form" });
+        expect(expandToggle).toHaveAttribute("aria-expanded", "false");
+        expect(expandToggle).toHaveAttribute("title", "Expand call form");
+
+        expandToggle.focus();
+        await user.keyboard("{Enter}");
+        const reExpandedToggle = within(form).getByRole("button", { name: "Collapse call form" });
+        expect(reExpandedToggle).toHaveAttribute("aria-expanded", "true");
+        expect(reExpandedToggle).toHaveAttribute("title", "Collapse call form");
+    });
 });
+
 
 describe("Call log: Need attention and current documents", () => {
     const DOCUMENT_STATUS = [
@@ -769,32 +997,43 @@ describe("Call log: Need attention and current documents", () => {
         return screen.findByRole("dialog", { name: "Call Logs" });
     };
     const callItem = async (dialog: HTMLElement, note: string) => {
-        const items = within(await within(dialog).findByRole("list", { name: "Calls" })).getAllByRole("listitem");
+        const items = within(await within(dialog).findByRole("list", { name: "Candidate history" })).getAllByRole("listitem");
         return items.find((item) => item.textContent?.includes(note))!;
     };
 
-    test("5-7. shows the candidate's current documents: uploaded with a green check, missing as not uploaded", async () => {
+    test("2-3. the Current Documents block is gone from the drawer; the candidate summary stays", async () => {
         signedInBackend({
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
             "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
         });
         renderApp("/candidates/N0000002");
         const dialog = await openCallLog();
-        const documents = await within(dialog).findByRole("list", { name: "Current documents" });
-        const chip = (name: string) => within(documents).getByRole("listitem", { name });
-        expect(chip("Passport: uploaded")).toHaveAttribute("data-uploaded", "true");
-        expect(chip("Passport: uploaded").className).toContain("text-verified");
-        expect(chip("Passport: uploaded").querySelector("svg")).not.toBeNull();
-        expect(chip("Police report · SL Verified: uploaded, waiting for review")).toHaveAttribute("data-uploaded", "true");
-        expect(chip("Medical: not uploaded")).toHaveAttribute("data-uploaded", "false");
-        expect(chip("Medical: not uploaded").className).not.toContain("text-verified");
-        expect(chip("Scan: not uploaded")).toBeInTheDocument();
-        expect(within(dialog).getByText("2 of 4 uploaded")).toBeInTheDocument();
-        // The notes are the call log's own, unchanged.
         expect(await callItem(dialog, "Passport not uploaded")).toBeTruthy();
+        expect(within(dialog).queryByRole("list", { name: "Current documents" })).toBeNull();
+        expect(within(dialog).queryByText(/of 4 uploaded/)).toBeNull();
+        const summary = within(dialog).getByLabelText("Candidate");
+        expect(within(summary).getByText("SAMAN SILVA")).toBeInTheDocument();
+        expect(within(summary).getByText("N0000002")).toBeInTheDocument();
     });
 
-    test("1-4. Need attention flags the call once; the call stays in the history and shows Needs attention", async () => {
+    test("16-17. no Need attention text button in the call body: a compact flag beside the caller", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        const item = await callItem(dialog, "Medical not uploaded yet");
+        expect(within(item).queryByRole("button", { name: "Need attention" })).toBeNull();
+        expect(within(item).queryByText("Need attention")).toBeNull();
+        const flagButton = within(item).getByRole("button", { name: "Mark as needs attention" });
+        expect(flagButton).toHaveAttribute("title", "Mark as needs attention");
+        expect(flagButton.textContent).toBe("");
+        // In the header row, beside the caller's name.
+        expect(flagButton.parentElement).toContainElement(within(item).getByText("Test Admin"));
+    });
+
+    test("1-4, 18. the flag marks the call once (the existing follow-up); the call stays in the history and shows Needs attention", async () => {
         const { calls } = signedInBackend({
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
             "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
@@ -803,20 +1042,21 @@ describe("Call log: Need attention and current documents", () => {
         renderApp("/candidates/N0000002");
         const dialog = await openCallLog();
         const item = await callItem(dialog, "Passport not uploaded");
-        const button = within(item).getByRole("button", { name: "Need attention" });
+        const button = within(item).getByRole("button", { name: "Mark as needs attention" });
         fireEvent.click(button);
         fireEvent.click(button);
 
-        expect(await within(item).findByText("Needs attention")).toBeInTheDocument();
-        expect(within(item).queryByRole("button", { name: "Need attention" })).toBeNull();
+        const open = await within(item).findByRole("img", { name: "Needs attention" });
+        expect(open).toHaveAttribute("title", "Needs attention");
+        expect(within(item).queryByRole("button", { name: /needs attention/i })).toBeNull();
         expect(calls.filter((c) => c.method === "POST" && c.path.endsWith("/follow-up")).map((c) => c.path)).toEqual(["/api/admin/candidates/N0000002/call-logs/c1/follow-up"]);
-        // Still in the call history, unchanged; the other call can still be flagged.
+        // Still in the history, unchanged; the other call can still be flagged.
         expect(within(item).getByText("Passport not uploaded")).toBeInTheDocument();
-        expect(within(await callItem(dialog, "Medical not uploaded yet")).getByRole("button", { name: "Need attention" })).toBeInTheDocument();
-        expect(within(await within(dialog).findByRole("list", { name: "Calls" })).getAllByRole("listitem")).toHaveLength(2);
+        expect(within(await callItem(dialog, "Medical not uploaded yet")).getByRole("button", { name: "Mark as needs attention" })).toBeInTheDocument();
+        expect(within(await within(dialog).findByRole("list", { name: "Candidate history" })).getAllByRole("listitem")).toHaveLength(2);
     });
 
-    test("an already flagged call shows Needs attention and offers no second flag; a completed one can be flagged again", async () => {
+    test("19-20. an open follow-up shows the active flag (no second flag); a completed one shows as completed and can be flagged again", async () => {
         signedInBackend({
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
             "GET /api/admin/candidates/N0000002/call-logs": {
@@ -833,11 +1073,27 @@ describe("Call log: Need attention and current documents", () => {
         renderApp("/candidates/N0000002");
         const dialog = await openCallLog();
         const flaggedItem = await callItem(dialog, "Passport not uploaded");
-        expect(within(flaggedItem).getByText("Needs attention")).toBeInTheDocument();
-        expect(within(flaggedItem).queryByRole("button", { name: "Need attention" })).toBeNull();
+        expect(within(flaggedItem).getByRole("img", { name: "Needs attention" })).toBeInTheDocument();
+        expect(within(flaggedItem).queryByRole("button")).toBeNull();
         const completedItem = await callItem(dialog, "Medical not uploaded yet");
-        expect(within(completedItem).getByText("Follow-up completed")).toBeInTheDocument();
-        expect(within(completedItem).getByRole("button", { name: "Need attention" })).toBeInTheDocument();
+        const again = within(completedItem).getByRole("button", { name: "Follow-up completed. Mark as needs attention again" });
+        expect(again).toHaveAttribute("title", "Follow-up completed (mark again)");
+    });
+
+    test("a viewer sees the follow-up states but no flag action", async () => {
+        signedInBackend({
+            "GET /auth/me": { status: 200, body: { user: VIEWER } },
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": {
+                status: 200,
+                body: { items: [{ ...CALLS.items[0], followUp: { followUpId: "f-0", status: "COMPLETED", flaggedAt: "2026-10-02T05:00:00.000Z" } }, { ...CALLS.items[1], followUp: { followUpId: "f-1", status: "OPEN", flaggedAt: "2026-10-07T05:00:00.000Z" } }] },
+            },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        expect(within(await callItem(dialog, "Passport not uploaded")).getByRole("img", { name: "Needs attention" })).toBeInTheDocument();
+        expect(within(await callItem(dialog, "Medical not uploaded yet")).getByRole("img", { name: "Follow-up completed" })).toBeInTheDocument();
+        expect(within(within(dialog).getByRole("list", { name: "Candidate history" })).queryByRole("button")).toBeNull();
     });
 
     test("already marked elsewhere (409): the calls are reloaded and it shows as flagged", async () => {
@@ -855,11 +1111,11 @@ describe("Call log: Need attention and current documents", () => {
         });
         renderApp("/candidates/N0000002");
         const dialog = await openCallLog();
-        await userEvent.setup().click(within(await callItem(dialog, "Passport not uploaded")).getByRole("button", { name: "Need attention" }));
-        expect(await within(await callItem(dialog, "Passport not uploaded")).findByText("Needs attention")).toBeInTheDocument();
+        await userEvent.setup().click(within(await callItem(dialog, "Passport not uploaded")).getByRole("button", { name: "Mark as needs attention" }));
+        expect(await within(await callItem(dialog, "Passport not uploaded")).findByRole("img", { name: "Needs attention" })).toBeInTheDocument();
     });
 
-    test("25. adding a call still works and keeps the document status", async () => {
+    test("22, 30. adding a call without Need Attention sends the call only", async () => {
         const { calls } = signedInBackend({
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
             "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [], documentStatus: DOCUMENT_STATUS } },
@@ -867,12 +1123,505 @@ describe("Call log: Need attention and current documents", () => {
         });
         renderApp("/candidates/N0000002");
         const dialog = await openCallLog();
-        await within(dialog).findByText("No calls logged yet.");
+        await within(dialog).findByText("No candidate history yet.");
+        expect(within(dialog).getByText("Add a call log or wait for candidate activity to appear.")).toBeInTheDocument();
         await userEvent.setup().type(within(dialog).getByLabelText("What the candidate said *"), "Medical not uploaded yet");
         await userEvent.setup().click(within(dialog).getByRole("button", { name: "Add call" }));
         expect(await within(dialog).findByText("Medical not uploaded yet")).toBeInTheDocument();
-        expect(calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual(["/api/admin/candidates/N0000002/call-logs"]);
-        expect(within(within(dialog).getByRole("list", { name: "Current documents" })).getByRole("listitem", { name: "Passport: uploaded" })).toBeInTheDocument();
+        const posts = calls.filter((c) => c.method === "POST");
+        expect(posts.map((c) => c.path)).toEqual(["/api/admin/candidates/N0000002/call-logs"]);
+        expect(posts[0].body).not.toHaveProperty("needsAttention");
+    });
+
+    test("21, 23-24. Need Attention sits between No Answer and Add call; with it the one request creates the call and its follow-up", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": {
+                status: 201,
+                body: { items: [{ ...CALLS.items[1], followUp: { followUpId: "f-1", status: "OPEN", flaggedAt: "2026-10-07T05:00:00.000Z" } }] },
+            },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+        const footer = within(form).getByRole("button", { name: "Add call" }).parentElement!;
+        expect(within(footer).getAllByRole("button").map((b) => b.textContent)).toEqual(["Close", "No Answer", "Need Attention", "Add call"]);
+
+        const toggle = within(form).getByRole("button", { name: "Need Attention" });
+        expect(toggle).toHaveAttribute("aria-pressed", "false");
+        await user.click(toggle);
+        expect(toggle).toHaveAttribute("aria-pressed", "true");
+        await user.type(within(dialog).getByLabelText("What the candidate said *"), "Passport not uploaded");
+        await user.click(within(form).getByRole("button", { name: "Add call" }));
+
+        expect(await within(await callItem(dialog, "Passport not uploaded")).findByRole("img", { name: "Needs attention" })).toBeInTheDocument();
+        const posts = calls.filter((c) => c.method === "POST");
+        expect(posts).toHaveLength(1);
+        expect(posts[0].path).toBe("/api/admin/candidates/N0000002/call-logs");
+        expect(posts[0].body).toMatchObject({ note: "Passport not uploaded", needsAttention: true });
+        // No separate flag request; the toggle resets for the next call.
+        expect(calls.some((c) => c.path.endsWith("/follow-up"))).toBe(false);
+        expect(toggle).toHaveAttribute("aria-pressed", "false");
+    });
+});
+
+describe("Candidate History: calls and candidate activity", () => {
+    const CALLS = {
+        items: [
+            { callLogId: "c2", note: "Passport is not uploaded. Need upload before 15 October.", calledAt: "2026-10-11T05:59:00.000Z", adminName: "Shamal Sathsara", followUp: null },
+            { callLogId: "c1", note: "Called candidate regarding missing documents.", calledAt: "2026-10-07T06:16:00.000Z", adminName: "Shamal Sathsara", followUp: null },
+        ],
+        activity: [
+            { activityId: "document:d1", kind: "DOCUMENT_RECEIVED", occurredAt: "2026-10-10T10:12:00.000Z", actorName: null, source: "WHATSAPP", documentType: "PASSPORT", variant: null, stage: null, fields: [] },
+            { activityId: "audit:a1", kind: "DETAILS_UPDATED", occurredAt: "2026-10-10T10:10:00.000Z", actorName: "Test Admin", source: null, documentType: null, variant: null, stage: null, fields: ["address", "contactNumber"] },
+            { activityId: "document:d2", kind: "DOCUMENT_RECEIVED", occurredAt: "2026-10-09T04:00:00.000Z", actorName: "Test Admin", source: "STAFF", documentType: "POLICE_REPORT", variant: "SL_VERIFIED", stage: null, fields: [] },
+            { activityId: "audit:a2", kind: "STAGE_COMPLETED", occurredAt: "2026-10-08T04:00:00.000Z", actorName: "Test Admin", source: null, documentType: null, variant: null, stage: "IVS_INTERVIEW", fields: [] },
+            { activityId: "audit:a3", kind: "DETAILS_UPDATED", occurredAt: "2026-10-01T04:00:00.000Z", actorName: "Test Admin", source: null, documentType: null, variant: null, stage: null, fields: ["whatsappNumber"] },
+        ],
+        activityTruncated: false,
+    };
+    const openCallLog = async () => {
+        await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
+        return screen.findByRole("dialog", { name: "Call Logs" });
+    };
+    const historyItems = async (dialog: HTMLElement) => within(await within(dialog).findByRole("list", { name: "Candidate history" })).getAllByRole("listitem");
+
+    test("4-7, 9-11, 13-14. calls and activity in one timeline, newest first; activity is short, attributed only when on record, and styled apart", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        const items = await historyItems(dialog);
+        expect(items.map((item) => item.textContent)).toEqual([
+            "11 Oct 2026 · 11:29Call logShamal SathsaraPassport is not uploaded. Need upload before 15 October.",
+            "10 Oct 2026 · 15:42Candidate activityvia WhatsAppPassport uploaded",
+            "10 Oct 2026 · 15:40Candidate activityby Test AdminCandidate details updatedAddress, Contact number",
+            "09 Oct 2026 · 09:30Candidate activityby Test AdminPolice report - SL Verified uploaded",
+            "08 Oct 2026 · 09:30Candidate activityby Test AdminIVS interview marked complete",
+            "07 Oct 2026 · 11:46Call logShamal SathsaraCalled candidate regarding missing documents.",
+            "01 Oct 2026 · 09:30Candidate activityby Test AdminWhatsApp number updated",
+        ]);
+        expect(items.map((item) => item.getAttribute("data-kind"))).toEqual([
+            "call-log", "candidate-activity", "candidate-activity", "candidate-activity", "candidate-activity", "call-log", "candidate-activity",
+        ]);
+        // Distinguishable: an answered call is amber-tinted, activity green-tinted (the theme's tokens).
+        expect(items[1].className).toContain("bg-verified-bg");
+        expect(items[0].className).toContain("bg-review-bg");
+        // A WhatsApp document never names a staff member.
+        expect(items[1].textContent).not.toContain("Test Admin");
+        expect(screen.queryByText("Showing the latest candidate activity only.")).toBeNull();
+    });
+
+    test("an activity with no actor or source on record says neither", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": {
+                status: 200,
+                body: {
+                    items: [],
+                    activity: [
+                        { activityId: "document:d9", kind: "DOCUMENT_RECEIVED", occurredAt: "2026-10-01T04:00:00.000Z", actorName: null, source: null, documentType: "SCAN", variant: null, stage: null, fields: [] },
+                        { activityId: "stage:FINALIZING_JOB", kind: "STAGE_COMPLETED", occurredAt: "2026-09-01T04:00:00.000Z", actorName: null, source: null, documentType: null, variant: null, stage: "FINALIZING_JOB", fields: [] },
+                    ],
+                    activityTruncated: true,
+                },
+            },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        expect((await historyItems(dialog)).map((item) => item.textContent)).toEqual([
+            "01 Oct 2026 · 09:30Candidate activityScan uploaded",
+            "01 Sept 2026 · 09:30Candidate activityFinalizing the job marked complete",
+        ]);
+        expect(within(dialog).getByText("Showing the latest candidate activity only.")).toBeInTheDocument();
+        expect(within(dialog).queryByText("No candidate history yet.")).toBeNull();
+    });
+
+    test("flagging a call keeps the activity in the timeline", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+            "POST /api/admin/candidates/N0000002/call-logs/c1/follow-up": { status: 201, body: { followUp: { followUpId: "f-1", callLogId: "c1", status: "OPEN", flaggedAt: "2026-10-12T05:00:00.000Z" } } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        const item = (await historyItems(dialog)).find((i) => i.textContent?.includes("missing documents"))!;
+        await userEvent.setup().click(within(item).getByRole("button", { name: "Mark as needs attention" }));
+        expect(await within(dialog).findByRole("img", { name: "Needs attention" })).toBeInTheDocument();
+        expect(await historyItems(dialog)).toHaveLength(7);
+    });
+});
+
+describe("Call log: No Answer", () => {
+    const WITH_NO_ANSWER = {
+        items: [
+            { callLogId: "n1", note: "", outcome: "NO_ANSWER", calledAt: "2026-10-13T04:06:00.000Z", adminName: "Shamal Sathsara", followUp: null },
+            { callLogId: "c1", note: "Asked about the medical", outcome: "ANSWERED", calledAt: "2026-10-12T04:45:00.000Z", adminName: "Test Admin", followUp: null },
+        ],
+        activity: [
+            { activityId: "document:d1", kind: "DOCUMENT_RECEIVED", occurredAt: "2026-10-12T10:12:00.000Z", actorName: null, source: "WHATSAPP", documentType: "PASSPORT", variant: null, stage: null, fields: [] },
+        ],
+    };
+    const openCallLog = async () => {
+        await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
+        return screen.findByRole("dialog", { name: "Call Logs" });
+    };
+    const posts = (calls: { method: string; path: string; body: unknown }[]) => calls.filter((c) => c.method === "POST");
+
+    test("1. the No Answer button is in Add New Call Log, between Close and Need Attention, with an accessible name and a visible label", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+        const button = within(form).getByRole("button", { name: "No Answer" });
+        expect(button).toBeEnabled();
+        expect(button.textContent).toBe("No Answer");
+        expect(within(form).getAllByRole("button").map((b) => b.textContent)).toEqual(["", "Close", "No Answer", "Need Attention", "Add call"]);
+        // Secondary, not the primary action.
+        expect(button.className).not.toContain("bg-primary");
+        expect(within(form).getByRole("button", { name: "Add call" }).className).toContain("bg-primary");
+    });
+
+    test("2-4, 6, 12. No Answer needs no note; it sends the selected date and time and nothing else; one request, one call, no follow-up", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": { status: 201, body: { items: [WITH_NO_ANSWER.items[0]] } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        fireEvent.change(within(dialog).getByLabelText("Date *"), { target: { value: "2026-10-12" } });
+        fireEvent.change(within(dialog).getByLabelText("Time *"), { target: { value: "09:36" } });
+        expect(within(dialog).getByLabelText("What the candidate said *")).toHaveValue("");
+        await userEvent.setup().click(within(dialog).getByRole("button", { name: "No Answer" }));
+
+        await vi.waitFor(() => expect(within(dialog).getByText("No Answer", { selector: "[data-outcome]" })).toBeInTheDocument());
+        expect(posts(calls)).toHaveLength(1);
+        expect(posts(calls)[0].path).toBe("/api/admin/candidates/N0000002/call-logs");
+        expect(posts(calls)[0].body).toEqual({ outcome: "NO_ANSWER", calledAt: "2026-10-12T09:36:00+05:30" });
+        expect(calls.some((c) => c.path.endsWith("/follow-up"))).toBe(false);
+        expect(within(dialog).queryByText("Enter the date and time of the call.")).toBeNull();
+    });
+
+    test("15. two quick clicks send one request; the buttons are disabled while it saves", async () => {
+        let release!: () => void;
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": () => new Promise((resolve) => {
+                release = () => resolve({ status: 201, body: { items: [WITH_NO_ANSWER.items[0]] } });
+            }),
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const button = within(dialog).getByRole("button", { name: "No Answer" });
+        fireEvent.click(button);
+        fireEvent.click(button);
+        await vi.waitFor(() => expect(within(dialog).getByRole("button", { name: "No Answer" })).toBeDisabled());
+        expect(within(dialog).getByRole("button", { name: "Saving…" })).toBeDisabled();
+        expect(within(dialog).getByRole("button", { name: "Need Attention" })).toBeDisabled();
+        release();
+        await vi.waitFor(() => expect(within(dialog).getByRole("button", { name: "No Answer" })).toBeEnabled());
+        expect(posts(calls)).toHaveLength(1);
+    });
+
+    test("7-9. the history shows a compact No Answer (icon and text, neutral), with no note body, sorted by time with the calls and activity", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: WITH_NO_ANSWER },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        const items = within(await within(dialog).findByRole("list", { name: "Candidate history" })).getAllByRole("listitem");
+        expect(items.map((item) => item.textContent)).toEqual([
+            "13 Oct 2026 · 09:36Call logShamal SathsaraNo Answer",
+            "12 Oct 2026 · 15:42Candidate activityvia WhatsAppPassport uploaded",
+            "12 Oct 2026 · 10:15Call logTest AdminAsked about the medical",
+        ]);
+        const badge = within(items[0]).getByText("No Answer");
+        expect(badge).toHaveAttribute("data-outcome", "NO_ANSWER");
+        expect(badge.querySelector("svg")).not.toBeNull();
+        // An outcome, not an error: red is the icon and a thin outline only; the words keep the normal text colour.
+        expect(badge.className).toContain("text-ink-soft");
+        expect(badge.className).not.toContain("text-critical");
+        expect(badge.querySelector(".text-critical")).not.toBeNull();
+        // Two lines only: the date row and the badge (a note would be a third).
+        expect(items[0].querySelectorAll("p")).toHaveLength(2);
+    });
+
+    test("13. a No Answer call can be flagged with the same flag as any call", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: WITH_NO_ANSWER },
+            "POST /api/admin/candidates/N0000002/call-logs/n1/follow-up": { status: 201, body: { followUp: { followUpId: "f-1", callLogId: "n1", status: "OPEN", flaggedAt: "2026-10-13T05:00:00.000Z" } } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        const item = (await within(dialog).findAllByRole("listitem")).find((i) => i.textContent?.includes("No Answer"))!;
+        await userEvent.setup().click(within(item).getByRole("button", { name: "Mark as needs attention" }));
+        expect(await within(item).findByRole("img", { name: "Needs attention" })).toBeInTheDocument();
+        expect(posts(calls).map((c) => c.path)).toEqual(["/api/admin/candidates/N0000002/call-logs/n1/follow-up"]);
+        // Still in the history, with no note.
+        expect(within(item).getByText("No Answer")).toBeInTheDocument();
+    });
+
+    test("12. with Need Attention on, No Answer sends it in the same single request", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": { status: 201, body: { items: [{ ...WITH_NO_ANSWER.items[0], followUp: { followUpId: "f-1", status: "OPEN", flaggedAt: "2026-10-13T05:00:00.000Z" } }] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        await user.click(within(dialog).getByRole("button", { name: "Need Attention" }));
+        await user.click(within(dialog).getByRole("button", { name: "No Answer" }));
+        expect(await within(dialog).findByRole("img", { name: "Needs attention" })).toBeInTheDocument();
+        expect(posts(calls)).toHaveLength(1);
+        expect(posts(calls)[0].body).toMatchObject({ outcome: "NO_ANSWER", needsAttention: true });
+        expect(posts(calls)[0].body).not.toHaveProperty("note");
+    });
+
+    test("10-11. Add call still needs a note and sends it without an outcome; a note typed before No Answer is kept for the next call", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": { status: 201, body: WITH_NO_ANSWER },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const addCall = within(dialog).getByRole("button", { name: "Add call" });
+        expect(addCall).toBeDisabled();
+        fireEvent.submit(within(dialog).getByRole("form", { name: "Add New Call Log" }));
+        expect(posts(calls)).toHaveLength(0);
+
+        await user.type(within(dialog).getByLabelText("What the candidate said *"), "Will bring the medical");
+        await user.click(within(dialog).getByRole("button", { name: "No Answer" }));
+        await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
+        expect(posts(calls)[0].body).not.toHaveProperty("note");
+        expect(within(dialog).getByLabelText("What the candidate said *")).toHaveValue("Will bring the medical");
+
+        await user.click(within(dialog).getByRole("button", { name: "Add call" }));
+        await vi.waitFor(() => expect(posts(calls)).toHaveLength(2));
+        expect(posts(calls)[1].body).toMatchObject({ note: "Will bring the medical" });
+        expect(posts(calls)[1].body).not.toHaveProperty("outcome");
+    });
+
+    test("No Answer is refused before anything is sent when the date is in the future", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        fireEvent.change(within(dialog).getByLabelText("Date *"), { target: { value: "2099-01-01" } });
+        await userEvent.setup().click(within(dialog).getByRole("button", { name: "No Answer" }));
+        expect(within(dialog).getByText("The call can't be in the future.")).toBeInTheDocument();
+        expect(posts(calls)).toHaveLength(0);
+    });
+
+    test("a viewer has no form, so no No Answer button", async () => {
+        signedInBackend({
+            "GET /auth/me": { status: 200, body: { user: VIEWER } },
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: WITH_NO_ANSWER },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("Asked about the medical");
+        expect(within(dialog).queryByRole("button", { name: "No Answer" })).toBeNull();
+    });
+
+    test("the Need Attention page shows a flagged No Answer call as No Answer, not as an empty row", async () => {
+        // Same data shape as GET /api/admin/follow-ups; rendered through the real page.
+        const item = { followUpId: "f-1", status: "OPEN", flaggedAt: "2026-10-13T05:00:00.000Z", flaggedByName: "Test Admin", completedAt: null, completedByName: null, callLog: { callLogId: "n1", note: "", outcome: "NO_ANSWER", calledAt: "2026-10-13T04:06:00.000Z", adminName: "Shamal Sathsara" } };
+        signedInBackend({
+            "GET /api/admin/follow-ups": { status: 200, body: { status: "OPEN", total: 1, truncated: false, groups: [{ candidate: { passportId: "N0000002", uniqueId: "U2", name: "SAMAN SILVA", whatsappNumber: null, contactNumber: null }, documentStatus: [], followUps: [item] }] } },
+        });
+        renderApp("/follow-ups");
+        const row = (await screen.findAllByText("No Answer"))[0].closest("li")!;
+        expect(row.textContent).toContain("No Answer");
+        expect(row.querySelectorAll("p")[1]?.textContent).toContain("No Answer");
+    });
+});
+
+describe("Candidate History: colour by event type", () => {
+    const BODY = {
+        items: [
+            { callLogId: "n1", note: "", outcome: "NO_ANSWER", calledAt: "2026-10-13T04:06:00.000Z", adminName: "Shamal Sathsara", followUp: null },
+            { callLogId: "c3", note: "Passport not uploaded", outcome: "ANSWERED", calledAt: "2026-10-12T04:45:00.000Z", adminName: "Test Admin", followUp: { followUpId: "f1", status: "OPEN", flaggedAt: "2026-10-12T05:00:00.000Z" } },
+            { callLogId: "c2", note: "Medical sorted", outcome: "ANSWERED", calledAt: "2026-10-11T04:45:00.000Z", adminName: "Test Admin", followUp: { followUpId: "f0", status: "COMPLETED", flaggedAt: "2026-10-11T05:00:00.000Z" } },
+            { callLogId: "c1", note: "Asked about the scan", outcome: "ANSWERED", calledAt: "2026-10-10T04:45:00.000Z", adminName: "Test Admin", followUp: null },
+        ],
+        activity: [
+            { activityId: "document:d1", kind: "DOCUMENT_RECEIVED", occurredAt: "2026-10-09T10:12:00.000Z", actorName: null, source: "WHATSAPP", documentType: "PASSPORT", variant: null, stage: null, fields: [] },
+        ],
+    };
+    const openHistory = async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: BODY },
+        });
+        renderApp("/candidates/N0000002");
+        await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
+        const dialog = await screen.findByRole("dialog", { name: "Call Logs" });
+        return within(await within(dialog).findByRole("list", { name: "Candidate history" })).getAllByRole("listitem");
+    };
+
+    test("1-3. No Answer is red-toned, a call log amber-toned, candidate activity green-toned, each with a thin left accent, from the theme's tokens", async () => {
+        const [noAnswer, call, , , activity] = await openHistory();
+        const classes = (el: Element) => el.className.split(/\s+/);
+        expect(noAnswer).toHaveAttribute("data-tone", "no-answer");
+        expect(classes(noAnswer)).toEqual(expect.arrayContaining(["bg-critical-bg", "border-l-critical", "border-l-[3px]"]));
+        expect(call).toHaveAttribute("data-tone", "call");
+        expect(classes(call)).toEqual(expect.arrayContaining(["bg-review-bg", "border-l-review", "border-l-[3px]"]));
+        expect(activity).toHaveAttribute("data-tone", "activity");
+        expect(classes(activity)).toEqual(expect.arrayContaining(["bg-verified-bg", "border-l-verified", "border-l-[3px]"]));
+        // Activity's icon is green; an answered call's small call icon is amber.
+        expect(activity.querySelector(".text-verified")).not.toBeNull();
+        expect(call.querySelector(".text-review")).not.toBeNull();
+    });
+
+    test("light and dark: only the theme's tokens, never fixed colours, saturated fills or coloured body text", async () => {
+        const items = await openHistory();
+        for (const item of items) {
+            // Tokens switch with the theme (index.css); no palette colours that would only suit one theme.
+            expect(item.outerHTML).not.toMatch(/\b(bg|text|border)-(red|amber|yellow|orange|green|emerald|lime)-\d{2,3}\b|#[0-9a-f]{3,6}\b|rgb\(/i);
+            // Only the soft -bg token fills a card; the strong colours are accents.
+            expect(item.className).not.toMatch(/\bbg-(critical|review|verified)(\s|$)/);
+            // Body text keeps the normal ink colours.
+            for (const p of item.querySelectorAll("p")) expect(p.className).not.toMatch(/text-(critical|review|verified)\b/);
+        }
+    });
+
+    test("8. the type is also in words and icons, never colour alone: Call log, Candidate activity, No Answer", async () => {
+        const items = await openHistory();
+        expect(items.filter((i) => i.getAttribute("data-kind") === "call-log").every((i) => i.textContent!.includes("Call log"))).toBe(true);
+        expect(items[4].textContent).toContain("Candidate activity");
+        expect(within(items[0]).getByText("No Answer").querySelector("svg")).not.toBeNull();
+    });
+
+    test("4-5. the flag: amber and filled when open, a muted check when completed, an outline when not flagged; each with a name", async () => {
+        const items = await openHistory();
+        const open = within(items[1]).getByRole("img", { name: "Needs attention" });
+        expect(open.className).toContain("text-review");
+        const completed = items[2].querySelector("button[aria-label^='Follow-up completed']")!;
+        expect(completed.className).toContain("text-ink-subtle");
+        expect(completed.className.split(/\s+/)).not.toContain("text-review");
+        const none = within(items[3]).getByRole("button", { name: "Mark as needs attention" });
+        expect(none.className).toContain("text-ink-subtle");
+        // Red is reserved for No Answer: the flag never uses it.
+        for (const el of [open, completed, none]) expect(el.className).not.toContain("critical");
+    });
+});
+
+describe("Call log drawer: closing", () => {
+    const openCallLog = async () => {
+        await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
+        return screen.findByRole("dialog", { name: "Call Logs" });
+    };
+    const CALLS = { items: [{ callLogId: "c1", note: "Asked about the medical", calledAt: "2026-09-30T04:45:00.000Z", adminName: null }] };
+
+    test("25-28. a click on the page outside the drawer closes it; clicks and text selection inside don't; X and Close still close", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        let dialog = await openCallLog();
+        await within(dialog).findByText("Asked about the medical");
+
+        // Inside: a note, the date input, a button that does not close, the form.
+        await user.click(within(dialog).getByText("Asked about the medical"));
+        await user.click(within(dialog).getByLabelText("Date *"));
+        await user.click(within(dialog).getByRole("button", { name: "Need Attention" }));
+        // A selection started inside and released over the backdrop.
+        const backdrop = screen.getByTestId("call-log-backdrop");
+        fireEvent.mouseDown(within(dialog).getByText("Asked about the medical"));
+        fireEvent.mouseUp(backdrop);
+        fireEvent.click(backdrop.parentElement!);
+        expect(screen.getByRole("dialog", { name: "Call Logs" })).toBeInTheDocument();
+
+        await user.click(backdrop);
+        await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(screen.getByRole("heading", { level: 1, name: "SAMAN SILVA" })).toBeInTheDocument();
+
+        dialog = await openCallLog();
+        await user.click(within(dialog).getByRole("button", { name: "Close call logs" }));
+        await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+        dialog = await openCallLog();
+        await user.click(within(dialog).getByRole("button", { name: "Close" }));
+        await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    });
+
+    test("layout: history takes the free height and scrolls on its own; the compact form keeps every field and button; responsive width and date/time", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("Asked about the medical");
+        // jsdom has no layout: check the layout rules are applied (real sizes were checked in a browser).
+        const classes = (element: Element) => element.className.split(/\s+/);
+        expect(classes(dialog)).toEqual(expect.arrayContaining(["h-full", "max-h-dvh", "flex-col", "overflow-x-hidden", "w-full", "sm:w-[min(92vw,600px)]", "2xl:w-[640px]"]));
+
+        const history = screen.getByTestId("candidate-history-scroll");
+        expect(history).toContainElement(within(dialog).getByRole("list", { name: "Candidate history" }));
+        expect(classes(history)).toEqual(expect.arrayContaining(["min-h-0", "flex-1", "overflow-y-auto", "overflow-x-hidden"]));
+        expect(classes(history.closest("section")!)).toContain("flex-1");
+        expect(within(dialog).queryByRole("list", { name: "Current documents" })).toBeNull();
+
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+        expect(classes(form)).toContain("shrink-0");
+        expect(within(form).getByRole("heading", { name: "Add New Call Log" })).toBeInTheDocument();
+        for (const label of ["Date *", "Time *", "What the candidate said *"]) expect(within(form).getByLabelText(label)).toBeInTheDocument();
+        expect(within(form).getByLabelText("What the candidate said *")).toHaveAttribute("rows", "2");
+        expect(classes(within(form).getByLabelText("Date *"))).toContain("h-9");
+        // Date and time side by side, stacked only on a very narrow screen.
+        expect(classes(screen.getByTestId("call-log-when"))).toEqual(expect.arrayContaining(["grid-cols-1", "min-[340px]:grid-cols-2"]));
+        // Every button keeps its name and a 32px height.
+        for (const name of ["Close", "No Answer", "Need Attention", "Add call"]) expect(classes(within(form).getByRole("button", { name }))).toContain("h-8");
+    });
+
+    test("29. the backdrop does not close the drawer while a call is being saved", async () => {
+        let release!: () => void;
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
+            "POST /api/admin/candidates/N0000002/call-logs": () => new Promise((resolve) => {
+                release = () => resolve({ status: 201, body: CALLS });
+            }),
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("Asked about the medical");
+        await user.type(within(dialog).getByLabelText("What the candidate said *"), "x");
+        await user.click(within(dialog).getByRole("button", { name: "Add call" }));
+        await within(dialog).findByRole("button", { name: "Saving…" });
+        await user.click(screen.getByTestId("call-log-backdrop"));
+        await user.keyboard("{Escape}");
+        expect(screen.getByRole("dialog", { name: "Call Logs" })).toBeInTheDocument();
+        release();
+        await within(dialog).findByRole("button", { name: "Add call" });
     });
 });
 
@@ -1230,11 +1979,11 @@ describe("REGISTRATION_DESK: the whole Candidates area", () => {
         signedInBackend({ "GET /auth/me": { status: 200, body: { user: DESK } }, "GET /api/admin/candidates": { status: 200, body: LIST }, ...routes });
     const nav = () => within(screen.getByRole("navigation", { name: "Main navigation" }));
 
-    test("sees Candidates and Priority Follow-Ups in the sidebar and nothing ADMIN-only; no separate registration link; no Review Queue bell", async () => {
+    test("sees Candidates and Need Attention in the sidebar and nothing ADMIN-only; no separate registration link; no Review Queue bell", async () => {
         const { calls } = asDesk();
         renderApp("/candidates");
         await screen.findByRole("table", { name: "Candidates" });
-        expect(nav().getAllByRole("link").map((l) => l.textContent)).toEqual(["Candidates", "Priority Follow-Ups"]);
+        expect(nav().getAllByRole("link").map((l) => l.textContent)).toEqual(["Candidates", "Need Attention"]);
         for (const name of ["Invite User", "Change Roles", "Audit Logs", "Settings", "Review Queue", "Overview"]) {
             expect(nav().queryByRole("link", { name })).toBeNull();
         }

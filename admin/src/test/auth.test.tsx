@@ -201,7 +201,7 @@ describe("dashboard shell", () => {
 
     test("ADMIN: every section, then Audit Logs and Settings (Invite User and Change Roles are Settings tabs)", async () => {
         await signedIn();
-        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Priority Follow-Ups", "Missing Documents", "Police Workflow", "Daily Report", "Audit Logs", "Settings"]);
+        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Missing Documents", "Police Workflow", "Daily Report", "Audit Logs", "Settings"]);
         await userEvent.setup().click(screen.getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });
@@ -209,14 +209,14 @@ describe("dashboard shell", () => {
     test("MANAGER and ANALYST: the dashboard sections, no user management or Settings", async () => {
         for (const role of ["MANAGER", "ANALYST"]) {
             await signedIn("/", userWithRole(role));
-            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Priority Follow-Ups", "Missing Documents", "Police Workflow", "Daily Report"]);
+            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Missing Documents", "Police Workflow", "Daily Report"]);
             document.body.innerHTML = "";
         }
     });
 
-    test("REGISTRATION_DESK: Candidates and Priority Follow-Ups only, and lands there instead of the Overview", async () => {
+    test("REGISTRATION_DESK: Candidates and Need Attention only, and lands there instead of the Overview", async () => {
         await signedIn("/", userWithRole("REGISTRATION_DESK"));
-        expect(navLinks()).toEqual(["Candidates", "Priority Follow-Ups"]);
+        expect(navLinks()).toEqual(["Candidates", "Need Attention"]);
         expect(await screen.findByRole("heading", { name: "Candidates", level: 1 })).toBeInTheDocument();
     });
 

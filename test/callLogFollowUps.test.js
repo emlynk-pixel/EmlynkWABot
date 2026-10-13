@@ -15,7 +15,9 @@ import { createTestDatabase, migrationNames } from "./helpers/pgliteDatabase.js"
 import { noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
-import { addCallLog, CANDIDATE_DOCUMENT_TYPES, createCandidate, documentStatusOf, listCallLogs, parseCandidateBody } from "../src/services/candidateService.js";
+import {
+    addCallLog, CANDIDATE_DOCUMENT_TYPES, createCandidate, documentStatusOf, listCallLogs, parseCandidateBody, updateCandidateDetails, updateStage,
+} from "../src/services/candidateService.js";
 import { FOLLOW_UP_STATUS, listFollowUps } from "../src/services/callLogFollowUpService.js";
 
 const MIGRATION = "20261011120000_call_log_follow_up";
@@ -501,6 +503,256 @@ describe("current document status", () => {
         assert.deepEqual([...types].sort(), Object.keys(CANDIDATE_DOCUMENT_TYPES).sort());
         for (const unsupported of ["AGREEMENT", "AFFIDAVIT", "CONTRACT"]) assert.ok(!types.has(unsupported), unsupported);
         assert.deepEqual(documentStatusOf([{ documentType: "AFFIDAVIT", verificationStatus: "VERIFIED", receivedDate: new Date(), createdDate: new Date() }]).filter((d) => d.uploaded), [], "an unsupported row is ignored");
+    });
+});
+
+describe("candidate history (activity with the call logs)", () => {
+    const history = async (passportId = A, role = "ADMIN") => {
+        const response = await as(role, `/candidates/${passportId}/call-logs`);
+        assert.equal(response.status, 200, JSON.stringify(response.body));
+        return response.body;
+    };
+    const whatsappSubmission = async (passportId, documentType) => {
+        const temporaryId = crypto.randomUUID();
+        await prisma.temporaryData.create({
+            data: { temporaryId, passportId, whatsappNumber: "+94771234567", documentType, temporaryStoragePath: `temp/${temporaryId}.pdf`, processingStatus: "STORED" },
+        });
+        return temporaryId;
+    };
+    const staffUpload = async (passportId, documentType, { variant = null, admin = USERS.ANALYST, receivedDate = new Date() } = {}) => {
+        const documentId = await addDocument(passportId, documentType, { variant, receivedDate });
+        await prisma.auditLog.create({
+            data: { auditId: crypto.randomUUID(), adminId: admin.adminId, action: "UPLOAD_DOCUMENT", documentId, passportId, previousStatus: "NONE", newStatus: "VERIFIED", documentType, newValue: variant },
+        });
+        return documentId;
+    };
+
+    test("5, 9-11. documents: a staff upload names the uploader; a WhatsApp document says WhatsApp, never a staff member; an older one says neither", async () => {
+        await staffUpload(A, "PASSPORT", { receivedDate: new Date("2026-10-03T05:00:00Z") });
+        await staffUpload(A, "POLICE_REPORT", { variant: "SL_VERIFIED", receivedDate: new Date("2026-10-04T05:00:00Z") });
+        const documentId = crypto.randomUUID();
+        await prisma.document.create({
+            data: {
+                documentId, passportId: A, documentType: "MEDICAL", originalFilename: "m.pdf", storedFilename: "m.pdf", storagePath: `clients/${A}/m.pdf`,
+                receivedDate: new Date("2026-10-05T05:00:00Z"), processingStatus: "STORED", verificationStatus: "REVIEW_REQUIRED", temporaryId: await whatsappSubmission(A, "MEDICAL"),
+            },
+        });
+        await addDocument(A, "NIC", { receivedDate: new Date("2026-10-02T05:00:00Z") });
+
+        const documents = (await history()).activity.filter((a) => a.kind === "DOCUMENT_RECEIVED");
+        assert.deepEqual(documents.map((a) => [a.documentType, a.variant, a.source, a.actorName]), [
+            ["MEDICAL", null, "WHATSAPP", null],
+            ["POLICE_REPORT", "SL_VERIFIED", "STAFF", USERS.ANALYST.name],
+            ["PASSPORT", null, "STAFF", USERS.ANALYST.name],
+            ["NIC", null, null, null],
+        ]);
+    });
+
+    test("12. ONE SCAN: a replaced scan is two receipts of the same Scan type; unsupported types never appear", async () => {
+        await addDocument(A, "SCAN", { status: "SUPERSEDED", receivedDate: new Date("2026-10-01T05:00:00Z") });
+        await addDocument(A, "SCAN", { receivedDate: new Date("2026-10-02T05:00:00Z") });
+        await addDocument(A, "AFFIDAVIT");
+        await addDocument(A, "AGREEMENT");
+        const types = (await history()).activity.map((a) => a.documentType).filter(Boolean);
+        assert.deepEqual(types, ["SCAN", "SCAN"]);
+    });
+
+    test("14. a details update lists the changed fields' names only, never their values", async () => {
+        const { values, errors } = parseCandidateBody({ ...BASE, nic: "965404378V", whatsappNumber: "+94771234567", address: "12 Temple Road, Kandy", contactNumber: "0711111111" }, { creating: false });
+        assert.equal(errors, undefined, JSON.stringify(errors));
+        await updateCandidateDetails({ db: prisma, passportId: A, values, actor: USERS.MANAGER });
+        const body = await history();
+        const update = body.activity.find((a) => a.kind === "DETAILS_UPDATED");
+        assert.equal(update.actorName, USERS.MANAGER.name);
+        assert.deepEqual(update.fields.sort(), ["address", "contactNumber"]);
+        assert.doesNotMatch(JSON.stringify(body.activity), /Temple Road|0711111111/);
+    });
+
+    test("13, 15. stage completion by an admin shows with who did it, once; a completion saved before stages were audited shows without one; automatic stages are not invented", async () => {
+        await updateStage({ db: prisma, passportId: A, stage: "IVS_INTERVIEW", values: { completed: true }, actor: USERS.ADMIN });
+        await updateStage({ db: prisma, passportId: A, stage: "VISA_APPROVAL", values: { notes: "Waiting for the embassy" }, actor: USERS.ADMIN });
+        await prisma.candidateStage.create({ data: { passportId: A, stage: "FINALIZING_JOB", completed: true, completedAt: new Date("2026-09-01T05:00:00Z") } });
+
+        const stages = (await history()).activity.filter((a) => a.stage);
+        assert.deepEqual(stages.map((a) => [a.kind, a.stage, a.actorName]), [
+            ["STAGE_UPDATED", "VISA_APPROVAL", USERS.ADMIN.name],
+            ["STAGE_COMPLETED", "IVS_INTERVIEW", USERS.ADMIN.name],
+            ["STAGE_COMPLETED", "FINALIZING_JOB", null],
+        ]);
+        assert.doesNotMatch(JSON.stringify(stages), /embassy/, "stage notes are not repeated here");
+        assert.ok(!stages.some((a) => ["CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION"].includes(a.stage)));
+    });
+
+    test("6. newest first across every source, call logs stay separate items", async () => {
+        await staffUpload(A, "PASSPORT", { receivedDate: new Date("2020-01-01T05:00:00Z") });
+        await updateStage({ db: prisma, passportId: A, stage: "IVS_INTERVIEW", values: { completed: true }, actor: USERS.ADMIN });
+        await logCall(A, "Called");
+        const body = await history();
+        const times = body.activity.map((a) => new Date(a.occurredAt).getTime());
+        assert.deepEqual(times, [...times].sort((x, y) => y - x));
+        assert.equal(body.activity.at(-1).documentType, "PASSPORT");
+        assert.deepEqual(body.items.map((i) => i.note), ["Called"]);
+        assert.equal(body.activityTruncated, false);
+    });
+
+    test("8, 19. never another candidate's events", async () => {
+        await staffUpload(B, "PASSPORT");
+        await updateStage({ db: prisma, passportId: B, stage: "IVS_INTERVIEW", values: { completed: true }, actor: USERS.ADMIN });
+        await logCall(B, "B only");
+        const body = await history(A);
+        assert.deepEqual(body.activity, []);
+        assert.deepEqual(body.items, []);
+        assert.equal((await history(B)).activity.length, 2);
+    });
+
+    test("33. reading the history changes nothing", async () => {
+        await staffUpload(A, "PASSPORT");
+        await logCall(A, "x");
+        const snapshot = async () => Promise.all([
+            prisma.document.findMany({ orderBy: { documentId: "asc" } }),
+            prisma.auditLog.count(),
+            prisma.candidate.findUnique({ where: { passportId: A } }),
+            prisma.candidateCallLog.findMany({ orderBy: { callLogId: "asc" } }),
+        ]);
+        const before = await snapshot();
+        await history(A, "REGISTRATION_DESK");
+        assert.deepEqual(await snapshot(), before);
+    });
+});
+
+describe("adding a call with Need Attention", () => {
+    const add = (body, role = "ANALYST") => as(role, `/candidates/${A}/call-logs`, { method: "POST", body });
+
+    test("22. without it: one call, no follow-up", async () => {
+        const response = await add({ note: "Called about the medical" });
+        assert.equal(response.status, 201);
+        assert.equal(response.body.items[0].followUp, null);
+        assert.equal(await prisma.callLogFollowUp.count(), 0);
+        assert.deepEqual(await followUpAudit(), []);
+    });
+
+    test("23-24. with it: one call, one OPEN follow-up and its audit entry; shown in Priority Follow-Ups", async () => {
+        const response = await add({ note: "Passport missing", needsAttention: true });
+        assert.equal(response.status, 201, JSON.stringify(response.body));
+        assert.equal(await prisma.candidateCallLog.count({ where: { passportId: A } }), 1, "no duplicate call");
+        const [call] = response.body.items;
+        assert.equal(call.followUp.status, "OPEN");
+        const rows = await prisma.callLogFollowUp.findMany();
+        assert.deepEqual(rows.map((r) => [r.callLogId, r.status, r.flaggedById]), [[call.callLogId, "OPEN", USERS.ANALYST.adminId]]);
+        assert.deepEqual((await followUpAudit()).map((r) => [r.action, r.passportId, r.adminId]), [["FLAG_FOLLOW_UP", A, USERS.ANALYST.adminId]]);
+        const group = (await list("ANALYST")).body.groups.find((g) => g.candidate.passportId === A);
+        assert.deepEqual(group.followUps.map((f) => f.callLog.note), ["Passport missing"]);
+    });
+
+    test("an invalid needsAttention is refused and writes nothing", async () => {
+        const response = await add({ note: "x", needsAttention: "yes" });
+        assert.equal(response.status, 400);
+        assert.equal(await prisma.candidateCallLog.count(), 0);
+        assert.equal(await prisma.callLogFollowUp.count(), 0);
+    });
+
+    test("32. the same roles as before: every Candidates-area role can add one; others can't", async () => {
+        for (const role of STAFF_ROLES) assert.equal((await add({ note: `by ${role}`, needsAttention: true }, role)).status, 201, role);
+        assert.equal((await add({ note: "x", needsAttention: true }, "VIEWER")).status, 403);
+    });
+});
+
+describe("No Answer calls", () => {
+    const add = (body, role = "ANALYST") => as(role, `/candidates/${A}/call-logs`, { method: "POST", body });
+    const rows = () => prisma.candidateCallLog.findMany({ where: { passportId: A } });
+
+    test("1-6. one call with the selected date and time and the signed-in user; no note needed, no fake note stored", async () => {
+        const response = await add({ outcome: "NO_ANSWER", calledAt: "2026-10-12T09:36:00+05:30" });
+        assert.equal(response.status, 201, JSON.stringify(response.body));
+        const stored = await rows();
+        assert.equal(stored.length, 1, "exactly one call log");
+        assert.equal(stored[0].callOutcome, "NO_ANSWER");
+        assert.equal(stored[0].note, "", "an empty note, not '-' or 'No answer'");
+        assert.equal(stored[0].adminId, USERS.ANALYST.adminId);
+        // The minute is the selected one (seconds are stamped by the server, as for any call).
+        assert.equal(stored[0].createdDate.toISOString().slice(0, 16), "2026-10-12T04:06");
+        const [call] = response.body.items;
+        assert.deepEqual([call.outcome, call.note, call.adminName, call.followUp], ["NO_ANSWER", "", USERS.ANALYST.name, null]);
+    });
+
+    test("a note sent with No Answer is ignored: the call is stored without one", async () => {
+        assert.equal((await add({ outcome: "NO_ANSWER", note: "should not be kept" })).status, 201);
+        assert.equal((await rows())[0].note, "");
+    });
+
+    test("10-11. a normal call still needs a note, with or without an outcome; its behaviour is unchanged", async () => {
+        for (const body of [{}, { note: "" }, { note: "   " }, { outcome: "ANSWERED" }, { outcome: "ANSWERED", note: "  " }]) {
+            const response = await add(body);
+            assert.equal(response.status, 400, JSON.stringify(body));
+            assert.ok(response.body.errors.some((e) => e.field === "note"));
+        }
+        assert.equal((await rows()).length, 0, "nothing stored");
+        const ok = await add({ note: "Said hello" });
+        assert.equal(ok.status, 201);
+        assert.deepEqual([ok.body.items[0].outcome, ok.body.items[0].note], ["ANSWERED", "Said hello"]);
+        assert.equal((await rows())[0].callOutcome, "ANSWERED");
+    });
+
+    test("an unknown outcome is refused and writes nothing", async () => {
+        const response = await add({ outcome: "BUSY", note: "x" });
+        assert.equal(response.status, 400);
+        assert.ok(response.body.errors.some((e) => e.field === "outcome"));
+        assert.equal((await rows()).length, 0);
+    });
+
+    test("12. no follow-up unless Need Attention is on; with it, one call and one follow-up", async () => {
+        const plain = await add({ outcome: "NO_ANSWER" });
+        assert.equal(plain.body.items[0].followUp, null);
+        assert.equal(await prisma.callLogFollowUp.count(), 0);
+        assert.deepEqual(await followUpAudit(), []);
+
+        const flaggedAtOnce = await add({ outcome: "NO_ANSWER", needsAttention: true });
+        assert.equal(flaggedAtOnce.status, 201);
+        assert.equal((await rows()).length, 2);
+        assert.equal(await prisma.callLogFollowUp.count(), 1);
+        assert.equal(flaggedAtOnce.body.items.filter((i) => i.followUp?.status === "OPEN").length, 1);
+    });
+
+    test("13. a No Answer call can be flagged, completed and deleted like any call, and always stays in the history", async () => {
+        const created = await add({ outcome: "NO_ANSWER" });
+        const { callLogId } = created.body.items[0];
+        const flagged = await flag("REGISTRATION_DESK", A, callLogId);
+        assert.equal(flagged.status, 201, JSON.stringify(flagged.body));
+        const group = (await list("ANALYST")).body.groups.find((g) => g.candidate.passportId === A);
+        assert.deepEqual([group.followUps[0].callLog.outcome, group.followUps[0].callLog.note], ["NO_ANSWER", ""]);
+        assert.equal((await complete("ANALYST", flagged.body.followUp.followUpId)).status, 200);
+        assert.equal((await remove("MANAGER", flagged.body.followUp.followUpId)).status, 200);
+        assert.equal((await rows()).length, 1, "the call log is kept");
+        assert.equal((await callLogRow(callLogId)).callOutcome, "NO_ANSWER");
+    });
+
+    test("6, 15. sent twice at once it is two requests (the form guards against double clicks); each makes exactly one row", async () => {
+        const [one, two] = await Promise.all([add({ outcome: "NO_ANSWER" }), add({ outcome: "NO_ANSWER" })]);
+        assert.deepEqual([one.status, two.status], [201, 201]);
+        assert.equal((await rows()).length, 2);
+    });
+
+    test("existing calls and the database rules: a call without an outcome is ANSWERED; the CHECKs hold", async () => {
+        const callLogId = await logCall(A, "Old style call");
+        assert.equal((await callLogRow(callLogId)).callOutcome, "ANSWERED");
+        const insert = (note, outcome) => pg.query(`INSERT INTO "candidate_call_logs" (call_log_id, passport_id, admin_id, note, call_outcome) VALUES ($1, $2, $3, $4, $5)`, [crypto.randomUUID(), A, USERS.ADMIN.adminId, note, outcome]);
+        await assert.rejects(insert("x", "BUSY"), /call_outcome_check/);
+        await assert.rejects(insert("", "ANSWERED"), /note_required_check/);
+        await assert.rejects(insert("   ", "ANSWERED"), /note_required_check/);
+        await insert("", "NO_ANSWER");
+    });
+
+    test("32. permissions are unchanged: every Candidates-area role can record one; others can't", async () => {
+        for (const role of STAFF_ROLES) assert.equal((await add({ outcome: "NO_ANSWER" }, role)).status, 201, role);
+        assert.equal((await add({ outcome: "NO_ANSWER" }, "VIEWER")).status, 403);
+    });
+
+    test("it sorts with the call logs by its time; reading history writes nothing", async () => {
+        await logCall(A, "Earlier", "2026-10-01T10:00:00Z");
+        await add({ outcome: "NO_ANSWER", calledAt: "2026-10-05T10:00:00+05:30" });
+        await logCall(A, "Later", "2026-10-09T10:00:00Z");
+        const items = (await as("ADMIN", `/candidates/${A}/call-logs`)).body.items;
+        assert.deepEqual(items.map((i) => i.outcome === "NO_ANSWER" ? "No answer" : i.note), ["Later", "No answer", "Earlier"]);
     });
 });
 

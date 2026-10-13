@@ -91,7 +91,7 @@ export function SetupPasswordPage() {
                 <div className="mb-6 flex items-center justify-center gap-3">
                     <span className="flex size-10 items-center justify-center rounded bg-primary text-headline-sm font-semibold text-on-primary">E</span>
                     <div>
-                        <p className="text-headline-sm font-bold text-ink">EmlynkWABot</p>
+                        <p className="text-headline-sm font-bold text-ink">Data Collector</p>
                         <p className="text-label-caps uppercase text-ink-subtle">Admin Console</p>
                     </div>
                 </div>

@@ -32,6 +32,7 @@ import { MAX_NAME_ATTEMPTS, removeObject } from "./permanentStorageService.js";
 import { DOCUMENT_PROCESSING_STATUS_STORED, VERIFICATION_STATUS } from "./clientDocumentService.js";
 import { clientSearchWhere } from "./adminClientService.js";
 import { findUsersByWhatsappNumber } from "./userLookupService.js";
+import { openFollowUp } from "./callLogFollowUpService.js";
 
 // ---------------------------------------------------------------- definitions
 
@@ -297,7 +298,8 @@ export function parseStageBody(body, stage) {
 // A call: when it took place (date and time with its offset, e.g.
 // "2026-10-02T14:30:00+05:30"; omitted = now) and a short note of what the
 // candidate said. A call can't be in the future (a few minutes of clock
-// difference are allowed).
+// difference are allowed). needsAttention (optional, true/false): also mark
+// the new call for follow-up (Priority Follow-Ups), in the same transaction.
 const CALL_NOTE_MAX_LENGTH = 500;
 const CALL_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
@@ -313,12 +315,23 @@ function parseCallTime(value) {
     return new Date(value);
 }
 
+// outcome (optional): ANSWERED (the default: a note is required) or NO_ANSWER
+// (the candidate did not pick up: no note; one sent is ignored, and the call
+// is stored with an empty note).
+export const CALL_OUTCOME = Object.freeze({ ANSWERED: "ANSWERED", NO_ANSWER: "NO_ANSWER" });
+
 export function parseCallLogBody(body, { now = new Date() } = {}) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
         return { errors: [{ field: "body", message: "must be a JSON object" }] };
     }
     const errors = [];
-    const note = text(body, "note", errors, { required: true, max: CALL_NOTE_MAX_LENGTH });
+    let outcome = CALL_OUTCOME.ANSWERED;
+    if (body.outcome !== undefined && body.outcome !== null) {
+        if (!Object.values(CALL_OUTCOME).includes(body.outcome)) errors.push({ field: "outcome", message: `must be one of ${Object.values(CALL_OUTCOME).join(", ")}` });
+        else outcome = body.outcome;
+    }
+    const noAnswer = outcome === CALL_OUTCOME.NO_ANSWER;
+    const note = noAnswer ? "" : text(body, "note", errors, { required: true, max: CALL_NOTE_MAX_LENGTH });
     let calledAt = null;
     if (body.calledAt !== undefined && body.calledAt !== null && body.calledAt !== "") {
         const parsed = parseCallTime(body.calledAt);
@@ -326,7 +339,10 @@ export function parseCallLogBody(body, { now = new Date() } = {}) {
         else if (parsed.getTime() > now.getTime() + CLOCK_SKEW_MS) errors.push({ field: "calledAt", message: "can't be in the future" });
         else calledAt = parsed;
     }
-    return errors.length ? { errors } : { values: { note, calledAt } };
+    if (body.needsAttention !== undefined && body.needsAttention !== null && typeof body.needsAttention !== "boolean") {
+        errors.push({ field: "needsAttention", message: "must be true or false" });
+    }
+    return errors.length ? { errors } : { values: { note, calledAt, needsAttention: body.needsAttention === true, outcome } };
 }
 
 // ---------------------------------------------------------------- reading
@@ -529,14 +545,18 @@ export function parseCandidateListQuery(query = {}) {
     return errors.length ? { errors } : { params };
 }
 
-// The clients search (passport ID, unique ID, names, WhatsApp number), plus NIC.
+// The clients search (passport ID, unique ID, names, WhatsApp number), plus NIC
+// and the contact number. The contact number takes exactly the conditions the
+// WhatsApp number has for the word (the substring and the 07… / 94… variants
+// of a phone-like word), so the two are matched the same way.
 export function candidateSearchWhere(search) {
     const where = clientSearchWhere(search);
     if (!where.AND) return where;
     return {
         AND: where.AND.map((word, index) => {
             const term = search.trim().split(/\s+/).filter(Boolean)[index];
-            return { OR: [...word.OR, { nic: { contains: term, mode: "insensitive" } }] };
+            const contact = word.OR.filter((condition) => condition.whatsappNumber).map((condition) => ({ contactNumber: condition.whatsappNumber }));
+            return { OR: [...word.OR, ...contact, { nic: { contains: term, mode: "insensitive" } }] };
         }),
     };
 }
@@ -1325,33 +1345,170 @@ export async function removeCandidateDocument({ db, bucket, admin, passportId, d
 // null: OPEN while it needs attention (there is at most one OPEN per call),
 // COMPLETED once done. documentStatus: the candidate's documents NOW (not
 // when the call was made), so an old "passport not uploaded" call shows the
-// passport once it is on record.
+// passport once it is on record. activity: the candidate's own history,
+// shown with the calls as Candidate History (candidateActivity, below).
 export async function listCallLogs({ db, passportId }) {
     await requireCandidate(db, passportId);
-    const [rows, statuses] = await Promise.all([
+    const [rows, documents, audits, stages] = await Promise.all([
         db.candidateCallLog.findMany({
             where: { passportId },
             select: {
-                callLogId: true, note: true, createdDate: true, admin: { select: { name: true } },
+                callLogId: true, note: true, callOutcome: true, createdDate: true, admin: { select: { name: true } },
                 followUps: { select: { followUpId: true, status: true, flaggedDate: true }, orderBy: [{ flaggedDate: "desc" }, { followUpId: "asc" }], take: 1 },
             },
             orderBy: [{ createdDate: "desc" }, { callLogId: "asc" }],
         }),
-        documentStatusByCandidate(db, [passportId]),
+        // Every document of a supported type, SUPERSEDED ones too: each was received once.
+        db.document.findMany({
+            where: { passportId, documentType: { in: Object.keys(CANDIDATE_DOCUMENT_TYPES) } },
+            select: { ...CURRENT_DOCUMENT_SELECT, temporaryId: true },
+            orderBy: [{ receivedDate: "desc" }, { documentId: "asc" }],
+            take: HISTORY_QUERY_LIMIT,
+        }),
+        db.auditLog.findMany({
+            where: { passportId, action: { in: HISTORY_AUDIT_ACTIONS } },
+            select: {
+                auditId: true, action: true, documentId: true, documentType: true, previousStatus: true, newStatus: true,
+                newValue: true, createdDate: true, admin: { select: { name: true } },
+            },
+            orderBy: [{ createdDate: "desc" }, { auditId: "asc" }],
+            take: HISTORY_QUERY_LIMIT,
+        }),
+        db.candidateStage.findMany({
+            where: { passportId, completed: true, completedAt: { not: null } },
+            select: { stage: true, completedAt: true },
+        }),
     ]);
+    const { activity, truncated } = candidateActivity({ documents, audits, stages, complete: documents.length < HISTORY_QUERY_LIMIT && audits.length < HISTORY_QUERY_LIMIT });
     return {
         items: rows.map((row) => {
             const followUp = row.followUps?.[0];
             return {
                 callLogId: row.callLogId,
                 note: row.note,
+                outcome: row.callOutcome ?? CALL_OUTCOME.ANSWERED,
                 calledAt: row.createdDate,
                 adminName: row.admin?.name ?? null,
                 followUp: followUp ? { followUpId: followUp.followUpId, status: followUp.status, flaggedAt: followUp.flaggedDate } : null,
             };
         }),
-        documentStatus: statuses.get(passportId),
+        documentStatus: documentStatusOf(documents),
+        activity,
+        activityTruncated: truncated,
     };
+}
+
+// ---------------------------------------------------------------- candidate history
+//
+// What happened to the candidate, next to the calls (Candidate History). Only
+// what is on record, never reconstructed or guessed:
+//   DOCUMENT_RECEIVED   each document of a supported type (SUPERSEDED ones
+//                       too: each was received once), at its received date.
+//                       source STAFF with the uploader (UPLOAD_DOCUMENT
+//                       audit), WHATSAPP (stored from a WhatsApp submission),
+//                       or null when neither is known (older records). An
+//                       upload whose document was removed later still shows.
+//   DOCUMENT_VERIFIED   approved in Review (APPROVE, REPLACE_VERIFIED)
+//   DOCUMENT_REMOVED    removed from the candidate page (REMOVE_DOCUMENT)
+//   CANDIDATE_REGISTERED, DETAILS_UPDATED (the changed fields' names only,
+//                       never their values), ADDITIONAL_DETAILS_UPDATED
+//   STAGE_COMPLETED / STAGE_REOPENED / STAGE_UPDATED   an admin's stage save
+//                       (UPDATE_STAGE). A completion saved before stage saves
+//                       were audited comes from candidate_stages.completed_at
+//                       (no actor). The automatic stages (Candidate details,
+//                       Document submission) keep no completion history.
+// Newest first, at most MAX_CANDIDATE_ACTIVITY entries.
+export const MAX_CANDIDATE_ACTIVITY = 100;
+const HISTORY_QUERY_LIMIT = 200;
+const HISTORY_AUDIT_ACTIONS = Object.freeze([
+    CANDIDATE_AUDIT_ACTION.CREATE_CANDIDATE, CANDIDATE_AUDIT_ACTION.UPDATE_CANDIDATE, CANDIDATE_AUDIT_ACTION.UPDATE_STAGE,
+    "UPLOAD_DOCUMENT", "REMOVE_DOCUMENT",
+    // Review approvals (adminReviewActionService.js REVIEW_ACTION).
+    "APPROVE", "REPLACE_VERIFIED",
+    // candidateAdditionalDetailsService.js ADDITIONAL_DETAILS_AUDIT_ACTION.
+    "CREATE_ADDITIONAL_DETAILS", "UPDATE_ADDITIONAL_DETAILS",
+]);
+// A stage completion and its audit entry are written in one transaction.
+const SAME_SAVE_MS = 60 * 1000;
+
+function parseAuditJson(value) {
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+export function candidateActivity({ documents, audits, stages, complete = true }) {
+    const entry = (activityId, kind, occurredAt, actorName, extra = {}) => ({
+        activityId, kind, occurredAt, actorName: actorName ?? null, source: null, documentType: null, variant: null, stage: null, fields: [], ...extra,
+    });
+    const documentById = new Map(documents.map((d) => [d.documentId, d]));
+    const uploads = new Map(audits.filter((a) => a.action === "UPLOAD_DOCUMENT" && a.documentId).map((a) => [a.documentId, a]));
+    const activity = [];
+
+    for (const document of documents) {
+        const upload = uploads.get(document.documentId);
+        const source = upload ? "STAFF" : document.temporaryId ? "WHATSAPP" : null;
+        activity.push(entry(`document:${document.documentId}`, "DOCUMENT_RECEIVED", document.receivedDate, upload?.admin?.name, {
+            source, documentType: document.documentType, variant: document.documentVariant ?? null,
+        }));
+    }
+
+    const stageCompletions = [];
+    for (const audit of audits) {
+        const id = `audit:${audit.auditId}`;
+        const actor = audit.admin?.name;
+        switch (audit.action) {
+            case "UPLOAD_DOCUMENT":
+                // Its document was removed since: the upload still happened.
+                if (!documentById.has(audit.documentId) && CANDIDATE_DOCUMENT_TYPES[audit.documentType]) {
+                    activity.push(entry(id, "DOCUMENT_RECEIVED", audit.createdDate, actor, { source: "STAFF", documentType: audit.documentType, variant: audit.newValue ?? null }));
+                }
+                break;
+            case "APPROVE":
+            case "REPLACE_VERIFIED": {
+                // The type is the document's own; one removed since is not guessed.
+                const document = documentById.get(audit.documentId);
+                if (document) activity.push(entry(id, "DOCUMENT_VERIFIED", audit.createdDate, actor, { documentType: document.documentType, variant: document.documentVariant ?? null }));
+                break;
+            }
+            case "REMOVE_DOCUMENT":
+                if (CANDIDATE_DOCUMENT_TYPES[audit.documentType]) activity.push(entry(id, "DOCUMENT_REMOVED", audit.createdDate, actor, { documentType: audit.documentType }));
+                break;
+            case CANDIDATE_AUDIT_ACTION.CREATE_CANDIDATE:
+                activity.push(entry(id, "CANDIDATE_REGISTERED", audit.createdDate, actor));
+                break;
+            case CANDIDATE_AUDIT_ACTION.UPDATE_CANDIDATE: {
+                const fields = Object.keys(parseAuditJson(audit.newValue) ?? {}).filter((field) => CANDIDATE_AUDIT_FIELDS.includes(field));
+                activity.push(entry(id, "DETAILS_UPDATED", audit.createdDate, actor, { fields }));
+                break;
+            }
+            case "CREATE_ADDITIONAL_DETAILS":
+            case "UPDATE_ADDITIONAL_DETAILS":
+                activity.push(entry(id, "ADDITIONAL_DETAILS_UPDATED", audit.createdDate, actor));
+                break;
+            case CANDIDATE_AUDIT_ACTION.UPDATE_STAGE: {
+                const stage = parseAuditJson(audit.newValue)?.stage;
+                if (!isCandidateStage(stage)) break;
+                const kind = audit.previousStatus === audit.newStatus ? "STAGE_UPDATED" : audit.newStatus === "COMPLETED" ? "STAGE_COMPLETED" : "STAGE_REOPENED";
+                if (kind === "STAGE_COMPLETED") stageCompletions.push({ stage, at: audit.createdDate });
+                activity.push(entry(id, kind, audit.createdDate, actor, { stage }));
+                break;
+            }
+        }
+    }
+
+    // A completion with no audited save of it (saved before stage saves were audited).
+    for (const row of stages) {
+        if (!isCandidateStage(row.stage) || !row.completedAt) continue;
+        const audited = stageCompletions.some((c) => c.stage === row.stage && Math.abs(new Date(c.at) - new Date(row.completedAt)) <= SAME_SAVE_MS);
+        if (!audited) activity.push(entry(`stage:${row.stage}`, "STAGE_COMPLETED", row.completedAt, null, { stage: row.stage }));
+    }
+
+    activity.sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt) || (a.activityId < b.activityId ? -1 : a.activityId > b.activityId ? 1 : 0));
+    return { activity: activity.slice(0, MAX_CANDIDATE_ACTIVITY), truncated: !complete || activity.length > MAX_CANDIDATE_ACTIVITY };
 }
 
 export async function addCallLog({ db, admin, passportId, values }) {
@@ -1367,14 +1524,23 @@ export async function addCallLog({ db, admin, passportId, values }) {
         entered.setSeconds(now.getSeconds(), now.getMilliseconds());
         storedDate = entered;
     }
-    await db.candidateCallLog.create({
-        data: {
-            callLogId: crypto.randomUUID(),
-            passportId,
-            adminId: admin.adminId,
-            note: values.note,
-            ...(storedDate ? { createdDate: storedDate } : {}),
-        },
-    });
+    const callLogId = crypto.randomUUID();
+    const noAnswer = values.outcome === CALL_OUTCOME.NO_ANSWER;
+    const data = {
+        callLogId, passportId, adminId: admin.adminId,
+        note: noAnswer ? "" : values.note,
+        // Omitted for an answered call: the column's default, as before.
+        ...(noAnswer ? { callOutcome: CALL_OUTCOME.NO_ANSWER } : {}),
+        ...(storedDate ? { createdDate: storedDate } : {}),
+    };
+    if (values.needsAttention) {
+        // One call, and its follow-up with it, or neither.
+        await db.$transaction(async (tx) => {
+            await tx.candidateCallLog.create({ data });
+            await openFollowUp(tx, { actor: admin, passportId, callLogId });
+        });
+    } else {
+        await db.candidateCallLog.create({ data });
+    }
     return listCallLogs({ db, passportId });
 }
