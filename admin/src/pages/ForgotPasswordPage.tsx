@@ -50,7 +50,7 @@ export function ForgotPasswordPage() {
                         E
                     </span>
                     <div>
-                        <p className="text-headline-sm text-ink">EmlynkWABot</p>
+                        <p className="text-headline-sm text-ink">Data Collector</p>
                         <p className="text-label-caps uppercase text-ink-subtle">Admin Console</p>
                     </div>
                 </div>

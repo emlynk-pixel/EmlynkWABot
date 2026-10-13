@@ -32,7 +32,7 @@ export function Sidebar({ collapsed, mobileOpen, onToggleCollapsed, onNavigate }
                 <span className="flex size-8 shrink-0 items-center justify-center rounded bg-primary font-semibold text-on-primary">E</span>
                 {!railOnly && (
                     <div className="min-w-0">
-                        <p className="truncate text-label-md text-sidebar-text-active">EmlynkWABot</p>
+                        <p className="truncate text-label-md text-sidebar-text-active">Data Collector</p>
                         <p className="text-label-caps uppercase text-sidebar-text">Admin Console</p>
                     </div>
                 )}
