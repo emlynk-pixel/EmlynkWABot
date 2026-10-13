@@ -112,7 +112,8 @@ describe("Additional Details", () => {
         // The parents' names are always there, required only when the parent is alive.
         expect(screen.getByLabelText("Father full name")).toBeInTheDocument();
         expect(screen.getByLabelText("Mother full name")).toBeInTheDocument();
-        expect(screen.queryByLabelText("Father birthday")).toBeNull();
+        expect(screen.getByLabelText("Father birthday")).toBeInTheDocument();
+        expect(screen.getByLabelText("Mother birthday")).toBeInTheDocument();
         expect(screen.queryByLabelText("Wife full name *")).toBeNull();
 
         await user.selectOptions(screen.getByLabelText("Is father alive?"), "yes");
@@ -120,7 +121,7 @@ describe("Additional Details", () => {
         expect(screen.getByLabelText("Father birthday")).toBeInTheDocument();
         await user.selectOptions(screen.getByLabelText("Is mother alive?"), "no");
         expect(screen.getByLabelText("Mother full name")).toBeInTheDocument();
-        expect(screen.queryByLabelText("Mother birthday")).toBeNull();
+        expect(screen.getByLabelText("Mother birthday")).toBeInTheDocument();
         await user.selectOptions(screen.getByLabelText("Marital status"), "MARRIED");
         expect(screen.getByLabelText("Wife full name *")).toBeInTheDocument();
 
@@ -130,7 +131,7 @@ describe("Additional Details", () => {
         expect(puts(calls)).toHaveLength(0);
     });
 
-    test("a parent's name stays when the alive answer changes; only the birthday goes with it", async () => {
+    test("a parent's name stays when the alive answer changes; nor does the birthday", async () => {
         const view = { ...SAVED_VIEW, details: { ...SAVED, fatherBirthday: "1960-01-01", motherAlive: true, motherFullName: "Kamala Silva" } };
         const { calls } = backend(view, { [`PUT ${PATH}`]: { status: 200, body: view } });
         renderApp("/candidates/N0000002?tab=additional");
@@ -140,9 +141,11 @@ describe("Additional Details", () => {
         await user.selectOptions(screen.getByLabelText("Is mother alive?"), "no");
         expect(screen.getByLabelText("Father full name")).toHaveValue("Sunil Silva");
         expect(screen.getByLabelText("Mother full name")).toHaveValue("Kamala Silva");
+        expect(screen.getByLabelText("Father birthday")).toHaveValue("1960-01-01");
+        await user.type(screen.getByLabelText("Mother birthday"), "1965-02-03");
         await user.click(screen.getByRole("button", { name: "Save additional details" }));
         await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
-        expect(puts(calls)[0].body).toMatchObject({ fatherAlive: false, fatherFullName: "Sunil Silva", fatherBirthday: null, motherAlive: false, motherFullName: "Kamala Silva", motherBirthday: null });
+        expect(puts(calls)[0].body).toMatchObject({ fatherAlive: false, fatherFullName: "Sunil Silva", fatherBirthday: "1960-01-01", motherAlive: false, motherFullName: "Kamala Silva" });
     });
 
     test("a parent who has passed away can be saved without a name", async () => {
@@ -205,7 +208,7 @@ describe("Additional Details", () => {
         await user.type(screen.getByLabelText("Custom shoe size (uk)"), "EU 43");
         await user.click(screen.getByRole("button", { name: "Save additional details" }));
         await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
-        expect(puts(calls)[0].body).toMatchObject({ fatherAlive: false, fatherFullName: "Sunil Silva", fatherBirthday: null, pantSize: "34", shoeSize: "EU 43", tshirtSize: "L" });
+        expect(puts(calls)[0].body).toMatchObject({ fatherAlive: false, fatherFullName: "Sunil Silva", pantSize: "34", shoeSize: "EU 43", tshirtSize: "L" });
     });
 
     test("children in order, and a future birthday is refused before sending", async () => {

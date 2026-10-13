@@ -46,13 +46,11 @@ function formFrom(details: AdditionalDetails): Form {
 }
 
 // What is saved: blanks as null, and details that go with a hidden answer
-// (a parent's birthday when not alive, a wife when not married, children when single) cleared rather than kept out of sight.
+// (a wife when not married, children when single) cleared rather than kept out of sight.
 function payloadOf(form: Form): AdditionalDetails {
     const value = (key: Key) => form[key].trim() || null;
     const payload = Object.fromEntries(KEYS.map((key) => [key, BOOLEAN_KEYS.includes(key) ? (form[key] ? form[key] === "yes" : null) : value(key)])) as AdditionalDetails;
-    // A parent's name is kept whatever the alive answer; only the birthday goes with it.
-    if (form.fatherAlive !== "yes") payload.fatherBirthday = null;
-    if (form.motherAlive !== "yes") payload.motherBirthday = null;
+    // A parent's name and birthday are kept whatever the alive answer.
     if (form.maritalStatus === "SINGLE") Object.assign(payload, { child1Name: null, child2Name: null, child3Name: null });
     if (form.maritalStatus !== "MARRIED") Object.assign(payload, { wifeFullName: null, wifeBirthday: null });
     return payload;
@@ -224,13 +222,13 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved }: {
             <Section title="Father details">
                 {yesNo("fatherAlive", "Is father alive?")}
                 {text("fatherFullName", "Father full name", { required: form.fatherAlive === "yes" })}
-                {form.fatherAlive === "yes" && dateField("fatherBirthday", "Father birthday")}
+                {dateField("fatherBirthday", "Father birthday")}
             </Section>
 
             <Section title="Mother details">
                 {yesNo("motherAlive", "Is mother alive?")}
                 {text("motherFullName", "Mother full name", { required: form.motherAlive === "yes" })}
-                {form.motherAlive === "yes" && dateField("motherBirthday", "Mother birthday")}
+                {dateField("motherBirthday", "Mother birthday")}
             </Section>
 
             <Section title="Marital & family details">

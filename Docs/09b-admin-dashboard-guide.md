@@ -361,7 +361,7 @@ The primary interface for managing candidate registrations and deployment workfl
   - Sections: Passport & Personal Details, Clothing & Sizes, Father Details, Mother Details, Marital & Family Details, Employment / Skills.
   - The passport number is the candidate's own passport ID (read-only), so the details always belong to the existing candidate.
   - A new form is pre-filled from the candidate's record (name, address, date of birth). Those values are only stored when Save is pressed, and the candidate's record itself is never changed from this tab.
-  - The father and mother names are always available (required only when that parent is alive); a parent's birthday appears only when alive. Wife details appear only when married (her name is then required). Child names are hidden when the marital status is Single.
+  - The father and mother names are always available (required only when that parent is alive); parent birthdays are always available. Wife details appear only when married (her name is then required). Child names are hidden when the marital status is Single.
   - Pant and shoe sizes take a preset or a custom value.
   - If someone else saved the same candidate's details after you opened them, your save is refused with a message; press **Sync** to load their changes and try again (what you typed is kept until then).
   - Saved in `public.candidate_additional_details`. Every change is in Audit Logs with only the changed fields.

@@ -292,9 +292,12 @@ describe("validation", () => {
         assert.deepEqual(fields({ fatherAlive: false }), [], "a deceased parent needs no name");
         assert.deepEqual(fields({ motherAlive: false, motherFullName: "Kamala" }), []);
         assert.deepEqual(fields({ fatherFullName: "Sunil" }), [], "no answer: the name is still accepted");
-        assert.deepEqual(fields({ fatherBirthday: "1960-01-01" }), ["fatherBirthday"], "no answer: no details");
+        assert.deepEqual(fields({ fatherBirthday: "1960-01-01" }), [], "no answer: the birthday is still accepted");
+        assert.deepEqual(fields({ fatherAlive: false, fatherFullName: "Sunil", fatherBirthday: "1960-01-01" }), []);
         assert.deepEqual(fields({ motherAlive: true }), ["motherFullName"]);
-        assert.deepEqual(fields({ motherAlive: false, motherBirthday: "1960-01-01" }), ["motherBirthday"]);
+        assert.deepEqual(fields({ motherAlive: false, motherBirthday: "1960-01-01" }), [], "a deceased parent's birthday is accepted");
+        assert.deepEqual(fields({ motherAlive: true, motherFullName: "Kamala", motherBirthday: "1960-01-01" }), []);
+        assert.deepEqual(fields({ motherBirthday: "2999-01-01" }), ["motherBirthday"], "still a real, past date");
         assert.deepEqual(fields({ motherAlive: "yes" }), ["motherAlive"]);
     });
 

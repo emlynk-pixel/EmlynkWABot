@@ -257,17 +257,17 @@ Every role that manages candidates can edit the form, REGISTRATION_DESK included
 |---|---|
 | Passport & Personal Details | Passport number (read-only: the candidate's passport ID), name according to passport, permanent address, birthday |
 | Clothing & Sizes | T-shirt size (XS–XXL), pant size (28–46 or custom), shoe size (UK 5–13 or custom) |
-| Father Details | Is father alive?; full name (always available, required only if alive); birthday (only if alive) |
-| Mother Details | Is mother alive?; full name (always available, required only if alive); birthday (only if alive) |
+| Father Details | Is father alive?; full name (required only if alive); birthday. Name and birthday are always available |
+| Mother Details | Is mother alive?; full name (required only if alive); birthday. Name and birthday are always available |
 | Marital & Family Details | Marital status; if Married: wife full name (required), wife birthday; 1st–3rd child names (not for Single) |
 | Employment / Skills | Other job skills |
 
 - **Always the existing candidate**: the passport number is the candidate's own passport ID and can't be edited, so a duplicate candidate can't be created from here. The API resolves the passport ID to the existing record and returns 404 for an unknown one.
 - **Auto-fill**: a form with nothing saved yet is pre-filled from the candidate's record (name, address, date of birth), with a note saying so. Those values are stored only when **Save additional details** is pressed.
 - **The candidate's own record is never changed** from this tab; the details live in `candidate_additional_details`.
-- **Parent names are independent of the alive answer.** The father and mother name fields are always shown, so a parent who has passed away can still be recorded; changing the answer never clears a name. The name is required only when the parent is alive. The birthday still goes with the answer (only for a living parent).
+- **Parent name and birthday are independent of the alive answer.** The father and mother name and birthday fields are always shown, so a parent who has passed away can still be recorded; changing the answer never clears them. Only the name is required, and only when the parent is alive.
 - **Children depend on marital status.** The 1st–3rd child name fields are hidden when the marital status is Single (they stay for Married, Divorced, Widowed, Separated, or not recorded) and are never required. Switching to Single in the form keeps what was typed until you save, and a Single candidate is never saved with child names (the server refuses them). A candidate already stored as Single with child names (from before this rule) is not changed until their details are next saved: the form then shows a note that the child names will be removed.
-- Hidden details are cleared on save: a parent's birthday when that parent is not alive, the wife's details when not married, and the child names when Single.
+- Hidden details are cleared on save: the wife's details when not married, and the child names when Single.
 - **Two people editing**: the form sends the `updatedDate` it loaded, and a save on a different version is refused with `409 DETAILS_CHANGED` ("changed by someone else… use Sync"). The typed values stay in the form. The page loads the details once and shares them with the stepper and the form.
 - Every change appears in Audit Logs (`CREATE_ADDITIONAL_DETAILS` / `UPDATE_ADDITIONAL_DETAILS`) with only the changed fields. Saving without changes writes nothing.
 
@@ -517,7 +517,7 @@ Enforced by `parseAdditionalDetailsBody` in `candidateAdditionalDetailsService.j
 | Birthdays | `YYYY-MM-DD`, a real date, from 1900-01-01, not in the future |
 | T-shirt size | `XS`, `S`, `M`, `L`, `XL`, `XXL` |
 | Pant / shoe size | A preset or a custom value: up to 10 letters, digits, spaces, `.`, `/`, `-` |
-| Father / mother alive | `true` / `false` / not recorded; full name required when `true`, and accepted whatever the answer; birthday refused unless `true` |
+| Father / mother alive | `true` / `false` / not recorded; full name required when `true`, and accepted whatever the answer; birthday accepted whatever the answer |
 | Marital status | `SINGLE`, `MARRIED`, `DIVORCED`, `WIDOWED`, `SEPARATED`; wife full name required when `MARRIED`; wife details refused otherwise |
 | Children | In order: no 2nd without a 1st, no 3rd without a 2nd; refused when the marital status is `SINGLE` |
 

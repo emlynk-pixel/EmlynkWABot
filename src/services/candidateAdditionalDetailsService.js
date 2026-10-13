@@ -133,18 +133,16 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
         }
     }
 
-    // A parent's name is independent of the alive answer (it may be recorded
-    // for a parent who has passed away). It is only required when the parent
-    // is alive; the birthday still goes with that answer.
+    // A parent's name and birthday are independent of the alive answer (they
+    // may be recorded for a parent who has passed away). Only the name is
+    // required, and only when the parent is alive.
     const conditional = [
-        ["fatherAlive", "fatherFullName", "fatherBirthday", "the father is alive"],
-        ["motherAlive", "motherFullName", "motherBirthday", "the mother is alive"],
+        ["fatherAlive", "fatherFullName", "the father is alive"],
+        ["motherAlive", "motherFullName", "the mother is alive"],
     ];
-    for (const [flag, nameField, birthdayField, condition] of conditional) {
-        if (values[flag] === true) {
-            if (values[nameField] === null && !errors.some((e) => e.field === nameField)) errors.push({ field: nameField, message: `is required when ${condition}` });
-        } else if (values[birthdayField] !== null) {
-            errors.push({ field: birthdayField, message: `is only recorded when ${condition}` });
+    for (const [flag, nameField, condition] of conditional) {
+        if (values[flag] === true && values[nameField] === null && !errors.some((e) => e.field === nameField)) {
+            errors.push({ field: nameField, message: `is required when ${condition}` });
         }
     }
     if (values.maritalStatus === "MARRIED") {
