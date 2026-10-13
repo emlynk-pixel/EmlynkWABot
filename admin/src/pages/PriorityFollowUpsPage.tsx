@@ -7,18 +7,16 @@ import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
 import { canDeleteFollowUps } from "../auth/roles";
 import { ActionDialog, DialogError, dangerSolidButton, secondaryButton } from "../components/Dialog";
-import { DocumentStatusSummary } from "../components/candidate/DocumentStatusSummary";
 import { formatDate, formatDateTime, formatNumber, formatTime } from "../components/format";
 import { Icon } from "../components/Icon";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
-import { ToneBadge } from "../components/StatusBadge";
 
-// Priority Follow-Ups: call logs marked "Need attention", one card per
-// candidate with the candidate's CURRENT documents and their follow-ups
-// (newest first). Open by default; Completed shows the history. Every
-// Candidates role can mark one complete; ADMIN and MANAGER can delete one.
-// Completing or deleting a follow-up never changes the call log: it stays in
-// the candidate's Call Logs.
+// Need Attention (internally still the Priority Follow-Ups feature: same
+// route, API and audit names): call logs marked as needing attention, one
+// card per candidate with their follow-ups (newest first). Open by default;
+// Completed shows the history. Every Candidates role can mark one complete;
+// ADMIN and MANAGER can delete one. Completing or deleting a follow-up never
+// changes the call log: it stays in the candidate's Candidate History.
 
 // Row actions, a size smaller than the dialog buttons.
 const compactButton = "h-8 rounded px-3 text-label-md disabled:cursor-not-allowed disabled:opacity-60";
@@ -107,10 +105,8 @@ export function PriorityFollowUpsPage() {
         <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                    <h1 id="page-title" className="text-headline-lg text-ink">Priority Follow-Ups</h1>
-                    <p className="mt-1 text-body-sm text-ink-muted">
-                        Calls marked as needing attention, by candidate, with the documents each candidate has now.
-                    </p>
+                    <h1 id="page-title" className="text-headline-lg text-ink">Need Attention</h1>
+                    <p className="mt-1 text-body-sm text-ink-muted">Calls and candidate follow-ups that require action.</p>
                 </div>
                 <div role="group" aria-label="Follow-up status" className="inline-flex rounded border border-border-strong bg-surface p-0.5">
                     {FILTERS.map((filter) => (
@@ -137,7 +133,7 @@ export function PriorityFollowUpsPage() {
                         <Card>
                             <EmptyState
                                 title={status === "OPEN" ? "No open follow-ups." : "No completed follow-ups."}
-                                description={status === "OPEN" ? "Calls marked “Need attention” in a candidate's call log appear here." : "Follow-ups marked complete appear here."}
+                                description={status === "OPEN" ? "Calls flagged as needing attention in a candidate's history appear here." : "Follow-ups marked complete appear here."}
                             />
                         </Card>
                     )
@@ -167,7 +163,7 @@ export function PriorityFollowUpsPage() {
             {confirmDelete && (
                 <ActionDialog title="Delete this follow-up?" busy={working !== null} onClose={() => setConfirmDelete(null)}>
                     <p className="text-body-sm text-ink-soft">
-                        The follow-up is removed from Priority Follow-Ups permanently. The original call log, the candidate and their documents are kept.
+                        The follow-up is removed from Need Attention permanently. The original call log, the candidate and their documents are kept.
                     </p>
                     <blockquote className="mt-3 rounded border border-border bg-canvas px-3 py-2 text-body-sm text-ink-soft [overflow-wrap:anywhere]">
                         {confirmDelete.callLog.note}
@@ -214,8 +210,7 @@ function CandidateGroup({ group, canDelete, working, actionError, onComplete, on
                         {count} {count === 1 ? "follow-up" : "follow-ups"}
                     </span>
                 </div>
-                <DocumentStatusSummary documents={group.documentStatus} className="px-4 pt-3 pb-3.5 sm:px-5" />
-                <ul aria-label={`Follow-ups for ${name}`} className="divide-y divide-border border-t border-border">
+                <ul aria-label={`Follow-ups for ${name}`} className="mt-3 divide-y divide-border border-t border-border">
                     {group.followUps.map((item) => (
                         <FollowUpRow
                             key={item.followUpId}
@@ -234,52 +229,69 @@ function CandidateGroup({ group, canDelete, working, actionError, onComplete, on
     );
 }
 
+// One follow-up, laid out like a call in Candidate History: when and who
+// called, with the state as a compact flag at the top right; the note (or a
+// No Answer badge); then who flagged it and the actions.
 function FollowUpRow({ item, canDelete, busy, disabled, error, onComplete, onDelete }: {
     item: FollowUpItem; canDelete: boolean; busy: boolean; disabled: boolean; error: string | null; onComplete: () => void; onDelete: () => void;
 }) {
     const open = item.status === "OPEN";
     return (
         <li className="px-4 py-3 sm:px-5">
-            <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-                <div className="min-w-0 flex-1">
-                    <p className="flex flex-wrap items-baseline gap-x-2 text-label-md">
-                        <span className="font-semibold text-ink tabular-nums">
-                            {formatDate(item.callLog.calledAt)} <span className="font-normal text-ink-subtle">·</span> {formatTime(item.callLog.calledAt)}
+            <div className="flex items-center justify-between gap-3">
+                <p className="flex min-w-min flex-1 flex-wrap items-baseline gap-x-2 text-label-md">
+                    <span className="whitespace-nowrap font-semibold text-ink tabular-nums">
+                        {formatDate(item.callLog.calledAt)} <span className="font-normal text-ink-subtle">·</span> {formatTime(item.callLog.calledAt)}
+                    </span>
+                    {item.callLog.adminName && <span className="text-label-sm text-ink-subtle">Called by {item.callLog.adminName}</span>}
+                </p>
+                <FollowUpFlag open={open} />
+            </div>
+            {item.callLog.outcome === "NO_ANSWER"
+                ? (
+                    <p className="mt-1.5">
+                        <span className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-canvas px-2 py-0.5 text-label-sm text-ink-muted">
+                            <Icon name="phone_missed" className="size-3.5" />
+                            No Answer
                         </span>
-                        {item.callLog.adminName && <span className="text-label-sm text-ink-subtle">Called by {item.callLog.adminName}</span>}
                     </p>
-                    {item.callLog.outcome === "NO_ANSWER"
-                        ? (
-                            <p className="mt-1">
-                                <span className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-canvas px-2 py-0.5 text-label-sm text-ink-muted">
-                                    <Icon name="phone_missed" className="size-3.5" />
-                                    No Answer
-                                </span>
-                            </p>
-                        )
-                        : <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{item.callLog.note}</p>}
-                    <p className="mt-1.5 text-label-sm text-ink-subtle">
-                        Flagged {formatDateTime(item.flaggedAt)}{item.flaggedByName ? ` by ${item.flaggedByName}` : ""}
-                        {item.completedAt && <> · Completed {formatDateTime(item.completedAt)}{item.completedByName ? ` by ${item.completedByName}` : ""}</>}
-                    </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                    {open
-                        ? <ToneBadge tone="review"><span className="inline-flex items-center gap-1"><Icon name="flag" className="size-3.5" />Needs attention</span></ToneBadge>
-                        : <ToneBadge tone="verified"><span className="inline-flex items-center gap-1"><Icon name="check" className="size-3.5" />Completed</span></ToneBadge>}
-                    {open && (
-                        <button type="button" onClick={onComplete} disabled={disabled} className={compactSecondary}>
-                            {busy ? "Saving…" : "Mark complete"}
-                        </button>
-                    )}
-                    {canDelete && (
-                        <button type="button" onClick={onDelete} disabled={disabled} aria-label="Delete follow-up" className={compactDanger}>
-                            <Icon name="delete" className="size-4" />
-                        </button>
-                    )}
-                </div>
+                )
+                : <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{item.callLog.note}</p>}
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                <p className="min-w-0 text-label-sm text-ink-subtle">
+                    Flagged {formatDateTime(item.flaggedAt)}{item.flaggedByName ? ` by ${item.flaggedByName}` : ""}
+                    {item.completedAt && <> · Completed {formatDateTime(item.completedAt)}{item.completedByName ? ` by ${item.completedByName}` : ""}</>}
+                </p>
+                {(open || canDelete) && (
+                    <div className="flex shrink-0 items-center gap-2">
+                        {open && (
+                            <button type="button" onClick={onComplete} disabled={disabled} className={compactSecondary}>
+                                {busy ? "Saving…" : "Mark complete"}
+                            </button>
+                        )}
+                        {canDelete && (
+                            <button type="button" onClick={onDelete} disabled={disabled} aria-label="Delete follow-up" className={compactDanger}>
+                                <Icon name="delete" className="size-4" />
+                            </button>
+                        )}
+                    </div>
+                )}
             </div>
             {error && <p role="alert" className="mt-2 text-label-sm text-critical">{error}</p>}
         </li>
+    );
+}
+
+// The follow-up's state as one compact icon, not a text badge, the same as
+// beside a call in Candidate History: a filled flag while it needs attention,
+// a muted check once completed. The shape differs as well as the colour, and
+// the name is spoken (aria-label), with a tooltip as a supplement. It is a
+// status here: completing is the Mark complete button.
+function FollowUpFlag({ open }: { open: boolean }) {
+    const label = open ? "Needs attention" : "Follow-up completed";
+    return (
+        <span role="img" aria-label={label} title={label} className={`flex size-7 shrink-0 items-center justify-center rounded ${open ? "text-review" : "text-ink-subtle"}`}>
+            <Icon name={open ? "flag_fill" : "task_alt"} className="size-4" />
+        </span>
     );
 }

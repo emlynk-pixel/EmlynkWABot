@@ -11,7 +11,7 @@ The development history, per-checkpoint tests and migrations are in [`09a-admin-
 | Address | `/admin` on the backend server (e.g. `http://localhost:3000/admin/`) |
 | Sign in | Email and password (Supabase Auth); the session is refreshed automatically and ends when you sign out |
 | Who can use it | Any staff user with status `ACTIVE`. What each person can do depends on their role: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK` (section 6). |
-| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Clients, Client Details, Missing Documents, Police Workflow, Daily Report, Priority Follow-Ups, Audit Logs, Settings (tabs: Change Roles, Invite User, Google Sheet Sync) |
+| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Clients, Client Details, Missing Documents, Police Workflow, Daily Report, Need Attention (formerly Priority Follow-Ups), Audit Logs, Settings (tabs: Change Roles, Invite User, Google Sheet Sync) |
 | Actions | Approve, Keep Pending, Remove from Review, Set Document Type, Assign Client, Set Police Slip Date, Upload Candidate Document, Update Candidate Stage, Invite User, Change Roles, Deactivate User |
 | Never | Reject, automatic removal of pending documents, changing a candidate's locked WhatsApp number, modifying or deleting audit logs |
 | Every action | Needs confirmation, is taken by the signed-in admin, and is written to an append-only audit log |
@@ -203,7 +203,7 @@ The primary interface for managing candidate registrations and deployment workfl
   - Staff can record phone calls with timestamp, conversation notes, and staff attribution (`public.candidate_call_logs`).
   - **Candidate History** (formerly Call History) shows the calls and the candidate's activity (documents received or verified, details and stages saved) as one timeline, newest first. The Current Documents block is no longer shown in the drawer. See `Docs/20-candidate-management.md` §4.3 for the event types and limits.
   - **No Answer** (in the add form) records an unanswered call attempt with no note; it shows in Candidate History as a No Answer badge and counts as a call in the Daily Report.
-  - A compact flag beside the caller marks a call as needing attention (Priority Follow-Ups). **Need Attention** in the add form marks the new call when it is added.
+  - A compact flag beside the caller marks a call as needing attention (it then appears on the Need Attention page; route `/follow-ups`, API and audit actions unchanged). **Need Attention** in the add form marks the new call when it is added.
 - **Additional details step (`/admin/candidates/:passportId?tab=additional`)**:
   - The third circle of the candidate's progress stepper (after Candidate details), for every role that manages candidates (REGISTRATION_DESK included). IVS interview and Finalizing the job have no circle.
   - Sections: Passport & Personal Details, Clothing & Sizes, Father Details, Mother Details, Marital & Family Details, Employment / Skills.

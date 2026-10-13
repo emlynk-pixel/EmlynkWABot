@@ -190,7 +190,7 @@ Every candidate page has a **Call log** button (top right). It opens a drawer fr
 - **Call logs**: date and time, who called, the note. White card, *Call log* label.
 - **Candidate activity**: one short line on a muted background with a small icon, *Candidate activity* label.
 
-The drawer no longer shows the *Current documents* block. Document status is still on the candidate page and in Priority Follow-Ups, and `documentStatus` is still returned by the API.
+The drawer no longer shows the *Current documents* block. Document status is still on the candidate page, and `documentStatus` is still returned by the API (the Need Attention page no longer shows it either).
 
 Candidate activity is built only from what is already on record. There is no new table and no migration, and nothing is reconstructed or guessed:
 
@@ -213,7 +213,13 @@ Limitations:
 - **Unattributed documents:** a document stored before submissions were linked (`temporary_id`) and without an upload audit entry has no "by" or "via" line.
 - **Activity limit:** the latest 100 activity entries are returned. *Showing the latest candidate activity only* appears when there are more. Call logs are not limited.
 
-**Need Attention.** Each call shows a compact flag beside the caller's name, using the existing Priority Follow-Up:
+**The Need Attention page** (sidebar, after Candidates; route `/follow-ups`) is the former *Priority Follow-Ups* page. Only what users read changed: the page, sidebar and dialog wording. The feature's internals keep their names (route, `/api/admin/follow-ups`, `call_log_follow_up`, the `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP` and `DELETE_FOLLOW_UP` audit actions), and so do the rules: the *Open* / *Completed* filter, grouping by candidate (one card per candidate, newest follow-up first), completing by every Candidates role, deleting by ADMIN and MANAGER only, and deleting or completing never touching the call log, the candidate or a document. What changed on the page:
+
+- The *Current documents* block is gone (the API still sends `documentStatus`; nothing renders it here).
+- The follow-up's state is a compact icon at the top right of each row, beside who called, like a call in Candidate History: a filled flag, *Needs attention*, while open; a muted check, *Follow-up completed*, once completed. Each has an accessible name and a tooltip, and the icon shape differs, so colour is not the only cue. It shows the state only; **Mark complete** (open follow-ups) and **Delete** (ADMIN, MANAGER) stay as buttons in the row's footer, next to who flagged it and when.
+- The "Needs attention" text badge is removed. A flagged No Answer call shows a No Answer badge instead of a note.
+
+**Need Attention (flagging a call).** Each call shows a compact flag beside the caller's name, using the existing Priority Follow-Up:
 
 - **Outline flag:** a button, *Mark as needs attention*.
 - **Filled flag:** *Needs attention*, while the follow-up is open. There is no second flag.

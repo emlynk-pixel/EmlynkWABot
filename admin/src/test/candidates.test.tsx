@@ -1630,11 +1630,11 @@ describe("REGISTRATION_DESK: the whole Candidates area", () => {
         signedInBackend({ "GET /auth/me": { status: 200, body: { user: DESK } }, "GET /api/admin/candidates": { status: 200, body: LIST }, ...routes });
     const nav = () => within(screen.getByRole("navigation", { name: "Main navigation" }));
 
-    test("sees Candidates and Priority Follow-Ups in the sidebar and nothing ADMIN-only; no separate registration link; no Review Queue bell", async () => {
+    test("sees Candidates and Need Attention in the sidebar and nothing ADMIN-only; no separate registration link; no Review Queue bell", async () => {
         const { calls } = asDesk();
         renderApp("/candidates");
         await screen.findByRole("table", { name: "Candidates" });
-        expect(nav().getAllByRole("link").map((l) => l.textContent)).toEqual(["Candidates", "Priority Follow-Ups"]);
+        expect(nav().getAllByRole("link").map((l) => l.textContent)).toEqual(["Candidates", "Need Attention"]);
         for (const name of ["Invite User", "Change Roles", "Audit Logs", "Settings", "Review Queue", "Overview"]) {
             expect(nav().queryByRole("link", { name })).toBeNull();
         }
