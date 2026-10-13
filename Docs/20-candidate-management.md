@@ -19,7 +19,7 @@ A candidate is stored as a row in the `candidate` table (named `users` before mi
 | Candidate detail | `/admin/candidates/:passportId?stage=…` |
 | Who can read | Any active admin |
 | Who can write | Reviewer role or above |
-| Search | By name, passport ID, NIC, or WhatsApp number |
+| Search | By name, passport ID, unique ID, NIC, contact number or WhatsApp number (database-side, before paging) |
 | Uniqueness | Passport ID and NIC are unique. WhatsApp number is unique per candidate (DB-level partial index). |
 
 ---
@@ -45,9 +45,9 @@ A candidate is stored as a row in the `candidate` table (named `users` before mi
 | `admin/src/components/candidate/StagePanels.tsx` | Stage-specific panel components |
 | `admin/src/components/candidate/DocumentRow.tsx` | Per-document upload row (used in both registration and stage 2) |
 | `admin/src/components/candidate/CandidateStepper.tsx` | Progress stepper shown across the top of the deployment page |
-| `admin/src/components/candidate/CallLogDialog.tsx` | Admin call log drawer: call history, Need attention, current documents |
-| `admin/src/components/candidate/DocumentStatusSummary.tsx` | Compact current-document chips (Call Log and Priority Follow-Ups) |
-| `admin/src/pages/PriorityFollowUpsPage.tsx` | Priority Follow-Ups page |
+| `admin/src/components/candidate/CallLogDialog.tsx` | Admin call log drawer: Candidate History, No Answer, Need Attention, collapsible compact add form |
+| `admin/src/components/candidate/DocumentStatusSummary.tsx` | Compact current-document chips (no longer shown in the Call Log drawer or on the Need Attention page; the component is kept, unused) |
+| `admin/src/pages/PriorityFollowUpsPage.tsx` | Need Attention page (formerly Priority Follow-Ups; the file keeps its name) |
 | `admin/src/components/candidate/AdditionalDetailsPanel.tsx` | Additional details form: sections, conditional fields, sizes, save |
 | `admin/src/api/candidates.ts` | Typed frontend API wrappers for all candidate endpoints |
 
@@ -240,6 +240,8 @@ Roles that can only view see the state, not the button.
 | Note | required (the database enforces it too) | not needed; one sent is ignored |
 
 The add form's buttons are **Close**, **No Answer**, **Need Attention** (a toggle) and **Add call**. With Need Attention on, the one request (`POST …/call-logs` with `needsAttention: true`) creates the call and its OPEN follow-up, with its `FLAG_FOLLOW_UP` audit entry, in one transaction. You get one call, never two.
+
+**Compact, collapsible add form.** *Add New Call Log* is compact (tighter spacing and controls, widths and heights that adapt to the screen) so Candidate History gets most of the drawer. A chevron beside its heading collapses it: expanded (down chevron) shows Date, Time and the note; collapsed (up chevron) hides those fields. **Close**, **No Answer**, **Need Attention** and **Add call** are always visible. Collapsing keeps what was typed and is only a display state; nothing is stored.
 
 **Closing.** The drawer closes with X, Close, Escape, or a click on the page outside it. A click only counts when the press started outside too, so a text selection dragged out of the drawer doesn't close it. Nothing closes the drawer while a call is being saved.
 

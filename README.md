@@ -49,10 +49,14 @@
 - [OCR Service](#ocr-service)
 - [Google Sheet Operational Mirror](#google-sheet-operational-mirror)
   - [Scheduled Sync](#scheduled-sync)
-  - [Multi-Sheet Configuration](#multi-sheet-configuration)
+  - [Sync Destination (Multi-Sheet Configuration)](#sync-destination-multi-sheet-configuration)
   - [Document Status Mapping](#document-status-mapping)
   - [Sync Safety Principles](#sync-safety-principles)
-- [Call Logs & Priority Follow-Ups](#call-logs--priority-follow-ups)
+- [Admin Dashboard Overview](#admin-dashboard-overview)
+  - [Candidate Search](#candidate-search)
+  - [Light and Dark Theme](#light-and-dark-theme)
+- [Candidate History & Need Attention](#candidate-history--need-attention)
+  - [Need Attention page](#need-attention-page)
 - [Daily Reports](#daily-reports)
 - [Settings & Administration](#settings--administration)
 - [Security](#security)
@@ -110,9 +114,11 @@ Manual processing of candidate verification documents via messaging channels pre
 - 📁 **Single-Scan Document Model**: One scan slot per candidate — no separate agreement/affidavit/contract slots to manage.
 - 🔐 **Supabase-Secured Admin Portal**: Supabase Auth identity plus backend role-based authorization (`ADMIN` / `MANAGER` / `ANALYST` / `REGISTRATION_DESK`) guards every protected route.
 - 🧭 **Candidate Progress Pipeline**: Test Details → Candidate Details → Document Submission → VISA Submission → IVS Interview → Visa Approval → Finalizing the Job.
-- 📞 **Call Logs with Priority Follow-Ups**: Any call can be marked **Need attention**; it then also appears on the Admin **Priority Follow-Ups** page, grouped by candidate with their current documents, without leaving the candidate's history. Every staff role can complete a follow-up; only ADMIN and MANAGER can delete one (the call log is always kept).
+- 📞 **Candidate History & Need Attention**: The call log drawer is a **Candidate History** timeline (calls, **No Answer** attempts and candidate activity). A call can be flagged **Need attention**; it then also appears on the Admin **Need Attention** page, grouped by candidate, without leaving the candidate's history. Every staff role can complete a follow-up; only ADMIN and MANAGER can delete one (the call log is always kept).
 - 📄 **Google Sheet Operational Mirror**: Scheduled, one-way database → Sheet sync (06:00 / 12:00 / 18:00) for staff who work from a spreadsheet.
-- 📈 **Role-Scoped Daily Reports**: Summary, Analyst, Registration Desk and Admin report views, plus a full operational export.
+- 📈 **Daily Reports**: A Summary and a role-based Summary by Roles for any business day (Asia/Colombo), with a structured PDF export.
+- 🔎 **Server-Side Candidate Search**: Name, passport ID, unique ID, NIC, contact and WhatsApp numbers, searched in PostgreSQL before paging (100 per page), including Sri Lankan `07…` / `947…` number forms.
+- 🎨 **Light and Dark Theme**: One token-driven stylesheet; the Light Theme's borders and dividers were strengthened globally.
 
 ---
 
@@ -191,7 +197,7 @@ One row per candidate per pipeline stage (see [Candidate Progress Flow](#candida
 
 ### call_log
 
-Staff call notes for a candidate (the source of truth for the note, call time and caller). See [Call Logs & Priority Follow-Ups](#call-logs--priority-follow-ups).
+Staff call notes for a candidate (the source of truth for the note, call time and caller). See [Candidate History & Need Attention](#candidate-history--need-attention).
 
 ### call_log_follow_up
 
@@ -506,16 +512,16 @@ flowchart LR
 
 Candidate and database updates made between scheduled runs are consolidated and written together at the next run.
 
-### Multi-Sheet Configuration
+### Sync Destination (Multi-Sheet Configuration)
 
-Sheet targeting is configurable from **Settings**, admin-only:
+The Sheet the mirror writes to is shown and, when more than one Sheet is configured for the worker, switched from **Settings → Google Sheet Sync** (admin-only):
 
-- An initial/default Sheet is configured out of the box.
-- Admins can change the target Sheet for the active mirror.
-- The architecture allows additional Sheets to be configured later (e.g. per office or region) without a schema change.
-- Google credentials are never exposed to the frontend; the frontend only sends/receives a Sheet identifier and sync status, never a credential.
+- The **Sync destination** dropdown lists the Sheets configured for the worker and shows the active one. Today only the existing operational Sheet is configured, so there is one option and no switch action; no placeholder Sheets are listed.
+- With more than one Sheet configured, choosing a Sheet does nothing until **Use this destination** is clicked. The server records the choice as *pending*; the worker then validates the Sheet (connection, tab, headers). Only if validation passes does it become the destination of every run, and the change is audited. If validation fails, the previous destination stays active and the page shows the reason.
+- Switching never copies Sheet data into the database and never clears the previous Sheet. The one-way rule (Database → Sheet) is unchanged.
+- Google credentials and full spreadsheet IDs are never sent to the browser.
 
-The exact configuration UI/storage is intentionally undecided here and will be documented once implemented, rather than invented in this specification.
+Details: [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md) (Google Sheet Sync tab) and [`Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md).
 
 ### Document Status Mapping
 
@@ -544,56 +550,120 @@ This rule applies consistently across every document type mirrored to the Sheet 
 
 ---
 
-## Call Logs & Priority Follow-Ups
+## Admin Dashboard Overview
 
-The candidate Call Log records staff notes about calls made to a candidate. Any call log entry can be marked **Need attention** for high-priority follow-up:
+The Admin Dashboard is served at `/admin`. What a person sees depends on their role (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`); the backend enforces it on every request. The full reference is [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md).
+
+| Area | What it is |
+|---|---|
+| **Overview** | Dashboard counts and links into the work that needs doing |
+| **Documents** | Candidate documents and their status |
+| **Review Queue** | WhatsApp submissions held for a person's decision (ADMIN, MANAGER, ANALYST) |
+| **Candidates** | Candidate list (server-side search and paging), registration, the stage pipeline, additional details, documents, and the Call Log / **Candidate History** drawer |
+| **Need Attention** | Calls flagged for follow-up, grouped by candidate (the former *Priority Follow-Ups*) |
+| **Missing Documents** | Incomplete candidates and the required documents they lack |
+| **Police Workflow** | The 21-day police report countdown |
+| **Daily Report** | Summary and Summary by Roles for a chosen day, with PDF export (ADMIN, MANAGER, ANALYST; Summary by Roles ADMIN and MANAGER only; not REGISTRATION_DESK) |
+| **Audit Logs** | Append-only record of every action (ADMIN only) |
+| **Settings** | Change Roles, Invite User and Google Sheet Sync (ADMIN only) |
+
+### Candidate Search
+
+The Candidates search runs in PostgreSQL **before** pagination (100 candidates per page), so paging covers matches only. Submitting a search starts again at page 1, and the search term and page stay in the URL (`?search=…&page=…`).
+
+- **Fields:** name (first and other), passport ID, unique ID, NIC, contact number and WhatsApp number.
+- **Words:** the text is split on spaces (up to five words) and every word must match one of the fields, case-insensitively, as a substring.
+- **Sri Lankan phone numbers:** a phone-like word (digits, an optional leading `+`, dashes) also matches the other local/international form, so `0771234567` finds a number stored as `94771234567` and the other way round. Numbers are matched as stored; spaces inside a number split it into separate words and are **not** normalised.
+
+Details: [`Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md`](Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md).
+
+### Light and Dark Theme
+
+Light is the default; Dark is a per-browser choice. Both are driven by the colour tokens in one stylesheet, `admin/src/index.css` (Tailwind v4 `@theme`; there is no `tailwind.config` for these tokens). Light uses the root token values, Dark overrides them under `:root[data-theme="dark"]`, and the Candidates screens add their own overrides under `.ui-classic`.
+
+The Light Theme's borders and dividers were too faint (card edges, tables, inputs, the Candidate screens and the Candidate History drawer). Only the three existing Light border tokens were retuned:
+
+| Token | Before (main) | Before (Candidates) | Now (both) |
+|---|---|---|---|
+| `--color-border` | `#d5dce5` | `#e2e8f0` | `#c9d1dc` |
+| `--color-border-strong` | `#b6c0cd` | `#cbd5e1` | `#a9b5c4` |
+| `--color-border-focus` | `#8494a8` | `#94a3b8` | `#7a8ba1` |
+
+Dark Theme values, backgrounds, surfaces, status colours and shadows were not changed, no tokens were added, and no component logic changed. The Daily Report's one `border-border/60` row line now uses the normal `border-border`.
+
+---
+
+## Candidate History & Need Attention
+
+Each candidate page has a **Call log** button that opens a right-hand drawer: the candidate summary, **Candidate History** (formerly *Call History*), and the **Add New Call Log** form. The database model keeps its technical name (`candidate_call_logs`, `CandidateCallLog`); only what users read changed.
+
+**Candidate History** is one timeline, newest first, of the staff's call logs and the candidate's activity, so it shows what was discussed and what changed afterwards:
+
+| Entry | Tone | Source |
+|---|---|---|
+| **Call log** | soft amber | `candidate_call_logs` |
+| **No Answer** | soft red | a call log with the `NO_ANSWER` outcome |
+| **Candidate activity** | soft green | what is already on record: documents received, verified or removed; registration; details, additional details and stage saves |
+
+Colour is only a supplement: every entry also says what it is in words and an icon, and the tints come from the theme's tokens so they stay readable in both Light and Dark. Activity is built only from existing records (no new table); a few things are not on record and are never reconstructed, such as stage completions that were never audited. The limits are listed in [`Docs/20-candidate-management.md`](Docs/20-candidate-management.md) §4.3.
+
+**Current Documents** is no longer shown in the drawer or on the Need Attention page, to cut clutter and free vertical space for the history and the action items. Only the display was removed: the API still returns `documentStatus`, and document status is still on the candidate page.
+
+**Adding a call.** The form is compact and responsive so the history gets most of the drawer. A chevron collapses it (down chevron when expanded, up when collapsed): collapsed, the Date, Time and note fields are hidden, the buttons stay, and what was typed is kept (the state is only in the page). Always visible: **Close**, **No Answer**, **Need Attention** and **Add call**.
+
+- **No Answer** records an unanswered attempt at the chosen date and time, signed with the staff member, **without a note**. It is a normal call row (`call_outcome = 'NO_ANSWER'`, empty note), so it counts in the Daily Report's *Calls taken*. It does not open a follow-up by itself; flag it with the flag icon, or turn **Need Attention** on first.
+- **Need Attention** (in the form) creates the call and its open follow-up in one request. On each call a compact **flag icon** beside the caller is the indicator and the action; the earlier large text button is gone. It reuses the existing follow-up record: nothing was duplicated.
+- The drawer closes with **X**, **Close**, **Escape**, or a click on the page behind it. A click inside the drawer, or a text selection dragged out of it, does not close it, and nothing closes it while a call is being saved.
+
+### Need Attention page
+
+The former **Priority Follow-Ups** page (`/admin/follow-ups`). Only the user-facing wording changed; the route, API (`/api/admin/follow-ups`), table (`call_log_follow_up`) and audit actions keep their names.
 
 ```
-Candidate Call Log
-    ->
-staff marks a call as Need attention
-    ->
-a separate call_log_follow_up record references the call (no data copied)
-    ->
-original call log entry remains in the candidate's history
-    ->
-the follow-up appears on the Admin "Priority Follow-Ups" page, grouped by candidate
+Candidate Call Log -> staff flags a call -> call_log_follow_up (references the call, copies nothing)
+     -> the call stays in Candidate History -> the follow-up shows on Need Attention, by candidate
 ```
 
-- The call log stays the source of truth; marking, completing or deleting a follow-up **never** deletes or changes it.
-- **Current documents**: the Call Log drawer and each candidate group show the candidate's documents *now* (uploaded / not uploaded), using the same current-document rule as the candidate page, so an old "passport not uploaded" call shows the passport once it is on record. Read-only.
-- **Mark complete**: ADMIN, MANAGER, ANALYST, REGISTRATION_DESK. The follow-up is kept (completer and time stored) and leaves the Open list.
-- **Delete**: ADMIN and MANAGER only (enforced by the API); removes the follow-up row only.
+- Grouped by candidate (one card each, newest follow-up first), with an **Open** (default) and a **Completed** view.
+- The state is a compact icon in each row: a filled flag while open, a muted check once completed; **Mark complete** and **Delete** remain buttons in the row's footer.
+- **Mark complete:** ADMIN, MANAGER, ANALYST, REGISTRATION_DESK. Completed follow-ups are kept as history (who and when).
+- **Delete:** ADMIN and MANAGER only (enforced by the API). It removes the follow-up row only; the call log, the candidate and the documents stay.
 - Audited as `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`.
 
 ---
 
 ## Daily Reports
 
-Daily reports describe **Candidates**, not "Clients". The report view uses stronger card borders and clearer visual separation between sections, and groups incomplete candidates by process/pipeline stage rather than as one flat list.
+Daily reports describe **Candidates**, not "Clients". The page (`/admin/reports/daily`) works on one business day at a time, using **Asia/Colombo** day boundaries. The date can be changed with **Previous day**, **Next day** (not past today), **Today** or a date picker.
 
-Report views:
+Two views:
 
-- **Summary** — headline counts: visa-completed candidates, calls taken, documents submitted.
-- **Analyst Summary** — detailed calls, documents and related activity, broken down by analyst.
-- **Registration Desk Summary** — daily registration-desk activity (new registrations, candidates progressed).
-- **Admin Summary** — daily admin-level activity across the system.
+- **Summary**: *Candidates Registered*, *Candidates Completed*, *Visa Completed*, *Calls Taken* and *Documents Submitted*; the Registered and Completed candidate lists; documents by type and source (WhatsApp / manual); and, under a *Current state* heading, the **Incomplete Candidates** breakdown by process and the **Police status** snapshot.
+- **Summary by Roles** (ADMIN and MANAGER only): pick Analyst, Manager, Admin or Registration Desk to see the calls taken and the manually uploaded documents of staff currently holding that role, a staff breakdown and an activity list. Files received by WhatsApp have no staff member and are never attributed to a role.
 
-**Export** produces a complete daily operational report: candidate activity, completed candidates, calls, documents, police reports, and other operational document/report totals, plus a structured completed-candidate table with each candidate's related document and process information.
+*Calls Taken* counts call rows, so a **No Answer** attempt counts as a call.
+
+**Export PDF** produces a structured, concise A4 PDF of the selected date and view (the role view for Summary by Roles), with repeated table headers and page numbers.
+
+Known limits, stated on the page: the Incomplete Candidates and Police sections show the state **now**, not on the selected day (no daily snapshots are kept); completions rely on the stage's stored completion time, so a stage unticked later no longer counts; staff are grouped by their **current** role (role changes are not versioned); *Registered by* comes from the audit log and is blank for older registrations.
+
+Details: [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md) (Daily Report).
 
 ---
 
 ## Settings & Administration
 
-Administration functions are consolidated under a single **Settings** area to reduce sidebar complexity, rather than scattered as separate top-level sidebar items:
+Administration is consolidated under one **Settings** item (ADMIN only) with three tabs, one URL each:
 
-- Configuration
-- Change Roles
-- Invite User
-- Google Sheet configuration / sync controls
-- Other administrative functions, as they are added
+| Tab | Route |
+|---|---|
+| **Change Roles** (opens first) | `/admin/settings/roles` |
+| **Invite User** | `/admin/settings/invite` |
+| **Google Sheet Sync** | `/admin/settings/sheet-sync` |
 
-There is no separate "Invite Admin" or "Change Roles" sidebar item once these live inside Settings; every user-facing reference to "Invite Admin" is renamed to **"Invite User"**.
+There is **no Configurations tab** (it existed briefly and was removed); new system settings become tabs or sections here, not sidebar entries. The old `/admin/invitations` and `/admin/roles` URLs redirect to their tabs. Every user-facing reference to "Invite Admin" is **"Invite User"**.
+
+The **Google Sheet Sync** tab has a cleaner, grouped status layout and shows **scheduled** and **manual** sync separately: the automatic runs (06:00 / 12:00 / 18:00 Asia/Colombo) are identified by the scheduler as their source, never by clock time, so a manual run at 13:45 does not look like the 12:00 run. It also shows the **Sync destination** (see [Sync Destination](#sync-destination-multi-sheet-configuration)); only ADMIN can switch it, a new destination is validated before it is activated, and the one-way Database → Sheet rule is unchanged.
 
 ---
 
@@ -811,13 +881,13 @@ Every route requires an authenticated, active `user`; access to each route is ad
 | `POST` | `/api/admin/documents/:documentId/police-date` | Set or correct a stored police slip's submitted date (reason required; audited) |
 | `GET` | `/api/admin/candidates` | Candidate directory: search, complete/incomplete, missing type, paging |
 | `GET` | `/api/admin/candidates/:passportId` | Candidate profile, documents, stage status, call logs |
-| `GET` | `/api/admin/candidates/:passportId/call-logs` | A candidate's call log history |
-| `POST` | `/api/admin/candidates/:passportId/call-logs` | Log a call |
-| `POST` | `/api/admin/candidates/:passportId/call-logs/:callLogId/follow-up` | Mark a call as Need attention (creates a Priority Follow-Up) |
-| `GET` | `/api/admin/follow-ups?status` | Priority Follow-Ups grouped by candidate, with current documents (`status`: `OPEN` default, or `COMPLETED`) |
+| `GET` | `/api/admin/candidates/:passportId/call-logs` | A candidate's Candidate History: call logs plus candidate activity |
+| `POST` | `/api/admin/candidates/:passportId/call-logs` | Log a call (`{ note, calledAt, needsAttention?, outcome? }`; `outcome: "NO_ANSWER"` needs no note) |
+| `POST` | `/api/admin/candidates/:passportId/call-logs/:callLogId/follow-up` | Mark a call as Need attention (creates a follow-up, shown on the Need Attention page) |
+| `GET` | `/api/admin/follow-ups?status` | Need Attention follow-ups grouped by candidate (`status`: `OPEN` default, or `COMPLETED`) |
 | `POST` | `/api/admin/follow-ups/:followUpId/complete` | Complete a follow-up |
 | `DELETE` | `/api/admin/follow-ups/:followUpId` | Delete a follow-up (ADMIN, MANAGER only) |
-| `GET` | `/api/admin/reports/daily` | Daily report (`?date=YYYY-MM-DD`) — see [Daily Reports](#daily-reports) for the view breakdown |
+| `GET` | `/api/admin/reports/daily` | Daily report (`?date=YYYY-MM-DD`) — see [Daily Reports](#daily-reports) for the views |
 | `GET` | `/api/admin/review` | Review queue: waiting files and documents needing review |
 | `POST` | `/api/admin/review/:reviewId/approve` | Approve a reviewed item; audit entry |
 | `POST` | `/api/admin/review/:reviewId/keep-pending` | Keep pending with a required reason; audit entry |
@@ -845,13 +915,14 @@ Every route requires an authenticated, active `user`; access to each route is ad
 | **2** | Admin Dashboard Foundation | ✅ Completed | Overview, Documents, Review Queue, Candidate directory, Police Workflow |
 | **3** | Candidate Management Pipeline | ✅ Completed | Candidate registration, progress stages, call logs, single-scan document model |
 | **4** | Google Sheet Operational Mirror | ✅ Completed | One-way database → Sheet mirror |
-| **5** | Role-Based Staff Management | 🚧 In Progress | Four-role model (`ADMIN`/`MANAGER`/`ANALYST`/`REGISTRATION_DESK`), backend RBAC |
-| **6** | Supabase Auth Migration | ⏳ Planned | Replace custom credential/session handling with Supabase Auth; migrate Invite User and password recovery to Supabase's admin functionality |
+| **5** | Role-Based Staff Management | ✅ Completed | Four-role model (`ADMIN`/`MANAGER`/`ANALYST`/`REGISTRATION_DESK`), backend RBAC |
+| **6** | Supabase Auth Migration | ✅ Completed | Supabase Auth for sign-in, Invite User and password recovery |
 | **7** | Candidate Progress Expansion | ⏳ Planned | Add VISA Submission stage; temporarily disable IVS Interview, Visa Approval, Finalizing the Job in the UI |
-| **8** | Scheduled Sheet Sync & Multi-Sheet Config | ⏳ Planned | Replace continuous sync with 06:00/12:00/18:00 scheduled runs; admin-configurable Sheet target; per-field submitted-date/"Not Submitted" mapping |
-| **9** | Call Logs: Priority Follow-Ups | ✅ Completed | Need attention action, `call_log_follow_up` table, Priority Follow-Ups page, current document status in Call Logs |
-| **10** | Daily Report Redesign | ⏳ Planned | Summary / Analyst / Registration Desk / Admin report views; full operational export |
-| **11** | Settings Consolidation | ⏳ Planned | Single Settings area for Configuration, Change Roles, Invite User, Sheet configuration |
+| **8** | Scheduled Sheet Sync & Multi-Sheet Config | ✅ Completed | 06:00/12:00/18:00 scheduled runs, scheduled vs manual status, Sync Destination (ADMIN-only, validated before activation) |
+| **9** | Call Logs: Follow-Ups (now Need Attention) | ✅ Completed | Need attention action, `call_log_follow_up` table, follow-ups page (now **Need Attention**) |
+| **10** | Daily Report Redesign | ✅ Completed | Summary and Summary by Roles views, date navigation, PDF export |
+| **11** | Settings Consolidation | ✅ Completed | Single Settings area: Change Roles, Invite User, Google Sheet Sync |
+| **11a** | Candidate History & UI refinement | ✅ Completed | Candidate History timeline, No Answer, compact/collapsible call form, Need Attention page cleanup, Light Theme border visibility, family-detail rules |
 | **12** | Security, QA & Deployment | ⏳ Planned | Load testing, production deployment hardening |
 
 ---
@@ -881,15 +952,16 @@ Implement Single Process -> Test & Verify -> Update Docs -> Git Commit Checkpoin
 
 Setup logs, implementation history and architectural proposals are maintained under the [`Docs/`](Docs/) directory:
 
-- 📄 [`Docs/01-initial-backend-database-setup.md`](Docs/01-initial-backend-database-setup.md): Node.js init, Docker PostgreSQL, & Prisma setup log.
-- 📄 [`Docs/02-seed-data.md`](Docs/02-seed-data.md): Database seeding documentation and sample entity records.
-- 📄 [`Docs/03-admin-authentication.md`](Docs/03-admin-authentication.md): Legacy authentication log, superseded by [Authentication & Authorization](#authentication--authorization).
-- 📄 [`Docs/05-ocr-document-processing.md`](Docs/05-ocr-document-processing.md): OCR and document-processing architecture.
-- 📄 [`Docs/13-security-overview.md`](Docs/13-security-overview.md): Security status, controls and findings.
-- 📄 [`Docs/14-phase-10-admin-dashboard.md`](Docs/14-phase-10-admin-dashboard.md): Admin dashboard development log.
-- 📄 [`Docs/15-admin-dashboard-reference.md`](Docs/15-admin-dashboard-reference.md): Admin dashboard reference — every screen, action, rule and setting.
-- 📄 [`Docs/WhatsApp_Document_Processing_Project_Proposal_Final.md`](Docs/WhatsApp_Document_Processing_Project_Proposal_Final.md): Original technical design proposal & specification.
-
+- 📄 [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md): Admin Dashboard guide: every screen, action, rule and setting.
+- 📄 [`Docs/09a-admin-dashboard-api.md`](Docs/09a-admin-dashboard-api.md): Admin Dashboard API reference.
+- 📄 [`Docs/20-candidate-management.md`](Docs/20-candidate-management.md): Candidate management: stages, Candidate History, Need Attention, additional details.
+- 📄 [`Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md`](Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md): Candidates list: server-side search and paging.
+- 📄 [`Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md): Google Sheet sync architecture, including Sync Destination.
+- 📄 [`Docs/GOOGLE_SHEET_SYNC_FEATURE.md`](Docs/GOOGLE_SHEET_SYNC_FEATURE.md): Google Sheet sync feature overview.
+- 📄 [`Docs/SUPABASE_AUTH.md`](Docs/SUPABASE_AUTH.md): Supabase Auth setup and flows.
+- 📄 [`Docs/DATABASE_IMPLEMENTATION.md`](Docs/DATABASE_IMPLEMENTATION.md): Database implementation notes.
+- 📄 [`Docs/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md`](Docs/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md): Project issues, fixes and lessons learned.
+- 📄 [`Docs/archive/`](Docs/archive/): Archived setup logs, early phase notes and the original proposal (historical).
 ---
 
 ## Project Status & License

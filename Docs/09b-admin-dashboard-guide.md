@@ -37,7 +37,7 @@ The first ADMIN is created on the server with `npm run user:create` (a Supabase 
 - **Review Queue Notification Bell**: Displays an alert bell icon in the top header with a real-time badge count of unread Review Queue submissions. Clicking the bell opens a dropdown panel listing recent pending items with quick navigation to `/admin/review/:id` and a "Mark all as read" button. Read/unread tracking is persisted in `localStorage` per staff user (`emlynk.admin.readNotifications.<userId>`).
 - **Register Candidate** quick access (`/admin/candidates/new`): a button on every page, left of Sync, for the roles that can register candidates (ADMIN, MANAGER, ANALYST, REGISTRATION_DESK). It is the same registration form the Candidates page's *Add candidate* button opens; no other role sees it. On small screens it shows the icon only.
 - **Sync** reloads the data on the current page from the server. Your filters, search and page are kept. While it runs the button shows *Syncing…* and can't be pressed again; afterwards the header shows *Synced HH:MM:SS* or *Sync failed*. Sync only reloads the page's data. It does not talk to WhatsApp or any other system.
-- **Dark mode** toggle (moon / sun icon). The choice is remembered in this browser. Light mode is the default.
+- **Dark mode** toggle (moon / sun icon). The choice is remembered in this browser. Light mode is the default. See *Light and dark theme* below for how the colours work.
 - Your name and role, and **Sign out**.
 
 ### Overview
@@ -213,7 +213,7 @@ The Summary view presents five high-level KPI tiles, detailed activity tables, d
   - **Passport number**: Candidate passport ID.
   - **Handled by**: Staff member who recorded the call.
   - **Role**: Staff member's *current* role (e.g. Analyst, Manager, Admin, Registration Desk).
-- Only stored fields are shown; call duration is not recorded in the database and is never estimated. Expandable list, capped at 200 items.
+- Only stored fields are shown; call duration is not recorded in the database and is never estimated. A **No Answer** attempt is a call row like any other, so it is listed and counted here (it has no note, and the report never shows one). Expandable list, capped at 200 items.
 
 ##### 6. Documents Submitted & Type Breakdown
 
@@ -331,7 +331,7 @@ The primary interface for managing candidate registrations and deployment workfl
 
 - **Candidate Pool (`/admin/candidates`)**:
   - Lists candidates from `public.candidate` with server-side pagination.
-  - Search by passport ID, unique ID, first or other name, NIC, or contact number.
+  - **Search** runs in PostgreSQL before pagination, 100 candidates per page. It matches passport ID, unique ID, first or other name, NIC, contact number and WhatsApp number, case-insensitively, as a substring. The text is split on spaces (up to five words) and every word must match. A phone-like word (digits, an optional leading `+`, dashes) also matches the other Sri Lankan form, so `0771234567` finds a number stored as `94771234567` and the reverse. Numbers are matched as stored: spaces inside a number split it into words and are not normalised. A new search starts at page 1, and the search and page stay in the URL (`?search=…&page=…`).
   - Candidate summary card: passport ID, business unique ID (`0001`, `0002`...), candidate name, contact numbers, and a 6-stage deployment progress overview.
   - Action buttons: **Register Candidate** and **View/Edit Deployment**.
 - **Candidate Registration (`/admin/candidates/new`)**:
@@ -354,8 +354,11 @@ The primary interface for managing candidate registrations and deployment workfl
   - Slide-out drawer on the deployment screen. It closes with X, Close, Escape, or a click outside it.
   - Staff can record phone calls with timestamp, conversation notes, and staff attribution (`public.candidate_call_logs`).
   - **Candidate History** (formerly Call History) shows the calls and the candidate's activity (documents received or verified, details and stages saved) as one timeline, newest first. The Current Documents block is no longer shown in the drawer. See `Docs/20-candidate-management.md` §4.3 for the event types and limits.
-  - **No Answer** (in the add form) records an unanswered call attempt with no note; it shows in Candidate History as a No Answer badge and counts as a call in the Daily Report.
-  - A compact flag beside the caller marks a call as needing attention (it then appears on the Need Attention page; route `/follow-ups`, API and audit actions unchanged). **Need Attention** in the add form marks the new call when it is added.
+  - **Candidate History colours.** Call log = soft amber, No Answer = soft red, Candidate activity = soft green; the Need Attention flag is amber/orange (filled while open) and a completed follow-up is a muted check. Colour is only a supplement: every entry also has a label and an icon. The tints come from the theme tokens, so they have their own readable values in Light and Dark.
+  - **No Answer** (in the add form) records an unanswered call attempt with no note and no message body; it shows in Candidate History as a No Answer badge with the date, time and staff member, and counts as a call (*Calls Taken*) in the Daily Report. It does not open a follow-up by itself; flag it with the flag icon, or switch **Need Attention** on first.
+  - **Compact, responsive form.** *Add New Call Log* has a smaller vertical footprint (tighter spacing, compact labels and controls, widths and heights that adapt to the screen), so Candidate History gets most of the drawer on large and small displays. A chevron beside the heading collapses it (down chevron when expanded, up when collapsed): expanded shows Date, Time and the note; collapsed hides those fields. **Close**, **No Answer**, **Need Attention** and **Add call** are always visible. Collapsing keeps what was typed and is only a display state (not saved anywhere).
+  - **Current Documents removed.** The block was removed from this drawer (and from the Need Attention page) to reduce clutter and free vertical space for the history and the action items. Only the display was removed: the API still returns `documentStatus`, and document status is still on the candidate page.
+  - A compact flag icon beside the caller is the Need Attention indicator and action (the large per-call text button was removed); the call then appears on the Need Attention page (route `/follow-ups`, API and audit actions unchanged). **Need Attention** in the add form marks the new call when it is added, in the same request. The existing follow-up record is reused; there is no second follow-up mechanism.
 - **Additional details step (`/admin/candidates/:passportId?tab=additional`)**:
   - The third circle of the candidate's progress stepper (after Candidate details), for every role that manages candidates (REGISTRATION_DESK included). IVS interview and Finalizing the job have no circle.
   - Sections: Passport & Personal Details, Clothing & Sizes, Father Details, Mother Details, Marital & Family Details, Employment / Skills.
@@ -366,14 +369,15 @@ The primary interface for managing candidate registrations and deployment workfl
   - If someone else saved the same candidate's details after you opened them, your save is refused with a message; press **Sync** to load their changes and try again (what you typed is kept until then).
   - Saved in `public.candidate_additional_details`. Every change is in Audit Logs with only the changed fields.
 
-### Priority Follow-Ups (`/admin/follow-ups`)
+### Need Attention (`/admin/follow-ups`)
 
-Calls marked **Need attention** in a candidate's Call Log, so important follow-ups are not lost in a long call history. In the sidebar after Candidates; visible to every role that uses call logs (ADMIN, MANAGER, ANALYST, REGISTRATION_DESK).
+Formerly *Priority Follow-Ups*. Calls flagged **Need attention** in a candidate's Call Log, so important follow-ups are not lost in a long history. In the sidebar after Candidates; visible to every role that uses call logs (ADMIN, MANAGER, ANALYST, REGISTRATION_DESK). Only the wording users read changed: the route, the API (`/api/admin/follow-ups`), the `call_log_follow_up` table and the audit actions keep their technical names.
 
-- **By candidate**: each candidate appears once as a compact card with name, passport ID, WhatsApp (or contact) number, the number of follow-ups and the candidate's current documents. Their follow-ups are listed inside, newest first, each with the call's date and time, who called, the note, who flagged it and when. Candidates with the newest follow-up come first.
-- **Open / Completed**: *Open* (default) lists follow-ups that still need attention; *Completed* is the history, with who completed each and when.
-- **Mark complete**: every role that uses call logs can mark a follow-up complete. It leaves the Open list; it is kept (completer and time stored) and shown under *Completed*.
-- **Delete** (ADMIN and MANAGER only): permanently deletes the follow-up after a confirmation. It removes the follow-up only: the original call log, the candidate and the candidate's documents are never touched, and the call stays in the candidate's Call Log. ANALYST and REGISTRATION_DESK don't see the button, and the server refuses them with 403 whatever the dashboard shows.
+- **By candidate**: each candidate appears once as a compact card with name, passport ID, WhatsApp (or contact) number and the number of follow-ups. Their follow-ups are listed inside, newest first, each with the call's date and time, who called, the note (a **No Answer** call shows a No Answer badge instead), who flagged it and when. Candidates with the newest follow-up come first. The *Current documents* block that used to be on each card was removed (the API still sends `documentStatus`; nothing renders it here).
+- **Compact flag icon**: the follow-up's state is a small icon at the top right of each row, beside who called, like a call in Candidate History: a filled flag (*Needs attention*) while open, a muted check (*Follow-up completed*) once completed. It shows the state only; the large *Needs attention* text badge was removed.
+- **Open / Completed**: *Open* (default) lists follow-ups that still need attention; *Completed* is the history, with who completed each and when, in quieter muted tones.
+- **Mark complete** (a button in the row's footer): every role that uses call logs can mark a follow-up complete. It leaves the Open list; it is kept (completer and time stored) and shown under *Completed*. This behaviour did not change.
+- **Delete** (ADMIN and MANAGER only): permanently deletes the follow-up after a confirmation. It removes the follow-up only: the original call log, the candidate and the candidate's documents are never touched, and the call stays in Candidate History. ANALYST and REGISTRATION_DESK don't see the button, and the server refuses them with 403 whatever the dashboard shows.
 - The call note, call time and caller are always read from the original call log; the follow-up stores only its own status, who flagged and completed it, and when.
 - Marking, completing and deleting are recorded in Audit Logs (*Candidate* category: `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`).
 - Loading, empty, error and in-progress states are shown, with a confirmation message after each action.
@@ -423,7 +427,7 @@ A centralized, immutable audit log viewer for all system operations, candidate m
   - **Clear Filters**: One-click reset to default view.
 - **Audited Events**:
   - Candidate lifecycle: `CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `UPDATE_STAGE`.
-  - Priority Follow-Ups: `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`.
+  - Need Attention follow-ups (formerly Priority Follow-Ups): `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`.
   - Document actions: `UPLOAD_DOCUMENT`, `REMOVE_DOCUMENT`, `REPLACE_VERIFIED`, `KEEP_AS_VERSION`, `DELETE_TEMPORARY_DOCUMENT`.
   - Review queue decisions: `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT`, `SET_POLICE_DATE`, `RETRY_PROCESSING`.
   - Staff management: `INVITE_USER`, `REACTIVATE_USER`, `COMPLETE_INVITATION`, `UPDATE_USER_ROLE`, `DEACTIVATE_USER`.
@@ -472,6 +476,27 @@ The layout is grouped with subtle dividers and compact status tiles so state can
 - Switching never copies Sheet data into the database and never clears the previous Sheet.
 - If the dropdown is missing and only the plain *Spreadsheet* row shows, the Cloud Run worker is still an old version that does not publish destinations; update the worker (see the troubleshooting section of the Sheet Sync document).
 - Changing the destination is ADMIN only like the rest of Settings; there is no view-only role.
+
+### Light and dark theme
+
+Light is the default; Dark is a per-browser choice. One stylesheet, `admin/src/index.css`, holds the colour tokens (Tailwind v4 `@theme`; this token system has no `tailwind.config`). Components use the tokens (`border-border`, `border-border-strong`, `bg-surface`, …) and carry no fixed colours, so a token change reaches every screen.
+
+| Theme | Where its values live |
+|---|---|
+| Light | the root token values (the `@theme` block) |
+| Dark | `:root[data-theme="dark"]` |
+| Candidates screens, Light | `:root:not([data-theme="dark"]) .ui-classic` (restores the pre-redesign canvas and text values, and had its own, lighter borders) |
+| Candidates screens, Dark | `:root[data-theme="dark"] .ui-classic` |
+
+**Light Theme border visibility.** Borders and dividers were too faint in Light (card edges, table rows, input and select boundaries, panels and dialogs), and the Candidates area was fainter still because `.ui-classic` overrode the border tokens with lighter values. Only the three existing Light border tokens were adjusted, in both the base and the `.ui-classic` Light blocks:
+
+| Token | Before (main) | Before (Candidates) | Now (both) |
+|---|---|---|---|
+| `--color-border` | `#d5dce5` | `#e2e8f0` | `#c9d1dc` |
+| `--color-border-strong` | `#b6c0cd` | `#cbd5e1` | `#a9b5c4` |
+| `--color-border-focus` | `#8494a8` | `#94a3b8` | `#7a8ba1` |
+
+The order border < strong < focus is kept, so hover and focus still read as stronger than the resting border. Dark Theme values (both Dark blocks) were not changed. No tokens were added, and backgrounds, surfaces, status colours, shadows, spacing and component logic were left alone. The Daily Report's one `border-border/60` row line now uses the normal `border-border`. The PDF exports use their own print styles and are unaffected.
 
 ## 3. Rules
 
@@ -601,7 +626,7 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | GET | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate call logs and candidate activity (Candidate History) |
 | POST | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Record call log `{ note, calledAt, needsAttention?, outcome? }` (`outcome: "NO_ANSWER"`: no note needed) |
 | POST | `/candidates/:passportId/call-logs/:callLogId/follow-up` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Mark a call for follow-up (201; 409 `FOLLOW_UP_EXISTS` if it already has an open one; 404 if the call isn't this candidate's). The call log is not changed |
-| GET | `/follow-ups?status` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Priority Follow-Ups grouped by candidate, each with the candidate's current documents (default `OPEN`; at most 500 follow-ups, newest first) |
+| GET | `/follow-ups?status` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Need Attention follow-ups grouped by candidate (default `OPEN`; at most 500 follow-ups, newest first). Each group still carries `documentStatus`; the page does not render it |
 | POST | `/follow-ups/:followUpId/complete` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Complete a follow-up (409 `FOLLOW_UP_COMPLETED` if already completed); the row is kept |
 | DELETE | `/follow-ups/:followUpId` | ADMIN, MANAGER | Delete the follow-up row only; the call log, candidate and documents stay |
 | GET | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Additional details `{ passportId, details, suggested, updatedDate }` |
@@ -664,7 +689,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 | 13 | Pending storage naming | `pending/{unique_id}/undefined/uncleared-docs/`, or `pending/unidentified/{temporary_id}/…` when no client is known, instead of `pending/{mobile_number}/…`, so storage keys contain no phone numbers. |
 | 14 | Daily reporting | Moved from Phase 11 into Phase 10. Daily and current figures are kept apart; figures without a data source are not estimated. |
 | 15 | Sync | Means an explicit reload of the dashboard data only. |
-| 16 | Dark mode | Added on top of the Stitch design through its colour tokens; light mode unchanged. |
+| 16 | Dark mode | Added on top of the Stitch design through its colour tokens. Light mode's colours were unchanged then; its border tokens were later strengthened (see *Light and dark theme*). |
 | 17 | User invitations | An ADMIN invites a user; Supabase Auth sends the invitation email and the user sets their password on `/admin/setup-password`. Dashboard SMTP is configured in Supabase, and every step is audit-logged. |
 | 18 | Password recovery | Handled by Supabase Auth: the reset link opens `/admin/reset-password`, and the forgot-password page never reveals whether an email has an account. |
 
@@ -680,9 +705,9 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 - **Refused files aren't counted.** Invalid files are refused at intake and leave no record.
 - **Removed files leave only an audit entry.** A file removed from review no longer counts as received on its day, and there is no screen listing removed files.
 - **Stored documents can't be corrected.** A *Review required* document can't be re-typed or moved to another client, because it is already in a client folder.
-- **Contrast in light mode.** The Stitch light status colours (green, amber and red badge text) have a contrast of 3.1–4.4:1, below the 4.5:1 guideline for small text. Light mode was kept unchanged as required; changing it would be a Stitch design decision. Dark mode meets 4.5:1 everywhere.
+- **Contrast in light mode.** The Stitch light status colours (green, amber and red badge text) have a contrast of 3.1–4.4:1, below the 4.5:1 guideline for small text. Those status colours were kept unchanged (the later Light border-token change did not touch them); changing them would be a Stitch design decision. Dark mode meets 4.5:1 everywhere.
 - **Calculated in memory.** Client completeness and police statuses are calculated over all clients on each request. That is fine for thousands of clients; a much larger client base would need the calculation moved into the database.
-- **Priority Follow-Ups list is capped.** The page shows the newest 500 follow-ups (it says so when more exist); there is no paging.
+- **Need Attention list is capped.** The page shows the newest 500 follow-ups (it says so when more exist); there is no paging.
 - **Sheet Sync status is global.** The last automatic / manual sync, queue counts and last failure are not kept per destination; right after a destination switch they still describe runs against the previous Sheet until the new one has run.
 - **Not built here.** Automated WhatsApp reminders and warnings (Phase 11), global search across all entities, and client profile editing.
 

@@ -2380,6 +2380,147 @@ GitHub automatically parses Git commit trailers formatted as `Co-Authored-By: Na
 
 ---
 
+# 47A. Light Theme Borders and UI Separation Were Too Faint
+
+**Date / Phase**: October 2026 (Admin UI refinement)
+
+### Symptoms
+
+- Card edges were difficult to distinguish from the page.
+- Divider lines were too light.
+- Table rows were difficult to scan.
+- Input and select boundaries were weak.
+- The Candidates area was even harder to read.
+- The whole UI looked washed out in the Light Theme (the Dark Theme was acceptable).
+
+### Initial Concern
+
+This looked like a potentially huge UI-wide redesign, because the problem showed on nearly every page.
+
+### Audit
+
+The project was inspected before anything was edited. Findings:
+
+- There is one global stylesheet, `admin/src/index.css` (Tailwind v4, `@theme` tokens; no `tailwind.config` for these tokens).
+- The tokens drive nearly all UI borders: `border-border` (about 99 uses) and `border-border-strong` (about 35 uses) are used widely.
+- No hardcoded hex/rgb colours exist in the application's TSX components.
+- The Candidates area had its own Light overrides under `:root:not([data-theme="dark"]) .ui-classic`.
+- The Dark Theme had a complete, separate set of overrides.
+
+### Root Cause
+
+The existing Light border tokens were too light, and the Candidates `.ui-classic` values were lighter still.
+
+| Token | Main Light (old) | Candidates Light (old) |
+|---|---|---|
+| `--color-border` | `#d5dce5` | `#e2e8f0` |
+| `--color-border-strong` | `#b6c0cd` | `#cbd5e1` |
+| `--color-border-focus` | `#8494a8` | `#94a3b8` |
+
+### Resolution
+
+Only the three existing Light border tokens were retuned, and the same values were applied to the Candidates Light block:
+
+- `--color-border`: `#c9d1dc`
+- `--color-border-strong`: `#a9b5c4`
+- `--color-border-focus`: `#7a8ba1`
+
+The order border < strong < focus was kept so hover and focus still read as stronger. The Daily Report's one `border-border/60` row-line exception was also changed to the normal `border-border`. One test that pinned the old Candidates values was updated to the new ones.
+
+### What Was Not Changed
+
+- The Dark Theme (both Dark blocks)
+- backgrounds, canvas and surfaces
+- shadows
+- status colours
+- component logic, spacing and layout
+- authentication and business logic
+- no new tokens were introduced
+
+### Verification
+
+- The full frontend suite passed, as did typecheck and the production build.
+- The Dark Theme blocks were compared with the previous commit and are identical.
+- A visual browser smoke-check of each page was **not** performed as part of this change; it is still required.
+
+### Lesson Learned
+
+For a large visual consistency problem:
+
+- audit the theme and token architecture first;
+- avoid editing dozens of components by hand;
+- prefer the existing global semantic tokens;
+- include scoped theme overrides such as `.ui-classic`;
+- preserve the Dark Theme by changing only Light-specific selectors.
+
+---
+
+# 47B. Call Log and Follow-Up Workflow Was Cluttered (Candidate History)
+
+**Date / Phase**: October 2026 (Admin UI refinement; follows the earlier Call Log drawer redesign in section 35)
+
+### Symptoms
+
+- *Current Documents* took too much vertical space in the drawer and on the follow-up cards.
+- Call History showed only calls, not what changed on the candidate afterwards.
+- A large *Need Attention* text button on every call and every follow-up consumed card space.
+- The drawer needed an explicit close control.
+- The Add New Call Log area took too much of the drawer.
+- Large and small displays behaved inconsistently.
+- An unanswered call had no short way to be recorded.
+
+### Resolution
+
+- **Candidate History** timeline: calls and meaningful candidate activity, newest first (documents received, verified or removed; registration; details, additional details and stage saves), built only from records that already exist (no new table).
+- **Current Documents** removed from the drawer and from the Need Attention page (display only; the data and `documentStatus` in the API remain).
+- **Compact flag icon** beside the caller replaces the per-call text button; **Need Attention** is also an option in the Add form and reuses the existing follow-up record.
+- **No Answer**: records an unanswered call with no note. It is stored as a call with the `NO_ANSWER` outcome (additive migration `20261013120000_call_log_outcome`), counts as a call in the Daily Report, and opens no follow-up on its own.
+- **Backdrop close**: X, Close, Escape or a click outside the drawer.
+- **Compact, responsive** Add form with a **collapse / expand** chevron (hides Date, Time and the note; the buttons stay; typed values are kept; display state only).
+- **Semantic event colours** (No Answer soft red, Call log soft amber, Candidate activity soft green), theme-aware, never the only cue.
+- **Need Attention page**: the former *Priority Follow-Ups* renamed for users (route, API, table and audit actions unchanged), a compact state icon instead of a text badge, *Complete* behaviour unchanged, delete still ADMIN and MANAGER only.
+
+### Status
+
+All of the above is implemented and in the codebase. Not implemented, and not claimed in the docs: reconstruction of earlier stage completions or reopenings that were never recorded, and history for the automatic stages (Candidate details, Document submission), which keep no completion history.
+
+### Lesson Learned
+
+Show the history and the action items first; keep derived or secondary data (such as current document status) where it already lives. Reuse an existing mechanism (the follow-up record) instead of adding a second one.
+
+---
+
+# 47C. Frontend Full-Suite Timeouts and a Request-Spy Assertion Race
+
+**Date / Phase**: October 2026
+
+### Observed
+
+One full frontend run reported 5 failures (420 passed): four 5000 ms timeouts (two candidate pagination tests and two candidate registration tests) and one Need Attention assertion that the request `/api/admin/follow-ups?status=OPEN` had not been seen.
+
+### Investigation
+
+- None of the failures reproduced when their test files were run alone, and a full rerun passed.
+- The Need Attention page still called `/api/admin/follow-ups?status=OPEN`. The test read the request spy right after the page heading appeared, which can happen before the fetch effect has fired.
+
+### Resolution
+
+- The assertion was moved to after the candidate list had loaded, so the request has certainly been made. Production code was unchanged and no test timeout was increased.
+
+### Verification
+
+- 425 of 425 frontend tests passed, and typecheck and build passed.
+
+### Later Observation
+
+The two pagination tests (Next/Previous paging and contact-number search) still time out occasionally in full runs: one takes about 3.4 s on its own against the 5 s limit, so heavy worker load pushes it over. They pass alone and in clean full runs. This is test-suite load sensitivity, not a product regression; a longer timeout on just those tests is the remedy if it becomes a nuisance.
+
+### Lesson Learned
+
+Do not treat full-suite async timing failures as product regressions without a focused reproduction. Wait for the response or the rendered result before asserting on a request spy.
+
+---
+
 # 48. Current Project Status
 
 ## Completed
@@ -2399,8 +2540,10 @@ GitHub automatically parses Git commit trailers formatted as `Co-Authored-By: Na
 - Candidate Registration form with duplicate validation
 - 7-stage deployment workflow tracking
 - Candidate document upload via signed URLs and removal with audit reasons
-- Candidate Call Logs drawer with current document status badges and follow-up flagging
-- Priority Follow-Ups page (`/admin/follow-ups`)
+- Candidate Call Logs drawer, now **Candidate History** (calls, No Answer attempts and candidate activity; compact, collapsible add form; backdrop close; see section 47B)
+- **Need Attention** page (`/admin/follow-ups`), formerly Priority Follow-Ups; the route, API and `call_log_follow_up` table keep their names
+- Light Theme border visibility strengthened globally (section 47A)
+- Parent name and birthday independent of the alive answer; child names unavailable when marital status is Single
 
 ### Daily Report System
 - Redesigned Daily Report (`/admin/reports/daily`) with Candidates terminology
@@ -2464,6 +2607,11 @@ GitHub automatically parses Git commit trailers formatted as `Co-Authored-By: Na
 - Candidate registration is an independent business event from document submission; zero-document intake must remain visible.
 - Always explicitly differentiate historical daily activity (immutable event timestamps) from current pipeline snapshots (evaluated at request time).
 - Do not claim historical metrics exist unless the underlying schema stores an immutable history.
+
+## UI Theme & Frontend Tests
+- For a UI-wide visual problem, audit the token architecture first and change the existing global tokens (including scoped overrides such as `.ui-classic`) instead of editing components one by one.
+- Change only Light-specific selectors to keep the Dark Theme byte-for-byte unchanged.
+- Do not treat full-suite async timing failures as product regressions without a focused reproduction; wait for the rendered result before asserting on a request spy.
 
 ## Git & Team Workflows
 - Keep `dev` as the active feature branch and `stage` as the integration preview branch.
