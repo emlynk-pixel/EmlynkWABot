@@ -686,6 +686,7 @@ describe("Call log", () => {
         expect(screen.getByRole("heading", { level: 1, name: "SAMAN SILVA" })).toBeInTheDocument();
     });
 
+
     test("a viewer sees the calls but can't add one", async () => {
         signedInBackend({
             "GET /auth/me": { status: 200, body: { user: VIEWER } },
@@ -698,7 +699,234 @@ describe("Call log", () => {
         expect(within(dialog).queryByLabelText("What the candidate said *")).not.toBeInTheDocument();
         expect(within(dialog).queryByRole("button", { name: "Add call" })).not.toBeInTheDocument();
     });
+
+    test("collapse: form is expanded by default when the drawer opens", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+        expect(within(form).getByLabelText("Date *")).toBeInTheDocument();
+        expect(within(form).getByLabelText("Time *")).toBeInTheDocument();
+        expect(within(form).getByLabelText("What the candidate said *")).toBeInTheDocument();
+        const toggle = within(form).getByRole("button", { name: "Collapse call form" });
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+    });
+
+    test("collapse: collapse button hides Date, Time and note fields; action buttons stay visible", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+
+        expect(within(form).queryByLabelText("Date *")).not.toBeInTheDocument();
+        expect(within(form).queryByLabelText("Time *")).not.toBeInTheDocument();
+        expect(within(form).queryByLabelText("What the candidate said *")).not.toBeInTheDocument();
+        // Action buttons always remain visible.
+        expect(within(form).getByRole("button", { name: "Close" })).toBeInTheDocument();
+        expect(within(form).getByRole("button", { name: "No Answer" })).toBeInTheDocument();
+        expect(within(form).getByRole("button", { name: "Need Attention" })).toBeInTheDocument();
+        expect(within(form).getByRole("button", { name: "Add call" })).toBeInTheDocument();
+    });
+
+    test("collapse: expand button restores the fields", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        expect(within(form).queryByLabelText("Date *")).not.toBeInTheDocument();
+
+        await user.click(within(form).getByRole("button", { name: "Expand call form" }));
+        expect(within(form).getByLabelText("Date *")).toBeInTheDocument();
+        expect(within(form).getByLabelText("Time *")).toBeInTheDocument();
+        expect(within(form).getByLabelText("What the candidate said *")).toBeInTheDocument();
+        expect(within(form).getByRole("button", { name: "Collapse call form" })).toHaveAttribute("aria-expanded", "true");
+    });
+
+    test("collapse: typed note survives collapse/expand", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        await user.type(within(form).getByLabelText("What the candidate said *"), "Police report ready");
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        await user.click(within(form).getByRole("button", { name: "Expand call form" }));
+
+        expect(within(form).getByLabelText("What the candidate said *")).toHaveValue("Police report ready");
+    });
+
+    test("collapse: date value survives collapse/expand", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        fireEvent.change(within(form).getByLabelText("Date *"), { target: { value: "2026-09-15" } });
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        await user.click(within(form).getByRole("button", { name: "Expand call form" }));
+
+        expect(within(form).getByLabelText("Date *")).toHaveValue("2026-09-15");
+    });
+
+    test("collapse: time value survives collapse/expand", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        fireEvent.change(within(form).getByLabelText("Time *"), { target: { value: "14:30" } });
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        await user.click(within(form).getByRole("button", { name: "Expand call form" }));
+
+        expect(within(form).getByLabelText("Time *")).toHaveValue("14:30");
+    });
+
+    test("collapse: Need Attention toggle state survives collapse/expand", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        await user.click(within(form).getByRole("button", { name: "Need Attention" }));
+        expect(within(form).getByRole("button", { name: "Need Attention" })).toHaveAttribute("aria-pressed", "true");
+
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        // Still visible and pressed while collapsed.
+        expect(within(form).getByRole("button", { name: "Need Attention" })).toHaveAttribute("aria-pressed", "true");
+
+        await user.click(within(form).getByRole("button", { name: "Expand call form" }));
+        expect(within(form).getByRole("button", { name: "Need Attention" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    test("collapse: No Answer still sends the current date/time while the form is collapsed", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": { status: 201, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        // Set a specific date/time while expanded, then collapse.
+        fireEvent.change(within(form).getByLabelText("Date *"), { target: { value: "2026-10-01" } });
+        fireEvent.change(within(form).getByLabelText("Time *"), { target: { value: "09:00" } });
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+
+        // No Answer is still visible and functional.
+        await user.click(within(form).getByRole("button", { name: "No Answer" }));
+        await within(dialog).findByText("Said the police report is ready");
+        const post = calls.find((c) => c.method === "POST")!;
+        expect(post.body).toMatchObject({ outcome: "NO_ANSWER", calledAt: "2026-10-01T09:00:00+05:30" });
+    });
+
+    test("collapse: Add call validates the note even when the textarea is collapsed", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        // Collapse without typing anything: Add call stays disabled (note is empty).
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        expect(within(form).getByRole("button", { name: "Add call" })).toBeDisabled();
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+    });
+
+    test("collapse: Add call with a pre-typed note still submits while collapsed", async () => {
+        const { calls } = signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+            "POST /api/admin/candidates/N0000002/call-logs": { status: 201, body: CALLS },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        await user.type(within(form).getByLabelText("What the candidate said *"), "Medical ready");
+        // Collapse and then submit.
+        await user.click(within(form).getByRole("button", { name: "Collapse call form" }));
+        await user.click(within(form).getByRole("button", { name: "Add call" }));
+
+        await within(dialog).findByText("Said the police report is ready");
+        const post = calls.find((c) => c.method === "POST")!;
+        expect(post.body).toMatchObject({ note: "Medical ready" });
+    });
+
+    test("collapse: aria-expanded is false on the toggle while collapsed, true while expanded; tooltip and keyboard activation work", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
+        });
+        renderApp("/candidates/N0000002");
+        const user = userEvent.setup();
+        const dialog = await openCallLog();
+        await within(dialog).findByText("No candidate history yet.");
+        const form = within(dialog).getByRole("form", { name: "Add New Call Log" });
+
+        const toggle = within(form).getByRole("button", { name: "Collapse call form" });
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+        expect(toggle).toHaveAttribute("title", "Collapse call form");
+
+        await user.click(toggle);
+        const expandToggle = within(form).getByRole("button", { name: "Expand call form" });
+        expect(expandToggle).toHaveAttribute("aria-expanded", "false");
+        expect(expandToggle).toHaveAttribute("title", "Expand call form");
+
+        expandToggle.focus();
+        await user.keyboard("{Enter}");
+        const reExpandedToggle = within(form).getByRole("button", { name: "Collapse call form" });
+        expect(reExpandedToggle).toHaveAttribute("aria-expanded", "true");
+        expect(reExpandedToggle).toHaveAttribute("title", "Collapse call form");
+    });
 });
+
 
 describe("Call log: Need attention and current documents", () => {
     const DOCUMENT_STATUS = [
@@ -1008,7 +1236,7 @@ describe("Call log: No Answer", () => {
         const button = within(form).getByRole("button", { name: "No Answer" });
         expect(button).toBeEnabled();
         expect(button.textContent).toBe("No Answer");
-        expect(within(form).getAllByRole("button").map((b) => b.textContent)).toEqual(["Close", "No Answer", "Need Attention", "Add call"]);
+        expect(within(form).getAllByRole("button").map((b) => b.textContent)).toEqual(["", "Close", "No Answer", "Need Attention", "Add call"]);
         // Secondary, not the primary action.
         expect(button.className).not.toContain("bg-primary");
         expect(within(form).getByRole("button", { name: "Add call" }).className).toContain("bg-primary");

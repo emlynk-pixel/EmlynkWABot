@@ -49,6 +49,8 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [shown, setShown] = useState(false);
+    // Collapse hides the date/time/note fields; the action buttons are always visible.
+    const [formCollapsed, setFormCollapsed] = useState(false);
     // Guards against a second submit before `busy` has re-rendered.
     const submitting = useRef(false);
     // The call being marked for follow-up (one at a time), and any error.
@@ -301,20 +303,37 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                 {canEdit
                     ? (
                         <form onSubmit={submit} noValidate aria-labelledby={`${titleId}-add`} className="shrink-0 space-y-2 border-t border-border bg-surface px-4 pt-2.5 pb-3 sm:px-5">
-                            <h3 id={`${titleId}-add`} className="text-body-lg font-semibold text-ink">Add New Call Log</h3>
-                            {/* Date and time side by side; stacked only below 340px, where both inputs no longer fit. */}
-                            <div data-testid="call-log-when" className="grid grid-cols-1 gap-2 min-[340px]:grid-cols-2 sm:gap-3">
-                                <Field label="Date" required htmlFor="call-log-date">
-                                    <input id="call-log-date" type="date" required max={today} value={when.date} disabled={busy} onChange={(event) => setWhen((w) => ({ ...w, date: event.target.value }))} className={compactField} />
-                                </Field>
-                                <Field label="Time" required htmlFor="call-log-time">
-                                    <input id="call-log-time" type="time" required value={when.time} disabled={busy} onChange={(event) => setWhen((w) => ({ ...w, time: event.target.value }))} className={compactField} />
-                                </Field>
+                            <div className="flex items-center justify-between gap-2">
+                                <h3 id={`${titleId}-add`} className="text-body-lg font-semibold text-ink">Add New Call Log</h3>
+                                <button
+                                    type="button"
+                                    aria-expanded={!formCollapsed}
+                                    aria-label={formCollapsed ? "Expand call form" : "Collapse call form"}
+                                    title={formCollapsed ? "Expand call form" : "Collapse call form"}
+                                    onClick={() => setFormCollapsed((c) => !c)}
+                                    disabled={busy}
+                                    className="-mr-0.5 flex size-7 shrink-0 items-center justify-center rounded text-ink-subtle hover:bg-canvas hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                    <Icon name={formCollapsed ? "keyboard_arrow_up" : "keyboard_arrow_down"} className="size-4" />
+                                </button>
                             </div>
-                            {/* Two lines by default, three on a tall screen; it can still be dragged taller. */}
-                            <Field label="What the candidate said" required htmlFor="call-log-note">
-                                <textarea id="call-log-note" rows={2} maxLength={NOTE_MAX_LENGTH} value={note} disabled={busy} onChange={(event) => setNote(event.target.value)} placeholder="Short note…" className={`${compactTextArea} block min-h-14 resize-y [@media(min-height:900px)]:min-h-20`} />
-                            </Field>
+                            {!formCollapsed && (
+                                <>
+                                    {/* Date and time side by side; stacked only below 340px, where both inputs no longer fit. */}
+                                    <div data-testid="call-log-when" className="grid grid-cols-1 gap-2 min-[340px]:grid-cols-2 sm:gap-3">
+                                        <Field label="Date" required htmlFor="call-log-date">
+                                            <input id="call-log-date" type="date" required max={today} value={when.date} disabled={busy} onChange={(event) => setWhen((w) => ({ ...w, date: event.target.value }))} className={compactField} />
+                                        </Field>
+                                        <Field label="Time" required htmlFor="call-log-time">
+                                            <input id="call-log-time" type="time" required value={when.time} disabled={busy} onChange={(event) => setWhen((w) => ({ ...w, time: event.target.value }))} className={compactField} />
+                                        </Field>
+                                    </div>
+                                    {/* Two lines by default, three on a tall screen; it can still be dragged taller. */}
+                                    <Field label="What the candidate said" required htmlFor="call-log-note">
+                                        <textarea id="call-log-note" rows={2} maxLength={NOTE_MAX_LENGTH} value={note} disabled={busy} onChange={(event) => setNote(event.target.value)} placeholder="Short note…" className={`${compactTextArea} block min-h-14 resize-y [@media(min-height:900px)]:min-h-20`} />
+                                    </Field>
+                                </>
+                            )}
                             <DialogError message={error} />
                             <div className="flex flex-wrap justify-end gap-2 pt-0.5">
                                 <button type="button" onClick={requestClose} disabled={busy} className={compactButton(secondaryButton)}>Close</button>

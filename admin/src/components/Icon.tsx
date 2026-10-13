@@ -48,6 +48,8 @@ import notifications from "@material-symbols/svg-400/outlined/notifications.svg?
 import notificationsActive from "@material-symbols/svg-400/outlined/notifications_active.svg?raw";
 import history from "@material-symbols/svg-400/outlined/history.svg?raw";
 import settings from "@material-symbols/svg-400/outlined/settings.svg?raw";
+import keyboardArrowUp from "@material-symbols/svg-400/outlined/keyboard_arrow_up.svg?raw";
+import keyboardArrowDown from "@material-symbols/svg-400/outlined/keyboard_arrow_down.svg?raw";
 
 const ICONS = {
     assignment_late: assignmentLate,
@@ -96,6 +98,8 @@ const ICONS = {
     visibility_off: visibilityOff,
     notifications,
     notifications_active: notificationsActive,
+    keyboard_arrow_up: keyboardArrowUp,
+    keyboard_arrow_down: keyboardArrowDown,
 } as const;
 
 export type IconName = keyof typeof ICONS;
