@@ -76,15 +76,7 @@ export async function flagCallLog({ db, actor, passportId, callLogId }) {
         return await db.$transaction(async (tx) => {
             const open = await tx.callLogFollowUp.findFirst({ where: { callLogId, status: FOLLOW_UP_STATUS.OPEN }, select: { followUpId: true } });
             if (open) throw exists();
-            const followUp = await tx.callLogFollowUp.create({
-                data: { followUpId: crypto.randomUUID(), callLogId, status: FOLLOW_UP_STATUS.OPEN, flaggedById: actor.adminId },
-                select: { followUpId: true, status: true, flaggedDate: true },
-            });
-            await writeAudit(tx, {
-                actor, action: FOLLOW_UP_AUDIT_ACTION.FLAG, passportId,
-                previousStatus: "NONE", newStatus: FOLLOW_UP_STATUS.OPEN, reason: "Call log marked for follow-up",
-            });
-            return { followUp: { followUpId: followUp.followUpId, callLogId, status: followUp.status, flaggedAt: followUp.flaggedDate } };
+            return { followUp: await openFollowUp(tx, { actor, passportId, callLogId }) };
         });
     } catch (error) {
         if (isUniqueViolation(error)) throw exists();
@@ -92,11 +84,26 @@ export async function flagCallLog({ db, actor, passportId, callLogId }) {
     }
 }
 
+// The OPEN follow-up row and its audit entry, inside the caller's
+// transaction: flagging a call (above) and a new call added with Need
+// Attention (candidateService.js addCallLog).
+export async function openFollowUp(tx, { actor, passportId, callLogId }) {
+    const followUp = await tx.callLogFollowUp.create({
+        data: { followUpId: crypto.randomUUID(), callLogId, status: FOLLOW_UP_STATUS.OPEN, flaggedById: actor.adminId },
+        select: { followUpId: true, status: true, flaggedDate: true },
+    });
+    await writeAudit(tx, {
+        actor, action: FOLLOW_UP_AUDIT_ACTION.FLAG, passportId,
+        previousStatus: "NONE", newStatus: FOLLOW_UP_STATUS.OPEN, reason: "Call log marked for follow-up",
+    });
+    return { followUpId: followUp.followUpId, callLogId, status: followUp.status, flaggedAt: followUp.flaggedDate };
+}
+
 const followUpSelect = {
     followUpId: true, status: true, flaggedDate: true, completedDate: true,
     flaggedBy: { select: { name: true } },
     completedBy: { select: { name: true } },
-    callLog: { select: { callLogId: true, passportId: true, note: true, createdDate: true, admin: { select: { name: true } } } },
+    callLog: { select: { callLogId: true, passportId: true, note: true, callOutcome: true, createdDate: true, admin: { select: { name: true } } } },
 };
 
 // GET /api/admin/follow-ups?status=OPEN|COMPLETED. Grouped by candidate:
@@ -166,6 +173,7 @@ function followUpView(row) {
         callLog: {
             callLogId: row.callLog.callLogId,
             note: row.callLog.note,
+            outcome: row.callLog.callOutcome ?? "ANSWERED",
             calledAt: row.callLog.createdDate,
             adminName: row.callLog.admin?.name ?? null,
         },

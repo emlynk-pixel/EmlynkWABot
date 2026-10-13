@@ -79,7 +79,7 @@ export function CandidatesPage() {
                         value={searchText}
                         maxLength={100}
                         onChange={(event) => setSearchText(event.target.value)}
-                        placeholder="Search by name, passport ID, NIC or WhatsApp number…"
+                        placeholder="Search by name, passport ID, NIC, contact or WhatsApp number…"
                         className="h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
                     />
                     <button type="submit" className="h-9 rounded bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>

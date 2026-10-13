@@ -8,6 +8,11 @@ import darkMode from "@material-symbols/svg-400/outlined/dark_mode.svg?raw";
 import edit from "@material-symbols/svg-400/outlined/edit.svg?raw";
 import event from "@material-symbols/svg-400/outlined/event.svg?raw";
 import flag from "@material-symbols/svg-400/outlined/flag.svg?raw";
+import flagFill from "@material-symbols/svg-400/outlined/flag-fill.svg?raw";
+import phoneMissed from "@material-symbols/svg-400/outlined/phone_missed.svg?raw";
+import editNote from "@material-symbols/svg-400/outlined/edit_note.svg?raw";
+import taskAlt from "@material-symbols/svg-400/outlined/task_alt.svg?raw";
+import uploadFile from "@material-symbols/svg-400/outlined/upload_file.svg?raw";
 import lightMode from "@material-symbols/svg-400/outlined/light_mode.svg?raw";
 import personSearch from "@material-symbols/svg-400/outlined/person_search.svg?raw";
 import search from "@material-symbols/svg-400/outlined/search.svg?raw";
@@ -43,6 +48,8 @@ import notifications from "@material-symbols/svg-400/outlined/notifications.svg?
 import notificationsActive from "@material-symbols/svg-400/outlined/notifications_active.svg?raw";
 import history from "@material-symbols/svg-400/outlined/history.svg?raw";
 import settings from "@material-symbols/svg-400/outlined/settings.svg?raw";
+import keyboardArrowUp from "@material-symbols/svg-400/outlined/keyboard_arrow_up.svg?raw";
+import keyboardArrowDown from "@material-symbols/svg-400/outlined/keyboard_arrow_down.svg?raw";
 
 const ICONS = {
     assignment_late: assignmentLate,
@@ -58,6 +65,11 @@ const ICONS = {
     edit,
     event,
     flag,
+    flag_fill: flagFill,
+    edit_note: editNote,
+    phone_missed: phoneMissed,
+    task_alt: taskAlt,
+    upload_file: uploadFile,
     light_mode: lightMode,
     person_add: personAdd,
     person_search: personSearch,
@@ -86,6 +98,8 @@ const ICONS = {
     visibility_off: visibilityOff,
     notifications,
     notifications_active: notificationsActive,
+    keyboard_arrow_up: keyboardArrowUp,
+    keyboard_arrow_down: keyboardArrowDown,
 } as const;
 
 export type IconName = keyof typeof ICONS;

@@ -11,7 +11,7 @@ The development history, per-checkpoint tests and migrations are in [`09a-admin-
 | Address | `/admin` on the backend server (e.g. `http://localhost:3000/admin/`) |
 | Sign in | Email and password (Supabase Auth); the session is refreshed automatically and ends when you sign out |
 | Who can use it | Any staff user with status `ACTIVE`. What each person can do depends on their role: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK` (section 6). |
-| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Priority Follow-Ups, Clients, Client Details, Missing Documents, Police Workflow, Daily Report, Audit Logs, Settings (tabs: Change Roles, Invite User, Google Sheet Sync) |
+| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Clients, Client Details, Missing Documents, Police Workflow, Daily Report, Need Attention (formerly Priority Follow-Ups), Audit Logs, Settings (tabs: Change Roles, Invite User, Google Sheet Sync) |
 | Actions | Approve, Keep Pending, Remove from Review, Set Document Type, Assign Client, Set Police Slip Date, Upload Candidate Document, Update Candidate Stage, Invite User, Change Roles, Deactivate User |
 | Never | Reject, automatic removal of pending documents, changing a candidate's locked WhatsApp number, modifying or deleting audit logs |
 | Every action | Needs confirmation, is taken by the signed-in admin, and is written to an append-only audit log |
@@ -351,10 +351,11 @@ The primary interface for managing candidate registrations and deployment workfl
   - Direct browser-to-storage uploads via signed URLs (`POST /candidates/:passportId/documents/upload-target` and `POST /candidates/:passportId/documents/finalize`).
   - Stored documents can be removed with a mandatory reason via `POST /candidates/:passportId/documents/:documentId/remove`.
 - **Candidate Call Logs**:
-  - Slide-out drawer on the deployment screen.
+  - Slide-out drawer on the deployment screen. It closes with X, Close, Escape, or a click outside it.
   - Staff can record phone calls with timestamp, conversation notes, and staff attribution (`public.candidate_call_logs`).
-  - **Current documents**: a compact row of chips above the call history shows the documents the candidate has NOW (a green check for a document on record, a quiet outline for one that isn't). It is not a snapshot from the day of the call: an old call "Passport not uploaded" reads against today's record, so staff can see at once that the passport has since arrived and no new call is needed. It uses the candidate page's own current-document rule (the newest *Verified* document, otherwise the newest waiting for review; *Superseded* never counts), shows only supported document types (police reports per variant; one *Scan*), and is read-only: opening a call log never changes a document.
-  - **Need attention**: a button under each call marks it for follow-up. The call stays in the call history unchanged and shows a *Needs attention* badge; it also appears in **Priority Follow-Ups**. A call that already has an open follow-up can't be marked twice; once its follow-up is completed it can be marked again.
+  - **Candidate History** (formerly Call History) shows the calls and the candidate's activity (documents received or verified, details and stages saved) as one timeline, newest first. The Current Documents block is no longer shown in the drawer. See `Docs/20-candidate-management.md` §4.3 for the event types and limits.
+  - **No Answer** (in the add form) records an unanswered call attempt with no note; it shows in Candidate History as a No Answer badge and counts as a call in the Daily Report.
+  - A compact flag beside the caller marks a call as needing attention (it then appears on the Need Attention page; route `/follow-ups`, API and audit actions unchanged). **Need Attention** in the add form marks the new call when it is added.
 - **Additional details step (`/admin/candidates/:passportId?tab=additional`)**:
   - The third circle of the candidate's progress stepper (after Candidate details), for every role that manages candidates (REGISTRATION_DESK included). IVS interview and Finalizing the job have no circle.
   - Sections: Passport & Personal Details, Clothing & Sizes, Father Details, Mother Details, Marital & Family Details, Employment / Skills.
@@ -597,8 +598,8 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/candidates/:passportId/documents/upload-target` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Issue signed upload URL for candidate document |
 | POST | `/candidates/:passportId/documents/finalize` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Finalize and verify candidate document upload |
 | POST | `/candidates/:passportId/documents/:documentId/remove` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Remove candidate document `{ reason }` |
-| GET | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate call logs: each call with its newest follow-up (`null`, `OPEN` or `COMPLETED`) and `documentStatus`, the candidate's current documents |
-| POST | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Record call log `{ note, createdDate }` |
+| GET | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate call logs and candidate activity (Candidate History) |
+| POST | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Record call log `{ note, calledAt, needsAttention?, outcome? }` (`outcome: "NO_ANSWER"`: no note needed) |
 | POST | `/candidates/:passportId/call-logs/:callLogId/follow-up` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Mark a call for follow-up (201; 409 `FOLLOW_UP_EXISTS` if it already has an open one; 404 if the call isn't this candidate's). The call log is not changed |
 | GET | `/follow-ups?status` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Priority Follow-Ups grouped by candidate, each with the candidate's current documents (default `OPEN`; at most 500 follow-ups, newest first) |
 | POST | `/follow-ups/:followUpId/complete` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Complete a follow-up (409 `FOLLOW_UP_COMPLETED` if already completed); the row is kept |

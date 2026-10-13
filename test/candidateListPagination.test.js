@@ -162,6 +162,54 @@ describe("paging", () => {
     });
 });
 
+describe("search by contact number (server-side, before paging)", () => {
+    // Candidates registered long ago sit on pages 2 and 3 of the full list.
+    before(async () => {
+        await pg.exec(`
+            UPDATE "candidate" SET contact_number = '0773344556' WHERE passport_id = 'P0000050';
+            UPDATE "candidate" SET contact_number = '94772233445' WHERE passport_id = 'P0000003';
+            UPDATE "candidate" SET whatsapp_number = '94775551234', nic = '199012345678' WHERE passport_id = 'P0000010';
+        `);
+    });
+
+    test("1, 9-10. an exact contact number finds a candidate that is not on page 1 of the full list, as result page 1", async () => {
+        const { body: unfiltered } = await get("?page=1");
+        assert.ok(!ids(unfiltered).includes("P0000050"), "on page 2, not among the first 100");
+        assert.ok(ids((await get("?page=2")).body).includes("P0000050"));
+        const { status, body } = await get("?search=0773344556");
+        assert.equal(status, 200);
+        assert.deepEqual(ids(body), ["P0000050"]);
+        assert.deepEqual([body.pagination.page, body.pagination.totalItems, body.pagination.totalPages, body.pagination.pageSize], [1, 1, 1, 100]);
+    });
+
+    test("2. a partial contact number matches", async () => {
+        assert.deepEqual(ids((await get("?search=3344556")).body), ["P0000050"]);
+        assert.deepEqual(ids((await get("?search=77334")).body), ["P0000050"]);
+    });
+
+    test("3-4. local and international forms match each other, as for WhatsApp numbers", async () => {
+        assert.deepEqual(ids((await get("?search=0772233445")).body), ["P0000003"], "local search, stored 94…");
+        assert.deepEqual(ids((await get("?search=94773344556")).body), ["P0000050"], "94… search, stored local");
+        assert.deepEqual(ids((await get("?search=%2B94772233445")).body), ["P0000003"], "+94… search");
+    });
+
+    test("5-8. WhatsApp number, passport ID, name and NIC searches still work", async () => {
+        assert.deepEqual(ids((await get("?search=0775551234")).body), ["P0000010"], "WhatsApp, local form");
+        assert.deepEqual(ids((await get("?search=94775551234")).body), ["P0000010"]);
+        assert.deepEqual(ids((await get("?search=P0000010")).body), ["P0000010"]);
+        const byName = ids((await get("?search=Given10 Surname")).body);
+        assert.ok(byName.includes("P0000010") && byName.length === 11, "name: Given10 and Given100-109");
+        assert.deepEqual(ids((await get("?search=199012345678")).body), ["P0000010"]);
+    });
+
+    test("10. paging still happens on the server: only matches are counted, the rest of the list is untouched", async () => {
+        const { body } = await get("?search=Surname&page=3");
+        assert.equal(body.pagination.totalItems, 247);
+        assert.equal(body.items.length, 47);
+        assert.equal((await get("?search=0000000000")).body.pagination.totalItems, 0);
+    });
+});
+
 describe("edge cases", () => {
     after(async () => seed(TOTAL));
 

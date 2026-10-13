@@ -185,23 +185,65 @@ Each has a free-text **Notes** field and a **Stage completed** checkbox. Changes
 
 ### 4.3 Call log
 
-Every candidate page has a **Call log** button (top right). The drawer shows a chronological log of admin call notes and allows adding new ones (`POST /api/admin/candidates/:passportId/call-logs`).
+Every candidate page has a **Call log** button (top right). It opens a drawer from the right: the candidate summary (name, passport ID, WhatsApp), **Candidate History**, and the **Add New Call Log** form at the bottom.
 
-- **Current documents.** Above the history, compact chips show the documents the candidate has *now* (green check = on record, outline = not uploaded). Not a snapshot: an old call "Passport not uploaded" shows the passport once it is uploaded, while the note itself never changes. The server computes it with the candidate page's own current-document rule (`currentOf`: newest *Verified*, else newest waiting for review, *Superseded* ignored; police reports per variant; a single *Scan*) in `documentStatusOf`, over the supported document types only. Read-only.
-- **Need attention.** Each call has a *Need attention* button. It creates a Priority Follow-Up that references the call log; the call stays in the history with a *Needs attention* badge. A call can't have two open follow-ups (partial unique index `call_log_follow_up_one_open_per_call_log`, 409 `FOLLOW_UP_EXISTS`); after completion it can be marked again. The follow-up copies nothing from the call.
+**Candidate History** (formerly *Call History*) is one timeline, newest first by when each thing happened, of:
 
-### 4.3.1 Priority Follow-Ups
+- **Call logs**: date and time, who called, the note, with the *Call log* label. Soft amber tint.
+- **No Answer calls**: the same card with a **No Answer** badge and no note. Soft red tint.
+- **Candidate activity**: one short line with a small icon and the *Candidate activity* label. Soft green tint.
 
-Admin page `/admin/follow-ups` (sidebar, after Candidates), grouped by candidate (one card per candidate with the candidate's current documents, follow-ups inside, newest first), with *Open* (default) and *Completed* views.
+Colour supports scanning and never carries the meaning on its own: every entry says what it is in words (and an icon). Each tint is a light fill with a thin accent on the left and a small coloured icon, taken from the dashboard theme's `review` (amber), `critical` (red) and `verified` (green) tokens, so light and dark mode each get their own soft or muted version; no fixed colours are used. Text keeps the normal ink colours (at least 6.9:1 contrast in light mode, 8.6:1 in dark). Red is reserved for No Answer, an outcome and not an error, so the Need Attention flag uses amber (filled while open, a muted check once completed, an outline when not flagged). The Need Attention page uses the same No Answer badge and shows completed follow-ups in quieter, muted tones.
 
-| Action | Roles | Effect |
+The drawer no longer shows the *Current documents* block. Document status is still on the candidate page, and `documentStatus` is still returned by the API (the Need Attention page no longer shows it either).
+
+Candidate activity is built only from what is already on record. There is no new table and no migration, and nothing is reconstructed or guessed:
+
+| Activity | Source | Shown as |
 |---|---|---|
-| Mark for follow-up | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Creates `call_log_follow_up` (`OPEN`). The call log is unchanged |
-| List | same | `GET /api/admin/follow-ups?status`: three queries however many follow-ups (follow-ups with their call logs, the candidates, their documents); newest 500 |
-| Mark complete | same | `COMPLETED` with completer and time; the row is kept and leaves the Open list |
-| Delete | ADMIN, MANAGER only (403 otherwise) | Removes the follow-up row only, after a confirmation. The call log, candidate and documents stay |
+| Document received | `documents` (every row of a candidate type, superseded ones too) at `received_date` | *Passport uploaded* / *Police report - SL Verified uploaded*, **by &lt;staff&gt;** (an `UPLOAD_DOCUMENT` audit entry), **via WhatsApp** (stored from a WhatsApp submission), or with no byline when neither is known |
+| Document verified | `APPROVE` / `REPLACE_VERIFIED` audit entries | *Medical verified*, by &lt;staff&gt; |
+| Document removed | `REMOVE_DOCUMENT` audit entries | *Scan removed*, by &lt;staff&gt; |
+| Candidate registered | `CREATE_CANDIDATE` | *Candidate registered* |
+| Details updated | `UPDATE_CANDIDATE` (field **names** only; old and new values are never sent) | *Address updated*, *WhatsApp number updated*, *Passport details updated*, or *Candidate details updated* with the field names |
+| Additional details | `CREATE_` / `UPDATE_ADDITIONAL_DETAILS` | *Additional details updated* |
+| Stage saved by an admin | `UPDATE_STAGE` | *IVS interview marked complete* / *marked incomplete* / *updated* (notes are not repeated) |
+| Older stage completion | `candidate_stages.completed_at` when no audited save matches it | *Visa approval marked complete* (no byline) |
 
-Each change is audited (`FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`, Candidate category). Migration `20261011120000_call_log_follow_up` (additive).
+Limitations:
+
+- **Automatic stages:** Candidate details and Document submission keep no completion history, so their completion never appears.
+- **Earlier stage completions:** for a manual stage, only its current `completed_at` exists from before stage saves were audited. Earlier completions, and reopenings, are not on record.
+- **Approvals of removed documents:** an approval whose document was removed later is not shown. The audit entry has no document type to name it by.
+- **Unattributed documents:** a document stored before submissions were linked (`temporary_id`) and without an upload audit entry has no "by" or "via" line.
+- **Activity limit:** the latest 100 activity entries are returned. *Showing the latest candidate activity only* appears when there are more. Call logs are not limited.
+
+**The Need Attention page** (sidebar, after Candidates; route `/follow-ups`) is the former *Priority Follow-Ups* page. Only what users read changed: the page, sidebar and dialog wording. The feature's internals keep their names (route, `/api/admin/follow-ups`, `call_log_follow_up`, the `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP` and `DELETE_FOLLOW_UP` audit actions), and so do the rules: the *Open* / *Completed* filter, grouping by candidate (one card per candidate, newest follow-up first), completing by every Candidates role, deleting by ADMIN and MANAGER only, and deleting or completing never touching the call log, the candidate or a document. What changed on the page:
+
+- The *Current documents* block is gone (the API still sends `documentStatus`; nothing renders it here).
+- The follow-up's state is a compact icon at the top right of each row, beside who called, like a call in Candidate History: a filled flag, *Needs attention*, while open; a muted check, *Follow-up completed*, once completed. Each has an accessible name and a tooltip, and the icon shape differs, so colour is not the only cue. It shows the state only; **Mark complete** (open follow-ups) and **Delete** (ADMIN, MANAGER) stay as buttons in the row's footer, next to who flagged it and when.
+- The "Needs attention" text badge is removed. A flagged No Answer call shows a No Answer badge instead of a note.
+
+**Need Attention (flagging a call).** Each call shows a compact flag beside the caller's name, using the existing Priority Follow-Up:
+
+- **Outline flag:** a button, *Mark as needs attention*.
+- **Filled flag:** *Needs attention*, while the follow-up is open. There is no second flag.
+- **Completed check:** *Follow-up completed*. The call can be marked again.
+
+Roles that can only view see the state, not the button.
+
+**No Answer.** When the candidate does not pick up, **No Answer** records the attempt at the selected date and time, signed with the staff member, with no note. It is a call log row like any other: `candidate_call_logs.call_outcome = 'NO_ANSWER'` (migration `20261013120000_call_log_outcome`; every earlier call is `ANSWERED`) and an empty `note`. Candidate History shows it as a **No Answer** badge (red icon and outline) with no note body, in the same time order. It counts in the Daily Report's Calls Taken (that count is of call rows). It does not open a follow-up by itself; flag it with the flag icon, or turn **Need Attention** on before pressing No Answer. A note typed in the box is not sent with No Answer and is kept for the next call.
+
+| | **Add call** | **No Answer** |
+|---|---|---|
+| Request | `POST …/call-logs { note, calledAt }` | `POST …/call-logs { outcome: "NO_ANSWER", calledAt }` |
+| Note | required (the database enforces it too) | not needed; one sent is ignored |
+
+The add form's buttons are **Close**, **No Answer**, **Need Attention** (a toggle) and **Add call**. With Need Attention on, the one request (`POST …/call-logs` with `needsAttention: true`) creates the call and its OPEN follow-up, with its `FLAG_FOLLOW_UP` audit entry, in one transaction. You get one call, never two.
+
+**Closing.** The drawer closes with X, Close, Escape, or a click on the page outside it. A click only counts when the press started outside too, so a text selection dragged out of the drawer doesn't close it. Nothing closes the drawer while a call is being saved.
+
+A call can't have two open follow-ups (partial unique index `call_log_follow_up_one_open_per_call_log`, 409 `FOLLOW_UP_EXISTS`); after completion it can be marked again. Migration `20261011120000_call_log_follow_up` (additive).
 
 ### 4.4 Additional details (a progress step)
 
@@ -393,8 +435,8 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `POST` | `/candidates/:passportId/documents/upload-target` | Check a file's description; returns a signed upload URL (JSON only) |
 | `POST` | `/candidates/:passportId/documents/finalize` | Check the uploaded file and record it (JSON only) |
 | `POST` | `/candidates/:passportId/documents/:documentId/remove` | Delete the current document and its file; `{ reason }` required |
-| `GET` | `/candidates/:passportId/call-logs` | List call log entries, each with its newest follow-up, plus the candidate's current document status |
-| `POST` | `/candidates/:passportId/call-logs` | Add a call log entry |
+| `GET` | `/candidates/:passportId/call-logs` | Call log entries, `documentStatus`, and `activity` (Candidate History, newest first, at most 100; `activityTruncated`) |
+| `POST` | `/candidates/:passportId/call-logs` | Add a call log entry `{ note, calledAt?, needsAttention?, outcome? }`; `needsAttention: true` also opens its follow-up (one transaction); `outcome: "NO_ANSWER"` needs no note (default `ANSWERED`: note required). Each call in the responses carries `outcome` |
 | `POST` | `/candidates/:passportId/call-logs/:callLogId/follow-up` | Mark a call for follow-up |
 | `GET` | `/follow-ups?status` | Priority Follow-Ups grouped by candidate |
 | `POST` | `/follow-ups/:followUpId/complete` | Complete a follow-up |
@@ -428,7 +470,7 @@ An unknown stage key returns 404 `Stage not found`; malformed input returns 400 
 |---|---|---|---|
 | `page` | integer >= 1 | 1 | Page number |
 | `pageSize` | integer | 25 | Results per page |
-| `search` | string | — | Search by name, passport ID, NIC, WhatsApp number |
+| `search` | string | — | Search by name, passport ID, NIC, contact number, WhatsApp number (database-side, before paging; a phone-like word also matches its 07… / 94… form, for both numbers) |
 
 ### Upload request bodies
 
