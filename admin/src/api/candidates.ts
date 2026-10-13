@@ -180,8 +180,29 @@ export type CallLogEntry = {
     adminName: string | null;
     followUp?: { followUpId: string; status: FollowUpStatus; flaggedAt: string } | null;
 };
+// Something that happened to the candidate (Candidate History), from what is
+// on record: documents, audited saves and stage completion dates. source
+// (DOCUMENT_RECEIVED): STAFF (actorName uploaded it), WHATSAPP, or null when
+// not known. fields (DETAILS_UPDATED): the changed fields' names, never values.
+export type CandidateActivityKind =
+    | "DOCUMENT_RECEIVED" | "DOCUMENT_VERIFIED" | "DOCUMENT_REMOVED"
+    | "CANDIDATE_REGISTERED" | "DETAILS_UPDATED" | "ADDITIONAL_DETAILS_UPDATED"
+    | "STAGE_COMPLETED" | "STAGE_REOPENED" | "STAGE_UPDATED";
+export type CandidateActivity = {
+    activityId: string;
+    kind: CandidateActivityKind;
+    occurredAt: string;
+    actorName: string | null;
+    source: "STAFF" | "WHATSAPP" | null;
+    documentType: CandidateDocumentType | null;
+    variant: string | null;
+    stage: CandidateStageKey | null;
+    fields: string[];
+};
+
 // documentStatus: the candidate's documents now, not when a call was made.
-export type CallLogList = { items: CallLogEntry[]; documentStatus?: DocumentStatusEntry[] };
+// activity: newest first, the latest 100 (activityTruncated: there is more).
+export type CallLogList = { items: CallLogEntry[]; documentStatus?: DocumentStatusEntry[]; activity?: CandidateActivity[]; activityTruncated?: boolean };
 
 const base = (passportId: string) => `/api/admin/candidates/${encodeURIComponent(passportId)}`;
 
@@ -237,7 +258,8 @@ export function listCallLogs(token: string, passportId: string, signal?: AbortSi
     return apiRequest(`${base(passportId)}/call-logs`, { token, signal });
 }
 
-export function addCallLog(token: string, passportId: string, call: { note: string; calledAt: string }): Promise<CallLogList> {
+// needsAttention: also mark the new call for follow-up, in the same request.
+export function addCallLog(token: string, passportId: string, call: { note: string; calledAt: string; needsAttention?: true }): Promise<CallLogList> {
     return apiRequest(`${base(passportId)}/call-logs`, { method: "POST", token, body: call });
 }
 

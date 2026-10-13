@@ -2,14 +2,13 @@ import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent 
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import { useAdminResource } from "../../api/useAdminResource";
-import { addCallLog, flagCallLog, listCallLogs, type CallLogEntry, type CallLogList } from "../../api/candidates";
-import { DialogError, primaryButton, secondaryButton } from "../Dialog";
+import { addCallLog, flagCallLog, listCallLogs, type CallLogEntry, type CallLogList, type CandidateActivity } from "../../api/candidates";
+import { DialogError, buttonBase, primaryButton, secondaryButton } from "../Dialog";
 import { formatDate, formatTime, nowInSriLanka, sriLankaDateTime } from "../format";
-import { Icon } from "../Icon";
+import { Icon, type IconName } from "../Icon";
 import { ErrorState, LoadingState } from "../States";
-import { ToneBadge } from "../StatusBadge";
 import { Field, fieldControl, textAreaControl } from "./CandidateFields";
-import { DocumentStatusSummary } from "./DocumentStatusSummary";
+import { describeActivity, historyTimeline } from "./candidateHistory";
 
 const NOTE_MAX_LENGTH = 500;
 // The server allows a few minutes of clock difference; so does this check.
@@ -22,20 +21,23 @@ export type CallLogCandidate = { name: string | null; passportId: string; whatsa
 
 const prefersReducedMotion = () => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// Calls made to the candidate, newest first: the date and time of the call
-// and a short note of what the candidate said. A new call defaults to now.
-// A call can be marked "Need attention": it then also appears in Priority
-// Follow-Ups (the call itself stays here, unchanged). The candidate's
-// current documents are shown above the history: what they have NOW, so an
-// old "passport not uploaded" call can be read against today's record.
-// Opens as a drawer from the right over the candidate page; Escape or Close
-// closes it, except while a call is being saved.
+// Candidate History: the calls made to the candidate (date and time, who
+// called, a short note of what the candidate said) and what happened to the
+// candidate (documents received, details and stages saved), as one timeline,
+// newest first. A new call defaults to now. A call can be marked as needing
+// attention (the flag beside the caller, or Need Attention when adding it):
+// it then also appears in Priority Follow-Ups (the call itself stays here,
+// unchanged).
+// Opens as a drawer from the right over the candidate page; Escape, Close or
+// a click on the page outside the drawer closes it, except while a call is
+// being saved.
 export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { passportId: string; candidate?: CallLogCandidate; canEdit: boolean; onClose: () => void }) {
     const { token } = useAuth();
     const log = useAdminResource(`call-logs:${passportId}`, (t, signal) => listCallLogs(t, passportId, signal));
     const [added, setAdded] = useState<CallLogList | null>(null);
     const [when, setWhen] = useState(() => nowInSriLanka());
     const [note, setNote] = useState("");
+    const [needsAttention, setNeedsAttention] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [shown, setShown] = useState(false);
@@ -47,11 +49,14 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
     const flaggingRef = useRef(false);
     const panelRef = useRef<HTMLDivElement>(null);
     const closeRef = useRef<HTMLButtonElement>(null);
+    // A backdrop click closes only when the press started on the backdrop
+    // too (not a text selection dragged out of the drawer).
+    const pressedOnBackdrop = useRef(false);
     const titleId = useId();
     const subtitleId = useId();
     const current = added ?? log.data ?? null;
     const entries = current?.items ?? [];
-    const documentStatus = current?.documentStatus ?? [];
+    const timeline = historyTimeline(entries, current?.activity ?? []);
     const today = nowInSriLanka().date;
     const loaded = log.status === "success" || added !== null;
 
@@ -117,8 +122,9 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
         setBusy(true);
         setError(null);
         try {
-            setAdded(await addCallLog(token, passportId, { note: note.trim(), calledAt }));
+            setAdded(await addCallLog(token, passportId, { note: note.trim(), calledAt, ...(needsAttention ? { needsAttention: true as const } : {}) }));
             setNote("");
+            setNeedsAttention(false);
             setWhen(nowInSriLanka());
         } catch (caught) {
             setError(caught instanceof ApiError ? caught.message : "The call could not be saved.");
@@ -136,8 +142,8 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
         try {
             const { followUp } = await flagCallLog(token, passportId, entry.callLogId);
             setAdded({
+                ...current,
                 items: entries.map((e) => (e.callLogId === entry.callLogId ? { ...e, followUp: { followUpId: followUp.followUpId, status: followUp.status, flaggedAt: followUp.flaggedAt } } : e)),
-                documentStatus,
             });
         } catch (caught) {
             if (caught instanceof ApiError && caught.status === 409) {
@@ -160,7 +166,18 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
 
     return (
         <div className="fixed inset-0 z-50 flex justify-end">
-            <div aria-hidden="true" className={`absolute inset-0 bg-overlay transition-opacity duration-200 motion-reduce:transition-none ${shown ? "opacity-100" : "opacity-0"}`} />
+            {/* The page behind the drawer: a click on it closes the drawer (Escape and Close do too, for the keyboard). */}
+            <div
+                aria-hidden="true"
+                data-testid="call-log-backdrop"
+                onMouseDown={(event) => { pressedOnBackdrop.current = event.target === event.currentTarget; }}
+                onClick={(event) => {
+                    const started = pressedOnBackdrop.current;
+                    pressedOnBackdrop.current = false;
+                    if (started && event.target === event.currentTarget) requestClose();
+                }}
+                className={`absolute inset-0 bg-overlay transition-opacity duration-200 motion-reduce:transition-none ${shown ? "opacity-100" : "opacity-0"}`}
+            />
             <div
                 ref={panelRef}
                 role="dialog"
@@ -176,7 +193,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                     </span>
                     <div className="min-w-0 flex-1">
                         <h2 id={titleId} className="text-headline-md text-ink">Call Logs</h2>
-                        <p id={subtitleId} className="mt-0.5 text-body-sm text-ink-muted">View and add call history for this candidate.</p>
+                        <p id={subtitleId} className="mt-0.5 text-body-sm text-ink-muted">Calls and candidate activity, newest first.</p>
                     </div>
                     <button
                         ref={closeRef}
@@ -207,13 +224,9 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                     </dl>
                 )}
 
-                {loaded && documentStatus.length > 0 && (
-                    <DocumentStatusSummary documents={documentStatus} className="shrink-0 border-b border-border px-5 py-3 sm:px-6" />
-                )}
-
                 <section aria-labelledby={`${titleId}-history`} className="flex min-h-48 flex-1 flex-col">
                     <div className="flex shrink-0 items-center justify-between gap-3 px-5 pt-5 pb-3 sm:px-6">
-                        <h3 id={`${titleId}-history`} className="text-headline-sm text-ink">Call History</h3>
+                        <h3 id={`${titleId}-history`} className="text-headline-sm text-ink">Candidate History</h3>
                         {loaded && entries.length > 0 && (
                             <span className="rounded-full border border-border bg-canvas px-2.5 py-0.5 text-label-sm text-ink-muted tabular-nums">
                                 {entries.length} {entries.length === 1 ? "call" : "calls"}
@@ -221,39 +234,38 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                         )}
                     </div>
                     <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 pb-5 sm:px-6">
-                        {log.status === "loading" && !added && <LoadingState label="Loading calls…" />}
+                        {log.status === "loading" && !added && <LoadingState label="Loading history…" />}
                         {log.status === "error" && !added && <ErrorState message={log.error.message} onRetry={log.reload} />}
                         {loaded && (
-                            entries.length === 0
+                            timeline.length === 0
                                 ? (
                                     <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border-strong px-4 py-10 text-center">
-                                        <Icon name="call" className="size-7 text-ink-subtle" />
-                                        <p className="text-headline-sm text-ink">No calls logged yet.</p>
-                                        {canEdit && <p className="text-body-sm text-ink-muted">Calls added below will appear here.</p>}
+                                        <Icon name="history" className="size-7 text-ink-subtle" />
+                                        <p className="text-headline-sm text-ink">No candidate history yet.</p>
+                                        <p className="text-body-sm text-ink-muted">Add a call log or wait for candidate activity to appear.</p>
                                     </div>
                                 )
                                 : (
-                                    <ul aria-label="Calls" className="space-y-3">
-                                        {entries.map((entry) => (
-                                            <li key={entry.callLogId} className="min-w-0 rounded-lg border border-border bg-canvas px-4 py-3">
-                                                <p className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                                                    <span className="text-label-md font-semibold text-ink tabular-nums">
-                                                        {formatDate(entry.calledAt)} <span className="font-normal text-ink-subtle">·</span> {formatTime(entry.calledAt)}
-                                                    </span>
-                                                    {entry.adminName && <span className="min-w-0 truncate text-label-sm text-ink-subtle">{entry.adminName}</span>}
-                                                </p>
-                                                <p className="mt-1.5 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{entry.note}</p>
-                                                <FollowUpControl
-                                                    entry={entry}
-                                                    canEdit={canEdit}
-                                                    busy={flagging === entry.callLogId}
-                                                    disabled={flagging !== null}
-                                                    error={flagError?.callLogId === entry.callLogId ? flagError.message : null}
-                                                    onMark={() => markForFollowUp(entry)}
-                                                />
-                                            </li>
-                                        ))}
-                                    </ul>
+                                    <>
+                                        <ul aria-label="Candidate history" className="space-y-2.5">
+                                            {timeline.map((item) => item.type === "CALL_LOG"
+                                                ? (
+                                                    <CallItem
+                                                        key={item.id}
+                                                        entry={item.call}
+                                                        canEdit={canEdit}
+                                                        busy={flagging === item.call.callLogId}
+                                                        disabled={flagging !== null}
+                                                        error={flagError?.callLogId === item.call.callLogId ? flagError.message : null}
+                                                        onMark={() => markForFollowUp(item.call)}
+                                                    />
+                                                )
+                                                : <ActivityItem key={item.id} activity={item.activity} />)}
+                                        </ul>
+                                        {current?.activityTruncated && (
+                                            <p className="mt-3 text-center text-label-sm text-ink-subtle">Showing the latest candidate activity only.</p>
+                                        )}
+                                    </>
                                 )
                         )}
                     </div>
@@ -275,8 +287,20 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                 <textarea id="call-log-note" rows={3} maxLength={NOTE_MAX_LENGTH} value={note} disabled={busy} onChange={(event) => setNote(event.target.value)} placeholder="Short note…" className={`${textAreaControl} resize-y`} />
                             </Field>
                             <DialogError message={error} />
-                            <div className="flex justify-end gap-2">
+                            <div className="flex flex-wrap justify-end gap-2">
                                 <button type="button" onClick={requestClose} disabled={busy} className={secondaryButton}>Close</button>
+                                {/* Marks the NEW call for follow-up when it is added (one request: the call and its follow-up together). */}
+                                <button
+                                    type="button"
+                                    aria-pressed={needsAttention}
+                                    onClick={() => setNeedsAttention((on) => !on)}
+                                    disabled={busy}
+                                    title={needsAttention ? "This call will be marked as needs attention" : "Mark this call as needs attention"}
+                                    className={`${buttonBase} inline-flex items-center gap-1.5 border ${needsAttention ? "border-review-border bg-review-bg text-review" : "border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"}`}
+                                >
+                                    <Icon name={needsAttention ? "flag_fill" : "flag"} className="size-4" />
+                                    Need Attention
+                                </button>
                                 <button type="submit" disabled={busy || !note.trim()} className={primaryButton}>{busy ? "Saving…" : "Add call"}</button>
                             </div>
                         </form>
@@ -291,35 +315,100 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
     );
 }
 
-// Under each call: "Needs attention" while its follow-up is open, otherwise
-// the Need attention action (for a role that can use call logs).
-function FollowUpControl({ entry, canEdit, busy, disabled, error, onMark }: {
+const kindLabel = "text-label-caps uppercase tracking-wide text-ink-subtle";
+
+// A call: when, who called, the flag, then the note.
+function CallItem({ entry, canEdit, busy, disabled, error, onMark }: {
     entry: CallLogEntry; canEdit: boolean; busy: boolean; disabled: boolean; error: string | null; onMark: () => void;
 }) {
-    const open = entry.followUp?.status === "OPEN";
-    const completed = entry.followUp?.status === "COMPLETED";
-    if (!open && !completed && !canEdit) return null;
     return (
-        <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-            {completed && <span className="text-label-sm text-ink-subtle">Follow-up completed</span>}
-            {open
-                ? (
-                    <ToneBadge tone="review">
-                        <span className="inline-flex items-center gap-1"><Icon name="flag" className="size-3.5" />Needs attention</span>
-                    </ToneBadge>
-                )
-                : canEdit && (
-                    <button
-                        type="button"
-                        onClick={onMark}
-                        disabled={disabled}
-                        className="inline-flex h-7 items-center gap-1 rounded border border-border-strong bg-surface px-2.5 text-label-sm text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                        <Icon name="flag" className="size-3.5" />
-                        {busy ? "Marking…" : "Need attention"}
-                    </button>
-                )}
-            {error && <p role="alert" className="w-full text-right text-label-sm text-critical">{error}</p>}
-        </div>
+        <li data-kind="call-log" className="min-w-0 rounded-lg border border-border bg-surface px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+                <p className="min-w-0">
+                    <span className="text-label-md font-semibold text-ink tabular-nums">
+                        {formatDate(entry.calledAt)} <span className="font-normal text-ink-subtle">·</span> {formatTime(entry.calledAt)}
+                    </span>
+                    <span className={`ml-2 ${kindLabel}`}>Call log</span>
+                </p>
+                <div className="flex min-w-0 shrink-0 items-center gap-1.5">
+                    {entry.adminName && <span className="max-w-40 truncate text-label-sm text-ink-subtle">{entry.adminName}</span>}
+                    <FollowUpFlag entry={entry} canEdit={canEdit} busy={busy} disabled={disabled} onMark={onMark} />
+                </div>
+            </div>
+            <p className="mt-1.5 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{entry.note}</p>
+            {error && <p role="alert" className="mt-1.5 text-right text-label-sm text-critical">{error}</p>}
+        </li>
+    );
+}
+
+// The call's follow-up, as one compact flag beside the caller:
+//   open       filled flag, "Needs attention" (no second follow-up)
+//   none       outline flag button: marks it (the existing Priority Follow-Up)
+//   completed  muted flag, "Follow-up completed"; can be marked again
+// A role without call log access sees the state only.
+function FollowUpFlag({ entry, canEdit, busy, disabled, onMark }: {
+    entry: CallLogEntry; canEdit: boolean; busy: boolean; disabled: boolean; onMark: () => void;
+}) {
+    const status = entry.followUp?.status ?? null;
+    const box = "flex size-7 shrink-0 items-center justify-center rounded";
+    if (status === "OPEN") {
+        return (
+            <span role="img" aria-label="Needs attention" title="Needs attention" className={`${box} text-review`}>
+                <Icon name="flag_fill" className="size-4" />
+            </span>
+        );
+    }
+    const completed = status === "COMPLETED";
+    if (!canEdit) {
+        return completed
+            ? <span role="img" aria-label="Follow-up completed" title="Follow-up completed" className={`${box} text-ink-subtle`}><Icon name="task_alt" className="size-4" /></span>
+            : null;
+    }
+    const label = busy ? "Marking as needs attention…" : completed ? "Follow-up completed. Mark as needs attention again" : "Mark as needs attention";
+    return (
+        <button
+            type="button"
+            onClick={onMark}
+            disabled={disabled}
+            aria-label={label}
+            aria-busy={busy || undefined}
+            title={completed ? "Follow-up completed (mark again)" : "Mark as needs attention"}
+            className={`${box} text-ink-subtle hover:bg-canvas hover:text-review disabled:cursor-not-allowed disabled:opacity-60`}
+        >
+            <Icon name={busy ? "progress_activity" : completed ? "task_alt" : "flag"} className={`size-4 ${busy ? "animate-spin" : ""}`} />
+        </button>
+    );
+}
+
+const ACTIVITY_ICON: Record<CandidateActivity["kind"], IconName> = {
+    DOCUMENT_RECEIVED: "upload_file",
+    DOCUMENT_VERIFIED: "upload_file",
+    DOCUMENT_REMOVED: "upload_file",
+    CANDIDATE_REGISTERED: "edit_note",
+    DETAILS_UPDATED: "edit_note",
+    ADDITIONAL_DETAILS_UPDATED: "edit_note",
+    STAGE_COMPLETED: "task_alt",
+    STAGE_REOPENED: "task_alt",
+    STAGE_UPDATED: "task_alt",
+};
+
+// Something that happened to the candidate: muted, one short line.
+function ActivityItem({ activity }: { activity: CandidateActivity }) {
+    const { title, detail, byline } = describeActivity(activity);
+    return (
+        <li data-kind="candidate-activity" className="flex min-w-0 items-start gap-2.5 rounded-lg bg-canvas px-4 py-2.5">
+            <Icon name={ACTIVITY_ICON[activity.kind] ?? "history"} className="mt-0.5 size-4 text-ink-subtle" />
+            <div className="min-w-0 flex-1">
+                <p className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                    <span className="text-label-sm text-ink-muted tabular-nums">
+                        {formatDate(activity.occurredAt)} <span className="text-ink-subtle">·</span> {formatTime(activity.occurredAt)}
+                        <span className={`ml-2 ${kindLabel}`}>Candidate activity</span>
+                    </span>
+                    {byline && <span className="min-w-0 truncate text-label-sm text-ink-subtle">{byline}</span>}
+                </p>
+                <p className="mt-0.5 break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{title}</p>
+                {detail && <p className="mt-0.5 text-label-sm text-ink-subtle">{detail}</p>}
+            </div>
+        </li>
     );
 }

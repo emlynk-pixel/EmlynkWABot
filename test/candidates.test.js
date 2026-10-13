@@ -110,6 +110,7 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
             },
         },
         candidateStage: {
+            findMany: async ({ where }) => state.stages.filter((s) => matches(s, where)),
             create: async ({ data }) => {
                 state.stages.push({ completed: false, completedAt: null, notes: null, ...data });
             },
@@ -138,7 +139,13 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
                 return { count: before - state.documents.length };
             },
         },
-        auditLog: { create: async ({ data }) => { state.auditLogs.push(data); } },
+        auditLog: {
+            create: async ({ data }) => { state.auditLogs.push({ createdDate: new Date(), ...data }); },
+            findMany: async ({ where }) => state.auditLogs
+                .filter((a) => matches(a, where))
+                .sort((a, b) => b.createdDate - a.createdDate)
+                .map((a) => ({ ...a, admin: state.admins.find((admin) => admin.adminId === a.adminId) ?? null })),
+        },
         candidateCallLog: {
             create: async ({ data }) => { state.callLogs.push({ createdDate: new Date(), ...data }); },
             // Newest call first, like orderBy createdDate desc.
@@ -832,7 +839,9 @@ describe("candidate list and call log", () => {
     test("call note validation: a short note is required; the time must be a real date and time, not in the future", () => {
         const now = new Date("2026-10-02T09:00:00Z");
         const fields = (body) => parseCallLogBody(body, { now }).errors?.map((e) => e.field);
-        assert.deepEqual(parseCallLogBody({ note: "  Will send medical  " }, { now }).values, { note: "Will send medical", calledAt: null });
+        assert.deepEqual(parseCallLogBody({ note: "  Will send medical  " }, { now }).values, { note: "Will send medical", calledAt: null, needsAttention: false });
+        assert.equal(parseCallLogBody({ note: "x", needsAttention: true }, { now }).values.needsAttention, true);
+        assert.deepEqual(fields({ note: "x", needsAttention: "yes" }), ["needsAttention"]);
         assert.deepEqual(fields({}), ["note"]);
         assert.deepEqual(fields({ note: "x".repeat(501) }), ["note"], "a short note: at most 500 characters");
         assert.equal(parseCallLogBody({ note: "x".repeat(500) }, { now }).errors, undefined);

@@ -239,7 +239,7 @@ describe("Priority Follow-Ups page", () => {
         await user.click(await screen.findByRole("button", { name: "Call log" }));
         const dialog = await screen.findByRole("dialog", { name: "Call Logs" });
         expect(await within(dialog).findByText("Passport not uploaded")).toBeInTheDocument();
-        expect(within(dialog).getByRole("button", { name: "Need attention" })).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Mark as needs attention" })).toBeInTheDocument();
     });
 
     test("28. the sidebar has Priority Follow-Ups after Candidates and it opens the page", async () => {
