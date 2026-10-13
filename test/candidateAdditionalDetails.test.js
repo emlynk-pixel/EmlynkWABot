@@ -288,7 +288,10 @@ describe("validation", () => {
 
     test("father / mother: the name is required when alive; details only when alive", () => {
         assert.deepEqual(fields({ fatherAlive: true }), ["fatherFullName"]);
-        assert.deepEqual(fields({ fatherAlive: false, fatherFullName: "Sunil" }), ["fatherFullName"]);
+        assert.deepEqual(fields({ fatherAlive: false, fatherFullName: "Sunil" }), [], "the name does not depend on the alive answer");
+        assert.deepEqual(fields({ fatherAlive: false }), [], "a deceased parent needs no name");
+        assert.deepEqual(fields({ motherAlive: false, motherFullName: "Kamala" }), []);
+        assert.deepEqual(fields({ fatherFullName: "Sunil" }), [], "no answer: the name is still accepted");
         assert.deepEqual(fields({ fatherBirthday: "1960-01-01" }), ["fatherBirthday"], "no answer: no details");
         assert.deepEqual(fields({ motherAlive: true }), ["motherFullName"]);
         assert.deepEqual(fields({ motherAlive: false, motherBirthday: "1960-01-01" }), ["motherBirthday"]);
@@ -300,6 +303,15 @@ describe("validation", () => {
         assert.deepEqual(fields({ maritalStatus: "SINGLE", wifeFullName: "Kumari" }), ["wifeFullName"]);
         assert.deepEqual(fields({ wifeBirthday: "1990-01-01" }), ["wifeBirthday"]);
         assert.deepEqual(fields({ maritalStatus: "ENGAGED" }), ["maritalStatus"]);
+    });
+
+    test("a Single candidate has no child names; other statuses may", () => {
+        assert.deepEqual(fields({ maritalStatus: "SINGLE", child1Name: "Nimal" }), ["child1Name"]);
+        assert.deepEqual(fields({ maritalStatus: "SINGLE", child1Name: "Nimal", child2Name: "Kamala", child3Name: "Sunil" }), ["child1Name", "child2Name", "child3Name"]);
+        assert.deepEqual(fields({ maritalStatus: "SINGLE" }), []);
+        for (const maritalStatus of ["DIVORCED", "WIDOWED", "SEPARATED"]) assert.deepEqual(fields({ maritalStatus, child1Name: "Nimal" }), [], maritalStatus);
+        assert.deepEqual(fields({ maritalStatus: "MARRIED", wifeFullName: "Kumari", child1Name: "Nimal" }), []);
+        assert.deepEqual(fields({ child1Name: "Nimal" }), [], "marital status not recorded");
     });
 
     test("children in order; text length limits; a non-object body", () => {

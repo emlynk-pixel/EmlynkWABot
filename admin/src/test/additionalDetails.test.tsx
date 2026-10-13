@@ -109,15 +109,18 @@ describe("Additional Details", () => {
         renderApp("/candidates/N0000002?tab=additional");
         await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
         const user = userEvent.setup();
-        expect(screen.queryByLabelText("Father full name *")).toBeNull();
-        expect(screen.queryByLabelText("Mother full name *")).toBeNull();
+        // The parents' names are always there, required only when the parent is alive.
+        expect(screen.getByLabelText("Father full name")).toBeInTheDocument();
+        expect(screen.getByLabelText("Mother full name")).toBeInTheDocument();
+        expect(screen.queryByLabelText("Father birthday")).toBeNull();
         expect(screen.queryByLabelText("Wife full name *")).toBeNull();
 
         await user.selectOptions(screen.getByLabelText("Is father alive?"), "yes");
         expect(screen.getByLabelText("Father full name *")).toBeInTheDocument();
         expect(screen.getByLabelText("Father birthday")).toBeInTheDocument();
         await user.selectOptions(screen.getByLabelText("Is mother alive?"), "no");
-        expect(screen.queryByLabelText("Mother full name *")).toBeNull();
+        expect(screen.getByLabelText("Mother full name")).toBeInTheDocument();
+        expect(screen.queryByLabelText("Mother birthday")).toBeNull();
         await user.selectOptions(screen.getByLabelText("Marital status"), "MARRIED");
         expect(screen.getByLabelText("Wife full name *")).toBeInTheDocument();
 
@@ -125,6 +128,70 @@ describe("Additional Details", () => {
         expect(await screen.findByText("Enter the father's full name.")).toBeInTheDocument();
         expect(screen.getByText("Enter the wife's full name.")).toBeInTheDocument();
         expect(puts(calls)).toHaveLength(0);
+    });
+
+    test("a parent's name stays when the alive answer changes; only the birthday goes with it", async () => {
+        const view = { ...SAVED_VIEW, details: { ...SAVED, fatherBirthday: "1960-01-01", motherAlive: true, motherFullName: "Kamala Silva" } };
+        const { calls } = backend(view, { [`PUT ${PATH}`]: { status: 200, body: view } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const user = userEvent.setup();
+        await user.selectOptions(screen.getByLabelText("Is father alive?"), "no");
+        await user.selectOptions(screen.getByLabelText("Is mother alive?"), "no");
+        expect(screen.getByLabelText("Father full name")).toHaveValue("Sunil Silva");
+        expect(screen.getByLabelText("Mother full name")).toHaveValue("Kamala Silva");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
+        expect(puts(calls)[0].body).toMatchObject({ fatherAlive: false, fatherFullName: "Sunil Silva", fatherBirthday: null, motherAlive: false, motherFullName: "Kamala Silva", motherBirthday: null });
+    });
+
+    test("a parent who has passed away can be saved without a name", async () => {
+        const { calls } = backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const user = userEvent.setup();
+        await user.selectOptions(screen.getByLabelText("Is father alive?"), "no");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
+        expect(puts(calls)[0].body).toMatchObject({ fatherAlive: false, fatherFullName: null });
+    });
+
+    test("child names: hidden and not required when Single, available otherwise, kept when switching back", async () => {
+        const { calls } = backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const user = userEvent.setup();
+        const marital = screen.getByLabelText("Marital status");
+        await user.selectOptions(marital, "DIVORCED");
+        await user.type(screen.getByLabelText("1st child name"), "Nimal");
+        for (const status of ["MARRIED", "WIDOWED", "SEPARATED"]) {
+            await user.selectOptions(marital, status);
+            expect(screen.getByLabelText("1st child name")).toBeInTheDocument();
+            expect(screen.getByLabelText("3rd child name")).toBeInTheDocument();
+        }
+        await user.selectOptions(marital, "SINGLE");
+        for (const label of ["1st child name", "2nd child name", "3rd child name"]) expect(screen.queryByLabelText(label)).toBeNull();
+        // Switching to Single does not throw the typed value away...
+        await user.selectOptions(marital, "WIDOWED");
+        expect(screen.getByLabelText("1st child name")).toHaveValue("Nimal");
+        // ...but a Single candidate is never saved with child names.
+        await user.selectOptions(marital, "SINGLE");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
+        expect(puts(calls)[0].body).toMatchObject({ maritalStatus: "SINGLE", child1Name: null, child2Name: null, child3Name: null });
+    });
+
+    test("a Single candidate with child names on record is told they go on save, and is not blocked", async () => {
+        const view = { ...SAVED_VIEW, details: { ...SAVED, child1Name: "Nimal", child3Name: "Sunil" } };
+        const { calls } = backend(view, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const user = userEvent.setup();
+        expect(screen.getByText(/Child names on record will be removed when you save/)).toBeInTheDocument();
+        await user.type(screen.getByLabelText("Other job skills"), "Welding");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
+        expect(puts(calls)[0].body).toMatchObject({ child1Name: null, child2Name: null, child3Name: null });
     });
 
     test("hidden details are cleared on save; sizes from presets or a custom value", async () => {
@@ -138,7 +205,7 @@ describe("Additional Details", () => {
         await user.type(screen.getByLabelText("Custom shoe size (uk)"), "EU 43");
         await user.click(screen.getByRole("button", { name: "Save additional details" }));
         await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
-        expect(puts(calls)[0].body).toMatchObject({ fatherAlive: false, fatherFullName: null, fatherBirthday: null, pantSize: "34", shoeSize: "EU 43", tshirtSize: "L" });
+        expect(puts(calls)[0].body).toMatchObject({ fatherAlive: false, fatherFullName: "Sunil Silva", fatherBirthday: null, pantSize: "34", shoeSize: "EU 43", tshirtSize: "L" });
     });
 
     test("children in order, and a future birthday is refused before sending", async () => {
@@ -146,6 +213,7 @@ describe("Additional Details", () => {
         renderApp("/candidates/N0000002?tab=additional");
         await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
         const user = userEvent.setup();
+        await user.selectOptions(screen.getByLabelText("Marital status"), "DIVORCED");
         await user.type(screen.getByLabelText("2nd child name"), "Kamala");
         await user.clear(screen.getByLabelText("Birthday"));
         await user.type(screen.getByLabelText("Birthday"), "2999-01-01");
@@ -395,6 +463,7 @@ describe("one load, versions and resets", () => {
         await screen.findByRole("form", { name: "Additional details" });
         expect(screen.getByLabelText("Other job skills")).toHaveValue("Welding");
 
+        await user.selectOptions(screen.getByLabelText("Marital status"), "DIVORCED");
         await user.type(screen.getByLabelText("1st child name"), "Nimal");
         await user.click(screen.getByRole("button", { name: "Save additional details" }));
         await vi.waitFor(() => expect(puts(calls)).toHaveLength(2));

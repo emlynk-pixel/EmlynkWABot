@@ -133,18 +133,18 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
         }
     }
 
-    // Parent and spouse details only go with their answer.
+    // A parent's name is independent of the alive answer (it may be recorded
+    // for a parent who has passed away). It is only required when the parent
+    // is alive; the birthday still goes with that answer.
     const conditional = [
-        ["fatherAlive", ["fatherFullName", "fatherBirthday"], "the father is alive"],
-        ["motherAlive", ["motherFullName", "motherBirthday"], "the mother is alive"],
+        ["fatherAlive", "fatherFullName", "fatherBirthday", "the father is alive"],
+        ["motherAlive", "motherFullName", "motherBirthday", "the mother is alive"],
     ];
-    for (const [flag, [nameField, birthdayField], condition] of conditional) {
+    for (const [flag, nameField, birthdayField, condition] of conditional) {
         if (values[flag] === true) {
             if (values[nameField] === null && !errors.some((e) => e.field === nameField)) errors.push({ field: nameField, message: `is required when ${condition}` });
-        } else {
-            for (const field of [nameField, birthdayField]) {
-                if (values[field] !== null) errors.push({ field, message: `is only recorded when ${condition}` });
-            }
+        } else if (values[birthdayField] !== null) {
+            errors.push({ field: birthdayField, message: `is only recorded when ${condition}` });
         }
     }
     if (values.maritalStatus === "MARRIED") {
@@ -152,6 +152,12 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
     } else {
         for (const field of ["wifeFullName", "wifeBirthday"]) {
             if (values[field] !== null) errors.push({ field, message: "is only recorded when married" });
+        }
+    }
+    // A single candidate has no child names.
+    if (values.maritalStatus === "SINGLE") {
+        for (const field of ["child1Name", "child2Name", "child3Name"]) {
+            if (values[field] !== null) errors.push({ field, message: "is not recorded when single" });
         }
     }
     // Children in order: no 2nd without a 1st, no 3rd without a 2nd.
