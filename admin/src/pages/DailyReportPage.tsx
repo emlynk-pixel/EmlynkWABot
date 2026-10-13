@@ -29,7 +29,7 @@ const PREVIEW_ROWS = 10;
 const button = "h-9 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50";
 const th = "border-b border-border px-3 py-2 text-left text-label-caps uppercase text-ink-subtle";
 const thRight = `${th} text-right`;
-const td = "border-b border-border/60 px-3 py-2 text-body-sm text-ink";
+const td = "border-b border-border px-3 py-2 text-body-sm text-ink";
 const tdRight = `${td} text-right tabular-nums`;
 const stageLabel = (stage: string) => STAGE_LABELS[stage as CandidateStageKey] ?? stage;
 const roleLabel = (role: string | null) => (role ? ROLE_LABELS[role as Role] ?? role : "—");

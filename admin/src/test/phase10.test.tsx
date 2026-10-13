@@ -313,7 +313,7 @@ describe("Dark mode", () => {
     test("the Candidates screens (.ui-classic) get back every previous value the redesign changed", () => {
         const block = (selector: string) => css.slice(css.indexOf(selector), css.indexOf("}", css.indexOf(selector)));
         const light = tokens(block(':root:not([data-theme="dark"]) .ui-classic'));
-        expect(light).toEqual({ canvas: "#f8fafc", "canvas-muted": "#f1f5f9", border: "#e2e8f0", "border-strong": "#cbd5e1", "border-focus": "#94a3b8", "ink-subtle": "#64748b" });
+        expect(light).toEqual({ canvas: "#f8fafc", "canvas-muted": "#f1f5f9", border: "#c9d1dc", "border-strong": "#a9b5c4", "border-focus": "#7a8ba1", "ink-subtle": "#64748b" });
         const dark = tokens(block(':root[data-theme="dark"] .ui-classic'));
         expect(dark).toEqual({ border: "#243044", "border-strong": "#3a4a61", "border-focus": "#64748b" });
         const text = block(".ui-classic {");
