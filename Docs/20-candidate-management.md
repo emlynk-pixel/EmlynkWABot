@@ -187,8 +187,11 @@ Every candidate page has a **Call log** button (top right). It opens a drawer fr
 
 **Candidate History** (formerly *Call History*) is one timeline, newest first by when each thing happened, of:
 
-- **Call logs**: date and time, who called, the note. White card, *Call log* label.
-- **Candidate activity**: one short line on a muted background with a small icon, *Candidate activity* label.
+- **Call logs**: date and time, who called, the note, with the *Call log* label. Soft amber tint.
+- **No Answer calls**: the same card with a **No Answer** badge and no note. Soft red tint.
+- **Candidate activity**: one short line with a small icon and the *Candidate activity* label. Soft green tint.
+
+Colour supports scanning and never carries the meaning on its own: every entry says what it is in words (and an icon). Each tint is a light fill with a thin accent on the left and a small coloured icon, taken from the dashboard theme's `review` (amber), `critical` (red) and `verified` (green) tokens, so light and dark mode each get their own soft or muted version; no fixed colours are used. Text keeps the normal ink colours (at least 6.9:1 contrast in light mode, 8.6:1 in dark). Red is reserved for No Answer, an outcome and not an error, so the Need Attention flag uses amber (filled while open, a muted check once completed, an outline when not flagged). The Need Attention page uses the same No Answer badge and shows completed follow-ups in quieter, muted tones.
 
 The drawer no longer shows the *Current documents* block. Document status is still on the candidate page, and `documentStatus` is still returned by the API (the Need Attention page no longer shows it either).
 
@@ -227,7 +230,7 @@ Limitations:
 
 Roles that can only view see the state, not the button.
 
-**No Answer.** When the candidate does not pick up, **No Answer** records the attempt at the selected date and time, signed with the staff member, with no note. It is a call log row like any other: `candidate_call_logs.call_outcome = 'NO_ANSWER'` (migration `20261013120000_call_log_outcome`; every earlier call is `ANSWERED`) and an empty `note`. Candidate History shows it as a small neutral **No Answer** badge with no note body, in the same time order. It counts in the Daily Report's Calls Taken (that count is of call rows). It does not open a follow-up by itself; flag it with the flag icon, or turn **Need Attention** on before pressing No Answer. A note typed in the box is not sent with No Answer and is kept for the next call.
+**No Answer.** When the candidate does not pick up, **No Answer** records the attempt at the selected date and time, signed with the staff member, with no note. It is a call log row like any other: `candidate_call_logs.call_outcome = 'NO_ANSWER'` (migration `20261013120000_call_log_outcome`; every earlier call is `ANSWERED`) and an empty `note`. Candidate History shows it as a **No Answer** badge (red icon and outline) with no note body, in the same time order. It counts in the Daily Report's Calls Taken (that count is of call rows). It does not open a follow-up by itself; flag it with the flag icon, or turn **Need Attention** on before pressing No Answer. A note typed in the box is not sent with No Answer and is kept for the next call.
 
 | | **Add call** | **No Answer** |
 |---|---|---|

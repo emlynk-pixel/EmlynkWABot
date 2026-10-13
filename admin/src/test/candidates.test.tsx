@@ -932,9 +932,9 @@ describe("Candidate History: calls and candidate activity", () => {
         expect(items.map((item) => item.getAttribute("data-kind"))).toEqual([
             "call-log", "candidate-activity", "candidate-activity", "candidate-activity", "candidate-activity", "call-log", "candidate-activity",
         ]);
-        // Distinguishable: a muted background and no border for activity.
-        expect(items[1].className).toContain("bg-canvas");
-        expect(items[0].className).toContain("bg-surface");
+        // Distinguishable: an answered call is amber-tinted, activity green-tinted (the theme's tokens).
+        expect(items[1].className).toContain("bg-verified-bg");
+        expect(items[0].className).toContain("bg-review-bg");
         // A WhatsApp document never names a staff member.
         expect(items[1].textContent).not.toContain("Test Admin");
         expect(screen.queryByText("Showing the latest candidate activity only.")).toBeNull();
@@ -1075,8 +1075,10 @@ describe("Call log: No Answer", () => {
         const badge = within(items[0]).getByText("No Answer");
         expect(badge).toHaveAttribute("data-outcome", "NO_ANSWER");
         expect(badge.querySelector("svg")).not.toBeNull();
-        // An outcome, not an error: no critical colours; no note paragraph.
-        expect(badge.className).not.toMatch(/critical|red/);
+        // An outcome, not an error: red is the icon and a thin outline only; the words keep the normal text colour.
+        expect(badge.className).toContain("text-ink-soft");
+        expect(badge.className).not.toContain("text-critical");
+        expect(badge.querySelector(".text-critical")).not.toBeNull();
         // Two lines only: the date row and the badge (a note would be a third).
         expect(items[0].querySelectorAll("p")).toHaveLength(2);
     });
@@ -1178,6 +1180,76 @@ describe("Call log: No Answer", () => {
         const row = (await screen.findAllByText("No Answer"))[0].closest("li")!;
         expect(row.textContent).toContain("No Answer");
         expect(row.querySelectorAll("p")[1]?.textContent).toContain("No Answer");
+    });
+});
+
+describe("Candidate History: colour by event type", () => {
+    const BODY = {
+        items: [
+            { callLogId: "n1", note: "", outcome: "NO_ANSWER", calledAt: "2026-10-13T04:06:00.000Z", adminName: "Shamal Sathsara", followUp: null },
+            { callLogId: "c3", note: "Passport not uploaded", outcome: "ANSWERED", calledAt: "2026-10-12T04:45:00.000Z", adminName: "Test Admin", followUp: { followUpId: "f1", status: "OPEN", flaggedAt: "2026-10-12T05:00:00.000Z" } },
+            { callLogId: "c2", note: "Medical sorted", outcome: "ANSWERED", calledAt: "2026-10-11T04:45:00.000Z", adminName: "Test Admin", followUp: { followUpId: "f0", status: "COMPLETED", flaggedAt: "2026-10-11T05:00:00.000Z" } },
+            { callLogId: "c1", note: "Asked about the scan", outcome: "ANSWERED", calledAt: "2026-10-10T04:45:00.000Z", adminName: "Test Admin", followUp: null },
+        ],
+        activity: [
+            { activityId: "document:d1", kind: "DOCUMENT_RECEIVED", occurredAt: "2026-10-09T10:12:00.000Z", actorName: null, source: "WHATSAPP", documentType: "PASSPORT", variant: null, stage: null, fields: [] },
+        ],
+    };
+    const openHistory = async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: BODY },
+        });
+        renderApp("/candidates/N0000002");
+        await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
+        const dialog = await screen.findByRole("dialog", { name: "Call Logs" });
+        return within(await within(dialog).findByRole("list", { name: "Candidate history" })).getAllByRole("listitem");
+    };
+
+    test("1-3. No Answer is red-toned, a call log amber-toned, candidate activity green-toned, each with a thin left accent, from the theme's tokens", async () => {
+        const [noAnswer, call, , , activity] = await openHistory();
+        const classes = (el: Element) => el.className.split(/\s+/);
+        expect(noAnswer).toHaveAttribute("data-tone", "no-answer");
+        expect(classes(noAnswer)).toEqual(expect.arrayContaining(["bg-critical-bg", "border-l-critical", "border-l-[3px]"]));
+        expect(call).toHaveAttribute("data-tone", "call");
+        expect(classes(call)).toEqual(expect.arrayContaining(["bg-review-bg", "border-l-review", "border-l-[3px]"]));
+        expect(activity).toHaveAttribute("data-tone", "activity");
+        expect(classes(activity)).toEqual(expect.arrayContaining(["bg-verified-bg", "border-l-verified", "border-l-[3px]"]));
+        // Activity's icon is green; an answered call's small call icon is amber.
+        expect(activity.querySelector(".text-verified")).not.toBeNull();
+        expect(call.querySelector(".text-review")).not.toBeNull();
+    });
+
+    test("light and dark: only the theme's tokens, never fixed colours, saturated fills or coloured body text", async () => {
+        const items = await openHistory();
+        for (const item of items) {
+            // Tokens switch with the theme (index.css); no palette colours that would only suit one theme.
+            expect(item.outerHTML).not.toMatch(/\b(bg|text|border)-(red|amber|yellow|orange|green|emerald|lime)-\d{2,3}\b|#[0-9a-f]{3,6}\b|rgb\(/i);
+            // Only the soft -bg token fills a card; the strong colours are accents.
+            expect(item.className).not.toMatch(/\bbg-(critical|review|verified)(\s|$)/);
+            // Body text keeps the normal ink colours.
+            for (const p of item.querySelectorAll("p")) expect(p.className).not.toMatch(/text-(critical|review|verified)\b/);
+        }
+    });
+
+    test("8. the type is also in words and icons, never colour alone: Call log, Candidate activity, No Answer", async () => {
+        const items = await openHistory();
+        expect(items.filter((i) => i.getAttribute("data-kind") === "call-log").every((i) => i.textContent!.includes("Call log"))).toBe(true);
+        expect(items[4].textContent).toContain("Candidate activity");
+        expect(within(items[0]).getByText("No Answer").querySelector("svg")).not.toBeNull();
+    });
+
+    test("4-5. the flag: amber and filled when open, a muted check when completed, an outline when not flagged; each with a name", async () => {
+        const items = await openHistory();
+        const open = within(items[1]).getByRole("img", { name: "Needs attention" });
+        expect(open.className).toContain("text-review");
+        const completed = items[2].querySelector("button[aria-label^='Follow-up completed']")!;
+        expect(completed.className).toContain("text-ink-subtle");
+        expect(completed.className.split(/\s+/)).not.toContain("text-review");
+        const none = within(items[3]).getByRole("button", { name: "Mark as needs attention" });
+        expect(none.className).toContain("text-ink-subtle");
+        // Red is reserved for No Answer: the flag never uses it.
+        for (const el of [open, completed, none]) expect(el.className).not.toContain("critical");
     });
 });
 

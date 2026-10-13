@@ -291,6 +291,20 @@ describe("Need Attention page", () => {
         expect(within(row).getByText(/Completed .* by Max Manager/)).toBeInTheDocument();
         expect(within(row).queryByRole("button", { name: "Mark complete" })).toBeNull();
         expect(within(row).queryByText(/needs? attention/i)).toBeNull();
+        // 4. Resolved reads as quieter: a soft neutral wash, a muted note; an open row has neither.
+        expect(row).toHaveAttribute("data-state", "completed");
+        expect(row.className).toContain("bg-canvas/50");
+        expect(within(row).getByText("Scan was missing").className).toContain("text-ink-muted");
+    });
+
+    test("5. an open follow-up is not washed out, and its flag is amber", async () => {
+        signedInBackend({ ...listRoute() });
+        renderApp("/follow-ups");
+        const row = rowWith(await group("SAMAN SILVA"), "Passport not uploaded");
+        expect(row).toHaveAttribute("data-state", "open");
+        expect(row.className).not.toContain("bg-canvas");
+        expect(within(row).getByText("Passport not uploaded").className).toContain("text-ink-soft");
+        expect(within(row).getByRole("img", { name: "Needs attention" }).className).toContain("text-review");
     });
 
     test("a flagged No Answer call reads as No Answer, not as an empty row", async () => {
@@ -298,7 +312,12 @@ describe("Need Attention page", () => {
         signedInBackend({ ...listRoute({ OPEN: { status: "OPEN", total: 1, truncated: false, groups: [{ ...SAMAN, followUps: [noAnswer] }] } }) });
         renderApp("/follow-ups");
         const row = within(within(await group("SAMAN SILVA")).getByRole("list", { name: /^Follow-ups for/ })).getByRole("listitem");
-        expect(within(row).getByText("No Answer")).toBeInTheDocument();
+        // The same badge as in Candidate History: red icon and outline, normal text colour.
+        const badge = within(row).getByText("No Answer");
+        expect(badge).toHaveAttribute("data-outcome", "NO_ANSWER");
+        expect(badge.className).toContain("border-critical-border");
+        expect(badge.className).toContain("text-ink-soft");
+        expect(badge.querySelector(".text-critical")).not.toBeNull();
         expect(within(row).getByRole("img", { name: "Needs attention" })).toBeInTheDocument();
     });
 

@@ -9,6 +9,7 @@ import { Icon, type IconName } from "../Icon";
 import { ErrorState, LoadingState } from "../States";
 import { Field, fieldControl, textAreaControl } from "./CandidateFields";
 import { describeActivity, historyTimeline } from "./candidateHistory";
+import { NoAnswerBadge } from "./NoAnswerBadge";
 
 const NOTE_MAX_LENGTH = 500;
 // The server allows a few minutes of clock difference; so does this check.
@@ -354,37 +355,50 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
     );
 }
 
-const kindLabel = "text-label-caps uppercase tracking-wide text-ink-subtle";
+const kindLabel = "text-label-caps uppercase tracking-wide text-ink-muted";
+
+// What kind of thing a Candidate History entry is, at a glance: a soft tint,
+// a thin accent on the left and a small coloured icon, from the theme's
+// semantic tokens (so light and dark each get their own soft or muted
+// version). Text stays in the normal colours, and every entry also says what
+// it is in words, so colour supports scanning and never carries the meaning.
+//   No Answer (an unsuccessful attempt)  red    critical
+//   Call log (a conversation, a note)    amber  review
+//   Candidate activity (an update)       green  verified
+// The flag is amber too (open) or muted (completed); it sits on its own
+// shape, so it is never mistaken for the call's colour.
+const TONE = {
+    noAnswer: "border-border border-l-[3px] border-l-critical bg-critical-bg",
+    call: "border-border border-l-[3px] border-l-review bg-review-bg",
+    activity: "border-border border-l-[3px] border-l-verified bg-verified-bg",
+} as const;
 
 // A call: when, who called, the flag, then the note.
 function CallItem({ entry, canEdit, busy, disabled, error, onMark }: {
     entry: CallLogEntry; canEdit: boolean; busy: boolean; disabled: boolean; error: string | null; onMark: () => void;
 }) {
+    const noAnswer = entry.outcome === "NO_ANSWER";
     return (
-        <li data-kind="call-log" className="min-w-0 rounded-lg border border-border bg-surface px-3.5 py-2.5">
+        <li data-kind="call-log" data-tone={noAnswer ? "no-answer" : "call"} className={`min-w-0 rounded-lg border px-3.5 py-2.5 ${noAnswer ? TONE.noAnswer : TONE.call}`}>
             <div className="flex items-center justify-between gap-3">
                 <p className="flex min-w-min flex-1 flex-wrap items-baseline gap-x-2">
                     <span className="whitespace-nowrap text-label-md font-semibold text-ink tabular-nums">
                         {formatDate(entry.calledAt)} <span className="font-normal text-ink-subtle">·</span> {formatTime(entry.calledAt)}
                     </span>
-                    <span className={`whitespace-nowrap ${kindLabel}`}>Call log</span>
+                    <span className={`inline-flex items-center gap-1 whitespace-nowrap ${kindLabel}`}>
+                        <Icon name="call" className="size-3 self-center text-review" />
+                        Call log
+                    </span>
                 </p>
                 {/* -my-1: the flag's 28px hit area doesn't make the row taller than its text. */}
                 <div className="-my-1 flex min-w-0 max-w-[50%] items-center gap-1.5">
-                    {entry.adminName && <span title={entry.adminName} className="min-w-0 max-w-40 truncate text-label-sm text-ink-subtle">{entry.adminName}</span>}
+                    {entry.adminName && <span title={entry.adminName} className="min-w-0 max-w-40 truncate text-label-sm text-ink-muted">{entry.adminName}</span>}
                     <FollowUpFlag entry={entry} canEdit={canEdit} busy={busy} disabled={disabled} onMark={onMark} />
                 </div>
             </div>
-            {entry.outcome === "NO_ANSWER"
-                // An outcome, not an error: a quiet neutral badge (icon and text), and no note body.
-                ? (
-                    <p className="mt-1.5">
-                        <span data-outcome="NO_ANSWER" className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-canvas px-2 py-0.5 text-label-sm text-ink-muted">
-                            <Icon name="phone_missed" className="size-3.5" />
-                            No Answer
-                        </span>
-                    </p>
-                )
+            {noAnswer
+                // An outcome, not an error: the badge (icon and words), and no note body.
+                ? <p className="mt-1.5"><NoAnswerBadge /></p>
                 : <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{entry.note}</p>}
             {error && <p role="alert" className="mt-1 text-right text-label-sm text-critical">{error}</p>}
         </li>
@@ -442,22 +456,22 @@ const ACTIVITY_ICON: Record<CandidateActivity["kind"], IconName> = {
     STAGE_UPDATED: "task_alt",
 };
 
-// Something that happened to the candidate: muted, one short line.
+// Something that happened to the candidate: one short line, in green.
 function ActivityItem({ activity }: { activity: CandidateActivity }) {
     const { title, detail, byline } = describeActivity(activity);
     return (
-        <li data-kind="candidate-activity" className="flex min-w-0 items-start gap-2.5 rounded-lg bg-canvas px-3.5 py-2">
-            <Icon name={ACTIVITY_ICON[activity.kind] ?? "history"} className="mt-0.5 size-4 text-ink-subtle" />
+        <li data-kind="candidate-activity" data-tone="activity" className={`flex min-w-0 items-start gap-2.5 rounded-lg border px-3.5 py-2 ${TONE.activity}`}>
+            <Icon name={ACTIVITY_ICON[activity.kind] ?? "history"} className="mt-0.5 size-4 text-verified" />
             <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
                     <span className="flex flex-wrap items-baseline gap-x-2 text-label-sm text-ink-muted tabular-nums">
                         <span className="whitespace-nowrap">{formatDate(activity.occurredAt)} <span className="text-ink-subtle">·</span> {formatTime(activity.occurredAt)}</span>
                         <span className={`whitespace-nowrap ${kindLabel}`}>Candidate activity</span>
                     </span>
-                    {byline && <span className="min-w-0 truncate text-label-sm text-ink-subtle">{byline}</span>}
+                    {byline && <span className="min-w-0 truncate text-label-sm text-ink-muted">{byline}</span>}
                 </p>
                 <p className="mt-0.5 break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{title}</p>
-                {detail && <p className="mt-0.5 text-label-sm text-ink-subtle">{detail}</p>}
+                {detail && <p className="mt-0.5 text-label-sm text-ink-muted">{detail}</p>}
             </div>
         </li>
     );

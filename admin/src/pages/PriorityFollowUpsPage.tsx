@@ -8,6 +8,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { canDeleteFollowUps } from "../auth/roles";
 import { ActionDialog, DialogError, dangerSolidButton, secondaryButton } from "../components/Dialog";
 import { formatDate, formatDateTime, formatNumber, formatTime } from "../components/format";
+import { NoAnswerBadge } from "../components/candidate/NoAnswerBadge";
 import { Icon } from "../components/Icon";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 
@@ -237,7 +238,8 @@ function FollowUpRow({ item, canDelete, busy, disabled, error, onComplete, onDel
 }) {
     const open = item.status === "OPEN";
     return (
-        <li className="px-4 py-3 sm:px-5">
+        // A completed follow-up reads as resolved: the same layout, one step quieter (muted note, muted check).
+        <li data-state={open ? "open" : "completed"} className={`px-4 py-3 sm:px-5 ${open ? "" : "bg-canvas/50"}`}>
             <div className="flex items-center justify-between gap-3">
                 <p className="flex min-w-min flex-1 flex-wrap items-baseline gap-x-2 text-label-md">
                     <span className="whitespace-nowrap font-semibold text-ink tabular-nums">
@@ -248,15 +250,8 @@ function FollowUpRow({ item, canDelete, busy, disabled, error, onComplete, onDel
                 <FollowUpFlag open={open} />
             </div>
             {item.callLog.outcome === "NO_ANSWER"
-                ? (
-                    <p className="mt-1.5">
-                        <span className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-canvas px-2 py-0.5 text-label-sm text-ink-muted">
-                            <Icon name="phone_missed" className="size-3.5" />
-                            No Answer
-                        </span>
-                    </p>
-                )
-                : <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-ink-soft [overflow-wrap:anywhere]">{item.callLog.note}</p>}
+                ? <p className="mt-1.5"><NoAnswerBadge /></p>
+                : <p className={`mt-1 whitespace-pre-wrap break-words text-body-sm [overflow-wrap:anywhere] ${open ? "text-ink-soft" : "text-ink-muted"}`}>{item.callLog.note}</p>}
             <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <p className="min-w-0 text-label-sm text-ink-subtle">
                     Flagged {formatDateTime(item.flaggedAt)}{item.flaggedByName ? ` by ${item.flaggedByName}` : ""}
