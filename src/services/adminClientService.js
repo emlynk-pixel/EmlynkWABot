@@ -177,8 +177,9 @@ export function summarizeCompleteness(rows, requiredTypes = REQUIRED_DOCUMENT_TY
 }
 
 // For the Overview and the daily report: every client, now.
-export async function clientCompletenessCounts({ db, requiredTypes = REQUIRED_DOCUMENT_TYPES }) {
-    return summarizeCompleteness(await loadClientCompleteness({ db, requiredTypes }), requiredTypes);
+// scope: the signed-in user's candidates (candidateAccess.js), {} for every client.
+export async function clientCompletenessCounts({ db, requiredTypes = REQUIRED_DOCUMENT_TYPES, scope = {} }) {
+    return summarizeCompleteness(await loadClientCompleteness({ db, where: scope, requiredTypes }), requiredTypes);
 }
 
 // ---------------------------------------------------------------- queries

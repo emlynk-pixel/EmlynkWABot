@@ -46,7 +46,7 @@ beforeEach(async () => {
     await pg.exec(`
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "call_log_follow_up"; DELETE FROM "candidate_call_logs"; DELETE FROM "candidate_allocation";
-        DELETE FROM "candidate_additional_details"; DELETE FROM "documents"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
+        DELETE FROM "candidate_additional_details"; DELETE FROM "documents"; DELETE FROM "temporary_data"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
         DELETE FROM "sheet_sync_queue";
         UPDATE "user" SET "role" = 'ANALYST', "status" = 'ACTIVE' WHERE "admin_id" IN ('u-ann', 'u-ben', 'u-cal');
         INSERT INTO "candidate" ("passport_id", "unique_id", "first_name", "other_name", "job", "whatsapp_number", "contact_number", "created_date", "updated_date")
@@ -259,6 +259,137 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
         assert.equal((await prisma.temporaryData.findUnique({ where: { temporaryId } })).passportId, null, "nothing was linked");
         assert.equal((await link(USERS.ANN, pid(1))).status, 200, "their own candidate");
         assert.equal((await link(USERS.ADMIN, pid(20))).status, 200, "ADMIN: any candidate");
+    });
+
+    test("Review Queue: an ANALYST cannot open, act on or delete another candidate's item; unlinked and own items stay open", async () => {
+        await seedAllocations();
+        const documentId = (i) => `00000000-0000-4000-8000-00000000d${String(i).padStart(3, "0")}`;
+        await prisma.document.createMany({
+            data: [1, 4, 20].map((i) => ({
+                documentId: documentId(i), passportId: pid(i), documentType: "MEDICAL", originalFilename: "m.pdf", storedFilename: "m.pdf",
+                storagePath: `clients/${pid(i)}/m.pdf`, receivedDate: new Date("2026-01-03T00:00:00Z"), processingStatus: "PROCESSED", verificationStatus: "REVIEW_REQUIRED",
+            })),
+        });
+        const temporaryId = (n) => `7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a${String(n).padStart(2, "0")}`;
+        await prisma.temporaryData.createMany({
+            data: [[1, pid(4)], [2, pid(20)], [3, null]].map(([n, passportId]) => ({
+                temporaryId: temporaryId(n), passportId, whatsappNumber: "94770000099", documentType: "MEDICAL",
+                temporaryStoragePath: `temporary/${temporaryId(n)}.pdf`, pendingStoragePath: `pending/${temporaryId(n)}.pdf`, processingStatus: "PROCESSED",
+            })),
+        });
+
+        // Another Analyst's candidate (pid 4) and an unallocated one (pid 20): 404 on every route naming the item.
+        for (const reviewId of [`document-${documentId(4)}`, `document-${documentId(20)}`, `pending-${temporaryId(1)}`, `pending-${temporaryId(2)}`]) {
+            for (const [method, path, body] of [
+                ["GET", `/review/${reviewId}`], ["GET", `/review/${reviewId}/file`],
+                ["POST", `/review/${reviewId}/approve`, {}], ["POST", `/review/${reviewId}/keep-pending`, { reason: "later" }],
+                ["POST", `/review/${reviewId}/remove`, { reason: "bad file" }],
+            ]) {
+                const refused = await api(USERS.ANN, method, path, body);
+                assert.deepEqual([refused.status, refused.body?.message], [404, "Review item not found"], `${method} ${path}`);
+            }
+        }
+        for (const n of [1, 2]) {
+            const refused = await api(USERS.ANN, "DELETE", `/temporary-documents/${temporaryId(n)}`);
+            assert.equal(refused.status, 404, `delete submission ${n}`);
+        }
+        assert.equal(await prisma.temporaryData.count({ where: { temporaryId: { in: [1, 2, 3].map(temporaryId) } } }), 3, "nothing was deleted");
+        assert.equal((await prisma.document.findUnique({ where: { documentId: documentId(4) } })).verificationStatus, "REVIEW_REQUIRED", "nothing was changed");
+        assert.equal(await prisma.auditLog.count({ where: { action: { in: ["APPROVE", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "DELETE_TEMPORARY_DOCUMENT"] } } }), 0, "nothing was audited");
+
+        // Their own candidate's item and a file not linked to anyone: open, as before.
+        assert.equal((await api(USERS.ANN, "GET", `/review/document-${documentId(1)}`)).status, 200);
+        assert.equal((await api(USERS.ANN, "GET", `/review/pending-${temporaryId(3)}`)).status, 200);
+        assert.equal((await api(USERS.ANN, "POST", `/review/document-${documentId(1)}/keep-pending`, { reason: "later" })).status, 200);
+        // ADMIN, MANAGER and Ben (the owner) reach it.
+        for (const who of [USERS.ADMIN, USERS.MANAGER, USERS.BEN]) {
+            assert.equal((await api(who, "GET", `/review/document-${documentId(4)}`)).status, 200, who.name);
+        }
+    });
+
+    test("Review Queue list, Overview and Daily Report: an ANALYST only gets their own candidates (and unlinked files); ADMIN and MANAGER stay global; reassignment applies next request", async () => {
+        await seedAllocations();
+        const DAY = "2026-01-01"; // every seeded candidate registers on this Colombo day
+        const at = new Date("2026-01-01T04:00:00Z");
+        const documentId = (i) => `00000000-0000-4000-8000-00000000e${String(i).padStart(3, "0")}`;
+        await prisma.document.createMany({
+            data: [1, 4, 20].map((i) => ({
+                documentId: documentId(i), passportId: pid(i), documentType: "MEDICAL", originalFilename: "m.pdf", storedFilename: "m.pdf",
+                storagePath: `clients/${pid(i)}/m.pdf`, receivedDate: at, processingStatus: "PROCESSED", verificationStatus: "REVIEW_REQUIRED",
+            })),
+        });
+        const temporaryId = (n) => `7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3b${String(n).padStart(2, "0")}`;
+        await prisma.temporaryData.createMany({
+            // T1: Ben's candidate; T2: Ann's candidate; T3: not linked to anyone yet.
+            data: [[1, pid(4)], [2, pid(1)], [3, null]].map(([n, passportId]) => ({
+                temporaryId: temporaryId(n), passportId, whatsappNumber: "94770000099", documentType: "MEDICAL", createdDate: at,
+                temporaryStoragePath: `temporary/${temporaryId(n)}.pdf`, pendingStoragePath: `pending/${temporaryId(n)}.pdf`, processingStatus: "PROCESSED",
+            })),
+        });
+        for (const [n, i] of [[1, 1], [2, 4]]) {
+            await prisma.candidateCallLog.create({ data: { callLogId: `00000000-0000-4000-8000-00000000c${String(n).padStart(3, "0")}`, passportId: pid(i), adminId: USERS.ADMIN.adminId, note: "called", createdDate: at } });
+            await prisma.candidateStage.create({ data: { passportId: pid(i), stage: "FINALIZING_JOB", completed: true, completedAt: at } });
+        }
+        const others = [pid(4), pid(5), pid(20)];
+        const leaks = (body) => others.filter((id) => JSON.stringify(body).includes(id));
+        const get = async (who, path) => {
+            const response = await api(who, "GET", path);
+            assert.equal(response.status, 200, `${who.name} GET ${path}`);
+            return response.body;
+        };
+
+        // ANALYST (Ann: P1-P3): own items plus the unlinked file.
+        const review = await get(USERS.ANN, "/review?pageSize=100");
+        assert.deepEqual(review.items.map((item) => item.reviewId).sort(), [`document-${documentId(1)}`, `pending-${temporaryId(2)}`, `pending-${temporaryId(3)}`].sort());
+        assert.equal(review.pagination.total, 3);
+        assert.equal(review.summary.total, 3, "the summary counts follow the same scope");
+        assert.equal((await get(USERS.ANN, `/review?passportId=${pid(4)}`)).items.length, 0, "filtering by another candidate finds nothing");
+        assert.deepEqual(leaks(review), []);
+
+        const overview = await get(USERS.ANN, "/overview");
+        assert.equal(overview.kpis.totalClients, 3);
+        assert.equal(overview.kpis.totalDocuments, 1);
+        assert.equal(overview.reviewQueue.pendingFiles, 2);
+        assert.equal(overview.reviewQueue.reviewRequiredDocuments, 1);
+        assert.deepEqual(leaks(overview), []);
+
+        const summary = await get(USERS.ANN, `/reports/daily/summary?date=${DAY}`);
+        assert.deepEqual([summary.summary.candidatesRegistered, summary.summary.callsTaken, summary.summary.candidatesCompleted], [3, 1, 1]);
+        assert.equal(summary.whatsappProcessing.received, 2);
+        assert.equal(summary.current.incomplete.totalCandidates, 3);
+        assert.deepEqual(leaks(summary), []);
+        const incomplete = await get(USERS.ANN, "/reports/daily/incomplete?stage=TEST_DETAILS&page=1");
+        assert.ok(incomplete.items.length > 0 && incomplete.items.every((row) => [pid(1), pid(2), pid(3)].includes(row.passportId)));
+        assert.equal(incomplete.pagination.total, 3);
+        const daily = await get(USERS.ANN, `/reports/daily?date=${DAY}`);
+        assert.equal(daily.daily.totalReceived, 2);
+        assert.equal(daily.current.clients.total, 3);
+        const monthly = await get(USERS.ANN, "/reports/monthly?month=2026-01");
+        assert.equal(monthly.candidatesRegistered, 3);
+        assert.equal(monthly.sources.whatsappSubmissions, 2);
+
+        // ADMIN and MANAGER: global, as before.
+        for (const who of [USERS.ADMIN, USERS.MANAGER]) {
+            assert.equal((await get(who, "/review?pageSize=100")).pagination.total, 6, who.name);
+            assert.equal((await get(who, "/overview")).kpis.totalClients, TOTAL, who.name);
+            const all = await get(who, `/reports/daily/summary?date=${DAY}`);
+            assert.deepEqual([all.summary.candidatesRegistered, all.summary.callsTaken, all.whatsappProcessing.received], [TOTAL, 2, 3], who.name);
+            assert.equal((await get(who, `/reports/daily?date=${DAY}`)).daily.totalReceived, 3, who.name);
+            assert.equal((await get(who, "/reports/monthly?month=2026-01")).candidatesRegistered, TOTAL, who.name);
+        }
+        // REGISTRATION_DESK: still outside these pages.
+        for (const path of ["/review", "/overview", `/reports/daily/summary?date=${DAY}`]) assert.equal((await api(USERS.DESK, "GET", path)).status, 403, path);
+
+        // Reassignment applies on the next request: P1 moves from Ann to Ben.
+        assert.equal((await assign(USERS.MANAGER, [pid(1)], [{ analystId: USERS.BEN.adminId, count: 1 }], { reassign: true })).status, 200);
+        const after = await get(USERS.ANN, "/review?pageSize=100");
+        assert.deepEqual(after.items.map((item) => item.reviewId), [`pending-${temporaryId(3)}`], "only the unlinked file is left");
+        assert.equal((await get(USERS.ANN, "/overview")).kpis.totalClients, 2);
+        assert.equal((await get(USERS.ANN, `/reports/daily/summary?date=${DAY}`)).summary.candidatesRegistered, 2);
+        const annOverview = JSON.stringify(await get(USERS.ANN, "/overview"));
+        assert.ok(![pid(1), ...others].some((id) => annOverview.includes(id)), "the moved candidate is gone from the old Analyst's Overview");
+        const ben = await get(USERS.BEN, "/review?pageSize=100");
+        assert.ok(ben.items.some((item) => item.reviewId === `document-${documentId(1)}`), "the new Analyst gains the item");
     });
 
     test("26. reassignment applies on the next request: the old Analyst loses access, the new one gains it", async () => {

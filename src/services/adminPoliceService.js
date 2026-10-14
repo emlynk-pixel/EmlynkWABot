@@ -37,9 +37,10 @@ export function countdownFromDocuments(documents, pendingSlips, today) {
 }
 
 // Every client's police status. Three queries whatever the number of clients.
-export async function loadPoliceStatuses({ db, today }) {
+// scope: the signed-in user's candidates (candidateAccess.js), {} for every client.
+export async function loadPoliceStatuses({ db, today, scope = {} }) {
     const [users, documents, pending] = await Promise.all([
-        db.candidate.findMany({ select: clientSelect, orderBy: [{ passportId: "asc" }] }),
+        db.candidate.findMany({ ...(Object.keys(scope).length ? { where: scope } : {}), select: clientSelect, orderBy: [{ passportId: "asc" }] }),
         db.document.findMany({
             // VERIFIED and REVIEW_REQUIRED slips/reports both count towards the
             // countdown (a REVIEW_REQUIRED slip's date counts too, see below);
@@ -71,8 +72,8 @@ export function summarizeStatuses(rows) {
     return { total: rows.length, byStatus };
 }
 
-export async function policeDueCounts({ db, today }) {
-    const { byStatus } = summarizeStatuses(await loadPoliceStatuses({ db, today }));
+export async function policeDueCounts({ db, today, scope = {} }) {
+    const { byStatus } = summarizeStatuses(await loadPoliceStatuses({ db, today, scope }));
     return {
         dueSoon: byStatus[POLICE_STATUS.DUE_SOON] || 0,
         dueToday: byStatus[POLICE_STATUS.DUE_TODAY] || 0,

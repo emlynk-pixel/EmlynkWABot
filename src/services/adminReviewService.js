@@ -19,6 +19,7 @@ import { clientName } from "../utils/clientName.js";
 import { ALLOWED_MIME_TYPES } from "../utils/fileValidation.js";
 import { toYmd } from "./policeCountdownService.js";
 import { describeFailure } from "./failureReason.js";
+import { andWhere, linkedScope, submissionScope } from "./candidateAccess.js";
 
 // Submissions waiting for a person: a file in pending/ (shared with the
 // Overview and client page). A FAILED submission is not a review item by
@@ -121,10 +122,19 @@ export function parseReviewQueueQuery(query = {}) {
 }
 
 // Prisma where clauses for the sources under the given filters.
-export function buildReviewWhere(params) {
+// scope: the signed-in user's candidates (candidateAccess.js candidateScope).
+// Empty for ADMIN, MANAGER and REGISTRATION_DESK; for an Analyst, items of
+// their own candidates plus waiting files not linked to any candidate yet.
+export function buildReviewWhere(params, scope = {}) {
     const pending = { AND: [REVIEW_PENDING_WHERE] };
     const document = { AND: [REVIEW_DOCUMENT_WHERE] };
     const failed = { AND: [FAILED_SUBMISSION_WHERE] };
+    const submissions = submissionScope(scope);
+    if (Object.keys(submissions).length) {
+        pending.AND.push(submissions);
+        failed.AND.push(submissions);
+        document.AND.push(linkedScope(scope));
+    }
     if (params.documentType) {
         pending.AND.push({ documentType: params.documentType });
         document.AND.push({ documentType: params.documentType });
@@ -202,11 +212,12 @@ function compareItems(order) {
         : (a.receivedDate < b.receivedDate ? -1 : 1) * direction);
 }
 
-async function queueSummary(db) {
+async function queueSummary(db, scope = {}) {
+    const submissions = submissionScope(scope);
     const [pendingByReason, reviewDocuments, failed] = await Promise.all([
-        db.temporaryData.groupBy({ by: ["reviewReason"], where: REVIEW_PENDING_WHERE, _count: { _all: true } }),
-        db.document.findMany({ where: REVIEW_DOCUMENT_WHERE, select: { temporaryData: { select: { reviewReason: true } } } }),
-        db.temporaryData.count({ where: FAILED_SUBMISSION_WHERE }),
+        db.temporaryData.groupBy({ by: ["reviewReason"], where: andWhere(REVIEW_PENDING_WHERE, submissions), _count: { _all: true } }),
+        db.document.findMany({ where: andWhere(REVIEW_DOCUMENT_WHERE, linkedScope(scope)), select: { temporaryData: { select: { reviewReason: true } } } }),
+        db.temporaryData.count({ where: andWhere(FAILED_SUBMISSION_WHERE, submissions) }),
     ]);
 
     const byReason = {};
@@ -229,7 +240,7 @@ async function queueSummary(db) {
 }
 
 // H3: kind=FAILED lists the failed submissions (newest first unless asked otherwise).
-async function listFailedSubmissions({ db, params, where }) {
+async function listFailedSubmissions({ db, params, where, scope }) {
     const [total, rows, summary] = await Promise.all([
         db.temporaryData.count({ where: where.failed }),
         db.temporaryData.findMany({
@@ -239,7 +250,7 @@ async function listFailedSubmissions({ db, params, where }) {
             skip: (params.page - 1) * params.pageSize,
             take: params.pageSize,
         }),
-        queueSummary(db),
+        queueSummary(db, scope),
     ]);
     return {
         items: rows.map(toFailedQueueItem),
@@ -249,9 +260,9 @@ async function listFailedSubmissions({ db, params, where }) {
     };
 }
 
-export async function listReviewQueue({ db, params }) {
-    const where = buildReviewWhere(params);
-    if (params.kind === REVIEW_KIND.FAILED) return listFailedSubmissions({ db, params, where });
+export async function listReviewQueue({ db, params, scope = {} }) {
+    const where = buildReviewWhere(params, scope);
+    if (params.kind === REVIEW_KIND.FAILED) return listFailedSubmissions({ db, params, where, scope });
     const includePending = params.kind === "ALL" || params.kind === REVIEW_KIND.PENDING;
     const includeDocuments = params.kind === "ALL" || params.kind === REVIEW_KIND.DOCUMENT;
     const window = params.page * params.pageSize;
@@ -282,7 +293,7 @@ export async function listReviewQueue({ db, params }) {
                 take: window,
             })
             : [],
-        queueSummary(db),
+        queueSummary(db, scope),
     ]);
 
     const merged = [...pendingRows.map(toPendingQueueItem), ...documentRows.map(toDocumentQueueItem)].sort(compareItems(params.order));
@@ -418,6 +429,18 @@ export async function findVerifiedOfType(db, { passportId, documentType, exceptD
     return match
         ? { documentId: match.documentId, documentType: match.documentType, storedFilename: match.storedFilename, verificationStatus: match.verificationStatus, receivedDate: toIso(match.receivedDate) }
         : null;
+}
+
+// The passport ID of the candidate a review item belongs to, or null when it
+// has none yet (a waiting file not linked to anyone) or does not exist. Used
+// to keep an Analyst to their own candidates (candidateAccess.js).
+export async function getReviewItemPassportId({ db, reviewId }) {
+    const parsed = parseReviewId(reviewId);
+    if (!parsed) return null;
+    const row = parsed.kind === REVIEW_KIND.DOCUMENT
+        ? await db.document.findUnique({ where: { documentId: parsed.id }, select: { passportId: true } })
+        : await db.temporaryData.findUnique({ where: { temporaryId: parsed.id }, select: { passportId: true } });
+    return row?.passportId ?? null;
 }
 
 export async function getReviewItem({ db, reviewId }) {

@@ -15,6 +15,7 @@ import {
     getReviewFile,
     parseReviewQueueQuery,
     parseReviewId,
+    getReviewItemPassportId,
 } from "../services/adminReviewService.js";
 import {
     approveReviewItem,
@@ -57,7 +58,7 @@ import {
     listFollowUps,
     parseFollowUpListQuery,
 } from "../services/callLogFollowUpService.js";
-import { accessiblePassportIds, ALLOCATION_MANAGER_ROLES, canAccessCandidate, candidateScope } from "../services/candidateAccess.js";
+import { accessiblePassportIds, ALLOCATION_MANAGER_ROLES, canAccessCandidate, candidateScope, isCandidateScoped } from "../services/candidateAccess.js";
 import {
     assignCandidates,
     listAllocationAnalysts,
@@ -154,7 +155,7 @@ export function createAdminRouter({
 
     router.get("/overview", requireRole(ALL_ACTIVE), async (req, res) => {
         const client = await resolveDb(db);
-        res.json(await getOverview({ db: client }));
+        res.json(await getOverview({ db: client, scope: candidateScope(req.user) }));
     });
 
     // Incomplete clients and their missing required documents. Registered
@@ -194,7 +195,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await getDailyReport({ db: client, date: parsed.params.date }));
+        return res.json(await getDailyReport({ db: client, date: parsed.params.date, scope: candidateScope(req.user) }));
     });
 
     // Daily Report page (dailyReportService.js). Summary: the same roles as
@@ -205,7 +206,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await getDailySummary({ db: client, date: parsed.params.date }));
+        return res.json(await getDailySummary({ db: client, date: parsed.params.date, scope: candidateScope(req.user) }));
     });
 
     router.get("/reports/daily/incomplete", requireRole(ALL_ACTIVE), async (req, res) => {
@@ -214,7 +215,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await getIncompleteCandidates({ db: client, ...parsed.params }));
+        return res.json(await getIncompleteCandidates({ db: client, ...parsed.params, scope: candidateScope(req.user) }));
     });
 
     router.get("/reports/daily/roles", requireRole(MANAGERS_UP), async (req, res) => {
@@ -235,7 +236,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await getMonthlyOverview({ db: client, month: parsed.params.month }));
+        return res.json(await getMonthlyOverview({ db: client, month: parsed.params.month, scope: candidateScope(req.user) }));
     });
 
     router.get("/clients/:passportId", requireRole(ALL_ACTIVE), async (req, res) => {
@@ -264,7 +265,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await listReviewQueue({ db: client, params: parsed.params }));
+        return res.json(await listReviewQueue({ db: client, params: parsed.params, scope: candidateScope(req.user) }));
     });
 
     // Police Workflow: every client's 21-day status, calculated (read-only).
@@ -280,6 +281,25 @@ export function createAdminRouter({
     const invalidReviewId = (res) => res.status(400).json({
         message: "Invalid review ID",
         errors: [{ field: "reviewId", message: "must be pending-<id>, document-<id> or failed-<id>" }],
+    });
+
+    // Every route naming a review item (detail, file, every action): an item
+    // linked to a candidate outside the user's scope reads as not found, before
+    // anything is shown or changed. A waiting file not linked to any candidate
+    // yet stays open to every Analyst (that is the review work).
+    router.param("reviewId", async (req, res, next, reviewId) => {
+        // Only a scoped user (an Analyst) needs the lookup; the route's own role check answers everyone else.
+        if (!isCandidateScoped(req.user)) return next();
+        try {
+            const client = await resolveDb(db);
+            const passportId = await getReviewItemPassportId({ db: client, reviewId });
+            if (passportId && !(await canAccessCandidate(client, req.user, passportId))) {
+                return res.status(404).json({ message: "Review item not found" });
+            }
+            return next();
+        } catch (error) {
+            return next(error);
+        }
     });
 
     router.get("/review/:reviewId", requireRole(ALL_ACTIVE), async (req, res) => {
@@ -380,6 +400,14 @@ export function createAdminRouter({
         }
         
         try {
+            // A waiting file linked to a candidate outside the user's scope reads as not found.
+            if (isCandidateScoped(req.user)) {
+                const client = await resolveDb(db);
+                const linked = await getReviewItemPassportId({ db: client, reviewId: `pending-${temporaryId}` });
+                if (linked && !(await canAccessCandidate(client, req.user, linked))) {
+                    return res.status(404).json({ message: "Temporary document not found." });
+                }
+            }
             await deleteTemporaryDocument(temporaryId, req.user, { db, bucket });
             return res.status(200).json({ action: "DELETE_TEMPORARY_DOCUMENT", temporaryId, deleted: true });
         } catch (error) {

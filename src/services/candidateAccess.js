@@ -33,6 +33,41 @@ export function scopedWhere(user, where = {}) {
     return Object.keys(where).length ? { AND: [where, candidateScope(user)] } : candidateScope(user);
 }
 
+// ---- the same scope for the other tables (Overview, Review Queue, reports).
+// Each takes the `scope` from candidateScope(user) ({} = unrestricted) and
+// returns a Prisma `where` fragment ({} when unrestricted, so an unrestricted
+// user's queries are exactly what they were).
+
+const isUnrestricted = (scope) => !scope || Object.keys(scope).length === 0;
+
+// Rows that belong to one candidate (documents, call logs, stages): only the
+// user's candidates.
+export const linkedScope = (scope) => (isUnrestricted(scope) ? {} : { user: scope });
+
+// Submissions (temporary_data): the user's candidates' and the ones not yet
+// linked to any candidate (waiting files nobody owns yet, which is the review
+// work). Once a file is linked, it follows the candidate's allocation.
+export const submissionScope = (scope) => (isUnrestricted(scope) ? {} : { OR: [{ passportId: null }, { user: scope }] });
+
+// Audit entries name a candidate by passport ID only (no relation): the
+// entries about the user's candidates. One indexed query for the IDs.
+export async function auditScope(db, scope) {
+    if (isUnrestricted(scope)) return {};
+    const rows = await db.candidate.findMany({ where: scope, select: { passportId: true } });
+    return { passportId: { in: rows.map((row) => row.passportId) } };
+}
+
+// Conditions AND-ed; empty ones dropped, and a single one returned as it is.
+export function andWhere(...parts) {
+    const used = parts.filter((part) => part && Object.keys(part).length);
+    if (used.length === 0) return {};
+    return used.length === 1 ? used[0] : { AND: used };
+}
+
+// `{ where }` for a query that had no filter before, or nothing when the
+// fragment is empty (the unrestricted call is unchanged).
+export const whereOnly = (fragment) => (isUnrestricted(fragment) ? {} : { where: fragment });
+
 // The passport IDs a scoped user may see, or null for "every candidate".
 // For lists computed in memory (the Police Workflow). An Analyst's set is
 // their allocations: one indexed query.
