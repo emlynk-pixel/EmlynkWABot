@@ -133,7 +133,19 @@ function WorkAllocationView() {
         list.reload();
         analysts.reload();
     };
-    const failed = (error: unknown) => setActionError(error instanceof ApiError ? error.message : "Something went wrong. Please try again.");
+    const failed = (error: unknown) => {
+        setActionError(error instanceof ApiError ? error.message : "Something went wrong. Please try again.");
+        // A conflict means what is on screen is out of date (another manager
+        // allocated the same candidates, an Analyst was deactivated, a
+        // candidate went away): show the current state, drop the selection
+        // made from the old one, and keep the message (it moves from the
+        // dialog to the page banner).
+        if (error instanceof ApiError && error.status === 409) {
+            setConfirm(null);
+            clearSelection();
+            reloadAll();
+        }
+    };
 
     const runAssign = async () => {
         if (!token || validation || busy) return;
@@ -179,6 +191,30 @@ function WorkAllocationView() {
 
     const data = list.status === "error" ? null : list.data;
     const changingPage = list.status === "loading" && Boolean(data);
+
+    // The page can end up beyond the last one (candidates were unallocated, or
+    // the URL was edited): the server answers an empty page, and the view moves
+    // to the last page that exists (the first when there is none) instead of
+    // showing an empty list as if nothing were allocated at all.
+    const lastPage = data?.pagination.totalPages ?? 1;
+    const pastLastPage = list.status === "success" && data !== null && data.items.length === 0 && page > lastPage;
+    useEffect(() => {
+        if (!pastLastPage) return;
+        const next = new URLSearchParams(searchParams);
+        if (lastPage > 1) next.set("page", String(lastPage));
+        else next.delete("page");
+        setSearchParams(next, { replace: true });
+        // searchParams is read once per recovery; the list key changes with it.
+    }, [pastLastPage, lastPage]);
+    const emptyTitle = search
+        ? "No candidates match this search."
+        : page > 1
+            ? "There are no candidates on this page."
+            : status === "UNALLOCATED"
+                ? "All candidates are currently allocated."
+                : analystFilter
+                    ? "No candidates are allocated to this Analyst."
+                    : "No candidates are allocated yet.";
     const filterAnalysts = [...activeAnalysts, ...(analysts.data?.unavailableAnalysts ?? [])];
 
     return (
@@ -242,10 +278,15 @@ function WorkAllocationView() {
                     </div>
                     {list.status === "error" && <ErrorState message={list.error.message} onRetry={list.reload} />}
                     {list.status === "loading" && !data && <LoadingState label="Loading candidates…" />}
-                    {data && data.items.length === 0 && (
+                    {pastLastPage && <LoadingState label="Loading candidates…" />}
+                    {data && data.items.length === 0 && !pastLastPage && (
                         <EmptyState
-                            title={search ? "No candidates match this search." : status === "UNALLOCATED" ? "All candidates are currently allocated." : "No candidates are allocated yet."}
-                            action={search ? <button type="button" onClick={() => go({ search: null })} className="text-label-md text-primary hover:underline">Clear search</button> : undefined}
+                            title={emptyTitle}
+                            action={search
+                                ? <button type="button" onClick={() => go({ search: null })} className="text-label-md text-primary hover:underline">Clear search</button>
+                                : page > 1
+                                    ? <button type="button" onClick={() => go({ page: null })} className="text-label-md text-primary hover:underline">Go to the first page</button>
+                                    : undefined}
                         />
                     )}
                     {data && data.items.length > 0 && (

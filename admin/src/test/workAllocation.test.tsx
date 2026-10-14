@@ -151,7 +151,115 @@ describe("Work Allocation: selecting and assigning", () => {
         await user.type(screen.getByLabelText("Candidates for Ann Analyst"), "1");
         await user.click(screen.getByRole("button", { name: "Assign 1 candidates" }));
         expect(await screen.findByText("Ann Analyst is not an active user. Nothing was changed.", {}, RENDER_STEP)).toBeInTheDocument();
-        expect(screen.queryByRole("status")).toBeNull();
+        expect(screen.queryByText(/^Allocated \d/)).toBeNull();
+    });
+
+    test("a 409 conflict keeps its message, refreshes the list and Analysts, and the stale row shows its new state", async () => {
+        // Another manager allocated CANDIDATE 1 while this page was open.
+        let allocatedElsewhere = false;
+        const { calls } = backend("MANAGER", {
+            "GET /api/admin/work-allocation/candidates": () => ({ status: 200, body: page([candidate(2), allocatedElsewhere ? candidate(1, ANN) : candidate(1)]) }),
+            "POST /api/admin/work-allocation/assign": () => {
+                allocatedElsewhere = true;
+                return { status: 409, body: { message: "1 selected candidate is already allocated. Nothing was changed; confirm a reassignment to move them.", code: "ALREADY_ALLOCATED" } };
+            },
+        });
+        renderApp("/work-allocation");
+        await table();
+        const user = userEvent.setup();
+        const row = (name: string) => within(screen.getByText(name).closest("tr")!);
+        expect(row("CANDIDATE 1").getByText("Unallocated")).toBeInTheDocument();
+        const listCalls = () => calls.filter((c) => c.method === "GET" && c.path.startsWith("/api/admin/work-allocation/candidates")).length;
+        const analystCalls = () => calls.filter((c) => c.method === "GET" && c.path.startsWith("/api/admin/work-allocation/analysts")).length;
+        const [listBefore, analystsBefore] = [listCalls(), analystCalls()];
+
+        await user.click(screen.getByRole("checkbox", { name: "Select CANDIDATE 1" }));
+        await user.type(screen.getByLabelText("Candidates for Ben Analyst"), "1");
+        await user.click(screen.getByRole("button", { name: "Assign 1 candidates" }));
+
+        // The message stays, the data is fetched again, and the row is current.
+        expect(await screen.findByText(/already allocated\. Nothing was changed/, {}, RENDER_STEP)).toBeInTheDocument();
+        await screen.findByText("Allocated", { selector: "span" }, RENDER_STEP);
+        expect(row("CANDIDATE 1").getByText("Allocated")).toBeInTheDocument();
+        expect(row("CANDIDATE 1").getByText("Ann Analyst")).toBeInTheDocument();
+        expect(listCalls()).toBeGreaterThan(listBefore);
+        expect(analystCalls()).toBeGreaterThan(analystsBefore);
+        // The selection made from the old state is dropped; the message is still there.
+        expect(screen.getAllByText("0 selected").length).toBeGreaterThan(0);
+        expect(screen.getByRole("alert")).toHaveTextContent("already allocated");
+    });
+
+    test("a 409 from the reassign dialog closes it, keeps the message on the page and refreshes", async () => {
+        const { calls } = backend("MANAGER", {
+            "POST /api/admin/work-allocation/assign": { status: 409, body: { message: "Ben Analyst is not an active user. Nothing was changed.", code: "ANALYST_INACTIVE" } },
+        });
+        renderApp("/work-allocation?view=allocated");
+        await table();
+        const user = userEvent.setup();
+        const before = calls.filter((c) => c.method === "GET" && c.path.startsWith("/api/admin/work-allocation/candidates")).length;
+        await user.click(screen.getByRole("checkbox", { name: "Select CANDIDATE 5" }));
+        await user.type(screen.getByLabelText("Candidates for Ben Analyst"), "1");
+        await user.click(screen.getByRole("button", { name: "Reassign 1 candidates" }));
+        await user.click(within(screen.getByRole("dialog", { name: "Reassign candidates?" })).getByRole("button", { name: "Reassign" }));
+        expect(await screen.findByRole("alert", {}, RENDER_STEP)).toHaveTextContent("Ben Analyst is not an active user.");
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(calls.filter((c) => c.method === "GET" && c.path.startsWith("/api/admin/work-allocation/candidates")).length).toBeGreaterThan(before);
+    });
+});
+
+describe("Work Allocation: pages and empty messages", () => {
+    const paged = (items: AllocationCandidate[], pageNumber: number, totalPages: number, total: number): AllocationCandidateList => ({
+        items,
+        pagination: { page: pageNumber, pageSize: 100, total, totalItems: total, totalPages, hasNextPage: pageNumber < totalPages, hasPreviousPage: pageNumber > 1 },
+        filters: { status: "ALLOCATED", analystId: null, search: null },
+    });
+
+    test("a page past the last one moves to the last page, without claiming nothing is allocated", async () => {
+        const { calls } = backend("MANAGER", {
+            "GET /api/admin/work-allocation/candidates": (url) => {
+                const requested = Number(url.searchParams.get("page"));
+                return { status: 200, body: requested === 2 ? paged([candidate(5, ANN)], 2, 2, 101) : paged([], requested, 2, 101) };
+            },
+        });
+        renderApp("/work-allocation?view=allocated&page=3");
+        await table();
+        expect(screen.getByText("CANDIDATE 5")).toBeInTheDocument();
+        expect(calls.some((c) => c.path === "/api/admin/work-allocation/candidates?status=ALLOCATED&page=2")).toBe(true);
+        expect(screen.queryByText("No candidates are allocated yet.")).toBeNull();
+        expect(screen.queryByText("There are no candidates on this page.")).toBeNull();
+    });
+
+    test("when every allocation was removed, a page past the end falls back to page 1 and shows the real empty state", async () => {
+        const { calls } = backend("MANAGER", {
+            "GET /api/admin/work-allocation/candidates": (url) => ({ status: 200, body: paged([], Number(url.searchParams.get("page")), 1, 0) }),
+        });
+        renderApp("/work-allocation?view=allocated&page=4");
+        expect(await screen.findByText("No candidates are allocated yet.", {}, RENDER_STEP)).toBeInTheDocument();
+        expect(calls.some((c) => c.path === "/api/admin/work-allocation/candidates?status=ALLOCATED&page=1")).toBe(true);
+    });
+
+    test("an empty page inside the range says so, and offers the first page", async () => {
+        backend("MANAGER", {
+            "GET /api/admin/work-allocation/candidates": (url) => {
+                const requested = Number(url.searchParams.get("page"));
+                return { status: 200, body: requested === 1 ? paged([candidate(5, ANN)], 1, 3, 250) : paged([], requested, 3, 250) };
+            },
+        });
+        renderApp("/work-allocation?view=allocated&page=2");
+        expect(await screen.findByText("There are no candidates on this page.", {}, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.queryByText("No candidates are allocated yet.")).toBeNull();
+        await userEvent.setup().click(screen.getByRole("button", { name: "Go to the first page" }));
+        expect(await screen.findByText("CANDIDATE 5", {}, RENDER_STEP)).toBeInTheDocument();
+    });
+
+    test("the empty message follows the view, the Analyst filter and the search", async () => {
+        backend("MANAGER", { "GET /api/admin/work-allocation/candidates": (url) => ({ status: 200, body: paged([], Number(url.searchParams.get("page")), 1, 0) }) });
+        const first = renderApp("/work-allocation?view=allocated&analyst=u-ann");
+        expect(await screen.findByText("No candidates are allocated to this Analyst.", {}, RENDER_STEP)).toBeInTheDocument();
+        first.unmount();
+        const second = renderApp("/work-allocation?view=allocated&search=nobody");
+        expect(await screen.findByText("No candidates match this search.", {}, RENDER_STEP)).toBeInTheDocument();
+        second.unmount();
     });
 });
 
