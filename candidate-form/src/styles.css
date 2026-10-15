@@ -1,0 +1,74 @@
+:root {
+    --bg: #f5f7fa;
+    --surface: #ffffff;
+    --ink: #1f2937;
+    --muted: #4b5563;
+    --border: #c9d1dc;
+    --primary: #1d4ed8;
+    --primary-ink: #ffffff;
+    --error: #b42318;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; }
+
+.shell {
+    min-height: 100vh;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 48px 16px;
+}
+
+.card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+}
+
+h1 { font-size: 1.375rem; margin: 0 0 8px; }
+
+.lead { color: var(--muted); margin: 0 0 20px; line-height: 1.5; }
+
+.field { margin-bottom: 16px; }
+
+.field label { display: block; font-weight: 600; margin-bottom: 6px; }
+
+.field input {
+    width: 100%;
+    font: inherit;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.field input:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+.field input[aria-invalid="true"] { border-color: var(--error); }
+
+.hint { color: var(--muted); font-size: 0.875rem; margin: 0 0 6px; }
+
+.error, .form-error { color: var(--error); font-size: 0.875rem; margin: 6px 0 0; }
+
+.form-error { margin: 0 0 16px; }
+
+button {
+    width: 100%;
+    font: inherit;
+    font-weight: 600;
+    padding: 11px 16px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--primary);
+    color: var(--primary-ink);
+    cursor: pointer;
+}
+
+button:disabled { opacity: 0.6; cursor: default; }
