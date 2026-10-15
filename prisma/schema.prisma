@@ -33,6 +33,8 @@ model User {
   // Priority Follow-Ups this user flagged / completed.
   flaggedFollowUps   CallLogFollowUp[] @relation("FollowUpFlaggedBy")
   completedFollowUps CallLogFollowUp[] @relation("FollowUpCompletedBy")
+  // Work Allocation: the candidates assigned to this user (an Analyst).
+  allocatedCandidates CandidateAllocation[]
 
   @@map("user")
 }
@@ -117,8 +119,27 @@ model Candidate {
   // Optional extra details (Admin > Candidates > Additional Details). A
   // relation only: the candidate table has no column for it.
   additionalDetails CandidateAdditionalDetails?
+  // Work Allocation: the Analyst the candidate is assigned to (no row:
+  // unallocated). A relation only, like additionalDetails.
+  allocation        CandidateAllocation?
 
   @@map("candidate")
+}
+
+// Work Allocation (workAllocationService.js): one row per allocated
+// candidate. A separate table so allocating never updates the candidate row
+// (its Sheet sync trigger and updated_date). History is in audit_logs.
+// Migration 20261014120000_candidate_allocation.
+model CandidateAllocation {
+  passportId   String   @id @map("passport_id")
+  analystId    String   @map("analyst_id")
+  assignedDate DateTime @default(now()) @map("assigned_date")
+
+  candidate Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  analyst   User      @relation(fields: [analystId], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([analystId])
+  @@map("candidate_allocation")
 }
 
 //added document table

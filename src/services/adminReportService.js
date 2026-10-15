@@ -16,6 +16,7 @@ import { REVIEW_DOCUMENT_WHERE, REVIEW_PENDING_WHERE } from "./adminReviewServic
 import { REVIEW_ACTION } from "./adminReviewActionService.js";
 import { clientCompletenessCounts } from "./adminClientService.js";
 import { policeDueCounts } from "./adminPoliceService.js";
+import { andWhere, auditScope, linkedScope, submissionScope } from "./candidateAccess.js";
 import { SUBMISSION_OUTCOME, UNCLEAR_STATUSES, isSuccessfullyProcessed, submissionOutcome } from "./statusMapping.js";
 
 export const EARLIEST_REPORT_DATE = "2000-01-01";
@@ -65,18 +66,25 @@ export function businessMonthRange(month) {
 // admin uploads and removals by when the admin did them. Same status
 // definitions as the Daily Report and the Overview, so the figures agree.
 // Only counts; no candidate or document details.
-export async function getMonthlyOverview({ db, month, now = new Date() }) {
+// scope: the signed-in user's candidates (candidateAccess.js candidateScope), {}
+// for ADMIN, MANAGER and REGISTRATION_DESK. For an Analyst: their candidates,
+// the waiting files not yet linked to anyone, and the audit entries about their
+// candidates (admin uploads, removals).
+export async function getMonthlyOverview({ db, month, now = new Date(), scope = {} }) {
     const thisMonth = businessDateOf(now).slice(0, 7);
     const { start, end } = businessMonthRange(month);
     const inMonth = { gte: start, lt: end };
+    const submissions = submissionScope(scope);
+    const linked = linkedScope(scope);
+    const audit = await auditScope(db, scope);
 
     const [candidatesRegistered, statusGroups, adminUploads, waitingFiles, reviewRequiredDocuments, rejected] = await Promise.all([
-        db.candidate.count({ where: { createdDate: inMonth } }),
-        db.temporaryData.groupBy({ by: ["processingStatus"], where: { createdDate: inMonth }, _count: { _all: true } }),
-        db.auditLog.count({ where: { action: ADMIN_UPLOAD_ACTION, createdDate: inMonth } }),
-        db.temporaryData.count({ where: { AND: [{ createdDate: inMonth }, REVIEW_PENDING_WHERE] } }),
-        db.document.count({ where: { AND: [{ receivedDate: inMonth }, REVIEW_DOCUMENT_WHERE] } }),
-        db.auditLog.count({ where: { action: REVIEW_ACTION.REMOVE_FROM_REVIEW, createdDate: inMonth } }),
+        db.candidate.count({ where: andWhere({ createdDate: inMonth }, scope) }),
+        db.temporaryData.groupBy({ by: ["processingStatus"], where: andWhere({ createdDate: inMonth }, submissions), _count: { _all: true } }),
+        db.auditLog.count({ where: andWhere({ action: ADMIN_UPLOAD_ACTION, createdDate: inMonth }, audit) }),
+        db.temporaryData.count({ where: andWhere({ createdDate: inMonth }, REVIEW_PENDING_WHERE, submissions) }),
+        db.document.count({ where: andWhere({ receivedDate: inMonth }, REVIEW_DOCUMENT_WHERE, linked) }),
+        db.auditLog.count({ where: andWhere({ action: REVIEW_ACTION.REMOVE_FROM_REVIEW, createdDate: inMonth }, audit) }),
     ]);
 
     let whatsappSubmissions = 0;
@@ -115,18 +123,21 @@ export async function getMonthlyOverview({ db, month, now = new Date() }) {
 
 const REPORTED_TYPES = [DOCUMENT_TYPES.PASSPORT, DOCUMENT_TYPES.POLICE_SLIP, DOCUMENT_TYPES.POLICE_REPORT, DOCUMENT_TYPES.MEDICAL, DOCUMENT_TYPES.UNKNOWN];
 
-export async function getDailyReport({ db, date, now = new Date() }) {
+// scope: as for getMonthlyOverview.
+export async function getDailyReport({ db, date, now = new Date(), scope = {} }) {
     const today = businessDateOf(now);
     const { start, end } = businessDayRange(date);
     const receivedThatDay = { createdDate: { gte: start, lt: end } };
+    const submissions = submissionScope(scope);
+    const audit = await auditScope(db, scope);
 
     const [statusGroups, typeGroups, stillWaiting, actionGroups, clients, police] = await Promise.all([
-        db.temporaryData.groupBy({ by: ["processingStatus"], where: receivedThatDay, _count: { _all: true } }),
-        db.temporaryData.groupBy({ by: ["documentType"], where: receivedThatDay, _count: { _all: true } }),
-        db.temporaryData.count({ where: { AND: [receivedThatDay, REVIEW_PENDING_WHERE] } }),
-        db.auditLog.groupBy({ by: ["action"], where: { createdDate: { gte: start, lt: end } }, _count: { _all: true } }),
-        clientCompletenessCounts({ db }),
-        policeDueCounts({ db, today }),
+        db.temporaryData.groupBy({ by: ["processingStatus"], where: andWhere(receivedThatDay, submissions), _count: { _all: true } }),
+        db.temporaryData.groupBy({ by: ["documentType"], where: andWhere(receivedThatDay, submissions), _count: { _all: true } }),
+        db.temporaryData.count({ where: andWhere(receivedThatDay, REVIEW_PENDING_WHERE, submissions) }),
+        db.auditLog.groupBy({ by: ["action"], where: andWhere({ createdDate: { gte: start, lt: end } }, audit), _count: { _all: true } }),
+        clientCompletenessCounts({ db, scope }),
+        policeDueCounts({ db, today, scope }),
     ]);
 
     const byStatus = Object.fromEntries(statusGroups.map((g) => [g.processingStatus, g._count._all]));

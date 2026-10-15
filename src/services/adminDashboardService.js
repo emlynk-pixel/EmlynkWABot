@@ -17,6 +17,7 @@ import { clientName } from "../utils/clientName.js";
 import { FAILED_SUBMISSION_WHERE, REVIEW_PENDING_WHERE } from "./adminReviewService.js";
 import { countdownFromDocuments, policeDueCounts } from "./adminPoliceService.js";
 import { toYmd } from "./policeCountdownService.js";
+import { andWhere, linkedScope, submissionScope, whereOnly } from "./candidateAccess.js";
 import {
     REQUIRED_DOCUMENT_TYPES,
     REQUIREMENT_STATUS,
@@ -87,7 +88,13 @@ function toPendingItem(row) {
 
 // ---------------------------------------------------------------- overview
 
-export async function getOverview({ db, now = new Date() }) {
+// scope: the signed-in user's candidates (candidateAccess.js candidateScope),
+// empty for ADMIN, MANAGER and REGISTRATION_DESK. For an Analyst every figure
+// and list counts their own candidates (and the waiting files not yet linked
+// to anyone), so another Analyst's candidates never show up here.
+export async function getOverview({ db, now = new Date(), scope = {} }) {
+    const linked = linkedScope(scope);
+    const submissions = submissionScope(scope);
     const today = businessDateOf(now);
     const { start: todayStart } = businessDayRange(today);
 
@@ -106,27 +113,27 @@ export async function getOverview({ db, now = new Date() }) {
         clients,
         failedSubmissions,
     ] = await Promise.all([
-        db.candidate.count(),
-        db.document.count(),
-        db.temporaryData.count({ where: { createdDate: { gte: todayStart } } }),
-        db.temporaryData.count({ where: PENDING_FILE_WHERE }),
-        db.document.count({ where: { verificationStatus: VERIFICATION_STATUS.REVIEW_REQUIRED } }),
-        db.temporaryData.groupBy({ by: ["processingStatus"], _count: { _all: true } }),
-        db.temporaryData.groupBy({ by: ["documentType"], _count: { _all: true } }),
-        db.temporaryData.groupBy({ by: ["processingStatus"], where: PENDING_FILE_WHERE, _count: { _all: true } }),
-        db.document.findMany({ select: documentSelect, orderBy: [{ receivedDate: "desc" }, { documentId: "asc" }], take: RECENT_DOCUMENTS_LIMIT }),
+        db.candidate.count(whereOnly(scope)),
+        db.document.count(whereOnly(linked)),
+        db.temporaryData.count({ where: andWhere({ createdDate: { gte: todayStart } }, submissions) }),
+        db.temporaryData.count({ where: andWhere(PENDING_FILE_WHERE, submissions) }),
+        db.document.count({ where: andWhere({ verificationStatus: VERIFICATION_STATUS.REVIEW_REQUIRED }, linked) }),
+        db.temporaryData.groupBy({ by: ["processingStatus"], ...whereOnly(submissions), _count: { _all: true } }),
+        db.temporaryData.groupBy({ by: ["documentType"], ...whereOnly(submissions), _count: { _all: true } }),
+        db.temporaryData.groupBy({ by: ["processingStatus"], where: andWhere(PENDING_FILE_WHERE, submissions), _count: { _all: true } }),
+        db.document.findMany({ ...whereOnly(linked), select: documentSelect, orderBy: [{ receivedDate: "desc" }, { documentId: "asc" }], take: RECENT_DOCUMENTS_LIMIT }),
         db.temporaryData.findMany({
-            where: PENDING_FILE_WHERE,
+            where: andWhere(PENDING_FILE_WHERE, submissions),
             select: { temporaryId: true, documentType: true, processingStatus: true, createdDate: true, user: { select: clientSelect } },
             orderBy: [{ createdDate: "desc" }, { temporaryId: "asc" }],
             take: REVIEW_QUEUE_PREVIEW_LIMIT,
         }),
         // Police Workflow: reports due soon, due today, overdue.
-        policeDueCounts({ db, today }),
+        policeDueCounts({ db, today, scope }),
         // Complete / incomplete clients and missing required documents.
-        clientCompletenessCounts({ db }),
+        clientCompletenessCounts({ db, scope }),
         // H3: submissions whose processing failed (shown on their own).
-        db.temporaryData.count({ where: FAILED_SUBMISSION_WHERE }),
+        db.temporaryData.count({ where: andWhere(FAILED_SUBMISSION_WHERE, submissions) }),
     ]);
 
     return {
@@ -284,8 +291,12 @@ export function buildDocumentListArgs(params) {
     };
 }
 
-export async function listDocuments({ db, params }) {
-    const args = buildDocumentListArgs(params);
+// scope: the signed-in user's candidates (candidateAccess.js); a document
+// is listed only when its candidate is in it. Applied in the query.
+export async function listDocuments({ db, params, scope = {} }) {
+    const built = buildDocumentListArgs(params);
+    const scoped = (where) => (Object.keys(scope).length ? { AND: [where ?? {}, { user: scope }] } : where);
+    const args = { ...built, where: scoped(built.where), whereWithoutVerification: scoped(built.whereWithoutVerification) };
     const [total, rows, verificationGroups] = await Promise.all([
         db.document.count({ where: args.where }),
         db.document.findMany({ where: args.where, select: documentSelect, orderBy: args.orderBy, skip: args.skip, take: args.take }),

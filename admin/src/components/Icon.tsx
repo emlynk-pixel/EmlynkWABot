@@ -3,6 +3,7 @@
 // use, instead of a 1-1.5 MB icon font. The markup is a build-time constant
 // from the package, never user data.
 import assignmentLate from "@material-symbols/svg-400/outlined/assignment_late.svg?raw";
+import assignmentInd from "@material-symbols/svg-400/outlined/assignment_ind.svg?raw";
 import checkCircle from "@material-symbols/svg-400/outlined/check_circle.svg?raw";
 import darkMode from "@material-symbols/svg-400/outlined/dark_mode.svg?raw";
 import edit from "@material-symbols/svg-400/outlined/edit.svg?raw";
@@ -73,6 +74,7 @@ const ICONS = {
     light_mode: lightMode,
     person_add: personAdd,
     person_search: personSearch,
+    assignment_ind: assignmentInd,
     refresh,
     schedule,
     search,

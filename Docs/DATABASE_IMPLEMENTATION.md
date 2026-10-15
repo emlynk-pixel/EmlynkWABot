@@ -106,6 +106,15 @@ All core application tables reside in the `public` schema.
 - **Indexes / constraints**: `(call_log_id)`; `(status, flagged_date)`; a partial UNIQUE index `(call_log_id) WHERE status = 'OPEN'` so a call log has at most one open follow-up (completed ones are kept as history). Defined in SQL by migration `20261011120000_call_log_follow_up` (not expressible in `schema.prisma`). Row-level security on, no access for `anon` / `authenticated`.
 - **Deletion**: ADMIN / MANAGER delete a follow-up through the API; that removes this row only. Deleting a candidate cascades to their call logs and so to their follow-ups.
 
+### 2.5.2 `public.candidate_allocation`
+- **Purpose**: Work Allocation: the Analyst a candidate is assigned to. One row per allocated candidate; no row means unallocated. A separate table so allocating never updates the candidate row (its Google Sheet sync trigger and `updated_date`). History is in `audit_logs` (`ASSIGN_CANDIDATE`, `REASSIGN_CANDIDATE`, `UNASSIGN_CANDIDATE`).
+- **Primary Key**: `passport_id` (`TEXT`, FK -> `candidate.passport_id` `ON DELETE CASCADE ON UPDATE CASCADE`).
+- **Important Columns**:
+  - `analyst_id` (`TEXT`, FK -> `"user".admin_id` `ON DELETE RESTRICT`): the assigned Analyst.
+  - `assigned_date` (`TIMESTAMP`): when the current Analyst was assigned.
+- **Indexes**: `analyst_id` (an Analyst's candidates and the per-Analyst counts).
+- **Migration**: `20261014120000_candidate_allocation` (additive; existing candidates start unallocated).
+
 ### 2.6 `public.audit_logs`
 - **Purpose**: Append-only security and operational audit trail for all admin actions, candidate modifications, document operations, and staff role adjustments.
 - **Primary Key**: `audit_id` (`TEXT`, UUID).
@@ -227,6 +236,7 @@ The candidate table represents job applicants and client records.
 - `candidate_stages`: Seven deployment tracking stages (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`).
 - `candidate_call_logs`: Telephone call notes recorded by staff.
 - `call_log_follow_up`: follow-ups (the dashboard's Need Attention page), one row per call marked for follow-up (see §2.5.1).
+- `candidate_allocation`: Work Allocation, the Analyst each allocated candidate is assigned to (see §2.5.2).
 - `candidate_additional_details`: At most one row of extra details (passport name, sizes, family, other skills); see §2.12.
 - `temporary_data`: Unprocessed or pending review items matched to this candidate.
 

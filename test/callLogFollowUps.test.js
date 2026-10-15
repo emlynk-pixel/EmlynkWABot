@@ -58,6 +58,10 @@ beforeEach(async () => {
     for (const [passportId, nic, whatsappNumber, otherNames] of [[A, "965404378V", "+94771234567", "Anusha"], [B, "199012345678", "+94777654321", "Kamal"]]) {
         const { values } = parseCandidateBody({ ...BASE, passportId, nic, whatsappNumber, otherNames }, { creating: true });
         await createCandidate({ db: prisma, values });
+        // Allocated to the test Analyst, who works on them below (Work
+        // Allocation; an Analyst only reaches their own candidates, see
+        // workAllocation.test.js).
+        await prisma.candidateAllocation.create({ data: { passportId, analystId: USERS.ANALYST.adminId } });
     }
 });
 

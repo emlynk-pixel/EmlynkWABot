@@ -501,7 +501,7 @@ export async function documentStatusByCandidate(db, passportIds) {
     return new Map([...byCandidate].map(([id, rows]) => [id, documentStatusOf(rows)]));
 }
 
-function candidateSummary(user) {
+export function candidateSummary(user) {
     return {
         passportId: user.passportId,
         uniqueId: user.uniqueId,
@@ -574,8 +574,13 @@ const listSelect = {
 // per candidate. Newest first; passport ID breaks ties, so the order is the
 // same on every page (no candidate on two pages, none skipped). A page past
 // the last one is empty, with the real totals, so the page can go back.
-export async function listCandidates({ db, params }) {
-    const where = params.search ? candidateSearchWhere(params.search) : {};
+// scope: the signed-in user's candidates (candidateAccess.js candidateScope),
+// applied in the database before paging, so search and totals only ever
+// cover the candidates the user may see.
+export async function listCandidates({ db, params, scope = {} }) {
+    const search = params.search ? candidateSearchWhere(params.search) : {};
+    const parts = [search, scope].filter((part) => Object.keys(part).length);
+    const where = parts.length > 1 ? { AND: parts } : parts[0] ?? {};
     const [total, users] = await Promise.all([
         db.candidate.count({ where }),
         db.candidate.findMany({
@@ -605,7 +610,7 @@ export async function listCandidates({ db, params }) {
 
 // total (kept for existing callers) and totalItems are the same count.
 // totalPages is at least 1, so an empty list is "page 1 of 1".
-function listPagination({ page, pageSize }, total) {
+export function listPagination({ page, pageSize }, total) {
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     return { page, pageSize, total, totalItems: total, totalPages, hasNextPage: page < totalPages, hasPreviousPage: page > 1 };
 }
@@ -613,11 +618,18 @@ function listPagination({ page, pageSize }, total) {
 // The stored passport ID for a requested one: the exact row, otherwise the
 // one row that matches ignoring case (legacy rows may be lowercase; registration
 // compares the same way). Null when there is none, or more than one.
-export async function resolveCandidatePassportId({ db, passportId }) {
-    const exact = await db.candidate.findUnique({ where: { passportId }, select: { passportId: true } });
+// scope (candidateAccess.js candidateScope): a candidate outside it is
+// treated exactly like one that does not exist, so the answer never tells
+// a scoped user that it exists.
+export async function resolveCandidatePassportId({ db, passportId, scope = {} }) {
+    const scoped = Object.keys(scope).length > 0;
+    const within = (where) => (scoped ? { AND: [where, scope] } : where);
+    const exact = scoped
+        ? await db.candidate.findFirst({ where: within({ passportId }), select: { passportId: true } })
+        : await db.candidate.findUnique({ where: { passportId }, select: { passportId: true } });
     if (exact) return exact.passportId;
     const rows = await db.candidate.findMany({
-        where: { passportId: { equals: passportId, mode: "insensitive" } },
+        where: within({ passportId: { equals: passportId, mode: "insensitive" } }),
         select: { passportId: true },
         take: 2,
     });

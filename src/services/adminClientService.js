@@ -91,6 +91,12 @@ export function clientSearchWhere(search) {
 
 // ---------------------------------------------------------------- loading
 
+// `where` AND the user's candidate scope (unchanged when the scope is empty).
+function withScope(where, scope) {
+    if (!Object.keys(scope).length) return where;
+    return Object.keys(where).length ? { AND: [where, scope] } : scope;
+}
+
 const clientSelect = { passportId: true, uniqueId: true, firstName: true, otherName: true, whatsappNumber: true };
 
 // Every (matching) client with its required-document status, in three
@@ -171,8 +177,9 @@ export function summarizeCompleteness(rows, requiredTypes = REQUIRED_DOCUMENT_TY
 }
 
 // For the Overview and the daily report: every client, now.
-export async function clientCompletenessCounts({ db, requiredTypes = REQUIRED_DOCUMENT_TYPES }) {
-    return summarizeCompleteness(await loadClientCompleteness({ db, requiredTypes }), requiredTypes);
+// scope: the signed-in user's candidates (candidateAccess.js), {} for every client.
+export async function clientCompletenessCounts({ db, requiredTypes = REQUIRED_DOCUMENT_TYPES, scope = {} }) {
+    return summarizeCompleteness(await loadClientCompleteness({ db, where: scope, requiredTypes }), requiredTypes);
 }
 
 // ---------------------------------------------------------------- queries
@@ -252,8 +259,9 @@ function page(rows, params) {
 
 // Clients directory. The summary counts the clients matching the search,
 // before the completion and missing-type filters.
-export async function listClients({ db, params, requiredTypes = REQUIRED_DOCUMENT_TYPES }) {
-    const where = params.search ? clientSearchWhere(params.search) : {};
+// scope: the signed-in user's candidates (candidateAccess.js); applied in the query.
+export async function listClients({ db, params, scope = {}, requiredTypes = REQUIRED_DOCUMENT_TYPES }) {
+    const where = withScope(params.search ? clientSearchWhere(params.search) : {}, scope);
     const rows = await loadClientCompleteness({ db, where, requiredTypes });
     const filtered = rows
         .filter((row) => !params.completion || row.completion === params.completion)
@@ -269,8 +277,8 @@ export async function listClients({ db, params, requiredTypes = REQUIRED_DOCUMEN
 
 // Missing-document view: incomplete clients, most documents missing first.
 // With documentType, only clients that have not sent that type at all.
-export async function listMissingDocuments({ db, params, requiredTypes = REQUIRED_DOCUMENT_TYPES }) {
-    const where = params.search ? clientSearchWhere(params.search) : {};
+export async function listMissingDocuments({ db, params, scope = {}, requiredTypes = REQUIRED_DOCUMENT_TYPES }) {
+    const where = withScope(params.search ? clientSearchWhere(params.search) : {}, scope);
     const rows = await loadClientCompleteness({ db, where, requiredTypes });
     const incomplete = rows
         .filter((row) => row.completion === COMPLETION.INCOMPLETE)

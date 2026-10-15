@@ -275,6 +275,38 @@ Every role that manages candidates can edit the form, REGISTRATION_DESK included
 
 ---
 
+### 4.5 Work Allocation and candidate access
+
+Candidates are allocated to Analysts on the **Work Allocation** page (`/admin/work-allocation`, ADMIN and MANAGER only). Who may see and change which candidates:
+
+| Role | Candidates | Work Allocation |
+|---|---|---|
+| ADMIN, MANAGER | all; can edit all | yes |
+| REGISTRATION_DESK | all; can edit all; registers new candidates | no (page hidden, API 403) |
+| ANALYST | **only the candidates allocated to them**; can edit only those | no (page hidden, API 403) |
+
+**Storage.** `public.candidate_allocation` (migration `20261014120000_candidate_allocation`, additive): one row per allocated candidate (`passport_id` primary key, `analyst_id` → `"user"`, `assigned_date`). No row means unallocated, so every existing candidate started unallocated. It is a separate table, not a column on `candidate`, so allocating never updates the candidate row (no Google Sheet sync trigger, no `updated_date` change). History is in Audit Logs.
+
+**Allocation rules** (`src/services/workAllocationService.js`):
+
+- Only an `ACTIVE` user with role `ANALYST` can receive candidates. Others are refused with 409 (`ANALYST_INACTIVE`, `NOT_AN_ANALYST`, `ANALYST_NOT_FOUND`).
+- One request assigns the whole selection, in one transaction, all or nothing. A missing candidate (`CANDIDATE_NOT_AVAILABLE`) or any invalid Analyst changes nothing.
+- **Distribution:** `allocations: [{ analystId, count }]`. The counts must be whole numbers ≥ 0, with no Analyst twice, and must add up exactly to the number of candidates (400 `COUNT_MISMATCH` otherwise). At most 500 candidates per request.
+- **Order:** the candidates are taken newest registered first (passport ID for ties: the list order, whatever order they were ticked in) and handed out in the order of `allocations`.
+- **Reassignment** of already allocated candidates needs `reassign: true` (else 409 `ALREADY_ALLOCATED`, nothing changed). A second manager working from a stale page therefore never silently overwrites the first. Candidates are locked (`FOR UPDATE`) during the change, and target Analysts `FOR SHARE`.
+- **Unassignment** needs `confirm: true` and returns candidates to Unallocated.
+- New candidates are unallocated. **Analysts cannot register candidates** (403, and the Add candidate / Register Candidate links are hidden), because the new candidate would not be theirs.
+- Audit: `ASSIGN_CANDIDATE`, `REASSIGN_CANDIDATE`, `UNASSIGN_CANDIDATE` (Candidate category). Each entry records the candidate, the acting user, and the previous and new Analyst's ID and name as JSON. A candidate given to the Analyst it already has is not audited.
+
+**Analyst scoping** (`src/services/candidateAccess.js`) is applied on the server on every request, so a reassignment or role change applies to the very next one:
+
+- `candidateScope(user)`: `{}` for ADMIN, MANAGER and REGISTRATION_DESK; for an Analyst, only candidates whose allocation is theirs; for any other role, no candidate (fails closed).
+- **Lists:** the Candidates list (search and totals included: the scope is in the database query before paging), Need Attention, Clients, Documents, Missing Documents and Police Workflow.
+- **Single candidate:** every `/candidates/:passportId/...` route resolves the passport ID *within* the scope. Another Analyst's or an unallocated candidate answers **404 "Candidate not found"**, exactly like one that does not exist, before anything is read or changed. This covers details, update, stages, document upload target, finalize and remove, call logs (Candidate History), adding a call, flagging a follow-up, and additional details. `GET /clients/:passportId` and completing a follow-up follow the same rule.
+- **Review Queue → assign client:** an Analyst can only link a waiting file to one of their own candidates; any other passport ID gets the same 409 `CLIENT_NOT_FOUND` as an unknown one.
+- **Review items (detail, file preview, every action) and deleting a waiting file:** an item linked to a candidate outside the Analyst's scope answers **404 "Review item not found"** before anything is shown or changed (`router.param("reviewId")`, and the same check on `DELETE /temporary-documents/:id`). A waiting file not yet linked to any candidate stays open to every Analyst, because that is the review work.
+- **Review Queue list, Overview and Daily Report:** scoped in the database queries (`linkedScope`, `submissionScope`, `auditScope` in `candidateAccess.js`), not in the browser. An Analyst's Review Queue (list and summary counts), Overview (KPIs, recent files, review preview, police and completeness counts) and Daily Report (daily, Summary, incomplete-candidates drill-down, monthly) cover **their own candidates**, plus waiting files **not yet linked to any candidate** (that is the review work). Once a file is linked it follows the candidate's allocation. Audit-based counts (admin actions, uploads, removals) count the entries about their candidates. ADMIN, MANAGER and REGISTRATION_DESK are unchanged (global); Summary by Roles stays ADMIN and MANAGER only. Reassignment applies on the next request.
+
 ## 5. Bug-Fix Release (2026-10-01)
 
 The following issues were fixed in a single release. The stage order, completion logic, and overall UI layout were not changed.

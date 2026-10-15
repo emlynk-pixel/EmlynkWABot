@@ -25,6 +25,7 @@ import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { SettingsPage, SheetSyncSettings } from "./pages/SettingsPage";
 import { SetupPasswordPage } from "./pages/SetupPasswordPage";
+import { WorkAllocationPage } from "./pages/WorkAllocationPage";
 
 // The Candidates screens keep their original look; .ui-classic (index.css)
 // restores the previous design tokens inside them, and the body class the
@@ -82,6 +83,7 @@ export function AppRoutes() {
                 <Route path="missing-documents" element={<MissingDocumentsPage />} />
                 <Route path="police" element={<PoliceWorkflowPage />} />
                 <Route path="follow-ups" element={<PriorityFollowUpsPage />} />
+                <Route path="work-allocation" element={<WorkAllocationPage />} />
                 <Route path="reports/daily" element={<DailyReportPage />} />
                 {/* Invite User and Change Roles are Settings tabs; the old URLs
                     (bookmarks, links) open the matching tab. */}

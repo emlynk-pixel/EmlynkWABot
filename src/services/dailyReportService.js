@@ -32,6 +32,7 @@ import { businessDayRange } from "../utils/businessDay.js";
 import { clientName } from "../utils/clientName.js";
 import { ALL_ROLES } from "../middleware/requireRole.js";
 import { getDailyReport } from "./adminReportService.js";
+import { andWhere, auditScope, linkedScope } from "./candidateAccess.js";
 import { DOCUMENT_TYPES } from "./documentClassificationService.js";
 import { CANDIDATE_DOCUMENT_TYPES, CANDIDATE_STAGES, REQUIRED_SUBMISSION_DOCUMENTS, automaticStageMissing, stageList } from "./candidateService.js";
 
@@ -126,8 +127,10 @@ const REGISTRATION_ACTION = "CREATE_CANDIDATE";
 
 // Current snapshot of every candidate: one query with their stages and
 // required documents, evaluated with the candidate page's stage rules.
-async function readProgress(db) {
+// scope: the signed-in user's candidates (candidateAccess.js), {} for every candidate.
+async function readProgress(db, scope = {}) {
     return db.candidate.findMany({
+        ...(Object.keys(scope).length ? { where: scope } : {}),
         select: { ...CANDIDATE_FIELDS, createdDate: true, ...PROGRESS_FIELDS },
         orderBy: [{ createdDate: "desc" }, { passportId: "asc" }],
     });
@@ -160,8 +163,8 @@ function incompleteSummary(candidates, now) {
 
 // GET /api/admin/reports/daily/incomplete?stage=&page= : the candidates whose
 // stage is incomplete now, with the reasons (current snapshot), paged.
-export async function getIncompleteCandidates({ db, stage, page, pageSize = INCOMPLETE_PAGE_SIZE, now = new Date() }) {
-    const candidates = await readProgress(db);
+export async function getIncompleteCandidates({ db, stage, page, pageSize = INCOMPLETE_PAGE_SIZE, now = new Date(), scope = {} }) {
+    const candidates = await readProgress(db, scope);
     const rows = [];
     for (const candidate of candidates) {
         const found = incompleteStages(candidate).find((s) => s.stage === stage);
@@ -188,24 +191,30 @@ const callView = (row) => ({
 });
 
 // GET /api/admin/reports/daily/summary?date=YYYY-MM-DD
-export async function getDailySummary({ db, date, now = new Date() }) {
+// scope: the signed-in user's candidates (candidateAccess.js candidateScope), {}
+// for ADMIN, MANAGER and REGISTRATION_DESK. For an Analyst every list and count
+// is about their own candidates (calls, uploads, registrations, completions).
+export async function getDailySummary({ db, date, now = new Date(), scope = {} }) {
     const { start, end } = businessDayRange(date);
     const inDay = { gte: start, lt: end };
-    const finalWhere = { stage: "FINALIZING_JOB", completed: true, completedAt: inDay };
+    const linked = linkedScope(scope);
+    const audit = await auditScope(db, scope);
+    const finalWhere = andWhere({ stage: "FINALIZING_JOB", completed: true, completedAt: inDay }, linked);
+    const callWhere = andWhere({ createdDate: inDay }, linked);
 
-    const registeredWhere = { createdDate: inDay };
+    const registeredWhere = andWhere({ createdDate: inDay }, scope);
     const [base, calls, callTotal, uploadGroups, finalized, finalizedTotal, visaCompleted, candidates, registered, registeredTotal] = await Promise.all([
         // WhatsApp files received that day, their processing outcomes and
         // types; admin actions; police status (current).
-        getDailyReport({ db, date, now }),
+        getDailyReport({ db, date, now, scope }),
         db.candidateCallLog.findMany({
-            where: { createdDate: inDay },
+            where: callWhere,
             select: { callLogId: true, createdDate: true, passportId: true, admin: { select: { name: true, role: true } }, user: { select: { firstName: true, otherName: true } } },
             orderBy: [{ createdDate: "desc" }, { callLogId: "asc" }],
             take: DAILY_LIST_LIMIT,
         }),
-        db.candidateCallLog.count({ where: { createdDate: inDay } }),
-        db.auditLog.groupBy({ by: ["documentType"], where: { action: UPLOAD_ACTION, createdDate: inDay }, _count: { _all: true } }),
+        db.candidateCallLog.count({ where: callWhere }),
+        db.auditLog.groupBy({ by: ["documentType"], where: andWhere({ action: UPLOAD_ACTION, createdDate: inDay }, audit), _count: { _all: true } }),
         db.candidateStage.findMany({
             where: finalWhere,
             select: { completedAt: true, user: { select: { ...CANDIDATE_FIELDS, ...PROGRESS_FIELDS } } },
@@ -213,8 +222,8 @@ export async function getDailySummary({ db, date, now = new Date() }) {
             take: DAILY_LIST_LIMIT,
         }),
         db.candidateStage.count({ where: finalWhere }),
-        db.candidateStage.count({ where: { stage: "VISA_APPROVAL", completed: true, completedAt: inDay } }),
-        readProgress(db),
+        db.candidateStage.count({ where: andWhere({ stage: "VISA_APPROVAL", completed: true, completedAt: inDay }, linked) }),
+        readProgress(db, scope),
         // Candidates registered that day (by their record's creation time),
         // with their stages and how many documents they have now.
         db.candidate.findMany({

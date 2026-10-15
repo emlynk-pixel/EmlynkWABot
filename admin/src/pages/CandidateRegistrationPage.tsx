@@ -14,7 +14,7 @@ import {
     type CandidateDocumentType,
     type FailedUpload,
 } from "../api/candidates";
-import { canManageCandidates, useAuth } from "../auth/AuthProvider";
+import { canRegisterCandidates, useAuth } from "../auth/AuthProvider";
 import { CandidateFields, detailsFrom, emptyDetails, Field, textAreaControl, validateDetails } from "../components/candidate/CandidateFields";
 import { DocumentRow, DOCUMENT_ACCEPT, VIDEO_ACCEPT } from "../components/candidate/DocumentRow";
 import { DialogError, primaryButton, secondaryButton } from "../components/Dialog";
@@ -76,8 +76,8 @@ export function CandidateRegistrationPage() {
     // the same ID is fetched once.
     const pending = useRef<{ passportId: string; promise: Promise<CandidateDetails | null> } | null>(null);
 
-    if (!canManageCandidates(user)) {
-        return <Card><EmptyState title="Candidate registration needs a staff account with access to Candidates." /></Card>;
+    if (!canRegisterCandidates(user)) {
+        return <Card><EmptyState title="Candidate registration is done by the Registration Desk, a Manager or an Admin. New candidates are then allocated to Analysts." /></Card>;
     }
 
     const existing = lookup.status === "found" ? lookup.details : null;

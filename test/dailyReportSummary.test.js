@@ -275,7 +275,8 @@ describe("API and permissions", () => {
         for (const role of ["ADMIN", "MANAGER", "ANALYST"]) {
             const { status, body } = await withApi(role, (get) => get(`/reports/daily/summary?date=${DAY}`));
             assert.equal(status, 200, role);
-            assert.equal(body.summary.callsTaken, 4);
+            // An ANALYST sees their own candidates only (none are allocated to this one); see workAllocation.test.js.
+            assert.equal(body.summary.callsTaken, role === "ANALYST" ? 0 : 4, role);
         }
         assert.equal((await withApi("REGISTRATION_DESK", (get) => get(`/reports/daily/summary?date=${DAY}`))).status, 403);
         assert.equal((await withApi("ADMIN", (get) => get("/reports/daily/summary?date=2999-01-01"))).status, 400);

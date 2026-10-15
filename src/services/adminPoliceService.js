@@ -37,9 +37,10 @@ export function countdownFromDocuments(documents, pendingSlips, today) {
 }
 
 // Every client's police status. Three queries whatever the number of clients.
-export async function loadPoliceStatuses({ db, today }) {
+// scope: the signed-in user's candidates (candidateAccess.js), {} for every client.
+export async function loadPoliceStatuses({ db, today, scope = {} }) {
     const [users, documents, pending] = await Promise.all([
-        db.candidate.findMany({ select: clientSelect, orderBy: [{ passportId: "asc" }] }),
+        db.candidate.findMany({ ...(Object.keys(scope).length ? { where: scope } : {}), select: clientSelect, orderBy: [{ passportId: "asc" }] }),
         db.document.findMany({
             // VERIFIED and REVIEW_REQUIRED slips/reports both count towards the
             // countdown (a REVIEW_REQUIRED slip's date counts too, see below);
@@ -71,8 +72,8 @@ export function summarizeStatuses(rows) {
     return { total: rows.length, byStatus };
 }
 
-export async function policeDueCounts({ db, today }) {
-    const { byStatus } = summarizeStatuses(await loadPoliceStatuses({ db, today }));
+export async function policeDueCounts({ db, today, scope = {} }) {
+    const { byStatus } = summarizeStatuses(await loadPoliceStatuses({ db, today, scope }));
     return {
         dueSoon: byStatus[POLICE_STATUS.DUE_SOON] || 0,
         dueToday: byStatus[POLICE_STATUS.DUE_TODAY] || 0,
@@ -146,10 +147,13 @@ export function matchesPoliceSearch(row, search) {
 // GET /api/admin/police: every client's status, filtered, most urgent first.
 // The summary counts the clients in scope (passport ID / search), before
 // the status filter.
-export async function listPoliceWorkflow({ db, params, now = new Date() }) {
+// allowedPassportIds: null for every candidate, else the set the signed-in
+// user may see (candidateAccess.js accessiblePassportIds).
+export async function listPoliceWorkflow({ db, params, allowedPassportIds = null, now = new Date() }) {
     const today = businessDateOf(now);
     const all = await loadPoliceStatuses({ db, today });
     const scoped = all
+        .filter((row) => !allowedPassportIds || allowedPassportIds.has(row.client.passportId))
         .filter((row) => !params.passportId || row.client.passportId === params.passportId)
         .filter((row) => !params.search || matchesPoliceSearch(row, params.search));
     const filtered = (params.status ? scoped.filter((row) => row.status === params.status) : scoped).sort(compareRows);
