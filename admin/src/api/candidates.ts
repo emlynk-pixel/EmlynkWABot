@@ -329,3 +329,27 @@ export function getAdditionalDetails(token: string, passportId: string, signal?:
 export function saveAdditionalDetails(token: string, passportId: string, body: AdditionalDetails, expectedUpdatedDate: string | null): Promise<AdditionalDetailsView> {
     return apiRequest<AdditionalDetailsView>(`${base(passportId)}/additional-details`, { method: "PUT", token, body: { ...body, expectedUpdatedDate } });
 }
+
+// Candidate Form share link (src/services/candidateFormShareService.js).
+// state: LOCKED (no active link) | OPEN (an active link) | SUBMITTED.
+export type FormShareState = "LOCKED" | "OPEN" | "SUBMITTED";
+export type FormShareStatus = {
+    passportId: string;
+    state: FormShareState;
+    submittedAt: string | null;
+    link: { linkId: string; createdAt: string; createdByName: string | null; expiresAt: string; lockedUntil: string | null } | null;
+};
+// The URL carries the link secret: it is returned only here, once.
+export type CreatedFormShareLink = { url: string; linkId: string; expiresAt: string; status: FormShareStatus };
+
+export function getFormShareStatus(token: string, passportId: string, signal?: AbortSignal): Promise<FormShareStatus> {
+    return apiRequest<FormShareStatus>(`${base(passportId)}/form-share`, { token, signal });
+}
+
+export function createFormShareLink(token: string, passportId: string): Promise<CreatedFormShareLink> {
+    return apiRequest<CreatedFormShareLink>(`${base(passportId)}/form-share`, { method: "POST", token, body: {} });
+}
+
+export function revokeFormShareLink(token: string, passportId: string): Promise<FormShareStatus> {
+    return apiRequest<FormShareStatus>(`${base(passportId)}/form-share/revoke`, { method: "POST", token, body: {} });
+}

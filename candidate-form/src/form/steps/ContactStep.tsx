@@ -16,7 +16,7 @@ export function ContactStep(props: StepProps & { whatsappNumber: string }) {
             <TextInput {...bind(props, "contact.district")} label={t("f.district")} required uppercase maxLength={MAX_LENGTH.text} />
             <TextInput {...bind(props, "contact.dsDivision")} label={t("f.dsDivision")} required uppercase maxLength={MAX_LENGTH.text} />
             <TextInput {...bind(props, "contact.gnDivision")} label={t("f.gnDivision")} uppercase maxLength={MAX_LENGTH.text} />
-            <VerifiedValue id="contact-whatsapp" label={t("f.whatsapp")} value={props.whatsappNumber} />
+            <VerifiedValue id="contact-whatsapp" label={t("f.whatsapp")} value={props.whatsappNumber || "—"} />
             <TextInput {...bind(props, "contact.alternativePhone")} label={t("f.alternativePhone")} hint={t("hint.phone")} type="tel" inputMode="tel" maxLength={20} />
             <div className="span-2">
                 <TextInput {...bind(props, "contact.email")} label={t("f.email")} hint={t("hint.email")} required type="email" inputMode="email" maxLength={254} />

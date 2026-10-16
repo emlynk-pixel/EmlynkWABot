@@ -1,8 +1,11 @@
 // Shapes of the public Candidate Extra Details API (/api/public/candidate-details).
 
+// The share link's secret (from the URL fragment) + the candidate's own
+// Passport Number and NIC.
 export type VerifyRequest = {
+    linkSecret: string;
     passportNumber: string;
-    whatsappNumber: string;
+    nic: string;
 };
 
 // A successful verification returns only the short-lived token and its expiry.
@@ -20,27 +23,31 @@ export type ApiErrorBody = {
 };
 
 
-// The Candidate Form as it would be sent once the secure save exists
-// (Task 3, not implemented on the server yet; the server side will confirm
-// this shape). Blanks are null; choices are English codes. It never holds
-// the Passport Number or WhatsApp Number: the server knows the candidate
-// from the token. Nothing staff-only (register number, stages, allocation,
-// jobs, documents) is part of it.
+// The Candidate Form's answers, as sent to POST /submit and returned
+// (as the prefill) by POST /form. Blanks are null; choices are English codes.
+// It never holds the Passport Number or the NIC: those are the verified
+// identity, taken from the candidate's record by the server. Nothing
+// staff-only (register number, stages, allocation, jobs, documents).
 type Nullable<T> = { [K in keyof T]: string | null };
+type Person = Nullable<{ name: string; surname: string; passportNumber: string; birthDate: string }>;
 
 export type CandidateFormPayload = {
-    basic: Nullable<{ fullName: string; surname: string; otherNames: string; nic: string; sex: string; civilStatus: string; birthDate: string; birthPlace: string }>;
+    basic: Nullable<{ fullName: string; surname: string; otherNames: string; sex: string; civilStatus: string; birthDate: string; birthPlace: string }>;
     contact: Nullable<{ address: string; city: string; district: string; dsDivision: string; gnDivision: string; alternativePhone: string; email: string }>;
     passport: Nullable<{ issueDate: string; expiryDate: string }>;
     qualifications: Nullable<{ jobCategory: string; jobCategoryOther: string; experience: string; otherSkills1: string; otherSkills2: string; englishKnowledge: string }>;
     measurements: Nullable<{ shirtSize: string; waistSize: string; shoeSize: string }>;
-    family: {
-        father: Nullable<{ name: string; surname: string; passportNumber: string; birthDate: string }>;
-        mother: Nullable<{ name: string; surname: string; passportNumber: string; birthDate: string }>;
-        spouse: Nullable<{ name: string; surname: string; passportNumber: string; birthDate: string }>;
-        child1: string | null;
-        child2: string | null;
-        child3: string | null;
-    };
+    family: { father: Person; mother: Person; spouse: Person; child1: string | null; child2: string | null; child3: string | null };
     guardian: Nullable<{ name: string; relationship: string; nic: string; birthDate: string; phone: string; address: string }>;
 };
+
+// POST /form: the verified identity (read-only), the prefill from the
+// candidate's existing records, and which answers were prefilled.
+export type FormLoadResponse = {
+    identity: { passportNumber: string; nic: string; whatsappNumber: string | null };
+    answers: CandidateFormPayload;
+    prefilled: string[];
+    expiresAt: string;
+};
+
+export type SubmitResponse = { submittedAt: string };

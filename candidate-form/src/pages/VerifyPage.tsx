@@ -5,24 +5,27 @@ import type { MessageKey } from "../i18n/translations";
 import { useLanguage, type Message } from "../i18n/useLanguage";
 import { setSession } from "../session/tokenStore";
 
-// Step 1: Passport Number + WhatsApp Number. The same rules as the server
-// (which stays the authority): passport letters and digits (spaces and
-// hyphens ignored), at most 20; WhatsApp "+" then 8 to 15 digits.
+// Step 1: the candidate's own Passport Number + NIC, checked together with
+// the share link they opened. The same input rules as the server (which stays
+// the authority): passport letters and digits (spaces and hyphens ignored),
+// at most 20; NIC 9 digits + V/X, or 12 digits (spaces ignored).
 const PASSPORT_PATTERN = /^[A-Za-z0-9]{1,20}$/;
-const WHATSAPP_PATTERN = /^\+[1-9]\d{7,14}$/;
+const NIC_PATTERN = /^(\d{9}[VX]|\d{12})$/;
 
-type FieldErrors = { passportNumber?: Message; whatsappNumber?: Message };
+type FieldErrors = { passportNumber?: Message; nic?: Message };
 
-function validate(passportNumber: string, whatsappNumber: string): FieldErrors {
+const canonicalNic = (value: string) => value.trim().replace(/\s/g, "").toUpperCase();
+
+function validate(passportNumber: string, nic: string): FieldErrors {
     const errors: FieldErrors = {};
     if (!PASSPORT_PATTERN.test(passportNumber.trim().replace(/[\s-]/g, ""))) errors.passportNumber = { key: "verify.passportInvalid" };
-    if (!WHATSAPP_PATTERN.test(whatsappNumber.trim())) errors.whatsappNumber = { key: "verify.whatsappInvalid" };
+    if (!NIC_PATTERN.test(canonicalNic(nic))) errors.nic = { key: "verify.nicInvalid" };
     return errors;
 }
 
 // A fixed message for every failure, in the current language; the server's
-// own text is never shown.
-const FAILURE_MESSAGE: Record<VerifyFailure, MessageKey> = {
+// own text is never shown. ("submitted" is handled by the page above.)
+const FAILURE_MESSAGE: Record<Exclude<VerifyFailure, "submitted">, MessageKey> = {
     failed: "verify.failed",
     invalid: "verify.invalidInput",
     rateLimited: "verify.rateLimited",
@@ -31,37 +34,42 @@ const FAILURE_MESSAGE: Record<VerifyFailure, MessageKey> = {
     generic: "error.generic",
 };
 
-export function VerifyPage({ onVerified, notice }: { onVerified: (expiresAt: string) => void; notice?: Message }) {
+export function VerifyPage({ linkSecret, onVerified, onAlreadySubmitted, notice }: {
+    linkSecret: string;
+    onVerified: (expiresAt: string) => void;
+    onAlreadySubmitted: () => void;
+    notice?: Message;
+}) {
     const { t } = useLanguage();
     const [passportNumber, setPassportNumber] = useState("");
-    const [whatsappNumber, setWhatsappNumber] = useState("");
+    const [nic, setNic] = useState("");
     const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
-    const [failure, setFailure] = useState<VerifyFailure | null>(null);
+    const [failure, setFailure] = useState<Exclude<VerifyFailure, "submitted"> | null>(null);
     const [busy, setBusy] = useState(false);
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
         if (busy) return;
-        const errors = validate(passportNumber, whatsappNumber);
+        const errors = validate(passportNumber, nic);
         setFieldErrors(errors);
         setFailure(null);
-        if (errors.passportNumber || errors.whatsappNumber) return;
+        if (errors.passportNumber || errors.nic) return;
 
         setBusy(true);
         try {
-            const result = await verifyCandidate({ passportNumber: passportNumber.trim(), whatsappNumber: whatsappNumber.trim() });
-            // The verified identity, as the server compares it: the passport in
-            // capitals without spaces or hyphens; the WhatsApp number as typed.
-            setSession(result.token, result.expiresAt, {
-                passportNumber: passportNumber.trim().replace(/[\s-]/g, "").toUpperCase(),
-                whatsappNumber: whatsappNumber.trim(),
-            });
+            const result = await verifyCandidate({ linkSecret, passportNumber: passportNumber.trim(), nic: nic.trim() });
+            setSession(result.token, result.expiresAt);
             // Nothing typed stays on screen after a successful verification.
             setPassportNumber("");
-            setWhatsappNumber("");
+            setNic("");
             onVerified(result.expiresAt);
         } catch (error) {
-            setFailure(verifyFailureOf(error));
+            const kind = verifyFailureOf(error);
+            if (kind === "submitted") {
+                onAlreadySubmitted();
+                return;
+            }
+            setFailure(kind);
         } finally {
             setBusy(false);
         }
@@ -85,17 +93,16 @@ export function VerifyPage({ onVerified, notice }: { onVerified: (expiresAt: str
                 uppercase
             />
             <TextInput
-                id="whatsappNumber"
-                label={t("verify.whatsapp")}
-                hint={t("verify.whatsappHint")}
+                id="nic"
+                label={t("verify.nic")}
+                hint={t("verify.nicHint")}
                 required
-                value={whatsappNumber}
-                onChange={setWhatsappNumber}
-                error={fieldErrors.whatsappNumber}
+                value={nic}
+                onChange={setNic}
+                error={fieldErrors.nic}
                 disabled={busy}
-                inputMode="tel"
-                placeholder="+94771234567"
                 maxLength={20}
+                uppercase
             />
             {failure && <p className="form-error" role="alert"><span aria-hidden="true">! </span>{t(FAILURE_MESSAGE[failure])}</p>}
             <button type="submit" className="primary" disabled={busy}>{busy ? t("verify.submitting") : t("verify.submit")}</button>

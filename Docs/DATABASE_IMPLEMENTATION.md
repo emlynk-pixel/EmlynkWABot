@@ -214,6 +214,25 @@ All core application tables reside in the `public` schema.
 - **Security**: RLS enabled, all privileges revoked from `anon` and `authenticated`.
 - **Not mirrored** to the Google Sheet (no change-capture trigger).
 
+### 2.13 `public.candidate_form_link`
+- **Purpose**: Candidate Form share links (Admin **Share Form**). One row per link ever created; at most one active per candidate (enforced by the service: a new link revokes the old one in the same transaction).
+- **Columns**: `link_id` (`UUID`, PK), `kind` (`TEXT`, default `SINGLE`, CHECK `SINGLE` only; room for group links later), `passport_id` (FK to `candidate`, required for `SINGLE`), `token_hash` (`CHAR(64)`, unique, lowercase hex SHA-256 of the secret; the secret itself is never stored), `created_by` (FK `"user"`), `created_at`, `expires_at` (3 days), `revoked_at` / `revoked_by` (both or neither), `failed_attempts` (≥ 0), `locked_until`, `last_verified_at`.
+
+### 2.14 `public.candidate_form_access`
+- **Purpose**: The lock for one candidate's form. PK `passport_id`.
+- **Columns**: `status` (`LOCKED`, `UNLOCKED`, `SUBMITTED`), `version` (bumped on every link change; form sessions carry it), `unlocked_at` / `unlocked_by` / `unlocked_via_link_id`, `submitted_at` / `submitted_via_link_id`, `submit_key` (the idempotency key of the submission), `updated_at`.
+- **Rules**: CHECK `SUBMITTED` exactly when `submitted_at` is set. Trigger `candidate_form_access_submitted_is_final`: a `SUBMITTED` row cannot change status or submission fields.
+
+### 2.15 `public.candidate_form_prefill_snapshot`
+- **Purpose**: What the form showed as prefill, captured once on the candidate's first load. PK `passport_id`.
+- **Columns**: the same answer columns as 2.16, plus `nic`; `captured_at`, `captured_via_link_id`. Values immutable (trigger `candidate_form_values_are_final`).
+
+### 2.16 `public.candidate_form_response`
+- **Purpose**: The candidate's submitted answers, once. PK `passport_id`. **Never** merged automatically into `candidate` or `candidate_additional_details`.
+- **Columns** (all nullable, typed): `full_name`, `surname`, `other_names`, `nic` (copied from the record, not an answer), `sex` (`MALE`/`FEMALE`/`OTHER`), `civil_status` (`SINGLE`/`MARRIED`/`DIVORCED`/`WIDOWED`), `birth_date` (`DATE`), `birth_place`, `address`, `city`, `district`, `ds_division`, `gn_division`, `alternative_phone`, `email`, `passport_issue_date`, `passport_expiry_date`, `job_category`, `job_category_other`, `experience`, `other_skills_1`, `other_skills_2`, `english_knowledge`, `shirt_size`, `waist_size`, `shoe_size`, `father_/mother_/spouse_` `name`, `surname`, `passport_number`, `birth_date`, `child_1_name` … `child_3_name`, `guardian_name`, `guardian_relationship`, `guardian_nic`, `guardian_birth_date`, `guardian_phone`, `guardian_address`; `submitted_at`, `submitted_via_link_id`.
+- **Rules**: CHECKs on the code columns; values immutable by trigger (the cascading `passport_id` and the link IDs may still change).
+- **Security (2.13–2.16)**: RLS enabled, all privileges revoked from `anon` and `authenticated`. Not mirrored to the Google Sheet.
+
 ---
 
 ## 3. Candidate Table (`public.candidate`)
@@ -335,6 +354,11 @@ Migrations 6.1 and 6.2 are applied and active on the shared database.
 - Enables RLS and revokes all privileges from `anon` and `authenticated` (SEC-001), like every other application table.
 - Until it is applied, the Additional Details endpoints fail on that database (the table does not exist). The candidate page loads them with the candidate, so apply the migration **before** deploying this version of the admin app; everything else keeps working in the meantime.
 
+### 6.4 `20261017120000_candidate_form_share_and_response`
+- **Status**: not applied to any shared database yet (written 2026-10-16). Apply with `prisma migrate deploy` before deploying the Share Form.
+- Additive only: creates the four tables of §2.13–2.16, their checks, foreign keys and the two immutability triggers. No existing table changes.
+- Enables RLS and revokes all privileges from `anon` and `authenticated` on all four. After applying, check live privileges (ISS-013 in the Candidate Form issues log).
+
 ---
 
 ## 7. Foreign Keys and Relationships
@@ -351,6 +375,9 @@ Migrations 6.1 and 6.2 are applied and active on the shared database.
 | `public.call_log_follow_up.flagged_by` | `public."user".admin_id` | `call_log_follow_up_flagged_by_fkey` | `ON DELETE RESTRICT ON UPDATE CASCADE` |
 | `public.call_log_follow_up.completed_by` | `public."user".admin_id` | `call_log_follow_up_completed_by_fkey` | `ON DELETE RESTRICT ON UPDATE CASCADE` |
 | `public.candidate_additional_details.passport_id` (also its primary key) | `public.candidate.passport_id` | `candidate_additional_details_passport_id_fkey` | `ON DELETE CASCADE ON UPDATE CASCADE` |
+| `public.candidate_form_link.passport_id`, `candidate_form_access.passport_id`, `candidate_form_prefill_snapshot.passport_id`, `candidate_form_response.passport_id` | `public.candidate.passport_id` | `<table>_passport_id_fkey` | `ON DELETE CASCADE ON UPDATE CASCADE` |
+| `candidate_form_link.created_by` / `revoked_by`, `candidate_form_access.unlocked_by` | `public."user".admin_id` | | `ON DELETE RESTRICT` |
+| `candidate_form_access.unlocked_via_link_id` / `submitted_via_link_id`, `…_snapshot.captured_via_link_id`, `…_response.submitted_via_link_id` | `public.candidate_form_link.link_id` | | `ON DELETE SET NULL` |
 | `public.audit_logs.admin_id` | `public."user".admin_id` | `audit_logs_admin_id_fkey` | `ON DELETE RESTRICT` |
 | `public.temporary_data.passport_id` | `public.candidate.passport_id` | `temporary_data_passport_id_fkey` | `RESTRICT / CASCADE` |
 
@@ -381,7 +408,7 @@ CREATE TRIGGER "audit_logs_no_truncate"
 ```
 
 ### 8.2 Logged Event Types
-- **Candidate Lifecycle**: `CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `UPDATE_STAGE`, `CREATE_ADDITIONAL_DETAILS`, `UPDATE_ADDITIONAL_DETAILS` (only the changed fields, before and after; no row for a save that changes nothing).
+- **Candidate Lifecycle**: `CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `UPDATE_STAGE`, `CREATE_ADDITIONAL_DETAILS`, `UPDATE_ADDITIONAL_DETAILS` (only the changed fields, before and after; no row for a save that changes nothing), `CREATE_FORM_LINK`, `REVOKE_FORM_LINK` (link ID and expiry; never the link secret). A candidate's own submission has no staff actor and is recorded on `candidate_form_access` instead.
 - **Document Management**: `UPLOAD_DOCUMENT`, `REMOVE_DOCUMENT`, `REPLACE_VERIFIED`, `KEEP_AS_VERSION`, `DELETE_TEMPORARY_DOCUMENT`.
 - **Review Queue Actions**: `APPROVE`, `KEEP_PENDING`, `REMOVE_FROM_REVIEW`, `SET_DOCUMENT_TYPE`, `ASSIGN_CLIENT`, `SET_POLICE_DATE`, `RETRY_PROCESSING`.
 - **Staff User Lifecycle**: `INVITE_USER`, `REACTIVATE_USER`, `COMPLETE_INVITATION`, `UPDATE_USER_ROLE`, `DEACTIVATE_USER`.

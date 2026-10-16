@@ -1,17 +1,18 @@
-import { screen, within } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import { act, screen, within } from "@testing-library/react";
+import { describe, expect, test, vi } from "vitest";
+import { getSession } from "../session/tokenStore";
 import { emptyForm, toPayload } from "../form/model";
 import { JOB_CATEGORIES, ENGLISH_LEVELS } from "../form/options";
 import { toUpperEnglish } from "../form/uppercase";
 import { validateForm } from "../form/validation";
 import styles from "../styles.css?raw";
 import {
-    completeToReview, en, field, fillBasic, fillContact, fillGuardian, fillPassport, next, PASSPORT, queryField, setField, si, startsWith,
+    callsTo, completeToReview, en, field, NIC, fillBasic, fillContact, fillGuardian, fillPassport, next, PASSPORT, queryField, setField, si, startsWith,
     stepHeading, switchLanguage, verified, WHATSAPP, type User,
 } from "./helpers";
 
-// The Candidate Form: sections, fields, rules, review. Saving is Task 3, so
-// nothing here is ever sent after the verification.
+// The Candidate Form: prefill, sections, fields, rules, review and the one
+// submission. The server's own rules are in test/candidateFormShare.test.js.
 
 const goToStep = async (user: User, step: "contact" | "passport" | "family" | "guardian") => {
     fillBasic(step === "family" ? "MARRIED" : "SINGLE");
@@ -26,6 +27,28 @@ const goToStep = async (user: User, step: "contact" | "passport" | "family" | "g
     if (step === "family") return;
     await next(user);
 };
+
+describe("prefill and identity", () => {
+    test("PREFILL-001 answers from the candidate's record are filled in and marked 'From your record'; the rest is empty", async () => {
+        await verified();
+        expect(screen.getByText(en("form.prefilledBanner"))).toBeInTheDocument();
+        expect(field("f.surname")).toHaveValue("PERERA");
+        expect(field("f.otherNames")).toHaveValue("KAMAL");
+        expect(field("f.sex")).toHaveValue("MALE");
+        expect(field("f.surname")).toHaveAccessibleDescription(startsWith(en("form.prefilledNote")));
+        expect(field("f.fullName")).toHaveValue("");
+        expect(field("f.fullName")).not.toHaveAccessibleDescription(startsWith(en("form.prefilledNote")));
+    });
+
+    test("PREFILL-002 the NIC (like the Passport and WhatsApp numbers) is the verified identity, read-only", async () => {
+        const { user } = await verified();
+        const nic = field("f.nic");
+        expect(nic).toHaveValue(NIC);
+        expect(nic).toHaveAttribute("readonly");
+        await user.type(nic, "999");
+        expect(nic).toHaveValue(NIC);
+    });
+});
 
 describe("sections and fields", () => {
     test("FORM-NEW-001 every section and its fields are there, one section at a time", async () => {
@@ -164,7 +187,8 @@ describe("validation", () => {
         await next(user);
         expect(stepHeading("step.basic")).toBeInTheDocument();
         expect(screen.getByText(en("form.fixErrors"))).toBeInTheDocument();
-        expect(screen.getAllByText(en("v.required"))).toHaveLength(6);
+        // Full name, civil status and birth date (the prefill has the surname, other names and sex).
+        expect(screen.getAllByText(en("v.required"))).toHaveLength(3);
         expect(field("f.fullName")).toHaveAttribute("aria-invalid", "true");
         fillBasic();
         expect(screen.queryByText(en("v.required"))).toBeNull();
@@ -172,12 +196,10 @@ describe("validation", () => {
         expect(stepHeading("step.contact")).toBeInTheDocument();
     });
 
-    test("formats: NIC, email, phone, dates, passport expiry after issue", async () => {
+    test("formats: email, phone, dates, passport expiry after issue", async () => {
         const { user } = await verified();
-        setField("f.nic", "12345");
         setField("f.birthDate", "2999-01-01");
         await next(user);
-        expect(screen.getByText(en("v.nicInvalid"))).toBeInTheDocument();
         expect(screen.getByText(en("v.dateFuture"))).toBeInTheDocument();
         fillBasic();
         await next(user);
@@ -237,6 +259,7 @@ describe("review and save", () => {
         const card = (key: Parameters<typeof en>[0]) => screen.getByRole("region", { name: en(key) });
         expect(within(card("review.verifiedIdentity")).getByText(PASSPORT)).toBeInTheDocument();
         expect(within(card("review.verifiedIdentity")).getByText(WHATSAPP)).toBeInTheDocument();
+        expect(within(card("review.verifiedIdentity")).getByText(NIC)).toBeInTheDocument();
         expect(within(card("step.basic")).getByText("SHAMAL")).toBeInTheDocument();
         expect(within(card("step.basic")).getByText(en("sex.MALE"))).toBeInTheDocument();
         expect(within(card("step.basic")).getByText(en("civil.SINGLE"))).toBeInTheDocument();
@@ -251,15 +274,90 @@ describe("review and save", () => {
         expect(field("f.email")).toHaveValue("shamal@example.com");
     });
 
-    test("FORM-NEW-012 Save Details sends nothing and says saving is not connected yet", async () => {
+    test("FORM-NEW-012 / SUBMIT-001 Submit asks for confirmation first; 'Not yet' sends nothing", async () => {
         const { user, calls } = await verified();
         await completeToReview(user);
         await user.click(screen.getByRole("button", { name: en("review.save") }));
-        expect(screen.getByText(en("review.devNotice"))).toBeInTheDocument();
-        expect(screen.getByText(en("review.notSaved"))).toBeInTheDocument();
-        expect(calls).toHaveLength(1); // only the verification
-        await switchLanguage(user, "සිංහල");
-        expect(screen.getByText(si("review.devNotice"))).toBeInTheDocument();
+        const confirm = screen.getByRole("alertdialog", { name: en("review.confirmTitle") });
+        expect(confirm).toHaveAccessibleDescription(en("review.confirmText"));
+        await user.click(within(confirm).getByRole("button", { name: en("review.confirmCancel") }));
+        expect(screen.queryByRole("alertdialog")).toBeNull();
+        expect(callsTo(calls, "submit")).toHaveLength(0);
+    });
+
+    test("SUBMIT-002 confirming sends ONE request with the answers (never the identity), then thanks; the session ends", async () => {
+        let release: () => void = () => {};
+        const { user, calls } = await verified({}, {});
+        const real = globalThis.fetch;
+        vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+            if (String(url).endsWith("/submit")) await new Promise<void>((resolve) => { release = resolve; });
+            return real(url, init);
+        }));
+        await completeToReview(user, { civilStatus: "SINGLE" });
+        await user.click(screen.getByRole("button", { name: en("review.save") }));
+        await user.click(screen.getByRole("button", { name: en("review.confirmSubmit") }));
+        // While it is sending the button is locked, so a double click can't send twice.
+        const sending = screen.getByRole("button", { name: en("review.sending") });
+        expect(sending).toBeDisabled();
+        await user.click(sending);
+        await act(async () => release());
+        expect(await screen.findByRole("heading", { level: 1, name: en("submitted.title") })).toBeInTheDocument();
+        const submits = callsTo(calls, "submit");
+        expect(submits).toHaveLength(1);
+        const body = submits[0].body as { answers: Record<string, Record<string, unknown>>; idempotencyKey: string };
+        expect(body.idempotencyKey).toMatch(/^[A-Za-z0-9_-]{16,64}$/);
+        expect(body.answers.basic.fullName).toBe("SHAMAL");
+        expect(body.answers.family.spouse).toEqual({ name: null, surname: null, passportNumber: null, birthDate: null });
+        expect(JSON.stringify(body)).not.toMatch(new RegExp(`${PASSPORT}|94771234567|linkSecret|token`));
+        expect("nic" in body.answers.basic).toBe(false);
+        expect(getSession()).toBeNull();
+        expect(screen.queryByRole("button", { name: en("review.save") })).toBeNull();
+    });
+
+    test("SUBMIT-003 a failed send is said plainly, keeps the answers, and a retry sends the same submission key", async () => {
+        const { user, calls } = await verified({}, { submit: (n) => (n === 1 ? "network" : { status: 200, body: { submittedAt: new Date().toISOString() } }) });
+        await completeToReview(user);
+        await user.click(screen.getByRole("button", { name: en("review.save") }));
+        await user.click(screen.getByRole("button", { name: en("review.confirmSubmit") }));
+        expect(await screen.findByText(en("review.sendFailed"))).toBeInTheDocument();
+        expect(screen.queryByRole("heading", { level: 1, name: en("submitted.title") })).toBeNull();
+        await user.click(screen.getByRole("button", { name: `Edit ${en("step.basic")}` }));
+        expect(field("f.fullName")).toHaveValue("SHAMAL");
+        await user.click(screen.getByRole("button", { name: en("step.review") }));
+        await user.click(screen.getByRole("button", { name: en("review.tryAgain") }));
+        await user.click(screen.getByRole("button", { name: en("review.confirmSubmit") }));
+        expect(await screen.findByRole("heading", { level: 1, name: en("submitted.title") })).toBeInTheDocument();
+        const keys = callsTo(calls, "submit").map((c) => (c.body as { idempotencyKey: string }).idempotencyKey);
+        expect(keys).toHaveLength(2);
+        expect(keys[1]).toBe(keys[0]);
+    });
+
+    test("SUBMIT-004 already submitted (409): the neutral screen", async () => {
+        const { user } = await verified({}, { submit: { status: 409, body: { message: "x", code: "ALREADY_SUBMITTED" } } });
+        await completeToReview(user);
+        await user.click(screen.getByRole("button", { name: en("review.save") }));
+        await user.click(screen.getByRole("button", { name: en("review.confirmSubmit") }));
+        expect(await screen.findByRole("heading", { level: 1, name: en("submitted.alreadyTitle") })).toBeInTheDocument();
+    });
+
+    test("SUBMIT-005 the server's field problems are marked on the fields, in the current language", async () => {
+        const { user } = await verified({}, { submit: { status: 400, body: { message: "x", errors: [{ field: "contact.district", code: "invalid", message: "invalid" }] } } });
+        await completeToReview(user);
+        await user.click(screen.getByRole("button", { name: en("review.save") }));
+        await user.click(screen.getByRole("button", { name: en("review.confirmSubmit") }));
+        expect(await screen.findByText(en("review.problems"))).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: en("review.goTo").replace("{section}", en("step.contact")) }));
+        expect(field("f.district")).toHaveAccessibleDescription(new RegExp(en("v.invalidAnswer")));
+        setField("f.district", "gampaha");
+        expect(field("f.district")).not.toHaveAttribute("aria-invalid");
+    });
+
+    test("SUBMIT-006 an ended session (401) goes back to verification", async () => {
+        const { user } = await verified({}, { submit: { status: 401, body: { message: "x", code: "VERIFICATION_REQUIRED" } } });
+        await completeToReview(user);
+        await user.click(screen.getByRole("button", { name: en("review.save") }));
+        await user.click(screen.getByRole("button", { name: en("review.confirmSubmit") }));
+        expect(await screen.findByText(en("session.ended"))).toBeInTheDocument();
     });
 
     test("Save with missing answers lists the sections to fix, with links back", async () => {
@@ -270,9 +368,10 @@ describe("review and save", () => {
         await user.click(screen.getByRole("button", { name: en("step.review") }));
         await user.click(screen.getByRole("button", { name: en("review.save") }));
         expect(screen.getByText(en("review.problems"))).toBeInTheDocument();
+        expect(screen.queryByRole("alertdialog")).toBeNull();
         await user.click(screen.getByRole("button", { name: en("review.goTo").replace("{section}", en("step.guardian")) }));
         expect(field("f.guardianAddress")).toHaveAttribute("aria-invalid", "true");
-        expect(calls).toHaveLength(1);
+        expect(callsTo(calls, "submit")).toHaveLength(0);
     });
 });
 
@@ -310,13 +409,14 @@ describe("uppercase", () => {
         expect(field("f.alternativePhone")).toHaveValue("+94 77 123 4567");
     });
 
-    test("identifiers and names elsewhere are capitalised too: NIC, guardian, family", async () => {
+    test("identifiers and names elsewhere are capitalised too: family passports, the guardian's NIC", async () => {
         const { user } = await verified();
-        await user.type(field("f.nic"), "901234567v");
-        expect(field("f.nic")).toHaveValue("901234567V");
         await goToStep(user, "family");
         await user.type(field("f.fatherPassport"), "n7654321");
         expect(field("f.fatherPassport")).toHaveValue("N7654321");
+        await next(user);
+        await user.type(field("f.guardianNic"), "901234567v");
+        expect(field("f.guardianNic")).toHaveValue("901234567V");
     });
 });
 
@@ -331,7 +431,7 @@ describe("accessibility and layout", () => {
             if (step === 1) fillContact();
             await next(user);
         }
-        expect(screen.getByRole("progressbar")).toHaveAccessibleName(/^\d+ of 18 required answers completed$/);
+        expect(screen.getByRole("progressbar")).toHaveAccessibleName(/^\d+ of 17 required answers completed$/);
         expect(screen.getByRole("navigation", { name: en("form.sections") })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: en("step.passport") })).toHaveAttribute("aria-current", "step");
     });

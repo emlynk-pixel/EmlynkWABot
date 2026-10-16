@@ -4,7 +4,10 @@ import { rateLimit } from "express-rate-limit";
 import { isUsableTokenSecret, parseCandidateFormOrigin } from "../config/candidateForm.js";
 import { createPostgresRateLimitStore } from "../middleware/postgresRateLimitStore.js";
 import { issueCandidateFormToken, passportReference } from "../services/candidateFormTokenService.js";
-import { parseVerifyBody, VERIFY_FAILED_MESSAGE, verifyCandidateDetailsAccess } from "../services/candidateFormVerificationService.js";
+import { ALREADY_SUBMITTED_MESSAGE, parseVerifyBody, VERIFY_FAILED_MESSAGE, verifyFormLinkAccess } from "../services/candidateFormVerificationService.js";
+import { loadCandidateForm, parseSubmission, submitCandidateForm } from "../services/candidateFormDataService.js";
+import { CandidateError } from "../services/candidateService.js";
+import { createRequireCandidateFormToken } from "../middleware/requireCandidateFormToken.js";
 import { resolveDb } from "../utils/resolveClients.js";
 
 // Public API of the Candidate Extra Details form, mounted at
@@ -12,15 +15,20 @@ import { resolveDb } from "../utils/resolveClients.js";
 // JSON parser, and completely separate from /api/admin and /auth: no staff
 // middleware, no Supabase session, no req.user.
 //
-// Task 1: POST /verify only (Passport + WhatsApp -> short-lived candidate
-// token). Reading and saving the details come in Task 2 and will take the
-// candidate only from the token (middleware/requireCandidateFormToken.js).
+//   POST /verify   share-link secret + Passport + NIC -> short-lived candidate
+//                  token (Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md)
+//   POST /form     the candidate's identity (read-only) and the prefill
+//   POST /submit   the answers, once; then the form is locked for good
+// /form and /submit take the candidate ONLY from the token
+// (middleware/requireCandidateFormToken.js). Everything is POST, so CORS
+// grants exactly POST and OPTIONS.
 //
 // Controls (Docs/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md):
 //   - CORS for exactly CANDIDATE_FORM_ORIGIN; any other Origin gets 403 and
 //     no CORS grant. CORS is not authorization: requests without an Origin
 //     (curl, servers) are still subject to every check below.
-//   - 16 KB JSON body limit; only passportNumber and whatsappNumber accepted.
+//   - JSON body limits per route (16 KB; 64 KB for /submit, Sinhala text is
+//     three bytes a character); only the documented fields are accepted.
 //   - Strict input patterns before any lookup (no wildcard / SQL text reaches
 //     the database).
 //   - Its own rate limits in PostgreSQL (not the staff 1000 / 15 min limit):
@@ -28,7 +36,7 @@ import { resolveDb } from "../utils/resolveClients.js";
 //     by an HMAC of the passport, never the raw value).
 //   - One generic 401 for every verification failure; fixed messages for
 //     every other error; no candidate data in any response; never cached.
-//   - No raw passport or WhatsApp number in logs.
+//   - No raw passport, NIC, link secret or answer in logs.
 
 export const PUBLIC_CANDIDATE_DETAILS_PATH = "/api/public/candidate-details";
 
@@ -41,7 +49,8 @@ export const PUBLIC_VERIFY_LIMITS = Object.freeze({
 
 const RATE_LIMITED = Object.freeze({ message: "Too many attempts. Please wait a while and try again." });
 const NOT_AVAILABLE = Object.freeze({ message: "Verification is not available right now." });
-const INVALID_INPUT_MESSAGE = "Please enter a valid Passport Number and WhatsApp Number.";
+const INVALID_INPUT_MESSAGE = "Please enter a valid Passport Number and NIC Number.";
+const INVALID_ANSWERS_MESSAGE = "Some answers are missing or not valid.";
 
 function failedAttemptLimiter({ db, prefix, windowMs, limit, keyGenerator }) {
     return rateLimit({
@@ -103,12 +112,26 @@ export function createPublicCandidateDetailsRouter({
         next();
     });
     router.use(createPublicCors(allowedOrigin));
-    router.use(express.json({ limit: "16kb" }));
+    const smallJson = express.json({ limit: "16kb" });
+    const answersJson = express.json({ limit: "64kb" });
+    const requireSession = createRequireCandidateFormToken({ db, secret: tokenSecret, now });
+    const requireSubmitSession = createRequireCandidateFormToken({ db, secret: tokenSecret, now, allowSubmitted: true });
+    const notAvailable = (req, res, next) => (configured ? next() : res.status(503).json(NOT_AVAILABLE));
+    // A CandidateError becomes its fixed { message, code }.
+    const respond = (run) => async (req, res) => {
+        try {
+            return await run(req, res);
+        } catch (error) {
+            if (error instanceof CandidateError) return res.status(error.status).json({ message: error.message, code: error.code });
+            throw error;
+        }
+    };
 
     router.post(
         "/verify",
         // A missing secret fails closed before anything is counted or read.
-        (req, res, next) => (configured ? next() : res.status(503).json(NOT_AVAILABLE)),
+        notAvailable,
+        smallJson,
         verifyIpLimiter,
         (req, res, next) => {
             const parsed = parseVerifyBody(req.body);
@@ -120,18 +143,43 @@ export function createPublicCandidateDetailsRouter({
         },
         verifyPassportLimiter,
         async (req, res) => {
-            const { passportId, whatsappDigits, passportRef } = req.candidateFormVerify;
+            const { linkSecret, passportId, nic, passportRef } = req.candidateFormVerify;
             const client = await resolveDb(db);
-            const match = await verifyCandidateDetailsAccess({ db: client, passportId, whatsappDigits });
-            if (!match) {
-                // A keyed reference only: never the passport or the number.
+            const result = await verifyFormLinkAccess({ db: client, linkSecret, passportId, nic, now: now() });
+            if (result.outcome === "submitted") {
+                return res.status(409).json({ message: ALREADY_SUBMITTED_MESSAGE, code: "ALREADY_SUBMITTED" });
+            }
+            if (result.outcome !== "verified") {
+                // A keyed reference only: never the passport, the NIC or the link secret.
                 log.warn("Candidate form verification failed", { ref: passportRef.slice(0, 12) });
                 return res.status(401).json({ message: VERIFY_FAILED_MESSAGE, code: "VERIFICATION_FAILED" });
             }
-            const { token, expiresAt } = issueCandidateFormToken({ secret: tokenSecret, passportId: match.passportId, whatsappDigits: match.whatsappDigits, now: now() });
+            const { token, expiresAt } = issueCandidateFormToken({ secret: tokenSecret, passportId: result.passportId, linkId: result.linkId, version: result.version, now: now() });
             return res.json({ token, expiresAt });
         },
     );
+
+    // The form for the verified candidate: identity (read-only) and prefill.
+    router.post("/form", notAvailable, smallJson, requireSession, respond(async (req, res) => {
+        const { passportId, linkId, expiresAt } = req.candidateForm;
+        const client = await resolveDb(db);
+        const form = await loadCandidateForm({ db: client, passportId, linkId, now: now() });
+        return res.json({ ...form, expiresAt });
+    }));
+
+    // The answers, once. 409 after the form was submitted (by this request's
+    // twin, another device, or earlier).
+    router.post("/submit", notAvailable, answersJson, requireSubmitSession, respond(async (req, res) => {
+        const parsed = parseSubmission(req.body, { now: now() });
+        if (parsed.errors) {
+            // Field paths and codes only: never the submitted values.
+            return res.status(400).json({ message: INVALID_ANSWERS_MESSAGE, errors: parsed.errors.map(({ field, code }) => ({ field, code, message: code })) });
+        }
+        const { passportId, linkId, version } = req.candidateForm;
+        const client = await resolveDb(db);
+        const result = await submitCandidateForm({ db: client, passportId, linkId, version, values: parsed.values, idempotencyKey: parsed.idempotencyKey, now: now() });
+        return res.json(result);
+    }));
 
     router.use((req, res) => res.status(404).json({ message: "Not found" }));
 

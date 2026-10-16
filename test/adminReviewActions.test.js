@@ -579,6 +579,8 @@ describe("security and error handling", () => {
             "POST /candidates/:passportId/documents/:documentId/remove", // reason required, audited
             "POST /candidates/:passportId/documents/finalize", // JSON only: the file goes browser -> storage
             "POST /candidates/:passportId/documents/upload-target",
+            "POST /candidates/:passportId/form-share", // Candidate Form share link: create (replaces the old one), audited (candidateFormShare.test.js)
+            "POST /candidates/:passportId/form-share/revoke",
             "POST /documents/:documentId/police-date",
             "POST /follow-ups/:followUpId/complete", // the row is kept, audited
             "POST /review/:reviewId/approve",

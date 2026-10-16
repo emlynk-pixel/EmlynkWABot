@@ -68,6 +68,8 @@ import {
     parseUnassignBody,
     unassignCandidates,
 } from "../services/workAllocationService.js";
+import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
+import { parseCandidateFormOrigin } from "../config/candidateForm.js";
 import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
@@ -140,8 +142,12 @@ export function createAdminRouter({
     authAdmin,
     requireAdmin = createRequireActiveUser({ db, verifyAccessToken }),
     apiLimiter = createApiRateLimiter(),
+    // Where Candidate Form share links point (the public form's own origin;
+    // never taken from a request header). Unset: no link can be created.
+    candidateFormOrigin = process.env.CANDIDATE_FORM_ORIGIN,
 } = {}) {
     const router = express.Router();
+    const formOrigin = parseCandidateFormOrigin(candidateFormOrigin);
 
     router.use(apiLimiter);
 
@@ -652,6 +658,36 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await saveAdditionalDetails({
             db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user),
             values: parsed.values, expectedUpdatedDate: parsed.expectedUpdatedDate,
+        })));
+    });
+
+    // ---------------------------------------------------------------- Candidate Form share link
+    // (candidateFormShareService.js). The Candidates-area roles, within their
+    // candidate scope (an Analyst only for candidates allocated to them):
+    // status, create (returns the link ONCE; replaces any earlier link;
+    // unlocks the form) and revoke (locks the form again). Audited, without
+    // the link secret.
+    router.get("/candidates/:passportId/form-share", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getFormShareStatus({
+            db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user),
+        })));
+    });
+
+    router.post("/candidates/:passportId/form-share", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await createFormShareLink({
+            db: client, actor: req.user, formOrigin, passportId: await storedCandidateId(client, req.params.passportId, req.user),
+        })));
+    });
+
+    router.post("/candidates/:passportId/form-share/revoke", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await revokeFormShareLink({
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user),
         })));
     });
 

@@ -1,41 +1,49 @@
 import { safeEqual } from "./candidateFormTokenService.js";
-import { normalizePhoneNumber } from "../utils/phoneNumber.js";
+import { FORM_ACCESS_STATUS, FORM_LINK_LOCK_MS, FORM_LINK_MAX_FAILURES, hashLinkSecret, isLinkSecret } from "./candidateFormShareService.js";
 
-// Passport + WhatsApp verification for the Candidate Extra Details public
-// form (POST /api/public/candidate-details/verify).
+// Share link + Passport + NIC verification for the public Candidate Form
+// (POST /api/public/candidate-details/verify).
+// Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md.
 //
 // Strict input rules come FIRST, before any database lookup:
+//   - linkSecret: the 43-character base64url secret from the share link.
 //   - passportNumber: trimmed, spaces and hyphens removed, then letters and
-//     digits only, 1-20 characters (the same pattern the staff routes use
-//     before resolveCandidatePassportId). No prefix is required. Anything else
-//     (including % and _, which the case-insensitive lookup would treat as
-//     wildcards, and SQL-like text) is a 400 and never reaches the database.
-//   - whatsappNumber: "+" then 8-15 digits, first digit not 0. Compared as
-//     those digits; the input is NOT run through the Sri Lankan local-form
-//     expansion of normalizePhoneNumber (that would let "+771234567" match a
-//     stored "+94771234567"). The STORED number is normalised, so stored
-//     "+94…", "94…" or "07…" forms all match "+94…".
+//     digits only, 1-20 characters (no % or _ can reach a query).
+//   - nic: spaces removed, upper case, then 9 digits + V/X or 12 digits.
 //
-// A match needs both values to belong to the same existing candidate. Every
-// mismatch is the same generic result; the caller never learns which value
-// was wrong or whether either exists.
+// A match needs: an existing share link that is not revoked, expired or
+// locked; the link's own candidate (a link opens the form for ONE
+// candidate); that candidate's passport AND NIC, compared in constant time;
+// and the form still UNLOCKED. Every other outcome is the same generic
+// failure: the caller never learns which part was wrong, whether a passport
+// exists or which candidate a link is for. The one exception is a form that
+// was already submitted, which is said (neutrally) only after the link,
+// passport and NIC all matched.
 //
-// Timing: every syntactically valid request makes exactly ONE candidate query
-// (the same query shape whether or not the passport exists) and always runs
-// the same normalise-and-compare step, against a placeholder number when no
-// candidate matched. So "passport not found" and "wrong WhatsApp" do the same
-// database and comparison work. What remains is the database's own
-// difference between returning zero rows and one row (sub-millisecond, far
-// below network jitter), and the rate limits bound the number of attempts.
+// Work on every path: one lookup by the secret's hash (an indexed unique
+// key), then the same two constant-time comparisons, against placeholders
+// when the link is unknown. A wrong Passport + NIC on a real link also
+// counts a failure on that link (and locks it after FORM_LINK_MAX_FAILURES);
+// the link secret is 256 bits, so the extra write only tells someone who
+// already holds a valid link that it is valid.
 
-export const VERIFY_FAILED_MESSAGE = "We couldn't verify your details. Please check your Passport Number and WhatsApp Number and try again.";
+export const VERIFY_FAILED_MESSAGE = "We couldn't verify your details. Please check your Passport Number and NIC Number and try again.";
+export const ALREADY_SUBMITTED_MESSAGE = "This form has already been submitted. Thank you.";
 
-const ALLOWED_FIELDS = new Set(["passportNumber", "whatsappNumber"]);
+const ALLOWED_FIELDS = new Set(["linkSecret", "passportNumber", "nic"]);
 const PASSPORT_PATTERN = /^[A-Za-z0-9]{1,20}$/;
-const WHATSAPP_PATTERN = /^\+[1-9]\d{7,14}$/;
+const NIC_PATTERN = /^(\d{9}[VX]|\d{12})$/;
 const MAX_RAW_LENGTH = 64;
 
-// { values: { passportId, whatsappDigits } } or { errors: [{ field, message }] }.
+// Compared when no candidate matched, so every path does the same work. They
+// can never equal a valid input (both fail their input patterns).
+const NO_MATCH_PASSPORT = "#";
+const NO_MATCH_NIC = "#";
+
+export const canonicalPassport = (value) => value.trim().replace(/[\s-]/g, "").toUpperCase();
+export const canonicalNic = (value) => value.trim().replace(/\s/g, "").toUpperCase();
+
+// { values: { linkSecret, passportId, nic } } or { errors: [{ field, message }] }.
 // Messages never echo the submitted values.
 export function parseVerifyBody(body) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -45,59 +53,72 @@ export function parseVerifyBody(body) {
     if (Object.keys(body).some((key) => !ALLOWED_FIELDS.has(key))) {
         errors.push({ field: "body", message: "contains unsupported fields" });
     }
+    const text = (field) => {
+        const value = body[field];
+        if (value === undefined || value === null || (typeof value === "string" && value.trim() === "")) {
+            errors.push({ field, message: "is required" });
+            return null;
+        }
+        if (typeof value !== "string" || value.length > MAX_RAW_LENGTH) {
+            errors.push({ field, message: "is not valid" });
+            return null;
+        }
+        return value;
+    };
 
-    let passportId = null;
-    const passport = body.passportNumber;
-    if (passport === undefined || passport === null || (typeof passport === "string" && passport.trim() === "")) {
-        errors.push({ field: "passportNumber", message: "is required" });
-    } else if (typeof passport !== "string" || passport.length > MAX_RAW_LENGTH) {
-        errors.push({ field: "passportNumber", message: "must contain only letters and digits (at most 20)" });
-    } else {
-        const canonical = passport.trim().replace(/[\s-]/g, "");
-        if (PASSPORT_PATTERN.test(canonical)) passportId = canonical;
-        else errors.push({ field: "passportNumber", message: "must contain only letters and digits (at most 20)" });
-    }
+    const secret = text("linkSecret");
+    const linkSecret = secret !== null && isLinkSecret(secret.trim()) ? secret.trim() : null;
+    if (secret !== null && !linkSecret) errors.push({ field: "linkSecret", message: "is not valid" });
 
-    let whatsappDigits = null;
-    const whatsapp = body.whatsappNumber;
-    if (whatsapp === undefined || whatsapp === null || (typeof whatsapp === "string" && whatsapp.trim() === "")) {
-        errors.push({ field: "whatsappNumber", message: "is required" });
-    } else if (typeof whatsapp !== "string" || whatsapp.length > MAX_RAW_LENGTH || !WHATSAPP_PATTERN.test(whatsapp.trim())) {
-        errors.push({ field: "whatsappNumber", message: "must start with + followed by 8 to 15 digits" });
-    } else {
-        whatsappDigits = whatsapp.trim().slice(1);
-    }
+    const passport = text("passportNumber");
+    const passportId = passport !== null && PASSPORT_PATTERN.test(canonicalPassport(passport)) ? canonicalPassport(passport) : null;
+    if (passport !== null && !passportId) errors.push({ field: "passportNumber", message: "must contain only letters and digits (at most 20)" });
 
-    return errors.length ? { errors } : { values: { passportId, whatsappDigits } };
+    const rawNic = text("nic");
+    const nic = rawNic !== null && NIC_PATTERN.test(canonicalNic(rawNic)) ? canonicalNic(rawNic) : null;
+    if (rawNic !== null && !nic) errors.push({ field: "nic", message: "must be 9 digits and V or X, or 12 digits" });
+
+    return errors.length ? { errors } : { values: { linkSecret, passportId, nic } };
 }
 
-// Case variants of one passport that a lookup reads at most (legacy rows may
-// differ only by case; more than one variant without an exact match is
-// ambiguous and never verifies).
-const MAX_CASE_VARIANTS = 10;
-
-// Compared when no candidate matched, so the mismatch paths do the same work.
-// It can never equal a valid input (inputs never start with 0).
-const NO_MATCH_STORED_NUMBER = "+0000000000";
-
-// The matched candidate { passportId, whatsappDigits } (stored passport ID,
-// normalised stored number), or null. Inputs must come from parseVerifyBody:
-// the passport is letters and digits only, so no LIKE wildcard can reach the
-// case-insensitive match below.
-export async function verifyCandidateDetailsAccess({ db, passportId, whatsappDigits }) {
-    // One query on every path: all case variants of the passport, with their numbers.
-    const rows = await db.candidate.findMany({
-        where: { passportId: { equals: passportId, mode: "insensitive" } },
-        select: { passportId: true, whatsappNumber: true },
-        take: MAX_CASE_VARIANTS,
+// { outcome: "verified", passportId, linkId, version }
+// | { outcome: "submitted" }   (link + passport + NIC matched; already submitted)
+// | { outcome: "failed" }
+export async function verifyFormLinkAccess({ db, linkSecret, passportId, nic, now = new Date() }) {
+    const link = await db.candidateFormLink.findUnique({
+        where: { tokenHash: hashLinkSecret(linkSecret) },
+        select: {
+            linkId: true, kind: true, passportId: true, expiresAt: true, revokedAt: true, lockedUntil: true, failedAttempts: true,
+            candidate: { select: { passportId: true, nic: true, formAccess: { select: { status: true, version: true } } } },
+        },
     });
-    // The rule of resolveCandidatePassportId (candidateService.js): the exact
-    // row, else the single case-insensitive match; never a guess between rows.
-    const candidate = rows.find((row) => row.passportId === passportId) ?? (rows.length === 1 ? rows[0] : null);
+    const candidate = link?.candidate ?? null;
 
-    // Always normalise and compare, whether or not a candidate matched.
-    const storedDigits = normalizePhoneNumber(candidate ? candidate.whatsappNumber : NO_MATCH_STORED_NUMBER);
-    const numbersMatch = safeEqual(storedDigits ?? "", whatsappDigits);
-    if (!candidate || !storedDigits || !numbersMatch) return null;
-    return { passportId: candidate.passportId, whatsappDigits: storedDigits };
+    // Always both comparisons, whatever was found.
+    const storedPassport = candidate ? candidate.passportId.toUpperCase() : NO_MATCH_PASSPORT;
+    const storedNic = candidate?.nic ? canonicalNic(candidate.nic) : NO_MATCH_NIC;
+    const passportMatches = safeEqual(storedPassport, passportId);
+    const nicMatches = safeEqual(storedNic, nic);
+
+    const usable = Boolean(link) && link.kind === "SINGLE" && !link.revokedAt && link.expiresAt > now && !(link.lockedUntil && link.lockedUntil > now) && Boolean(candidate);
+    if (!usable) return { outcome: "failed" };
+
+    if (!passportMatches || !nicMatches) {
+        // A failed attempt on this link; too many lock it for a while.
+        const failures = link.failedAttempts + 1;
+        await db.candidateFormLink.update({
+            where: { linkId: link.linkId },
+            data: failures >= FORM_LINK_MAX_FAILURES
+                ? { failedAttempts: 0, lockedUntil: new Date(now.getTime() + FORM_LINK_LOCK_MS) }
+                : { failedAttempts: failures },
+        });
+        return { outcome: "failed" };
+    }
+
+    const access = candidate.formAccess;
+    if (access?.status === FORM_ACCESS_STATUS.SUBMITTED) return { outcome: "submitted" };
+    if (access?.status !== FORM_ACCESS_STATUS.UNLOCKED) return { outcome: "failed" };
+
+    await db.candidateFormLink.update({ where: { linkId: link.linkId }, data: { failedAttempts: 0, lastVerifiedAt: now } });
+    return { outcome: "verified", passportId: candidate.passportId, linkId: link.linkId, version: access.version };
 }

@@ -4,8 +4,8 @@ import { isUsableTokenSecret } from "../config/candidateForm.js";
 
 // Short-lived candidate token for the Candidate Extra Details public form.
 //
-// Issued only by POST /api/public/candidate-details/verify after Passport +
-// WhatsApp matched one existing candidate. It is a credential of a different
+// Issued only by POST /api/public/candidate-details/verify after a share link
+// + Passport + NIC matched the link's candidate. It is a credential of a different
 // kind from a staff session and must never be confused with one:
 //
 //   - Format "cf1~<iv>~<ciphertext>": NOT shaped like a JWT (no dots), so the
@@ -15,36 +15,37 @@ import { isUsableTokenSecret } from "../config/candidateForm.js";
 //     so a modified token fails, and the candidate's passport ID is not
 //     readable from the token in the browser.
 //   - Keys are derived (HKDF) from CANDIDATE_FORM_TOKEN_SECRET, backend only.
-//   - Payload: version, audience, candidate passport ID, a keyed hash of the
-//     candidate's stored WhatsApp number (the binding), issued / expiry times.
-//     Expiry 15 minutes; a token claiming a longer life is refused.
-//   - The binding is re-checked against the database on every use
+//   - Payload: version, audience, candidate passport ID, the share link it
+//     was verified through and the form lock's version, issued / expiry
+//     times. Expiry 60 minutes (long enough to fill the form); a token
+//     claiming a longer life is refused.
+//   - The link and the lock are re-checked against the database on every use
 //     (src/middleware/requireCandidateFormToken.js), so a token stops working
-//     as soon as the stored WhatsApp number changes.
+//     as soon as the link is revoked or replaced, expires, or the form is
+//     submitted.
 //
 // Nothing is stored server-side.
 
-export const CANDIDATE_FORM_TOKEN_TTL_MS = 15 * 60 * 1000;
+export const CANDIDATE_FORM_TOKEN_TTL_MS = 60 * 60 * 1000;
 const MAX_LIFETIME_SECONDS = CANDIDATE_FORM_TOKEN_TTL_MS / 1000;
 const CLOCK_SKEW_SECONDS = 60;
 const PREFIX = "cf1";
 const SEPARATOR = "~";
 const AUDIENCE = "candidate-form";
-const VERSION = 1;
+// 2: bound to the share link and the lock version (1 was the WhatsApp binding).
+const VERSION = 2;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const MAX_TOKEN_LENGTH = 1024;
 const B64URL = /^[A-Za-z0-9_-]+$/;
 const PASSPORT_ID = /^[A-Za-z0-9]{1,20}$/;
+const LINK_ID = /^[0-9a-f-]{36}$/;
 
 function subKey(secret, purpose) {
     return Buffer.from(crypto.hkdfSync("sha256", Buffer.from(secret, "utf8"), Buffer.from("emlynk-candidate-form"), Buffer.from(purpose), 32));
 }
 
 const hmac = (secret, purpose, value) => crypto.createHmac("sha256", subKey(secret, purpose)).update(value).digest("base64url");
-
-// Keyed hash of the normalised WhatsApp digits (the token's binding).
-export const whatsappBinding = (secret, whatsappDigits) => hmac(secret, "whatsapp-binding", whatsappDigits);
 
 // Keyed hash of a canonical passport number: the per-passport rate-limit key
 // and a log reference. Upper case, because the lookup is case-insensitive.
@@ -58,13 +59,14 @@ export function safeEqual(a, b) {
     return left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
-// { token, expiresAt } for one verified candidate.
-export function issueCandidateFormToken({ secret, passportId, whatsappDigits, now = new Date(), ttlMs = CANDIDATE_FORM_TOKEN_TTL_MS }) {
+// { token, expiresAt } for one verified candidate, through one link, at one
+// version of the form lock.
+export function issueCandidateFormToken({ secret, passportId, linkId, version, now = new Date(), ttlMs = CANDIDATE_FORM_TOKEN_TTL_MS }) {
     if (!isUsableTokenSecret(secret)) throw new Error("CANDIDATE_FORM_TOKEN_SECRET is not configured");
-    if (!PASSPORT_ID.test(passportId ?? "") || typeof whatsappDigits !== "string" || whatsappDigits === "") throw new Error("Invalid token subject");
+    if (!PASSPORT_ID.test(passportId ?? "") || !LINK_ID.test(linkId ?? "") || !Number.isInteger(version) || version < 0) throw new Error("Invalid token subject");
     const iat = Math.floor(now.getTime() / 1000);
     const exp = iat + Math.min(Math.floor(ttlMs / 1000), MAX_LIFETIME_SECONDS);
-    const payload = Buffer.from(JSON.stringify({ v: VERSION, aud: AUDIENCE, sub: passportId, wa: whatsappBinding(secret, whatsappDigits), iat, exp }));
+    const payload = Buffer.from(JSON.stringify({ v: VERSION, aud: AUDIENCE, sub: passportId, lnk: linkId, ver: version, iat, exp }));
 
     const iv = crypto.randomBytes(IV_BYTES);
     const cipher = crypto.createCipheriv("aes-256-gcm", subKey(secret, "token-encryption"), iv);
@@ -76,7 +78,7 @@ export function issueCandidateFormToken({ secret, passportId, whatsappDigits, no
     };
 }
 
-// The verified payload { sub, wa, iat, exp }, or null for anything that is not
+// The verified payload { sub, lnk, ver, iat, exp }, or null for anything that is not
 // a valid, unexpired token of this service (never throws).
 export function readCandidateFormToken(token, { secret, now = new Date() } = {}) {
     if (!isUsableTokenSecret(secret)) return null;
@@ -103,10 +105,11 @@ export function readCandidateFormToken(token, { secret, now = new Date() } = {})
         && payload.v === VERSION
         && payload.aud === AUDIENCE
         && typeof payload.sub === "string" && PASSPORT_ID.test(payload.sub)
-        && typeof payload.wa === "string" && payload.wa.length > 0
+        && typeof payload.lnk === "string" && LINK_ID.test(payload.lnk)
+        && Number.isInteger(payload.ver) && payload.ver >= 0
         && Number.isInteger(payload.iat) && Number.isInteger(payload.exp)
         && payload.iat <= nowSeconds + CLOCK_SKEW_SECONDS
         && payload.exp > nowSeconds
         && payload.exp - payload.iat <= MAX_LIFETIME_SECONDS;
-    return valid ? { sub: payload.sub, wa: payload.wa, iat: payload.iat, exp: payload.exp } : null;
+    return valid ? { sub: payload.sub, lnk: payload.lnk, ver: payload.ver, iat: payload.iat, exp: payload.exp } : null;
 }

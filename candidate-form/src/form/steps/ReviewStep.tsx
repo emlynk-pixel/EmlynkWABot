@@ -1,13 +1,13 @@
 import type { Language, MessageKey } from "../../i18n/translations";
 import { useLanguage } from "../../i18n/useLanguage";
-import type { VerifiedIdentity } from "../../session/tokenStore";
+import type { FormLoadResponse } from "../../types/api";
 import { showsOtherJobCategory, showsSpouse, type CandidateFormData } from "../model";
 import { STEPS, type StepId } from "../steps";
 import { valueAt } from "../validation";
 
 // What the candidate entered, by section, before saving. Only the
-// candidate's own answers (and the verified Passport / WhatsApp numbers they
-// typed) are shown: never the token or anything staff-only.
+// candidate's own answers and their verified identity (from the record) are
+// shown: never the token or anything staff-only.
 
 type Row = { label: MessageKey; path: string; kind?: "date" | "code"; codePrefix?: string };
 
@@ -18,7 +18,6 @@ function rowsFor(step: StepId, data: CandidateFormData): Row[] {
                 { label: "f.fullName", path: "basic.fullName" },
                 { label: "f.surname", path: "basic.surname" },
                 { label: "f.otherNames", path: "basic.otherNames" },
-                { label: "f.nic", path: "basic.nic" },
                 { label: "f.sex", path: "basic.sex", kind: "code", codePrefix: "sex." },
                 { label: "f.civilStatus", path: "basic.civilStatus", kind: "code", codePrefix: "civil." },
                 { label: "f.birthDate", path: "basic.birthDate", kind: "date" },
@@ -90,7 +89,7 @@ export function formatDate(value: string, language: Language): string {
     return date.toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric" });
 }
 
-export function ReviewStep({ data, identity, onEdit }: { data: CandidateFormData; identity: VerifiedIdentity; onEdit: (step: StepId) => void }) {
+export function ReviewStep({ data, identity, onEdit }: { data: CandidateFormData; identity: FormLoadResponse["identity"]; onEdit: (step: StepId) => void }) {
     const { t, language } = useLanguage();
     const display = (row: Row) => {
         const value = valueAt(data, row.path).trim();
@@ -105,7 +104,8 @@ export function ReviewStep({ data, identity, onEdit }: { data: CandidateFormData
                 <h3 id="review-identity">{t("review.verifiedIdentity")}</h3>
                 <dl>
                     <div><dt>{t("f.passportNumber")}</dt><dd>{identity.passportNumber}</dd></div>
-                    <div><dt>{t("f.whatsapp")}</dt><dd>{identity.whatsappNumber}</dd></div>
+                    <div><dt>{t("f.nic")}</dt><dd>{identity.nic}</dd></div>
+                    <div><dt>{t("f.whatsapp")}</dt><dd>{identity.whatsappNumber || "—"}</dd></div>
                 </dl>
             </section>
             {STEPS.filter((step) => step.id !== "review").map((step) => (

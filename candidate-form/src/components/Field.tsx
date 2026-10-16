@@ -11,17 +11,19 @@ export type FieldProps = {
     // A short line always shown under the label.
     hint?: string;
     error?: Message;
+    // Filled in from the candidate's existing record (a small note says so).
+    prefilled?: boolean;
 };
 
 // The ids a control should list in aria-describedby.
-export function describedBy(id: string, { hint, error }: Pick<FieldProps, "hint" | "error">, helpOpen: boolean): string | undefined {
-    return [hint ? `${id}-hint` : null, helpOpen ? `${id}-help` : null, error ? `${id}-error` : null].filter(Boolean).join(" ") || undefined;
+export function describedBy(id: string, { hint, error, prefilled }: Pick<FieldProps, "hint" | "error" | "prefilled">, helpOpen: boolean): string | undefined {
+    return [hint ? `${id}-hint` : null, prefilled ? `${id}-prefilled` : null, helpOpen ? `${id}-help` : null, error ? `${id}-error` : null].filter(Boolean).join(" ") || undefined;
 }
 
 // Label (with the required marker and the optional help button), hint, the
 // control itself, and the error. The error is text with a mark, never colour
 // alone, and is announced when it appears.
-export function Field({ id, label, required, help, hint, error, children }: FieldProps & { children: (helpOpen: boolean) => ReactNode }) {
+export function Field({ id, label, required, help, hint, error, prefilled, children }: FieldProps & { children: (helpOpen: boolean) => ReactNode }) {
     const { t } = useLanguage();
     const [helpOpen, setHelpOpen] = useState(false);
     return (
@@ -39,6 +41,7 @@ export function Field({ id, label, required, help, hint, error, children }: Fiel
                 {help && <FieldHelp id={`${id}-help`} label={label} text={help} open={helpOpen} onToggle={() => setHelpOpen((open) => !open)} />}
             </div>
             {hint && <p id={`${id}-hint`} className="hint">{hint}</p>}
+            {prefilled && <p id={`${id}-prefilled`} className="prefilled-note">{t("form.prefilledNote")}</p>}
             {children(helpOpen)}
             {error && (
                 <p id={`${id}-error`} className="error" role="alert">

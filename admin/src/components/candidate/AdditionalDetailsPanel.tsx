@@ -14,6 +14,7 @@ import { todayInSriLanka } from "../format";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { ErrorState, LoadingState } from "../States";
 import { Field, fieldControl, textAreaControl } from "./CandidateFields";
+import { ShareFormButton } from "./ShareFormButton";
 
 // Additional Details tab of a candidate: passport and personal details,
 // clothing sizes, parents, marital and family details, other job skills.
@@ -183,9 +184,13 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved }: {
 
     return (
         <form onSubmit={submit} noValidate aria-labelledby="additional-details-title" className="space-y-6">
-            <div>
-                <h2 id="additional-details-title" className="text-headline-sm text-ink">Additional details</h2>
-                <p className="mt-1 text-body-sm text-ink-muted">Saved separately from the candidate&apos;s record, which is not changed here. Every field is optional.</p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h2 id="additional-details-title" className="text-headline-sm text-ink">Additional details</h2>
+                    <p className="mt-1 text-body-sm text-ink-muted">Saved separately from the candidate&apos;s record, which is not changed here. Every field is optional.</p>
+                </div>
+                {/* The public Candidate Form for this candidate (link + Passport + NIC). */}
+                {canEdit && <ShareFormButton passportId={view.passportId} />}
             </div>
 
             {autofilled.length > 0 && (

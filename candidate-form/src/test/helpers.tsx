@@ -2,7 +2,9 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { App } from "../App";
+import { emptyForm, toPayload } from "../form/model";
 import { TRANSLATIONS, type MessageKey } from "../i18n/translations";
+import type { CandidateFormPayload, FormLoadResponse } from "../types/api";
 
 // Shared by the candidate-form tests. The backend is a stub: nothing leaves
 // the test.
@@ -14,33 +16,64 @@ export const si = (key: MessageKey) => TRANSLATIONS.si[key];
 // the help button's name, "Help: …", never starts with the label).
 export const startsWith = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
 
+// The share link's secret (set for every test in setup.ts).
+export const LINK_SECRET = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCdE";
 export const TOKEN = "cf1~test-iv~test-ciphertext";
 export const PASSPORT = "N1234567";
+export const NIC = "901234567V";
 export const WHATSAPP = "+94771234567";
 export const inMinutes = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
 
-export type Reply = { status: number; body?: unknown } | "network";
-export type User = ReturnType<typeof userEvent.setup>;
+// What POST /form returns: the identity and a partial prefill.
+export const IDENTITY = { passportNumber: PASSPORT, nic: NIC, whatsappNumber: WHATSAPP };
+export function prefill(overrides: (p: CandidateFormPayload) => void = () => {}): FormLoadResponse {
+    const answers = toPayload(emptyForm());
+    answers.basic.surname = "PERERA";
+    answers.basic.otherNames = "KAMAL";
+    answers.basic.sex = "MALE";
+    overrides(answers);
+    const prefilled = [["basic", answers.basic], ["contact", answers.contact], ["passport", answers.passport]]
+        .flatMap(([group, values]) => Object.entries(values as Record<string, string | null>).filter(([, v]) => v !== null).map(([k]) => `${group}.${k}`));
+    return { identity: IDENTITY, answers, prefilled, expiresAt: inMinutes(60) };
+}
 
-// Stubs fetch with one reply and records every request.
-export function backend(reply: Reply = { status: 200, body: { token: TOKEN, expiresAt: inMinutes(15) } }) {
-    const calls: { url: string; init: RequestInit }[] = [];
+export type Reply = { status: number; body?: unknown } | "network";
+export type Routes = { verify?: Reply; form?: Reply; submit?: Reply | ((call: number) => Reply) };
+export type User = ReturnType<typeof userEvent.setup>;
+export type Call = { url: string; path: string; init: RequestInit; body: unknown };
+
+const OK_VERIFY: Reply = { status: 200, body: { token: TOKEN, expiresAt: inMinutes(60) } };
+
+// Stubs fetch for the three public endpoints and records every request.
+export function backend(routes: Routes = {}) {
+    const calls: Call[] = [];
+    let submits = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
-        calls.push({ url: String(url), init });
+        const path = new URL(String(url), "http://localhost").pathname;
+        calls.push({ url: String(url), path, init, body: typeof init.body === "string" ? JSON.parse(init.body) : undefined });
+        let reply: Reply = { status: 404, body: { message: "Not found" } };
+        if (path.endsWith("/verify")) reply = routes.verify ?? OK_VERIFY;
+        if (path.endsWith("/form")) reply = routes.form ?? { status: 200, body: prefill() };
+        if (path.endsWith("/submit")) {
+            submits += 1;
+            const r = routes.submit ?? { status: 200, body: { submittedAt: new Date().toISOString() } };
+            reply = typeof r === "function" ? r(submits) : r;
+        }
         if (reply === "network") throw new TypeError("Failed to fetch");
         return new Response(JSON.stringify(reply.body ?? {}), { status: reply.status, headers: { "Content-Type": "application/json" } });
     }));
     return calls;
 }
+export const callsTo = (calls: Call[], endpoint: "verify" | "form" | "submit") => calls.filter((c) => c.path.endsWith(`/${endpoint}`));
 
-export async function fillVerify(user: User, passport = PASSPORT, whatsapp = WHATSAPP) {
+export async function fillVerify(user: User, passport = PASSPORT, nic = NIC) {
     await user.type(screen.getByLabelText(/^(Passport Number|ගමන් බලපත්‍ර අංකය)/), passport);
-    await user.type(screen.getByLabelText(/^(WhatsApp Number|WhatsApp අංකය)/), whatsapp);
+    await user.type(screen.getByLabelText(/^(NIC Number|ජාතික හැඳුනුම්පත් අංකය)/), nic);
 }
 
 // Renders the app and verifies; resolves on the form's first step.
-export async function verified(options: Parameters<typeof userEvent.setup>[0] = {}) {
-    const calls = backend();
+export async function verified(options: Parameters<typeof userEvent.setup>[0] = {}, routes: Routes = {}) {
+    const calls = backend(routes);
     render(<App />);
     const user = userEvent.setup(options);
     await fillVerify(user);
@@ -61,11 +94,11 @@ export const queryField = (key: MessageKey) => screen.queryByLabelText(startsWit
 export const stepHeading = (key: MessageKey) => screen.getByRole("heading", { level: 2, name: startsWith(en(key)) });
 export const next = (user: User) => user.click(screen.getByRole("button", { name: en("form.next") }));
 
-// Valid answers for every required field, step by step.
+// Valid answers for every required field, step by step (the prefill already
+// has the surname, other names and sex).
 export function fillBasic(civilStatus = "SINGLE") {
     setField("f.fullName", "shamal");
     setField("f.surname", "sathsara");
-    setField("f.nic", "199012345678");
     setField("f.sex", "MALE");
     setField("f.civilStatus", civilStatus);
     setField("f.birthDate", "1990-05-01");

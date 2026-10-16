@@ -35,6 +35,10 @@ model User {
   completedFollowUps CallLogFollowUp[] @relation("FollowUpCompletedBy")
   // Work Allocation: the candidates assigned to this user (an Analyst).
   allocatedCandidates CandidateAllocation[]
+  // Candidate Form share links this user created / revoked, and forms unlocked.
+  createdFormLinks   CandidateFormLink[]   @relation("FormLinkCreatedBy")
+  revokedFormLinks   CandidateFormLink[]   @relation("FormLinkRevokedBy")
+  unlockedFormAccess CandidateFormAccess[] @relation("FormAccessUnlockedBy")
 
   @@map("user")
 }
@@ -122,8 +126,192 @@ model Candidate {
   // Work Allocation: the Analyst the candidate is assigned to (no row:
   // unallocated). A relation only, like additionalDetails.
   allocation        CandidateAllocation?
+  // Candidate Form (public): share links, the lock, the submitted answers and
+  // the prefill snapshot. Relations only: no candidate column changes.
+  formLinks         CandidateFormLink[]
+  formAccess        CandidateFormAccess?
+  formResponse      CandidateFormResponse?
+  formSnapshot      CandidateFormPrefillSnapshot?
 
   @@map("candidate")
+}
+
+// Candidate Form share link (candidateFormShareService.js). Only a SHA-256 of
+// the link secret is stored. kind SINGLE = one candidate; a job-group kind can
+// be added later (passport_id is nullable for that reason).
+// Migration 20261017120000_candidate_form_share_and_response.
+model CandidateFormLink {
+  linkId         String    @id @map("link_id")
+  kind           String    @default("SINGLE")
+  passportId     String?   @map("passport_id")
+  tokenHash      String    @unique @map("token_hash") @db.Char(64)
+  createdById    String    @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  expiresAt      DateTime  @map("expires_at")
+  revokedAt      DateTime? @map("revoked_at")
+  revokedById    String?   @map("revoked_by")
+  failedAttempts Int       @default(0) @map("failed_attempts")
+  lockedUntil    DateTime? @map("locked_until")
+  lastVerifiedAt DateTime? @map("last_verified_at")
+
+  candidate          Candidate?                     @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  createdBy          User                           @relation("FormLinkCreatedBy", fields: [createdById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  revokedBy          User?                          @relation("FormLinkRevokedBy", fields: [revokedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  unlockedAccess     CandidateFormAccess[]          @relation("AccessUnlockedViaLink")
+  submittedAccess    CandidateFormAccess[]          @relation("AccessSubmittedViaLink")
+  responses          CandidateFormResponse[]
+  snapshots          CandidateFormPrefillSnapshot[]
+
+  @@index([passportId])
+  @@index([createdById])
+  @@map("candidate_form_link")
+}
+
+// The lock: LOCKED (no row) -> UNLOCKED (a link was created) -> SUBMITTED
+// (terminal; a trigger refuses any later change).
+model CandidateFormAccess {
+  passportId         String    @id @map("passport_id")
+  status             String    @default("LOCKED")
+  version            Int       @default(0)
+  unlockedAt         DateTime? @map("unlocked_at")
+  unlockedById       String?   @map("unlocked_by")
+  unlockedViaLinkId  String?   @map("unlocked_via_link_id")
+  submittedAt        DateTime? @map("submitted_at")
+  submittedViaLinkId String?   @map("submitted_via_link_id")
+  submitKey          String?   @map("submit_key")
+  updatedAt          DateTime  @default(now()) @map("updated_at")
+
+  candidate        Candidate          @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  unlockedBy       User?              @relation("FormAccessUnlockedBy", fields: [unlockedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  unlockedViaLink  CandidateFormLink? @relation("AccessUnlockedViaLink", fields: [unlockedViaLinkId], references: [linkId], onDelete: SetNull, onUpdate: Cascade)
+  submittedViaLink CandidateFormLink? @relation("AccessSubmittedViaLink", fields: [submittedViaLinkId], references: [linkId], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([unlockedViaLinkId])
+  @@index([submittedViaLinkId])
+  @@map("candidate_form_access")
+}
+
+// The answers the candidate submitted (every field nullable). Written once;
+// a trigger refuses any later change. The main candidate tables are never
+// written by the public form.
+model CandidateFormResponse {
+  passportId             String    @id @map("passport_id")
+  fullName               String?   @map("full_name")
+  surname                String?   @map("surname")
+  otherNames             String?   @map("other_names")
+  nic                    String?   @map("nic")
+  sex                    String?   @map("sex")
+  civilStatus            String?   @map("civil_status")
+  birthDate              DateTime? @map("birth_date") @db.Date
+  birthPlace             String?   @map("birth_place")
+  address                String?   @map("address")
+  city                   String?   @map("city")
+  district               String?   @map("district")
+  dsDivision             String?   @map("ds_division")
+  gnDivision             String?   @map("gn_division")
+  alternativePhone       String?   @map("alternative_phone")
+  email                  String?   @map("email")
+  passportIssueDate      DateTime? @map("passport_issue_date") @db.Date
+  passportExpiryDate     DateTime? @map("passport_expiry_date") @db.Date
+  jobCategory            String?   @map("job_category")
+  jobCategoryOther       String?   @map("job_category_other")
+  experience             String?   @map("experience")
+  otherSkills1           String?   @map("other_skills_1")
+  otherSkills2           String?   @map("other_skills_2")
+  englishKnowledge       String?   @map("english_knowledge")
+  shirtSize              String?   @map("shirt_size")
+  waistSize              String?   @map("waist_size")
+  shoeSize               String?   @map("shoe_size")
+  fatherName             String?   @map("father_name")
+  fatherSurname          String?   @map("father_surname")
+  fatherPassportNumber   String?   @map("father_passport_number")
+  fatherBirthDate        DateTime? @map("father_birth_date") @db.Date
+  motherName             String?   @map("mother_name")
+  motherSurname          String?   @map("mother_surname")
+  motherPassportNumber   String?   @map("mother_passport_number")
+  motherBirthDate        DateTime? @map("mother_birth_date") @db.Date
+  spouseName             String?   @map("spouse_name")
+  spouseSurname          String?   @map("spouse_surname")
+  spousePassportNumber   String?   @map("spouse_passport_number")
+  spouseBirthDate        DateTime? @map("spouse_birth_date") @db.Date
+  child1Name             String?   @map("child_1_name")
+  child2Name             String?   @map("child_2_name")
+  child3Name             String?   @map("child_3_name")
+  guardianName           String?   @map("guardian_name")
+  guardianRelationship   String?   @map("guardian_relationship")
+  guardianNic            String?   @map("guardian_nic")
+  guardianBirthDate      DateTime? @map("guardian_birth_date") @db.Date
+  guardianPhone          String?   @map("guardian_phone")
+  guardianAddress        String?   @map("guardian_address")
+  submittedAt            DateTime  @default(now()) @map("submitted_at")
+  submittedViaLinkId     String?   @map("submitted_via_link_id")
+
+  candidate        Candidate          @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  submittedViaLink CandidateFormLink? @relation(fields: [submittedViaLinkId], references: [linkId], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([submittedViaLinkId])
+  @@map("candidate_form_response")
+}
+
+// What the form was prefilled with from the existing records, taken once at
+// the first verified visit (the original values, for comparison). Never changed.
+model CandidateFormPrefillSnapshot {
+  passportId             String    @id @map("passport_id")
+  fullName               String?   @map("full_name")
+  surname                String?   @map("surname")
+  otherNames             String?   @map("other_names")
+  nic                    String?   @map("nic")
+  sex                    String?   @map("sex")
+  civilStatus            String?   @map("civil_status")
+  birthDate              DateTime? @map("birth_date") @db.Date
+  birthPlace             String?   @map("birth_place")
+  address                String?   @map("address")
+  city                   String?   @map("city")
+  district               String?   @map("district")
+  dsDivision             String?   @map("ds_division")
+  gnDivision             String?   @map("gn_division")
+  alternativePhone       String?   @map("alternative_phone")
+  email                  String?   @map("email")
+  passportIssueDate      DateTime? @map("passport_issue_date") @db.Date
+  passportExpiryDate     DateTime? @map("passport_expiry_date") @db.Date
+  jobCategory            String?   @map("job_category")
+  jobCategoryOther       String?   @map("job_category_other")
+  experience             String?   @map("experience")
+  otherSkills1           String?   @map("other_skills_1")
+  otherSkills2           String?   @map("other_skills_2")
+  englishKnowledge       String?   @map("english_knowledge")
+  shirtSize              String?   @map("shirt_size")
+  waistSize              String?   @map("waist_size")
+  shoeSize               String?   @map("shoe_size")
+  fatherName             String?   @map("father_name")
+  fatherSurname          String?   @map("father_surname")
+  fatherPassportNumber   String?   @map("father_passport_number")
+  fatherBirthDate        DateTime? @map("father_birth_date") @db.Date
+  motherName             String?   @map("mother_name")
+  motherSurname          String?   @map("mother_surname")
+  motherPassportNumber   String?   @map("mother_passport_number")
+  motherBirthDate        DateTime? @map("mother_birth_date") @db.Date
+  spouseName             String?   @map("spouse_name")
+  spouseSurname          String?   @map("spouse_surname")
+  spousePassportNumber   String?   @map("spouse_passport_number")
+  spouseBirthDate        DateTime? @map("spouse_birth_date") @db.Date
+  child1Name             String?   @map("child_1_name")
+  child2Name             String?   @map("child_2_name")
+  child3Name             String?   @map("child_3_name")
+  guardianName           String?   @map("guardian_name")
+  guardianRelationship   String?   @map("guardian_relationship")
+  guardianNic            String?   @map("guardian_nic")
+  guardianBirthDate      DateTime? @map("guardian_birth_date") @db.Date
+  guardianPhone          String?   @map("guardian_phone")
+  guardianAddress        String?   @map("guardian_address")
+  capturedAt             DateTime  @default(now()) @map("captured_at")
+  capturedViaLinkId      String?   @map("captured_via_link_id")
+
+  candidate       Candidate          @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  capturedViaLink CandidateFormLink? @relation(fields: [capturedViaLinkId], references: [linkId], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([capturedViaLinkId])
+  @@map("candidate_form_prefill_snapshot")
 }
 
 // Work Allocation (workAllocationService.js): one row per allocated

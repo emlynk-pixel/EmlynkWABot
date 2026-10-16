@@ -40,6 +40,8 @@ const ACTION_LABELS: Record<string, string> = {
     FLAG_FOLLOW_UP: "Call marked for follow-up",
     COMPLETE_FOLLOW_UP: "Follow-up completed",
     DELETE_FOLLOW_UP: "Follow-up deleted",
+    CREATE_FORM_LINK: "Candidate Form link created",
+    REVOKE_FORM_LINK: "Candidate Form link revoked",
     ASSIGN_CANDIDATE: "Candidate assigned to an Analyst",
     REASSIGN_CANDIDATE: "Candidate reassigned",
     UNASSIGN_CANDIDATE: "Candidate unassigned",

@@ -380,6 +380,40 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 .review dd { margin: 0; font-weight: 600; }
 .review-empty { color: var(--muted); font-weight: 400; font-style: italic; }
 
+/* A value filled in from the candidate's record. */
+.prefilled-note { margin: 0 0 6px; color: var(--muted); font-size: 0.8125rem; }
+.prefilled-note::before { content: "↺ "; }
+
+/* The one-time submit confirmation. */
+.confirm-box {
+    margin: 0 0 16px;
+    padding: 14px 16px;
+    border: 2px solid var(--primary);
+    border-radius: 12px;
+    background: var(--primary-soft);
+}
+.confirm-box p { margin: 0 0 8px; }
+.confirm-title { font-weight: 700; font-size: 1.0625rem; }
+.confirm-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+
+/* Message screens: no link, loading, submitted. */
+.status-panel { text-align: center; }
+.status-panel .lead { margin-bottom: 0; }
+.status-panel button.primary { margin-top: 16px; }
+.status-icon {
+    margin: 0 auto 10px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--success-soft);
+    color: var(--success);
+    font-size: 1.75rem;
+    font-weight: 700;
+}
+
 /* ---------- buttons ---------- */
 
 button.primary, button.secondary {

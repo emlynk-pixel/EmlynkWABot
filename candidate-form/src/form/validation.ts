@@ -77,12 +77,10 @@ export function validateForm(data: CandidateFormData, today = todayInSriLanka())
     const { basic } = data;
     required("basic.fullName", basic.fullName);
     required("basic.surname", basic.surname);
-    required("basic.nic", basic.nic);
     required("basic.sex", basic.sex);
     required("basic.civilStatus", basic.civilStatus);
     required("basic.birthDate", basic.birthDate);
     for (const field of ["fullName", "surname", "otherNames", "birthPlace"] as const) length(`basic.${field}`, basic[field], MAX_LENGTH.text);
-    nic("basic.nic", basic.nic);
     oneOf("basic.sex", basic.sex, SEX_OPTIONS);
     oneOf("basic.civilStatus", basic.civilStatus, CIVIL_STATUS_OPTIONS);
     date("basic.birthDate", basic.birthDate, true);
@@ -159,7 +157,7 @@ export function errorsIn(errors: FormErrors, groups: readonly FormGroup[]): Form
 // The required answers, for the progress line ("12 of 20 done").
 export function requiredPaths(data: CandidateFormData): string[] {
     const paths = [
-        "basic.fullName", "basic.surname", "basic.nic", "basic.sex", "basic.civilStatus", "basic.birthDate",
+        "basic.fullName", "basic.surname", "basic.sex", "basic.civilStatus", "basic.birthDate",
         "contact.address", "contact.district", "contact.dsDivision", "contact.email",
         "passport.issueDate", "passport.expiryDate", "qualifications.jobCategory", "qualifications.englishKnowledge",
         "guardian.name", "guardian.nic", "guardian.phone", "guardian.address",

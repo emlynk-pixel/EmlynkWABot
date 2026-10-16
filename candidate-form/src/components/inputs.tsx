@@ -150,7 +150,7 @@ export function SelectInput({ id, value, onChange, disabled, options, ...field }
 
 // One choice from a short list, as large tappable cards (radio buttons in a
 // fieldset whose legend is the question). Arrow keys move between choices.
-export function ChoiceCards({ id, label, value, onChange, options, required, help, error }: Pick<Common, "id" | "label" | "value" | "onChange" | "required" | "help" | "error"> & { options: Option[] }) {
+export function ChoiceCards({ id, label, value, onChange, options, required, help, error }: Pick<Common, "id" | "label" | "value" | "onChange" | "required" | "help" | "error" | "prefilled"> & { options: Option[] }) {
     const { t } = useLanguage();
     return (
         <fieldset id={id} tabIndex={-1} className={`field choice${error ? " field-invalid" : ""}`} aria-describedby={[help ? `${id}-note` : null, error ? `${id}-error` : null].filter(Boolean).join(" ") || undefined}>

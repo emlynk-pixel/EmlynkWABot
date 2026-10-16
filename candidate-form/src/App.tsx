@@ -1,15 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
+import { loadCandidateForm } from "./api/candidateDetails";
+import { ApiError } from "./api/client";
 import { LanguageSwitch } from "./components/LanguageSwitch";
 import { ThemeSwitch } from "./components/ThemeSwitch";
 import { isApiConfigured } from "./config/env";
+import type { MessageKey } from "./i18n/translations";
 import { LanguageProvider } from "./i18n/LanguageContext";
 import { useLanguage, type Message } from "./i18n/useLanguage";
 import { CandidateFormPage } from "./pages/CandidateFormPage";
 import { VerifyPage } from "./pages/VerifyPage";
-import { clearSession, getSession, type VerifiedIdentity } from "./session/tokenStore";
+import { getLinkSecret } from "./session/linkSecret";
+import { clearSession, getSession } from "./session/tokenStore";
 import { ThemeProvider } from "./theme/ThemeContext";
+import type { FormLoadResponse } from "./types/api";
 
-type View = { name: "verify"; notice?: Message } | { name: "form"; expiresAt: string; identity: VerifiedIdentity };
+type View =
+    | { name: "noLink" }
+    | { name: "verify"; notice?: Message }
+    | { name: "loading" }
+    | { name: "loadFailed" }
+    | { name: "form"; expiresAt: string; form: FormLoadResponse }
+    | { name: "submitted"; justNow: boolean };
 
 // Theme and language sit above every page: switching either only changes how
 // the page looks or reads; the answers, the validation state and the session
@@ -24,9 +35,24 @@ export function App() {
     );
 }
 
+// A simple message screen (no link, loading, submitted).
+function StatusScreen({ title, text, tone = "plain", children }: { title: MessageKey; text: MessageKey; tone?: "plain" | "success" | "error"; children?: React.ReactNode }) {
+    const { t } = useLanguage();
+    return (
+        <section className={`panel status-panel status-${tone}`} role={tone === "error" ? "alert" : "status"}>
+            {tone === "success" && <p className="status-icon" aria-hidden="true">✓</p>}
+            <h1>{t(title)}</h1>
+            <p className="lead">{t(text)}</p>
+            {children}
+        </section>
+    );
+}
+
 function CandidateForm() {
     const { t } = useLanguage();
-    const [view, setView] = useState<View>({ name: "verify" });
+    // The link secret was read from the address (and removed from it) before
+    // the first render (main.tsx). Without one there is nothing to verify.
+    const [view, setView] = useState<View>(() => (getLinkSecret() ? { name: "verify" } : { name: "noLink" }));
 
     // Leaving the page ends the session (the token is only in memory anyway).
     useEffect(() => {
@@ -40,11 +66,63 @@ function CandidateForm() {
         clearSession();
         setView({ name: "verify", notice: { key: "session.ended" } });
     }, []);
+    const alreadySubmitted = useCallback(() => {
+        clearSession();
+        setView({ name: "submitted", justNow: false });
+    }, []);
 
-    const verified = (expiresAt: string) => {
+    const load = useCallback(async (expiresAt: string) => {
         const session = getSession();
-        if (session) setView({ name: "form", expiresAt, identity: session.identity });
-    };
+        if (!session) {
+            sessionEnded();
+            return;
+        }
+        setView({ name: "loading" });
+        try {
+            const form = await loadCandidateForm(session.token);
+            setView({ name: "form", expiresAt, form });
+        } catch (error) {
+            if (error instanceof ApiError && error.status === 409) alreadySubmitted();
+            else if (error instanceof ApiError && error.status === 401) sessionEnded();
+            else setView({ name: "loadFailed" });
+        }
+    }, [sessionEnded, alreadySubmitted]);
+
+    const linkSecret = getLinkSecret();
+
+    let page: React.ReactNode;
+    if (!isApiConfigured) {
+        page = <StatusScreen title="notConfigured.title" text="notConfigured.lead" tone="error" />;
+    } else if (view.name === "noLink" || !linkSecret) {
+        page = <StatusScreen title="link.missingTitle" text="link.missingText" />;
+    } else if (view.name === "verify") {
+        page = <VerifyPage linkSecret={linkSecret} notice={view.notice} onVerified={(expiresAt) => void load(expiresAt)} onAlreadySubmitted={alreadySubmitted} />;
+    } else if (view.name === "loading") {
+        page = <StatusScreen title="form.loadingTitle" text="form.loadingText" />;
+    } else if (view.name === "loadFailed") {
+        page = (
+            <StatusScreen title="form.loadFailedTitle" text="form.loadFailedText" tone="error">
+                <button type="button" className="primary" onClick={() => void load(new Date(getSession()?.expiresAt ?? Date.now()).toISOString())}>{t("form.retry")}</button>
+            </StatusScreen>
+        );
+    } else if (view.name === "submitted") {
+        page = view.justNow
+            ? <StatusScreen title="submitted.title" text="submitted.text" tone="success" />
+            : <StatusScreen title="submitted.alreadyTitle" text="submitted.alreadyText" tone="success" />;
+    } else {
+        page = (
+            <CandidateFormPage
+                expiresAt={view.expiresAt}
+                form={view.form}
+                onSessionEnded={sessionEnded}
+                onAlreadySubmitted={alreadySubmitted}
+                onSubmitted={() => {
+                    clearSession();
+                    setView({ name: "submitted", justNow: true });
+                }}
+            />
+        );
+    }
 
     return (
         <div className="page">
@@ -63,26 +141,7 @@ function CandidateForm() {
                     </div>
                 </div>
             </header>
-            <main className="shell">
-                {!isApiConfigured ? (
-                    <section className="panel" role="alert">
-                        <h1>{t("notConfigured.title")}</h1>
-                        <p className="lead">{t("notConfigured.lead")}</p>
-                    </section>
-                ) : view.name === "verify" ? (
-                    <VerifyPage notice={view.notice} onVerified={verified} />
-                ) : (
-                    <CandidateFormPage
-                        expiresAt={view.expiresAt}
-                        identity={view.identity}
-                        onSessionEnded={sessionEnded}
-                        onFinish={() => {
-                            clearSession();
-                            setView({ name: "verify" });
-                        }}
-                    />
-                )}
-            </main>
+            <main className="shell">{page}</main>
         </div>
     );
 }

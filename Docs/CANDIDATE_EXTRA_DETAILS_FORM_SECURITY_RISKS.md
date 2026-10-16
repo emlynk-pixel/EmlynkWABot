@@ -943,3 +943,28 @@ The Candidate Form must **not** be released until **all** of these pass (test ID
 9. **Remaining pre-release controls.** The 18 release-blocking checks in section 27 and the implementation architecture of section 26, the dedicated public DTO, token-derived identity, strict input validation, isolated Project B configuration, CORS allow-list, public rate limits and live Supabase privilege verification.
 
 **Overall conclusion:** No current candidate/admin data leak was found in the audited existing routes. The main risk is creating a leak while implementing the new public API, especially by reusing existing candidate services that return more data than the public form is allowed to see. A dedicated public DTO, token-derived candidate identity, strict input validation, isolated Project B configuration, and live Supabase privilege verification are required before release.
+
+---
+
+## 29. Task 3 update (2026-10-16): share links, Passport + NIC, single submission
+
+Task 3 changed the design described in section 1. Verification now needs a personal **share link** created by staff (a 256-bit secret in the URL fragment), plus the candidate's **Passport Number and NIC Number** (NIC replaces WhatsApp). The candidate submits once; answers go to the new `candidate_form_response` table and never to `candidate`, `candidate_additional_details` or `candidate_stages`. The full design, sources and field mapping are in [CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md).
+
+Effect on the earlier register: R-028 / R-029 (knowledge-only verification) are reduced, because a guess now also needs the link secret. R-001 / R-082 (IDOR) stay controlled: the candidate comes only from the token, which now also carries the link ID and the access version. R-047 / R-046 (full replacement, concurrent edits) no longer apply to the public path: it never writes the staff tables.
+
+New risks:
+
+| ID | Category | Risk | Scenario | Control | Severity | Verification | Status |
+|---|---|---|---|---|---|---|---|
+| R-085 | Link secret leakage | The secret reaches logs, proxies or `Referer` | Secret in a path or query string | Secret only in the fragment; read once, kept in memory, removed from the address bar; sent only in the `POST /verify` body; `Referrer-Policy: no-referrer` on the form | HIGH | LINK-001, UI-002, UI-005 | Implemented, tested |
+| R-086 | Secret at rest | A database read discloses usable links | Plain secret stored | Only `SHA-256(secret)` stored (unique); shown once; never in audit rows or logs | HIGH | share: link creation, logs | Implemented, tested |
+| R-087 | Brute force of the link | Guessing or trying many secrets | Online guessing | 256-bit secret; per-IP and per-passport limits (Task 1); per-link lock after 10 failures for 1 hour | MEDIUM | RATE-001; share: link lock | Implemented, tested |
+| R-088 | Link misuse after replacement | An old link or an old session keeps working | Staff create a new link or revoke | One active link per candidate; revoke and replace in one transaction; the token carries the link ID and access version, checked on every request | HIGH | TOKEN-005; share: replace / revoke | Implemented, tested |
+| R-089 | Double or late submission | Two submits, or a submit after the form closed | Double click, retry, two tabs | Compare-and-set on `status = UNLOCKED AND version`; `SUBMITTED` final by trigger; idempotency key | HIGH | share: concurrent, idempotent; SUBMIT-002/003 | Implemented, tested |
+| R-090 | Submitted-state oracle | "Already submitted" reveals that a candidate exists | Probing with guessed details | The 409 is returned only when link, passport and NIC all match; any mismatch is the generic 401 | MEDIUM | VERIFY suite; share: after submit | Implemented, tested |
+| R-091 | Over-exposure in prefill | The form receives staff-only data | Reusing staff services | Whitelist DTO (`loadCandidateForm`); identity limited to passport, NIC and WhatsApp | HIGH | share: DTO whitelist | Implemented, tested |
+| R-092 | Public write to core data | A submission changes the main tables | Reusing the staff save | Separate `candidate_form_response`; the public path has no code that writes `candidate`, `candidate_additional_details` or `candidate_stages` | HIGH | share: main tables unchanged | Implemented, tested |
+| R-093 | Link lock as denial of service | Someone with the link locks it with wrong details | 10 deliberate failures | Lock lasts 1 hour; staff can create a new link (audited) | LOW | share: link lock | Accepted risk |
+| R-094 | Forwarded link | The link reaches someone else who also knows the Passport and NIC | Shared phone, forwarded message | 3-day expiry; revoke; one submission only; staff can see the state | MEDIUM | — | Accepted risk (residual) |
+
+New tables `candidate_form_link`, `candidate_form_access`, `candidate_form_prefill_snapshot` and `candidate_form_response` have RLS enabled and all privileges revoked from `anon` and `authenticated` in their migration. Their live privileges still need the ISS-013 check once the migration is applied.

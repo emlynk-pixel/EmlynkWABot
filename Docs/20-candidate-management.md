@@ -273,6 +273,20 @@ Every role that manages candidates can edit the form, REGISTRATION_DESK included
 - **Two people editing**: the form sends the `updatedDate` it loaded, and a save on a different version is refused with `409 DETAILS_CHANGED` ("changed by someone else… use Sync"). The typed values stay in the form. The page loads the details once and shares them with the stepper and the form.
 - Every change appears in Audit Logs (`CREATE_ADDITIONAL_DETAILS` / `UPDATE_ADDITIONAL_DETAILS`) with only the changed fields. Saving without changes writes nothing.
 
+### 4.6 Share Form (the candidate fills in the Candidate Form)
+
+Staff send a candidate a personal link to the public Candidate Form (`candidate-form/`). Design: [CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md).
+
+- **Where:** the candidate page, Additional details, **Share Form** (shown to staff who can edit the candidate).
+- **Who:** ADMIN, MANAGER and REGISTRATION_DESK for any candidate; ANALYST only for candidates allocated to them (others are 404, as everywhere). VIEWER: no.
+- **Create share link:** makes a link valid for **3 days** and shows it **once**, with **Copy link** and **Share on WhatsApp**. It is never shown again; if it is lost, create a new one. A new link replaces the previous one at once (the old link and any open form session stop working).
+- **Revoke link:** stops the link at once (confirmation first).
+- **State:** *No active link*, *Link active until …*, *Locked after failed attempts* (10 wrong attempts lock the link for 1 hour), *Submitted on …*.
+- **The candidate** opens the link, enters their Passport Number and NIC Number, checks the prefilled answers and submits **once**. After that the form cannot be opened or changed, and no new link can be created (409 `FORM_SUBMITTED`).
+- **Where the answers go:** `candidate_form_response`, a separate table. The candidate's record, additional details and stages are **never** changed by the form. They are not shown in Admin yet.
+- **Audit:** `CREATE_FORM_LINK` and `REVOKE_FORM_LINK` (link ID and expiry; never the link itself). The submission time is on the share state.
+- **Configuration:** the backend needs `CANDIDATE_FORM_ORIGIN` (the form's exact origin); without it, creating a link answers 503 `FORM_NOT_CONFIGURED`.
+
 ---
 
 ### 4.5 Work Allocation and candidate access
@@ -479,6 +493,9 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `DELETE` | `/follow-ups/:followUpId` | Delete a follow-up (ADMIN, MANAGER) |
 | `GET` | `/candidates/:passportId/additional-details` | Additional details, or suggestions from the candidate record when none are saved |
 | `PUT` | `/candidates/:passportId/additional-details` | Save additional details (full replacement; audited; never creates a candidate) |
+| `GET` | `/candidates/:passportId/form-share` | Share Form state (§4.6) |
+| `POST` | `/candidates/:passportId/form-share` | Create a share link (201; replaces the active one; audited) |
+| `POST` | `/candidates/:passportId/form-share/revoke` | Revoke the active link (audited) |
 
 ### Error codes
 
@@ -497,6 +514,9 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `UPLOAD_NOT_FOUND` | 404 | Finalize found no uploaded file for that upload ID, candidate and type |
 | `DOCUMENT_NOT_FOUND` | 404 | Remove: not the candidate's current document (already removed or replaced) |
 | `TRY_AGAIN` | 503 | Registration could not get a free unique ID; retry |
+| `FORM_SUBMITTED` | 409 | Share Form: the candidate has already submitted; no new link |
+| `NO_ACTIVE_LINK` | 404 | Share Form revoke: there is no active link |
+| `FORM_NOT_CONFIGURED` | 503 | Share Form: `CANDIDATE_FORM_ORIGIN` is not set |
 
 An unknown stage key returns 404 `Stage not found`; malformed input returns 400 with `errors`.
 
