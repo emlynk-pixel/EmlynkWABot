@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { buildMetaContentSecurityPolicy } from "./csp";
@@ -40,6 +41,14 @@ export default defineConfig(({ mode }) => {
             emptyOutDir: true,
             // No source maps in the public bundle.
             sourcemap: false,
+        },
+        // Component tests (npm test): a browser-like document, no network.
+        test: {
+            environment: "jsdom",
+            setupFiles: ["./src/test/setup.ts"],
+            // The stylesheet is read as text by the layout test (FORM-004).
+            css: true,
+            restoreMocks: true,
         },
     };
 });
