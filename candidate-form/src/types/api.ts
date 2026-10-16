@@ -19,37 +19,28 @@ export type ApiErrorBody = {
     errors?: FieldError[];
 };
 
-// Additional Details as the public API will exchange them (Task 3: the
-// secure read and save do not exist yet). Exactly the 19 fields, in the
-// server's names; blanks are null. Nothing else about the candidate is ever
-// part of these shapes.
-export type AdditionalDetailsPayload = {
-    nameAsInPassport: string | null;
-    permanentAddress: string | null;
-    birthday: string | null; // YYYY-MM-DD
-    tshirtSize: string | null;
-    pantSize: string | null;
-    shoeSize: string | null;
-    fatherAlive: boolean | null;
-    fatherFullName: string | null;
-    fatherBirthday: string | null;
-    motherAlive: boolean | null;
-    motherFullName: string | null;
-    motherBirthday: string | null;
-    maritalStatus: string | null;
-    wifeFullName: string | null;
-    wifeBirthday: string | null;
-    child1Name: string | null;
-    child2Name: string | null;
-    child3Name: string | null;
-    otherJobSkills: string | null;
-};
 
-// Planned (Task 3), not implemented on the server yet:
-//   GET /api/public/candidate-details/details -> AdditionalDetailsResponse
-//   PUT /api/public/candidate-details/details  { ...AdditionalDetailsPayload, expectedUpdatedDate }
-// Both authorised by the candidate token in the Authorization header.
-export type AdditionalDetailsResponse = {
-    details: AdditionalDetailsPayload | null;
-    updatedDate: string | null;
+// The Candidate Form as it would be sent once the secure save exists
+// (Task 3, not implemented on the server yet; the server side will confirm
+// this shape). Blanks are null; choices are English codes. It never holds
+// the Passport Number or WhatsApp Number: the server knows the candidate
+// from the token. Nothing staff-only (register number, stages, allocation,
+// jobs, documents) is part of it.
+type Nullable<T> = { [K in keyof T]: string | null };
+
+export type CandidateFormPayload = {
+    basic: Nullable<{ fullName: string; surname: string; otherNames: string; nic: string; sex: string; civilStatus: string; birthDate: string; birthPlace: string }>;
+    contact: Nullable<{ address: string; city: string; district: string; dsDivision: string; gnDivision: string; alternativePhone: string; email: string }>;
+    passport: Nullable<{ issueDate: string; expiryDate: string }>;
+    qualifications: Nullable<{ jobCategory: string; jobCategoryOther: string; experience: string; otherSkills1: string; otherSkills2: string; englishKnowledge: string }>;
+    measurements: Nullable<{ shirtSize: string; waistSize: string; shoeSize: string }>;
+    family: {
+        father: Nullable<{ name: string; surname: string; passportNumber: string; birthDate: string }>;
+        mother: Nullable<{ name: string; surname: string; passportNumber: string; birthDate: string }>;
+        spouse: Nullable<{ name: string; surname: string; passportNumber: string; birthDate: string }>;
+        child1: string | null;
+        child2: string | null;
+        child3: string | null;
+    };
+    guardian: Nullable<{ name: string; relationship: string; nic: string; birthDate: string; phone: string; address: string }>;
 };

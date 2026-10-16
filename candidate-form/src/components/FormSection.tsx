@@ -5,7 +5,7 @@ export function FormSection({ title, note, children }: { title: string; note?: s
     const headingId = useId();
     return (
         <section className="form-section" aria-labelledby={headingId}>
-            <h2 id={headingId}>{title}</h2>
+            <h3 id={headingId}>{title}</h3>
             {note && <p className="section-note">{note}</p>}
             <div className="section-fields">{children}</div>
         </section>

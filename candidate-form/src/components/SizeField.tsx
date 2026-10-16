@@ -42,7 +42,7 @@ export function SizeField({ id, label, otherLabel, help, presets, value, other, 
                 disabled={disabled}
             />
             {custom && (
-                <TextInput id={`${id}Other`} label={otherLabel} value={value} onChange={onChange} error={error} disabled={disabled} maxLength={10} autoCapitalize="characters" />
+                <TextInput id={`${id}Other`} label={otherLabel} value={value} onChange={onChange} error={error} disabled={disabled} maxLength={10} uppercase />
             )}
         </div>
     );

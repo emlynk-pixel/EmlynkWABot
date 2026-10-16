@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
 import { LanguageSwitch } from "./components/LanguageSwitch";
+import { ThemeSwitch } from "./components/ThemeSwitch";
 import { isApiConfigured } from "./config/env";
 import { LanguageProvider } from "./i18n/LanguageContext";
 import { useLanguage, type Message } from "./i18n/useLanguage";
-import { DetailsPage } from "./pages/DetailsPage";
+import { CandidateFormPage } from "./pages/CandidateFormPage";
 import { VerifyPage } from "./pages/VerifyPage";
-import { clearSession } from "./session/tokenStore";
+import { clearSession, getSession, type VerifiedIdentity } from "./session/tokenStore";
+import { ThemeProvider } from "./theme/ThemeContext";
 
-type View = { name: "verify"; notice?: Message } | { name: "details"; expiresAt: string };
+type View = { name: "verify"; notice?: Message } | { name: "form"; expiresAt: string; identity: VerifiedIdentity };
 
+// Theme and language sit above every page: switching either only changes how
+// the page looks or reads; the answers, the validation state and the session
+// stay as they are.
 export function App() {
     return (
-        <LanguageProvider>
-            <CandidateForm />
-        </LanguageProvider>
+        <ThemeProvider>
+            <LanguageProvider>
+                <CandidateForm />
+            </LanguageProvider>
+        </ThemeProvider>
     );
 }
 
@@ -34,17 +41,26 @@ function CandidateForm() {
         setView({ name: "verify", notice: { key: "session.ended" } });
     }, []);
 
-    const step = view.name === "verify" ? 1 : 2;
+    const verified = (expiresAt: string) => {
+        const session = getSession();
+        if (session) setView({ name: "form", expiresAt, identity: session.identity });
+    };
 
     return (
         <div className="page">
             <header className="site-header">
                 <div className="site-header-inner">
                     <p className="brand">
-                        <span className="brand-name">Emlynk</span>
-                        <span className="brand-sub">{t("app.subtitle")}</span>
+                        <span className="brand-mark" aria-hidden="true">E</span>
+                        <span className="brand-text">
+                            <span className="brand-name">Emlynk</span>
+                            <span className="brand-sub">{t("app.subtitle")}</span>
+                        </span>
                     </p>
-                    <LanguageSwitch />
+                    <div className="header-controls">
+                        <LanguageSwitch />
+                        <ThemeSwitch />
+                    </div>
                 </div>
             </header>
             <main className="shell">
@@ -53,28 +69,18 @@ function CandidateForm() {
                         <h1>{t("notConfigured.title")}</h1>
                         <p className="lead">{t("notConfigured.lead")}</p>
                     </section>
+                ) : view.name === "verify" ? (
+                    <VerifyPage notice={view.notice} onVerified={verified} />
                 ) : (
-                    <>
-                        <ol className="steps" aria-label={t("steps.label")}>
-                            {(["steps.verify", "steps.details"] as const).map((label, index) => (
-                                <li key={label} className={index + 1 === step ? "current" : index + 1 < step ? "done" : undefined} aria-current={index + 1 === step ? "step" : undefined}>
-                                    <span className="step-number" aria-hidden="true">{index + 1 < step ? "✓" : index + 1}</span>
-                                    {t(label)}
-                                </li>
-                            ))}
-                        </ol>
-                        {view.name === "verify" && <VerifyPage notice={view.notice} onVerified={(expiresAt) => setView({ name: "details", expiresAt })} />}
-                        {view.name === "details" && (
-                            <DetailsPage
-                                expiresAt={view.expiresAt}
-                                onSessionEnded={sessionEnded}
-                                onFinish={() => {
-                                    clearSession();
-                                    setView({ name: "verify" });
-                                }}
-                            />
-                        )}
-                    </>
+                    <CandidateFormPage
+                        expiresAt={view.expiresAt}
+                        identity={view.identity}
+                        onSessionEnded={sessionEnded}
+                        onFinish={() => {
+                            clearSession();
+                            setView({ name: "verify" });
+                        }}
+                    />
                 )}
             </main>
         </div>

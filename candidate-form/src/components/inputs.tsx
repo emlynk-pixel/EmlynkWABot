@@ -1,3 +1,5 @@
+import type { ChangeEvent } from "react";
+import { toUpperEnglish } from "../form/uppercase";
 import { useLanguage, type Message } from "../i18n/useLanguage";
 import { describedBy, Field, type FieldProps } from "./Field";
 
@@ -9,11 +11,28 @@ type Common = FieldProps & { value: string; onChange: (value: string) => void; d
 
 const invalid = (error?: Message) => (error ? true : undefined);
 
-export function TextInput({ id, value, onChange, disabled, maxLength, inputMode = "text", placeholder, autoCapitalize = "sentences", autoComplete = "off", ...field }: Common & {
+// With `uppercase`, English letters become capitals in the value itself as
+// they are typed (Sinhala and everything else unchanged). The same-length
+// text is written back into the box with the cursor where it was, so React
+// sees no difference and the cursor does not jump to the end.
+function readValue(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>, uppercase: boolean): string {
+    const element = event.target;
+    if (!uppercase) return element.value;
+    const next = toUpperEnglish(element.value);
+    if (next !== element.value) {
+        const { selectionStart, selectionEnd } = element;
+        element.value = next;
+        if (selectionStart !== null && selectionEnd !== null) element.setSelectionRange(selectionStart, selectionEnd);
+    }
+    return next;
+}
+
+export function TextInput({ id, value, onChange, disabled, maxLength, type = "text", inputMode, placeholder, uppercase = false, autoComplete = "off", ...field }: Common & {
     maxLength?: number;
-    inputMode?: "text" | "tel";
+    type?: "text" | "email" | "tel";
+    inputMode?: "text" | "tel" | "email";
     placeholder?: string;
-    autoCapitalize?: "sentences" | "words" | "characters" | "off";
+    uppercase?: boolean;
     autoComplete?: string;
 }) {
     return (
@@ -22,14 +41,15 @@ export function TextInput({ id, value, onChange, disabled, maxLength, inputMode 
                 <input
                     id={id}
                     name={id}
+                    type={type}
                     value={value}
-                    onChange={(event) => onChange(event.target.value)}
+                    onChange={(event) => onChange(readValue(event, uppercase))}
                     disabled={disabled}
                     inputMode={inputMode}
                     placeholder={placeholder}
                     maxLength={maxLength}
                     autoComplete={autoComplete}
-                    autoCapitalize={autoCapitalize}
+                    autoCapitalize={uppercase ? "characters" : "off"}
                     spellCheck={false}
                     required={field.required}
                     aria-invalid={invalid(field.error)}
@@ -40,7 +60,7 @@ export function TextInput({ id, value, onChange, disabled, maxLength, inputMode 
     );
 }
 
-export function TextArea({ id, value, onChange, disabled, maxLength, rows = 3, ...field }: Common & { maxLength?: number; rows?: number }) {
+export function TextArea({ id, value, onChange, disabled, maxLength, rows = 3, uppercase = false, ...field }: Common & { maxLength?: number; rows?: number; uppercase?: boolean }) {
     return (
         <Field id={id} {...field}>
             {(helpOpen) => (
@@ -48,14 +68,31 @@ export function TextArea({ id, value, onChange, disabled, maxLength, rows = 3, .
                     id={id}
                     name={id}
                     value={value}
-                    onChange={(event) => onChange(event.target.value)}
+                    onChange={(event) => onChange(readValue(event, uppercase))}
                     disabled={disabled}
                     maxLength={maxLength}
                     rows={rows}
+                    autoCapitalize={uppercase ? "characters" : "sentences"}
                     required={field.required}
                     aria-invalid={invalid(field.error)}
                     aria-describedby={describedBy(id, field, helpOpen)}
                 />
+            )}
+        </Field>
+    );
+}
+
+// A value the candidate can see but not change (the verified Passport and
+// WhatsApp numbers): a read-only box with a "Verified" mark and a hint.
+export function VerifiedValue({ id, label, value }: { id: string; label: string; value: string }) {
+    const { t } = useLanguage();
+    return (
+        <Field id={id} label={label} hint={t("form.verifiedHint")}>
+            {() => (
+                <div className="verified-value">
+                    <input id={id} name={id} value={value} readOnly aria-readonly="true" aria-describedby={`${id}-hint ${id}-badge`} />
+                    <span id={`${id}-badge`} className="verified-badge"><span aria-hidden="true">✓ </span>{t("form.verified")}</span>
+                </div>
             )}
         </Field>
     );
@@ -111,26 +148,27 @@ export function SelectInput({ id, value, onChange, disabled, options, ...field }
     );
 }
 
-// Yes / No as two large radio buttons in a fieldset (the question is its
-// legend). "" means not answered.
-export function YesNo({ id, label, value, onChange, disabled, error }: Pick<Common, "id" | "label" | "value" | "onChange" | "disabled" | "error">) {
+// One choice from a short list, as large tappable cards (radio buttons in a
+// fieldset whose legend is the question). Arrow keys move between choices.
+export function ChoiceCards({ id, label, value, onChange, options, required, help, error }: Pick<Common, "id" | "label" | "value" | "onChange" | "required" | "help" | "error"> & { options: Option[] }) {
     const { t } = useLanguage();
     return (
-        <fieldset className={`field choice${error ? " field-invalid" : ""}`} aria-describedby={error ? `${id}-error` : undefined}>
-            <legend>{label}</legend>
-            <div className="choice-row">
-                {(["yes", "no"] as const).map((choice) => (
-                    <label key={choice} className="choice-option">
-                        <input
-                            type="radio"
-                            name={id}
-                            id={`${id}-${choice}`}
-                            value={choice}
-                            checked={value === choice}
-                            onChange={() => onChange(choice)}
-                            disabled={disabled}
-                        />
-                        <span>{t(choice === "yes" ? "option.yes" : "option.no")}</span>
+        <fieldset id={id} tabIndex={-1} className={`field choice${error ? " field-invalid" : ""}`} aria-describedby={[help ? `${id}-note` : null, error ? `${id}-error` : null].filter(Boolean).join(" ") || undefined}>
+            <legend>
+                {label}
+                {required && (
+                    <>
+                        <span className="required-mark" aria-hidden="true"> *</span>
+                        <span className="visually-hidden"> ({t("required")})</span>
+                    </>
+                )}
+            </legend>
+            {help && <p id={`${id}-note`} className="hint">{help}</p>}
+            <div className="choice-grid">
+                {options.map((option) => (
+                    <label key={option.value} className="choice-option">
+                        <input type="radio" name={id} value={option.value} checked={value === option.value} onChange={() => onChange(option.value)} />
+                        <span>{option.label}</span>
                     </label>
                 ))}
             </div>

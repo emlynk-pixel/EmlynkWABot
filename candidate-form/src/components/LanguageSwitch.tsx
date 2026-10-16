@@ -8,7 +8,7 @@ import { useLanguage } from "../i18n/useLanguage";
 export function LanguageSwitch() {
     const { language, setLanguage } = useLanguage();
     return (
-        <div className="language-switch" role="group" aria-label="Language / භාෂාව">
+        <div className="segmented language-switch" role="group" aria-label="Language / භාෂාව">
             {LANGUAGES.map((option) => (
                 <button
                     key={option}

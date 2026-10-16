@@ -50,7 +50,12 @@ export function VerifyPage({ onVerified, notice }: { onVerified: (expiresAt: str
         setBusy(true);
         try {
             const result = await verifyCandidate({ passportNumber: passportNumber.trim(), whatsappNumber: whatsappNumber.trim() });
-            setSession(result.token, result.expiresAt);
+            // The verified identity, as the server compares it: the passport in
+            // capitals without spaces or hyphens; the WhatsApp number as typed.
+            setSession(result.token, result.expiresAt, {
+                passportNumber: passportNumber.trim().replace(/[\s-]/g, "").toUpperCase(),
+                whatsappNumber: whatsappNumber.trim(),
+            });
             // Nothing typed stays on screen after a successful verification.
             setPassportNumber("");
             setWhatsappNumber("");
@@ -77,7 +82,7 @@ export function VerifyPage({ onVerified, notice }: { onVerified: (expiresAt: str
                 error={fieldErrors.passportNumber}
                 disabled={busy}
                 maxLength={30}
-                autoCapitalize="characters"
+                uppercase
             />
             <TextInput
                 id="whatsappNumber"
