@@ -408,7 +408,8 @@ describe("SECRET: candidate-form holds no backend configuration", () => {
         assert.match(vite, /const ENV_PREFIX = "VITE_API_"/);
         assert.match(vite, /envPrefix: ENV_PREFIX/);
         assert.match(vite, /sourcemap: false/);
-        const example = fs.readFileSync(path.join(ROOT, ".env.example"), "utf8").split("\n").filter((line) => /^[A-Z]/.test(line));
+        // Either line ending: a Windows checkout (core.autocrlf) has CRLF.
+        const example = fs.readFileSync(path.join(ROOT, ".env.example"), "utf8").split(/\r?\n/).filter((line) => /^[A-Z]/.test(line));
         assert.deepEqual(example, ["VITE_API_BASE_URL="]);
         const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
         assert.ok(!Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).some((name) => /supabase|prisma|pg$|googleapis/.test(name)), "no database / Supabase / Google client in the form");

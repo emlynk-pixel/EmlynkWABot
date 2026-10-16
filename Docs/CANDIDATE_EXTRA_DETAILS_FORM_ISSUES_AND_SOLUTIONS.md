@@ -1,7 +1,7 @@
 # Candidate Extra Details Form — Issues and Solutions Log
 
 Branch: `version/candidate-extra-details-form`
-Last updated: 2026-10-15 (after the Task 1 security cleanup)
+Last updated: 2026-10-16 (Task 2: form UI and English / Sinhala)
 
 Related documents:
 - [CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md](CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md): the risk register (`R-xxx`) and preventive controls.
@@ -27,10 +27,11 @@ It is not the security risk document. The risk document lists what *could* go wr
 | **Audit** | Repository security and data-leakage audit before implementation. Findings were recorded in the security risk document. |
 | **Task 1** | Candidate form setup and secure backend API: `candidate-form/`, `POST /api/public/candidate-details/verify`, candidate token, public CORS, public rate limits, tests. |
 | **Task 1 cleanup** | Fix of the two security issues left after Task 1: the timing difference and the CSP mismatch. |
+| **Task 2** | The candidate-facing form UI: verification and Additional Details screens, English / Sinhala, field components, validation messages, mobile layout, frontend tests. No backend read or save. |
 | **Task 3** | Planned: the public read and save of the 19 Additional Details fields. |
 | **Task 4** | Planned: load testing and release hardening. |
 
-The Task 1 work, the Task 1 cleanup and the final audit edits are dated 2026-10-15 (file dates on the branch). The Audit phase came before Task 1 and has no separately recorded date.
+The Task 1 work, the Task 1 cleanup and the final audit edits are dated 2026-10-15 (file dates on the branch). Task 2 is dated 2026-10-16. The Audit phase came before Task 1 and has no separately recorded date.
 
 ### Statuses
 
@@ -69,6 +70,11 @@ Test IDs refer to [test/publicCandidateDetails.test.js](../test/publicCandidateD
 | ISS-016 | Task 1 | Configuration | The form must not work partially when its configuration is missing or wrong. | A half-configured deployment could expose the endpoint with weak settings. | Both backend variables are optional for the server as a whole, so the server starts without them. | **Fails closed.** A missing or short (< 32 characters) `CANDIDATE_FORM_TOKEN_SECRET` makes `verify` and the token middleware return 503 before any counting or lookup. A missing or invalid `CANDIDATE_FORM_ORIGIN` means no browser origin is allowed (403). A value that is set but malformed is reported by the startup environment check. In the form, a missing `VITE_API_BASE_URL` shows "Not available", and an invalid one fails the build. The Admin app and API are unaffected. | Unusable-secret test (503) in the VERIFY suite; "Configuration checks" test; CORS-002; CSP-001 (invalid base URL fails the build) | Solved |
 | ISS-017 | Audit; Task 1 | Security: matching | `normalizePhoneNumber` expands Sri Lankan local forms, so the inputs `+0771234567` and `+771234567` matched a stored `+94771234567` (executed). (R-043) | A number that is not the candidate's could pass verification. | The normaliser was built for comparing stored numbers (it accepts local formats), not for strictly validating public input. | The public input must be `+` followed by 8–15 digits with a non-zero first digit, and is compared as those digits **without** the local-form expansion. Only the stored number is normalised. | VERIFY-008, VERIFY-008b | Solved |
 | ISS-018 | Task 1 cleanup | Testing | The first run of CSP-003 failed against the built `dist/index.html`. | One failing test; no product impact. | Vite HTML-escapes attribute values (`'` becomes `&#39;`), so the raw meta `content` did not equal the generated policy string. | The test decodes HTML entities before comparing. | CSP-003 passes; public candidate suite 27/27 | Solved |
+| ISS-019 | Task 2 | Testing | SECRET-001 failed in this checkout before any Task 2 change (confirmed with the Task 2 changes stashed: public suite 26/27). | The Task 1 public suite did not pass on Windows; no product impact. | `candidate-form/.env.example` has CRLF line endings (the committed file has them, and `core.autocrlf` is on). The test split lines on `"\n"`, so the line read as `VITE_API_BASE_URL=\r`. | The test splits on `/\r?\n/`. What it checks is unchanged: the file still must list exactly `VITE_API_BASE_URL=`. | SECRET-001 passes; public candidate suite 27/27 | Solved |
+| ISS-020 | Task 2 | Testing | The new layout test (FORM-004) first read an empty stylesheet. | One failing test; no product impact. | With `css: false` in the Vitest settings, every CSS import is replaced, including `styles.css?raw`. | `css: true` in the `candidate-form` test settings. | FORM-004 passes | Solved |
+| ISS-021 | Task 2 | Testing / mobile | Real-browser checks at 320, 375 and 390 px were not possible by resizing headless Edge: its window has a minimum width, and all three rendered at 492 px. | Phone widths could not be checked that way. | Headless browser window minimum. | A temporary page (not committed) loaded the form in iframes of exactly 320, 375, 390, 768 and 1280 px and compared `scrollWidth` with `clientWidth`. All 20 cases matched (verification and details screens, wife fields shown, English and Sinhala): no horizontal scrolling. Screenshots were checked by eye. The committed suite keeps a static CSS check (FORM-004). **Residual:** no automated real-browser width test in the repository. | FORM-004; the one-off measurement above | Mitigated |
+| ISS-022 | Task 2 | Frontend / UX | The Additional Details form has nothing to read from or save to: the secure GET and PUT are Task 3. | The candidate could think their details were saved. | Task order: the UI comes before the secure endpoints. | The form starts empty and says plainly that saving is not available yet and nothing is kept. **Save details** only checks the entries with the server's own rules and then says that nothing was saved; it sends no request. Hidden entries (wife details when not married, children when single) stay in the form but are left out of what would be sent (`toPayload`). The request and response shapes are typed for Task 3. | "Save never pretends to save", FORM-003 | Deferred |
+| ISS-023 | Task 2 | Frontend / UX | On the Sinhala form at 320 px, section headings looked like one more field label. | Harder to scan the form on a phone. | The heading was barely larger than a label and sat directly on the first label. | Larger section headings with more space under them. | Screenshot check after the change | Solved |
 
 ISS-017 and ISS-018 are not in the original list of 16. They are added because they also happened (ISS-017 in the audit, ISS-018 during the Task 1 cleanup).
 
@@ -133,7 +139,12 @@ Neither affects the code as it stands: Task 1 adds no read or save of candidate 
 
 ## 6. Frontend / UX Issues
 
-No frontend or UX defects have been recorded. Task 1 built only the verification screen; the 19-field form is Task 2.
+| ID | Summary | Status |
+|---|---|---|
+| ISS-022 | The form cannot read or save yet (Task 3); it says so and never claims to save | Deferred |
+| ISS-023 | Section headings looked like labels on the Sinhala form at 320 px | Solved |
+
+Task 2 built the verification and Additional Details screens in English and Sinhala.
 
 Frontend-relevant behaviour recorded elsewhere in this log:
 - An unconfigured build shows "Not available" (ISS-016).
@@ -147,6 +158,9 @@ Frontend-relevant behaviour recorded elsewhere in this log:
 | ID | Summary | Status |
 |---|---|---|
 | ISS-018 | CSP-003 compared HTML-escaped meta content | Solved |
+| ISS-019 | SECRET-001 failed on CRLF line endings in `.env.example` | Solved |
+| ISS-020 | Vitest `css: false` blanked the stylesheet the layout test reads | Solved |
+| ISS-021 | Phone widths could not be checked by resizing headless Edge | Mitigated |
 
 Test results after the Task 1 cleanup (2026-10-15):
 
@@ -157,8 +171,18 @@ Test results after the Task 1 cleanup (2026-10-15):
 | Admin `npm test` | 448 / 448 pass |
 | `candidate-form` typecheck and build | Pass; no `.map` files in `dist/` |
 
+Test results after Task 2 (2026-10-16):
+
+| Suite | Result |
+|---|---|
+| `test/publicCandidateDetails.test.js` | 27 / 27 pass |
+| Backend `npm test` | 1601 tests: 1579 pass, 0 fail, 22 skipped |
+| `candidate-form` `npm test` (new) | 31 / 31 pass |
+| `candidate-form` typecheck and build | Pass |
+
 Coverage gaps:
 - ISS-002 and ISS-003 have no tests yet (Task 3).
+- No automated real-browser width test (ISS-021).
 - ISS-007, ISS-012 and ISS-013 cannot be verified from the repository.
 - ISS-014 needs the Task 4 load test.
 - The deployed response headers (HDR-001) are untested.
@@ -174,6 +198,7 @@ Coverage gaps:
 | ISS-012 | `candidate_allocation` live privileges; RLS and revokes if needed | Before release | Release Blocker |
 | ISS-013 | Live Supabase table privileges, RLS and Storage policies | Before release | Release Blocker |
 | ISS-014 | Load test of public verification against Admin traffic | Task 4 | Deferred |
+| ISS-022 | Connect the form to the secure read and save; replace the "not saved" notice | Task 3 | Deferred |
 | ISS-015 | Review the per-passport lockout window and policy | Task 4 | Accepted Risk |
 | ISS-006 (follow-up) | Confirm the deployed Project B response headers match `vercel.json` (HDR-001) | First Project B deployment | Open check (the issue itself is Solved) |
 | ISS-007 (follow-up) | Confirm Project B was created with Root Directory `candidate-form/` | First Project B deployment | Open check (the issue itself is Mitigated) |
@@ -212,10 +237,10 @@ Before the first production deployment, also complete the follow-up checks in se
 
 | Status | Count | IDs |
 |---|---|---|
-| Solved | 9 | ISS-001, 004, 006, 008, 009, 011, 016, 017, 018 |
-| Mitigated | 3 | ISS-005, 007, 010 |
+| Solved | 12 | ISS-001, 004, 006, 008, 009, 011, 016, 017, 018, 019, 020, 023 |
+| Mitigated | 4 | ISS-005, 007, 010, 021 |
 | Open | 2 | ISS-002, 003 |
-| Deferred | 1 | ISS-014 |
+| Deferred | 2 | ISS-014, 022 |
 | Release Blocker | 2 | ISS-012, 013 |
 | Accepted Risk | 1 | ISS-015 |
-| **Total** | **18** | |
+| **Total** | **23** | |
