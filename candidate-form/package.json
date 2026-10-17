@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "react": "19.3.0",
+    "react-day-picker": "10.0.2",
     "react-dom": "19.3.0"
   },
   "devDependencies": {

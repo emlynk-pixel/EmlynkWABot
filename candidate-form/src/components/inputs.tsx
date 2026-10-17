@@ -1,6 +1,7 @@
 import type { ChangeEvent } from "react";
 import { toUpperEnglish } from "../form/uppercase";
 import { useLanguage, type Message } from "../i18n/useLanguage";
+import { DatePicker } from "./DatePicker";
 import { describedBy, Field, type FieldProps } from "./Field";
 
 // The form's controls. Each takes its label and messages already chosen by
@@ -98,23 +99,36 @@ export function VerifiedValue({ id, label, value }: { id: string; label: string;
     );
 }
 
-// The browser's own date picker (YYYY-MM-DD), between min and max.
+// A calendar date picker (components/DatePicker.tsx). The value is always "YYYY-MM-DD" (or ""), between min and max.
 export function DateInput({ id, value, onChange, disabled, min, max, ...field }: Common & { min?: string; max?: string }) {
+    const { t, language } = useLanguage();
     return (
         <Field id={id} {...field}>
             {(helpOpen) => (
-                <input
+                <DatePicker
                     id={id}
-                    name={id}
-                    type="date"
                     value={value}
+                    onChange={onChange}
                     min={min}
                     max={max}
-                    onChange={(event) => onChange(event.target.value)}
                     disabled={disabled}
                     required={field.required}
-                    aria-invalid={invalid(field.error)}
-                    aria-describedby={describedBy(id, field, helpOpen)}
+                    invalid={Boolean(field.error)}
+                    describedBy={describedBy(id, field, helpOpen)}
+                    numericMonths={language === "si"}
+                    labels={{
+                        openCalendar: t("date.openCalendar"),
+                        calendar: t("date.calendar"),
+                        previousMonth: t("date.previousMonth"),
+                        nextMonth: t("date.nextMonth"),
+                        month: t("date.month"),
+                        year: t("date.year"),
+                        today: t("date.today"),
+                        clear: t("date.clear"),
+                        close: t("date.close"),
+                        selected: t("date.selected"),
+                        invalidFormat: t("date.invalidFormat"),
+                    }}
                 />
             )}
         </Field>

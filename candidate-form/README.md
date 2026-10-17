@@ -37,6 +37,16 @@ Public web form where an **existing** candidate opens the personal link staff se
 
 **Uppercase.** English free text is kept in capitals as it is typed: `shamal sathsara` becomes `SHAMAL SATHSARA` in the value itself, with the cursor left where it was (`src/form/uppercase.ts`). Only the letters a-z change, so Sinhala, digits and punctuation stay exactly as typed. Email, phone numbers, dates and choice lists are never changed. This is for the candidate's benefit only; the server normalises again.
 
+## Date fields
+
+Every date (birth dates, passport dates, parents', spouse's and guardian's birth dates) uses one calendar component, `src/components/DatePicker.tsx` (built on `react-day-picker`; the form's `DateInput` wraps it).
+
+- **Value:** always a date-only string, `YYYY-MM-DD` (or empty): never a locale string or a timestamp. The calendar works on local calendar days, so no day can shift with the time zone.
+- **Typing:** one format only, `YYYY-MM-DD` (the placeholder says so). A real date is accepted as soon as it is complete and the form's own rules then judge it (required, not in the future, expiry after issue); anything else is not accepted, is flagged and is cleared when the field loses focus. There is no `DD/MM` or `MM/DD` guessing.
+- **Calendar:** opens from the field's calendar button (or Alt+Down), with month and year lists (a birth date is a few taps), Today / Clear / Close, and days outside the field's minimum and maximum disabled. Escape closes only the calendar and returns focus to the field; a click outside closes it. Optional dates can be cleared in the calendar; required ones have no Clear.
+- **Language:** the labels follow the language switch. In Sinhala the month list shows numbers (01-12), because the browser's Sinhala month names can be confusing; the stored value is never translated.
+- **Look:** colours come from the Light / Dark variables; on phones (up to 520 px wide) the calendar is a bottom sheet, otherwise a popover rendered in `<body>` so no card can clip it.
+
 ## Language support (English / සිංහල)
 
 - The switch is in the header on every screen. English is the default; the choice is kept in memory only (a reload starts in English) and sets `<html lang>`.

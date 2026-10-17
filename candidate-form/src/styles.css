@@ -477,3 +477,90 @@ button:disabled { opacity: 0.6; cursor: default; }
     .theme-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
     .theme-switch button { min-width: 36px; justify-content: center; }
 }
+
+/* ---------- date picker (components/DatePicker.tsx) ---------- */
+
+.date-picker { position: relative; }
+.date-picker-row { display: flex; align-items: stretch; gap: 8px; }
+.date-picker-row input { flex: 1 1 auto; font-variant-numeric: tabular-nums; }
+.date-picker-button {
+    flex: none;
+    width: 46px;
+    min-height: 46px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--primary);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    cursor: pointer;
+}
+.date-picker-button:hover:not(:disabled) { background: var(--primary-soft); }
+.date-picker-button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.date-picker-button:disabled { background: var(--notice-soft); color: var(--muted); cursor: not-allowed; }
+.field-invalid .date-picker-button { border-color: var(--error); border-width: 2px; }
+
+/* The calendar is rendered in <body>, above everything, so no card or section can clip it. */
+.date-picker-popover {
+    position: fixed;
+    z-index: 1000;
+    width: min(320px, calc(100vw - 16px));
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
+    padding: 12px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    box-shadow: var(--shadow), 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+/* Phones: a sheet at the bottom of the screen with big touch targets. */
+.date-picker-backdrop { position: fixed; inset: 0; z-index: 999; background: rgba(0, 0, 0, 0.4); }
+.date-picker-popover.is-sheet { left: 8px; right: 8px; bottom: 8px; top: auto; width: auto; max-height: 85vh; }
+
+.date-picker-popover .rdp-root {
+    --rdp-accent-color: var(--primary);
+    --rdp-accent-background-color: var(--primary-soft);
+    --rdp-day-height: 40px;
+    --rdp-day-width: 40px;
+    --rdp-day_button-height: 38px;
+    --rdp-day_button-width: 38px;
+    --rdp-nav_button-height: 40px;
+    --rdp-nav_button-width: 40px;
+    --rdp-selected-border: 2px solid var(--primary);
+    --rdp-today-color: var(--primary);
+    --rdp-weekday-opacity: 1;
+    margin: 0 auto;
+    width: fit-content;
+    color: var(--ink);
+}
+.date-picker-popover .rdp-day_button { color: var(--ink); background: transparent; font: inherit; }
+.date-picker-popover .rdp-day_button:hover:not(:disabled) { background: var(--primary-soft); }
+.date-picker-popover .rdp-selected .rdp-day_button { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); font-weight: 700; }
+.date-picker-popover .rdp-today:not(.rdp-selected) .rdp-day_button { border-color: var(--primary); font-weight: 700; }
+.date-picker-popover .rdp-disabled { opacity: 0.35; }
+.date-picker-popover .rdp-outside { opacity: 0.6; }
+.date-picker-popover .rdp-weekday { color: var(--muted); font-size: 0.8125rem; font-weight: 600; }
+.date-picker-popover .rdp-button_previous, .date-picker-popover .rdp-button_next { color: var(--primary); }
+.date-picker-popover .rdp-chevron { fill: currentColor; }
+.date-picker-popover .rdp-day_button:focus-visible, .date-picker-popover .rdp-button_previous:focus-visible, .date-picker-popover .rdp-button_next:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+/* Month and year lists. */
+.date-picker-popover .rdp-dropdown_root { color: var(--ink); }
+.date-picker-popover .rdp-dropdown { color: var(--ink); background: var(--surface); }
+.date-picker-popover .rdp-caption_label { color: var(--ink); font-weight: 700; }
+.date-picker-popover .rdp-dropdown:focus-visible ~ .rdp-caption_label { outline: 3px solid var(--focus); }
+.date-picker-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.date-picker-footer button {
+    min-height: 40px;
+    padding: 6px 14px;
+    font: inherit;
+    font-weight: 600;
+    color: var(--primary);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+}
+.date-picker-footer button:hover { background: var(--primary-soft); }
+.date-picker-footer button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
