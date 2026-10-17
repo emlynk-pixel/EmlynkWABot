@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import {
@@ -16,6 +16,7 @@ import { ErrorState, LoadingState } from "../States";
 import { Field, fieldControl, textAreaControl } from "./CandidateFields";
 import type { CandidateJobAssignment } from "../../api/jobs";
 import { ShareFormButton } from "./ShareFormButton";
+import { mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
 
 // Additional Details tab of a candidate: passport and personal details,
 // clothing sizes, parents, marital and family details, other job skills.
@@ -95,6 +96,9 @@ export type AdditionalDetailsLoad = {
 export function AdditionalDetailsPanel({ resource, canEdit, onSaved, currentJob = null }: { resource: AdditionalDetailsLoad; canEdit: boolean; onSaved?: (view: AdditionalDetailsView) => void; currentJob?: CandidateJobAssignment | null }) {
     // The version this panel saved last: "Saved" is shown only while that is still the one on screen.
     const [savedVersion, setSavedVersion] = useState<string | null | undefined>(undefined);
+    // A save rebuilds the form from what was saved; any other refresh (a confirmed Candidate Form value, Sync) is
+    // merged into the open form without discarding what is being typed.
+    const [saves, setSaves] = useState(0);
 
     const data = resource.data;
     if (!data) {
@@ -104,12 +108,12 @@ export function AdditionalDetailsPanel({ resource, canEdit, onSaved, currentJob 
     }
     return (
         <AdditionalDetailsForm
-            key={data.updatedDate ?? "new"}
+            key={saves}
             view={data}
             canEdit={canEdit}
             currentJob={currentJob}
             notice={savedVersion !== undefined && savedVersion === data.updatedDate}
-            onSaved={(view) => { setSavedVersion(view.updatedDate); onSaved?.(view); }}
+            onSaved={(view) => { setSavedVersion(view.updatedDate); setSaves((n) => n + 1); onSaved?.(view); }}
         />
     );
 }
@@ -131,6 +135,17 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob }: {
     const [busy, setBusy] = useState(false);
     // Cancel remounts the size fields, so a custom-size input follows the restored value.
     const [resets, setResets] = useState(0);
+    const baseline = useRef(initial);
+    const takeConfirmed = useTakeConfirmed();
+    useEffect(() => {
+        const previous = baseline.current;
+        if (JSON.stringify(previous) === JSON.stringify(initial)) return;
+        baseline.current = initial;
+        const forced = takeConfirmed(KEYS);
+        setForm((current) => mergeRefreshed(current, previous, initial, forced));
+        // Size fields keep a custom-value toggle of their own: rebuild them when a size was refreshed.
+        if (previous.pantSize !== initial.pantSize || previous.shoeSize !== initial.shoeSize) setResets((n) => n + 1);
+    }, [view.updatedDate, view.details]);
     const today = todayInSriLanka();
 
     const changed = JSON.stringify(form) !== JSON.stringify(initial);
@@ -168,11 +183,11 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob }: {
         }
     };
 
-    const text = (key: Key, label: string, { required = false, maxLength = 150, placeholder }: { required?: boolean; maxLength?: number; placeholder?: string } = {}) => (
-        <TextField id={key} label={label} required={required} error={errors[key]} value={form[key]} onChange={set(key)} disabled={disabled} maxLength={maxLength} placeholder={placeholder} />
+    const text = (key: Key, label: string, { required = false, maxLength = 150, placeholder, submitted }: { required?: boolean; maxLength?: number; placeholder?: string; submitted?: string } = {}) => (
+        <TextField id={key} label={label} required={required} error={errors[key]} value={form[key]} onChange={set(key)} disabled={disabled} maxLength={maxLength} placeholder={placeholder} submitted={submitted} />
     );
-    const dateField = (key: Key, label: string) => (
-        <Field label={label} htmlFor={`ad-${key}`} error={errors[key]}>
+    const dateField = (key: Key, label: string, submitted?: string) => (
+        <Field label={label} htmlFor={`ad-${key}`} error={errors[key]} submitted={submitted}>
             <input id={`ad-${key}`} type="date" min="1900-01-01" max={today} value={form[key]} onChange={(e) => set(key)(e.target.value)} disabled={disabled} aria-invalid={Boolean(errors[key])} className={`${fieldControl} ${errors[key] ? "border-critical" : ""}`} />
         </Field>
     );
@@ -208,7 +223,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob }: {
                     <input id="ad-passport" value={view.passportId} readOnly aria-describedby="ad-passport-hint" className={`${fieldControl} bg-canvas text-ink-muted`} />
                     <p id="ad-passport-hint" className="mt-1 text-label-sm text-ink-subtle">The candidate&apos;s passport ID; it can&apos;t be changed here.</p>
                 </Field>
-                {text("nameAsInPassport", "Name according to passport")}
+                {text("nameAsInPassport", "Name according to passport", { submitted: "basic.fullName" })}
                 <div className="sm:col-span-2">
                     <Field label="Permanent address" htmlFor="ad-permanentAddress" error={errors.permanentAddress}>
                         <textarea id="ad-permanentAddress" rows={2} maxLength={500} value={form.permanentAddress} onChange={(e) => set("permanentAddress")(e.target.value)} disabled={disabled} className={textAreaControl} />
@@ -218,26 +233,26 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob }: {
             </Section>
 
             <Section title="Clothing & sizes">
-                <Field label="T-shirt size" htmlFor="ad-tshirtSize" error={errors.tshirtSize}>
+                <Field label="T-shirt size" htmlFor="ad-tshirtSize" error={errors.tshirtSize} submitted="measurements.shirtSize">
                     <select id="ad-tshirtSize" value={form.tshirtSize} onChange={(e) => set("tshirtSize")(e.target.value)} disabled={disabled} className={fieldControl}>
                         <option value="">Not recorded</option>
                         {TSHIRT_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
                     </select>
                 </Field>
-                <SizeField key={`pant-${resets}`} id="pantSize" label="Pant size" presets={PANT_SIZE_PRESETS} value={form.pantSize} onChange={set("pantSize")} error={errors.pantSize} disabled={disabled} />
-                <SizeField key={`shoe-${resets}`} id="shoeSize" label="Shoe size (UK)" presets={SHOE_SIZE_PRESETS} value={form.shoeSize} onChange={set("shoeSize")} error={errors.shoeSize} disabled={disabled} />
+                <SizeField key={`pant-${resets}`} id="pantSize" label="Pant size" submitted="measurements.waistSize" presets={PANT_SIZE_PRESETS} value={form.pantSize} onChange={set("pantSize")} error={errors.pantSize} disabled={disabled} />
+                <SizeField key={`shoe-${resets}`} id="shoeSize" label="Shoe size (UK)" submitted="measurements.shoeSize" presets={SHOE_SIZE_PRESETS} value={form.shoeSize} onChange={set("shoeSize")} error={errors.shoeSize} disabled={disabled} />
             </Section>
 
             <Section title="Father details">
                 {yesNo("fatherAlive", "Is father alive?")}
                 {text("fatherFullName", "Father full name", { required: form.fatherAlive === "yes" })}
-                {dateField("fatherBirthday", "Father birthday")}
+                {dateField("fatherBirthday", "Father birthday", "family.father.birthDate")}
             </Section>
 
             <Section title="Mother details">
                 {yesNo("motherAlive", "Is mother alive?")}
                 {text("motherFullName", "Mother full name", { required: form.motherAlive === "yes" })}
-                {dateField("motherBirthday", "Mother birthday")}
+                {dateField("motherBirthday", "Mother birthday", "family.mother.birthDate")}
             </Section>
 
             <Section title="Marital & family details">
@@ -299,24 +314,24 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
     );
 }
 
-function TextField({ id, label, required, error, value, onChange, disabled, maxLength, placeholder }: {
-    id: string; label: string; required: boolean; error?: string; value: string; onChange: (value: string) => void; disabled: boolean; maxLength: number; placeholder?: string;
+function TextField({ id, label, required, error, value, onChange, disabled, maxLength, placeholder, submitted }: {
+    id: string; label: string; required: boolean; error?: string; value: string; onChange: (value: string) => void; disabled: boolean; maxLength: number; placeholder?: string; submitted?: string;
 }) {
     return (
-        <Field label={label} required={required} htmlFor={`ad-${id}`} error={error}>
+        <Field label={label} required={required} htmlFor={`ad-${id}`} error={error} submitted={submitted}>
             <input id={`ad-${id}`} value={value} maxLength={maxLength} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={placeholder} aria-invalid={Boolean(error)} className={`${fieldControl} ${error ? "border-critical" : ""}`} />
         </Field>
     );
 }
 
 // A preset from the list, or "Other" with a typed value (e.g. 31, 9.5, EU 43).
-function SizeField({ id, label, presets, value, onChange, error, disabled }: {
-    id: string; label: string; presets: readonly string[]; value: string; onChange: (value: string) => void; error?: string; disabled: boolean;
+function SizeField({ id, label, presets, value, onChange, error, disabled, submitted }: {
+    id: string; label: string; presets: readonly string[]; value: string; onChange: (value: string) => void; error?: string; disabled: boolean; submitted?: string;
 }) {
     const customId = useId();
     const [custom, setCustom] = useState(Boolean(value) && !presets.includes(value));
     return (
-        <Field label={label} htmlFor={`ad-${id}`} error={error}>
+        <Field label={label} htmlFor={`ad-${id}`} error={error} submitted={submitted}>
             <select
                 id={`ad-${id}`}
                 value={custom ? "__custom" : value}
