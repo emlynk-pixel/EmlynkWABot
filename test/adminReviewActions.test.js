@@ -572,7 +572,9 @@ describe("security and error handling", () => {
             .flatMap((layer) => Object.keys(layer.route.methods).filter((m) => m !== "get").map((m) => `${m.toUpperCase()} ${layer.route.path}`));
         assert.deepEqual(writes.sort(), [
             "DELETE /follow-ups/:followUpId", // Priority Follow-Ups: ADMIN and MANAGER; the follow-up row only (callLogFollowUps.test.js)
+            "DELETE /jobs/:jobId/candidates/:passportId", // Jobs: ADMIN and MANAGER, audited (jobManagement.test.js)
             "DELETE /temporary-documents/:temporaryId",
+            "POST /agents", // Job reference data: ADMIN and MANAGER, audited
             "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",
             "POST /candidates/:passportId/call-logs/:callLogId/follow-up", // flag a call for follow-up, audited
@@ -581,8 +583,16 @@ describe("security and error handling", () => {
             "POST /candidates/:passportId/documents/upload-target",
             "POST /candidates/:passportId/form-share", // Candidate Form share link: create (replaces the old one), audited (candidateFormShare.test.js)
             "POST /candidates/:passportId/form-share/revoke",
+            "POST /companies",
             "POST /documents/:documentId/police-date",
             "POST /follow-ups/:followUpId/complete", // the row is kept, audited
+            "POST /job-types",
+            "POST /jobs",
+            "POST /jobs/:jobId/cancel", // a reason is required
+            "POST /jobs/:jobId/candidates", // the one-PROCESSING-job rule is enforced in the service and the database
+            "POST /jobs/:jobId/complete",
+            "POST /jobs/:jobId/form-share", // job-group Candidate Form link: ADMIN and MANAGER, audited (jobGroupShare.test.js)
+            "POST /jobs/:jobId/form-share/revoke",
             "POST /review/:reviewId/approve",
             "POST /review/:reviewId/assign-client",
             "POST /review/:reviewId/document-type",
@@ -596,6 +606,7 @@ describe("security and error handling", () => {
             "PUT /candidates/:passportId",
             "PUT /candidates/:passportId/additional-details",
             "PUT /candidates/:passportId/stages/:stage",
+            "PUT /jobs/:jobId",
         ]);
     });
 

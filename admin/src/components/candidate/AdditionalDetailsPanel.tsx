@@ -14,6 +14,7 @@ import { todayInSriLanka } from "../format";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { ErrorState, LoadingState } from "../States";
 import { Field, fieldControl, textAreaControl } from "./CandidateFields";
+import type { CandidateJobAssignment } from "../../api/jobs";
 import { ShareFormButton } from "./ShareFormButton";
 
 // Additional Details tab of a candidate: passport and personal details,
@@ -90,7 +91,8 @@ export type AdditionalDetailsLoad = {
 };
 
 // onSaved: told after each save (the page's Additional details step).
-export function AdditionalDetailsPanel({ resource, canEdit, onSaved }: { resource: AdditionalDetailsLoad; canEdit: boolean; onSaved?: (view: AdditionalDetailsView) => void }) {
+// currentJob: the candidate's PROCESSING job (from the Job relation), for the Share Form's job-group link.
+export function AdditionalDetailsPanel({ resource, canEdit, onSaved, currentJob = null }: { resource: AdditionalDetailsLoad; canEdit: boolean; onSaved?: (view: AdditionalDetailsView) => void; currentJob?: CandidateJobAssignment | null }) {
     // The version this panel saved last: "Saved" is shown only while that is still the one on screen.
     const [savedVersion, setSavedVersion] = useState<string | null | undefined>(undefined);
 
@@ -105,15 +107,17 @@ export function AdditionalDetailsPanel({ resource, canEdit, onSaved }: { resourc
             key={data.updatedDate ?? "new"}
             view={data}
             canEdit={canEdit}
+            currentJob={currentJob}
             notice={savedVersion !== undefined && savedVersion === data.updatedDate}
             onSaved={(view) => { setSavedVersion(view.updatedDate); onSaved?.(view); }}
         />
     );
 }
 
-function AdditionalDetailsForm({ view, canEdit, notice, onSaved }: {
+function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob }: {
     view: AdditionalDetailsView;
     canEdit: boolean;
+    currentJob: CandidateJobAssignment | null;
     notice: boolean;
     onSaved: (view: AdditionalDetailsView) => void;
 }) {
@@ -190,7 +194,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved }: {
                     <p className="mt-1 text-body-sm text-ink-muted">Saved separately from the candidate&apos;s record, which is not changed here. Every field is optional.</p>
                 </div>
                 {/* The public Candidate Form for this candidate (link + Passport + NIC). */}
-                {canEdit && <ShareFormButton passportId={view.passportId} />}
+                {canEdit && <ShareFormButton passportId={view.passportId} currentJob={currentJob} />}
             </div>
 
             {autofilled.length > 0 && (

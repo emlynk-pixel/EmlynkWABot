@@ -324,8 +324,15 @@ export function parseSubmission(body, { now = new Date() } = {}) {
 //      sure the original-values snapshot exists.
 // A retry of the winning request (same idempotency key) gets the same success;
 // anything else after submission is 409 with a neutral body.
-export async function submitCandidateForm({ db, passportId, linkId, version, values, idempotencyKey, now = new Date() }) {
+export async function submitCandidateForm({ db, passportId, linkId, version, kind = "SINGLE", jobId = null, values, idempotencyKey, now = new Date() }) {
     return db.$transaction(async (tx) => {
+        if (kind === "JOB_GROUP") {
+            // The job must still be PROCESSING and the candidate still on it, now (FOR SHARE
+            // keeps a completion from slipping in between this check and the write).
+            const [job] = await tx.$queryRaw`SELECT "status" FROM "job" WHERE "id" = ${jobId}::uuid FOR SHARE`;
+            const member = job?.status === "PROCESSING" && (await tx.jobCandidate.findFirst({ where: { jobId, passportId, isActive: true }, select: { jobId: true } }));
+            if (!member) throw new CandidateError(401, "VERIFICATION_REQUIRED", "Please verify your details again.");
+        }
         const { count } = await tx.candidateFormAccess.updateMany({
             where: { passportId, status: FORM_ACCESS_STATUS.UNLOCKED, version },
             data: { status: FORM_ACCESS_STATUS.SUBMITTED, version: version + 1, submittedAt: now, submittedViaLinkId: linkId, submitKey: idempotencyKey, updatedAt: now },

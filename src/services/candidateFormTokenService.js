@@ -32,8 +32,11 @@ const CLOCK_SKEW_SECONDS = 60;
 const PREFIX = "cf1";
 const SEPARATOR = "~";
 const AUDIENCE = "candidate-form";
-// 2: bound to the share link and the lock version (1 was the WhatsApp binding).
-const VERSION = 2;
+// 3: bound to the share link, its kind (SINGLE | JOB_GROUP), the job of a group
+// link, and the lock version (2: link + version; 1 was the WhatsApp binding).
+const VERSION = 3;
+const KINDS = ["SINGLE", "JOB_GROUP"];
+const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const MAX_TOKEN_LENGTH = 1024;
@@ -61,12 +64,13 @@ export function safeEqual(a, b) {
 
 // { token, expiresAt } for one verified candidate, through one link, at one
 // version of the form lock.
-export function issueCandidateFormToken({ secret, passportId, linkId, version, now = new Date(), ttlMs = CANDIDATE_FORM_TOKEN_TTL_MS }) {
+export function issueCandidateFormToken({ secret, passportId, linkId, version, kind = "SINGLE", jobId = null, now = new Date(), ttlMs = CANDIDATE_FORM_TOKEN_TTL_MS }) {
     if (!isUsableTokenSecret(secret)) throw new Error("CANDIDATE_FORM_TOKEN_SECRET is not configured");
     if (!PASSPORT_ID.test(passportId ?? "") || !LINK_ID.test(linkId ?? "") || !Number.isInteger(version) || version < 0) throw new Error("Invalid token subject");
+    if (!KINDS.includes(kind) || (kind === "JOB_GROUP") !== (typeof jobId === "string" && JOB_ID.test(jobId))) throw new Error("Invalid token scope");
     const iat = Math.floor(now.getTime() / 1000);
     const exp = iat + Math.min(Math.floor(ttlMs / 1000), MAX_LIFETIME_SECONDS);
-    const payload = Buffer.from(JSON.stringify({ v: VERSION, aud: AUDIENCE, sub: passportId, lnk: linkId, ver: version, iat, exp }));
+    const payload = Buffer.from(JSON.stringify({ v: VERSION, aud: AUDIENCE, sub: passportId, lnk: linkId, knd: kind, job: kind === "JOB_GROUP" ? jobId : null, ver: version, iat, exp }));
 
     const iv = crypto.randomBytes(IV_BYTES);
     const cipher = crypto.createCipheriv("aes-256-gcm", subKey(secret, "token-encryption"), iv);
@@ -78,7 +82,7 @@ export function issueCandidateFormToken({ secret, passportId, linkId, version, n
     };
 }
 
-// The verified payload { sub, lnk, ver, iat, exp }, or null for anything that is not
+// The verified payload { sub, lnk, knd, job, ver, iat, exp }, or null for anything that is not
 // a valid, unexpired token of this service (never throws).
 export function readCandidateFormToken(token, { secret, now = new Date() } = {}) {
     if (!isUsableTokenSecret(secret)) return null;
@@ -106,10 +110,12 @@ export function readCandidateFormToken(token, { secret, now = new Date() } = {})
         && payload.aud === AUDIENCE
         && typeof payload.sub === "string" && PASSPORT_ID.test(payload.sub)
         && typeof payload.lnk === "string" && LINK_ID.test(payload.lnk)
+        && KINDS.includes(payload.knd)
+        && (payload.knd === "JOB_GROUP" ? typeof payload.job === "string" && JOB_ID.test(payload.job) : payload.job === null)
         && Number.isInteger(payload.ver) && payload.ver >= 0
         && Number.isInteger(payload.iat) && Number.isInteger(payload.exp)
         && payload.iat <= nowSeconds + CLOCK_SKEW_SECONDS
         && payload.exp > nowSeconds
         && payload.exp - payload.iat <= MAX_LIFETIME_SECONDS;
-    return valid ? { sub: payload.sub, lnk: payload.lnk, ver: payload.ver, iat: payload.iat, exp: payload.exp } : null;
+    return valid ? { sub: payload.sub, lnk: payload.lnk, knd: payload.knd, job: payload.job, ver: payload.ver, iat: payload.iat, exp: payload.exp } : null;
 }

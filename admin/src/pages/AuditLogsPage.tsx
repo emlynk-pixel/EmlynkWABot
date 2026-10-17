@@ -23,6 +23,7 @@ const DEFAULT_PAGE_SIZE = 25;
 
 const CATEGORY_LABELS: Record<AuditCategory, string> = {
     CANDIDATE: "Candidate",
+    JOB: "Job",
     STAGE: "Stage",
     DOCUMENT: "Document",
     REVIEW: "Review",
@@ -45,6 +46,17 @@ const ACTION_LABELS: Record<string, string> = {
     ASSIGN_CANDIDATE: "Candidate assigned to an Analyst",
     REASSIGN_CANDIDATE: "Candidate reassigned",
     UNASSIGN_CANDIDATE: "Candidate unassigned",
+    CREATE_JOB: "Job created",
+    UPDATE_JOB: "Job updated",
+    COMPLETE_JOB: "Job completed",
+    CANCEL_JOB: "Job cancelled",
+    ADD_CANDIDATE_TO_JOB: "Candidate added to a job",
+    REMOVE_CANDIDATE_FROM_JOB: "Candidate removed from a job",
+    CREATE_JOB_FORM_LINK: "Job-group Candidate Form link created",
+    REVOKE_JOB_FORM_LINK: "Job-group Candidate Form link revoked",
+    CREATE_JOB_TYPE: "Job type created",
+    CREATE_COMPANY: "Company created",
+    CREATE_AGENT: "Agent created",
     SET_SHEET_DESTINATION: "Sheet sync destination changed",
     UPLOAD_DOCUMENT: "Document uploaded",
     REMOVE_DOCUMENT: "Document removed",
@@ -60,6 +72,7 @@ export const actionLabel = (action: string) => ACTION_LABELS[action] ?? humanize
 
 const CATEGORY_TONES: Record<AuditCategory, Tone> = {
     CANDIDATE: "verified",
+    JOB: "verified",
     STAGE: "pending",
     DOCUMENT: "review",
     REVIEW: "review",
@@ -85,7 +98,7 @@ const FIELD_LABELS: Record<string, string> = {
     sex: "Sex",
     completed: "Completed",
     notes: "Notes",
-    jobId: "Job ID",
+    jobId: "Legacy job ID",
     testResult: "Test result",
     testDate: "Test date",
     // Additional details

@@ -181,3 +181,65 @@ On the candidate page, Additional Details panel, for staff who can edit: **Share
 - A submission cannot be corrected by the candidate; staff use the existing Admin screens.
 - Submitted answers are not yet shown in Admin, not merged into the main tables and not synced to the Sheet (ISS-033, ISS-034).
 - Live Supabase privileges for the new tables must be checked after the migration is applied (ISS-013).
+
+---
+
+## 12. Job-group links (JOB_GROUP)
+
+One link for everyone assigned to one job. Migration `20261018130000_job_company_id_and_form_job_group`; code `src/services/candidateFormJobGroupService.js`, `candidateFormVerificationService.js`, `middleware/requireCandidateFormToken.js`.
+
+### 12.1 Schema
+
+`candidate_form_link` gains `job_id UUID → job.id` (`ON DELETE RESTRICT`, indexed) and the kinds are `SINGLE` and `JOB_GROUP`. CHECK: **exactly one valid target** — `SINGLE`: `passport_id` set, `job_id` NULL; `JOB_GROUP`: `job_id` set, `passport_id` NULL. Partial unique index: **at most one active (unrevoked) group link per job**. RLS stays on, no policies, `anon` / `authenticated` have no privileges (unchanged, re-tested). The link is bound to the **immutable `job.id`** — never the job code, never the Company Job ID, never the legacy `candidate_stages.job_id`.
+
+### 12.2 Creating a group link (Admin)
+
+Candidate page → Additional details → **Share Form** → *Share link for the job group* (ADMIN and MANAGER only; Analyst and Registration Desk keep only the personal link and the section is not shown or fetched). The section uses the candidate's current PROCESSING job from `job_candidate`: with none it is disabled with a short explanation; otherwise it shows the job code, Company Job ID (or "Not assigned"), company, job type, the number of candidates on the job and how many have submitted. Creating asks for confirmation. `POST /api/admin/jobs/:jobId/form-share`:
+
+1. lock the job row `FOR SHARE`; the job must be PROCESSING (else `409 JOB_NOT_PROCESSING`; a completion cannot interleave);
+2. **regeneration rule:** revoke the job's previous active group link, create the new one (same secret rules as a personal link: 256-bit CSPRNG, only a SHA-256 stored, shown once, fragment URL `<form origin>/#k=…`, 3 days);
+3. unlock each current member whose form is LOCKED (`candidate_form_access` row created if missing, `UNLOCKED`, version + 1). Members already UNLOCKED (e.g. by a personal link) are left alone so their open sessions survive; SUBMITTED members are never touched (also enforced by the existing trigger);
+4. audit `CREATE_JOB_FORM_LINK` (job, link id, expiry, how many were unlocked — never the secret).
+
+`GET .../form-share` returns the state and counts; `POST .../form-share/revoke` revokes (see 12.6). The secret exists only in the create response and the dialog's state: closing the dialog discards it, and nothing can read it back.
+
+### 12.3 Verification (public, unchanged inputs)
+
+`POST /api/public/candidate-details/verify { linkSecret, passportNumber, nic }` — same strict validation, rate limits and constant-time comparisons as a personal link. For a JOB_GROUP link the candidate comes from the **typed passport** and must then satisfy **all** of:
+
+* link not revoked / expired / locked, and **its job is PROCESSING**;
+* the candidate has an active `job_candidate` row for **that exact `job.id`** (live, at this moment — membership is not copied into the link);
+* Passport **and** NIC match;
+* the candidate's form is not SUBMITTED. A LOCKED member (added after the link was made) is unlocked now, for them alone.
+
+Every failure — unknown / revoked / expired link, wrong passport, wrong NIC, not on this job, on another job, job completed or cancelled — is the **same generic 401** (`VERIFICATION_FAILED`, byte-identical body), so membership is never disclosed. Only after link + passport + NIC + membership matched can an already-submitted candidate be told so (neutral 409). Wrong attempts count against the link; a group link locks after 100 failures (a personal link after 10), because a typo-prone group would otherwise lock itself for everyone; the per-IP and per-passport limits still apply.
+
+### 12.4 Session binding and per-request re-checks
+
+The candidate token (`cf1~…`, AES-256-GCM, 60 minutes) is now version 3: it carries the candidate, the **link id**, the **link kind**, the **job id** (group links) and the candidate's **access version**. On **every** protected request (`/form`, `/submit`) the middleware reloads the link from the database and requires: the kind equals the token's; for `SINGLE` the link's passport equals the token's; for `JOB_GROUP` the link's `job_id` equals the token's **and** the link is not revoked / expired, the job is still PROCESSING and the candidate still has an active row for that job. Then the usual lock checks (SUBMITTED → 409; otherwise UNLOCKED at the token's version). The job id is never taken from the request. `/submit` repeats the job / membership check inside its transaction (job row `FOR SHARE`) before the compare-and-set, so a completion or removal between the middleware and the write cannot let a submission through.
+
+### 12.5 PROCESSING-only behaviour (decision)
+
+A JOB_GROUP link works **only while `job.status = PROCESSING`**. When the job becomes COMPLETED or CANCELLED: no new verification; open sessions get `401 VERIFICATION_REQUIRED` on their next request; SUBMITTED candidates stay SUBMITTED and all responses / history stay. Group links are not deleted or auto-revoked — they simply stop being usable (the admin status shows "No active group link"). Personal SINGLE links follow their own rules and are unaffected unless revoked. Removing a candidate from the job ends their access through the group link on their next request, and does not touch their submission if they already submitted.
+
+### 12.6 Per-candidate locks, SINGLE ↔ GROUP, revoke
+
+* The lock stays **per candidate** (`LOCKED → UNLOCKED → SUBMITTED`, terminal, trigger-enforced). A's submission changes only A; B and C stay UNLOCKED.
+* Submission is candidate-level, not link-level: submitted through SINGLE → a group link answers "already submitted" and creating a personal link is `409 FORM_SUBMITTED`, and vice versa. A new browser, Incognito or another phone changes nothing; the state is in the database.
+* **Revoke** a group link: it and every session bound to it stop at once; members it had unlocked and who have not submitted are locked again (version + 1); submitted answers, assignments and other jobs' links are untouched; audit `REVOKE_JOB_FORM_LINK`.
+* Regenerating never reopens a SUBMITTED candidate.
+
+### 12.7 Company Job ID independence
+
+Changing `job.company_job_id` touches no row in `job_candidate`, `candidate_form_link`, `candidate_form_access` or `candidate_form_response`; the existing group link keeps verifying (tests JOB-ID-004 to JOB-ID-006).
+
+### 12.8 Candidate Form (public app)
+
+Unchanged: open link → Passport + NIC → form → submit → done. The page never receives the job id, job code, Company Job ID, member count or any other candidate; the `/form` response carries only the caller's own identity and answers (tested).
+
+### 12.9 Residual risks (group links)
+
+* Anyone holding the group link who also knows another member's Passport **and** NIC can submit for them — the same trust model as a personal link, with a bigger audience for the link. Staff should send it through the intended channel only; revoke if it leaks.
+* A job's members can all use the same link for up to 3 days; revoke or complete the job to stop it earlier.
+* Deploying the new token format (version 3) invalidates sessions issued before the deploy (at most 60 minutes old): those candidates verify again.
+* The group-link failure lock (100) is looser than the personal one (10) by design; the per-passport (5 / hour) and per-IP limits remain the main brute-force control.

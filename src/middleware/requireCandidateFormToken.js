@@ -11,8 +11,10 @@ import { resolveDb } from "../utils/resolveClients.js";
 // reads a passport ID from the path, the query string or the body. The token
 // travels only in the Authorization header. On EVERY request it checks the
 // token (encryption tag, audience, expiry) and then the database:
-//   - the share link the candidate verified through still belongs to them,
-//     is not revoked and has not expired (a new link revokes the old one);
+//   - the share link the candidate verified through still covers them (a
+//     personal link: it is theirs; a JOB_GROUP link: its job is still
+//     PROCESSING and they are still assigned to that exact job), is not
+//     revoked and has not expired (a new link revokes the old one);
 //   - the form is still UNLOCKED at the token's lock version (a new link, a
 //     revoke or a submission all change the version).
 // So revoking a link, replacing it, or submitting ends every session at once.
@@ -45,13 +47,23 @@ export function createRequireCandidateFormToken({ db, secret = process.env.CANDI
         const client = await resolveDb(db);
         const link = await client.candidateFormLink.findUnique({
             where: { linkId: payload.lnk },
-            select: { passportId: true, revokedAt: true, expiresAt: true, candidate: { select: { formAccess: { select: { status: true, version: true } } } } },
+            select: { kind: true, passportId: true, jobId: true, revokedAt: true, expiresAt: true, job: { select: { status: true } } },
         });
-        const access = link?.candidate?.formAccess;
-        if (!link || link.passportId !== payload.sub) return expired();
+        // The scope comes from the stored link, never from the request; the token
+        // must agree with it (kind, and for a group link the job).
+        if (!link || link.kind !== payload.knd) return expired();
+        const isGroup = link.kind === "JOB_GROUP";
+        if (isGroup ? link.jobId !== payload.job : link.passportId !== payload.sub) return expired();
+        if (isGroup) {
+            // Live, on every request: link usable, job still PROCESSING, candidate still on THAT job.
+            if (link.revokedAt || link.expiresAt <= current || link.job?.status !== "PROCESSING") return expired();
+            const member = await client.jobCandidate.findFirst({ where: { jobId: link.jobId, passportId: payload.sub, isActive: true }, select: { jobId: true } });
+            if (!member) return expired();
+        }
+        const access = await client.candidateFormAccess.findUnique({ where: { passportId: payload.sub }, select: { status: true, version: true } });
         if (access?.status === FORM_ACCESS_STATUS.SUBMITTED) {
             if (!allowSubmitted) return res.status(409).json({ message: ALREADY_SUBMITTED_MESSAGE, code: "ALREADY_SUBMITTED" });
-            req.candidateForm = { passportId: payload.sub, linkId: payload.lnk, version: payload.ver, expiresAt: new Date(payload.exp * 1000).toISOString(), submitted: true };
+            req.candidateForm = { passportId: payload.sub, linkId: payload.lnk, version: payload.ver, kind: link.kind, jobId: isGroup ? link.jobId : null, expiresAt: new Date(payload.exp * 1000).toISOString(), submitted: true };
             return next();
         }
         if (link.revokedAt || link.expiresAt <= current || access?.status !== FORM_ACCESS_STATUS.UNLOCKED || access.version !== payload.ver) {
@@ -61,6 +73,8 @@ export function createRequireCandidateFormToken({ db, secret = process.env.CANDI
             passportId: payload.sub,
             linkId: payload.lnk,
             version: payload.ver,
+            kind: link.kind,
+            jobId: isGroup ? link.jobId : null,
             expiresAt: new Date(payload.exp * 1000).toISOString(),
             submitted: false,
         };

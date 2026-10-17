@@ -43,7 +43,7 @@ export const newLinkSecret = () => crypto.randomBytes(FORM_LINK_SECRET_BYTES).to
 // request header (OWASP: do not build such links from the Host header).
 export const shareUrl = (formOrigin, secret) => `${formOrigin}/#k=${secret}`;
 
-const linkIsActive = (link, now) => link && !link.revokedAt && link.expiresAt > now;
+export const linkIsActive = (link, now) => link && !link.revokedAt && link.expiresAt > now;
 
 // GET /api/admin/candidates/:passportId/form-share
 //   state: SUBMITTED | OPEN (an active link) | LOCKED (no active link)
@@ -74,14 +74,14 @@ export async function getFormShareStatus({ db, passportId, now = new Date() }) {
     };
 }
 
-function writeAudit(tx, { actor, action, passportId, previousStatus, newStatus, reason, newValue = null }) {
+export function writeAudit(tx, { actor, action, passportId, previousStatus, newStatus, reason, newValue = null }) {
     return tx.auditLog.create({
         data: { auditId: crypto.randomUUID(), adminId: actor.adminId, action, passportId, previousStatus, newStatus, reason, newValue },
     });
 }
 
 // Serialises link changes for one candidate (two staff clicking at once).
-async function lockAccessRow(tx, passportId) {
+export async function lockAccessRow(tx, passportId) {
     await tx.$executeRaw`INSERT INTO "candidate_form_access" ("passport_id") VALUES (${passportId}) ON CONFLICT ("passport_id") DO NOTHING`;
     const [row] = await tx.$queryRaw`SELECT "status", "version" FROM "candidate_form_access" WHERE "passport_id" = ${passportId} FOR UPDATE`;
     return row;

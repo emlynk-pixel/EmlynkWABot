@@ -96,6 +96,10 @@ Test IDs refer to [test/publicCandidateDetails.test.js](../test/publicCandidateD
 | ISS-040 | Task 3 | Testing | The Admin "Copy link" test could not see what was copied. | One failing test. | `userEvent.setup()` installs its own clipboard on `navigator.clipboard`, replacing the test's spy. | The test reads the result with `navigator.clipboard.readText()`. | admin/src/test/shareForm.test.tsx | Solved |
 | ISS-041 | Task 3 | Testing | Ten Admin tests timed out (5 s) when the Admin suite ran at the same time as the backend suite. | False failures. | CPU contention on the developer machine. | Run the suites one after another: Admin 453 / 453 alone. | Admin `npm test` | Mitigated |
 | ISS-042 | Task 3 | Frontend | The first Share Form dialog loaded the link state during render. | A request per render, and React warnings. | Data loading placed in the render path. | Moved to `useEffect` with an `AbortController`. | admin/src/test/shareForm.test.tsx | Solved |
+| ISS-043 | Job group | Frontend | The Share Form's job-group section fetched the group status for every role, before checking the role. | An Analyst or Registration Desk user triggered a request that the API answers with 403. | The permission check came after the `useEffect` that loads the data. | The effect now runs only for roles that manage jobs; the section renders nothing otherwise. Test: "only ADMIN and MANAGER see the group action" asserts no `/jobs/` request is made. | admin/src/components/candidate/ShareFormButton.tsx, admin/src/test/jobGroupShareForm.test.tsx | Solved |
+| ISS-044 | Job group | Validation | The first Company Job ID normaliser collapsed all whitespace, so `AB<newline>CD` was accepted as `AB CD`. | A control character slipped through as a space. | Whitespace collapsing ran before the control-character check. | Control characters (including tabs and line breaks) are refused before any normalisation; only repeated spaces are collapsed. A database CHECK repeats the allow-list. | src/services/jobService.js, test/jobGroupShare.test.js | Solved |
+| ISS-045 | Job group | Design | A personal-link limit of 10 wrong attempts per link would let a few typos lock a shared group link for everyone. | A whole job locked out for an hour. | Per-link counters assume one person per link. | Group links lock after 100 failures; the per-IP and per-passport limits (unchanged) remain the brute-force control. Documented as a residual risk. | src/services/candidateFormJobGroupService.js | Mitigated |
+| ISS-046 | Job group | Deployment | The candidate session token gained the link kind and job id, so token version 2 sessions are no longer valid. | Candidates mid-form at deploy time (at most 60 minutes) must verify again. | Token payload changed from version 2 to 3. | Accepted: tokens are short-lived and nothing is lost (answers are only saved on submit). Deploy outside busy hours if possible. | src/services/candidateFormTokenService.js | Accepted Risk |
 
 ISS-017 and ISS-018 are not in the original list of 16. They are added because they also happened (ISS-017 in the audit, ISS-018 during the Task 1 cleanup).
 
@@ -171,6 +175,10 @@ All are sub-millisecond, and the rate limits allow 5 attempts per passport per h
 | ISS-023 | Section headings looked like labels on the Sinhala form at 320 px | Solved |
 | ISS-024 | The verified identity now comes from the server | Solved |
 | ISS-042 | Share Form dialog loaded data during render | Solved |
+| ISS-043 | Job-group status fetched before the role check | Solved |
+| ISS-044 | Company Job ID normaliser turned a line break into a space | Solved |
+| ISS-045 | Per-link lock too tight for a shared group link | Mitigated |
+| ISS-046 | Token version change ends sessions at deploy | Accepted Risk |
 | ISS-030 | The 19-field form replaced by the guided Candidate Form (old UI, model and tests removed) | Solved (UI) |
 | ISS-026 | A section and its field shared the name "Job Category" | Solved |
 | ISS-027 | Review titles broke mid-word in Sinhala at 320 px | Solved |
@@ -325,10 +333,10 @@ Before the first production deployment, also complete the follow-up checks in se
 
 | Status | Count | IDs |
 |---|---|---|
-| Solved | 28 | ISS-001, 002, 003, 004, 006, 008, 009, 011, 016, 017, 018, 019, 020, 022, 023, 024, 025, 026, 027, 028, 029, 030, 032, 035, 036, 039, 040, 042 |
-| Mitigated | 7 | ISS-005, 007, 010, 021, 037, 038, 041 |
+| Solved | 30 | ISS-001, 002, 003, 004, 006, 008, 009, 011, 016, 017, 018, 019, 020, 022, 023, 024, 025, 026, 027, 028, 029, 030, 032, 035, 036, 039, 040, 042, 043, 044 |
+| Mitigated | 8 | ISS-005, 007, 010, 021, 037, 038, 041, 045 |
 | Open | 3 | ISS-031, 033, 034 |
 | Deferred | 1 | ISS-014 |
 | Release Blocker | 2 | ISS-012, 013 |
-| Accepted Risk | 1 | ISS-015 |
-| **Total** | **42** | |
+| Accepted Risk | 2 | ISS-015, 046 |
+| **Total** | **46** | |

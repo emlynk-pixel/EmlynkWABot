@@ -68,6 +68,28 @@ import {
     parseUnassignBody,
     unassignCandidates,
 } from "../services/workAllocationService.js";
+import {
+    addCandidateToJob,
+    cancelJob,
+    completeJob,
+    createAgent,
+    createCompany,
+    createJob,
+    createJobType,
+    getJob,
+    isValidJobIdParam,
+    listJobOptions,
+    listJobs,
+    parseAddCandidateBody,
+    parseCancelBody,
+    parseCreateJobBody,
+    parseJobListQuery,
+    parseReferenceBody,
+    parseUpdateJobBody,
+    removeCandidateFromJob,
+    updateJob,
+} from "../services/jobService.js";
+import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
 import { parseCandidateFormOrigin } from "../config/candidateForm.js";
 import { createUsersRouter } from "./users.js";
@@ -725,6 +747,111 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await unassignCandidates({ db: client, actor: req.user, ...parsed.values })));
+    });
+
+    // ---------------------------------------------------------------- Jobs (jobService.js)
+    // ADMIN and MANAGER manage jobs; an ANALYST reads only the jobs that hold a
+    // candidate allocated to them (and sees only those candidates);
+    // REGISTRATION_DESK has no access. Membership rules (one PROCESSING job per
+    // candidate) are enforced in the service and by the database.
+    const jobParam = (req, res) => {
+        if (isValidJobIdParam(req.params.jobId)) return true;
+        res.status(404).json({ message: "Job not found", code: "JOB_NOT_FOUND" });
+        return false;
+    };
+    const jobBody = (res, parsed) => {
+        if (!parsed.errors) return true;
+        res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        return false;
+    };
+
+    router.get("/job-options", requireRole(MANAGERS_UP), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json(await listJobOptions({ db: client }));
+    });
+    for (const [path, create, withCountry] of [["/job-types", createJobType, false], ["/companies", createCompany, false], ["/agents", createAgent, true]]) {
+        router.post(path, requireRole(MANAGERS_UP), async (req, res) => {
+            const parsed = parseReferenceBody(req.body, { withCountry });
+            if (!jobBody(res, parsed)) return undefined;
+            const client = await resolveDb(db);
+            return candidateAction(res, async () => res.status(201).json(await create({ db: client, actor: req.user, values: parsed.values })));
+        });
+    }
+
+    router.get("/jobs", requireRole(ALL_ACTIVE), async (req, res) => {
+        const parsed = parseJobListQuery(req.query);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        const client = await resolveDb(db);
+        return res.json(await listJobs({ db: client, params: parsed.params, user: req.user }));
+    });
+
+    router.post("/jobs", requireRole(MANAGERS_UP), async (req, res) => {
+        const parsed = parseCreateJobBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await createJob({ db: client, actor: req.user, values: parsed.values })));
+    });
+
+    router.get("/jobs/:jobId", requireRole(ALL_ACTIVE), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getJob({ db: client, jobId: req.params.jobId.toLowerCase(), user: req.user })));
+    });
+
+    router.put("/jobs/:jobId", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        const parsed = parseUpdateJobBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await updateJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), values: parsed.values })));
+    });
+
+    router.post("/jobs/:jobId/candidates", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        const parsed = parseAddCandidateBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await addCandidateToJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), ...parsed.values })));
+    });
+
+    router.delete("/jobs/:jobId/candidates/:passportId", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        if (!isValidCandidateIdParam(req.params.passportId)) return res.status(404).json({ message: "Candidate not found", code: "CANDIDATE_NOT_FOUND" });
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await removeCandidateFromJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), passportId: req.params.passportId })));
+    });
+
+    // Candidate Form job-group link (candidateFormJobGroupService.js): ADMIN and
+    // MANAGER only. Bound to the immutable job id; works only while the job is
+    // PROCESSING; one active link per job; the URL is returned once.
+    router.get("/jobs/:jobId/form-share", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getJobGroupShareStatus({ db: client, jobId: req.params.jobId.toLowerCase() })));
+    });
+    router.post("/jobs/:jobId/form-share", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await createJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), formOrigin })));
+    });
+    router.post("/jobs/:jobId/form-share/revoke", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await revokeJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase() })));
+    });
+
+    router.post("/jobs/:jobId/complete", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await completeJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase() })));
+    });
+
+    router.post("/jobs/:jobId/cancel", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        const parsed = parseCancelBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await cancelJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), reason: parsed.values.reason })));
     });
 
     // ---------------------------------------------------------------- audit logs (ADMIN only, read-only)

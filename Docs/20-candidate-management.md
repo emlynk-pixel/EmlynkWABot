@@ -159,6 +159,8 @@ flowchart LR
 | 6 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
 | 7 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
 
+**Jobs.** The candidate page has a **Job assignment** section (above the stepper) read from the Job relation: the current PROCESSING job (code, type, company, responsible agent) and the history (completed, cancelled, removed). `GET /candidates/:passportId` returns it as `jobAssignments: { current, history }`. Assigning a candidate is done in Admin > Jobs (*Add to job*), see `JOB_MANAGEMENT_IMPLEMENTATION.md`. The Test details stage no longer has a free-text Job ID: it shows the assigned job read-only, and an old value as a read-only *Legacy job reference* (`legacyJobId`).
+
 The progress stepper on the candidate page shows Test details, Candidate details, Additional details, Document submission, Visa submission and Visa approval. IVS interview and Finalizing the job have no circle (their data and `?stage=` links are unchanged). The candidate list's progress counts all seven stages (`x/7`).
 
 Stages are independent: any stage can be opened and edited in any order. The URL uses `?stage=<key>` to select which panel is shown; the default is the first incomplete stage.
@@ -481,7 +483,7 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `POST` | `/candidates` | Register a new candidate |
 | `GET` | `/candidates/:passportId` | Get a single candidate (also used for the registration lookup) |
 | `PUT` | `/candidates/:passportId` | Update candidate details |
-| `PUT` | `/candidates/:passportId/stages/:stage` | Update a stage (notes, completed) |
+| `PUT` | `/candidates/:passportId/stages/:stage` | Update a stage (notes, completed; Test details also `testResult`, `testDate`). `jobId` is no longer accepted (400): the job is the Job assignment |
 | `POST` | `/candidates/:passportId/documents/upload-target` | Check a file's description; returns a signed upload URL (JSON only) |
 | `POST` | `/candidates/:passportId/documents/finalize` | Check the uploaded file and record it (JSON only) |
 | `POST` | `/candidates/:passportId/documents/:documentId/remove` | Delete the current document and its file; `{ reason }` required |

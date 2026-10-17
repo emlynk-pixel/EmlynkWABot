@@ -15,11 +15,12 @@ const DETAILS: CandidateDetails = {
         address: "1 Main Street", jobExperience: "5 years", whatsappNumber: "94770000002", contactNumber: null,
     },
     stages: CANDIDATE_STAGES.map((stage) => ({
-        stage, completed: false, completedAt: null, notes: null, jobId: null, testResult: null, testDate: null,
+        stage, completed: false, completedAt: null, notes: null, legacyJobId: null, testResult: null, testDate: null,
         automatic: stage === "CANDIDATE_DETAILS" || stage === "DOCUMENT_SUBMISSION", missing: [],
     })),
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null, VISA_SUBMISSION: null },
     variantDocuments: { POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null } },
+    jobAssignments: { current: null, history: [] },
     requiredDocuments: [],
 };
 const VIEW: AdditionalDetailsView = { passportId: "N0000002", details: null, suggested: { nameAsInPassport: null, permanentAddress: null, birthday: null }, updatedDate: null };
@@ -95,7 +96,7 @@ describe("Share Form", () => {
         backend({ [`GET ${SHARE}`]: { status: 200, body: status("SUBMITTED", { submittedAt: "2026-10-16T06:00:00.000Z" }) } });
         const dialog = await openDialog();
         expect(await within(dialog).findByText(/Submitted: the form is locked/)).toBeInTheDocument();
-        expect(within(dialog).queryByRole("button", { name: /Create/ })).toBeNull();
+        expect(within(dialog).queryByRole("button", { name: /Create (share|a new) link/ })).toBeNull();
         expect(within(dialog).queryByRole("button", { name: /Revoke/ })).toBeNull();
     });
 

@@ -83,15 +83,15 @@ const message = (caught: unknown) => (caught instanceof ApiError ? caught.messag
 
 // The stages completed by an admin (Test details, IVS interview, Visa
 // approval, Finalizing the job): notes and completion. Test details also
-// records the job ID (entered by the admin), the test's result and the date
-// it was sat; the client name shown with them comes from the candidate's record.
+// shows the candidate's job (from the Job assignment, read-only) and records the
+// test's result and the date it was sat; the client name shown with them comes
+// from the candidate's record.
 export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & { stage: CandidateStageKey }) {
     const { token } = useAuth();
     const saved = stageOf(details, stage);
     const isTest = stage === "TEST_DETAILS";
     const [notes, setNotes] = useState(saved.notes ?? "");
     const [completed, setCompleted] = useState(saved.completed);
-    const [jobId, setJobId] = useState(saved.jobId ?? "");
     const [testResult, setTestResult] = useState<TestResult | "">(saved.testResult ?? "");
     const [testDate, setTestDate] = useState(saved.testDate ?? "");
     const [busy, setBusy] = useState(false);
@@ -99,12 +99,11 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
     const notesId = useId();
     const testId = useId();
     const dirty = notes !== (saved.notes ?? "") || completed !== saved.completed
-        || (isTest && (jobId !== (saved.jobId ?? "") || testResult !== (saved.testResult ?? "") || testDate !== (saved.testDate ?? "")));
+        || (isTest && (testResult !== (saved.testResult ?? "") || testDate !== (saved.testDate ?? "")));
 
     const showSaved = (state: StageState) => {
         setNotes(state.notes ?? "");
         setCompleted(state.completed);
-        setJobId(state.jobId ?? "");
         setTestResult(state.testResult ?? "");
         setTestDate(state.testDate ?? "");
     };
@@ -118,7 +117,7 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
             const next = await updateCandidateStage(token, details.candidate.passportId, stage, {
                 notes: notes.trim() || null,
                 completed,
-                ...(isTest ? { jobId: jobId.trim() || null, testResult: testResult || null, testDate: testDate || null } : {}),
+                ...(isTest ? { testResult: testResult || null, testDate: testDate || null } : {}),
             });
             showSaved(stageOf(next, stage));
             onChange(next);
@@ -169,9 +168,14 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
                     <Field label="Client name" htmlFor={`${testId}-client`}>
                         <input id={`${testId}-client`} value={details.candidate.name ?? ""} readOnly className={`${fieldControl} bg-canvas text-ink-muted`} />
                     </Field>
-                    <Field label="Job ID" htmlFor={`${testId}-job`}>
-                        <input id={`${testId}-job`} value={jobId} maxLength={50} disabled={!canEdit || busy} onChange={(event) => setJobId(event.target.value)} className={fieldControl} />
+                    <Field label="Job" htmlFor={`${testId}-job`}>
+                        <input id={`${testId}-job`} value={details.jobAssignments.current?.jobCode ?? "Not assigned to a job"} readOnly className={`${fieldControl} bg-canvas text-ink-muted`} />
                     </Field>
+                    {saved.legacyJobId && (
+                        <Field label="Legacy job reference" htmlFor={`${testId}-legacy`} help="The job ID typed here before Jobs existed. Read-only: assign the candidate to a real job in Admin > Jobs.">
+                            <input id={`${testId}-legacy`} value={saved.legacyJobId} readOnly className={`${fieldControl} bg-canvas text-ink-muted`} />
+                        </Field>
+                    )}
                     <Field label="Test result" htmlFor={`${testId}-result`}>
                         <select
                             id={`${testId}-result`}

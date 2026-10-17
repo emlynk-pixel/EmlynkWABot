@@ -557,7 +557,8 @@ describe("TIMING: failing verifications do the same work and look the same", () 
         }
         for (const { args } of lookups(calls)) {
             assert.deepEqual(args[0].select, {
-                linkId: true, kind: true, passportId: true, expiresAt: true, revokedAt: true, lockedUntil: true, failedAttempts: true,
+                linkId: true, kind: true, passportId: true, jobId: true, expiresAt: true, revokedAt: true, lockedUntil: true, failedAttempts: true,
+                job: { select: { status: true } },
                 candidate: { select: { passportId: true, nic: true, formAccess: { select: { status: true, version: true } } } },
             });
         }

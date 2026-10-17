@@ -1,5 +1,7 @@
 import { safeEqual } from "./candidateFormTokenService.js";
-import { FORM_ACCESS_STATUS, FORM_LINK_LOCK_MS, FORM_LINK_MAX_FAILURES, hashLinkSecret, isLinkSecret } from "./candidateFormShareService.js";
+import { FORM_ACCESS_STATUS, FORM_LINK_LOCK_MS, FORM_LINK_MAX_FAILURES, hashLinkSecret, isLinkSecret, lockAccessRow } from "./candidateFormShareService.js";
+import { GROUP_LINK_MAX_FAILURES } from "./candidateFormJobGroupService.js";
+import { JOB_STATUS } from "./jobAssignmentReader.js";
 
 // Share link + Passport + NIC verification for the public Candidate Form
 // (POST /api/public/candidate-details/verify).
@@ -12,9 +14,16 @@ import { FORM_ACCESS_STATUS, FORM_LINK_LOCK_MS, FORM_LINK_MAX_FAILURES, hashLink
 //   - nic: spaces removed, upper case, then 9 digits + V/X or 12 digits.
 //
 // A match needs: an existing share link that is not revoked, expired or
-// locked; the link's own candidate (a link opens the form for ONE
-// candidate); that candidate's passport AND NIC, compared in constant time;
-// and the form still UNLOCKED. Every other outcome is the same generic
+// locked; a candidate the link covers; that candidate's passport AND NIC,
+// compared in constant time; and the form not yet submitted.
+//   SINGLE     the link's own candidate (a link opens the form for ONE candidate);
+//              the form must be UNLOCKED.
+//   JOB_GROUP  any candidate with an active job_candidate row for the link's
+//              job.id, while that job is PROCESSING (checked live, here and on
+//              every request). A LOCKED member (added after the link was made)
+//              is unlocked now; their own lock is theirs alone.
+// A candidate outside the job, a finished job, a wrong passport or NIC and an
+// unknown / revoked / expired link are all the same generic failure. Every other outcome is the same generic
 // failure: the caller never learns which part was wrong, whether a passport
 // exists or which candidate a link is for. The one exception is a form that
 // was already submitted, which is said (neutrally) only after the link,
@@ -81,18 +90,32 @@ export function parseVerifyBody(body) {
     return errors.length ? { errors } : { values: { linkSecret, passportId, nic } };
 }
 
-// { outcome: "verified", passportId, linkId, version }
+// { outcome: "verified", passportId, linkId, kind, jobId, version }
 // | { outcome: "submitted" }   (link + passport + NIC matched; already submitted)
 // | { outcome: "failed" }
 export async function verifyFormLinkAccess({ db, linkSecret, passportId, nic, now = new Date() }) {
     const link = await db.candidateFormLink.findUnique({
         where: { tokenHash: hashLinkSecret(linkSecret) },
         select: {
-            linkId: true, kind: true, passportId: true, expiresAt: true, revokedAt: true, lockedUntil: true, failedAttempts: true,
+            linkId: true, kind: true, passportId: true, jobId: true, expiresAt: true, revokedAt: true, lockedUntil: true, failedAttempts: true,
+            job: { select: { status: true } },
             candidate: { select: { passportId: true, nic: true, formAccess: { select: { status: true, version: true } } } },
         },
     });
-    const candidate = link?.candidate ?? null;
+    const isGroup = link?.kind === "JOB_GROUP";
+    let candidate = link?.candidate ?? null;
+    let member = true;
+    if (isGroup) {
+        // The candidate comes from the typed passport, then must be a live member of THIS job.
+        candidate = await db.candidate.findFirst({
+            where: { passportId: { equals: passportId, mode: "insensitive" } },
+            select: {
+                passportId: true, nic: true, formAccess: { select: { status: true, version: true } },
+                jobAssignments: { where: { jobId: link.jobId, isActive: true }, select: { jobId: true } },
+            },
+        });
+        member = Boolean(candidate && candidate.jobAssignments.length > 0);
+    }
 
     // Always both comparisons, whatever was found.
     const storedPassport = candidate ? candidate.passportId.toUpperCase() : NO_MATCH_PASSPORT;
@@ -100,25 +123,44 @@ export async function verifyFormLinkAccess({ db, linkSecret, passportId, nic, no
     const passportMatches = safeEqual(storedPassport, passportId);
     const nicMatches = safeEqual(storedNic, nic);
 
-    const usable = Boolean(link) && link.kind === "SINGLE" && !link.revokedAt && link.expiresAt > now && !(link.lockedUntil && link.lockedUntil > now) && Boolean(candidate);
+    const scopeOpen = isGroup ? link.job?.status === JOB_STATUS.PROCESSING : link?.kind === "SINGLE";
+    const usable = Boolean(link) && scopeOpen && !link.revokedAt && link.expiresAt > now && !(link.lockedUntil && link.lockedUntil > now) && Boolean(candidate);
     if (!usable) return { outcome: "failed" };
 
-    if (!passportMatches || !nicMatches) {
+    if (!passportMatches || !nicMatches || !member) {
         // A failed attempt on this link; too many lock it for a while.
         const failures = link.failedAttempts + 1;
         await db.candidateFormLink.update({
             where: { linkId: link.linkId },
-            data: failures >= FORM_LINK_MAX_FAILURES
+            data: failures >= (isGroup ? GROUP_LINK_MAX_FAILURES : FORM_LINK_MAX_FAILURES)
                 ? { failedAttempts: 0, lockedUntil: new Date(now.getTime() + FORM_LINK_LOCK_MS) }
                 : { failedAttempts: failures },
         });
         return { outcome: "failed" };
     }
 
-    const access = candidate.formAccess;
+    let access = candidate.formAccess;
     if (access?.status === FORM_ACCESS_STATUS.SUBMITTED) return { outcome: "submitted" };
+    if (isGroup && access?.status !== FORM_ACCESS_STATUS.UNLOCKED) {
+        // A member who was not there (or locked) when the link was created: unlock only their own form.
+        access = await unlockMember({ db, passportId: candidate.passportId, linkId: link.linkId, now });
+        if (access.status === FORM_ACCESS_STATUS.SUBMITTED) return { outcome: "submitted" };
+    }
     if (access?.status !== FORM_ACCESS_STATUS.UNLOCKED) return { outcome: "failed" };
 
     await db.candidateFormLink.update({ where: { linkId: link.linkId }, data: { failedAttempts: 0, lastVerifiedAt: now } });
-    return { outcome: "verified", passportId: candidate.passportId, linkId: link.linkId, version: access.version };
+    return { outcome: "verified", passportId: candidate.passportId, linkId: link.linkId, kind: link.kind, jobId: isGroup ? link.jobId : null, version: access.version };
+}
+
+// LOCKED -> UNLOCKED for one verified member of a group link. SUBMITTED stays SUBMITTED.
+async function unlockMember({ db, passportId, linkId, now }) {
+    return db.$transaction(async (tx) => {
+        const row = await lockAccessRow(tx, passportId);
+        if (row.status !== FORM_ACCESS_STATUS.LOCKED) return row;
+        await tx.candidateFormAccess.update({
+            where: { passportId },
+            data: { status: FORM_ACCESS_STATUS.UNLOCKED, version: row.version + 1, unlockedAt: now, unlockedViaLinkId: linkId, updatedAt: now },
+        });
+        return { status: FORM_ACCESS_STATUS.UNLOCKED, version: row.version + 1 };
+    });
 }

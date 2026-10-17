@@ -1,4 +1,5 @@
 import { apiRequest, uploadToSignedUrl } from "./client";
+import type { CandidateJobAssignment } from "./jobs";
 
 // Admin > Candidates (src/routes/admin.js, /api/admin/candidates/*).
 // Reads for every admin; changes need ANALYST or above (checked on the server).
@@ -46,13 +47,14 @@ export const TEST_RESULT_OPTIONS = [
 ] as const;
 export type TestResult = (typeof TEST_RESULT_OPTIONS)[number]["value"];
 
-// jobId / testResult / testDate (YYYY-MM-DD): recorded on Test details only, null elsewhere.
+// testResult / testDate (YYYY-MM-DD): recorded on Test details only, null elsewhere.
+// legacyJobId: the old free-text job ID (read-only; the job is jobAssignments).
 export type StageState = StageProgress & {
     completedAt: string | null;
     notes: string | null;
     automatic: boolean;
     missing: string[];
-    jobId: string | null;
+    legacyJobId: string | null;
     testResult: TestResult | null;
     testDate: string | null;
 };
@@ -81,6 +83,8 @@ export type CandidateDocument = {
     receivedDate: string;
 };
 
+export type JobAssignments = { current: CandidateJobAssignment | null; history: CandidateJobAssignment[] };
+
 export type CandidateDetails = {
     candidate: {
         passportId: string;
@@ -102,6 +106,8 @@ export type CandidateDetails = {
         contactNumber: string | null;
     };
     stages: StageState[];
+    // From the Job relation (job_candidate): the PROCESSING job the candidate is on, and the rest.
+    jobAssignments: JobAssignments;
     // The current document of each type (for a type with variants: the newest of any variant).
     documents: Record<CandidateDocumentType, CandidateDocument | null>;
     // Police reports and affidavits: the current document of each variant (a
@@ -231,7 +237,7 @@ export function updateCandidateStage(
     token: string,
     passportId: string,
     stage: CandidateStageKey,
-    body: { completed?: boolean; notes?: string | null; jobId?: string | null; testResult?: TestResult | null; testDate?: string | null },
+    body: { completed?: boolean; notes?: string | null; testResult?: TestResult | null; testDate?: string | null },
 ): Promise<CandidateDetails> {
     return apiRequest<CandidateDetails>(`${base(passportId)}/stages/${stage}`, { method: "PUT", token, body });
 }

@@ -6,6 +6,7 @@ import { canManageCandidates, useAuth } from "../auth/AuthProvider";
 import { AdditionalDetailsPanel } from "../components/candidate/AdditionalDetailsPanel";
 import { CallLogDialog } from "../components/candidate/CallLogDialog";
 import { CandidateStepper, type StepperStep } from "../components/candidate/CandidateStepper";
+import { JobAssignmentPanel } from "../components/candidate/JobAssignmentPanel";
 import { CandidateDetailsStage, DocumentSubmissionStage, NotesStage } from "../components/candidate/StagePanels";
 import { secondaryButton } from "../components/Dialog";
 import { documentTypeLabel } from "../components/format";
@@ -103,6 +104,8 @@ export function CandidateDeploymentPage() {
                 </p>
             )}
 
+            <JobAssignmentPanel assignments={details.jobAssignments} />
+
             <Card className="px-4 py-5">
                 <CandidateStepper steps={steps} current={tab === "additional" ? ADDITIONAL_STEP : current} onSelect={select} />
             </Card>
@@ -118,6 +121,7 @@ export function CandidateDeploymentPage() {
                     <AdditionalDetailsPanel
                         resource={{ data: additionalView, status: additional.status, errorMessage: additional.status === "error" ? additional.error.message : null, reload: additional.reload }}
                         canEdit={canEdit}
+                        currentJob={details.jobAssignments.current}
                         onSaved={setSavedAdditional}
                     />
                 </Card>

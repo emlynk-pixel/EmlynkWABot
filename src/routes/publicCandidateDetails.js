@@ -154,7 +154,7 @@ export function createPublicCandidateDetailsRouter({
                 log.warn("Candidate form verification failed", { ref: passportRef.slice(0, 12) });
                 return res.status(401).json({ message: VERIFY_FAILED_MESSAGE, code: "VERIFICATION_FAILED" });
             }
-            const { token, expiresAt } = issueCandidateFormToken({ secret: tokenSecret, passportId: result.passportId, linkId: result.linkId, version: result.version, now: now() });
+            const { token, expiresAt } = issueCandidateFormToken({ secret: tokenSecret, passportId: result.passportId, linkId: result.linkId, version: result.version, kind: result.kind, jobId: result.jobId, now: now() });
             return res.json({ token, expiresAt });
         },
     );
@@ -175,9 +175,9 @@ export function createPublicCandidateDetailsRouter({
             // Field paths and codes only: never the submitted values.
             return res.status(400).json({ message: INVALID_ANSWERS_MESSAGE, errors: parsed.errors.map(({ field, code }) => ({ field, code, message: code })) });
         }
-        const { passportId, linkId, version } = req.candidateForm;
+        const { passportId, linkId, version, kind, jobId } = req.candidateForm;
         const client = await resolveDb(db);
-        const result = await submitCandidateForm({ db: client, passportId, linkId, version, values: parsed.values, idempotencyKey: parsed.idempotencyKey, now: now() });
+        const result = await submitCandidateForm({ db: client, passportId, linkId, version, kind, jobId, values: parsed.values, idempotencyKey: parsed.idempotencyKey, now: now() });
         return res.json(result);
     }));
 

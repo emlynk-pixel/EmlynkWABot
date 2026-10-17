@@ -33,6 +33,7 @@ import { DOCUMENT_PROCESSING_STATUS_STORED, VERIFICATION_STATUS } from "./client
 import { clientSearchWhere } from "./adminClientService.js";
 import { findUsersByWhatsappNumber } from "./userLookupService.js";
 import { openFollowUp } from "./callLogFollowUpService.js";
+import { candidateJobAssignments } from "./jobAssignmentReader.js";
 
 // ---------------------------------------------------------------- definitions
 
@@ -254,12 +255,12 @@ export function parseCandidateBody(body, { creating }) {
 
 export const TEST_RESULTS = Object.freeze(["PASS", "FAIL"]);
 
-const MAX_JOB_ID_LENGTH = 50;
-
 // Stage update: { completed?: boolean, notes?: string | null }, and for
-// TEST_DETAILS also { jobId?: string | null, testResult?: "PASS" | "FAIL" |
-// null, testDate?: "YYYY-MM-DD" | null }. A field left out is unchanged;
-// null (or empty text) clears it.
+// TEST_DETAILS also { testResult?: "PASS" | "FAIL" | null, testDate?:
+// "YYYY-MM-DD" | null }. A field left out is unchanged; null (or empty text)
+// clears it. jobId is no longer accepted: a candidate's job is the Job
+// assignment (job_candidate, jobService.js); candidate_stages.job_id is
+// deprecated legacy text, kept read-only.
 export function parseStageBody(body, stage) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
         return { errors: [{ field: "body", message: "must be a JSON object" }] };
@@ -273,13 +274,13 @@ export function parseStageBody(body, stage) {
     if (body.notes !== undefined) {
         values.notes = text(body, "notes", errors);
     }
-    for (const field of ["jobId", "testResult", "testDate"]) {
+    if (body.jobId !== undefined) {
+        errors.push({ field: "jobId", message: "is no longer recorded here: assign the candidate to a Job (Admin > Jobs)" });
+    }
+    for (const field of ["testResult", "testDate"]) {
         if (body[field] !== undefined && stage !== "TEST_DETAILS") errors.push({ field, message: "is only recorded for the Test details stage" });
     }
     if (stage === "TEST_DETAILS") {
-        if (body.jobId !== undefined) {
-            values.jobId = text(body, "jobId", errors, { max: MAX_JOB_ID_LENGTH });
-        }
         if (body.testResult !== undefined) {
             if (body.testResult === null) values.testResult = null;
             else if (TEST_RESULTS.includes(body.testResult)) values.testResult = body.testResult;
@@ -290,7 +291,7 @@ export function parseStageBody(body, stage) {
         }
     }
     if (!errors.length && Object.keys(values).length === 0 && body.notes === undefined) {
-        errors.push({ field: "body", message: "must contain completed, notes, or (Test details) jobId, testResult or testDate" });
+        errors.push({ field: "body", message: "must contain completed, notes, or (Test details) testResult or testDate" });
     }
     return errors.length ? { errors } : { values };
 }
@@ -400,7 +401,7 @@ export function stageList(rows, missingByStage) {
         const row = byStage.get(stage);
         const missing = missingByStage[stage];
         // Recorded on TEST_DETAILS only; null on every other stage.
-        const test = { jobId: row?.jobId ?? null, testResult: row?.testResult ?? null, testDate: isoDate(row?.testDate) };
+        const test = { legacyJobId: row?.jobId ?? null, testResult: row?.testResult ?? null, testDate: isoDate(row?.testDate) };
         return missing
             ? { stage, automatic: true, completed: missing.length === 0, completedAt: null, notes: row?.notes ?? null, missing, ...test }
             : { stage, automatic: false, completed: Boolean(row?.completed), completedAt: row?.completedAt ?? null, notes: row?.notes ?? null, missing: [], ...test };
@@ -655,7 +656,9 @@ export async function getCandidate({ db, passportId }) {
     if (!user) return null;
 
     const documents = currentDocuments(user.documents);
+    const jobAssignments = await candidateJobAssignments(db, passportId);
     return {
+        jobAssignments,
         candidate: {
             ...candidateSummary(user),
             surname: user.otherName ?? null,
@@ -736,7 +739,7 @@ export const CANDIDATE_AUDIT_FIELDS = Object.freeze([
     "otherName", "firstName", "address", "nic", "job", "jobExperience", "whatsappNumber", "contactNumber",
     "placeOfBirth", "dateOfBirth", "passportIssueDate", "passportExpiryDate", "nationality", "sex",
 ]);
-const STAGE_AUDIT_FIELDS = Object.freeze(["completed", "notes", "jobId", "testResult", "testDate"]);
+const STAGE_AUDIT_FIELDS = Object.freeze(["completed", "notes", "testResult", "testDate"]);
 const MAX_AUDIT_VALUE_LENGTH = 300;
 
 const isAuditBlank = (value) => value === null || value === undefined || (typeof value === "string" && value.trim() === "");
@@ -899,7 +902,6 @@ export async function updateStage({ db, passportId, stage, values, actor = null,
     }
     if (values.notes !== undefined) data.notes = values.notes;
     if (stage === "TEST_DETAILS") {
-        if (values.jobId !== undefined) data.jobId = values.jobId;
         if (values.testResult !== undefined) data.testResult = values.testResult;
         if (values.testDate !== undefined) data.testDate = values.testDate;
     }

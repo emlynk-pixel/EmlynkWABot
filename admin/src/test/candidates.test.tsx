@@ -28,7 +28,7 @@ const DETAILS: CandidateDetails = {
         ...s,
         completedAt: null,
         notes: null,
-        jobId: null,
+        legacyJobId: null,
         testResult: null,
         testDate: null,
         automatic: s.stage === "CANDIDATE_DETAILS" || s.stage === "DOCUMENT_SUBMISSION",
@@ -38,6 +38,7 @@ const DETAILS: CandidateDetails = {
     variantDocuments: {
         POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null },
     },
+    jobAssignments: { current: null, history: [] },
     requiredDocuments: (["PASSPORT", "MEDICAL", "POLICE_REPORT", "SCAN"] as const).map((documentType) => ({ documentType, included: documentType === "PASSPORT" })),
 };
 
@@ -201,43 +202,43 @@ describe("Candidate deployment", () => {
     });
 
     describe("Test details: result and date", () => {
-        const withTest = (testResult: "PASS" | "FAIL" | null, testDate: string | null, extra: { notes?: string; completed?: boolean; jobId?: string } = {}): CandidateDetails => ({
+        const withTest = (testResult: "PASS" | "FAIL" | null, testDate: string | null, extra: { notes?: string; completed?: boolean; legacyJobId?: string } = {}): CandidateDetails => ({
             ...DETAILS,
-            stages: DETAILS.stages.map((s) => (s.stage === "TEST_DETAILS" ? { ...s, testResult, testDate, jobId: extra.jobId ?? null, notes: extra.notes ?? null, completed: extra.completed ?? false } : s)),
+            stages: DETAILS.stages.map((s) => (s.stage === "TEST_DETAILS" ? { ...s, testResult, testDate, legacyJobId: extra.legacyJobId ?? null, notes: extra.notes ?? null, completed: extra.completed ?? false } : s)),
         });
 
-        test("the client name comes from the record; the job ID is entered; nothing is preselected; all three are saved", async () => {
+        test("the client name comes from the record; the job is shown read-only from the Job assignment; nothing is preselected; the result and date are saved", async () => {
             const { calls } = signedInBackend({
                 "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
-                "PUT /api/admin/candidates/N0000002/stages/TEST_DETAILS": { status: 200, body: withTest("PASS", "2026-09-28", { jobId: "JOB-2026-014" }) },
+                "PUT /api/admin/candidates/N0000002/stages/TEST_DETAILS": { status: 200, body: withTest("PASS", "2026-09-28") },
             });
             renderApp("/candidates/N0000002?stage=TEST_DETAILS");
             const user = userEvent.setup();
 
             expect(await screen.findByLabelText("Client name")).toHaveValue("SAMAN SILVA");
             expect(screen.getByLabelText("Client name")).toHaveAttribute("readonly");
-            expect(screen.getByLabelText("Job ID")).toHaveValue("");
-            expect(screen.getByLabelText("Job ID")).not.toHaveAttribute("readonly");
+            expect(screen.getByLabelText("Job")).toHaveValue("Not assigned to a job");
+            expect(screen.getByLabelText("Job")).toHaveAttribute("readonly");
+            expect(screen.queryByLabelText("Job ID")).not.toBeInTheDocument();
+            expect(screen.queryByLabelText("Legacy job reference")).not.toBeInTheDocument();
             expect(screen.getByLabelText("Test result")).toHaveValue("");
             expect(within(screen.getByLabelText("Test result")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select result…", "Pass", "Fail"]);
             expect(screen.getByLabelText("Test date")).toHaveValue("");
             expect(screen.getByLabelText("Notes")).toBeInTheDocument();
             expect(screen.getByRole("checkbox", { name: "Stage completed" })).not.toBeChecked();
 
-            await user.type(screen.getByLabelText("Job ID"), " JOB-2026-014 ");
             await user.selectOptions(screen.getByLabelText("Test result"), "PASS");
             await user.type(screen.getByLabelText("Test date"), "2026-09-28");
             await user.click(screen.getByRole("button", { name: "Save changes" }));
 
-            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: null, completed: false, jobId: "JOB-2026-014", testResult: "PASS", testDate: "2026-09-28" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: null, completed: false, testResult: "PASS", testDate: "2026-09-28" }));
             await vi.waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled());
-            expect(screen.getByLabelText("Job ID")).toHaveValue("JOB-2026-014");
             expect(screen.getByLabelText("Test result")).toHaveValue("PASS");
             expect(screen.getByLabelText("Test date")).toHaveValue("2026-09-28");
         });
 
         test("a saved result and date are shown again; saving other changes keeps the saved date, never today's", async () => {
-            const saved = withTest("FAIL", "2026-09-20", { notes: "Retest booked", completed: true, jobId: "JOB-2026-009" });
+            const saved = withTest("FAIL", "2026-09-20", { notes: "Retest booked", completed: true, legacyJobId: "Job12" });
             const { calls } = signedInBackend({
                 "GET /api/admin/candidates/N0000002": { status: 200, body: saved },
                 "PUT /api/admin/candidates/N0000002/stages/TEST_DETAILS": { status: 200, body: saved },
@@ -246,20 +247,52 @@ describe("Candidate deployment", () => {
             const user = userEvent.setup();
 
             expect(await screen.findByLabelText("Test result")).toHaveValue("FAIL");
-            expect(screen.getByLabelText("Job ID")).toHaveValue("JOB-2026-009");
+            expect(screen.getByLabelText("Legacy job reference")).toHaveValue("Job12");
+            expect(screen.getByLabelText("Legacy job reference")).toHaveAttribute("readonly");
             expect(screen.getByLabelText("Test date")).toHaveValue("2026-09-20");
             expect(screen.getByLabelText("Notes")).toHaveValue("Retest booked");
             expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeChecked();
 
             await user.selectOptions(screen.getByLabelText("Test result"), "PASS");
-            await user.type(screen.getByLabelText("Job ID"), "X");
             await user.click(screen.getByRole("button", { name: "Cancel" }));
             expect(screen.getByLabelText("Test result")).toHaveValue("FAIL");
-            expect(screen.getByLabelText("Job ID")).toHaveValue("JOB-2026-009");
 
             await user.type(screen.getByLabelText("Notes"), " (done)");
             await user.click(screen.getByRole("button", { name: "Save changes" }));
-            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Retest booked (done)", completed: true, jobId: "JOB-2026-009", testResult: "FAIL", testDate: "2026-09-20" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Retest booked (done)", completed: true, testResult: "FAIL", testDate: "2026-09-20" }));
+        });
+
+        test("JOB-018: the Job section reads the Job relation: the current processing job and the history, not the legacy text", async () => {
+            const job = (jobCode: string, status: "PROCESSING" | "COMPLETED" | "CANCELLED", extra = {}) => ({
+                jobId: `id-${jobCode}`, jobCode, companyJobId: jobCode === "JOB-2026-000007" ? "Y26S01" : null, status, jobType: { id: "t", code: "WELDER", name: "Welder" }, company: { id: "c", name: "Acme Construction" },
+                responsibleAgent: { id: "a", name: "Ion Popescu", countryCode: "RO" }, countryCode: "RO", vacancies: 5, createdAt: "2026-10-01T05:00:00.000Z",
+                completedAt: null, cancelledAt: null, cancelReason: null, assignedAt: "2026-10-02T05:00:00.000Z", removed: false, removedAt: null, ...extra,
+            });
+            const withJobs: CandidateDetails = {
+                ...withTest(null, null, { legacyJobId: "Job12" }),
+                jobAssignments: { current: job("JOB-2026-000007", "PROCESSING"), history: [job("JOB-2026-000003", "CANCELLED", { cancelReason: "Visa quota cancelled" }), job("JOB-2026-000001", "COMPLETED")] },
+            };
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: withJobs } });
+            renderApp("/candidates/N0000002?stage=TEST_DETAILS");
+
+            const section = await screen.findByRole("region", { name: "Job assignment" });
+            expect(within(section).getByRole("heading", { name: "Current processing job" })).toBeInTheDocument();
+            expect(within(section).getByRole("link", { name: "JOB-2026-000007" })).toHaveAttribute("href", "/jobs/id-JOB-2026-000007");
+            expect(within(section).getAllByText("Acme Construction").length).toBeGreaterThan(0);
+            expect(within(section).getAllByText("Ion Popescu").length).toBeGreaterThan(0);
+            expect(within(section).getByRole("link", { name: "JOB-2026-000003" })).toBeInTheDocument();
+            expect(within(section).getByText("Visa quota cancelled")).toBeInTheDocument();
+            expect(within(section).getByRole("link", { name: "JOB-2026-000001" })).toBeInTheDocument();
+            // The Test details panel shows the assigned job, and the old text only as a read-only legacy reference.
+            expect(screen.getByLabelText("Job")).toHaveValue("JOB-2026-000007");
+            expect(screen.getByLabelText("Legacy job reference")).toHaveValue("Job12");
+        });
+
+        test("a candidate on no job says so", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+            renderApp("/candidates/N0000002?stage=TEST_DETAILS");
+            const section = await screen.findByRole("region", { name: "Job assignment" });
+            expect(within(section).getByText("Not assigned to a processing job.")).toBeInTheDocument();
         });
 
         test("the other admin-completed stages stay notes and completion only", async () => {
@@ -279,7 +312,7 @@ describe("Candidate deployment", () => {
             expect(await screen.findByLabelText("Test result")).toBeDisabled();
             expect(screen.getByLabelText("Test result")).toHaveValue("PASS");
             expect(screen.getByLabelText("Test date")).toBeDisabled();
-            expect(screen.getByLabelText("Job ID")).toBeDisabled();
+            expect(screen.getByLabelText("Job")).toHaveAttribute("readonly");
             expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
         });
     });
