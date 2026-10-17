@@ -35,6 +35,7 @@ import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../c
 import { StatusBadge, ToneBadge } from "../components/StatusBadge";
 import { HelpTip } from "../components/Form";
 import { inputClass, textareaClass } from "../components/ui";
+import { DatePicker } from "../components/DatePicker";
 
 // The file is fetched through the backend with the admin's token and shown
 // from a local blob: URL (released when the page closes).
@@ -806,18 +807,17 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             <label htmlFor="police-date" className="block text-label-md text-ink">
                                 Submitted date on the police slip <span aria-hidden="true" className="text-critical">*</span>
                             </label>
-                            <input
+                            <DatePicker
                                 id="police-date"
-                                type="date"
                                 required
                                 min="2000-01-01"
                                 max={todayInSriLanka()}
                                 value={policeDate}
                                 disabled={busy}
-                                aria-invalid={policeDateError ? "true" : undefined}
-                                aria-describedby={policeDateError ? "police-date-error" : "police-date-hint"}
-                                onChange={(event) => {
-                                    setPoliceDate(event.target.value);
+                                invalid={Boolean(policeDateError)}
+                                describedBy={policeDateError ? "police-date-error" : "police-date-hint"}
+                                onChange={(next) => {
+                                    setPoliceDate(next);
                                     setPoliceDateError(null);
                                     setError(null);
                                 }}
@@ -1059,18 +1059,17 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                     <span aria-hidden="true" className="text-label-md text-critical">*</span>
                                     <HelpTip label="Submitted date on the police slip" text="The date printed on the police slip. The 21-day wait for the final police report is counted from it." />
                                 </div>
-                                <input
+                                <DatePicker
                                     id="replace-police-date"
-                                    type="date"
                                     required
-                                    aria-invalid={replacePoliceDateError ? "true" : undefined}
-                                    aria-describedby={replacePoliceDateError ? "replace-police-date-error" : undefined}
+                                    invalid={Boolean(replacePoliceDateError)}
+                                    describedBy={replacePoliceDateError ? "replace-police-date-error" : undefined}
                                     min="2000-01-01"
                                     max={todayInSriLanka()}
                                     value={replacePoliceDate}
                                     disabled={busy}
-                                    onChange={(event) => {
-                                        setReplacePoliceDate(event.target.value);
+                                    onChange={(next) => {
+                                        setReplacePoliceDate(next);
                                         setReplacePoliceDateError(null);
                                     }}
                                     className={inputClass(Boolean(replacePoliceDateError), { extra: "mt-1" })}

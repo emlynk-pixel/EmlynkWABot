@@ -1318,7 +1318,7 @@ describe("Call log: No Answer", () => {
         const button = within(form).getByRole("button", { name: "No Answer" });
         expect(button).toBeEnabled();
         expect(button.textContent).toBe("No Answer");
-        expect(within(form).getAllByRole("button").map((b) => b.textContent)).toEqual(["", "Close", "No Answer", "Need Attention", "Add call"]);
+        expect(within(form).getAllByRole("button").map((b) => b.textContent)).toEqual(["", "", "Close", "No Answer", "Need Attention", "Add call"]); // the second "" is the date field's calendar button
         // Secondary, not the primary action.
         expect(button.className).not.toContain("bg-primary");
         expect(within(form).getByRole("button", { name: "Add call" }).className).toContain("bg-primary");

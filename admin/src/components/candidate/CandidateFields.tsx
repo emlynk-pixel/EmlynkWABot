@@ -1,6 +1,7 @@
 import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
 import { SEX_OPTIONS, type CandidateDetails, type CandidateDetailsInput } from "../../api/candidates";
 import { HelpTip } from "../Form";
+import { DatePicker } from "../DatePicker";
 import { SubmittedHint } from "./submittedChanges";
 
 export const fieldControl = "h-10 w-full rounded border border-border-strong bg-surface px-3 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
@@ -229,6 +230,18 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
 }) {
     const id = useId();
     const set = (field: keyof CandidateDetailsInput) => (next: string) => onChange({ ...value, [field]: next });
+    // A calendar field (value is always YYYY-MM-DD). Same rules as before: required only where the label says so.
+    const dateInput = (field: "dateOfBirth" | "passportIssueDate" | "passportExpiryDate", required = false) => (
+        <DatePicker
+            id={`${id}-${field}`}
+            value={value[field]}
+            onChange={set(field)}
+            disabled={disabled}
+            required={required}
+            invalid={Boolean(errors[field])}
+            className={`${fieldControl} ${errors[field] ? "border-critical" : ""}`}
+        />
+    );
     const input = (field: Exclude<keyof CandidateDetailsInput, "jobTypes" | "sex">, props: { type?: string; maxLength?: number; readOnly?: boolean } = {}) => (
         <input
             id={`${id}-${field}`}
@@ -275,10 +288,10 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
                     {SEX_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
             </Field>
-            <Field label="Date of birth" htmlFor={`${id}-dateOfBirth`} error={errors.dateOfBirth} submitted="basic.birthDate">{input("dateOfBirth", { type: "date" })}</Field>
+            <Field label="Date of birth" htmlFor={`${id}-dateOfBirth`} error={errors.dateOfBirth} submitted="basic.birthDate">{dateInput("dateOfBirth")}</Field>
             <Field label="Place of birth" htmlFor={`${id}-placeOfBirth`} error={errors.placeOfBirth} submitted="basic.birthPlace">{input("placeOfBirth")}</Field>
-            <Field label="Passport issue date" required htmlFor={`${id}-passportIssueDate`} error={errors.passportIssueDate} help={FIELD_HINTS.passportIssueDate} submitted="passport.issueDate">{input("passportIssueDate", { type: "date" })}</Field>
-            <Field label="Passport expiry date" required htmlFor={`${id}-passportExpiryDate`} error={errors.passportExpiryDate} help={FIELD_HINTS.passportExpiryDate} submitted="passport.expiryDate">{input("passportExpiryDate", { type: "date" })}</Field>
+            <Field label="Passport issue date" required htmlFor={`${id}-passportIssueDate`} error={errors.passportIssueDate} help={FIELD_HINTS.passportIssueDate} submitted="passport.issueDate">{dateInput("passportIssueDate", true)}</Field>
+            <Field label="Passport expiry date" required htmlFor={`${id}-passportExpiryDate`} error={errors.passportExpiryDate} help={FIELD_HINTS.passportExpiryDate} submitted="passport.expiryDate">{dateInput("passportExpiryDate", true)}</Field>
             <Field label="WhatsApp number" required htmlFor={`${id}-whatsappNumber`} error={errors.whatsappNumber} help={FIELD_HINTS.whatsappNumber}>
                 <WhatsAppInput id={`${id}-whatsappNumber`} value={value.whatsappNumber} onChange={set("whatsappNumber")} disabled={disabled} locked={whatsappLocked} invalid={Boolean(errors.whatsappNumber)} />
                 {whatsappLocked && <div className="mt-1 text-label-sm text-ink-muted">Registered WhatsApp numbers cannot be changed.</div>}

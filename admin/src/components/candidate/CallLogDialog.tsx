@@ -10,6 +10,7 @@ import { ErrorState, LoadingState } from "../States";
 import { Field, fieldControl, textAreaControl } from "./CandidateFields";
 import { describeActivity, historyTimeline } from "./candidateHistory";
 import { NoAnswerBadge } from "./NoAnswerBadge";
+import { DatePicker } from "../DatePicker";
 
 const NOTE_MAX_LENGTH = 500;
 // The server allows a few minutes of clock difference; so does this check.
@@ -322,7 +323,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                     {/* Date and time side by side; stacked only below 340px, where both inputs no longer fit. */}
                                     <div data-testid="call-log-when" className="grid grid-cols-1 gap-2 min-[340px]:grid-cols-2 sm:gap-3">
                                         <Field label="Date" required htmlFor="call-log-date">
-                                            <input id="call-log-date" type="date" required max={today} value={when.date} disabled={busy} onChange={(event) => setWhen((w) => ({ ...w, date: event.target.value }))} className={compactField} />
+                                            <DatePicker id="call-log-date" required max={today} value={when.date} disabled={busy} onChange={(date) => setWhen((w) => ({ ...w, date }))} className={compactField} />
                                         </Field>
                                         <Field label="Time" required htmlFor="call-log-time">
                                             <input id="call-log-time" type="time" required value={when.time} disabled={busy} onChange={(event) => setWhen((w) => ({ ...w, time: event.target.value }))} className={compactField} />
