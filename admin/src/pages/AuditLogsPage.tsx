@@ -35,6 +35,8 @@ const CATEGORIES = Object.keys(CATEGORY_LABELS) as AuditCategory[];
 const ACTION_LABELS: Record<string, string> = {
     CREATE_CANDIDATE: "Candidate registered",
     UPDATE_CANDIDATE: "Candidate details updated",
+    CANDIDATE_FORM_FIELD_CONFIRMED: "Candidate Form change confirmed",
+    CANDIDATE_FORM_FIELD_REJECTED: "Candidate Form change rejected",
     UPDATE_STAGE: "Stage updated",
     CREATE_ADDITIONAL_DETAILS: "Additional details added",
     UPDATE_ADDITIONAL_DETAILS: "Additional details updated",
