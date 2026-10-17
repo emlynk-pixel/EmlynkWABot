@@ -10,6 +10,7 @@ import { formatDateTime, formatDay, formatNumber, formatTime, todayInSriLanka } 
 import { Icon } from "../components/Icon";
 import { AUDIT_ACTIONS } from "../components/reviewLabels";
 import { Card, ErrorState, LoadingState } from "../components/States";
+import { DatePicker } from "../components/DatePicker";
 
 // Daily Report (Admin > Daily Report): one business day in Sri Lanka
 // (00:00–24:00 Asia/Colombo). Two views:
@@ -458,14 +459,14 @@ export function DailyReportPage() {
                 <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Report date">
                     <button type="button" className={button} onClick={() => setDate(shiftDay(date, -1))}>Previous day</button>
                     <label htmlFor="report-date" className="sr-only">Business date</label>
-                    <input
+                    <DatePicker
                         id="report-date"
-                        type="date"
                         min="2000-01-01"
                         max={today}
+                        required
                         value={date}
-                        onChange={(event) => setDate(event.target.value)}
-                        className="h-9 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
+                        onChange={(next) => next && setDate(next)}
+                        className="h-9 w-40 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
                     />
                     <button type="button" className={button} disabled={date >= today} onClick={() => setDate(shiftDay(date, 1))}>Next day</button>
                     <button type="button" className={button} disabled={date === today} onClick={() => setDate(today)}>Today</button>

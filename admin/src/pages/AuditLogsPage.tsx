@@ -12,6 +12,7 @@ import { AUDIT_ACTIONS as REVIEW_ACTIONS } from "../components/reviewLabels";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { ToneBadge, type Tone } from "../components/StatusBadge";
 import { fieldLabel, filterControl, tableCell, tableCellWrap, tableHead } from "../components/ui";
+import { DatePicker } from "../components/DatePicker";
 
 // Audit Logs (ADMIN only): who changed what, newest first. View only: there
 // is no edit, delete, clear or rollback here or in the API. Filters and the
@@ -240,10 +241,10 @@ function AuditLogsView() {
                         </select>
                     </FilterField>
                     <FilterField label="From" htmlFor="audit-start">
-                        <input id="audit-start" type="date" value={params.startDate ?? ""} max={params.endDate} onChange={(e) => update({ startDate: e.target.value || undefined })} className={filterControl} />
+                        <DatePicker id="audit-start" value={params.startDate ?? ""} max={params.endDate} onChange={(date) => update({ startDate: date || undefined })} className={filterControl} />
                     </FilterField>
                     <FilterField label="To" htmlFor="audit-end">
-                        <input id="audit-end" type="date" value={params.endDate ?? ""} min={params.startDate} onChange={(e) => update({ endDate: e.target.value || undefined })} className={filterControl} />
+                        <DatePicker id="audit-end" value={params.endDate ?? ""} min={params.startDate} onChange={(date) => update({ endDate: date || undefined })} className={filterControl} />
                     </FilterField>
                     <FilterField label="Search" htmlFor="audit-search">
                         <input

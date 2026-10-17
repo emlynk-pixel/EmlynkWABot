@@ -140,7 +140,7 @@ The interface provides agile date navigation:
 - **Today**: Quick button jumping to the current date in Sri Lanka.
 - **Previous day**: Shifts the reporting window backward by 1 day.
 - **Next day**: Shifts the reporting window forward by 1 day (disabled when viewing today; future dates are blocked).
-- **Date picker**: Allows direct selection of any valid past or current date (`<input type="date" max={today} />`).
+- **Date picker**: A calendar field (`components/DatePicker.tsx`, built on `react-day-picker`): type a date as `YYYY-MM-DD` or open the calendar and use its month and year lists. Days after today are disabled. Admin date fields all use this one component; the stored value is always `YYYY-MM-DD`.
 
 State synchronization: The chosen date (`date=YYYY-MM-DD`), active view tab (`view=summary` or `view=roles`), and selected role filter (`role=ANALYST|MANAGER|ADMIN|REGISTRATION_DESK`) are continuously synchronized with browser URL query parameters, preserving context across reloads and shares.
 
