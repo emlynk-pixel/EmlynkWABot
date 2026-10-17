@@ -71,7 +71,7 @@ body { margin: 0; background: var(--bg); color: var(--ink); }
 /* Long words wrap instead of widening the page. Text wraps between words
    first (break-word); values that can be one long word (emails, addresses)
    may break anywhere. */
-p, label, legend, h1, h2, h3, dt, li { overflow-wrap: break-word; }
+p, label, legend, h1, h2, h3, h4, dt, li { overflow-wrap: break-word; }
 dd, input { overflow-wrap: anywhere; }
 
 .visually-hidden {
@@ -158,7 +158,7 @@ dd, input { overflow-wrap: anywhere; }
 
 h1 { font-size: 1.5rem; line-height: 1.3; margin: 0 0 6px; }
 h2 { font-size: 1.25rem; line-height: 1.35; margin: 0 0 4px; }
-h3 { font-size: 1.0625rem; line-height: 1.4; margin: 0 0 12px; }
+h3, h4 { font-size: 1.0625rem; line-height: 1.4; margin: 0 0 12px; }
 
 .lead { color: var(--muted); margin: 0 0 16px; }
 
@@ -215,22 +215,28 @@ progress::-webkit-progress-bar { background: var(--border); border-radius: 999px
 progress::-webkit-progress-value { background: linear-gradient(90deg, var(--brand-a), var(--brand-b)); border-radius: 999px; }
 progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a), var(--brand-b)); border-radius: 999px; }
 
-.step-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
-.step-list button {
+/* Four stages in one compact row on phones (number above a short name); a
+   vertical list beside the form on wide screens. */
+.step-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.step-list button, .step-list .stage {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 10px;
+    gap: 4px;
+    width: 100%;
     min-height: 40px;
     padding: 2px;
     border: 0;
-    border-radius: 999px;
+    border-radius: 10px;
     background: transparent;
     color: var(--muted);
     font: inherit;
-    font-size: 0.9375rem;
-    text-align: left;
+    font-size: 0.75rem;
+    line-height: 1.25;
+    text-align: center;
     cursor: pointer;
 }
+.step-list .stage { cursor: default; }
 .step-list button:disabled { cursor: default; opacity: 0.55; }
 .step-number {
     flex: none;
@@ -245,15 +251,7 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
     font-weight: 600;
     font-size: 0.875rem;
 }
-/* Phones: numbers only (the full name is in the step heading). */
-.step-name {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
-}
+.step-name { min-width: 0; overflow-wrap: anywhere; }
 .step-list li.done .step-number { background: var(--success-soft); border-color: var(--success); color: var(--success); }
 .step-list li.current .step-number { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
 .step-list li.current button { color: var(--ink); font-weight: 600; }
@@ -270,6 +268,10 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 
 .field-grid { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 20px; }
 
+/* A section inside a step (Personal Details and Work & Family Details hold several). */
+.step-section + .step-section { border-top: 1px solid var(--border); margin-top: 22px; padding-top: 22px; }
+.step-section > h3:focus { outline: none; }
+.step-section > h3:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
 .form-section { border-top: 1px solid var(--border); padding-top: 18px; margin-top: 10px; }
 .section-note { color: var(--muted); font-size: 0.875rem; margin: -6px 0 12px; }
 
@@ -464,10 +466,9 @@ button:disabled { opacity: 0.6; cursor: default; }
     .candidate-form { display: grid; grid-template-columns: 270px minmax(0, 1fr); column-gap: 28px; align-items: start; }
     .form-intro { grid-column: 1 / -1; }
     .progress-block { position: sticky; top: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
-    .step-list { flex-direction: column; gap: 2px; }
-    .step-list button { width: 100%; padding: 4px 8px 4px 2px; border-radius: 10px; }
+    .step-list { display: flex; flex-direction: column; gap: 2px; }
+    .step-list button, .step-list .stage { flex-direction: row; gap: 10px; padding: 4px 8px 4px 2px; font-size: 0.9375rem; text-align: left; }
     .step-list li.current button { background: var(--primary-soft); }
-    .step-name { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
 }
 
 /* Narrow phones: the theme switch shows its icons only (each button keeps its

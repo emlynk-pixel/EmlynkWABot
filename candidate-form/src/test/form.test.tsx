@@ -1,4 +1,4 @@
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import { getSession } from "../session/tokenStore";
 import { emptyForm, toPayload } from "../form/model";
@@ -8,24 +8,18 @@ import { validateForm } from "../form/validation";
 import styles from "../styles.css?raw";
 import {
     callsTo, completeToReview, en, field, NIC, fillBasic, fillContact, fillGuardian, fillPassport, next, PASSPORT, queryField, setField, si, startsWith,
-    stepHeading, switchLanguage, verified, WHATSAPP, type User,
+    sectionHeading, stepHeading, switchLanguage, verified, WHATSAPP, type User,
 } from "./helpers";
 
 // The Candidate Form: prefill, sections, fields, rules, review and the one
 // submission. The server's own rules are in test/candidateFormShare.test.js.
 
-const goToStep = async (user: User, step: "contact" | "passport" | "family" | "guardian") => {
-    fillBasic(step === "family" ? "MARRIED" : "SINGLE");
-    await next(user);
-    if (step === "contact") return;
+// Personal Details filled in, on Work & Family Details.
+const goToWork = async (user: User, civilStatus = "SINGLE") => {
+    fillBasic(civilStatus);
     fillContact();
     await next(user);
-    if (step === "passport") return;
-    await fillPassport(user);
-    await next(user);
-    await next(user);
-    if (step === "family") return;
-    await next(user);
+    await screen.findByRole("heading", { level: 2, name: startsWith(en("step.work")) });
 };
 
 describe("prefill and identity", () => {
@@ -51,27 +45,73 @@ describe("prefill and identity", () => {
 });
 
 describe("sections and fields", () => {
-    test("FORM-NEW-001 every section and its fields are there, one section at a time", async () => {
+    const PERSONAL_FIELDS = ["f.fullName", "f.surname", "f.otherNames", "f.nic", "f.sex", "f.civilStatus", "f.birthDate", "f.birthPlace",
+        "f.address", "f.city", "f.district", "f.dsDivision", "f.gnDivision", "f.whatsapp", "f.alternativePhone", "f.email"] as const;
+    const WORK_FIELDS = ["f.passportNumber", "f.passportIssueDate", "f.passportExpiryDate", "f.jobCategory", "f.experience", "f.otherSkills1", "f.otherSkills2",
+        "f.shirtSize", "f.waistSize", "f.shoeSize",
+        "f.fatherName", "f.fatherSurname", "f.fatherPassport", "f.fatherBirthDate", "f.motherName", "f.motherSurname", "f.motherPassport", "f.motherBirthDate",
+        "f.spouseName", "f.spouseSurname", "f.spousePassport", "f.spouseBirthDate", "f.child1", "f.child2", "f.child3",
+        "f.guardianName", "f.guardianRelationship", "f.guardianNic", "f.guardianBirthDate", "f.guardianPhone", "f.guardianAddress"] as const;
+
+    test("STEP-001 only four journey stages are shown: Verify (done), Personal Details, Work & Family Details, Review & Submit", async () => {
+        await verified();
+        const nav = screen.getByRole("navigation", { name: en("form.sections") });
+        const items = within(nav).getAllByRole("listitem");
+        expect(items.map((item) => item.textContent?.replace(/^[\d✓]+/, ""))).toEqual([en("step.verify"), en("step.personal"), en("step.work"), en("step.review")]);
+        expect(items[0]).toHaveClass("done");
+        expect(items[1]).toHaveClass("current");
+        expect(within(items[1]).getByRole("button")).toHaveAttribute("aria-current", "step");
+        expect(within(items[0]).queryByRole("button")).toBeNull(); // verification is not repeated
+        expect(screen.getByText("Step 2 of 4")).toBeInTheDocument();
+        expect(stepHeading("step.personal")).toBeInTheDocument();
+    });
+
+    test("STEP-002 / 003 / 010 Basic + Contact are on Personal Details; Passport & Qualifications, Measurements, Family and Guardian on Work & Family Details; no field is missing", async () => {
         const { user } = await verified();
-        const labels = (keys: Parameters<typeof en>[0][]) => keys.forEach((key) => expect(field(key), key).toBeInTheDocument());
-        labels(["f.fullName", "f.surname", "f.otherNames", "f.nic", "f.sex", "f.civilStatus", "f.birthDate", "f.birthPlace"]);
-        expect(queryField("f.address")).toBeNull(); // the next section is not on screen yet
+        const present = (keys: readonly Parameters<typeof en>[0][]) => keys.forEach((key) => expect(field(key), key).toBeInTheDocument());
+        present(PERSONAL_FIELDS);
+        expect(sectionHeading("step.basic")).toBeInTheDocument();
+        expect(sectionHeading("step.contact")).toBeInTheDocument();
+        expect(queryField("f.passportIssueDate")).toBeNull(); // the next step is not on screen yet
+        expect(queryField("f.guardianName")).toBeNull();
         fillBasic("MARRIED");
-        await next(user);
-        expect(stepHeading("step.contact")).toBeInTheDocument();
-        labels(["f.address", "f.city", "f.district", "f.dsDivision", "f.gnDivision", "f.whatsapp", "f.alternativePhone", "f.email"]);
         fillContact();
         await next(user);
-        labels(["f.passportNumber", "f.passportIssueDate", "f.passportExpiryDate", "f.jobCategory", "f.experience", "f.otherSkills1", "f.otherSkills2"]);
+        expect(stepHeading("step.work")).toBeInTheDocument();
+        for (const key of ["step.passport", "step.measurements", "step.family", "step.guardian"] as const) expect(sectionHeading(key), key).toBeInTheDocument();
+        present(WORK_FIELDS);
         expect(screen.getByRole("group", { name: startsWith(en("f.englishKnowledge")) })).toBeInTheDocument();
+        expect(queryField("f.fullName")).toBeNull();
+        // 8 + 8 and 7 + 3 + 15 + 6 = the 47 fields of the former seven steps.
+        expect(PERSONAL_FIELDS.length + WORK_FIELDS.length).toBe(47);
+        // Only Personal Details, Work & Family Details and the review are steps: the sections are headings, not list items.
+        expect(within(screen.getByRole("navigation", { name: en("form.sections") })).getAllByRole("listitem")).toHaveLength(4);
+    });
+
+    test("STEP-006 Previous and Next keep every value, including the prefill and a hidden spouse", async () => {
+        const { user } = await verified();
+        fillBasic("MARRIED");
+        fillContact();
+        setField("f.alternativePhone", "0771234567");
+        await next(user);
         await fillPassport(user);
+        setField("f.shirtSize", "M");
+        await user.type(field("f.spouseName"), "kumari");
+        await user.type(field("f.child1"), "nimal");
+        fillGuardian();
+        await user.click(screen.getByRole("button", { name: en("form.previous") }));
+        expect(stepHeading("step.personal")).toBeInTheDocument();
+        expect(field("f.fullName")).toHaveValue("SHAMAL");
+        expect(field("f.surname")).toHaveValue("SATHSARA");
+        expect(field("f.otherNames")).toHaveValue("KAMAL"); // from the record
+        expect(field("f.email")).toHaveValue("shamal@example.com");
+        expect(field("f.alternativePhone")).toHaveValue("0771234567");
         await next(user);
-        labels(["f.shirtSize", "f.waistSize", "f.shoeSize"]);
-        await next(user);
-        labels(["f.fatherName", "f.fatherSurname", "f.fatherPassport", "f.fatherBirthDate", "f.motherName", "f.motherSurname", "f.motherPassport", "f.motherBirthDate",
-            "f.spouseName", "f.spouseSurname", "f.spousePassport", "f.spouseBirthDate", "f.child1", "f.child2", "f.child3"]);
-        await next(user);
-        labels(["f.guardianName", "f.guardianRelationship", "f.guardianNic", "f.guardianBirthDate", "f.guardianPhone", "f.guardianAddress"]);
+        expect(field("f.jobCategory")).toHaveValue("WELDER TIG");
+        expect(field("f.shirtSize")).toHaveValue("M");
+        expect(field("f.spouseName")).toHaveValue("KUMARI");
+        expect(field("f.child1")).toHaveValue("NIMAL");
+        expect(field("f.guardianPhone")).toHaveValue("0771234567");
     });
 
     test("FORM-NEW-002 there is no register number, and nothing staff-only, anywhere in the form or the data", async () => {
@@ -86,7 +126,6 @@ describe("sections and fields", () => {
     test("FORM-NEW-003 / FORM-NEW-004 the verified Passport and WhatsApp numbers are shown read-only and can't be changed", async () => {
         const { user } = await verified();
         fillBasic();
-        await next(user);
         const whatsapp = field("f.whatsapp");
         expect(whatsapp).toHaveValue(WHATSAPP);
         expect(whatsapp).toHaveAttribute("readonly");
@@ -104,7 +143,7 @@ describe("sections and fields", () => {
 
     test("FORM-NEW-005 the job categories are exactly the required list, with OTHER last", async () => {
         const { user } = await verified();
-        await goToStep(user, "passport");
+        await goToWork(user);
         const options = within(field("f.jobCategory")).getAllByRole("option").map((option) => (option as HTMLOptionElement).value).filter(Boolean);
         expect(options).toEqual([
             "PLASTER", "BLOCK MASON", "TILER", "SHUTTERING CARPENTER", "BARBENDER", "GYPSUM WORKER", "ALUMINIUM WORKER", "WELDER TIG", "WELDER MIG", "WELDER ARC",
@@ -115,7 +154,7 @@ describe("sections and fields", () => {
 
     test("FORM-NEW-006 / UPPER-005 OTHER opens a required Other Job Category, typed in capitals, sent only with OTHER", async () => {
         const { user } = await verified();
-        await goToStep(user, "passport");
+        await goToWork(user);
         expect(queryField("f.jobCategoryOther")).toBeNull();
         await user.selectOptions(field("f.jobCategory"), "OTHER");
         const other = field("f.jobCategoryOther");
@@ -130,7 +169,7 @@ describe("sections and fields", () => {
 
     test("English Knowledge is one choice of six, stored as an English code, labelled in the current language", async () => {
         const { user } = await verified();
-        await goToStep(user, "passport");
+        await goToWork(user);
         const group = screen.getByRole("group", { name: startsWith(en("f.englishKnowledge")) });
         expect(within(group).getAllByRole("radio")).toHaveLength(ENGLISH_LEVELS.length);
         await user.click(within(group).getByRole("radio", { name: en("english.VERY GOOD") }));
@@ -143,23 +182,23 @@ describe("sections and fields", () => {
 describe("family", () => {
     test("FORM-NEW-007 / 008 / 009 spouse details only for Married; hidden values are kept, and never sent", async () => {
         const { user } = await verified();
-        await goToStep(user, "family");
+        await goToWork(user, "MARRIED");
         expect(field("f.spouseName")).toBeInTheDocument();
         await user.type(field("f.spouseName"), "kumari");
         await user.type(field("f.child1"), "nimal");
 
-        // Back to Basic, change to Single: the spouse is hidden, the children stay.
-        for (let i = 0; i < 4; i++) await user.click(screen.getByRole("button", { name: en("form.previous") }));
+        // Back to Personal Details, change to Single: the spouse is hidden, the children stay.
+        await user.click(screen.getByRole("button", { name: en("form.previous") }));
         await user.selectOptions(field("f.civilStatus"), "SINGLE");
-        await user.click(screen.getByRole("button", { name: en("step.family") }));
-        expect(stepHeading("step.family")).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: en("step.work") }));
+        expect(stepHeading("step.work")).toBeInTheDocument();
         expect(queryField("f.spouseName")).toBeNull();
         expect(field("f.child1")).toHaveValue("NIMAL");
 
         // Married again: what was typed is still there.
-        for (let i = 0; i < 4; i++) await user.click(screen.getByRole("button", { name: en("form.previous") }));
+        await user.click(screen.getByRole("button", { name: en("form.previous") }));
         await user.selectOptions(field("f.civilStatus"), "MARRIED");
-        await user.click(screen.getByRole("button", { name: en("step.family") }));
+        await user.click(screen.getByRole("button", { name: en("step.work") }));
         expect(field("f.spouseName")).toHaveValue("KUMARI");
 
         const single = emptyForm();
@@ -172,28 +211,45 @@ describe("family", () => {
 
     test("the family section is marked important; children are optional", async () => {
         const { user } = await verified();
-        await goToStep(user, "family");
-        expect(stepHeading("step.family")).toHaveTextContent(en("form.important"));
+        await goToWork(user);
+        expect(sectionHeading("step.family")).toHaveTextContent(en("form.important"));
         expect(screen.getByText(en("family.childrenNote"))).toBeInTheDocument();
         expect(field("f.child1")).not.toBeRequired();
-        await next(user);
-        expect(stepHeading("step.guardian")).toBeInTheDocument();
+        expect(sectionHeading("step.guardian")).toBeInTheDocument();
     });
 });
 
 describe("validation", () => {
-    test("Next checks the section: required answers, with the first problem focused; corrections clear the messages", async () => {
+    test("STEP-008 Next checks the whole step: Basic and Contact required answers, the first problem (in page order) focused; corrections clear the messages", async () => {
         const { user } = await verified();
         await next(user);
-        expect(stepHeading("step.basic")).toBeInTheDocument();
+        expect(stepHeading("step.personal")).toBeInTheDocument();
         expect(screen.getByText(en("form.fixErrors"))).toBeInTheDocument();
-        // Full name, civil status and birth date (the prefill has the surname, other names and sex).
-        expect(screen.getAllByText(en("v.required"))).toHaveLength(3);
+        // Full name, civil status, birth date, address, district, DS division and email (the prefill has the surname, other names and sex).
+        expect(screen.getAllByText(en("v.required"))).toHaveLength(7);
         expect(field("f.fullName")).toHaveAttribute("aria-invalid", "true");
+        expect(field("f.email")).toHaveAttribute("aria-invalid", "true");
+        await waitFor(() => expect(field("f.fullName")).toHaveFocus());
         fillBasic();
+        expect(screen.getAllByText(en("v.required"))).toHaveLength(4); // the contact ones remain
+        fillContact();
         expect(screen.queryByText(en("v.required"))).toBeNull();
         await next(user);
-        expect(stepHeading("step.contact")).toBeInTheDocument();
+        expect(stepHeading("step.work")).toBeInTheDocument();
+    });
+
+    test("STEP-008 a problem only in the Contact section is focused, and a problem in the later sections of Work & Family Details too", async () => {
+        const { user } = await verified();
+        fillBasic();
+        await next(user);
+        await waitFor(() => expect(field("f.address")).toHaveFocus()); // Basic is complete: the first problem is the first Contact field
+        fillContact();
+        await next(user);
+        await fillPassport(user);
+        await next(user); // only the Guardian answers are missing
+        expect(stepHeading("step.work")).toBeInTheDocument();
+        await waitFor(() => expect(field("f.guardianName")).toHaveFocus());
+        expect(screen.getAllByText(en("v.required"))).toHaveLength(4);
     });
 
     test("formats: email, phone, dates, passport expiry after issue", async () => {
@@ -202,7 +258,6 @@ describe("validation", () => {
         await next(user);
         expect(screen.getByText(en("v.dateFuture"))).toBeInTheDocument();
         fillBasic();
-        await next(user);
         fillContact();
         setField("f.email", "not-an-email");
         setField("f.alternativePhone", "12");
@@ -213,6 +268,7 @@ describe("validation", () => {
         setField("f.alternativePhone", "");
         await next(user);
         await fillPassport(user);
+        fillGuardian();
         setField("f.passportExpiryDate", "2019-01-01");
         await next(user);
         expect(screen.getByText(en("v.expiryBeforeIssue"))).toBeInTheDocument();
@@ -220,8 +276,9 @@ describe("validation", () => {
 
     test("FORM-NEW-010 guardian name, NIC, phone and address are required and checked", async () => {
         const { user } = await verified();
-        await goToStep(user, "guardian");
-        expect(stepHeading("step.guardian")).toBeInTheDocument();
+        await goToWork(user);
+        expect(sectionHeading("step.guardian")).toBeInTheDocument();
+        await fillPassport(user);
         await next(user);
         for (const key of ["f.guardianName", "f.guardianNic", "f.guardianPhone", "f.guardianAddress"] as const) {
             expect(field(key), key).toHaveAttribute("aria-invalid", "true");
@@ -237,13 +294,26 @@ describe("validation", () => {
         expect(stepHeading("step.review")).toBeInTheDocument();
     });
 
-    test("LANG validation messages and step text follow the language without losing answers", async () => {
+    test("STEP-009 the spouse section follows Civil Status inside the combined step", async () => {
+        const { user } = await verified();
+        await goToWork(user, "SINGLE");
+        expect(queryField("f.spouseName")).toBeNull();
+        await user.click(screen.getByRole("button", { name: en("form.previous") }));
+        await user.selectOptions(field("f.civilStatus"), "MARRIED");
+        await next(user);
+        expect(field("f.spouseName")).toBeInTheDocument();
+        expect(field("f.spouseName")).not.toBeRequired();
+    });
+
+    test("STEP-011 LANG validation messages and step text follow the language without losing answers", async () => {
         const { user } = await verified();
         setField("f.fullName", "shamal");
         await next(user);
         expect(screen.getAllByText(en("v.required")).length).toBeGreaterThan(0);
         await switchLanguage(user, "සිංහල");
-        expect(screen.getByRole("heading", { level: 2, name: startsWith(si("step.basic")) })).toBeInTheDocument();
+        expect(screen.getByRole("heading", { level: 2, name: startsWith(si("step.personal")) })).toBeInTheDocument();
+        expect(screen.getByRole("heading", { level: 3, name: startsWith(si("step.basic")) })).toBeInTheDocument();
+        expect(within(screen.getByRole("navigation", { name: si("form.sections") })).getAllByRole("listitem").map((item) => item.textContent?.replace(/^[\d✓]+/, ""))).toEqual([si("step.verify"), si("step.personal"), si("step.work"), si("step.review")]);
         expect(screen.getAllByText(si("v.required")).length).toBeGreaterThan(0);
         expect(screen.queryByText(en("v.required"))).toBeNull();
         expect(screen.getByLabelText(startsWith(si("f.fullName")))).toHaveValue("SHAMAL");
@@ -270,8 +340,25 @@ describe("review and save", () => {
         expect(within(card("step.family")).queryByText(en("f.spouseName"))).toBeNull();
         expect(within(card("step.family")).getAllByText(en("review.empty")).length).toBeGreaterThan(0);
         await user.click(screen.getByRole("button", { name: `Edit ${en("step.contact")}` }));
-        expect(stepHeading("step.contact")).toBeInTheDocument();
+        expect(stepHeading("step.personal")).toBeInTheDocument();
         expect(field("f.email")).toHaveValue("shamal@example.com");
+        await waitFor(() => expect(sectionHeading("step.contact")).toHaveFocus());
+    });
+
+    test("STEP-005 / 007 the review lists every section; Edit opens the combined step that holds it (no seven-step navigation)", async () => {
+        const { user } = await verified();
+        await completeToReview(user, { civilStatus: "MARRIED" });
+        const sections = ["step.basic", "step.contact", "step.passport", "step.measurements", "step.family", "step.guardian"] as const;
+        for (const key of sections) expect(screen.getByRole("region", { name: en(key) }), key).toBeInTheDocument();
+        expect(within(screen.getByRole("region", { name: en("step.family") })).getByText(en("f.spouseName"))).toBeInTheDocument();
+        const stepFor = { "step.basic": "step.personal", "step.contact": "step.personal", "step.passport": "step.work", "step.measurements": "step.work", "step.family": "step.work", "step.guardian": "step.work" } as const;
+        for (const key of sections) {
+            await user.click(screen.getByRole("button", { name: `Edit ${en(key)}` }));
+            expect(stepHeading(stepFor[key]), key).toBeInTheDocument();
+            await waitFor(() => expect(sectionHeading(key), key).toHaveFocus());
+            expect(within(screen.getByRole("navigation", { name: en("form.sections") })).getAllByRole("listitem")).toHaveLength(4);
+            await user.click(screen.getByRole("button", { name: en("step.review") }));
+        }
     });
 
     test("FORM-NEW-012 / SUBMIT-001 Submit asks for confirmation first; 'Not yet' sends nothing", async () => {
@@ -346,7 +433,7 @@ describe("review and save", () => {
         await user.click(screen.getByRole("button", { name: en("review.save") }));
         await user.click(screen.getByRole("button", { name: en("review.confirmSubmit") }));
         expect(await screen.findByText(en("review.problems"))).toBeInTheDocument();
-        await user.click(screen.getByRole("button", { name: en("review.goTo").replace("{section}", en("step.contact")) }));
+        await user.click(screen.getByRole("button", { name: en("review.goTo").replace("{section}", en("step.personal")) }));
         expect(field("f.district")).toHaveAccessibleDescription(new RegExp(en("v.invalidAnswer")));
         setField("f.district", "gampaha");
         expect(field("f.district")).not.toHaveAttribute("aria-invalid");
@@ -369,7 +456,7 @@ describe("review and save", () => {
         await user.click(screen.getByRole("button", { name: en("review.save") }));
         expect(screen.getByText(en("review.problems"))).toBeInTheDocument();
         expect(screen.queryByRole("alertdialog")).toBeNull();
-        await user.click(screen.getByRole("button", { name: en("review.goTo").replace("{section}", en("step.guardian")) }));
+        await user.click(screen.getByRole("button", { name: en("review.goTo").replace("{section}", en("step.work")) }));
         expect(field("f.guardianAddress")).toHaveAttribute("aria-invalid", "true");
         expect(callsTo(calls, "submit")).toHaveLength(0);
     });
@@ -401,8 +488,6 @@ describe("uppercase", () => {
 
     test("UPPER-003 / UPPER-004 email and phone numbers are not changed", async () => {
         const { user } = await verified();
-        fillBasic();
-        await next(user);
         await user.type(field("f.email"), "Shamal.Sathsara@example.com");
         expect(field("f.email")).toHaveValue("Shamal.Sathsara@example.com");
         await user.type(field("f.alternativePhone"), "+94 77 123 4567");
@@ -411,10 +496,9 @@ describe("uppercase", () => {
 
     test("identifiers and names elsewhere are capitalised too: family passports, the guardian's NIC", async () => {
         const { user } = await verified();
-        await goToStep(user, "family");
+        await goToWork(user, "MARRIED");
         await user.type(field("f.fatherPassport"), "n7654321");
         expect(field("f.fatherPassport")).toHaveValue("N7654321");
-        await next(user);
         await user.type(field("f.guardianNic"), "901234567v");
         expect(field("f.guardianNic")).toHaveValue("901234567V");
     });
@@ -423,24 +507,35 @@ describe("uppercase", () => {
 describe("accessibility and layout", () => {
     test("A11Y-001 every control has a label; the progress is announced; sections are a navigation list", async () => {
         const { user } = await verified();
-        for (const step of [0, 1, 2]) {
+        for (const step of [0, 1]) {
             for (const control of document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("input, select, textarea")) {
                 expect(control.labels?.length ?? 0, `${step}: ${control.id || control.name}`).toBeGreaterThan(0);
             }
-            if (step === 0) fillBasic();
-            if (step === 1) fillContact();
-            await next(user);
+            if (step === 0) {
+                fillBasic();
+                fillContact();
+                await next(user);
+            }
         }
         expect(screen.getByRole("progressbar")).toHaveAccessibleName(/^\d+ of 17 required answers completed$/);
         expect(screen.getByRole("navigation", { name: en("form.sections") })).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: en("step.passport") })).toHaveAttribute("aria-current", "step");
+        expect(screen.getByRole("button", { name: en("step.work") })).toHaveAttribute("aria-current", "step");
     });
 
-    test("the step heading takes focus on a new section", async () => {
+    test("the step heading takes focus on a new step", async () => {
         const { user } = await verified();
         fillBasic();
+        fillContact();
         await next(user);
-        expect(stepHeading("step.contact")).toHaveFocus();
+        expect(stepHeading("step.work")).toHaveFocus();
+    });
+
+    test("STEP-MOBILE the four-stage indicator is a compact row on phones and a list beside the form on wide screens", () => {
+        const css = styles.replace(/\/\*[\s\S]*?\*\//g, "");
+        const base = css.split("@media")[0];
+        expect(base).toMatch(/\.step-list \{[^}]*display: grid;[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
+        expect(css).toMatch(/@media \(min-width: 1024px\)[\s\S]*\.step-list \{ display: flex; flex-direction: column/);
+        expect(base).not.toMatch(/\.step-name \{[^}]*(position: absolute|clip:)/);
     });
 
     test("MOBILE the stylesheet can't overflow a 320px screen: fluid controls, no fixed wide widths, columns only on wider screens", () => {

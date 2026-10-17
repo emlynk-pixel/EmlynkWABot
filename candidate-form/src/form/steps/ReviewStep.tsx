@@ -2,7 +2,7 @@ import type { Language, MessageKey } from "../../i18n/translations";
 import { useLanguage } from "../../i18n/useLanguage";
 import type { FormLoadResponse } from "../../types/api";
 import { showsOtherJobCategory, showsSpouse, type CandidateFormData } from "../model";
-import { STEPS, type StepId } from "../steps";
+import { SECTIONS, type SectionId } from "../steps";
 import { valueAt } from "../validation";
 
 // What the candidate entered, by section, before saving. Only the
@@ -11,8 +11,8 @@ import { valueAt } from "../validation";
 
 type Row = { label: MessageKey; path: string; kind?: "date" | "code"; codePrefix?: string };
 
-function rowsFor(step: StepId, data: CandidateFormData): Row[] {
-    switch (step) {
+function rowsFor(section: SectionId, data: CandidateFormData): Row[] {
+    switch (section) {
         case "basic":
             return [
                 { label: "f.fullName", path: "basic.fullName" },
@@ -89,7 +89,7 @@ export function formatDate(value: string, language: Language): string {
     return date.toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric" });
 }
 
-export function ReviewStep({ data, identity, onEdit }: { data: CandidateFormData; identity: FormLoadResponse["identity"]; onEdit: (step: StepId) => void }) {
+export function ReviewStep({ data, identity, onEdit }: { data: CandidateFormData; identity: FormLoadResponse["identity"]; onEdit: (section: SectionId) => void }) {
     const { t, language } = useLanguage();
     const display = (row: Row) => {
         const value = valueAt(data, row.path).trim();
@@ -108,7 +108,7 @@ export function ReviewStep({ data, identity, onEdit }: { data: CandidateFormData
                     <div><dt>{t("f.whatsapp")}</dt><dd>{identity.whatsappNumber || "—"}</dd></div>
                 </dl>
             </section>
-            {STEPS.filter((step) => step.id !== "review").map((step) => (
+            {SECTIONS.map((step) => (
                 <section key={step.id} className="review-card" aria-labelledby={`review-${step.id}`}>
                     <div className="review-card-head">
                         <h3 id={`review-${step.id}`}>{t(step.title)}</h3>

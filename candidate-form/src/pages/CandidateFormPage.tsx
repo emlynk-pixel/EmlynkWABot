@@ -3,7 +3,7 @@ import { submitCandidateForm } from "../api/candidateDetails";
 import { ApiError } from "../api/client";
 import { idOf, setAt, type StepProps } from "../form/binding";
 import { fromPayload, toPayload, type CandidateFormData } from "../form/model";
-import { STEPS, stepOf, type StepId } from "../form/steps";
+import { JOURNEY_OFFSET, JOURNEY_TOTAL, STEPS, SECTIONS, stepOf, type SectionId, type StepId } from "../form/steps";
 import { BasicStep } from "../form/steps/BasicStep";
 import { ContactStep } from "../form/steps/ContactStep";
 import { FamilyStep } from "../form/steps/FamilyStep";
@@ -29,7 +29,9 @@ type SubmitState = "idle" | "confirm" | "sending" | "invalid" | "failed";
 // response reuses it, so the server can tell it is the same submission.
 const newSubmissionKey = () => (crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`);
 
-// The Candidate Form, one section at a time, then a review and ONE submit.
+// The Candidate Form: Personal Details, Work & Family Details, then a review and
+// ONE submit (the Verify stage before it is its own page, so the journey shows
+// four stages). The sections inside a step are headings, not steps.
 //
 // It starts from the server's prefill (the candidate's existing records). The
 // answers live only in this component's memory (never in browser storage)
@@ -55,6 +57,8 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
     const submissionKey = useRef(newSubmissionKey());
     const headingRef = useRef<HTMLHeadingElement>(null);
     const firstRender = useRef(true);
+    // A section chosen with Edit on the review: the step opens at its heading.
+    const pendingSection = useRef<SectionId | null>(null);
 
     const step = STEPS[stepIndex];
     const allErrors = useMemo(() => ({ ...serverErrors, ...validateForm(data) }), [data, serverErrors]);
@@ -87,8 +91,11 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
             firstRender.current = false;
             return;
         }
-        headingRef.current?.focus();
-        headingRef.current?.scrollIntoView?.({ block: "start" });
+        const section = pendingSection.current ? document.getElementById(`section-${pendingSection.current}`) : null;
+        pendingSection.current = null;
+        const target = section ?? headingRef.current;
+        target?.focus();
+        target?.scrollIntoView?.({ block: "start" });
     }, [stepIndex]);
 
     const set = (path: string) => (value: string) => {
@@ -106,13 +113,26 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
         setStepIndex(index);
         setFurthest((previous) => Math.max(previous, index));
     };
+    // Focuses the first invalid field as the candidate sees the page (document
+    // order, across all the sections of the step), not the first in the data.
     const focusFirstError = (errors: FormErrors) => {
-        const first = Object.keys(errors)[0];
-        if (!first) return;
+        const paths = Object.keys(errors);
+        if (!paths.length) return;
         window.requestAnimationFrame(() => {
-            const id = idOf(first);
-            (document.getElementById(`${id}Other`) ?? document.getElementById(id))?.focus();
+            const elements = paths
+                .map((path) => document.getElementById(`${idOf(path)}Other`) ?? document.getElementById(idOf(path)))
+                .filter((element): element is HTMLElement => element !== null);
+            elements.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+            elements[0]?.focus();
+            elements[0]?.scrollIntoView?.({ block: "center" });
         });
+    };
+    const editSection = (id: SectionId) => {
+        const section = SECTIONS.find((candidate) => candidate.id === id);
+        const index = STEPS.findIndex((candidate) => candidate.id === section?.step);
+        if (index < 0) return;
+        pendingSection.current = id;
+        goTo(index);
     };
 
     const next = () => {
@@ -169,16 +189,28 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
     const time = new Date(expiresAt).toLocaleTimeString(language === "si" ? "si-LK" : "en-GB", { hour: "2-digit", minute: "2-digit" });
     const sending = submitState === "sending";
 
-    let content: ReactNode;
-    switch (step.id) {
-        case "basic": content = <BasicStep {...props} nic={form.identity.nic} />; break;
-        case "contact": content = <ContactStep {...props} whatsappNumber={form.identity.whatsappNumber ?? ""} />; break;
-        case "passport": content = <PassportStep {...props} passportNumber={form.identity.passportNumber} />; break;
-        case "measurements": content = <MeasurementsStep {...props} />; break;
-        case "family": content = <FamilyStep {...props} />; break;
-        case "guardian": content = <GuardianStep {...props} />; break;
-        default: content = <ReviewStep data={data} identity={form.identity} onEdit={(id) => goTo(STEPS.findIndex((s) => s.id === id))} />;
-    }
+    const sectionContent = (id: SectionId): ReactNode => {
+        switch (id) {
+            case "basic": return <BasicStep {...props} nic={form.identity.nic} />;
+            case "contact": return <ContactStep {...props} whatsappNumber={form.identity.whatsappNumber ?? ""} />;
+            case "passport": return <PassportStep {...props} passportNumber={form.identity.passportNumber} />;
+            case "measurements": return <MeasurementsStep {...props} />;
+            case "family": return <FamilyStep {...props} />;
+            default: return <GuardianStep {...props} />;
+        }
+    };
+    // All the sections of the step stay mounted together under their own headings.
+    const content: ReactNode = step.id === "review"
+        ? <ReviewStep data={data} identity={form.identity} onEdit={editSection} />
+        : step.sections.map((section) => (
+            <section key={section.id} className="step-section" aria-labelledby={`section-${section.id}`}>
+                <h3 id={`section-${section.id}`} tabIndex={-1}>
+                    {t(section.title)}
+                    {section.important && <span className="badge">{t("form.important")}</span>}
+                </h3>
+                {sectionContent(section.id)}
+            </section>
+        ));
 
     return (
         <div className="candidate-form">
@@ -191,19 +223,26 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
 
             <div className="progress-block">
                 <div className="progress-text">
-                    <span className="progress-step">{t("form.stepOf", { current: stepIndex + 1, total: STEPS.length })}</span>
+                    <span className="progress-step">{t("form.stepOf", { current: stepIndex + 1 + JOURNEY_OFFSET, total: JOURNEY_TOTAL })}</span>
                     <span className="progress-done">{t("form.requiredDone", { done, total: required.length })}</span>
                 </div>
                 <progress value={done} max={required.length} aria-label={t("form.requiredDone", { done, total: required.length })} />
                 <nav aria-label={t("form.sections")}>
                     <ol className="step-list">
+                        {/* Stage 1: verification happened on the previous page and is not repeated here. */}
+                        <li className="done verified-stage">
+                            <span className="stage">
+                                <span className="step-number" aria-hidden="true">✓</span>
+                                <span className="step-name">{t("step.verify")}</span>
+                            </span>
+                        </li>
                         {STEPS.map((s, index) => {
                             const reachable = index <= furthest;
                             const current = index === stepIndex;
                             return (
                                 <li key={s.id} className={current ? "current" : index < stepIndex ? "done" : undefined}>
                                     <button type="button" disabled={!reachable || sending} aria-current={current ? "step" : undefined} onClick={() => goTo(index)}>
-                                        <span className="step-number" aria-hidden="true">{index + 1}</span>
+                                        <span className="step-number" aria-hidden="true">{index + 1 + JOURNEY_OFFSET}</span>
                                         <span className="step-name">{t(s.title)}</span>
                                     </button>
                                 </li>
@@ -217,7 +256,6 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
                 <header className="step-head">
                     <h2 id="step-title" ref={headingRef} tabIndex={-1}>
                         {t(step.title)}
-                        {step.important && <span className="badge">{t("form.important")}</span>}
                     </h2>
                     <p className="lead">{t(step.lead)}</p>
                 </header>

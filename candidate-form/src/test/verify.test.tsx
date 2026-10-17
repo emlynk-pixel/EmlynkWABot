@@ -135,7 +135,7 @@ describe("verification", () => {
         await user.click(screen.getByRole("button", { name: "Verify" }));
         expect(await screen.findByRole("heading", { level: 1, name: en("form.loadFailedTitle") })).toBeInTheDocument();
         await user.click(screen.getByRole("button", { name: en("form.retry") }));
-        expect(await screen.findByRole("heading", { level: 2, name: en("step.basic") })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { level: 2, name: en("step.personal") })).toBeInTheDocument();
         expect(callsTo(calls, "form")).toHaveLength(1);
     });
 

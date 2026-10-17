@@ -41,7 +41,7 @@ const en = {
     // The form
     "form.verifiedBanner": "Your details were verified.",
     "form.title": "Your details",
-    "form.intro": "Fill in one section at a time. Fields marked * are required. English letters are written in capitals automatically.",
+    "form.intro": "Fill in each step below. Fields marked * are required. English letters are written in capitals automatically.",
     "form.notSavedNotice": "Your answers stay only on this page until you submit. Leaving or reloading the page clears them.",
     "form.sessionEnds": "For your security, this session ends at {time}.",
     "form.stepOf": "Step {current} of {total}",
@@ -54,6 +54,11 @@ const en = {
     "form.verified": "Verified",
     "form.verifiedHint": "From your verification. It can't be changed here.",
 
+    "step.verify": "Verify",
+    "step.personal": "Personal Details",
+    "step.personal.lead": "Your identity, address and contact details.",
+    "step.work": "Work & Family Details",
+    "step.work.lead": "Your passport and work, your sizes, your family and a guardian.",
     "step.basic": "Basic & Identification Information",
     "step.basic.lead": "Your name and identity details, as in your official documents.",
     "step.contact": "Contact & Location Details",
@@ -66,7 +71,7 @@ const en = {
     "step.family.lead": "Details of your parents, your spouse and your children.",
     "step.guardian": "Guardian Details",
     "step.guardian.lead": "A person we can contact about you if needed.",
-    "step.review": "Review your details",
+    "step.review": "Review & Submit",
     "step.review.lead": "Check your answers. Use Edit to change a section.",
 
     // Fields
@@ -254,7 +259,7 @@ const si: Record<MessageKey, string> = {
 
     "form.verifiedBanner": "ඔබේ විස්තර තහවුරු කරන ලදී.",
     "form.title": "ඔබේ විස්තර",
-    "form.intro": "වරකට එක් කොටසක් බැගින් පුරවන්න. * ලකුණ ඇති කොටස් අනිවාර්ය වේ. ඉංග්‍රීසි අකුරු ස්වයංක්‍රීයව කැපිටල් අකුරු බවට පත් වේ.",
+    "form.intro": "පහත එක් එක් පියවර පුරවන්න. * ලකුණ ඇති කොටස් අනිවාර්ය වේ. ඉංග්‍රීසි අකුරු ස්වයංක්‍රීයව කැපිටල් අකුරු බවට පත් වේ.",
     "form.notSavedNotice": "ඔබ ඉදිරිපත් කරන තුරු ඔබේ පිළිතුරු මෙම පිටුවේ පමණක් තිබේ. පිටුවෙන් ඉවත් වුවහොත් හෝ පිටුව නැවත පූරණය කළහොත් ඒවා මැකී යයි.",
     "form.sessionEnds": "ඔබේ ආරක්ෂාව සඳහා, මෙම සැසිය {time} ට අවසන් වේ.",
     "form.stepOf": "පියවර {current} / {total}",
@@ -267,6 +272,11 @@ const si: Record<MessageKey, string> = {
     "form.verified": "තහවුරු කළ",
     "form.verifiedHint": "ඔබේ තහවුරු කිරීමෙන් ලබා ගත් අගයකි. මෙහිදී වෙනස් කළ නොහැක.",
 
+    "step.verify": "තහවුරු කිරීම",
+    "step.personal": "පුද්ගලික තොරතුරු",
+    "step.personal.lead": "ඔබේ අනන්‍යතාව, ලිපිනය සහ සබඳතා විස්තර.",
+    "step.work": "රැකියා සහ පවුල් තොරතුරු",
+    "step.work.lead": "ඔබේ ගමන් බලපත්‍රය සහ රැකියාව, ඇඳුම් ප්‍රමාණ, පවුල සහ භාරකරු.",
     "step.basic": "මූලික තොරතුරු",
     "step.basic.lead": "ඔබේ නිල ලේඛනවල ඇති පරිදි ඔබේ නම සහ හැඳුනුම් විස්තර.",
     "step.contact": "ලිපිනය සහ සබඳතා",
@@ -279,7 +289,7 @@ const si: Record<MessageKey, string> = {
     "step.family.lead": "ඔබේ දෙමාපියන්, කලත්‍රයා සහ දරුවන්ගේ විස්තර.",
     "step.guardian": "භාරකරුගේ තොරතුරු",
     "step.guardian.lead": "අවශ්‍ය වුවහොත් ඔබ ගැන සම්බන්ධ කර ගත හැකි පුද්ගලයෙක්.",
-    "step.review": "ඔබේ විස්තර පරීක්ෂා කරන්න",
+    "step.review": "පරීක්ෂා කර යොමු කරන්න",
     "step.review.lead": "ඔබේ පිළිතුරු පරීක්ෂා කරන්න. කොටසක් වෙනස් කිරීමට \"සංස්කරණය\" භාවිත කරන්න.",
 
     "f.fullName": "සම්පූර්ණ නම",

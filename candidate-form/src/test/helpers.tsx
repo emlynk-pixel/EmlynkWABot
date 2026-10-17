@@ -78,7 +78,7 @@ export async function verified(options: Parameters<typeof userEvent.setup>[0] = 
     const user = userEvent.setup(options);
     await fillVerify(user);
     await user.click(screen.getByRole("button", { name: en("verify.submit") }));
-    await screen.findByRole("heading", { level: 2, name: en("step.basic") });
+    await screen.findByRole("heading", { level: 2, name: en("step.personal") });
     return { user, calls };
 }
 
@@ -92,6 +92,8 @@ export const setField = (label: MessageKey | string, value: string) =>
 export const field = (key: MessageKey) => screen.getByLabelText(startsWith(en(key)));
 export const queryField = (key: MessageKey) => screen.queryByLabelText(startsWith(en(key)));
 export const stepHeading = (key: MessageKey) => screen.getByRole("heading", { level: 2, name: startsWith(en(key)) });
+// A section inside a step (Basic, Contact, Passport & Qualifications, Measurements, Family, Guardian).
+export const sectionHeading = (key: MessageKey) => screen.getByRole("heading", { level: 3, name: startsWith(en(key)) });
 export const next = (user: User) => user.click(screen.getByRole("button", { name: en("form.next") }));
 
 // Valid answers for every required field, step by step (the prefill already
@@ -125,14 +127,10 @@ export function fillGuardian() {
 // From the first step to the review, filling every required answer.
 export async function completeToReview(user: User, { civilStatus = "SINGLE" }: { civilStatus?: string } = {}) {
     fillBasic(civilStatus);
-    await next(user);
     fillContact();
-    await next(user);
+    await next(user); // Personal Details
     await fillPassport(user);
-    await next(user);
-    await next(user); // measurements: nothing required
-    await next(user); // family: nothing required
     fillGuardian();
-    await next(user);
+    await next(user); // Work & Family Details (measurements and family: nothing required)
     await screen.findByRole("heading", { level: 2, name: en("step.review") });
 }
