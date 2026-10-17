@@ -359,3 +359,50 @@ export function createFormShareLink(token: string, passportId: string): Promise<
 export function revokeFormShareLink(token: string, passportId: string): Promise<FormShareStatus> {
     return apiRequest<FormShareStatus>(`${base(passportId)}/form-share/revoke`, { method: "POST", token, body: {} });
 }
+
+// What the candidate submitted through the Candidate Form, read only
+// (src/services/candidateFormSubmissionService.js). Values are keyed by the form's
+// own paths ("basic.fullName", "family.father.name", "guardian.nic", ...); dates
+// are YYYY-MM-DD; an empty answer is null. `original` is what the form was
+// prefilled with, `changed` the paths whose submitted value differs from it.
+export type FormSubmissionState = "LOCKED" | "UNLOCKED" | "SUBMITTED";
+export type FormSubmission = {
+    passportId: string;
+    formStatus: FormSubmissionState;
+    submittedAt: string | null;
+    submitted: Record<string, string | null> | null;
+    original: Record<string, string | null> | null;
+    changed: string[];
+    // Differences from the record that can be confirmed one field at a time.
+    pending: PendingChange[];
+    // Staff decisions already taken on this submission (a field with one is no longer pending).
+    reviews?: { field: string; status: "CONFIRMED" | "REJECTED" }[];
+};
+
+// A candidate-submitted value that differs from the record, for a field the record has a place for.
+// current / submitted are in the form's representation (dates YYYY-MM-DD, sex MALE | FEMALE | OTHER).
+export type PendingChange = { field: string; current: string | null; submitted: string | null };
+
+export function getFormSubmission(token: string, passportId: string, signal?: AbortSignal): Promise<FormSubmission> {
+    return apiRequest<FormSubmission>(`${base(passportId)}/form-submission`, { token, signal });
+}
+
+// Confirm ONE candidate-submitted field into the record (ADMIN, MANAGER). The server reads the new
+// value from the stored submission; these values only detect a stale screen. Returns the refreshed state.
+export function confirmFormField(
+    token: string,
+    passportId: string,
+    body: { field: string; expectedCurrentValue: string | null; expectedSubmittedValue: string | null },
+): Promise<FormSubmission> {
+    return apiRequest<FormSubmission>(`${base(passportId)}/form-submission/confirm-field`, { method: "POST", token, body });
+}
+
+// Reject ("Revoke") ONE candidate-submitted field: the record is left as it is and the proposal is marked
+// rejected for good (ADMIN, MANAGER). Same body as confirmFormField; returns the refreshed state.
+export function rejectFormField(
+    token: string,
+    passportId: string,
+    body: { field: string; expectedCurrentValue: string | null; expectedSubmittedValue: string | null },
+): Promise<FormSubmission> {
+    return apiRequest<FormSubmission>(`${base(passportId)}/form-submission/reject-field`, { method: "POST", token, body });
+}

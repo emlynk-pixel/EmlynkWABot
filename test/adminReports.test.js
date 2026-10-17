@@ -53,7 +53,10 @@ describe("status mapping (proposal words -> implementation)", () => {
     test("there is no REJECTED status anywhere in the implementation", () => {
         assert.ok(!Object.values(PROCESSING_STATUS).includes("REJECTED"));
         assert.ok(!Object.values(SUBMISSION_OUTCOME).includes("REJECTED"));
-        const sources = fs.readdirSync(new URL("../src/services/", import.meta.url)).map((f) => fs.readFileSync(new URL(`../src/services/${f}`, import.meta.url), "utf8"));
+        // The document / review-queue vocabulary has no reject. The one REJECTED in the code base is a different thing:
+        // a staff decision on a candidate-submitted Candidate Form field (candidate_form_field_review), not a document status.
+        const FIELD_REVIEW_SERVICE = "candidateFormFieldConfirmService.js";
+        const sources = fs.readdirSync(new URL("../src/services/", import.meta.url)).filter((f) => f !== FIELD_REVIEW_SERVICE).map((f) => fs.readFileSync(new URL(`../src/services/${f}`, import.meta.url), "utf8"));
         assert.ok(!sources.some((code) => /["']REJECTED["']/.test(code)));
     });
 

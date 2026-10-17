@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router";
-import { CANDIDATE_STAGES, STAGE_LABELS, getAdditionalDetails, getCandidate, type AdditionalDetailsView, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
+import { CANDIDATE_STAGES, STAGE_LABELS, getAdditionalDetails, getCandidate, getFormSubmission, type AdditionalDetailsView, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
-import { canManageCandidates, useAuth } from "../auth/AuthProvider";
+import { canConfirmSubmittedChanges, canManageCandidates, useAuth } from "../auth/AuthProvider";
 import { AdditionalDetailsPanel } from "../components/candidate/AdditionalDetailsPanel";
 import { CallLogDialog } from "../components/candidate/CallLogDialog";
 import { CandidateStepper, type StepperStep } from "../components/candidate/CandidateStepper";
+import { SubmittedChangesProvider } from "../components/candidate/submittedChanges";
 import { JobAssignmentPanel } from "../components/candidate/JobAssignmentPanel";
 import { CandidateDetailsStage, DocumentSubmissionStage, NotesStage } from "../components/candidate/StagePanels";
 import { secondaryButton } from "../components/Dialog";
-import { documentTypeLabel } from "../components/format";
+import { documentTypeLabel, formatDateTime } from "../components/format";
 import { Icon } from "../components/Icon";
 import { Card, ErrorState, LoadingState } from "../components/States";
 
@@ -30,7 +31,7 @@ const ADDITIONAL_STEP = "ADDITIONAL_DETAILS";
 // the stepper) or the Additional details form (?tab=additional).
 export function CandidateDeploymentPage() {
     const { passportId = "" } = useParams();
-    const { user } = useAuth();
+    const { user, token } = useAuth();
     const location = useLocation();
     const [searchParams, setSearchParams] = useSearchParams();
     const resource = useAdminResource(`candidate:${passportId}`, (token, signal) => getCandidate(token, passportId, signal));
@@ -39,6 +40,9 @@ export function CandidateDeploymentPage() {
     // is newer than the loaded one until the next reload.
     const additional = useAdminResource(`candidate-additional:${passportId}`, (token, signal) => getAdditionalDetails(token, passportId, signal));
     const [savedAdditional, setSavedAdditional] = useState<AdditionalDetailsView | null>(null);
+    // What the candidate submitted through the Candidate Form: feeds the submission panel and the
+    // "Candidate submitted: ... [Confirm]" hints under the record's fields.
+    const submission = useAdminResource(`form-submission:${passportId}`, (token, signal) => getFormSubmission(token, passportId, signal));
     const [updated, setUpdated] = useState<CandidateDetails | null>(null);
     const [callLogOpen, setCallLogOpen] = useState(false);
     const failedUploads = (location.state as { failedUploads?: FailedUpload[] } | null)?.failedUploads ?? [];
@@ -85,7 +89,19 @@ export function CandidateDeploymentPage() {
     // the message goes once each one has been uploaded here.
     const stillMissing = failedUploads.filter((failed) => !details.documents[failed.documentType]);
 
+    const submittedAt = submission.data && submission.data.passportId.toUpperCase() === passportId.toUpperCase() && submission.data.formStatus === "SUBMITTED" ? submission.data.submittedAt : null;
+    const pendingChanges = submission.data && submission.data.passportId.toUpperCase() === passportId.toUpperCase() ? submission.data.pending ?? [] : [];
+    const rejectedFields = submission.data && submission.data.passportId.toUpperCase() === passportId.toUpperCase()
+        ? (submission.data.reviews ?? []).filter((review) => review.status === "REJECTED").map((review) => review.field)
+        : [];
+    const afterConfirm = () => {
+        resource.reload();
+        additional.reload();
+        submission.reload();
+    };
+
     return (
+        <SubmittedChangesProvider pending={pendingChanges} rejected={rejectedFields} canConfirm={canConfirmSubmittedChanges(user)} passportId={c.passportId} token={token} onConfirmed={afterConfirm}>
         <section aria-labelledby="page-title" className="mx-auto max-w-5xl space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div className="min-w-0">
@@ -104,7 +120,7 @@ export function CandidateDeploymentPage() {
                 </p>
             )}
 
-            <JobAssignmentPanel assignments={details.jobAssignments} />
+            <JobAssignmentPanel assignments={details.jobAssignments} candidate={{ passportId: c.passportId, name: c.name }} onChanged={setUpdated} />
 
             <Card className="px-4 py-5">
                 <CandidateStepper steps={steps} current={tab === "additional" ? ADDITIONAL_STEP : current} onSelect={select} />
@@ -118,6 +134,7 @@ export function CandidateDeploymentPage() {
                 </Card>
             ) : (
                 <Card className="p-6">
+                    {submittedAt && <p data-testid="form-status" className="mb-3 text-label-sm text-ink-muted">Candidate Form submitted: {formatDateTime(submittedAt)}</p>}
                     <AdditionalDetailsPanel
                         resource={{ data: additionalView, status: additional.status, errorMessage: additional.status === "error" ? additional.error.message : null, reload: additional.reload }}
                         canEdit={canEdit}
@@ -129,5 +146,6 @@ export function CandidateDeploymentPage() {
 
             {callLogOpen && <CallLogDialog passportId={c.passportId} candidate={c} canEdit={canEdit} onClose={() => setCallLogOpen(false)} />}
         </section>
+        </SubmittedChangesProvider>
     );
 }

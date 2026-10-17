@@ -89,6 +89,8 @@ import {
     removeCandidateFromJob,
     updateJob,
 } from "../services/jobService.js";
+import { getFormSubmission } from "../services/candidateFormSubmissionService.js";
+import { confirmFormField, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
 import { parseCandidateFormOrigin } from "../config/candidateForm.js";
@@ -689,6 +691,39 @@ export function createAdminRouter({
     // status, create (returns the link ONCE; replaces any earlier link;
     // unlocks the form) and revoke (locks the form again). Audited, without
     // the link secret.
+    // What the candidate submitted through the Candidate Form, read-only, from
+    // candidate_form_response (with the original prefill for comparison). Admin
+    // API only; within the user's candidate scope like every candidate route.
+    router.get("/candidates/:passportId/form-submission", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getFormSubmission({
+            db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user),
+        })));
+    });
+
+    // Confirm ONE candidate-submitted field into the record (ADMIN and MANAGER). The body
+    // names an allowlisted field key and the values the Admin saw (to detect a stale
+    // screen); the new value is read from candidate_form_response on the server.
+    for (const [action, review] of [["confirm-field", confirmFormField], ["reject-field", rejectFormField]]) {
+        router.post(`/candidates/:passportId/form-submission/${action}`, requireRole(MANAGERS_UP), async (req, res) => {
+            if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+            const body = req.body;
+            const allowed = new Set(["field", "expectedCurrentValue", "expectedSubmittedValue"]);
+            const textOrNull = (value) => value === null || value === undefined || typeof value === "string";
+            if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => !allowed.has(key))
+                || typeof body.field !== "string" || !textOrNull(body.expectedCurrentValue) || !textOrNull(body.expectedSubmittedValue)) {
+                return res.status(400).json({ message: "Invalid request body", errors: [{ field: "body", message: "must be { field, expectedCurrentValue, expectedSubmittedValue }" }] });
+            }
+            const client = await resolveDb(db);
+            return candidateAction(res, async () => {
+                const passportId = await storedCandidateId(client, req.params.passportId, req.user);
+                await review({ db: client, actor: req.user, passportId, field: body.field, expectedCurrentValue: body.expectedCurrentValue ?? null, expectedSubmittedValue: body.expectedSubmittedValue ?? null });
+                return res.json(await getFormSubmission({ db: client, passportId }));
+            });
+        });
+    }
+
     router.get("/candidates/:passportId/form-share", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);

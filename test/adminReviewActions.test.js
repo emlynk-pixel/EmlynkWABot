@@ -583,6 +583,8 @@ describe("security and error handling", () => {
             "POST /candidates/:passportId/documents/upload-target",
             "POST /candidates/:passportId/form-share", // Candidate Form share link: create (replaces the old one), audited (candidateFormShare.test.js)
             "POST /candidates/:passportId/form-share/revoke",
+            "POST /candidates/:passportId/form-submission/confirm-field", // ADMIN and MANAGER: one field, audited (candidateFormFieldConfirm.test.js)
+            "POST /candidates/:passportId/form-submission/reject-field", // ADMIN and MANAGER: dismiss one proposed value, record unchanged, audited
             "POST /companies",
             "POST /documents/:documentId/police-date",
             "POST /follow-ups/:followUpId/complete", // the row is kept, audited

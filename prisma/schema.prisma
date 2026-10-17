@@ -42,6 +42,8 @@ model User {
   // Job Management: jobs this user created, candidates they assigned to jobs.
   createdJobs           Job[]          @relation("JobCreatedBy")
   assignedJobCandidates JobCandidate[] @relation("JobCandidateAssignedBy")
+  // Candidate Form values this user confirmed or rejected, field by field.
+  formFieldReviews      CandidateFormFieldReview[] @relation("FormFieldReviewedBy")
 
   @@map("user")
 }
@@ -138,6 +140,8 @@ model Candidate {
   // Job Management: every job the candidate was assigned to (history). The
   // row with is_active = true is the current PROCESSING job. Relation only.
   jobAssignments    JobCandidate[]
+  // Staff decisions on candidate-submitted form values (CONFIRMED / REJECTED); no row = pending.
+  formFieldReviews  CandidateFormFieldReview[]
 
   @@map("candidate")
 }
@@ -261,6 +265,27 @@ model CandidateFormResponse {
 
   @@index([submittedViaLinkId])
   @@map("candidate_form_response")
+}
+
+// Per-field staff decision on a candidate-submitted value (candidateFormFieldConfirmService.js).
+// PENDING is the absence of a row; a decision is final (trigger). The submitted answers stay
+// untouched in candidate_form_response. Migration 20261018140000_candidate_form_field_review.
+model CandidateFormFieldReview {
+  passportId     String   @map("passport_id")
+  fieldKey       String   @map("field_key")
+  // CONFIRMED | REJECTED
+  status         String
+  submittedValue String?  @map("submitted_value")
+  currentValue   String?  @map("current_value")
+  reviewedById   String   @map("reviewed_by")
+  reviewedAt     DateTime @default(now()) @map("reviewed_at")
+
+  candidate  Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  reviewedBy User      @relation("FormFieldReviewedBy", fields: [reviewedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([passportId, fieldKey])
+  @@index([reviewedById])
+  @@map("candidate_form_field_review")
 }
 
 // What the form was prefilled with from the existing records, taken once at

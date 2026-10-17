@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import {
@@ -20,6 +20,7 @@ import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { CandidateFields, completionGaps, detailsFrom, Field, fieldControl, textAreaControl, validateDetails } from "./CandidateFields";
 import { DocumentRow, VIDEO_ACCEPT } from "./DocumentRow";
 import { exportDocumentSubmissionPdf } from "./exportPdf";
+import { mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
 
 type PanelProps = { details: CandidateDetails; canEdit: boolean; onChange: (details: CandidateDetails) => void };
 
@@ -206,6 +207,18 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
     const { token } = useAuth();
     const saved = stageOf(details, "CANDIDATE_DETAILS");
     const [form, setForm] = useState<CandidateDetailsInput>(() => detailsFrom(details.candidate));
+    // When the record is refreshed (a confirmed Candidate Form value, Sync), fields the Admin has not touched follow
+    // it and the confirmed field takes its new value; whatever else is being typed stays.
+    const baseline = useRef(detailsFrom(details.candidate));
+    const takeConfirmed = useTakeConfirmed();
+    useEffect(() => {
+        const next = detailsFrom(details.candidate);
+        const previous = baseline.current;
+        if (JSON.stringify(previous) === JSON.stringify(next)) return;
+        baseline.current = next;
+        const forced = takeConfirmed(Object.keys(next));
+        setForm((current) => mergeRefreshed(current, previous, next, forced));
+    }, [details.candidate, takeConfirmed]);
     const [comment, setComment] = useState(saved.notes ?? "");
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState(false);

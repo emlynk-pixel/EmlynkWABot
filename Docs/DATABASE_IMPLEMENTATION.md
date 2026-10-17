@@ -226,6 +226,8 @@ All core application tables reside in the `public` schema.
 
 - **Job groups** (`20261018130000`): `candidate_form_link.job_id` (`UUID` → `job.id`, `ON DELETE RESTRICT`, indexed); `kind` is `SINGLE` or `JOB_GROUP`; CHECK exactly one target per kind (`SINGLE`: `passport_id` only; `JOB_GROUP`: `job_id` only); partial unique index `candidate_form_link_one_active_group_per_job (job_id) WHERE kind = 'JOB_GROUP' AND revoked_at IS NULL`.
 
+- **Field review** (`20261018140000`): `candidate_form_field_review` (`passport_id` -> `candidate` CASCADE, `field_key`, `status` `CONFIRMED` | `REJECTED`, `submitted_value`, `current_value`, `reviewed_by` -> `"user"`, `reviewed_at`). PK `(passport_id, field_key)`; PENDING = no row; a trigger makes a decision final; RLS on, no API-role privileges. `candidate_form_response` is never modified by a review.
+
 ### 2.15 `public.candidate_form_prefill_snapshot`
 - **Purpose**: What the form showed as prefill, captured once on the candidate's first load. PK `passport_id`.
 - **Columns**: the same answer columns as 2.16, plus `nic`; `captured_at`, `captured_via_link_id`. Values immutable (trigger `candidate_form_values_are_final`).
@@ -621,6 +623,10 @@ Migrations 6.1 and 6.2 are applied and active on the shared database.
 - **Status**: written 2026-10-17; **not applied to any shared database yet**. Apply after `20261018120000_job_management` (it references `job`), with `prisma migrate deploy` (never `migrate dev`).
 - Additive only: `job.company_job_id` + CHECK + per-company partial unique index; `candidate_form_link.job_id` + FK + index; the `kind` and target CHECKs replaced by the SINGLE / JOB_GROUP versions; the one-active-group-link-per-job partial unique index. No existing row changes (every existing link is `SINGLE`, `job_id` NULL). `candidate_form_link` keeps RLS and its revokes.
 - Why a new migration rather than editing `20261018120000_job_management`: that file was never committed or pushed, but it could not be verified as unapplied on every environment (the preview / production connection strings were not available to check), and the link-table changes alter a table that **is** already applied, so they need a new migration regardless.
+
+### 6.7 `20261018140000_candidate_form_field_review`
+- **Status**: written 2026-10-17; **not applied to any shared database yet**. Apply after the two earlier `20261018*` migrations with `prisma migrate deploy`.
+- Additive only: the `candidate_form_field_review` table, its CHECKs, foreign keys, the "decision is final" trigger, RLS and revokes. No existing row or table changes.
 
 ---
 
