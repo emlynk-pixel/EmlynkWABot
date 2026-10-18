@@ -576,6 +576,9 @@ describe("security and error handling", () => {
             "DELETE /temporary-documents/:temporaryId",
             "PATCH /agents/:agentId", // Agents and Client Management: ADMIN and MANAGER, audited (agentClientManagement.test.js)
             "PATCH /agents/:agentId/status",
+            "PATCH /client-management/:clientId",
+            "PATCH /client-management/:clientId/agent",
+            "PATCH /client-management/:clientId/status",
             "POST /agents",
             "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",
@@ -583,6 +586,7 @@ describe("security and error handling", () => {
             "POST /candidates/:passportId/documents/:documentId/remove", // reason required, audited
             "POST /candidates/:passportId/documents/finalize", // JSON only: the file goes browser -> storage
             "POST /candidates/:passportId/documents/upload-target",
+            "POST /client-management",
             "POST /documents/:documentId/police-date",
             "POST /follow-ups/:followUpId/complete", // the row is kept, audited
             "POST /job-types",

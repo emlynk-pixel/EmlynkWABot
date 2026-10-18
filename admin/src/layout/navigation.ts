@@ -23,6 +23,7 @@ export const NAV_ITEMS: NavItem[] = [
     // The recruiting partners and the employer clients they manage (ADMIN and MANAGER). The
     // technical route is /client-management: /clients is the candidate-documents area.
     { to: "/agents", label: "Agents", icon: "support_agent", roles: MASTER_DATA_ROLES },
+    { to: "/client-management", label: "Client Management", icon: "apartment", roles: MASTER_DATA_ROLES },
     // Assigning candidates to Analysts (ADMIN and MANAGER).
     { to: "/work-allocation", label: "Work Allocation", icon: "assignment_ind", roles: ALLOCATION_ROLES },
     { to: "/missing-documents", label: "Missing Documents", icon: "assignment_late", roles: DASHBOARD_ROLES },
