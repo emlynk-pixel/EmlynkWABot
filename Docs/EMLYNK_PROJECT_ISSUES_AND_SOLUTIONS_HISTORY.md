@@ -2521,6 +2521,184 @@ Do not treat full-suite async timing failures as product regressions without a f
 
 ---
 
+# 47D. Client Management Migration Failed Because company_job_id Already Existed
+
+**Date / Phase**: October 2026 / Pre-Stage Deployment
+
+### Symptoms & Error Output
+
+When deploying the Client Management database migration to the shared Supabase PostgreSQL instance using Prisma, the migration failed with an execution error:
+
+```bash
+npx prisma migrate deploy
+```
+
+```text
+Applying migration `20261019120000_client_management`
+Error: P3009
+
+migrate found failed migrations in the target database,
+new migrations will not be applied. Read more about how to resolve migration issues in a production database: https://pris.ly/d/migrate-resolve
+The `20261019120000_client_management` migration failed when applied to the database.
+Database error code: 42701
+Database error:
+ERROR: column "company_job_id" of relation "job" already exists
+```
+
+- **Command**: `npx prisma migrate deploy`
+- **Prisma Error**: `Prisma P3009` (Failed migration found in target database)
+- **Failed Migration**: `20261019120000_client_management`
+- **PostgreSQL Error Code**: `SQLSTATE 42701` (`duplicate_column`)
+- **Database Error Message**: `column "company_job_id" of relation "job" already exists`
+
+### Root Cause Analysis
+
+The failure was **NOT database corruption** or schema inconsistency within the PostgreSQL engine.
+
+The root cause was **divergent branch migration histories** between two parallel feature branches that shared the same remote Supabase database:
+
+1. **Prior Candidate Form Migration on Shared Database:**
+   Earlier development on the Candidate Form feature branch (`version/candidate-extra-details-form`) had applied migration:
+   `20261018130000_job_company_id_and_form_job_group`
+   This migration had already created:
+   - Column `job.company_job_id`
+   - Check constraint `job_company_job_id_check`
+   - Partial unique index `job_company_job_id_key`
+
+2. **Linear Migration Path on Current Branch (`dev`):**
+   The new Admin Dashboard migration `20261019120000_client_management` was authored and tested locally against a simpler linear branch path:
+   `20261018120000_job_management` → `20261019120000_client_management`
+
+3. **Collision in Shared Environment:**
+   In the shared database environment, the actual upgrade path was:
+   `20261018120000_job_management` → Candidate Form migration (`20261018130000_...`) → `20261019120000_client_management`
+
+When `20261019120000_client_management` executed `ALTER TABLE "job" ADD COLUMN "company_job_id" TEXT;`, PostgreSQL threw `SQLSTATE 42701` because the column had already been added by the Candidate Form migration.
+
+### Wrong Fixes Avoided (and Why)
+
+Under pressure to unblock deployment, several naive or destructive fixes were explicitly avoided:
+
+1. **Did NOT reset the database (`prisma migrate reset`):**
+   A reset drops the database and recreates it from scratch. In a shared/stage Supabase instance, this would permanently destroy live testing data, Candidate Form tables, audit logs, and existing Job records.
+2. **Did NOT drop the existing Job tables:**
+   Dropping `job`, `job_candidate`, or `client` would break relational integrity and delete valid candidate assignments.
+3. **Did NOT mark the failed migration as applied (`prisma migrate resolve --applied`):**
+   Running `--applied` would update `_prisma_migrations` to record success, but because the transaction had failed on step 4, the preceding operations (such as renaming `company` to `client`, adding `client.agent_id`, and updating foreign keys) would **never** have been applied! The schema in the database would be out-of-sync with Prisma client models.
+4. **Did NOT use `prisma migrate dev`:**
+   `prisma migrate dev` is an interactive development command intended for local prototyping. Running it against shared or staging databases risks prompt loops, unreviewed auto-generated migrations, or accidental reset prompts.
+5. **Did NOT delete Candidate Form tables:**
+   The `candidate_form_*` tables belong to an active feature stream; destroying them to satisfy an Admin migration would violate branch separation.
+6. **Did NOT manually delete rows from `_prisma_migrations`:**
+   Direct manipulation of the Prisma migration ledger bypasses internal checksum and state tracking, leaving the migration history corrupted.
+7. **Did NOT overwrite or truncate existing `company_job_id` values:**
+   Existing Client Job IDs stored by previous tests were preserved intact.
+
+### Safe Resolution (Recovery Procedure)
+
+The issue was resolved cleanly and safely using forward-compatible DDL and standard Prisma CLI recovery tooling:
+
+1. **Inspected `_prisma_migrations` Ledger:**
+   Queried the migration ledger directly:
+   ```sql
+   SELECT migration_name, started_at, finished_at, rolled_back_at, applied_steps_count
+   FROM "_prisma_migrations"
+   WHERE migration_name = '20261019120000_client_management';
+   ```
+   Confirmed `applied_steps_count = 0`. Because PostgreSQL executes DDL inside transactional migration blocks, the failed statement caused the entire migration transaction to roll back cleanly. No partial schema alterations remained.
+
+2. **Verified Shared Schema State:**
+   Confirmed that `job.company_job_id` already existed, while `company` had not yet been renamed to `client`.
+
+3. **Made Migration Idempotent & Compatibility-Sensitive:**
+   Updated `prisma/migrations/20261019120000_client_management/migration.sql` to make the conflicting statements safely handle existing objects:
+   - Added column conditionally:
+     ```sql
+     ALTER TABLE "job" ADD COLUMN IF NOT EXISTS "company_job_id" TEXT;
+     ```
+   - Added check constraint conditionally inside a PL/pgSQL `DO $$` block:
+     ```sql
+     DO $$
+     BEGIN
+         IF NOT EXISTS (
+             SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'public.job'::regclass
+               AND conname = 'job_company_job_id_check'
+         ) THEN
+             ALTER TABLE "job" ADD CONSTRAINT "job_company_job_id_check"
+                 CHECK ("company_job_id" IS NULL OR "company_job_id" ~ '^[A-Z0-9][A-Z0-9 ._/#-]{0,39}$');
+         END IF;
+     END
+     $$;
+     ```
+   - Created partial unique index conditionally:
+     ```sql
+     CREATE UNIQUE INDEX IF NOT EXISTS "job_company_job_id_key"
+         ON "job"("client_id", "company_job_id")
+         WHERE "company_job_id" IS NOT NULL;
+     ```
+
+4. **Marked Failed Attempt as Rolled Back:**
+   Used the authoritative Prisma command to register that the failed attempt was safely rolled back:
+   ```bash
+   npx prisma migrate resolve --rolled-back 20261019120000_client_management
+   ```
+
+5. **Reran Deployment Migration:**
+   Executed the updated migration against the shared database:
+   ```bash
+   npx prisma migrate deploy
+   ```
+   Prisma successfully executed the entire migration:
+   - Table `company` was renamed to `client` along with constraints and indexes (`client_pkey`, `client_name_check`, `client_name_lower_key`).
+   - `job.company_id` was renamed to `job.client_id` with foreign key and index updates.
+   - Column `client.agent_id` was created, backfilled from the newest job's `responsible_agent_id`, and linked via `ON DELETE RESTRICT`.
+   - Contact columns were added to `agent` and `client`.
+   - `job.company_job_id` and its check/index were safely verified without errors.
+
+6. **Regenerated Prisma Client & Verified Status:**
+   ```bash
+   npx prisma migrate status
+   npx prisma generate
+   ```
+   Prisma reported: `Database schema is up to date!`
+
+### Final Database Result
+
+The shared database was brought into the exact target architectural state:
+- Table `client` exists with all historical employer data preserved.
+- Table `company` no longer exists (cleanly renamed).
+- `job.client_id` exists; legacy `job.company_id` is removed.
+- `job.company_job_id` is preserved with its data intact.
+- `job.responsible_agent_id` is preserved.
+- `client.agent_id` exists with foreign key constraint and index.
+- Candidate Form tables (`candidate_form_*`) remain completely intact.
+- Candidate Form group-link foreign key (`candidate_form_link.job_id` → `job.id`) remains intact.
+- Existing Client and Job UUIDs are preserved; zero orphan records exist.
+- `_prisma_migrations` contains two entries for `20261019120000_client_management`:
+  - One historical record with `rolled_back_at` populated (the initial failed attempt).
+  - One successful record with `finished_at` populated (the clean deployment).
+  *Note:* Having two entries in `_prisma_migrations` for a resolved migration is the expected and documented behavior of Prisma's audit ledger; it is not database corruption.
+
+### Prevention & Migration Rules
+
+1. **Always Use `prisma migrate deploy` for Shared Environments:**
+   Never run `prisma migrate dev` against shared Supabase or staging databases. `deploy` runs headless, non-interactive, and enforces forward-only migration scripts.
+2. **Inspect Shared Migration History Before Writing Overlapping Migrations:**
+   When multiple feature branches are active, query `_prisma_migrations` on the shared database before introducing migrations that touch related tables or columns.
+3. **Test Both Clean and Upgrade Migration Paths:**
+   Always validate migrations against:
+   - A clean database from scratch (`init` → latest).
+   - An existing shared database clone that contains migration history from other branches.
+4. **Never Edit Successfully Applied Historical Migrations:**
+   Never retroactively alter a migration file that has already been applied in shared or production environments. Forward migrations must resolve compatibility gaps.
+5. **Use Defensive DDL for Cross-Branch Objects:**
+   When a column or constraint may already have been introduced by another branch, write compatibility-sensitive DDL (`ADD COLUMN IF NOT EXISTS`, conditional constraint creation via `DO $$` blocks, `CREATE INDEX IF NOT EXISTS`).
+6. **Dev Migration Folder vs Shared Database:**
+   The `dev` branch migration folder does not contain every Candidate Form migration even though the shared DB has them. This is expected due to branch separation, but it means migration integration must be handled carefully before branches are combined.
+
+---
+
 # 48. Current Project Status
 
 ## Completed
@@ -2528,12 +2706,26 @@ Do not treat full-suite async timing failures as product regressions without a f
 ### Database & Authentication
 - `users` table renamed to `candidate`
 - `admins` table renamed to `user`
+- `company` table renamed to `client` (authoritative employer entity; `company` retired)
+- `agent` table created (overseas agency commercial partner; `country_code`, contact details, `is_active`)
+- `client.agent_id` foreign key established with `ON DELETE RESTRICT`
+- `job`, `job_type`, `job_candidate`, `job_code_counter` fully implemented
+- Single active `PROCESSING` job per candidate enforced at service, index, and trigger levels
+- `job.company_job_id` retained as Client Job ID (external employer reference) with per-client unique index
 - Supabase Auth migration fully complete
 - Custom password hashing, bcrypt, and legacy JWT libraries removed
 - `auth_user_id` UUID foreign key active and enforced
 - Gmail SMTP configured for invitation and password reset emails
 - User invitation lifecycle (`/admin/settings/invite`) and setup flow verified
 - Role-Based Access Control (RBAC) enforced on every API route (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`)
+- Migration `20261019120000_client_management` successfully deployed and verified on shared Supabase instance
+
+### Master Data & Operational Modules
+- **Agent Management (`/admin/agents`)**: Full CRUD and lifecycle protection (blocked from deactivation while `PROCESSING` jobs exist).
+- **Client Management (`/admin/client-management`)**: Employer client management separate from legacy candidate `/clients` workflow.
+- **Job Management (`/admin/jobs`)**: Demand order tracking, Client Job ID, candidate assignment history, and atomic `job_code` generation.
+- **Work Allocation Equal Distribution (`/admin/work-allocation`)**: Automated distribution via $\text{floor}(\text{eligible} / \text{analysts})$ with concurrency row locks (`FOR UPDATE`) and remainder protection.
+- **Universal Modern DatePicker**: Reusable `react-day-picker` integration across all Admin date inputs with `YYYY-MM-DD` persistence, month/year navigation, and zero timezone shifting.
 
 ### Candidate & Deployment Workflows
 - Candidate Pool (`/admin/candidates`) with server-side pagination and search
@@ -2618,6 +2810,13 @@ Do not treat full-suite async timing failures as product regressions without a f
 - Avoid modifying `main` until integration testing is approved.
 - Avoid rewriting Git history on shared branches to fix minor metadata like commit trailers.
 
+## Database Migrations & Multi-Branch Schema Coordination
+- In shared cloud environments (e.g. Supabase), divergent feature branches can easily introduce schema overlap. Never blindly run `prisma migrate dev` against shared databases.
+- Always use `prisma migrate deploy` for shared, staging, and production deployments.
+- When an overlapping migration fails, never mark it `--applied` unless every individual statement has actually taken effect in the database; `--applied` creates a false success record while leaving the schema partially unmigrated. Use `--rolled-back` and repair the migration script using defensive, idempotent DDL (`ADD COLUMN IF NOT EXISTS`, conditional PL/pgSQL `DO $$` blocks, `CREATE UNIQUE INDEX IF NOT EXISTS`).
+- Always test both migration paths: clean-database path (fresh DB from scratch) and the real upgrade path from the shared database's historical state.
+- Note that the `dev` branch migration folder does not contain every Candidate Form migration even though the shared DB has them. This is expected due to branch separation, but it means migration integration must be handled carefully before branches are combined.
+
 ---
 
 # 52. Final Summary
@@ -2628,10 +2827,13 @@ Major completed milestones include:
 ```text
 Monolithic OCR       -> Separate Cloud Run OCR Worker
 Custom Auth          -> Supabase Auth (RBAC, Invitations, Password Reset)
-Legacy Tables        -> candidate / user / auth.users
+Legacy Tables        -> candidate / user / auth.users / client / agent / job
 Real-Time Sheet Sync -> Scheduled Reconciliation + Worker Outbox Mirror
 Fixed Sheet Mapping  -> Dynamic 41-Column Header Mapping + Destination Selector
 Basic Intake Report  -> Modern Daily Report (5 KPIs, Role Summaries, PDF Export)
+Equal Allocation     -> Automated Deterministic Equal Distribution across Analysts
+Master Data          -> Agent Management, Employer Client Management, and Job Tracking
+Modern Date Picker   -> Universal react-day-picker Integration (Zero Timezone Shift)
 ```
 
 The Google Cloud billing hold has been completely resolved, the background worker is active and healthy on Cloud Run, and the Admin Console provides end-to-end visibility across candidate registration, deployment stages, call logs, and daily productivity.

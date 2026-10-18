@@ -10,12 +10,12 @@ The development history, per-checkpoint tests and migrations are in [`09a-admin-
 |---|---|
 | Address | `/admin` on the backend server (e.g. `http://localhost:3000/admin/`) |
 | Sign in | Email and password (Supabase Auth); the session is refreshed automatically and ends when you sign out |
-| Who can use it | Any staff user with status `ACTIVE`. What each person can do depends on their role: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK` (section 6). |
-| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Clients, Client Details, Missing Documents, Police Workflow, Daily Report, Need Attention (formerly Priority Follow-Ups), Audit Logs, Settings (tabs: Change Roles, Invite User, Google Sheet Sync) |
-| Actions | Approve, Keep Pending, Remove from Review, Set Document Type, Assign Client, Set Police Slip Date, Upload Candidate Document, Update Candidate Stage, Invite User, Change Roles, Deactivate User |
-| Never | Reject, automatic removal of pending documents, changing a candidate's locked WhatsApp number, modifying or deleting audit logs |
+| Who can use it | Any staff user with status `ACTIVE`. What each person can do depends on their role: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK` (section 6 and 7). |
+| Screens | Overview, Documents, Review Queue, Review Detail, Candidates (Pool, Registration, Deployment Stages, Call Logs), Need Attention (formerly Priority Follow-Ups), Jobs, Agents, Client Management (`/client-management`), Work Allocation, Clients (`/clients` — candidate documents), Client Details, Missing Documents, Police Workflow, Daily Report, Audit Logs, Settings (tabs: Change Roles, Invite User, Google Sheet Sync) |
+| Actions | Approve, Keep Pending, Remove from Review, Set Document Type, Assign Client, Set Police Slip Date, Upload Candidate Document, Update Candidate Stage, Assign Candidates (Manual & Equal Distribution), Create / Manage Jobs, Assign / Release Candidates to Jobs, Manage Agents, Manage Employer Clients, Invite User, Change Roles, Deactivate User |
+| Never | Reject, automatic removal of pending documents, changing a candidate's locked WhatsApp number, hard-deleting Agents / Clients / Jobs, silent overwrite of candidate allocations, modifying or deleting audit logs |
 | Every action | Needs confirmation, is taken by the signed-in admin, and is written to an append-only audit log |
-| Time | Every date and "today" is Sri Lanka time (`Asia/Colombo`) |
+| Time & Dates | Every date and "today" is Sri Lanka time (`Asia/Colombo`). All date inputs use the modern reusable DatePicker (`react-day-picker`, `YYYY-MM-DD`, zero timezone shifting) |
 
 ## 1. Signing in
 
@@ -35,7 +35,7 @@ The first ADMIN is created on the server with `npm run user:create` (a Supabase 
 
 - **Breadcrumb** with the current section.
 - **Review Queue Notification Bell**: Displays an alert bell icon in the top header with a real-time badge count of unread Review Queue submissions. Clicking the bell opens a dropdown panel listing recent pending items with quick navigation to `/admin/review/:id` and a "Mark all as read" button. Read/unread tracking is persisted in `localStorage` per staff user (`emlynk.admin.readNotifications.<userId>`).
-- **Register Candidate** quick access (`/admin/candidates/new`): a button on every page, left of Sync, for the roles that can register candidates (ADMIN, MANAGER, ANALYST, REGISTRATION_DESK). It is the same registration form the Candidates page's *Add candidate* button opens; no other role sees it. On small screens it shows the icon only.
+- **Register Candidate** quick access (`/admin/candidates/new`): a button on every page, left of Sync, for the roles that can register candidates (ADMIN, MANAGER, REGISTRATION_DESK). It is the same registration form the Candidates page's *Add candidate* button opens; no other role sees it. On small screens it shows the icon only.
 - **Sync** reloads the data on the current page from the server. Your filters, search and page are kept. While it runs the button shows *Syncing…* and can't be pressed again; afterwards the header shows *Synced HH:MM:SS* or *Sync failed*. Sync only reloads the page's data. It does not talk to WhatsApp or any other system.
 - **Dark mode** toggle (moon / sun icon). The choice is remembered in this browser. Light mode is the default. See *Light and dark theme* below for how the colours work.
 - Your name and role, and **Sign out**.
@@ -384,17 +384,131 @@ Formerly *Priority Follow-Ups*. Calls flagged **Need attention** in a candidate'
 
 ### Work Allocation (`/admin/work-allocation`) — ADMIN and MANAGER
 
-Assigns candidates to Analysts. In the sidebar after Need Attention, for ADMIN and MANAGER only. For ANALYST and REGISTRATION_DESK the link is hidden, the URL shows *Access Restricted* and requests nothing, and the API answers 403.
+Assigns candidates to Analysts. In the sidebar after Need Attention, accessible exclusively to `ADMIN` and `MANAGER`. For `ANALYST` and `REGISTRATION_DESK`, the navigation link is hidden, direct URL access displays an `<AccessRestricted />` barrier requesting no data, and backend APIs fail closed with `403 { message: "Insufficient permissions" }`.
 
-- **Views:** *Unallocated* (default, with its count) and *Allocated* (with an Analyst filter). Both have a server-side search (name, passport ID, contact or WhatsApp number, as on Candidates) and 100 candidates a page, newest registered first.
-- **Table:** checkbox, passport number (opens the candidate), candidate name, contact / WhatsApp, registered date, current stage (and stages done), Analyst (marked *inactive* when that user is no longer active), status.
-- **Selection:** individual checkboxes, **Select all on this page** and **Clear selection**. Selection is per page: changing the page, view or search clears it, so a selection is never larger than what is on screen.
-- **Allocate panel:** every active Analyst with their current number of candidates. Type how many of the selection each one gets; the panel previews the resulting count (*42 candidates → 52*) and the total (*30 / 30*). **All** gives the whole selection to one Analyst. **Assign** stays disabled until the counts are whole numbers that add up exactly to the selection.
-- **Reassign:** when the selection includes allocated candidates, the button reads *Reassign N candidates* and a confirmation lists each candidate's current Analyst before anything is sent.
-- **Unassign:** *Unassign N* (allocated candidates in the selection) asks for confirmation, then returns them to Unallocated.
-- After a change, a summary is shown (*Allocated 30 candidates: Kamal 10, Nimal 12, Saman 8.*) and the list and counts reload. Server errors are shown as they are (for example *Ann Analyst is not an active user. Nothing was changed.*); nothing is partly applied.
-- **Empty states:** *All candidates are currently allocated.*, *No active Analysts are available for allocation.*, *No candidates match this search.*
-- **What an Analyst then sees:** only their allocated candidates, in Candidates, Need Attention, Clients, Documents, Missing Documents and Police Workflow. Any other candidate's URL answers *Candidate not found*. Analysts no longer register candidates. Rules, audit and the remaining global pages: `Docs/20-candidate-management.md` §4.5.
+- **Views:** *Unallocated* (default, with badge count) and *Allocated* (with an Analyst filter). Both provide server-side substring search (matching candidate name, passport ID, contact number, or WhatsApp number) and paginate at 100 candidates per page, ordered newest registered first.
+- **Table:** Row checkbox, passport number (links to candidate deployment profile), candidate name, contact / WhatsApp number, registered date, current stage (and completed stages count), assigned Analyst (flagged *inactive* when the user is deactivated), and status.
+- **Page-Level Selection:** Individual row checkboxes, **Select all on this page**, and **Clear selection**. Selection is strictly scoped to the active page: navigating to another page, changing the search term, or switching tabs clears the selection automatically, ensuring operations never act on unseen off-screen records.
+- **Manual Allocation:** The allocation panel lists all active Analysts with their current candidate count. Staff can enter specific numbers per Analyst; the panel previews resulting workloads (*42 candidates → 52*) and validates that the sum equals the selection count before enabling **Assign**. **All** assigns the full selection to a single Analyst.
+- **Equal Distribution (Automatic):**
+  - Designed for high-volume intake: `ADMIN` and `MANAGER` can select multiple candidates and multiple active Analysts, then click **Auto Allocate**.
+  - The backend automatically distributes eligible unallocated candidates equally among the selected Analysts using the deterministic formula:
+    $$\text{equalAllocationCount} = \left\lfloor \frac{\text{eligibleCandidates}}{\text{analystCount}} \right\rfloor$$
+  - **Remainder candidates:** Any surplus candidates ($\text{remainder} = \text{eligibleCount} - (\text{equalAllocationCount} \times \text{analystCount})$) remain safely unallocated in the pool.
+  - **Conflict & Overwrite Protection:** Existing allocations are **never silently overwritten**. Any candidate in the selection who is already allocated to an Analyst is automatically skipped from equal distribution and returned in `conflictsCount` / `skippedCount`.
+  - **Transaction & Concurrency Safety:** The operation runs inside an atomic PostgreSQL transaction (`db.$transaction`). Candidate rows are locked `FOR UPDATE` in a deterministic order (newest registered first, with passport ID as a tie-breaker), and target Analysts are locked `FOR SHARE`. This guarantees deterministic assignment order and prevents race conditions if multiple managers allocate concurrently.
+  - **Audit Logging:** Every allocated candidate generates an append-only `ASSIGN_CANDIDATE` audit log entry recording the performing actor, candidate passport ID, and assigned Analyst.
+- **Reassign:** When the selection includes already-allocated candidates, the panel switches to *Reassign N candidates*, requiring confirmation and displaying a list of current Analyst assignments before execution.
+- **Unassign:** *Unassign N* prompts for confirmation and returns allocated candidates to the Unallocated pool (`DELETE` from `candidate_allocation`, logged as `UNASSIGN`).
+- **Analyst Scoped Visibility:** Once allocated, an Analyst sees only their assigned candidates across Candidates, Need Attention, Clients, Documents, Missing Documents, and Police Workflow. Accessing an unassigned candidate URL returns `404 Candidate not found`. Analysts cannot register new candidates (as new registrations start unallocated).
+
+### Job Management (`/admin/jobs`) — ADMIN, MANAGER (ANALYST Read Scoped)
+
+Centralized management for recruitment demand orders (Jobs) placed by employer Clients, and the assignment of candidates to those jobs (`/admin/jobs`).
+
+- **Entity Model**:
+  - `JobType` (`job_type`): Controlled list of recruitment trade classifications (e.g. Tile Fitter with auto-generated code `TILE_FITTER`). Free-text job titles are not permitted.
+  - `Job` (`job`): Represents an active or historical recruitment order placed by a Client.
+  - `JobCandidate` (`job_candidate`): Relational join entity managing candidate assignment history, membership status (`is_active`), assignment timestamps, and release tracking.
+  - `JobCodeCounter` (`job_code_counter`): Atomic yearly counter table providing sequential numbers for human-readable job codes.
+- **Three Core Identifiers**:
+  - **Internal Job ID (`job.id`)**: An immutable UUID primary key generated by PostgreSQL. Used as the foreign key target for all relational links (`job_candidate.job_id`, `candidate_form_link.job_id`) and API routes. Never changes and is never displayed as an operational identifier.
+  - **Display Job Code (`job.job_code`)**: System-generated display reference formatted as `JOB-YYYY-NNNNNN` (e.g. `JOB-2026-000012`), atomically allocated per Asia/Colombo calendar year via `INSERT ... ON CONFLICT DO UPDATE ... RETURNING`. Displayed across all tables, headers, and reports.
+  - **Client Job ID (`job.company_job_id`)**: The employer organization's external reference code (e.g. `Y26S01` or `QAT-2026-B`). Displayed in the UI as **Client Job ID**.
+    - *Column Name Retention:* The database column deliberately retains its technical name `company_job_id`. It represents the employer's external reference identifier, **not** an entity foreign key. Renaming the column would break operational continuity and existing database schemas without changing business semantics.
+    - *Format and Validation:* Normalized to uppercase, trimmed, 1–40 characters from `A-Z 0-9 . _ / # -`.
+    - *Uniqueness:* Enforced unique per Client when present via the partial unique index:
+      `CREATE UNIQUE INDEX "job_company_job_id_key" ON "job"("client_id", "company_job_id") WHERE "company_job_id" IS NOT NULL;`
+    - Can be modified at any time on jobs in any status by `ADMIN` or `MANAGER`.
+- **Job Statuses & Lifecycle**:
+  - **`PROCESSING`**: Active job order. The only status in which candidates can be assigned or released.
+  - **`COMPLETED`**: Fulfilled job order. Finalizing a job atomically releases all active candidate memberships (`job_candidate.is_active = false`, recording `released_at`), while preserving complete assignment history.
+  - **`CANCELLED`**: Cancelled job order. Requires an administrative justification note (`cancel_reason`). Atomically releases all active candidate memberships while preserving history.
+  - *One-Way Lifecycle:* Once marked `COMPLETED` or `CANCELLED`, a job cannot return to `PROCESSING` (enforced by PostgreSQL status triggers).
+- **Client & Responsible Agent Relationships**:
+  - Every Job belongs to exactly one employer **Client** (`job.client_id` → `client.id`).
+  - Records its **Responsible Agent** (`job.responsible_agent_id` → `agent.id`), which must match the Client's responsible Agent at creation time (`409 CLIENT_AGENT_MISMATCH` if mismatched).
+  - The job's country is immutable and copied from the responsible Agent's country upon creation.
+  - Moving a job (`PUT /api/admin/jobs/:id { clientId }`) is permitted only between Clients managed by the exact same responsible Agent.
+  - Historical integrity: When a Client is reassigned to a new Agent, existing historical Jobs retain their original responsible Agent; only new Jobs use the new Agent.
+- **Candidate Assignment Rules**:
+  - Candidates are assigned via `POST /api/admin/jobs/:jobId/candidates { passportId }`.
+  - **Single Active Job Rule:** A candidate can be assigned to **at most one `PROCESSING` job** at any time across the entire system.
+  - *Enforcement:* Verified at three independent levels:
+    1. Application service check under row-level locks (`FOR UPDATE` on candidate, `FOR SHARE` on job).
+    2. Partial unique database index: `CREATE UNIQUE INDEX job_candidate_one_active_per_candidate ON job_candidate (passport_id) WHERE is_active = true;`.
+    3. PostgreSQL trigger permitting `is_active = true` only when `job.status = 'PROCESSING'`.
+  - Releasing a candidate (`DELETE /api/admin/jobs/:jobId/candidates/:passportId`) marks `is_active = false` and writes `released_at`. Records are never deleted.
+  - Candidate deployment profile (`GET /api/admin/candidates/:passportId`) returns full `jobAssignments: { current, history }`.
+- **Role-Based Access**:
+  - `ADMIN` and `MANAGER`: Full management (create, update, complete, cancel, assign/release candidates, manage Job Types).
+  - `ANALYST`: Scoped read-only access. Analysts can only view Jobs that hold candidates allocated to them, and can only see their own candidates within those jobs. Accessing other jobs returns `404 Not Found`.
+  - `REGISTRATION_DESK`: No access to Jobs (routes return 403, hidden from navigation).
+
+### Agent Management (`/admin/agents`) — ADMIN and MANAGER
+
+Interface for managing overseas recruitment agency partners (`/admin/agents`).
+
+- **Business Entity Definition**: An Agent is a *commercial recruitment business partner abroad* (e.g., an agency in Romania, UAE, or Poland). It is **not** a login user, not an Admin or Analyst, and has zero connection to the `public."user"` table or Supabase Auth.
+- **Country Assignment**: Each Agent belongs to exactly **one country** (`country_code CHAR(2)`, validated against ISO 3166-1). An Agent cannot hold multiple countries.
+- **Cardinality**: One Agent manages **many employer Clients** (1 → N).
+- **Status & Lifecycle**:
+  - Status is represented by `is_active` and exposed as `ACTIVE` or `INACTIVE`.
+  - **No Hard Delete:** Agents are never deleted from the database. There is no `DELETE` endpoint, and foreign keys enforce `ON DELETE RESTRICT`. Inactive records remain queryable for audit and historical reporting.
+  - **Protection of Active Work:**
+    - An Agent cannot be deactivated (`INACTIVE`) while any Job with that `responsible_agent_id` remains in `PROCESSING` status (`409 AGENT_HAS_PROCESSING_JOBS`).
+    - An Agent's country cannot be changed while active `PROCESSING` jobs exist (since existing jobs inherit that country).
+    - An `INACTIVE` Agent cannot receive new Clients, cannot be targeted for Client reassignment, and cannot be assigned to new Jobs (`409 AGENT_INACTIVE`).
+- **User Interface**:
+  - Table: Agent name, Country, Active Clients count, Processing Jobs count, Completed Jobs count, Status badge, and Actions (View, Edit, Activate/Deactivate).
+  - Server-side search and filtering by Country and Status with URL synchronization.
+  - Details View: Profile facts, contact info (phone, WhatsApp, email, address, notes), managed Clients tab, and Jobs tab categorized by status (Processing, Completed, Cancelled).
+- **Role Access**: Restricted strictly to `ADMIN` and `MANAGER`. `ANALYST` and `REGISTRATION_DESK` receive `403 Forbidden`.
+
+### Client Management (`/admin/client-management`) — ADMIN and MANAGER
+
+Interface for managing employer and customer companies seeking overseas recruitment (`/admin/client-management`).
+
+- **Terminology Standard**: The employer organization is consistently called **Client**. The legacy term "Company" is retired from application code and documentation. The authoritative database table is `client` (renamed from `company`).
+- **Cardinality & Relationships**:
+  - One Client belongs to **one responsible Agent** (`client.agent_id` → `agent.id`, `ON DELETE RESTRICT`).
+  - One Client can have **many Jobs** (`job.client_id` → `client.id`).
+  - A Client's operational country is derived directly from its responsible Agent, ensuring a single source of truth without data drift.
+- **Status & Lifecycle**:
+  - Status is stored as `is_active` (`ACTIVE` / `INACTIVE`).
+  - **No Hard Delete:** Clients are never hard-deleted; foreign keys enforce `ON DELETE RESTRICT`.
+  - **Protection of Active Work:**
+    - A Client cannot be deactivated while any Job associated with that Client is in `PROCESSING` status (`409 CLIENT_HAS_PROCESSING_JOBS`).
+    - An `INACTIVE` Client cannot receive new Jobs or moved jobs (`409 CLIENT_INACTIVE`).
+    - Activating a Client requires that its assigned Agent is currently `ACTIVE` (`409 AGENT_INACTIVE`).
+  - **Changing a Client's Agent:** An explicit administrative action (`PATCH /api/admin/client-management/:id/agent`). Requires that the target Agent is `ACTIVE`. Crucially, existing historical Jobs retain their original responsible Agent; only newly created Jobs inherit the new Agent.
+- **User Interface**:
+  - Table: Client name, Country (inherited from Agent), Responsible Agent, Processing Jobs count, Completed Jobs count, Status badge, and Actions (View, Edit, Change Agent, Activate/Deactivate).
+  - Search and filters: Free-text search, filter by Agent, filter by Country, filter by Status.
+  - Details View: Profile facts, contact person, phone, WhatsApp, email, address, responsible Agent link, and Jobs tab listing jobs with status and active candidate counts.
+- **Role Access**: Restricted strictly to `ADMIN` and `MANAGER`.
+
+### Distinction: Legacy `/clients` vs. Employer `/client-management`
+
+To prevent operational and architectural confusion, the dashboard maintains an explicit distinction between two unrelated modules:
+
+| Feature | Technical Route | API Endpoint | Business Purpose | Entity Type |
+|---|---|---|---|---|
+| **Candidate Documents** | `/clients`, `/clients/:passportId` | `/api/admin/clients` | Tracking candidate document intake checklists, missing files, and police report countdowns | Candidate (`public.candidate`) |
+| **Client Management** | `/client-management`, `/client-management/:clientId` | `/api/admin/client-management` | Managing overseas employer/customer organizations that place recruitment Job orders | Employer Client (`public.client`) |
+
+The technical route `/client-management` was intentionally chosen to avoid namespace collisions with the legacy candidate document workflow (`/clients`), which predates the Client/Agent management module. They are completely independent features.
+
+### Modern Date Picker Component
+
+All native date inputs (`<input type="date">`) across the Admin Dashboard have been replaced with a unified, accessible, and timezone-safe `DatePicker` component (`components/DatePicker.tsx`, built upon `react-day-picker`).
+
+- **Universal Deployment:** Used across Candidate Registration, Candidate Deployment Stages (Test Details, Passport Issue/Expiry), Additional Details panels, Call Log Drawer, Review Queue corrections (Police Slip Date), Documents filter range, Client Details, Daily Report date navigation, and Audit Log date ranges.
+- **Authoritative Storage & API Format:** Strictly adheres to ISO `YYYY-MM-DD` string representation. The component never outputs arbitrary timestamps or localized date strings to application state or API payloads.
+- **Rapid Month & Year Navigation:** Provides native dropdown select menus for Month and Year. This enables one-click navigation across extensive date ranges (e.g. birth years back to 1900 or passport expiry dates 15–20 years in the future) without repetitive month-by-month pagination.
+- **Zero Timezone Date Shifting:** Pure calendar-day parsing and formatting using custom helpers (`formatDay`, `parseDay`). This prevents common JavaScript `new Date("YYYY-MM-DD")` UTC bugs where client timezone offsets (e.g. Asia/Colombo `UTC+05:30`) could shift dates backward to the previous calendar day.
+- **Accessibility & Focus Management:** Full keyboard navigation support (Tab indexing, Arrow keys, Enter to select, Escape to close dialog). When a date is selected or the picker is dismissed, DOM focus is automatically returned to the trigger input field.
+- **Responsive Layout:** Automatically renders as an accessible popover dialog that repositions dynamically to prevent viewport overflow on both desktop displays and mobile viewports.
 
 ### Invite User (Settings tab, `/admin/settings/invite`) — ADMIN Only
 
@@ -514,6 +628,65 @@ The order border < strong < focus is kept, so hover and focus still read as stro
 
 ## 3. Rules
 
+### Database Architecture & Entity Relationships
+
+The relational architecture reflects real-world overseas agency recruitment workflows, connecting international recruiting partners (Agents), employer organizations (Clients), operational job demand orders (Jobs), candidates, and internal staff allocations.
+
+```text
+Agent (1) ───────────< Client (many)
+Client (1) ──────────< Job (many)
+Job (many) >─────────< Candidate (many) via JobCandidate
+Candidate (optional 1:1) ─> Analyst (public."user") via CandidateAllocation
+```
+
+- **Current Real Table Names**:
+  - `agent`: Commercial recruitment partner entities abroad.
+  - `client`: Employer / customer organizations. The authoritative table is **`client`** (renamed in place from legacy `company`). There is **no** `company` table in the database schema.
+  - `job`: Recruitment job orders placed by employer Clients.
+  - `job_candidate`: Relational join table linking candidates to jobs with historical status tracking.
+  - `job_type`: Standardized trade/job classifications.
+  - `job_code_counter`: Atomic sequence generator for human-readable job codes.
+  - `candidate`: Candidate master records (formerly `users`).
+  - `candidate_allocation`: Current operational assignment of candidates to staff Analysts.
+  - `user`: Internal console staff accounts with RBAC roles (formerly `admins`).
+- **Entity Relationships**:
+  - **Agent 1 → many Client**: One Agent represents an overseas recruitment partner in a single country (`country_code CHAR(2)`). An Agent manages multiple employer Clients (`client.agent_id` → `agent.id`, `ON DELETE RESTRICT`).
+  - **Client 1 → many Job**: One employer Client places multiple recruitment Job orders (`job.client_id` → `client.id`, `ON DELETE RESTRICT`). A Client inherits its operational country directly from its assigned Agent.
+  - **Job many ↔ many Candidate (through `job_candidate`)**: Candidates join Jobs through the `job_candidate` join table (`job_id`, `passport_id`, `is_active`, `assigned_at`, `released_at`).
+  - **Candidate optional Work Allocation → Analyst**: Candidates can be allocated to an active Analyst for processing (`candidate_allocation.analyst_id` → `user.id`).
+- **`company_job_id` Intentional Naming**:
+  - The column on table `job` deliberately retains the name `company_job_id`.
+  - It represents the Client/employer organization's external reference code (e.g. `Y26S01` or `QAT-2026-B`), labeled in the UI as **Client Job ID**.
+  - It is **not** an entity foreign key and does **not** reference the removed `company` table. Retaining this column name preserves backwards compatibility with existing shared database schemas and queries without distorting business domain semantics. Unique per client when set (`UNIQUE (client_id, company_job_id) WHERE company_job_id IS NOT NULL`).
+
+### Master Data & Job Lifecycle Rules
+
+- **No Hard Delete**: Neither Agents, Clients, nor Jobs can be hard-deleted from the database. There are no `DELETE` endpoints for master entities, and foreign keys enforce `ON DELETE RESTRICT`. Inactive records remain queryable for historical continuity and audit logs.
+- **Active / Inactive Status**: Status is tracked via `is_active` boolean columns, exposed through the API as `ACTIVE` or `INACTIVE`.
+- **Protection Against Inactive Work**:
+  - An Agent cannot be deactivated (`INACTIVE`) while any Job with that `responsible_agent_id` is currently in `PROCESSING` status (`409 AGENT_HAS_PROCESSING_JOBS`).
+  - An Agent's country cannot be edited while active `PROCESSING` jobs exist.
+  - An `INACTIVE` Agent cannot receive new Clients or new Job assignments (`409 AGENT_INACTIVE`).
+  - A Client cannot be deactivated while any Job with that `client_id` is in `PROCESSING` status (`409 CLIENT_HAS_PROCESSING_JOBS`).
+  - An `INACTIVE` Client cannot receive new Jobs or moved jobs (`409 CLIENT_INACTIVE`).
+  - Activating a Client requires that its assigned Agent is currently `ACTIVE` (`409 AGENT_INACTIVE`).
+- **Controlled Client Agent Reassignment**:
+  - Changing a Client's responsible Agent is an explicit administrative action (`PATCH /api/admin/client-management/:id/agent`).
+  - The target Agent must be `ACTIVE`.
+  - Existing historical Jobs retain their original responsible Agent; only newly created Jobs inherit the new Agent.
+- **Single Active Job Rule for Candidates**:
+  - A candidate can be assigned to **at most one `PROCESSING` job** at any given time.
+  - Enforced concurrently via application service row locks (`FOR UPDATE`), partial unique index `job_candidate_one_active_per_candidate`, and database status triggers.
+- **Job Finalization & Historical Data Preservation**:
+  - A Job can transition from `PROCESSING` → `COMPLETED` or `PROCESSING` → `CANCELLED` (with mandatory `cancel_reason`).
+  - Leaving `PROCESSING` atomically marks all active candidate memberships as released (`is_active = false`, recording `released_at`), while preserving complete assignment history.
+  - Finalized jobs (`COMPLETED` or `CANCELLED`) can never return to `PROCESSING`.
+- **Work Allocation Equal Distribution Rules**:
+  - Distributed strictly via $\text{floor}(\text{eligible candidates} / \text{analyst count})$.
+  - Remainder candidates remain unallocated in the pool.
+  - Existing allocations are never silently overwritten (conflicts are skipped).
+  - Executed inside an atomic transaction with candidate rows locked `FOR UPDATE` (deterministic order) and analysts locked `FOR SHARE`.
+
 ### No reject
 
 The implemented workflow has no reject action, status, button or endpoint:
@@ -601,7 +774,7 @@ npm start               # dashboard at http://localhost:3000/admin/
 npm run admin:dev       # development server with live reload (backend must run too)
 ```
 
-**Before deploying Phase 10**, apply the five Phase 10 database migrations to the live database, in this order. The new code needs them.
+**Database Migrations (through Phase 10, Job Management, and Client Management)**:
 
 1. `20260925150000_phase10_review_data`
 2. `20260925160000_phase10_review_audit_log`
@@ -610,8 +783,10 @@ npm run admin:dev       # development server with live reload (backend must run 
 5. `20260926120000_phase10_audit_correction_values`
 6. `20260927120000_m1_async_processing` (background processing, below)
 7. `20260927130000_m1_placement_path` (background processing, below)
+8. `20261018120000_job_management` (Job, JobType, JobCandidate, JobCodeCounter, Agent tables)
+9. `20261019120000_client_management` (company → client rename, client.agent_id, contact columns, job.company_job_id IF NOT EXISTS)
 
-All seven are additive (new table and columns, nothing dropped), and all were tested on a throwaway database. The first five are applied to the live database (checked 2026-09-26); the last two are not yet.
+All migrations are forward-only and data-preserving. They were verified against both clean databases and existing shared migration histories.
 
 ### Background processing (M1)
 
@@ -627,11 +802,11 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | GET | `/documents` | ADMIN, MANAGER, ANALYST | Stored documents (search, filters, sort, paging) |
 | GET | `/documents/missing` | ADMIN, MANAGER, ANALYST | Incomplete clients and missing types (`documentType`, `search`, paging) |
 | POST | `/documents/:documentId/police-date` | ADMIN, MANAGER | Set or correct a police slip date `{ policeSubmittedDate, reason }` |
-| GET | `/clients` | ADMIN, MANAGER, ANALYST | Clients directory (`search`, `completion`, `missingType`, paging) |
-| GET | `/clients/:passportId` | ADMIN, MANAGER, ANALYST | Client details |
-| GET | `/candidates` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate list (search, filters, paging) |
+| GET | `/clients` | ADMIN, MANAGER, ANALYST | Clients directory (`search`, `completion`, `missingType`, paging) — legacy candidate document view |
+| GET | `/clients/:passportId` | ADMIN, MANAGER, ANALYST | Client details — legacy candidate document profile |
+| GET | `/candidates` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate list (search, filters, paging; Analysts see allocated only) |
 | POST | `/candidates` | ADMIN, MANAGER, REGISTRATION_DESK | Candidate registration `{ passportId, nic, firstName, ... }` (not ANALYST: a new candidate is unallocated) |
-| GET | `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate details and stage status |
+| GET | `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate details and stage status (returns `jobAssignments: { current, history }`) |
 | PUT | `/candidates/:passportId` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Update candidate details |
 | PUT | `/candidates/:passportId/stages/:stage` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Update candidate deployment stage `{ completed, notes, ... }` |
 | POST | `/candidates/:passportId/documents/upload-target` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Issue signed upload URL for candidate document |
@@ -639,12 +814,35 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/candidates/:passportId/documents/:documentId/remove` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Remove candidate document `{ reason }` |
 | GET | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Candidate call logs and candidate activity (Candidate History) |
 | POST | `/candidates/:passportId/call-logs` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Record call log `{ note, calledAt, needsAttention?, outcome? }` (`outcome: "NO_ANSWER"`: no note needed) |
-| POST | `/candidates/:passportId/call-logs/:callLogId/follow-up` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Mark a call for follow-up (201; 409 `FOLLOW_UP_EXISTS` if it already has an open one; 404 if the call isn't this candidate's). The call log is not changed |
+| POST | `/candidates/:passportId/call-logs/:callLogId/follow-up` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Mark a call for follow-up (201; 409 `FOLLOW_UP_EXISTS` if it already has an open one; 404 if the call isn't this candidate's) |
 | GET | `/work-allocation/candidates?status&analystId&search&page` | ADMIN, MANAGER | Work Allocation list: Unallocated or Allocated candidates, 100 a page |
 | GET | `/work-allocation/analysts` | ADMIN, MANAGER | Active Analysts with their candidate counts |
-| POST | `/work-allocation/assign` | ADMIN, MANAGER | Assign / distribute / reassign `{ candidateIds, allocations: [{ analystId, count }], reassign? }` (all or nothing) |
+| POST | `/work-allocation/assign` | ADMIN, MANAGER | Manual assign / distribute / reassign `{ candidateIds, allocations: [{ analystId, count }], reassign? }` |
+| POST | `/work-allocation/auto-allocate` | ADMIN, MANAGER | Equal distribution: automatically allocate eligible candidates equally among selected Analysts `{ candidateIds, analystIds }` |
 | POST | `/work-allocation/unassign` | ADMIN, MANAGER | Return candidates to Unallocated `{ candidateIds, confirm: true }` |
-| GET | `/follow-ups?status` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Need Attention follow-ups grouped by candidate (default `OPEN`; at most 500 follow-ups, newest first). Each group still carries `documentStatus`; the page does not render it |
+| GET | `/jobs?view=processing\|completed\|cancelled&search=&page=` | ADMIN, MANAGER, ANALYST (scoped) | List recruitment Jobs (50/page) with tab counts (Analysts see jobs with their allocated candidates) |
+| GET | `/jobs/:jobId` | ADMIN, MANAGER, ANALYST (scoped) | Job details, Client/Agent info, and assigned candidates list |
+| POST | `/jobs` | ADMIN, MANAGER | Create Job `{ jobTypeId, clientId, responsibleAgentId?, vacancies?, companyJobId? }` |
+| PUT | `/jobs/:jobId` | ADMIN, MANAGER | Update Job `{ vacancies?, jobTypeId?, clientId?, companyJobId? }` (Client Job ID editable in any status) |
+| POST | `/jobs/:jobId/candidates` | ADMIN, MANAGER | Assign candidate to Job `{ passportId }` (single active PROCESSING job rule enforced) |
+| DELETE | `/jobs/:jobId/candidates/:passportId` | ADMIN, MANAGER | Release candidate from Job (record kept with `released_at`, `is_active = false`) |
+| POST | `/jobs/:jobId/complete` | ADMIN, MANAGER | Complete Job (auto-releases all active candidate memberships; immutable) |
+| POST | `/jobs/:jobId/cancel` | ADMIN, MANAGER | Cancel Job `{ reason }` (auto-releases all active candidate memberships; immutable) |
+| GET | `/job-options` | ADMIN, MANAGER | Active Job Types, active Clients of active Agents (with `agentId`), and active Agents |
+| POST | `/job-types` | ADMIN, MANAGER | Create Job Type `{ name }` |
+| GET | `/agents?search=&country=&status=&page=` | ADMIN, MANAGER | List Agents (25/page) with active client and processing/completed job counts |
+| POST | `/agents` | ADMIN, MANAGER | Create Agent `{ name, countryCode, contactNumber?, whatsappNumber?, email?, address?, notes?, status? }` |
+| GET | `/agents/:agentId` | ADMIN, MANAGER | Agent details: facts, contact info, managed Clients, and Jobs by status |
+| PATCH | `/agents/:agentId` | ADMIN, MANAGER | Update Agent details (immutable ID; country change blocked if PROCESSING jobs exist) |
+| PATCH | `/agents/:agentId/status` | ADMIN, MANAGER | Change Agent status `{ status: "ACTIVE" \| "INACTIVE" }` (blocked if PROCESSING jobs exist) |
+| GET | `/agent-options` | ADMIN, MANAGER | All agents (all statuses, unpaged) for selectors and filters |
+| GET | `/client-management?search=&agentId=&country=&status=&page=` | ADMIN, MANAGER | List employer Clients (25/page) with processing/completed job counts |
+| POST | `/client-management` | ADMIN, MANAGER | Create employer Client `{ name, agentId, contactPerson?, contactNumber?, whatsappNumber?, email?, address? }` |
+| GET | `/client-management/:clientId` | ADMIN, MANAGER | Employer Client details: facts, contact info, responsible Agent, and Jobs with candidate counts |
+| PATCH | `/client-management/:clientId` | ADMIN, MANAGER | Update employer Client details (not Agent or status) |
+| PATCH | `/client-management/:clientId/agent` | ADMIN, MANAGER | Change responsible Agent `{ agentId }` (ACTIVE agent required; existing Jobs keep historical Agent) |
+| PATCH | `/client-management/:clientId/status` | ADMIN, MANAGER | Change status `{ status: "ACTIVE" \| "INACTIVE" }` (blocked if PROCESSING jobs exist) |
+| GET | `/follow-ups?status` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Need Attention follow-ups grouped by candidate (default `OPEN`; at most 500 follow-ups, newest first) |
 | POST | `/follow-ups/:followUpId/complete` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Complete a follow-up (409 `FOLLOW_UP_COMPLETED` if already completed); the row is kept |
 | DELETE | `/follow-ups/:followUpId` | ADMIN, MANAGER | Delete the follow-up row only; the call log, candidate and documents stay |
 | GET | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Additional details `{ passportId, details, suggested, updatedDate }` |
@@ -660,25 +858,48 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/review/:reviewId/keep-as-version` | ADMIN, MANAGER, ANALYST | Keep document as version `{ reason? }` |
 | GET | `/police` | ADMIN, MANAGER, ANALYST | Police Workflow (`status`, `search`, `passportId`, paging) |
 | GET | `/reports/daily` | ADMIN, MANAGER, ANALYST | Daily figures (`date=YYYY-MM-DD`, default today in Sri Lanka); kept for backwards compatibility |
-| GET | `/reports/daily/summary` | ADMIN, MANAGER, ANALYST | Daily Report Summary (`date=YYYY-MM-DD`): 5 KPIs (`candidatesRegistered`, `candidatesCompleted`, `visaCompleted`, `callsTaken`, `documentsSubmitted`), `documents` (totals, WhatsApp/manual split, and breakdown by candidate document type plus unclassified), WhatsApp processing metrics, `adminActions`, `calls` (capped at 200 with `truncated`), `registeredCandidates` (capped at 200 with `total` and `truncated`), `completedCandidates` (capped at 200 with `total` and `truncated`), and `current` snapshot: `incomplete` candidates per stage with reasons and `police` report status |
-| GET | `/reports/daily/incomplete` | ADMIN, MANAGER, ANALYST | Candidates with one deployment stage incomplete now (`stage`, `page`; paginated at 25 per page), with failure reasons evaluated from candidate bio, test results, and document checklist |
-| GET | `/reports/daily/roles` | ADMIN, MANAGER | Summary by Roles (`date=YYYY-MM-DD`, `role` = `ADMIN` / `MANAGER` / `ANALYST` / `REGISTRATION_DESK`): staff count, `callsTaken`, `documentsUploaded` (manual staff uploads only; WhatsApp files excluded), `documentsByType`, per-staff activity, and `activity` details list (capped at 200 with `truncated`) |
+| GET | `/reports/daily/summary` | ADMIN, MANAGER, ANALYST | Daily Report Summary (`date=YYYY-MM-DD`): 5 KPIs (`candidatesRegistered`, `candidatesCompleted`, `visaCompleted`, `callsTaken`, `documentsSubmitted`), `documents`, WhatsApp metrics, `adminActions`, `calls`, `registeredCandidates`, `completedCandidates`, and `current` pipeline snapshot |
+| GET | `/reports/daily/incomplete` | ADMIN, MANAGER, ANALYST | Candidates with one deployment stage incomplete now (`stage`, `page`; paginated at 25 per page) |
+| GET | `/reports/daily/roles` | ADMIN, MANAGER | Summary by Roles (`date=YYYY-MM-DD`, `role` = `ADMIN` / `MANAGER` / `ANALYST` / `REGISTRATION_DESK`) |
 | GET | `/audit-logs` | ADMIN | View-only audit logs (search, user/candidate filters, dates, paging) |
 | GET | `/users` | ADMIN | List staff users (under `/api/admin/users`) |
 | POST | `/users/invite` | ADMIN | Invite a user `{ name, email, role }` |
 | PUT | `/users/:userId/role` | ADMIN | Change a user's role |
 | POST | `/users/:userId/deactivate` | ADMIN | Deactivate a user |
-| GET | `/settings/sheet-sync/status` | ADMIN | Sheet Sync status: connection, integration state, write gate, last automatic / manual / latest sync, queue counts, last reconciliation and failure, schedule, and the Sync Destination (`destination.available / activeKey / requestedKey`; short hints only) |
+| GET | `/settings/sheet-sync/status` | ADMIN | Sheet Sync status: connection, integration state, write gate, sync activity, queue counts, reconciliation, and destination |
 | POST | `/settings/sheet-sync/test` | ADMIN | Test Connection: queues a read-only check on the worker (202) |
 | POST | `/settings/sheet-sync/run` | ADMIN | Sync Now: queues a reconciliation (202) |
-| PUT | `/settings/sheet-sync/destination` | ADMIN | Ask to switch the Sync Destination `{ key }`; validated by the worker before it takes effect (202 pending, 200 already active, 400 unknown, 409 busy) |
+| PUT | `/settings/sheet-sync/destination` | ADMIN | Ask to switch the Sync Destination `{ key }` |
 | GET | `/settings/sheet-sync/runs/:runId` | ADMIN | One run's status and result |
 
 Sign-in, sign-out, password recovery and setting a password from an invitation are Supabase Auth's, called by the dashboard directly; the backend only offers `GET /auth/me` and `POST /auth/complete-invite` (activates an invited user after they set a password).
 
-Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, message }]`, refused actions (409) add a `code` such as `ALREADY_RESOLVED`, `VERIFIED_DOCUMENT_EXISTS`, `CLIENT_NOT_FOUND`, `DUPLICATE_ACTIVE_ADMIN` or `NOT_CORRECTABLE`, and insufficient permissions (403) return `{ "message": "Insufficient permissions" }`. 401 means no or an invalid session, 404 an unknown item, 502 a storage failure, and 500 an unexpected error (no details are shown).
+Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, message }]`, refused actions (409) add a `code` such as `ALREADY_RESOLVED`, `VERIFIED_DOCUMENT_EXISTS`, `CLIENT_NOT_FOUND`, `AGENT_NOT_FOUND`, `JOB_NOT_FOUND`, `AGENT_HAS_PROCESSING_JOBS`, `CLIENT_HAS_PROCESSING_JOBS`, `AGENT_INACTIVE`, `CLIENT_INACTIVE`, `CLIENT_AGENT_MISMATCH`, `CANDIDATE_ON_ACTIVE_JOB`, `COMPANY_JOB_ID_EXISTS`, `DUPLICATE_ACTIVE_ADMIN` or `NOT_CORRECTABLE`, and insufficient permissions (403) return `{ "message": "Insufficient permissions" }`. 401 means no or an invalid session, 404 an unknown item, 502 a storage failure, and 500 an unexpected error (no details are shown).
 
-## 7. Security
+## 7. Security & Role-Based Access Control (RBAC)
+
+The security model implements strict defense-in-depth across storage, authentication, and database authorization:
+
+### Role Permissions Matrix
+
+All application endpoints enforce server-side role validation via `requireRole` middleware inspecting `public."user".role`. Frontend navigation visibility is merely an affordance; backend APIs fail closed (`403 Forbidden`).
+
+| Capability / Resource | ADMIN | MANAGER | ANALYST | REGISTRATION_DESK |
+|---|:---:|:---:|:---:|:---:|
+| **Agent Management** (`/agents`, `/api/admin/agents`) | Full | Full | None (403) | None (403) |
+| **Client Management** (`/client-management`, `/api/admin/client-management`) | Full | Full | None (403) | None (403) |
+| **Job Management** (`/jobs`, `/api/admin/jobs`) | Full | Full | Read-Only (Scoped to allocated candidates) | None (403) |
+| **Work Allocation** (`/work-allocation`, `/api/admin/work-allocation/*`) | Full | Full | None (403) | None (403) |
+| **Candidate Registration** (`/candidates/new`, `POST /candidates`) | Yes | Yes | No (Unallocated by default) | Yes |
+| **Candidate Deployment & Profile** (`/candidates/:passportId`) | Full | Full | Scoped (Allocated candidates only) | Full |
+| **Candidate Documents** (Upload & Removal) | Yes | Yes | Yes (Allocated candidates only) | Yes |
+| **Call Logs & Need Attention** (`/follow-ups`) | Full (Delete open) | Full (Delete open) | Scoped (Flag & Complete) | Full (Flag & Complete) |
+| **Review Queue** (`/review`) | Full | Full | Full | None (403) |
+| **Police Slip Date Correction** | Yes | Yes | No (403) | No (403) |
+| **Daily Report (Summary View)** | Yes | Yes | Yes | None (403) |
+| **Daily Report (Summary by Roles)** | Yes | Yes | None (403) | None (403) |
+| **Audit Logs** (`/audit-logs`) | Full (View Only) | None (403) | None (403) | None (403) |
+| **Settings (User Roles, Invites, Sheet Sync)** | Full | None (403) | None (403) | None (403) |
 
 - **Private Storage**: Documents reside in a private Supabase Storage bucket. The dashboard never receives raw storage credentials: files stream securely through the authenticated server. Direct uploads to candidate folders use time-limited, signed URLs issued by the API.
 - **Supabase Auth & Bearer Tokens**: All authenticated requests pass `Authorization: Bearer <token>`. The server verifies tokens directly with Supabase Auth. Browser applications hold only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. The `SUPABASE_SERVICE_ROLE_KEY` is server-only.
@@ -713,7 +934,7 @@ Errors are `{ "message": "…" }`; invalid input (400) adds `errors: [{ field, m
 
 ## 9. Known limitations
 
-- **Not deployed.** The five migrations above must be applied to the live database first.
+- **Database Migrations:** Schema migrations through `20261019120000_client_management` must be applied to target databases using `npx prisma migrate deploy` before deploying application code.
 - **Failed submissions can't be retried or closed.** They stay in the *Failed processing* list; the client has to send the file again. Files refused on arrival (wrong type, too large) leave no record at all.
 - **No historical snapshots for current pipeline state.** Incomplete candidate process breakdown and police status are current state snapshots evaluated at query time (`asOf`); historical day-by-day snapshots of incomplete reasons or police countdown states are not stored.
 - **Stage completion reversal affects past days.** *Candidates completed* and *Visa completed* use the stage's stored completion timestamp (`completed_at`). If a stage completion is later unticked or reversed, the historical day will no longer count it because immutable stage completion transition history is not maintained.
