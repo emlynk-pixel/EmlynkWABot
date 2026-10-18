@@ -225,6 +225,37 @@ export function parseAssignBody(body) {
     return errors.length ? { errors } : { values: { candidateIds, allocations, reassign: body.reassign === true } };
 }
 
+function parseAnalystIds(body, errors) {
+    const ids = body.analystIds;
+    if (!Array.isArray(ids) || ids.length === 0) {
+        errors.push({ field: "analystIds", message: "must be a non-empty list of analyst IDs" });
+        return [];
+    }
+    if (ids.length > MAX_ALLOCATION_ANALYSTS) {
+        errors.push({ field: "analystIds", message: `must name at most ${MAX_ALLOCATION_ANALYSTS} Analysts` });
+        return [];
+    }
+    if (!ids.every((id) => typeof id === "string" && ID_PATTERN.test(id))) {
+        errors.push({ field: "analystIds", message: "must be user IDs" });
+        return [];
+    }
+    if (new Set(ids).size !== ids.length) {
+        errors.push({ field: "analystIds", message: "must not repeat an Analyst" });
+        return [];
+    }
+    return ids;
+}
+
+// POST /api/admin/work-allocation/auto-allocate
+//   { candidateIds: [passportId, ...], analystIds: [analystId, ...] }
+export function parseAutoAllocateBody(body) {
+    const errors = [];
+    if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
+    const candidateIds = parseCandidateIds(body, errors);
+    const analystIds = parseAnalystIds(body, errors);
+    return errors.length ? { errors } : { values: { candidateIds, analystIds } };
+}
+
 // POST /api/admin/work-allocation/unassign  { candidateIds: [...], confirm: true }
 export function parseUnassignBody(body) {
     const errors = [];
@@ -364,3 +395,86 @@ export async function unassignCandidates({ db, actor, candidateIds }) {
         return { unassigned: allocated.length, alreadyUnallocated: rows.length - allocated.length };
     });
 }
+
+// Automatically distributes eligible unallocated candidates equally among
+// the selected Analysts in one transaction.
+//
+// 1. Locks the candidate rows FOR UPDATE (ordered newest registered first,
+//    passport ID for ties: deterministic list order).
+// 2. Locks the target Analysts FOR SHARE (must all be ACTIVE Analysts).
+// 3. Resolves eligible unallocated candidates vs already allocated candidates
+//    (conflicts are skipped; they are never silently reassigned or duplicated).
+// 4. Calculates:
+//    equalAllocationCount = floor(eligibleCount / analystCount)
+//    allocatedCount = equalAllocationCount * analystCount
+//    remainder = eligibleCount - allocatedCount
+// 5. Assigns exactly equalAllocationCount candidates to each selected Analyst.
+// 6. Remainder candidates remain unallocated in the database.
+// 7. Audits every new allocation with ASSIGN_CANDIDATE.
+export async function autoAllocateCandidates({ db, actor, candidateIds, analystIds }) {
+    return db.$transaction(async (tx) => {
+        const rows = await lockCandidates(tx, candidateIds);
+        const analysts = await lockAnalysts(tx, analystIds);
+        const orderedAnalysts = analystIds.map((id) => analysts.get(id));
+
+        const eligibleRows = rows.filter((row) => !row.analystId);
+        const conflictingRows = rows.filter((row) => Boolean(row.analystId));
+
+        const eligibleCount = eligibleRows.length;
+        const analystCount = orderedAnalysts.length;
+        const equalAllocationCount = analystCount > 0 ? Math.floor(eligibleCount / analystCount) : 0;
+        const allocatedCount = equalAllocationCount * analystCount;
+        const remainderCount = eligibleCount - allocatedCount;
+
+        const plan = [];
+        let offset = 0;
+        for (const analyst of orderedAnalysts) {
+            const chunk = eligibleRows.slice(offset, offset + equalAllocationCount);
+            for (const row of chunk) {
+                plan.push({ passportId: row.passportId, analystId: analyst.adminId });
+            }
+            offset += equalAllocationCount;
+        }
+
+        const now = new Date();
+        if (plan.length) {
+            await tx.candidateAllocation.createMany({
+                data: plan.map((entry) => ({
+                    passportId: entry.passportId,
+                    analystId: entry.analystId,
+                    assignedDate: now,
+                })),
+            });
+            await audit(tx, plan.map((entry) => auditRow({
+                actor,
+                action: ALLOCATION_AUDIT_ACTION.ASSIGN,
+                passportId: entry.passportId,
+                from: null,
+                to: analysts.get(entry.analystId),
+            })));
+        }
+
+        const remainderRows = eligibleRows.slice(allocatedCount);
+        const unallocatedCandidateIds = remainderRows.map((r) => r.passportId);
+        const skippedCandidateIds = conflictingRows.map((r) => r.passportId);
+
+        return {
+            selectedCount: rows.length,
+            eligibleCount,
+            allocatedCount,
+            analystCount,
+            equalAllocationCount,
+            remainderCount,
+            conflictsCount: conflictingRows.length,
+            skippedCount: conflictingRows.length,
+            unallocatedCandidateIds,
+            skippedCandidateIds,
+            byAnalyst: orderedAnalysts.map((a) => ({
+                analystId: a.adminId,
+                name: a.name,
+                count: equalAllocationCount,
+            })),
+        };
+    });
+}
+
