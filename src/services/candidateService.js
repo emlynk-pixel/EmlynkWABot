@@ -33,6 +33,7 @@ import { DOCUMENT_PROCESSING_STATUS_STORED, VERIFICATION_STATUS } from "./client
 import { clientSearchWhere } from "./adminClientService.js";
 import { findUsersByWhatsappNumber } from "./userLookupService.js";
 import { openFollowUp } from "./callLogFollowUpService.js";
+import { candidateJobAssignments } from "./jobAssignmentReader.js";
 
 // ---------------------------------------------------------------- definitions
 
@@ -655,7 +656,9 @@ export async function getCandidate({ db, passportId }) {
     if (!user) return null;
 
     const documents = currentDocuments(user.documents);
+    const jobAssignments = await candidateJobAssignments(db, passportId);
     return {
+        jobAssignments,
         candidate: {
             ...candidateSummary(user),
             surname: user.otherName ?? null,

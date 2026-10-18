@@ -23,6 +23,7 @@ const DEFAULT_PAGE_SIZE = 25;
 
 const CATEGORY_LABELS: Record<AuditCategory, string> = {
     CANDIDATE: "Candidate",
+    JOB: "Job",
     STAGE: "Stage",
     DOCUMENT: "Document",
     REVIEW: "Review",
@@ -32,6 +33,13 @@ const CATEGORY_LABELS: Record<AuditCategory, string> = {
 const CATEGORIES = Object.keys(CATEGORY_LABELS) as AuditCategory[];
 
 const ACTION_LABELS: Record<string, string> = {
+    CREATE_JOB: "Job created",
+    UPDATE_JOB: "Job updated",
+    COMPLETE_JOB: "Job completed",
+    CANCEL_JOB: "Job cancelled",
+    ADD_CANDIDATE_TO_JOB: "Candidate added to a job",
+    REMOVE_CANDIDATE_FROM_JOB: "Candidate removed from a job",
+    CREATE_JOB_TYPE: "Job type created",
     CREATE_CANDIDATE: "Candidate registered",
     UPDATE_CANDIDATE: "Candidate details updated",
     UPDATE_STAGE: "Stage updated",
@@ -58,6 +66,7 @@ export const actionLabel = (action: string) => ACTION_LABELS[action] ?? humanize
 
 const CATEGORY_TONES: Record<AuditCategory, Tone> = {
     CANDIDATE: "verified",
+    JOB: "verified",
     STAGE: "pending",
     DOCUMENT: "review",
     REVIEW: "review",
