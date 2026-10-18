@@ -5,6 +5,7 @@ import { STAGE_LABELS } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import {
     assignCandidates,
+    autoAllocateCandidates,
     listAllocationAnalysts,
     listAllocationCandidates,
     unassignCandidates,
@@ -66,11 +67,12 @@ function WorkAllocationView() {
     useEffect(() => setSearchText(search ?? ""), [search]);
     // Selected rows of the current page, in table order.
     const [selected, setSelected] = useState<Map<string, AllocationCandidate>>(new Map());
+    const [selectedAnalysts, setSelectedAnalysts] = useState<Set<string>>(new Set());
     const [counts, setCounts] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState(false);
     const [notice, setNotice] = useState<string | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
-    const [confirm, setConfirm] = useState<"reassign" | "unassign" | null>(null);
+    const [confirm, setConfirm] = useState<"reassign" | "unassign" | "allocate" | null>(null);
 
     // A new page, view or search starts with nothing selected.
     const listKey = searchParams.toString();
@@ -118,6 +120,22 @@ function WorkAllocationView() {
         const value = raw === "" ? 0 : Number(raw);
         return { analyst, raw, value, valid: raw === "" || (/^\d+$/.test(raw) && Number.isInteger(value)) };
     });
+    const toggleAnalyst = (id: string) => setSelectedAnalysts((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+    });
+    const allAnalystsSelected = activeAnalysts.length > 0 && activeAnalysts.every((a) => selectedAnalysts.has(a.analystId));
+    const toggleAllAnalysts = () => setSelectedAnalysts(allAnalystsSelected ? new Set() : new Set(activeAnalysts.map((a) => a.analystId)));
+    const selectedAnalystCount = selectedAnalysts.size;
+
+    const eligibleSelection = selection.filter((item) => !item.analyst);
+    const eligibleCount = eligibleSelection.length;
+    const equalAllocationCount = selectedAnalystCount > 0 ? Math.floor(eligibleCount / selectedAnalystCount) : 0;
+    const autoAllocatedTotal = equalAllocationCount * selectedAnalystCount;
+    const autoRemainder = eligibleCount - autoAllocatedTotal;
+
     const total = parsedCounts.reduce((sum, entry) => sum + (entry.valid ? entry.value : 0), 0);
     const invalidCount = parsedCounts.some((entry) => !entry.valid);
     const validation = useMemo(() => {
@@ -144,6 +162,33 @@ function WorkAllocationView() {
             setConfirm(null);
             clearSelection();
             reloadAll();
+        }
+    };
+
+    const runAutoAllocate = async () => {
+        if (!token || !selectedCount || !selectedAnalystCount || busy) return;
+        setBusy(true);
+        setActionError(null);
+        setNotice(null);
+        try {
+            const result = await autoAllocateCandidates(token, {
+                candidateIds: selection.map((item) => item.passportId),
+                analystIds: [...selectedAnalysts],
+            });
+            const remainderText = result.remainderCount > 0
+                ? ` ${formatNumber(result.remainderCount)} ${result.remainderCount === 1 ? "candidate remains" : "candidates remain"} unallocated.`
+                : "";
+            const skippedText = result.skippedCount > 0
+                ? ` (${formatNumber(result.skippedCount)} already allocated ${result.skippedCount === 1 ? "candidate was" : "candidates were"} skipped)`
+                : "";
+            setNotice(`${formatNumber(result.allocatedCount)} candidates allocated successfully. ${formatNumber(result.analystCount)} analysts received ${formatNumber(result.equalAllocationCount)} candidates each.${remainderText}${skippedText}`);
+            setConfirm(null);
+            clearSelection();
+            reloadAll();
+        } catch (error) {
+            failed(error);
+        } finally {
+            setBusy(false);
         }
     };
 
@@ -367,14 +412,31 @@ function WorkAllocationView() {
                     )}
                     {activeAnalysts.length > 0 && (
                         <>
-                            <ul aria-label="Analysts" className="mt-3 divide-y divide-border">
+                            <div className="mt-3 flex items-center justify-between border-b border-border pb-1.5 text-label-sm">
+                                <span className="text-ink-soft">{formatNumber(selectedAnalystCount)} of {formatNumber(activeAnalysts.length)} Analysts selected</span>
+                                <button type="button" onClick={toggleAllAnalysts} disabled={busy} className="text-primary hover:underline">
+                                    {allAnalystsSelected ? "Deselect all" : "Select all"}
+                                </button>
+                            </div>
+                            <ul aria-label="Analysts" className="divide-y divide-border">
                                 {parsedCounts.map(({ analyst, raw, value, valid }) => (
                                     <li key={analyst.analystId} className="flex items-center gap-2 py-2">
+                                        <input
+                                            type="checkbox"
+                                            aria-label={`Select ${analyst.name}`}
+                                            checked={selectedAnalysts.has(analyst.analystId)}
+                                            onChange={() => toggleAnalyst(analyst.analystId)}
+                                            disabled={busy}
+                                            className="size-4 accent-primary"
+                                        />
                                         <div className="min-w-0 flex-1">
                                             <p className="truncate text-body-sm text-ink">{analyst.name}</p>
                                             <p className="text-label-sm text-ink-subtle tabular-nums">
                                                 {formatNumber(analyst.assignedCount)} {analyst.assignedCount === 1 ? "candidate" : "candidates"}
                                                 {valid && value > 0 && <span className="text-primary"> → {formatNumber(analyst.assignedCount + value)}</span>}
+                                                {selectedAnalysts.has(analyst.analystId) && equalAllocationCount > 0 && !value && (
+                                                    <span className="font-medium text-primary"> (+{formatNumber(equalAllocationCount)})</span>
+                                                )}
                                             </p>
                                         </div>
                                         <button type="button" onClick={() => giveAllTo(analyst.analystId)} disabled={!selectedCount || busy} className="text-label-sm text-primary hover:underline disabled:text-ink-subtle disabled:no-underline">All</button>
@@ -392,14 +454,55 @@ function WorkAllocationView() {
                                     </li>
                                 ))}
                             </ul>
-                            <p className="mt-2 flex justify-between border-t border-border pt-2 text-label-md tabular-nums">
-                                <span className="text-ink-soft">Total</span>
-                                <span className={selectedCount && total === selectedCount ? "text-verified" : "text-ink"}>{formatNumber(total)} / {formatNumber(selectedCount)}</span>
-                            </p>
-                            {validation && selectedCount > 0 && <p className="mt-1 text-label-sm text-ink-muted">{validation}</p>}
-                            <button type="button" onClick={onAssign} disabled={Boolean(validation) || busy} className={`${primaryButton} mt-3 w-full`}>
-                                {busy && !confirm ? "Saving…" : alreadyAllocated.length ? `Reassign ${formatNumber(selectedCount)} candidates` : `Assign ${formatNumber(selectedCount)} candidates`}
+
+                            <div className="mt-3 space-y-1.5 rounded border border-border bg-canvas p-3 text-body-sm">
+                                <div className="flex justify-between text-ink">
+                                    <span className="text-ink-muted">Selected candidates:</span>
+                                    <span className="font-medium tabular-nums">{formatNumber(selectedCount)}</span>
+                                </div>
+                                <div className="flex justify-between text-ink">
+                                    <span className="text-ink-muted">Selected analysts:</span>
+                                    <span className="font-medium tabular-nums">{formatNumber(selectedAnalystCount)}</span>
+                                </div>
+                                <div className="flex justify-between text-ink">
+                                    <span className="text-ink-muted">Each analyst will receive:</span>
+                                    <span className="font-medium tabular-nums text-primary">{formatNumber(equalAllocationCount)}</span>
+                                </div>
+                                <div className="flex justify-between text-ink">
+                                    <span className="text-ink-muted">Remaining unallocated:</span>
+                                    <span className={`font-medium tabular-nums ${autoRemainder > 0 ? "font-semibold text-pending" : "text-ink"}`}>{formatNumber(autoRemainder)}</span>
+                                </div>
+                                {alreadyAllocated.length > 0 && (
+                                    <p className="border-t border-border pt-1 text-label-sm text-review">
+                                        {formatNumber(alreadyAllocated.length)} already allocated will be skipped
+                                    </p>
+                                )}
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => setConfirm("allocate")}
+                                disabled={!selectedCount || !selectedAnalystCount || busy}
+                                className={`${primaryButton} mt-3 w-full`}
+                            >
+                                {busy && confirm === "allocate" ? "Allocating…" : "Allocate"}
                             </button>
+
+                            <div className="mt-3 border-t border-border pt-2">
+                                <p className="flex justify-between text-label-sm tabular-nums text-ink-muted">
+                                    <span>Manual total</span>
+                                    <span className={selectedCount && total === selectedCount ? "font-medium text-verified" : "text-ink"}>{formatNumber(total)} / {formatNumber(selectedCount)}</span>
+                                </p>
+                                {validation && selectedCount > 0 && total > 0 && <p className="mt-1 text-label-sm text-ink-muted">{validation}</p>}
+                                <button
+                                    type="button"
+                                    onClick={onAssign}
+                                    disabled={Boolean(validation) || busy}
+                                    className={`${secondaryButton} mt-2 w-full`}
+                                >
+                                    {busy && !confirm ? "Saving…" : alreadyAllocated.length ? `Reassign ${formatNumber(selectedCount)} candidates` : `Assign ${formatNumber(selectedCount)} candidates`}
+                                </button>
+                            </div>
                         </>
                     )}
                     {alreadyAllocated.length > 0 && (
@@ -409,6 +512,54 @@ function WorkAllocationView() {
                     )}
                 </Card>
             </div>
+
+            {confirm === "allocate" && (
+                <ActionDialog title="Confirm Allocation" busy={busy} onClose={() => setConfirm(null)}>
+                    <div className="space-y-3 text-body-sm text-ink-soft">
+                        <p>
+                            {formatNumber(autoAllocatedTotal)} {autoAllocatedTotal === 1 ? "candidate" : "candidates"} will be allocated equally across {formatNumber(selectedAnalystCount)} {selectedAnalystCount === 1 ? "analyst" : "analysts"}.
+                        </p>
+                        <p>
+                            {formatNumber(equalAllocationCount)} {equalAllocationCount === 1 ? "candidate" : "candidates"} will be assigned to each analyst.
+                        </p>
+                        {autoRemainder > 0 && (
+                            <p className="font-medium text-pending">
+                                {formatNumber(autoRemainder)} selected {autoRemainder === 1 ? "candidate" : "candidates"} will remain unallocated.
+                            </p>
+                        )}
+                        {alreadyAllocated.length > 0 && (
+                            <p className="text-label-sm text-review">
+                                {formatNumber(alreadyAllocated.length)} already allocated {alreadyAllocated.length === 1 ? "candidate" : "candidates"} will be skipped and remain with their current analysts.
+                            </p>
+                        )}
+                        <div className="space-y-1 rounded border border-border bg-canvas p-3 text-label-sm">
+                            <div className="flex justify-between">
+                                <span className="text-ink-muted">Selected candidates:</span>
+                                <span className="tabular-nums font-medium">{formatNumber(selectedCount)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-ink-muted">Selected analysts:</span>
+                                <span className="tabular-nums font-medium">{formatNumber(selectedAnalystCount)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-ink-muted">Each analyst will receive:</span>
+                                <span className="tabular-nums font-medium text-primary">{formatNumber(equalAllocationCount)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-ink-muted">Remaining unallocated:</span>
+                                <span className={`tabular-nums font-medium ${autoRemainder > 0 ? "font-semibold text-pending" : ""}`}>{formatNumber(autoRemainder)}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <DialogError message={actionError} />
+                    <div className="mt-4 flex justify-end gap-2">
+                        <button type="button" onClick={() => setConfirm(null)} disabled={busy} className={secondaryButton}>Cancel</button>
+                        <button type="button" onClick={runAutoAllocate} disabled={busy} className={primaryButton}>
+                            {busy ? "Allocating…" : "Allocate"}
+                        </button>
+                    </div>
+                </ActionDialog>
+            )}
 
             {confirm === "reassign" && (
                 <ActionDialog title="Reassign candidates?" busy={busy} onClose={() => setConfirm(null)}>

@@ -603,7 +603,9 @@ describe("security and error handling", () => {
             "POST /review/:reviewId/remove",
             "POST /review/:reviewId/replace-verified", // M4 Policy B: existing verified document of the same type only
             "POST /review/:reviewId/retry", // H3: failed submissions only
+            "POST /work-allocation/allocate",
             "POST /work-allocation/assign", // Work Allocation: ADMIN and MANAGER; one transaction, audited (workAllocation.test.js)
+            "POST /work-allocation/auto-allocate",
             "POST /work-allocation/unassign",
             "PUT /candidates/:passportId",
             "PUT /candidates/:passportId/additional-details",

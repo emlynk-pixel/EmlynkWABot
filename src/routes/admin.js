@@ -61,10 +61,12 @@ import {
 import { accessiblePassportIds, ALLOCATION_MANAGER_ROLES, canAccessCandidate, candidateScope, isCandidateScoped } from "../services/candidateAccess.js";
 import {
     assignCandidates,
+    autoAllocateCandidates,
     listAllocationAnalysts,
     listAllocationCandidates,
     parseAllocationListQuery,
     parseAssignBody,
+    parseAutoAllocateBody,
     parseUnassignBody,
     unassignCandidates,
 } from "../services/workAllocationService.js";
@@ -774,6 +776,18 @@ export function createAdminRouter({
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await assignCandidates({ db: client, actor: req.user, ...parsed.values })));
     });
+
+    const handleAutoAllocate = async (req, res) => {
+        const parsed = parseAutoAllocateBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await autoAllocateCandidates({ db: client, actor: req.user, ...parsed.values })));
+    };
+
+    router.post("/work-allocation/auto-allocate", requireRole(ALLOCATION_MANAGER_ROLES), handleAutoAllocate);
+    router.post("/work-allocation/allocate", requireRole(ALLOCATION_MANAGER_ROLES), handleAutoAllocate);
 
     router.post("/work-allocation/unassign", requireRole(ALLOCATION_MANAGER_ROLES), async (req, res) => {
         const parsed = parseUnassignBody(req.body);
