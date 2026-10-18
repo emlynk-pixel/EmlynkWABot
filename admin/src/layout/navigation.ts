@@ -1,5 +1,5 @@
 import type { IconName } from "../components/Icon";
-import { ADMIN_ONLY, ALLOCATION_ROLES, CANDIDATE_ROLES, DASHBOARD_ROLES, JOB_VIEW_ROLES, type Role } from "../auth/roles";
+import { ADMIN_ONLY, ALLOCATION_ROLES, CANDIDATE_ROLES, DASHBOARD_ROLES, JOB_VIEW_ROLES, MASTER_DATA_ROLES, type Role } from "../auth/roles";
 
 // Sidebar entries, in the order of the Stitch design, plus Missing Documents
 // and Daily Report (Phase 10 scope, same design language), Audit Logs
@@ -20,6 +20,9 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/follow-ups", label: "Need Attention", icon: "flag", roles: CANDIDATE_ROLES },
     // Jobs and the candidates assigned to them (ADMIN and MANAGER manage; ANALYST reads their own).
     { to: "/jobs", label: "Jobs", icon: "work", roles: JOB_VIEW_ROLES },
+    // The recruiting partners and the employer clients they manage (ADMIN and MANAGER). The
+    // technical route is /client-management: /clients is the candidate-documents area.
+    { to: "/agents", label: "Agents", icon: "support_agent", roles: MASTER_DATA_ROLES },
     // Assigning candidates to Analysts (ADMIN and MANAGER).
     { to: "/work-allocation", label: "Work Allocation", icon: "assignment_ind", roles: ALLOCATION_ROLES },
     { to: "/missing-documents", label: "Missing Documents", icon: "assignment_late", roles: DASHBOARD_ROLES },

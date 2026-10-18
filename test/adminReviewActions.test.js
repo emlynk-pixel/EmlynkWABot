@@ -574,6 +574,9 @@ describe("security and error handling", () => {
             "DELETE /follow-ups/:followUpId", // Priority Follow-Ups: ADMIN and MANAGER; the follow-up row only (callLogFollowUps.test.js)
             "DELETE /jobs/:jobId/candidates/:passportId", // Jobs: ADMIN and MANAGER, audited (jobManagement.test.js)
             "DELETE /temporary-documents/:temporaryId",
+            "PATCH /agents/:agentId", // Agents and Client Management: ADMIN and MANAGER, audited (agentClientManagement.test.js)
+            "PATCH /agents/:agentId/status",
+            "POST /agents",
             "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",
             "POST /candidates/:passportId/call-logs/:callLogId/follow-up", // flag a call for follow-up, audited

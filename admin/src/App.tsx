@@ -7,6 +7,8 @@ import { CandidateDeploymentPage } from "./pages/CandidateDeploymentPage";
 import { CandidateRegistrationPage } from "./pages/CandidateRegistrationPage";
 import { CandidatesPage } from "./pages/CandidatesPage";
 import { ClientDetailsPage } from "./pages/ClientDetailsPage";
+import { AgentDetailsPage } from "./pages/AgentDetailsPage";
+import { AgentsPage } from "./pages/AgentsPage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { JobDetailsPage } from "./pages/JobDetailsPage";
 import { JobsPage } from "./pages/JobsPage";
@@ -87,6 +89,8 @@ export function AppRoutes() {
                 <Route path="follow-ups" element={<PriorityFollowUpsPage />} />
                 <Route path="jobs" element={<JobsPage />} />
                 <Route path="jobs/:jobId" element={<JobDetailsPage />} />
+                <Route path="agents" element={<AgentsPage />} />
+                <Route path="agents/:agentId" element={<AgentDetailsPage />} />
                 <Route path="work-allocation" element={<WorkAllocationPage />} />
                 <Route path="reports/daily" element={<DailyReportPage />} />
                 {/* Invite User and Change Roles are Settings tabs; the old URLs

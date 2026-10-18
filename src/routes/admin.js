@@ -89,6 +89,19 @@ import {
     removeCandidateFromJob,
     updateJob,
 } from "../services/jobService.js";
+import {
+    createAgent,
+    getAgent,
+    isValidUuid,
+    listAgentOptions,
+    listAgents,
+    parseCreateAgentBody,
+    parseListQuery,
+    parseStatusBody,
+    parseUpdateAgentBody,
+    setAgentStatus,
+    updateAgent,
+} from "../services/agentService.js";
 import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
@@ -806,6 +819,58 @@ export function createAdminRouter({
         if (!jobBody(res, parsed)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await cancelJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), reason: parsed.values.reason })));
+    });
+
+    // ---------------------------------------------------------------- Agents and Clients (agentService.js, clientService.js)
+    // ADMIN and MANAGER only (every method); no delete route exists: Agents and
+    // Clients are made ACTIVE / INACTIVE, never removed. The employer Client lives
+    // under /client-management because /clients is the legacy candidate-documents area.
+    const entityParam = (name, notFound) => (req, res) => {
+        if (isValidUuid(req.params[name])) return true;
+        res.status(404).json(notFound);
+        return false;
+    };
+    const agentParam = entityParam("agentId", { message: "Agent not found", code: "AGENT_NOT_FOUND" });
+    const queryErrors = (res, parsed) => {
+        if (!parsed.errors) return false;
+        res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        return true;
+    };
+
+    router.get("/agents", requireRole(MANAGERS_UP), async (req, res) => {
+        const parsed = parseListQuery(req.query);
+        if (queryErrors(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return res.json(await listAgents({ db: client, params: parsed.params }));
+    });
+    router.get("/agent-options", requireRole(MANAGERS_UP), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json(await listAgentOptions({ db: client }));
+    });
+    router.post("/agents", requireRole(MANAGERS_UP), async (req, res) => {
+        const parsed = parseCreateAgentBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await createAgent({ db: client, actor: req.user, values: parsed.values })));
+    });
+    router.get("/agents/:agentId", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!agentParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getAgent({ db: client, agentId: req.params.agentId.toLowerCase() })));
+    });
+    router.patch("/agents/:agentId", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!agentParam(req, res)) return undefined;
+        const parsed = parseUpdateAgentBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await updateAgent({ db: client, actor: req.user, agentId: req.params.agentId.toLowerCase(), values: parsed.values })));
+    });
+    router.patch("/agents/:agentId/status", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!agentParam(req, res)) return undefined;
+        const parsed = parseStatusBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await setAgentStatus({ db: client, actor: req.user, agentId: req.params.agentId.toLowerCase(), status: parsed.values.status })));
     });
 
     // ---------------------------------------------------------------- audit logs (ADMIN only, read-only)
