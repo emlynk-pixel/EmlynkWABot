@@ -201,16 +201,17 @@ describe("dashboard shell", () => {
 
     test("ADMIN: every section, then Audit Logs and Settings (Invite User and Change Roles are Settings tabs)", async () => {
         await signedIn();
-        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Work Allocation", "Missing Documents", "Police Workflow", "Daily Report", "Audit Logs", "Settings"]);
+        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Agents", "Work Allocation", "Missing Documents", "Police Workflow", "Daily Report", "Audit Logs", "Settings"]);
         await userEvent.setup().click(screen.getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });
 
-    test("MANAGER and ANALYST: the dashboard sections, no user management or Settings; Jobs for both; Work Allocation for MANAGER only", async () => {
+    test("MANAGER and ANALYST: the dashboard sections, no user management or Settings; Jobs for both; Agents and Work Allocation for MANAGER only", async () => {
         for (const role of ["MANAGER", "ANALYST"]) {
             await signedIn("/", userWithRole(role));
+            const masterData = role === "MANAGER" ? ["Agents"] : [];
             const allocation = role === "MANAGER" ? ["Work Allocation"] : [];
-            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", ...allocation, "Missing Documents", "Police Workflow", "Daily Report"]);
+            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", ...masterData, ...allocation, "Missing Documents", "Police Workflow", "Daily Report"]);
             document.body.innerHTML = "";
         }
     });

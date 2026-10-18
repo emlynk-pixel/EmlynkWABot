@@ -280,7 +280,7 @@ describe("GET /api/admin/audit-logs", () => {
 
             assert.deepEqual(body.filters.users.map((u) => u.name), ["Ada Admin", "Ali Analyst", "Dee Desk", "Mia Manager"]);
             assert.ok(body.filters.actions.includes("UPDATE_STAGE"));
-            assert.deepEqual(body.filters.categories.map((c) => c.category), ["CANDIDATE", "JOB", "STAGE", "DOCUMENT", "REVIEW", "USER", "OTHER"]);
+            assert.deepEqual(body.filters.categories.map((c) => c.category), ["CANDIDATE", "JOB", "AGENT", "STAGE", "DOCUMENT", "REVIEW", "USER", "OTHER"]);
         });
     });
 

@@ -305,7 +305,7 @@ describe("roles and the Analyst scope (JOB-015, JOB-016)", () => {
             ["DELETE", `/jobs/${job.jobId}/candidates/${pid(1)}`],
             ["POST", `/jobs/${job.jobId}/complete`, {}],
             ["POST", `/jobs/${job.jobId}/cancel`, { reason: "x" }],
-            ["POST", "/job-types", { name: "Cook" }], 
+            ["POST", "/job-types", { name: "Cook" }], ["POST", "/agents", { name: "A", countryCode: "RO" }],
             ["GET", "/job-options"],
         ];
         for (const who of [USERS.ANN, USERS.DESK]) {

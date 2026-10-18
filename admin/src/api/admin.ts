@@ -605,7 +605,7 @@ export function deactivateUser(token: string, userId: string): Promise<{ user: U
 
 // ---------------------------------------------------------------- audit logs (ADMIN only, read-only)
 
-export type AuditCategory = "CANDIDATE" | "JOB" | "STAGE" | "DOCUMENT" | "REVIEW" | "USER" | "OTHER";
+export type AuditCategory = "CANDIDATE" | "JOB" | "AGENT" | "STAGE" | "DOCUMENT" | "REVIEW" | "USER" | "OTHER";
 export type AuditChange = { field: string; from: string | boolean | null; to: string | boolean | null };
 
 export type AuditLogItem = {
