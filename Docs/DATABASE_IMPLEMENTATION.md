@@ -335,6 +335,11 @@ Migrations 6.1 and 6.2 are applied and active on the shared database.
 - Enables RLS and revokes all privileges from `anon` and `authenticated` (SEC-001), like every other application table.
 - Until it is applied, the Additional Details endpoints fail on that database (the table does not exist). The candidate page loads them with the candidate, so apply the migration **before** deploying this version of the admin app; everything else keeps working in the meantime.
 
+### 6.4 `20261018120000_job_management` and `20261019120000_client_management`
+- **Job Management** (additive): `job_type`, `agent`, `job_code_counter`, `job`, `job_candidate` and the employer table (created as `company`), with CHECKs, the partial unique index `job_candidate_one_active_per_candidate` and the status triggers. RLS on, no `anon` / `authenticated` access. See `JOB_MANAGEMENT_IMPLEMENTATION.md`.
+- **Client Management** (forward-only): renames `company` to `client` in place (rows, UUIDs, primary key and the job foreign key kept; `job.company_id` becomes `client_id`), adds `client.agent_id` (FK to `agent`, `RESTRICT`; backfilled from the client's newest job), contact columns on `agent` and `client`, and `job.company_job_id` (the employer's own external job reference, name kept) with a per-client unique index. Agents and clients are never deleted: `is_active` is the ACTIVE / INACTIVE status. See `AGENT_CLIENT_MANAGEMENT.md`.
+- Relationships: `Agent 1──∞ Client 1──∞ Job`, `Agent 1──∞ Job (responsible_agent_id)`, `Job 1──∞ job_candidate ∞──1 Candidate`.
+
 ---
 
 ## 7. Foreign Keys and Relationships
