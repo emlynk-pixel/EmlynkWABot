@@ -65,6 +65,29 @@ export function assignCandidates(
     return apiRequest<AssignResult>("/api/admin/work-allocation/assign", { method: "POST", token, body });
 }
 
+export type AutoAllocateResult = {
+    selectedCount: number;
+    eligibleCount: number;
+    allocatedCount: number;
+    analystCount: number;
+    equalAllocationCount: number;
+    remainderCount: number;
+    conflictsCount: number;
+    skippedCount: number;
+    unallocatedCandidateIds: string[];
+    skippedCandidateIds: string[];
+    byAnalyst: { analystId: string; name: string; count: number }[];
+};
+
+// Automatic equal distribution across selected analysts.
+export function autoAllocateCandidates(
+    token: string,
+    body: { candidateIds: string[]; analystIds: string[] },
+): Promise<AutoAllocateResult> {
+    return apiRequest<AutoAllocateResult>("/api/admin/work-allocation/auto-allocate", { method: "POST", token, body });
+}
+
 export function unassignCandidates(token: string, candidateIds: string[]): Promise<{ unassigned: number; alreadyUnallocated: number }> {
     return apiRequest("/api/admin/work-allocation/unassign", { method: "POST", token, body: { candidateIds, confirm: true } });
 }
+

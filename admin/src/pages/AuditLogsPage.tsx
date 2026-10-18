@@ -12,6 +12,7 @@ import { AUDIT_ACTIONS as REVIEW_ACTIONS } from "../components/reviewLabels";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { ToneBadge, type Tone } from "../components/StatusBadge";
 import { fieldLabel, filterControl, tableCell, tableCellWrap, tableHead } from "../components/ui";
+import { DatePicker } from "../components/DatePicker";
 
 // Audit Logs (ADMIN only): who changed what, newest first. View only: there
 // is no edit, delete, clear or rollback here or in the API. Filters and the
@@ -23,6 +24,9 @@ const DEFAULT_PAGE_SIZE = 25;
 
 const CATEGORY_LABELS: Record<AuditCategory, string> = {
     CANDIDATE: "Candidate",
+    JOB: "Job",
+    AGENT: "Agent",
+    CLIENT: "Client Management",
     STAGE: "Stage",
     DOCUMENT: "Document",
     REVIEW: "Review",
@@ -32,6 +36,20 @@ const CATEGORY_LABELS: Record<AuditCategory, string> = {
 const CATEGORIES = Object.keys(CATEGORY_LABELS) as AuditCategory[];
 
 const ACTION_LABELS: Record<string, string> = {
+    CREATE_JOB: "Job created",
+    UPDATE_JOB: "Job updated",
+    COMPLETE_JOB: "Job completed",
+    CANCEL_JOB: "Job cancelled",
+    ADD_CANDIDATE_TO_JOB: "Candidate added to a job",
+    REMOVE_CANDIDATE_FROM_JOB: "Candidate removed from a job",
+    CREATE_JOB_TYPE: "Job type created",
+    AGENT_CREATED: "Agent created",
+    AGENT_UPDATED: "Agent updated",
+    AGENT_STATUS_CHANGED: "Agent status changed",
+    CLIENT_CREATED: "Client created",
+    CLIENT_UPDATED: "Client updated",
+    CLIENT_AGENT_CHANGED: "Client's agent changed",
+    CLIENT_STATUS_CHANGED: "Client status changed",
     CREATE_CANDIDATE: "Candidate registered",
     UPDATE_CANDIDATE: "Candidate details updated",
     UPDATE_STAGE: "Stage updated",
@@ -58,6 +76,9 @@ export const actionLabel = (action: string) => ACTION_LABELS[action] ?? humanize
 
 const CATEGORY_TONES: Record<AuditCategory, Tone> = {
     CANDIDATE: "verified",
+    JOB: "verified",
+    AGENT: "duplicate",
+    CLIENT: "duplicate",
     STAGE: "pending",
     DOCUMENT: "review",
     REVIEW: "review",
@@ -240,10 +261,10 @@ function AuditLogsView() {
                         </select>
                     </FilterField>
                     <FilterField label="From" htmlFor="audit-start">
-                        <input id="audit-start" type="date" value={params.startDate ?? ""} max={params.endDate} onChange={(e) => update({ startDate: e.target.value || undefined })} className={filterControl} />
+                        <DatePicker id="audit-start" value={params.startDate ?? ""} max={params.endDate} onChange={(date) => update({ startDate: date || undefined })} className={filterControl} />
                     </FilterField>
                     <FilterField label="To" htmlFor="audit-end">
-                        <input id="audit-end" type="date" value={params.endDate ?? ""} min={params.startDate} onChange={(e) => update({ endDate: e.target.value || undefined })} className={filterControl} />
+                        <DatePicker id="audit-end" value={params.endDate ?? ""} min={params.startDate} onChange={(date) => update({ endDate: date || undefined })} className={filterControl} />
                     </FilterField>
                     <FilterField label="Search" htmlFor="audit-search">
                         <input

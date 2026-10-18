@@ -20,21 +20,24 @@ datasource db {
 // status: INVITED | ACTIVE | INACTIVE (middleware/requireActiveUser.js).
 // role:   ADMIN | MANAGER | ANALYST | REGISTRATION_DESK (middleware/requireRole.js).
 model User {
-  adminId     String             @id @map("admin_id")
-  authUserId  String             @unique @map("auth_user_id") @db.Uuid
-  name        String
-  email       String             @unique
-  role        String
-  status      String             @default("ACTIVE")
-  createdDate DateTime           @default(now()) @map("created_date")
-  updatedDate DateTime           @updatedAt @map("updated_date")
-  auditLogs   AuditLog[]
-  callLogs    CandidateCallLog[]
+  adminId               String                @id @map("admin_id")
+  authUserId            String                @unique @map("auth_user_id") @db.Uuid
+  name                  String
+  email                 String                @unique
+  role                  String
+  status                String                @default("ACTIVE")
+  createdDate           DateTime              @default(now()) @map("created_date")
+  updatedDate           DateTime              @updatedAt @map("updated_date")
+  auditLogs             AuditLog[]
+  callLogs              CandidateCallLog[]
   // Priority Follow-Ups this user flagged / completed.
-  flaggedFollowUps   CallLogFollowUp[] @relation("FollowUpFlaggedBy")
-  completedFollowUps CallLogFollowUp[] @relation("FollowUpCompletedBy")
+  flaggedFollowUps      CallLogFollowUp[]     @relation("FollowUpFlaggedBy")
+  completedFollowUps    CallLogFollowUp[]     @relation("FollowUpCompletedBy")
   // Work Allocation: the candidates assigned to this user (an Analyst).
-  allocatedCandidates CandidateAllocation[]
+  allocatedCandidates   CandidateAllocation[]
+  // Job Management.
+  createdJobs           Job[]                 @relation("JobCreatedBy")
+  assignedJobCandidates JobCandidate[]        @relation("JobCandidateAssignedBy")
 
   @@map("user")
 }
@@ -107,13 +110,13 @@ model Candidate {
 
   // Candidate deployment (candidateService.js). NIC is unique, so the same
   // person can't be registered twice under two passport records.
-  nic               String?            @unique
-  jobExperience     String?            @map("job_experience")
+  nic               String?                     @unique
+  jobExperience     String?                     @map("job_experience")
   // Optional passport details with no earlier column (the passport OCR reads
   // date of birth, place of birth and expiry only). sex: M, F or X.
   nationality       String?
   sex               String?
-  passportIssueDate DateTime?          @map("passport_issue_date")
+  passportIssueDate DateTime?                   @map("passport_issue_date")
   stages            CandidateStage[]
   callLogs          CandidateCallLog[]
   // Optional extra details (Admin > Candidates > Additional Details). A
@@ -122,6 +125,7 @@ model Candidate {
   // Work Allocation: the Analyst the candidate is assigned to (no row:
   // unallocated). A relation only, like additionalDetails.
   allocation        CandidateAllocation?
+  jobAssignments    JobCandidate[]
 
   @@map("candidate")
 }
@@ -140,6 +144,138 @@ model CandidateAllocation {
 
   @@index([analystId])
   @@map("candidate_allocation")
+}
+
+// ---------------------------------------------------------------- Job Management
+// jobService.js. Migration 20261018120000_job_management. Docs/JOB_MANAGEMENT_IMPLEMENTATION.md.
+// CHECK constraints, partial unique indexes and triggers are in that
+// migration's SQL (not expressible here): maintain them through a SQL migration.
+
+// Controlled list of job types (no free text on a Job).
+model JobType {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  jobs Job[]
+
+  @@map("job_type")
+}
+
+// The employer / customer organisation a job belongs to (formerly "company";
+// migration 20261019120000_client_management). Each Client has ONE responsible
+// Agent (one Agent manages many Clients); a Client has many Jobs. Never
+// hard-deleted: is_active = INACTIVE. Its country is its Agent's country.
+model Client {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  // Null only for a client that predates agent assignment (see the migration).
+  agentId        String?  @map("agent_id") @db.Uuid
+  contactPerson  String?  @map("contact_person")
+  contactNumber  String?  @map("contact_number")
+  whatsappNumber String?  @map("whatsapp_number")
+  email          String?
+  address        String?
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  agent Agent? @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  jobs  Job[]
+
+  @@index([agentId])
+  @@map("client")
+}
+
+// The agent responsible for a job; country_code (ISO 3166-1 alpha-2) is the
+// agent's country and is copied onto each new job.
+model Agent {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  countryCode    String   @map("country_code") @db.Char(2)
+  isActive       Boolean  @default(true) @map("is_active")
+  contactNumber  String?  @map("contact_number")
+  whatsappNumber String?  @map("whatsapp_number")
+  email          String?
+  address        String?
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  clients Client[]
+  jobs    Job[]
+
+  @@map("agent")
+}
+
+// Yearly Job Code counter: next_number is the number the NEXT job of that
+// year gets. Incremented atomically (INSERT ... ON CONFLICT DO UPDATE).
+model JobCodeCounter {
+  year       Int @id
+  nextNumber Int @map("next_number")
+
+  @@map("job_code_counter")
+}
+
+// status: PROCESSING | COMPLETED | CANCELLED. Never hard-deleted. A COMPLETED
+// or CANCELLED job cannot go back to PROCESSING (trigger; reopen is an open
+// decision).
+model Job {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jobCode            String    @unique @map("job_code")
+  // The employer's own Job ID (Y26S01): an editable attribute, never a key.
+  // Unique per client when set (partial index in the SQL migration).
+  companyJobId       String?   @map("company_job_id")
+  jobTypeId          String    @map("job_type_id") @db.Uuid
+  clientId           String    @map("client_id") @db.Uuid
+  responsibleAgentId String    @map("responsible_agent_id") @db.Uuid
+  countryCode        String    @map("country_code") @db.Char(2)
+  vacancies          Int?
+  status             String    @default("PROCESSING")
+  createdById        String    @map("created_by")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  completedAt        DateTime? @map("completed_at")
+  cancelledAt        DateTime? @map("cancelled_at")
+  cancelReason       String?   @map("cancel_reason")
+
+  jobType          JobType        @relation(fields: [jobTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  client           Client         @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  responsibleAgent Agent          @relation(fields: [responsibleAgentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy        User           @relation("JobCreatedBy", fields: [createdById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  candidates       JobCandidate[]
+
+  @@index([status, createdAt])
+  @@index([clientId])
+  @@index([responsibleAgentId])
+  @@index([jobTypeId])
+  @@map("job")
+}
+
+// Candidate <-> Job membership and history. is_active = "this candidate is
+// currently on this PROCESSING job": a partial unique index (passport_id WHERE
+// is_active) allows at most ONE per candidate, and a trigger on job clears it
+// when the job leaves PROCESSING. released_at = removed from the job by staff.
+model JobCandidate {
+  jobId      String    @map("job_id") @db.Uuid
+  passportId String    @map("passport_id")
+  assignedAt DateTime  @default(now()) @map("assigned_at")
+  assignedBy String    @map("assigned_by")
+  isActive   Boolean   @default(true) @map("is_active")
+  releasedAt DateTime? @map("released_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  job             Job       @relation(fields: [jobId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  candidate       Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  assignedByStaff User      @relation("JobCandidateAssignedBy", fields: [assignedBy], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([jobId, passportId])
+  @@index([passportId])
+  @@map("job_candidate")
 }
 
 //added document table

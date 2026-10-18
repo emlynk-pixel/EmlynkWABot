@@ -572,15 +572,28 @@ describe("security and error handling", () => {
             .flatMap((layer) => Object.keys(layer.route.methods).filter((m) => m !== "get").map((m) => `${m.toUpperCase()} ${layer.route.path}`));
         assert.deepEqual(writes.sort(), [
             "DELETE /follow-ups/:followUpId", // Priority Follow-Ups: ADMIN and MANAGER; the follow-up row only (callLogFollowUps.test.js)
+            "DELETE /jobs/:jobId/candidates/:passportId", // Jobs: ADMIN and MANAGER, audited (jobManagement.test.js)
             "DELETE /temporary-documents/:temporaryId",
+            "PATCH /agents/:agentId", // Agents and Client Management: ADMIN and MANAGER, audited (agentClientManagement.test.js)
+            "PATCH /agents/:agentId/status",
+            "PATCH /client-management/:clientId",
+            "PATCH /client-management/:clientId/agent",
+            "PATCH /client-management/:clientId/status",
+            "POST /agents",
             "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",
             "POST /candidates/:passportId/call-logs/:callLogId/follow-up", // flag a call for follow-up, audited
             "POST /candidates/:passportId/documents/:documentId/remove", // reason required, audited
             "POST /candidates/:passportId/documents/finalize", // JSON only: the file goes browser -> storage
             "POST /candidates/:passportId/documents/upload-target",
+            "POST /client-management",
             "POST /documents/:documentId/police-date",
             "POST /follow-ups/:followUpId/complete", // the row is kept, audited
+            "POST /job-types",
+            "POST /jobs",
+            "POST /jobs/:jobId/cancel", // a reason is required
+            "POST /jobs/:jobId/candidates", // the one-PROCESSING-job rule is enforced in the service and the database
+            "POST /jobs/:jobId/complete",
             "POST /review/:reviewId/approve",
             "POST /review/:reviewId/assign-client",
             "POST /review/:reviewId/document-type",
@@ -589,11 +602,14 @@ describe("security and error handling", () => {
             "POST /review/:reviewId/remove",
             "POST /review/:reviewId/replace-verified", // M4 Policy B: existing verified document of the same type only
             "POST /review/:reviewId/retry", // H3: failed submissions only
+            "POST /work-allocation/allocate",
             "POST /work-allocation/assign", // Work Allocation: ADMIN and MANAGER; one transaction, audited (workAllocation.test.js)
+            "POST /work-allocation/auto-allocate",
             "POST /work-allocation/unassign",
             "PUT /candidates/:passportId",
             "PUT /candidates/:passportId/additional-details",
             "PUT /candidates/:passportId/stages/:stage",
+            "PUT /jobs/:jobId",
         ]);
     });
 

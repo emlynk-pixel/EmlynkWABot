@@ -37,6 +37,9 @@ import refresh from "@material-symbols/svg-400/outlined/refresh.svg?raw";
 import schedule from "@material-symbols/svg-400/outlined/schedule.svg?raw";
 import send from "@material-symbols/svg-400/outlined/send.svg?raw";
 import cancel from "@material-symbols/svg-400/outlined/cancel.svg?raw";
+import work from "@material-symbols/svg-400/outlined/work.svg?raw";
+import supportAgent from "@material-symbols/svg-400/outlined/support_agent.svg?raw";
+import apartment from "@material-symbols/svg-400/outlined/apartment.svg?raw";
 import visibility from "@material-symbols/svg-400/outlined/visibility.svg?raw";
 import visibilityOff from "@material-symbols/svg-400/outlined/visibility_off.svg?raw";
 import call from "@material-symbols/svg-400/outlined/call.svg?raw";
@@ -75,6 +78,9 @@ const ICONS = {
     person_add: personAdd,
     person_search: personSearch,
     assignment_ind: assignmentInd,
+    work,
+    support_agent: supportAgent,
+    apartment,
     refresh,
     schedule,
     search,

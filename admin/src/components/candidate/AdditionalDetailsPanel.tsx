@@ -11,6 +11,7 @@ import {
     type AdditionalDetailsView,
 } from "../../api/candidates";
 import { todayInSriLanka } from "../format";
+import { DatePicker } from "../DatePicker";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { ErrorState, LoadingState } from "../States";
 import { Field, fieldControl, textAreaControl } from "./CandidateFields";
@@ -168,7 +169,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved }: {
     );
     const dateField = (key: Key, label: string) => (
         <Field label={label} htmlFor={`ad-${key}`} error={errors[key]}>
-            <input id={`ad-${key}`} type="date" min="1900-01-01" max={today} value={form[key]} onChange={(e) => set(key)(e.target.value)} disabled={disabled} aria-invalid={Boolean(errors[key])} className={`${fieldControl} ${errors[key] ? "border-critical" : ""}`} />
+            <DatePicker id={`ad-${key}`} min="1900-01-01" max={today} value={form[key]} onChange={set(key)} disabled={disabled} invalid={Boolean(errors[key])} className={`${fieldControl} ${errors[key] ? "border-critical" : ""}`} />
         </Field>
     );
     const yesNo = (key: Key, label: string) => (

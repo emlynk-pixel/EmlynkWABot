@@ -11,6 +11,7 @@ import { Icon } from "../components/Icon";
 import { daysLeftLabel, policeStatusLabel } from "../components/policeLabels";
 import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
 import { StatusBadge, ToneBadge, statusTone } from "../components/StatusBadge";
+import { DatePicker } from "../components/DatePicker";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
     return (
@@ -108,15 +109,14 @@ function PoliceDateDialog({ slip, onClose, onSaved }: { slip: NonNullable<Client
                 <label htmlFor="slip-date" className="mt-3 block text-label-md text-ink">
                     Submitted date on the police slip <span aria-hidden="true" className="text-critical">*</span>
                 </label>
-                <input
+                <DatePicker
                     id="slip-date"
-                    type="date"
                     min="2000-01-01"
                     max={today}
                     value={date}
                     disabled={busy}
-                    onChange={(event) => {
-                        setDate(event.target.value);
+                    onChange={(next) => {
+                        setDate(next);
                         setFieldError(null);
                     }}
                     className="mt-1 h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"

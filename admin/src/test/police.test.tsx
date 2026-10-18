@@ -188,9 +188,12 @@ describe("approving a police slip", () => {
         const { calls, user, dialog } = await open(slipItem(), { [`POST /api/admin/review/pending-${TEMP_ID}/approve`]: { status: 200, body: approved("2026-09-10") } });
         const input = within(dialog).getByLabelText(/Submitted date on the police slip/);
         expect(input).toBeRequired();
-        expect(input).toHaveAttribute("type", "date");
-        expect(input).toHaveAttribute("min", "2000-01-01");
-        expect(input.getAttribute("max")).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        // A calendar field (typed YYYY-MM-DD or picked); the years run from 2000 to this year.
+        expect(input).toHaveAttribute("placeholder", "YYYY-MM-DD");
+        await user.click(within(dialog).getByRole("button", { name: "Open calendar" }));
+        const years = within(await screen.findByRole("dialog", { name: "Choose a date" })).getAllByRole("option", { name: /^\d{4}$/ }).map((o) => Number(o.textContent));
+        expect([years[0], years.at(-1)]).toEqual([2000, new Date().getFullYear()]);
+        await user.keyboard("{Escape}");
 
         await user.click(within(dialog).getByRole("button", { name: "Approve" }));
         expect(within(dialog).getByText("Enter the submitted date shown on the police slip.")).toBeInTheDocument();

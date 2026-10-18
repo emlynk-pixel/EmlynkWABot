@@ -49,6 +49,16 @@ export const canCorrectPoliceDates = (user: WithRole) => hasRole(user, POLICE_DA
 export const canDeleteFollowUps = (user: WithRole) => hasRole(user, FOLLOW_UP_DELETE_ROLES);
 // Work Allocation (the page and its API).
 export const canManageAllocations = (user: WithRole) => hasRole(user, ALLOCATION_ROLES);
+// Jobs: ADMIN and MANAGER manage them; an ANALYST reads the jobs holding their
+// own candidates (the server scopes the lists). REGISTRATION_DESK: no Jobs area.
+export const JOB_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER, ROLES.ANALYST];
+export const JOB_MANAGE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
+export const canViewJobs = (user: WithRole) => hasRole(user, JOB_VIEW_ROLES);
+export const canManageJobs = (user: WithRole) => hasRole(user, JOB_MANAGE_ROLES);
+// Agents and Client Management (the employer clients): ADMIN and MANAGER only,
+// for reading and writing. The other roles get no entry and the API answers 403.
+export const MASTER_DATA_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
+export const canManageMasterData = (user: WithRole) => hasRole(user, MASTER_DATA_ROLES);
 // Registering a new candidate.
 export const canRegisterCandidates = (user: WithRole) => hasRole(user, REGISTRATION_ROLES);
 // User management and Settings.

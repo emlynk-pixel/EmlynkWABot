@@ -15,6 +15,7 @@ import {
     type VariantDocumentType,
 } from "../../api/candidates";
 import { documentTypeLabel } from "../format";
+import { DatePicker } from "../DatePicker";
 import { Icon } from "../Icon";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { CandidateFields, completionGaps, detailsFrom, Field, fieldControl, textAreaControl, validateDetails } from "./CandidateFields";
@@ -185,7 +186,7 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
                         </select>
                     </Field>
                     <Field label="Test date" htmlFor={`${testId}-date`}>
-                        <input id={`${testId}-date`} type="date" value={testDate} disabled={!canEdit || busy} onChange={(event) => setTestDate(event.target.value)} className={fieldControl} />
+                        <DatePicker id={`${testId}-date`} value={testDate} disabled={!canEdit || busy} onChange={setTestDate} className={fieldControl} />
                     </Field>
                 </div>
             )}
