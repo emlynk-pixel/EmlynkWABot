@@ -687,6 +687,42 @@ The body holds the fields `nameAsInPassport, permanentAddress, birthday, tshirtS
   - `previous_value` / `new_value` hold only the changed fields as JSON, and the actor is `req.user`.
   - A save that changes nothing (or an empty form with nothing saved) writes no row and no audit entry.
 
+## 4q. Candidate Form share links
+
+Service: `src/services/candidateFormShareService.js`. Roles: ADMIN, MANAGER, ANALYST (allocated candidates only; others 404), REGISTRATION_DESK. Rules: `Docs/20-candidate-management.md` §4.6; design: `Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md`.
+
+### `GET /api/admin/candidates/:passportId/form-share`
+
+```json
+{
+  "passportId": "N1023757",
+  "state": "OPEN",
+  "submittedAt": null,
+  "link": { "linkId": "…", "createdAt": "…", "createdByName": "…", "expiresAt": "…", "lockedUntil": null }
+}
+```
+
+`state`: `LOCKED` (no usable link), `OPEN` (an active link), `SUBMITTED` (final). `link` is the active link or null. The link itself is never returned here.
+
+### `POST /api/admin/candidates/:passportId/form-share`
+
+No body. **201** `{ url, linkId, expiresAt, status }`, where `url` is `<CANDIDATE_FORM_ORIGIN>/#k=<secret>` and `status` is the GET shape.
+- The secret is 32 random bytes; only its SHA-256 is stored. `url` is returned **only in this response**.
+- Replaces the active link (revoked in the same transaction) and ends any open form session. Valid 3 days.
+- **409** `FORM_SUBMITTED` after the candidate submitted; **503** `FORM_NOT_CONFIGURED` without `CANDIDATE_FORM_ORIGIN`.
+- Audit `CREATE_FORM_LINK` (link ID and expiry, no secret).
+
+### `POST /api/admin/candidates/:passportId/form-share/revoke`
+
+No body. **200** with the GET shape. **404** `NO_ACTIVE_LINK` when there is none. Audit `REVOKE_FORM_LINK`.
+
+### Public endpoints used by the form (`/api/public/candidate-details`, not admin)
+
+POST only, CORS for `CANDIDATE_FORM_ORIGIN` only, public rate limits, 503 when not configured.
+- `POST /verify` `{ linkSecret, passportNumber, nic }` → 200 `{ token, expiresAt }`; 400 invalid input; 401 one generic failure; 409 `ALREADY_SUBMITTED` (only when everything matches); 429.
+- `POST /form` (Bearer token) → `{ identity: { passportNumber, nic, whatsappNumber }, answers, prefilled, expiresAt }`.
+- `POST /submit` (Bearer token) `{ answers, idempotencyKey }` → 200 `{ submittedAt }`; 400 `{ message, errors: [{ field, code }] }`; 401; 409 `ALREADY_SUBMITTED`. Writes only `candidate_form_response` and the access row.
+
 ## 4p. Work Allocation
 
 ADMIN and MANAGER only (`requireRole`): every other role gets 403. Rules: `Docs/20-candidate-management.md` §4.5.

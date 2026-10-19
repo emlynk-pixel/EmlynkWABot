@@ -6,6 +6,7 @@ import { createAdminRouter } from "./routes/admin.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { trustProxyHops } from "./config/env.js";
 import { createAdminFrontendRouter, DEFAULT_ADMIN_DIST_DIR } from "./adminFrontend.js";
+import { createPublicCandidateDetailsRouter, PUBLIC_CANDIDATE_DETAILS_PATH } from "./routes/publicCandidateDetails.js";
 
 // Candidate documents are uploaded from the admin's browser straight to
 // Supabase Storage, to a signed URL the API issues, so the admin page may
@@ -17,8 +18,9 @@ export const STORAGE_CONNECT_SRC = "https://*.supabase.co";
 // Builds the Express app without starting a server, so tests can use it.
 // Environment variables must already be loaded (src/app.js does that first).
 // Options exist for tests: another admin build folder, fake-DB routers, and
-// the /admin rate limiter (its default counts in PostgreSQL).
-export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = authRoutes, adminApiRouter = createAdminRouter(), adminFrontendLimiter } = {}) {
+// the /admin rate limiter (its default counts in PostgreSQL), and the public
+// Candidate Extra Details router.
+export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = authRoutes, adminApiRouter = createAdminRouter(), adminFrontendLimiter, publicCandidateRouter = createPublicCandidateDetailsRouter() } = {}) {
     const app = express();
 
     // Don't advertise the framework (SEC-015).
@@ -45,6 +47,12 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
             },
         },
     }));
+
+    // Candidate Extra Details public form (candidate-form/, its own Vercel
+    // project). Mounted before the global JSON parser so its own 16 KB limit
+    // and CORS apply, and kept apart from /auth and /api/admin: a candidate
+    // token is never a staff credential (routes/publicCandidateDetails.js).
+    app.use(PUBLIC_CANDIDATE_DETAILS_PATH, publicCandidateRouter);
 
     app.use(
         express.json({

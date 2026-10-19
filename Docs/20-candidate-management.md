@@ -161,6 +161,8 @@ flowchart LR
 | 7 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
 | 8 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
 
+**Jobs.** The candidate page has a **Job assignment** section (above the stepper) read from the Job relation: the current PROCESSING job (code, Client Job ID, type, client, responsible agent) and the history (completed, cancelled, removed). `GET /candidates/:passportId` returns it as `jobAssignments: { current, history }`. ADMIN and MANAGER can *Assign to Job* there (the same endpoint as Admin > Jobs > *Add to job*); the button is disabled until the Test result is PASS, and the server refuses others with `CANDIDATE_TEST_NOT_PASSED`. See `JOB_MANAGEMENT_IMPLEMENTATION.md`.
+
 **Test details** records: *Agent name* (free text: the agent associated with the test, `test_agent_name`), *Test ID* (the test's own reference, `test_id`), *Test result* (Pass / Fail), *Test date* and *Notes*. It used to hold "Client name" (the candidate's own name, read-only) and a free-text "Job ID"; the Job is no longer entered here.
 
 **Job details** records a *Date* (`job_details_date`), a *Note* (the stage's `notes`) and the completion checkbox, and **shows** two read-only values taken live from the candidate's Job assignments (`job_candidate` → `job` → `client`): *Job ID* (the human-readable Job code, e.g. `JOB-2026-000007`, never the UUID) and *Client name*. They are not stored on the stage, so a Client rename or a reassignment to another Job shows immediately; the API refuses to write them (`jobCode`, `clientName`, `jobId`). Which Job is shown follows a fixed priority: **(A)** the current PROCESSING assignment; else **(B)** the latest historical assignment (completed, cancelled, or one the candidate was removed from), with a small note under Job ID ("Completed job (not current)", "Cancelled job (not current)" or "Candidate was removed from this job (not current)"); else **(C)** "Not assigned" (the candidate never had a Job). "Latest" is the newest `job_candidate.assigned_at` (ties: the row's `created_at`, then the job id), so a candidate whose Job B completed after Job A keeps showing Job B. Removing a candidate from a job never deletes the `job_candidate` row (it sets `released_at`), so this history is complete. The fallback is display-only: it never re-activates an assignment, changes a Job, or writes anything to the stage. The old free-text `candidate_stages.job_id` is never read as a Job: it only appears as the Test ID of a Test details row that has no `test_id` yet.
@@ -311,6 +313,20 @@ Every role that manages candidates can edit the form, REGISTRATION_DESK included
 - Hidden details are cleared on save: the wife's details when not married, and the child names when Single.
 - **Two people editing**: the form sends the `updatedDate` it loaded, and a save on a different version is refused with `409 DETAILS_CHANGED` ("changed by someone else… use Sync"). The typed values stay in the form. The page loads the details once and shares them with the stepper and the form.
 - Every change appears in Audit Logs (`CREATE_ADDITIONAL_DETAILS` / `UPDATE_ADDITIONAL_DETAILS`) with only the changed fields. Saving without changes writes nothing.
+
+### 4.6 Share Form (the candidate fills in the Candidate Form)
+
+Staff send a candidate a personal link to the public Candidate Form (`candidate-form/`). Design: [CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md).
+
+- **Where:** the candidate page, Additional details, **Share Form** (shown to staff who can edit the candidate).
+- **Who:** ADMIN, MANAGER and REGISTRATION_DESK for any candidate; ANALYST only for candidates allocated to them (others are 404, as everywhere). VIEWER: no.
+- **Create share link:** makes a link valid for **3 days** and shows it **once**, with **Copy link** and **Share on WhatsApp**. It is never shown again; if it is lost, create a new one. A new link replaces the previous one at once (the old link and any open form session stop working).
+- **Revoke link:** stops the link at once (confirmation first).
+- **State:** *No active link*, *Link active until …*, *Locked after failed attempts* (10 wrong attempts lock the link for 1 hour), *Submitted on …*.
+- **The candidate** opens the link, enters their Passport Number and NIC Number, checks the prefilled answers and submits **once**. After that the form cannot be opened or changed, and no new link can be created (409 `FORM_SUBMITTED`).
+- **Where the answers go:** `candidate_form_response`, a separate table. The candidate's record, additional details and stages are **never** changed by the form. They are not shown in Admin yet.
+- **Audit:** `CREATE_FORM_LINK` and `REVOKE_FORM_LINK` (link ID and expiry; never the link itself). The submission time is on the share state.
+- **Configuration:** the backend needs `CANDIDATE_FORM_ORIGIN` (the form's exact origin); without it, creating a link answers 503 `FORM_NOT_CONFIGURED`.
 
 ---
 
@@ -506,7 +522,7 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `POST` | `/candidates` | Register a new candidate |
 | `GET` | `/candidates/:passportId` | Get a single candidate (also used for the registration lookup) |
 | `PUT` | `/candidates/:passportId` | Update candidate details |
-| `PUT` | `/candidates/:passportId/stages/:stage` | Update a stage (notes, completed) |
+| `PUT` | `/candidates/:passportId/stages/:stage` | Update a stage (notes, completed; Test details also `testResult`, `testDate`). `jobId` is no longer accepted (400): the job is the Job assignment |
 | `POST` | `/candidates/:passportId/documents/upload-target` | Check a file's description; returns a signed upload URL (JSON only) |
 | `POST` | `/candidates/:passportId/documents/finalize` | Check the uploaded file and record it (JSON only) |
 | `POST` | `/candidates/:passportId/documents/:documentId/remove` | Delete the current document and its file; `{ reason }` required |
@@ -518,6 +534,12 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `DELETE` | `/follow-ups/:followUpId` | Delete a follow-up (ADMIN, MANAGER) |
 | `GET` | `/candidates/:passportId/additional-details` | Additional details, or suggestions from the candidate record when none are saved |
 | `PUT` | `/candidates/:passportId/additional-details` | Save additional details (full replacement; audited; never creates a candidate) |
+| `GET` | `/candidates/:passportId/form-submission` | What the candidate submitted through the Candidate Form (read only, from `candidate_form_response`): form status, submitted time, values by the form's paths, the original prefill and the changed answers. Shown on the Additional details tab as "Candidate Form submission"; never merged into the candidate record |
+| `POST` | `/candidates/:passportId/form-submission/confirm-field` | ADMIN and MANAGER. Confirm ONE candidate-submitted field into the record: `{ field, expectedCurrentValue, expectedSubmittedValue }` (an allowlisted field key plus the values the Admin saw, only to detect a stale screen). The new value is read from `candidate_form_response`; `409 FORM_FIELD_STALE` when the record changed meanwhile, `409 FORM_FIELD_NOT_PENDING` when nothing differs, `400 FIELD_NOT_CONFIRMABLE` for anything not on the allowlist. Audited as `CANDIDATE_FORM_FIELD_CONFIRMED`; the submission is never changed |
+| `POST` | `/candidates/:passportId/form-submission/reject-field` | ADMIN and MANAGER. Revoke (reject) ONE pending candidate-submitted field: same body and checks as confirm-field, but the record is not changed; the proposal is marked rejected for good in `candidate_form_field_review`. `409 FORM_FIELD_REVIEW_STALE` if the field was already decided. Audited as `CANDIDATE_FORM_FIELD_REJECTED` |
+| `GET` | `/candidates/:passportId/form-share` | Share Form state (§4.6) |
+| `POST` | `/candidates/:passportId/form-share` | Create a share link (201; replaces the active one; audited) |
+| `POST` | `/candidates/:passportId/form-share/revoke` | Revoke the active link (audited) |
 
 ### Error codes
 
@@ -536,6 +558,9 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `UPLOAD_NOT_FOUND` | 404 | Finalize found no uploaded file for that upload ID, candidate and type |
 | `DOCUMENT_NOT_FOUND` | 404 | Remove: not the candidate's current document (already removed or replaced) |
 | `TRY_AGAIN` | 503 | Registration could not get a free unique ID; retry |
+| `FORM_SUBMITTED` | 409 | Share Form: the candidate has already submitted; no new link |
+| `NO_ACTIVE_LINK` | 404 | Share Form revoke: there is no active link |
+| `FORM_NOT_CONFIGURED` | 503 | Share Form: `CANDIDATE_FORM_ORIGIN` is not set |
 
 An unknown stage key returns 404 `Stage not found`; malformed input returns 400 with `errors`.
 

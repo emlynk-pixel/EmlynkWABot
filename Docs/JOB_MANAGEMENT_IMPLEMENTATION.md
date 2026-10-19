@@ -114,3 +114,7 @@ Audit actions (category **Job**): `CREATE_JOB`, `UPDATE_JOB`, `COMPLETE_JOB`, `C
 1. **Reopening** a COMPLETED / CANCELLED job is not implemented.
 2. **Vacancies** are informational: assigning beyond the number is allowed.
 3. The candidate page's **Job details** stage shows the current Job and its Client from this assignment (read-only; see `20-candidate-management.md` §4). The legacy free-text `candidate_stages.job_id` is no longer written; it is only read as a Test ID when a Test details row has no `test_id`. Dropping the column is a later, separate decision.
+## 12. Candidate Form job-group link
+
+A Job can have one active Candidate Form *group* link (Admin > Candidate > Share Form > "Share link for the job group", or `GET/POST /jobs/:jobId/form-share`, `POST /jobs/:jobId/form-share/revoke`, ADMIN and MANAGER, audited as `CREATE_JOB_FORM_LINK` / `REVOKE_JOB_FORM_LINK`). It is bound to the immutable `job.id` (never the job code or the Client Job ID); only a candidate with an active `job_candidate` row on that PROCESSING job can open the form with it. See `CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md` §12.
+

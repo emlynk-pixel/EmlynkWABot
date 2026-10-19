@@ -586,6 +586,10 @@ describe("security and error handling", () => {
             "POST /candidates/:passportId/documents/:documentId/remove", // reason required, audited
             "POST /candidates/:passportId/documents/finalize", // JSON only: the file goes browser -> storage
             "POST /candidates/:passportId/documents/upload-target",
+            "POST /candidates/:passportId/form-share", // Candidate Form share link: create (replaces the old one), audited (candidateFormShare.test.js)
+            "POST /candidates/:passportId/form-share/revoke",
+            "POST /candidates/:passportId/form-submission/confirm-field", // ADMIN and MANAGER: one field, audited (candidateFormFieldConfirm.test.js)
+            "POST /candidates/:passportId/form-submission/reject-field", // ADMIN and MANAGER: dismiss one proposed value, record unchanged, audited
             "POST /candidates/:passportId/verification", // Verify details / documents: ADMIN and MANAGER, audited (candidateWorkflowStatus.test.js)
             "POST /client-management",
             "POST /documents/:documentId/police-date",
@@ -595,6 +599,8 @@ describe("security and error handling", () => {
             "POST /jobs/:jobId/cancel", // a reason is required
             "POST /jobs/:jobId/candidates", // the one-PROCESSING-job rule is enforced in the service and the database
             "POST /jobs/:jobId/complete",
+            "POST /jobs/:jobId/form-share", // job-group Candidate Form link: ADMIN and MANAGER, audited (jobGroupShare.test.js)
+            "POST /jobs/:jobId/form-share/revoke",
             "POST /review/:reviewId/approve",
             "POST /review/:reviewId/assign-client",
             "POST /review/:reviewId/document-type",

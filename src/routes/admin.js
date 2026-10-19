@@ -89,6 +89,11 @@ import {
     removeCandidateFromJob,
     updateJob,
 } from "../services/jobService.js";
+import { getFormSubmission } from "../services/candidateFormSubmissionService.js";
+import { confirmFormField, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
+import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
+import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
+import { parseCandidateFormOrigin } from "../config/candidateForm.js";
 import {
     createAgent,
     getAgent,
@@ -186,8 +191,12 @@ export function createAdminRouter({
     authAdmin,
     requireAdmin = createRequireActiveUser({ db, verifyAccessToken }),
     apiLimiter = createApiRateLimiter(),
+    // Where Candidate Form share links point (the public form's own origin;
+    // never taken from a request header). Unset: no link can be created.
+    candidateFormOrigin = process.env.CANDIDATE_FORM_ORIGIN,
 } = {}) {
     const router = express.Router();
+    const formOrigin = parseCandidateFormOrigin(candidateFormOrigin);
 
     router.use(apiLimiter);
 
@@ -713,6 +722,69 @@ export function createAdminRouter({
         })));
     });
 
+    // ---------------------------------------------------------------- Candidate Form share link
+    // (candidateFormShareService.js). The Candidates-area roles, within their
+    // candidate scope (an Analyst only for candidates allocated to them):
+    // status, create (returns the link ONCE; replaces any earlier link;
+    // unlocks the form) and revoke (locks the form again). Audited, without
+    // the link secret.
+    // What the candidate submitted through the Candidate Form, read-only, from
+    // candidate_form_response (with the original prefill for comparison). Admin
+    // API only; within the user's candidate scope like every candidate route.
+    router.get("/candidates/:passportId/form-submission", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getFormSubmission({
+            db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user),
+        })));
+    });
+
+    // Confirm ONE candidate-submitted field into the record (ADMIN and MANAGER). The body
+    // names an allowlisted field key and the values the Admin saw (to detect a stale
+    // screen); the new value is read from candidate_form_response on the server.
+    for (const [action, review] of [["confirm-field", confirmFormField], ["reject-field", rejectFormField]]) {
+        router.post(`/candidates/:passportId/form-submission/${action}`, requireRole(MANAGERS_UP), async (req, res) => {
+            if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+            const body = req.body;
+            const allowed = new Set(["field", "expectedCurrentValue", "expectedSubmittedValue"]);
+            const textOrNull = (value) => value === null || value === undefined || typeof value === "string";
+            if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => !allowed.has(key))
+                || typeof body.field !== "string" || !textOrNull(body.expectedCurrentValue) || !textOrNull(body.expectedSubmittedValue)) {
+                return res.status(400).json({ message: "Invalid request body", errors: [{ field: "body", message: "must be { field, expectedCurrentValue, expectedSubmittedValue }" }] });
+            }
+            const client = await resolveDb(db);
+            return candidateAction(res, async () => {
+                const passportId = await storedCandidateId(client, req.params.passportId, req.user);
+                await review({ db: client, actor: req.user, passportId, field: body.field, expectedCurrentValue: body.expectedCurrentValue ?? null, expectedSubmittedValue: body.expectedSubmittedValue ?? null });
+                return res.json(await getFormSubmission({ db: client, passportId }));
+            });
+        });
+    }
+
+    router.get("/candidates/:passportId/form-share", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getFormShareStatus({
+            db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user),
+        })));
+    });
+
+    router.post("/candidates/:passportId/form-share", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await createFormShareLink({
+            db: client, actor: req.user, formOrigin, passportId: await storedCandidateId(client, req.params.passportId, req.user),
+        })));
+    });
+
+    router.post("/candidates/:passportId/form-share/revoke", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await revokeFormShareLink({
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user),
+        })));
+    });
+
     // ---------------------------------------------------------------- Work Allocation (ADMIN and MANAGER)
     // Which Analyst each candidate is assigned to (workAllocationService.js).
     // Every change is one transaction (all or nothing) and audited.
@@ -829,6 +901,25 @@ export function createAdminRouter({
         if (!isValidCandidateIdParam(req.params.passportId)) return res.status(404).json({ message: "Candidate not found", code: "CANDIDATE_NOT_FOUND" });
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await removeCandidateFromJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), passportId: req.params.passportId })));
+    });
+
+    // Candidate Form job-group link (candidateFormJobGroupService.js): ADMIN and
+    // MANAGER only. Bound to the immutable job id; works only while the job is
+    // PROCESSING; one active link per job; the URL is returned once.
+    router.get("/jobs/:jobId/form-share", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getJobGroupShareStatus({ db: client, jobId: req.params.jobId.toLowerCase() })));
+    });
+    router.post("/jobs/:jobId/form-share", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await createJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), formOrigin })));
+    });
+    router.post("/jobs/:jobId/form-share/revoke", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await revokeJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase() })));
     });
 
     router.post("/jobs/:jobId/complete", requireRole(MANAGERS_UP), async (req, res) => {

@@ -48,7 +48,7 @@ export const CANDIDATE_AGGREGATE_SELECT = Object.freeze({
     passportId: true, uniqueId: true, firstName: true, otherName: true, dateOfBirth: true, placeOfBirth: true,
     passportExpiryDate: true, passportIssueDate: true, address: true, job: true, nic: true, jobExperience: true,
     whatsappNumber: true, contactNumber: true, nationality: true, sex: true, createdDate: true,
-    stages: { select: { stage: true, completed: true, completedAt: true, notes: true, jobId: true, testResult: true, testDate: true } },
+    stages: { select: { stage: true, completed: true, completedAt: true, notes: true, testResult: true, testDate: true } },
     documents: {
         where: { documentType: { in: Object.keys(CANDIDATE_DOCUMENT_TYPES) } },
         select: {

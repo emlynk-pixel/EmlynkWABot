@@ -218,7 +218,8 @@ describe("Need Attention page", () => {
             stages,
             documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null, VISA_SUBMISSION: null },
             variantDocuments: { POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null } },
-            requiredDocuments: [],
+            jobAssignments: { current: null, history: [] },
+    requiredDocuments: [],
         };
         signedInBackend({
             ...listRoute(),

@@ -77,3 +77,22 @@ export const cancelJob = (token: string, jobId: string, reason: string) => apiRe
 // Reference data a job needs (job types are created inline from the New job form;
 // agents and clients are managed in Admin > Agents and Admin > Client Management).
 export const createJobType = (token: string, name: string) => apiRequest<{ id: string; name: string; code: string }>("/api/admin/job-types", { method: "POST", token, body: { name } });
+
+// Candidate Form job-group link (src/services/candidateFormJobGroupService.js): ADMIN and MANAGER.
+// Bound to the job's immutable id on the server; the URL carries only an opaque secret.
+export type JobGroupShareStatus = {
+    jobId: string;
+    jobCode: string;
+    companyJobId: string | null;
+    client: string;
+    jobType: string;
+    jobStatus: JobStatus;
+    state: "OPEN" | "NONE";
+    counts: { candidates: number; submitted: number; remaining: number };
+    link: { linkId: string; createdAt: string; createdByName: string | null; expiresAt: string; lockedUntil: string | null } | null;
+};
+export type CreatedJobGroupShareLink = { url: string; linkId: string; expiresAt: string; status: JobGroupShareStatus };
+
+export const getJobGroupShareStatus = (token: string, jobId: string, signal?: AbortSignal) => apiRequest<JobGroupShareStatus>(`${jobPath(jobId)}/form-share`, { token, signal });
+export const createJobGroupShareLink = (token: string, jobId: string) => apiRequest<CreatedJobGroupShareLink>(`${jobPath(jobId)}/form-share`, { method: "POST", token, body: {} });
+export const revokeJobGroupShareLink = (token: string, jobId: string) => apiRequest<JobGroupShareStatus>(`${jobPath(jobId)}/form-share/revoke`, { method: "POST", token, body: {} });
