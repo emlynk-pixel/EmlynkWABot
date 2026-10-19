@@ -848,6 +848,9 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | DELETE | `/follow-ups/:followUpId` | ADMIN, MANAGER | Delete the follow-up row only; the call log, candidate and documents stay |
 | GET | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Additional details `{ passportId, details, suggested, updatedDate }` |
 | PUT | `/candidates/:passportId/additional-details` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Save additional details (full replacement; audited) |
+| GET | `/candidates/:passportId/form-share` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Share Form state `{ passportId, state, submittedAt, link }` (never the link itself) |
+| POST | `/candidates/:passportId/form-share` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Create a Candidate Form share link (201 `{ url, linkId, expiresAt, status }`; the URL is shown once; replaces the active link; 409 `FORM_SUBMITTED`; audited) |
+| POST | `/candidates/:passportId/form-share/revoke` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | Revoke the active share link (404 `NO_ACTIVE_LINK`; audited) |
 | GET | `/review`, `/review/:reviewId`, `/review/:reviewId/file` | ADMIN, MANAGER, ANALYST | Review Queue, one item, its file |
 | POST | `/review/:reviewId/approve` | ADMIN, MANAGER, ANALYST | Approve `{ reason?, policeSubmittedDate? }` |
 | POST | `/review/:reviewId/keep-pending` | ADMIN, MANAGER, ANALYST | Keep Pending `{ reason }` |

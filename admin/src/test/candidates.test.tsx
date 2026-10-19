@@ -45,6 +45,7 @@ const DETAILS: CandidateDetails = {
     variantDocuments: {
         POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null },
     },
+    jobAssignments: { current: null, history: [] },
     requiredDocuments: (["PASSPORT", "MEDICAL", "POLICE_REPORT", "SCAN"] as const).map((documentType) => ({ documentType, included: documentType === "PASSPORT" })),
 };
 

@@ -22,6 +22,7 @@ const DETAILS: CandidateDetails = {
     })),
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null, VISA_SUBMISSION: null },
     variantDocuments: { POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null } },
+    jobAssignments: { current: null, history: [] },
     requiredDocuments: [],
 };
 
@@ -43,6 +44,7 @@ function backend(view: AdditionalDetailsView, routes: FetchRoutes = {}, user = A
         "GET /auth/me": { status: 200, body: { user } },
         "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
         [`GET ${PATH}`]: { status: 200, body: view },
+        "GET /api/admin/candidates/N0000002/form-submission": { status: 200, body: { passportId: "N0000002", formStatus: "LOCKED", submittedAt: null, submitted: null, original: null, changed: [], pending: [] } },
         ...routes,
     });
 }

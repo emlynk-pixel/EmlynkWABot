@@ -614,10 +614,11 @@ describe("migration 20261019120000_client_management", () => {
         }
     });
 
-    test("only ONE employer table exists, and no Candidate Form object was imported", async () => {
+    test("only ONE employer table exists; the Candidate Form job-group link still points at job.id", async () => {
         const tables = (await pg.query(`SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY 1`)).rows.map((r) => r.table_name);
         assert.ok(tables.includes("client") && !tables.includes("company"));
-        assert.ok(!tables.some((t) => t.startsWith("candidate_form")), tables.join());
+        const linkFk = (await pg.query(`SELECT ccu.table_name, ccu.column_name FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name WHERE tc.table_name = 'candidate_form_link' AND tc.constraint_type = 'FOREIGN KEY' AND kcu.column_name = 'job_id'`)).rows;
+        assert.deepEqual(linkFk, [{ table_name: "job", column_name: "id" }]);
         const columns = (await pg.query(`SELECT column_name FROM information_schema.columns WHERE table_name='job'`)).rows.map((r) => r.column_name);
         assert.ok(!columns.includes("company_id"));
     });

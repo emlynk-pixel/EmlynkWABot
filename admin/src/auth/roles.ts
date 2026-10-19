@@ -57,6 +57,10 @@ export const JOB_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER, ROLE
 export const JOB_MANAGE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
 export const canViewJobs = (user: WithRole) => hasRole(user, JOB_VIEW_ROLES);
 export const canManageJobs = (user: WithRole) => hasRole(user, JOB_MANAGE_ROLES);
+// Confirming a candidate-submitted Candidate Form value into the candidate's record (one field at a time).
+// Analysts and the Registration Desk see the submitted change but cannot apply it.
+export const CONFIRM_SUBMITTED_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
+export const canConfirmSubmittedChanges = (user: WithRole) => hasRole(user, CONFIRM_SUBMITTED_ROLES);
 // Agents and Client Management (the employer clients): ADMIN and MANAGER only,
 // for reading and writing. The other roles get no entry and the API answers 403.
 export const MASTER_DATA_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];

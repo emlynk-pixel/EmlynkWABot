@@ -166,7 +166,7 @@ Registration and the Candidate Details stage are **different concepts** and must
 
 | Stage | Source | Sheet value |
 | :--- | :--- | :--- |
-| `TEST_DETAILS` | Stored (`candidate_stages.completed`) plus `job_id`, `test_result` (`PASS`/`FAIL`), `test_date` | `COMPLETED`/`INCOMPLETE` (`AE`) plus `TEST DATE` (`E`); job ID and test result are not mirrored |
+| `TEST_DETAILS` | Stored (`candidate_stages.completed`) plus `test_result` (`PASS`/`FAIL`), `test_date` (the old free-text `job_id` is deprecated; the job is now the `job` / `job_candidate` relation, see `JOB_MANAGEMENT_IMPLEMENTATION.md` §12) | `COMPLETED`/`INCOMPLETE` (`AE`) plus `TEST DATE` (`E`); job and test result are not mirrored |
 | `CANDIDATE_DETAILS` | **Derived** from `candidate` + `documents` (4.1 B) | `COMPLETED`/`INCOMPLETE` |
 | `DOCUMENT_SUBMISSION` | **Derived** from `documents` (medical, SL Verified and Romania police reports, scan) | `COMPLETED`/`INCOMPLETE` |
 | `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB` | Stored | `COMPLETED`/`INCOMPLETE` |

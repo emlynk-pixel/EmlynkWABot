@@ -2,6 +2,7 @@ import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
 import { SEX_OPTIONS, type CandidateDetails, type CandidateDetailsInput } from "../../api/candidates";
 import { HelpTip } from "../Form";
 import { DatePicker } from "../DatePicker";
+import { SubmittedHint } from "./submittedChanges";
 
 export const fieldControl = "h-10 w-full rounded border border-border-strong bg-surface px-3 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
 export const textAreaControl = "w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
@@ -116,7 +117,8 @@ export function completionGaps(value: CandidateDetailsInput): Record<string, str
     return gaps;
 }
 
-export function Field({ label, required, error, htmlFor, children, className = "", help }: { label: string; required?: boolean; error?: string; htmlFor: string; children: ReactNode; className?: string; help?: string }) {
+// submitted: the Candidate Form path of this field; shows "Candidate submitted: ... [Confirm]" when the candidate sent a different value.
+export function Field({ label, required, error, htmlFor, children, className = "", help, submitted }: { label: string; required?: boolean; error?: string; htmlFor: string; children: ReactNode; className?: string; help?: string; submitted?: string }) {
     const text = <>{label}{required && <span className="text-critical"> *</span>}</>;
     return (
         <div className={className}>
@@ -129,6 +131,7 @@ export function Field({ label, required, error, htmlFor, children, className = "
                 <label htmlFor={htmlFor} className="mb-1 block text-label-sm text-ink-muted">{text}</label>
             )}
             {children}
+            {submitted && <SubmittedHint field={submitted} />}
             {error && <p className="mt-1 text-label-sm text-critical">{error}</p>}
         </div>
     );
@@ -255,8 +258,8 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
 
     return (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Field label="Surname" required htmlFor={`${id}-surname`} error={errors.surname}>{input("surname")}</Field>
-            <Field label="Other names" required htmlFor={`${id}-otherNames`} error={errors.otherNames}>{input("otherNames")}</Field>
+            <Field label="Surname" required htmlFor={`${id}-surname`} error={errors.surname} submitted="basic.surname">{input("surname")}</Field>
+            <Field label="Other names" required htmlFor={`${id}-otherNames`} error={errors.otherNames} submitted="basic.otherNames">{input("otherNames")}</Field>
             <Field label="NIC" required htmlFor={`${id}-nic`} error={errors.nic}>{input("nic", { maxLength: 12 })}</Field>
             <Field label="Passport ID" required htmlFor={`${id}-passportId`} error={passportId.error} help={FIELD_HINTS.passportId}>
                 <input
@@ -273,7 +276,7 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
                 {passportId.hint && <div className="mt-1 text-label-sm" aria-live="polite">{passportId.hint}</div>}
             </Field>
             <Field label="Nationality" htmlFor={`${id}-nationality`} error={errors.nationality}>{input("nationality", { maxLength: 60 })}</Field>
-            <Field label="Sex" htmlFor={`${id}-sex`} error={errors.sex}>
+            <Field label="Sex" htmlFor={`${id}-sex`} error={errors.sex} submitted="basic.sex">
                 <select
                     id={`${id}-sex`}
                     value={value.sex}
@@ -285,22 +288,22 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
                     {SEX_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
             </Field>
-            <Field label="Date of birth" htmlFor={`${id}-dateOfBirth`} error={errors.dateOfBirth}>{dateInput("dateOfBirth")}</Field>
-            <Field label="Place of birth" htmlFor={`${id}-placeOfBirth`} error={errors.placeOfBirth}>{input("placeOfBirth")}</Field>
-            <Field label="Passport issue date" required htmlFor={`${id}-passportIssueDate`} error={errors.passportIssueDate} help={FIELD_HINTS.passportIssueDate}>{dateInput("passportIssueDate", true)}</Field>
-            <Field label="Passport expiry date" required htmlFor={`${id}-passportExpiryDate`} error={errors.passportExpiryDate} help={FIELD_HINTS.passportExpiryDate}>{dateInput("passportExpiryDate", true)}</Field>
+            <Field label="Date of birth" htmlFor={`${id}-dateOfBirth`} error={errors.dateOfBirth} submitted="basic.birthDate">{dateInput("dateOfBirth")}</Field>
+            <Field label="Place of birth" htmlFor={`${id}-placeOfBirth`} error={errors.placeOfBirth} submitted="basic.birthPlace">{input("placeOfBirth")}</Field>
+            <Field label="Passport issue date" required htmlFor={`${id}-passportIssueDate`} error={errors.passportIssueDate} help={FIELD_HINTS.passportIssueDate} submitted="passport.issueDate">{dateInput("passportIssueDate", true)}</Field>
+            <Field label="Passport expiry date" required htmlFor={`${id}-passportExpiryDate`} error={errors.passportExpiryDate} help={FIELD_HINTS.passportExpiryDate} submitted="passport.expiryDate">{dateInput("passportExpiryDate", true)}</Field>
             <Field label="WhatsApp number" required htmlFor={`${id}-whatsappNumber`} error={errors.whatsappNumber} help={FIELD_HINTS.whatsappNumber}>
                 <WhatsAppInput id={`${id}-whatsappNumber`} value={value.whatsappNumber} onChange={set("whatsappNumber")} disabled={disabled} locked={whatsappLocked} invalid={Boolean(errors.whatsappNumber)} />
                 {whatsappLocked && <div className="mt-1 text-label-sm text-ink-muted">Registered WhatsApp numbers cannot be changed.</div>}
             </Field>
-            <Field label="Contact number" htmlFor={`${id}-contactNumber`} error={errors.contactNumber}>{input("contactNumber", { type: "tel", maxLength: 30 })}</Field>
+            <Field label="Contact number" htmlFor={`${id}-contactNumber`} error={errors.contactNumber} submitted="contact.alternativePhone">{input("contactNumber", { type: "tel", maxLength: 30 })}</Field>
             <Field label="Job type" required htmlFor={`${id}-jobTypes`} error={errors.jobTypes} className="md:col-span-2">
                 <JobTypesInput id={`${id}-jobTypes`} value={value.jobTypes} onChange={(next) => onChange({ ...value, jobTypes: next })} disabled={disabled} invalid={Boolean(errors.jobTypes)} />
             </Field>
-            <Field label="Job experience" required htmlFor={`${id}-jobExperience`} error={errors.jobExperience} className="md:col-span-2">
+            <Field label="Job experience" required htmlFor={`${id}-jobExperience`} error={errors.jobExperience} className="md:col-span-2" submitted="qualifications.experience">
                 {input("jobExperience", { maxLength: 2000 })}
             </Field>
-            <Field label="Address" htmlFor={`${id}-address`} error={errors.address} className="md:col-span-2">
+            <Field label="Address" htmlFor={`${id}-address`} error={errors.address} className="md:col-span-2" submitted="contact.address">
                 <textarea
                     id={`${id}-address`}
                     rows={2}

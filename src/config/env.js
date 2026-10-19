@@ -40,6 +40,7 @@ export const SHEET_SYNC_WORKER_REQUIRED_ENV_VARS = Object.freeze([
 
 import { parseRequiredDocumentTypes } from "./requiredDocuments.js";
 import { parseAppBaseUrl } from "./appBaseUrl.js";
+import { findCandidateFormEnvProblems } from "./candidateForm.js";
 import { isLoopbackUrl } from "../services/ocrClient.js";
 
 // Number of reverse proxies in front of the app, from TRUST_PROXY_HOPS.
@@ -128,6 +129,8 @@ export function findEnvProblems(env = process.env, { required: requiredVars = RE
     if (required.error) {
         problems.push(required.error);
     }
+    // Candidate Extra Details public form (optional; config/candidateForm.js).
+    problems.push(...findCandidateFormEnvProblems(env));
 
     return problems;
 }

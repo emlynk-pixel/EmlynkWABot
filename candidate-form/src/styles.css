@@ -1,0 +1,609 @@
+/* Candidate Form: calm, public, mobile-first. Light and Dark themes are the
+   same tokens with different values (<html data-theme>). No inline styles
+   anywhere (the CSP is style-src 'self'). */
+
+:root {
+    color-scheme: light;
+    --bg: #f3f6fb;
+    --surface: #ffffff;
+    --surface-2: #f6f8fc;
+    --ink: #1b2433;
+    --muted: #4b5565;
+    --border: #d5dbe5;
+    --border-strong: #8a96a8;
+    --primary: #1d4ed8;
+    --primary-hover: #1e40af;
+    --primary-ink: #ffffff;
+    --primary-soft: #eef3ff;
+    --brand-a: #1d4ed8;
+    --brand-b: #0e7490;
+    --error: #b42318;
+    --error-soft: #fef3f2;
+    --error-border: #fecdca;
+    --success: #067647;
+    --success-soft: #ecfdf3;
+    --success-border: #abefc6;
+    --notice-soft: #f2f4f7;
+    --important: #93370d;
+    --important-soft: #fef0c7;
+    --focus: #1d4ed8;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 16px rgba(16, 24, 40, 0.06);
+    /* Sinhala needs a font that has it: Windows, Android and Apple each ship one. */
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Sinhala", "Iskoola Pota", "Nirmala UI", "Sinhala Sangam MN", sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--ink);
+    background: var(--bg);
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0f1520;
+    --surface: #172030;
+    --surface-2: #1c2738;
+    --ink: #e8edf5;
+    --muted: #aab5c5;
+    --border: #2d3b50;
+    --border-strong: #5b6b83;
+    --primary: #7aa7ff;
+    --primary-hover: #9dbdff;
+    --primary-ink: #0b1220;
+    --primary-soft: #1b2b48;
+    --brand-a: #3b6fe0;
+    --brand-b: #1597b5;
+    --error: #ff9b90;
+    --error-soft: #3a1b1d;
+    --error-border: #6b2b2b;
+    --success: #6fe0a6;
+    --success-soft: #10301f;
+    --success-border: #1f5a3a;
+    --notice-soft: #1c2738;
+    --important: #fec84b;
+    --important-soft: #3a2a0a;
+    --focus: #9dbdff;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; background: var(--bg); color: var(--ink); }
+
+/* Long words wrap instead of widening the page. Text wraps between words
+   first (break-word); values that can be one long word (emails, addresses)
+   may break anywhere. */
+p, label, legend, h1, h2, h3, h4, dt, li { overflow-wrap: break-word; }
+dd, input { overflow-wrap: anywhere; }
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* One visible focus style for everything that can take focus. */
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* ---------- header ---------- */
+
+.site-header { background: var(--surface); border-bottom: 1px solid var(--border); }
+
+.site-header-inner {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 10px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 16px;
+}
+
+.brand { margin: 0; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-mark {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
+    color: #ffffff;
+    font-weight: 700;
+}
+.brand-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.brand-name { font-weight: 700; font-size: 1.0625rem; }
+.brand-sub { color: var(--muted); font-size: 0.875rem; }
+
+.header-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 999px; padding: 2px; background: var(--surface); }
+.segmented button {
+    min-height: 36px;
+    padding: 4px 12px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 0.875rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.segmented button.active { background: var(--primary); color: var(--primary-ink); font-weight: 600; }
+.theme-icon { font-size: 0.9375rem; line-height: 1; }
+
+/* ---------- page ---------- */
+
+.shell { max-width: 1120px; margin: 0 auto; padding: 16px 16px 56px; }
+
+.panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 16px;
+    box-shadow: var(--shadow);
+}
+
+/* The verification card stays narrow. */
+.shell > form.panel, .shell > section.panel { max-width: 520px; margin: 8px auto 0; }
+
+h1 { font-size: 1.5rem; line-height: 1.3; margin: 0 0 6px; }
+h2 { font-size: 1.25rem; line-height: 1.35; margin: 0 0 4px; }
+h3, h4 { font-size: 1.0625rem; line-height: 1.4; margin: 0 0 12px; }
+
+.lead { color: var(--muted); margin: 0 0 16px; }
+
+.notice, .success, .form-error {
+    margin: 0 0 16px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 0.9375rem;
+}
+.notice p, .form-error p { margin: 0; }
+.notice p + p { margin-top: 4px; }
+.notice { background: var(--notice-soft); color: var(--ink); border: 1px solid var(--border); }
+.notice.subtle { color: var(--muted); font-size: 0.875rem; }
+.success { background: var(--success-soft); color: var(--success); border: 1px solid var(--success-border); font-weight: 600; }
+.form-error { background: var(--error-soft); color: var(--error); border: 1px solid var(--error-border); }
+.form-error ul { margin: 8px 0 0; padding-left: 18px; }
+
+.badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--important-soft);
+    color: var(--important);
+    font-size: 0.75rem;
+    font-weight: 700;
+    vertical-align: middle;
+    letter-spacing: 0.02em;
+}
+.important-note { margin: 0 0 8px; color: var(--muted); font-size: 0.9375rem; }
+.important-note .badge { margin-left: 0; }
+
+/* ---------- the form: intro, progress, steps ---------- */
+
+.form-intro { margin-bottom: 14px; }
+.form-intro .lead { margin-bottom: 0; }
+
+.progress-block { margin-bottom: 16px; }
+.progress-text { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 0.875rem; color: var(--muted); margin-bottom: 6px; }
+.progress-step { font-weight: 600; color: var(--ink); }
+
+progress {
+    display: block;
+    width: 100%;
+    height: 8px;
+    border: 0;
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--border);
+    appearance: none;
+    -webkit-appearance: none;
+}
+progress::-webkit-progress-bar { background: var(--border); border-radius: 999px; }
+progress::-webkit-progress-value { background: linear-gradient(90deg, var(--brand-a), var(--brand-b)); border-radius: 999px; }
+progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a), var(--brand-b)); border-radius: 999px; }
+
+/* Four stages in one compact row on phones (number above a short name); a
+   vertical list beside the form on wide screens. */
+.step-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.step-list button, .step-list .stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    min-height: 40px;
+    padding: 2px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.75rem;
+    line-height: 1.25;
+    text-align: center;
+    cursor: pointer;
+}
+.step-list .stage { cursor: default; }
+.step-list button:disabled { cursor: default; opacity: 0.55; }
+.step-number {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+.step-name { min-width: 0; overflow-wrap: anywhere; }
+.step-list li.done .step-number { background: var(--success-soft); border-color: var(--success); color: var(--success); }
+.step-list li.current .step-number { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.step-list li.current button { color: var(--ink); font-weight: 600; }
+
+.step-head { margin-bottom: 8px; }
+.step-head h2:focus { outline: none; }
+.step-head h2:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
+
+.step-actions { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); margin-top: 8px; padding-top: 18px; }
+
+.save-area { margin-top: 8px; }
+
+/* ---------- fields ---------- */
+
+.field-grid { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 20px; }
+
+/* A section inside a step (Personal Details and Work & Family Details hold several). */
+.step-section + .step-section { border-top: 1px solid var(--border); margin-top: 22px; padding-top: 22px; }
+.step-section > h3:focus { outline: none; }
+.step-section > h3:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
+.form-section { border-top: 1px solid var(--border); padding-top: 18px; margin-top: 10px; }
+.section-note { color: var(--muted); font-size: 0.875rem; margin: -6px 0 12px; }
+
+.field { margin: 0 0 16px; min-width: 0; }
+
+.label-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+.field label, .field legend { font-weight: 600; }
+.required-mark { color: var(--error); }
+
+.help-toggle {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--primary);
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+.help-toggle[aria-expanded="true"] { background: var(--primary-soft); border-color: var(--primary); }
+.help-text { margin: 0 0 8px; padding: 8px 10px; border-radius: 8px; background: var(--primary-soft); color: var(--ink); font-size: 0.875rem; }
+
+.hint { color: var(--muted); font-size: 0.875rem; margin: 0 0 6px; }
+
+.field input:not([type="radio"]),
+.field select,
+.field textarea {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 46px;
+    font: inherit;
+    color: var(--ink);
+    background: var(--surface);
+    padding: 10px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+}
+.field textarea { resize: vertical; }
+/* Date controls keep to the screen's width on small phones. */
+.field input[type="date"] { appearance: none; -webkit-appearance: none; }
+.field input::placeholder { color: var(--muted); opacity: 1; }
+
+.field input:disabled, .field select:disabled, .field textarea:disabled { background: var(--notice-soft); }
+
+.field-invalid input:not([type="radio"]), .field-invalid select, .field-invalid textarea { border-color: var(--error); border-width: 2px; }
+
+.error { color: var(--error); font-size: 0.875rem; margin: 6px 0 0; font-weight: 600; }
+
+/* A verified, read-only value: plainly different from an editable box. */
+.verified-value { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.verified-value input {
+    flex: 1 1 160px;
+    background: var(--surface-2) !important;
+    border-style: dashed !important;
+    color: var(--ink);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+.verified-badge {
+    flex: none;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--success-soft);
+    color: var(--success);
+    border: 1px solid var(--success-border);
+    font-size: 0.8125rem;
+    font-weight: 700;
+}
+
+/* One choice from a short list, as cards. */
+.choice { border: 0; padding: 0; margin-inline: 0; min-inline-size: 0; }
+.choice:focus { outline: none; }
+.choice legend { padding: 0; margin-bottom: 6px; }
+.choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.choice-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 46px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--surface);
+    font-weight: 500;
+    cursor: pointer;
+}
+.choice-option input { flex: none; width: 20px; height: 20px; margin: 0; accent-color: var(--primary); }
+.choice-option:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+.choice-option:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+.size-field { min-width: 0; }
+
+/* ---------- review ---------- */
+
+.review { display: grid; gap: 12px; }
+.review-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: var(--surface-2); }
+.review-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.review-card-head h3 { flex: 1 1 12rem; }
+.review-card h3 { margin-bottom: 8px; }
+.review dl { margin: 0; display: grid; gap: 8px; }
+.review dl > div { display: grid; gap: 0; }
+.review dt { color: var(--muted); font-size: 0.8125rem; }
+.review dd { margin: 0; font-weight: 600; }
+.review-empty { color: var(--muted); font-weight: 400; font-style: italic; }
+
+/* A value filled in from the candidate's record. */
+.prefilled-note { margin: 0 0 6px; color: var(--muted); font-size: 0.8125rem; }
+.prefilled-note::before { content: "↺ "; }
+
+/* The one-time submit confirmation. */
+.confirm-box {
+    margin: 0 0 16px;
+    padding: 14px 16px;
+    border: 2px solid var(--primary);
+    border-radius: 12px;
+    background: var(--primary-soft);
+}
+.confirm-box p { margin: 0 0 8px; }
+.confirm-title { font-weight: 700; font-size: 1.0625rem; }
+.confirm-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+
+/* Message screens: no link, loading, submitted. */
+.status-panel { text-align: center; }
+.status-panel .lead { margin-bottom: 0; }
+.status-panel button.primary { margin-top: 16px; }
+.status-icon {
+    margin: 0 auto 10px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--success-soft);
+    color: var(--success);
+    font-size: 1.75rem;
+    font-weight: 700;
+}
+
+/* "Contact Admin": English and Sinhala together, then the contact numbers. */
+.status-icon-warning { background: var(--important-soft); color: var(--important); }
+.contact-admin { display: flex; flex-direction: column; gap: 14px; text-align: center; }
+.contact-admin h1, .contact-admin .contact-title { margin: 0; font-size: 1.125rem; font-weight: 700; line-height: 1.35; }
+.contact-admin .contact-text { margin: 4px 0 0; color: var(--muted); }
+.contact-admin > div[lang="si"] { padding-top: 12px; border-top: 1px solid var(--border); }
+.contact-numbers {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 6px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+}
+.contact-numbers-heading {
+    margin: 0;
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--ink);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.contact-numbers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.contact-number {
+    margin: 0;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--primary);
+    word-break: break-all;
+}
+/* Under an inline failure: smaller and left-aligned, the form above stays usable. */
+.contact-compact { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--notice-soft); text-align: left; gap: 10px; }
+.contact-compact .contact-title { font-size: 0.9375rem; }
+.contact-compact .contact-text { font-size: 0.875rem; }
+.contact-compact .contact-numbers { padding-top: 10px; }
+.contact-compact .contact-numbers-heading { font-size: 0.875rem; }
+.contact-compact .contact-number { font-size: 0.9375rem; }
+
+/* ---------- buttons ---------- */
+
+button.primary, button.secondary {
+    display: block;
+    width: 100%;
+    min-height: 48px;
+    font: inherit;
+    font-weight: 600;
+    padding: 11px 18px;
+    border-radius: 10px;
+    cursor: pointer;
+}
+button.primary { border: 0; background: var(--primary); color: var(--primary-ink); }
+button.primary:hover:not(:disabled) { background: var(--primary-hover); }
+button.secondary { border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); }
+button:disabled { opacity: 0.6; cursor: default; }
+
+.link-button {
+    min-height: 32px;
+    padding: 2px 4px;
+    border: 0;
+    background: transparent;
+    color: var(--primary);
+    font: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* ---------- wider screens ---------- */
+
+@media (min-width: 640px) {
+    .shell { padding-top: 24px; }
+    .panel { padding: 26px 30px; }
+    .choice-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (min-width: 768px) {
+    .field-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .field-grid > .span-2 { grid-column: 1 / -1; }
+    .review dl { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; }
+    .step-actions { flex-direction: row-reverse; flex-wrap: wrap; justify-content: flex-start; align-items: center; }
+    .step-actions button.primary, .step-actions button.secondary { width: auto; min-width: 160px; }
+}
+
+@media (min-width: 1024px) {
+    /* The steps beside the form, with their names. */
+    .candidate-form { display: grid; grid-template-columns: 270px minmax(0, 1fr); column-gap: 28px; align-items: start; }
+    .form-intro { grid-column: 1 / -1; }
+    .progress-block { position: sticky; top: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+    .step-list { display: flex; flex-direction: column; gap: 2px; }
+    .step-list button, .step-list .stage { flex-direction: row; gap: 10px; padding: 4px 8px 4px 2px; font-size: 0.9375rem; text-align: left; }
+    .step-list li.current button { background: var(--primary-soft); }
+}
+
+/* Narrow phones: the theme switch shows its icons only (each button keeps its
+   name for screen readers), so both switches fit on one line. */
+@media (max-width: 479px) {
+    .theme-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .theme-switch button { min-width: 36px; justify-content: center; }
+}
+
+/* ---------- date picker (components/DatePicker.tsx) ---------- */
+
+.date-picker { position: relative; }
+.date-picker-row { display: flex; align-items: stretch; gap: 8px; }
+.date-picker-row input { flex: 1 1 auto; font-variant-numeric: tabular-nums; }
+.date-picker-button {
+    flex: none;
+    width: 46px;
+    min-height: 46px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--primary);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    cursor: pointer;
+}
+.date-picker-button:hover:not(:disabled) { background: var(--primary-soft); }
+.date-picker-button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.date-picker-button:disabled { background: var(--notice-soft); color: var(--muted); cursor: not-allowed; }
+.field-invalid .date-picker-button { border-color: var(--error); border-width: 2px; }
+
+/* The calendar is rendered in <body>, above everything, so no card or section can clip it. */
+.date-picker-popover {
+    position: fixed;
+    z-index: 1000;
+    width: min(320px, calc(100vw - 16px));
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
+    padding: 12px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    box-shadow: var(--shadow), 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+/* Phones: a sheet at the bottom of the screen with big touch targets. */
+.date-picker-backdrop { position: fixed; inset: 0; z-index: 999; background: rgba(0, 0, 0, 0.4); }
+.date-picker-popover.is-sheet { left: 8px; right: 8px; bottom: 8px; top: auto; width: auto; max-height: 85vh; }
+
+.date-picker-popover .rdp-root {
+    --rdp-accent-color: var(--primary);
+    --rdp-accent-background-color: var(--primary-soft);
+    --rdp-day-height: 40px;
+    --rdp-day-width: 40px;
+    --rdp-day_button-height: 38px;
+    --rdp-day_button-width: 38px;
+    --rdp-nav_button-height: 40px;
+    --rdp-nav_button-width: 40px;
+    --rdp-selected-border: 2px solid var(--primary);
+    --rdp-today-color: var(--primary);
+    --rdp-weekday-opacity: 1;
+    margin: 0 auto;
+    width: fit-content;
+    color: var(--ink);
+}
+.date-picker-popover .rdp-day_button { color: var(--ink); background: transparent; font: inherit; }
+.date-picker-popover .rdp-day_button:hover:not(:disabled) { background: var(--primary-soft); }
+.date-picker-popover .rdp-selected .rdp-day_button { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); font-weight: 700; }
+.date-picker-popover .rdp-today:not(.rdp-selected) .rdp-day_button { border-color: var(--primary); font-weight: 700; }
+.date-picker-popover .rdp-disabled { opacity: 0.35; }
+.date-picker-popover .rdp-outside { opacity: 0.6; }
+.date-picker-popover .rdp-weekday { color: var(--muted); font-size: 0.8125rem; font-weight: 600; }
+.date-picker-popover .rdp-button_previous, .date-picker-popover .rdp-button_next { color: var(--primary); }
+.date-picker-popover .rdp-chevron { fill: currentColor; }
+.date-picker-popover .rdp-day_button:focus-visible, .date-picker-popover .rdp-button_previous:focus-visible, .date-picker-popover .rdp-button_next:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+/* Month and year lists. */
+.date-picker-popover .rdp-dropdown_root { color: var(--ink); }
+.date-picker-popover .rdp-dropdown { color: var(--ink); background: var(--surface); }
+.date-picker-popover .rdp-caption_label { color: var(--ink); font-weight: 700; }
+.date-picker-popover .rdp-dropdown:focus-visible ~ .rdp-caption_label { outline: 3px solid var(--focus); }
+.date-picker-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.date-picker-footer button {
+    min-height: 40px;
+    padding: 6px 14px;
+    font: inherit;
+    font-weight: 600;
+    color: var(--primary);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+}
+.date-picker-footer button:hover { background: var(--primary-soft); }
+.date-picker-footer button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
