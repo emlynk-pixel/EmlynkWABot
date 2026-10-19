@@ -1,10 +1,11 @@
 import { useId, useState, type FormEvent, type ReactNode } from "react";
-import { useAuth } from "../../auth/AuthProvider";
+import { canVerifyCandidate, useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import {
     POLICE_REPORT_VARIANTS,
     STAGE_LABELS,
     TEST_RESULT_OPTIONS,
+    setCandidateVerification,
     updateCandidate,
     updateCandidateStage,
     type CandidateDetails,
@@ -86,6 +87,46 @@ function AutomaticStatus({ stage, completedLabel = "Stage completed" }: { stage:
         <p className="inline-flex items-center gap-1.5 text-body-sm text-verified"><Icon name="check" className="size-4" />{completedLabel}</p>
     ) : (
         <p className="text-body-sm text-ink-muted">Missing: {stage.missing.join(", ")}</p>
+    );
+}
+
+// "Verify details" / "Verify documents": an explicit manual action (ADMIN and MANAGER) behind the Candidate
+// list Status. Saving or completing the stage never verifies it; the server also refuses to verify an incomplete stage.
+function VerifyBar({ details, kind, onChange }: { details: CandidateDetails; kind: "DETAILS" | "DOCUMENTS"; onChange: (details: CandidateDetails) => void }) {
+    const { user, token } = useAuth();
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const state = kind === "DETAILS" ? details.verification.details : details.verification.documents;
+    const noun = kind === "DETAILS" ? "details" : "documents";
+    // Something to verify: the Candidate details stage is complete / at least one required document is on record.
+    const ready = kind === "DETAILS" ? Boolean(details.stages.find((s) => s.stage === "CANDIDATE_DETAILS")?.completed) : details.requiredDocuments.some((r) => r.included);
+    const canVerify = canVerifyCandidate(user);
+    if (!state && !canVerify) return null;
+    const change = async (verified: boolean) => {
+        if (!token) return;
+        setBusy(true);
+        setError(null);
+        try {
+            onChange(await setCandidateVerification(token, details.candidate.passportId, kind, verified));
+        } catch (caught) {
+            setError(message(caught));
+        } finally {
+            setBusy(false);
+        }
+    };
+    return (
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded border border-border px-3 py-2">
+            <p className={`inline-flex items-center gap-1.5 text-body-sm ${state ? "text-verified" : "text-ink-muted"}`}>
+                {state && <Icon name="check" className="size-4" />}
+                {state ? `Verified${state.by ? ` by ${state.by}` : ""} on ${state.at.slice(0, 10)}` : `Not verified yet`}
+            </p>
+            {canVerify && (
+                <button type="button" disabled={busy || (!state && !ready)} title={!state && !ready ? (kind === "DETAILS" ? "Complete the details first" : "Add a required document first") : undefined} onClick={() => change(!state)} className={state ? secondaryButton : primaryButton}>
+                    {busy ? "Saving…" : state ? `Remove ${noun} verification` : `Verify ${noun}`}
+                </button>
+            )}
+            <DialogError message={error} />
+        </div>
     );
 }
 
@@ -298,6 +339,7 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
                     onCancel={() => { setForm(detailsFrom(details.candidate)); setComment(saved.notes ?? ""); setFieldErrors({}); setError(null); }}
                 />
             </form>
+            <VerifyBar details={details} kind="DETAILS" onChange={onChange} />
         </div>
     );
 }
@@ -401,6 +443,7 @@ export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelPro
                 dirty={false}
                 error={error}
             />
+            <VerifyBar details={details} kind="DOCUMENTS" onChange={onChange} />
         </div>
     );
 }

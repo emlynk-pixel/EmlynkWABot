@@ -10,6 +10,7 @@ import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from
 // Candidate > Additional details (opened from its progress step). Synthetic data only; the backend is stubbed.
 
 const DETAILS: CandidateDetails = {
+    verification: { details: null, documents: null },
     candidate: {
         passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: "901234567V", jobTypes: ["Driver"], surname: "SILVA", otherNames: "SAMAN",
         dateOfBirth: "1990-03-12", placeOfBirth: "COLOMBO", passportExpiryDate: "2030-05-11", passportIssueDate: null, nationality: null, sex: null,

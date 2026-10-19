@@ -14,6 +14,7 @@
 // at once. The audit entry is written in the same transaction: it exists
 // exactly when the action took effect.
 
+import { setAuditActor } from "./auditActor.js";
 import crypto from "node:crypto";
 import path from "node:path";
 
@@ -361,6 +362,7 @@ async function approvePending({ db, bucket, admin, temporaryId, reason, policeSu
     let copiedPath = null;
     try {
         const outcome = await db.$transaction(async (tx) => {
+            await setAuditActor(tx, admin);
             await lockTemporaryRow(tx, temporaryId);
             const row = await findPending(tx, temporaryId);
             if (!row || row.pendingStoragePath !== before.pendingStoragePath) throw alreadyResolved();
@@ -530,6 +532,7 @@ export async function replaceVerifiedDocument({ db, bucket, admin, reviewId, doc
     let copiedPath = null;
     try {
         const outcome = await db.$transaction(async (tx) => {
+            await setAuditActor(tx, admin);
             await lockTemporaryRow(tx, temporaryId);
             const row = await findPending(tx, temporaryId);
             if (!row || row.pendingStoragePath !== before.pendingStoragePath) throw alreadyResolved();
@@ -682,6 +685,7 @@ export async function keepDocumentAsVersion({ db, bucket, admin, reviewId, reaso
     let copiedPath = null;
     try {
         const outcome = await db.$transaction(async (tx) => {
+            await setAuditActor(tx, admin);
             await lockTemporaryRow(tx, temporaryId);
             const row = await findPending(tx, temporaryId);
             if (!row || row.pendingStoragePath !== before.pendingStoragePath) throw alreadyResolved();
@@ -785,6 +789,7 @@ async function approveDocument({ db, admin, documentId, reason, policeSubmittedD
     policeDateForApproval({ documentType: before.documentType, storedDate: toYmd(before.policeSubmittedDate), givenDate });
 
     const outcome = await db.$transaction(async (tx) => {
+        await setAuditActor(tx, admin);
         await lockDocumentRow(tx, documentId);
         const row = await findReviewDocument(tx, documentId);
         if (!row) throw alreadyResolved();
@@ -1042,6 +1047,7 @@ async function removeStoredDocument({ db, bucket, admin, documentId, reason }) {
     if (!(await findReviewDocument(db, documentId))) throw notFound();
 
     const outcome = await db.$transaction(async (tx) => {
+        await setAuditActor(tx, admin);
         await lockDocumentRow(tx, documentId);
         const row = await findReviewDocument(tx, documentId);
         if (!row) throw alreadyResolved();

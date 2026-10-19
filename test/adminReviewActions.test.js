@@ -586,6 +586,7 @@ describe("security and error handling", () => {
             "POST /candidates/:passportId/documents/:documentId/remove", // reason required, audited
             "POST /candidates/:passportId/documents/finalize", // JSON only: the file goes browser -> storage
             "POST /candidates/:passportId/documents/upload-target",
+            "POST /candidates/:passportId/verification", // Verify details / documents: ADMIN and MANAGER, audited (candidateWorkflowStatus.test.js)
             "POST /client-management",
             "POST /documents/:documentId/police-date",
             "POST /follow-ups/:followUpId/complete", // the row is kept, audited

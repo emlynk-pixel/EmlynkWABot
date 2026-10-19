@@ -156,6 +156,7 @@ describe("Admin screens use the date picker", () => {
         documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null, VISA_SUBMISSION: null },
         variantDocuments: { POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null } },
         requiredDocuments: [],
+        verification: { details: null, documents: null },
     };
     const backend = () => signedInBackend({
         "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "ADMIN" } } },
