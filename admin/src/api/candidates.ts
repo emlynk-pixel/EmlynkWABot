@@ -220,9 +220,10 @@ export type CallLogList = { items: CallLogEntry[]; documentStatus?: DocumentStat
 
 const base = (passportId: string) => `/api/admin/candidates/${encodeURIComponent(passportId)}`;
 
-export function listCandidates(token: string, params: { page: number; pageSize: number; search?: string }, signal?: AbortSignal): Promise<CandidateList> {
+export function listCandidates(token: string, params: { page: number; pageSize: number; search?: string; testResult?: "PASS" }, signal?: AbortSignal): Promise<CandidateList> {
     const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
     if (params.search) query.set("search", params.search);
+    if (params.testResult) query.set("testResult", params.testResult);
     return apiRequest<CandidateList>(`/api/admin/candidates?${query.toString()}`, { token, signal });
 }
 

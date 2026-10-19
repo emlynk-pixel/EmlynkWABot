@@ -256,7 +256,10 @@ export function parseCandidateBody(body, { creating }) {
     return errors.length ? { errors } : { values };
 }
 
+// The stored Test result values (candidate_stages.test_result, TEST_DETAILS). PASS is the only one
+// that makes a candidate eligible for a Job assignment (jobService.js addCandidateToJob).
 export const TEST_RESULTS = Object.freeze(["PASS", "FAIL"]);
+export const TEST_RESULT_PASS = "PASS";
 
 const MAX_TEST_ID_LENGTH = 50;
 const MAX_AGENT_NAME_LENGTH = 120;
@@ -578,6 +581,12 @@ export function parseCandidateListQuery(query = {}) {
         if (trimmed.length > 100) errors.push({ field: "search", message: "must be at most 100 characters" });
         else if (trimmed) params.search = trimmed;
     }
+    // testResult=PASS: only candidates whose saved Test details result is PASS (the Job "Add candidate" search).
+    const testResult = single("testResult");
+    if (testResult !== undefined) {
+        if (testResult === TEST_RESULT_PASS) params.testResult = TEST_RESULT_PASS;
+        else errors.push({ field: "testResult", message: `must be ${TEST_RESULT_PASS}` });
+    }
     return errors.length ? { errors } : { params };
 }
 
@@ -615,7 +624,9 @@ const listSelect = {
 // cover the candidates the user may see.
 export async function listCandidates({ db, params, scope = {} }) {
     const search = params.search ? candidateSearchWhere(params.search) : {};
-    const parts = [search, scope].filter((part) => Object.keys(part).length);
+    // Filtered on the database, from the saved Test details row (never from stage completion).
+    const passed = params.testResult === TEST_RESULT_PASS ? { stages: { some: { stage: "TEST_DETAILS", testResult: TEST_RESULT_PASS } } } : {};
+    const parts = [search, scope, passed].filter((part) => Object.keys(part).length);
     const where = parts.length > 1 ? { AND: parts } : parts[0] ?? {};
     const [total, users] = await Promise.all([
         db.candidate.count({ where }),
@@ -640,7 +651,7 @@ export async function listCandidates({ db, params, scope = {} }) {
             stages: stageList(user.stages, automaticStageMissing(user, user.documents)).map(({ stage, completed }) => ({ stage, completed })),
         })),
         pagination: listPagination(params, total),
-        filters: { search: params.search ?? null },
+        filters: { search: params.search ?? null, ...(params.testResult ? { testResult: params.testResult } : {}) },
     };
 }
 

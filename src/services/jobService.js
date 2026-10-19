@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-import { CandidateError, listPagination, resolveCandidatePassportId } from "./candidateService.js";
+import { CandidateError, TEST_RESULT_PASS, listPagination, resolveCandidatePassportId } from "./candidateService.js";
 import { candidateScope, isCandidateScoped } from "./candidateAccess.js";
 import { JOB_SELECT, JOB_STATUS, jobSummaryView } from "./jobAssignmentReader.js";
 import { clientName } from "../utils/clientName.js";
@@ -471,6 +471,16 @@ export async function addCandidateToJob({ db, actor, jobId, passportId }) {
             const active = await tx.jobCandidate.findFirst({ where: { passportId: stored, isActive: true }, select: { jobId: true, job: { select: { jobCode: true } } } });
             if (active?.jobId === jobId) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", `This candidate is already assigned to ${job.jobCode}.`);
             if (active) throw new CandidateError(409, "CANDIDATE_ON_ACTIVE_JOB", `This candidate is already on the PROCESSING job ${active.job.jobCode}. Complete or cancel that job, or remove the candidate from it, first.`);
+
+            // Only a candidate who PASSED the test can be assigned (also a removed candidate put back, and a
+            // candidate being moved to another job after leaving the first). The saved Test details result is
+            // the only source (not stage completion, not the Job details stage, not the legacy job_id); the row
+            // is share-locked so the result cannot change between this check and the insert. Existing
+            // assignments are never touched when a result later changes.
+            const [test] = await tx.$queryRaw`SELECT "test_result" AS "result" FROM "candidate_stages" WHERE "passport_id" = ${stored} AND "stage" = 'TEST_DETAILS' FOR SHARE`;
+            if (test?.result !== TEST_RESULT_PASS) {
+                throw new CandidateError(409, "CANDIDATE_TEST_NOT_PASSED", "Candidate must pass the test before being assigned to a job.");
+            }
 
             const existing = await tx.jobCandidate.findUnique({ where: { jobId_passportId: { jobId, passportId: stored } }, select: { releasedAt: true } });
             const now = new Date();

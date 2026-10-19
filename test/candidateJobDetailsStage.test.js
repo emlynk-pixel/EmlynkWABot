@@ -36,6 +36,8 @@ beforeEach(async () => {
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
     `);
     await prisma.candidate.createMany({ data: [[P1, "7001", "Nimal", "Perera", "900000001V"], [P2, "7002", "Kamal", "Silva", "900000002V"]].map(([passportId, uniqueId, firstName, otherName, nic]) => ({ passportId, uniqueId, firstName, otherName, nic })) });
+    // Both candidates passed the test (the only ones a job can take); the rule itself is in jobAssignmentTestPass.test.js.
+    await prisma.candidateStage.createMany({ data: [P1, P2].map((passportId) => ({ passportId, stage: "TEST_DETAILS", testResult: "PASS" })) });
     await prisma.candidateAllocation.create({ data: { passportId: P1, analystId: USERS.ANALYST.adminId } });
     const jobType = await prisma.jobType.create({ data: { code: "WELDER", name: "Welder" } });
     const agent = await prisma.agent.create({ data: { name: "Ion Popescu", countryCode: "RO" } });
@@ -88,7 +90,7 @@ describe("the Job and Client come from the Job assignment (STAGE-JOB-007, 008, 0
     test("STAGE-JOB-009 / 021: with no Job, and no JOB_DETAILS row, the stage loads with safe defaults", async () => {
         const job = await stage(P1, "JOB_DETAILS");
         assert.deepEqual([job.automatic, job.completed, job.jobDate, job.notes, job.jobCode, job.clientName], [false, false, null, null, null, null]);
-        assert.equal(await prisma.candidateStage.count({ where: { passportId: P1 } }), 0, "reading creates nothing");
+        assert.equal(await prisma.candidateStage.count({ where: { passportId: P1 } }), 1, "reading creates nothing (only the Test details row the test set up)");
     });
 
     test("STAGE-JOB-007 / 008: the assigned Job's human-readable code and its Client's name (never the UUID)", async () => {
@@ -138,7 +140,7 @@ describe("the Job and Client come from the Job assignment (STAGE-JOB-007, 008, 0
     });
 
     test("STAGE-JOB-023: a legacy free-text job_id never overrides the relational assignment, and never becomes the Job", async () => {
-        await prisma.candidateStage.create({ data: { passportId: P1, stage: "TEST_DETAILS", jobId: "Legacy-Job-12" } });
+        await prisma.candidateStage.update({ where: { passportId_stage: { passportId: P1, stage: "TEST_DETAILS" } }, data: { jobId: "Legacy-Job-12" } });
         await prisma.candidateStage.create({ data: { passportId: P1, stage: "JOB_DETAILS", jobId: "Legacy-Job-12" } });
         let job = await stage(P1, "JOB_DETAILS");
         assert.deepEqual([job.jobCode, job.clientName], [null, null], "legacy text is not an assignment");
@@ -292,7 +294,7 @@ describe("what can be saved (STAGE-JOB-010 to 015)", () => {
                 assert.equal(response.status, 400, `${key} ${JSON.stringify(body)}`);
             }
         }
-        assert.equal(await prisma.candidateStage.count(), 0, "nothing was written");
+        assert.equal(await prisma.candidateStage.count(), 2, "nothing was written (only the two Test details rows the test set up)");
         const shown = await stage(P1, "JOB_DETAILS");
         assert.deepEqual([shown.jobCode, shown.clientName], [job.jobCode, "Acme Builders"]);
     });
