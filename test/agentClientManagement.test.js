@@ -361,6 +361,7 @@ describe("clients: lists, details, edit (CLIENT-011 to CLIENT-013, REL-002)", ()
         const cancelled = await mkJobOk(c1.clientId);
         await mkJobOk(c2.clientId);
         await prisma.candidate.create({ data: { passportId: pid(1), uniqueId: "7001", firstName: "Nimal" } });
+        await prisma.candidateStage.create({ data: { passportId: pid(1), stage: "TEST_DETAILS", testResult: "PASS" } });
         assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${processing.jobId}/candidates`, { passportId: pid(1) })).status, 201);
         await api(USERS.MANAGER, "POST", `/jobs/${done.jobId}/complete`, {});
         await api(USERS.MANAGER, "POST", `/jobs/${cancelled.jobId}/cancel`, { reason: "Employer withdrew" });
@@ -519,6 +520,7 @@ describe("jobs use the relational Client + Agent (REL-005 to REL-008)", () => {
         const agent = await mkAgent();
         const client = await mkClient(agent.agentId);
         await prisma.candidate.createMany({ data: [1, 2].map((i) => ({ passportId: pid(i), uniqueId: `700${i}`, firstName: `N${i}`, otherName: `S${i}` })) });
+        await prisma.candidateStage.createMany({ data: [1, 2].map((i) => ({ passportId: pid(i), stage: "TEST_DETAILS", testResult: "PASS" })) });
         await prisma.candidateAllocation.create({ data: { passportId: pid(1), analystId: USERS.ANALYST.adminId } });
         const job = await mkJobOk(client.clientId, { companyJobId: "Y26S01" });
         assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { passportId: pid(1) })).status, 201);
