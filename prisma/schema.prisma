@@ -422,20 +422,29 @@ model CandidateAdditionalDetails {
 }
 
 model CandidateStage {
-  passportId  String    @map("passport_id")
-  // TEST_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION | IVS_INTERVIEW
-  // | VISA_APPROVAL | FINALIZING_JOB
-  stage       String
-  completed   Boolean   @default(false)
-  completedAt DateTime? @map("completed_at")
-  notes       String?
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-  // TEST_DETAILS only (null on the other stages): the job ID the admin
-  // enters, the test's result (PASS or FAIL) and the date the candidate
-  // actually sat it. Null until recorded.
-  jobId       String?   @map("job_id")
-  testResult  String?   @map("test_result")
-  testDate    DateTime? @map("test_date") @db.Date
+  passportId     String    @map("passport_id")
+  // TEST_DETAILS | JOB_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION
+  // | IVS_INTERVIEW | VISA_SUBMISSION | VISA_APPROVAL | FINALIZING_JOB
+  stage          String
+  completed      Boolean   @default(false)
+  completedAt    DateTime? @map("completed_at")
+  notes          String?
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  // TEST_DETAILS only (null on the other stages): the agent and the Test ID
+  // the admin enters, the test's result (PASS or FAIL) and the date the
+  // candidate actually sat it. Null until recorded.
+  testAgentName  String?   @map("test_agent_name")
+  testId         String?   @map("test_id")
+  testResult     String?   @map("test_result")
+  testDate       DateTime? @map("test_date") @db.Date
+  // LEGACY free text, entered as "Job ID" on Test details before Job Management.
+  // No longer written. Read only as the Test ID of a row that has no test_id,
+  // never as a Job (the Job is the job_candidate assignment).
+  jobId          String?   @map("job_id")
+  // JOB_DETAILS only: the saved date. The stage's note and completion use the
+  // generic notes / completed columns; its Job and Client are read from
+  // job_candidate, never stored here.
+  jobDetailsDate DateTime? @map("job_details_date") @db.Date
 
   user Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
 
