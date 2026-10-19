@@ -21,6 +21,7 @@
 // compare-and-swap on that version, so even two saves at the same moment
 // can't both win.
 
+import { setAuditActor } from "./auditActor.js";
 import crypto from "node:crypto";
 
 import { businessDateOf } from "../utils/businessDay.js";
@@ -251,6 +252,7 @@ export async function saveAdditionalDetails({ db, passportId, values, actor, exp
     let row;
     try {
         row = await db.$transaction(async (tx) => {
+            await setAuditActor(tx, actor);
             const existing = await tx.candidateAdditionalDetails.findUnique({ where: { passportId }, select: selectAll });
             const changes = changedFields(existing, values);
             // Nothing changed (including an empty form with nothing saved): no write, no audit.

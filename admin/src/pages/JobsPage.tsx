@@ -2,8 +2,6 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ApiError } from "../api/client";
 import {
-    createAgent,
-    createCompany,
     createJob,
     createJobType,
     getJobOptions,
@@ -117,7 +115,7 @@ function JobsView() {
                             type="search"
                             value={searchText}
                             maxLength={100}
-                            placeholder="Job code, Company Job ID, company, agent…"
+                            placeholder="Job code, Client Job ID, client, agent…"
                             onChange={(event) => setSearchText(event.target.value)}
                             className={`${filterControl} w-64`}
                         />
@@ -139,10 +137,10 @@ function JobsView() {
                             <thead>
                                 <tr>
                                     <th className={tableHead}>Job code</th>
-                                    <th className={tableHead}>Company Job ID</th>
+                                    <th className={tableHead}>Client Job ID</th>
                                     <th className={tableHead}>Job type</th>
                                     <th className={tableHead}>Country</th>
-                                    <th className={tableHead}>Company</th>
+                                    <th className={tableHead}>Client</th>
                                     <th className={tableHead}>Responsible agent</th>
                                     <th className={`${tableHead} text-right`}>Candidates</th>
                                     <th className={`${tableHead} text-right`}>Vacancies</th>
@@ -159,7 +157,7 @@ function JobsView() {
                                         <td className={tableCell}>{job.companyJobId ?? <span className="text-ink-muted">{NO_COMPANY_JOB_ID}</span>}</td>
                                         <td className={tableCell}>{job.jobType.name}</td>
                                         <td className={tableCell}>{job.countryCode}</td>
-                                        <td className={tableCell}>{job.company.name}</td>
+                                        <td className={tableCell}>{job.client.name}</td>
                                         <td className={tableCell}>{job.responsibleAgent.name}</td>
                                         <td className={`${tableCell} text-right tabular-nums`}>{formatNumber(job.candidateCount)}</td>
                                         <td className={`${tableCell} text-right tabular-nums`}>{job.vacancies === null ? "—" : formatNumber(job.vacancies)}</td>
@@ -187,7 +185,7 @@ function JobsView() {
     );
 }
 
-// A reference list (job type, company, agent) with an inline "add new" row, so
+// A reference list (job type) with an inline "add new" row, so
 // the first jobs can be created without a separate management screen.
 function ReferenceSelect({ label, value, onChange, options, disabled, adding, onAdd, extraField }: {
     label: string;
@@ -246,24 +244,26 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     const options = useAdminResource("job-options", (t, signal) => getJobOptions(t, signal));
     const [created, setCreated] = useState<Partial<JobOptions>>({});
     const [jobTypeId, setJobTypeId] = useState("");
-    const [companyId, setCompanyId] = useState("");
-    const [agentId, setAgentId] = useState("");
+    const [clientId, setClientId] = useState("");
     const [vacancies, setVacancies] = useState("");
     const [companyJobId, setCompanyJobId] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const vacanciesId = useId();
     const companyJobIdField = useId();
+    const clientField = useId();
 
     const merged = <K extends keyof JobOptions>(key: K): JobOptions[K] => {
         const loaded = (options.data?.[key] ?? []) as JobOptions[K];
         const added = (created[key] ?? []) as JobOptions[K];
         return [...loaded, ...added] as JobOptions[K];
     };
-    const agent = merged("agents").find((a) => a.id === agentId);
+    const client = merged("clients").find((c) => c.id === clientId);
+    // The responsible agent is the client's own (the server enforces it); shown, not chosen.
+    const agent = merged("agents").find((a) => a.id === client?.agentId);
     const vacanciesNumber = vacancies.trim() === "" ? null : Number(vacancies);
     const vacanciesValid = vacanciesNumber === null || (Number.isInteger(vacanciesNumber) && vacanciesNumber >= 1 && vacanciesNumber <= 100000);
-    const ready = Boolean(jobTypeId && companyId && agentId) && vacanciesValid;
+    const ready = Boolean(jobTypeId && clientId && agent) && vacanciesValid;
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
@@ -271,7 +271,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
         setBusy(true);
         setError(null);
         try {
-            const job = await createJob(token, { jobTypeId, companyId, responsibleAgentId: agentId, vacancies: vacanciesNumber, companyJobId: companyJobId.trim() || null });
+            const job = await createJob(token, { jobTypeId, clientId, responsibleAgentId: agent?.id, vacancies: vacanciesNumber, companyJobId: companyJobId.trim() || null });
             onCreated(job.jobId);
         } catch (caught) {
             setError(message(caught));
@@ -294,32 +294,25 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
                             setJobTypeId(row.id);
                         }}
                     />
-                    <ReferenceSelect
-                        label="Company" value={companyId} onChange={setCompanyId} disabled={busy} adding="Add company"
-                        options={merged("companies").map((o) => ({ id: o.id, label: o.name }))}
-                        onAdd={async (name) => {
-                            const row = await createCompany(token, name);
-                            setCreated((c) => ({ ...c, companies: [...(c.companies ?? []), row] }));
-                            setCompanyId(row.id);
-                        }}
-                    />
-                    <ReferenceSelect
-                        label="Responsible agent" value={agentId} onChange={setAgentId} disabled={busy} adding="Add agent"
-                        options={merged("agents").map((o) => ({ id: o.id, label: `${o.name} (${o.countryCode})` }))}
-                        extraField={{ label: "Agent country code", placeholder: "Country code, e.g. RO" }}
-                        onAdd={async (name, country) => {
-                            const row = await createAgent(token, name, country);
-                            setCreated((c) => ({ ...c, agents: [...(c.agents ?? []), row] }));
-                            setAgentId(row.id);
-                        }}
-                    />
+                    <div>
+                        <label htmlFor={clientField} className="text-label-md text-ink">Client</label>
+                        <select id={clientField} value={clientId} disabled={busy} onChange={(event) => setClientId(event.target.value)} className={`${inputClass()} mt-1`}>
+                            <option value="">Select a client…</option>
+                            {merged("clients").map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        {merged("clients").length === 0 && <p className="mt-1 text-label-sm text-ink-muted">No active client with an active agent yet. Add one in Client Management.</p>}
+                    </div>
+                    <div>
+                        <span className="text-label-md text-ink">Responsible agent</span>
+                        <p className="mt-1 text-body-sm text-ink" data-testid="job-agent">{agent ? `${agent.name} (${agent.countryCode})` : <span className="text-ink-muted">Taken from the selected client</span>}</p>
+                    </div>
                     <div>
                         <label htmlFor={vacanciesId} className="text-label-md text-ink">Vacancies <span className="text-ink-muted">(optional)</span></label>
                         <input id={vacanciesId} inputMode="numeric" value={vacancies} disabled={busy} onChange={(event) => setVacancies(event.target.value)} className={`${inputClass(!vacanciesValid)} mt-1`} />
                         {!vacanciesValid && <p className="mt-1 text-label-sm text-critical">Enter a whole number from 1 to 100000, or leave it empty.</p>}
                     </div>
                     <div>
-                        <label htmlFor={companyJobIdField} className="text-label-md text-ink">Company Job ID <span className="text-ink-muted">(optional, the employer&apos;s own ID; can be added later)</span></label>
+                        <label htmlFor={companyJobIdField} className="text-label-md text-ink">Client Job ID <span className="text-ink-muted">(optional, the employer&apos;s own ID; can be added later)</span></label>
                         <input id={companyJobIdField} value={companyJobId} maxLength={40} disabled={busy} onChange={(event) => setCompanyJobId(event.target.value)} className={`${inputClass()} mt-1`} />
                     </div>
                     <p className="text-body-sm text-ink-muted">Country: {agent ? agent.countryCode : "taken from the responsible agent"}. The job code is generated when you save.</p>

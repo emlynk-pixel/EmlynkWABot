@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-import { CandidateError, listPagination, resolveCandidatePassportId } from "./candidateService.js";
+import { CandidateError, TEST_RESULT_PASS, listPagination, resolveCandidatePassportId } from "./candidateService.js";
 import { candidateScope, isCandidateScoped } from "./candidateAccess.js";
 import { JOB_SELECT, JOB_STATUS, jobSummaryView } from "./jobAssignmentReader.js";
 import { clientName } from "../utils/clientName.js";
@@ -9,7 +9,8 @@ export { JOB_STATUS };
 
 // Job Management (Admin > Jobs). Docs/JOB_MANAGEMENT_IMPLEMENTATION.md.
 //
-// A Job belongs to one Company, one Job Type and one responsible Agent. A
+// A Job belongs to one Client (the employer), one Job Type and one responsible
+// Agent. The Agent must be the Client's own Agent (checked on create and update). A
 // candidate is assigned through job_candidate; at most ONE PROCESSING job per
 // candidate (service check under row locks, and the partial unique index
 // job_candidate_one_active_per_candidate as the database's own guarantee).
@@ -29,8 +30,6 @@ export const JOB_AUDIT_ACTION = Object.freeze({
     ADD_CANDIDATE: "ADD_CANDIDATE_TO_JOB",
     REMOVE_CANDIDATE: "REMOVE_CANDIDATE_FROM_JOB",
     CREATE_JOB_TYPE: "CREATE_JOB_TYPE",
-    CREATE_COMPANY: "CREATE_COMPANY",
-    CREATE_AGENT: "CREATE_AGENT",
 });
 
 export const JOB_VIEWS = Object.freeze({ processing: JOB_STATUS.PROCESSING, completed: JOB_STATUS.COMPLETED, cancelled: JOB_STATUS.CANCELLED });
@@ -114,21 +113,23 @@ export function parseJobListQuery(query = {}) {
     return errors.length ? { errors } : { params };
 }
 
-// POST /api/admin/jobs { jobTypeId, companyId, responsibleAgentId, vacancies? }
+// POST /api/admin/jobs { jobTypeId, clientId, responsibleAgentId?, vacancies? }
+// responsibleAgentId is optional: omitted, the Client's own Agent is used. Given, it
+// must be that Agent (the service rejects any other combination).
 export function parseCreateJobBody(body) {
     if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
     const errors = [];
     const values = {
         jobTypeId: requiredId(body, "jobTypeId", errors),
-        companyId: requiredId(body, "companyId", errors),
-        responsibleAgentId: requiredId(body, "responsibleAgentId", errors),
+        clientId: requiredId(body, "clientId", errors),
+        responsibleAgentId: body.responsibleAgentId === undefined || body.responsibleAgentId === null ? undefined : requiredId(body, "responsibleAgentId", errors),
         vacancies: body.vacancies === undefined ? null : parseVacancies(body.vacancies, errors),
         companyJobId: body.companyJobId === undefined ? null : normalizeCompanyJobId(body.companyJobId, errors),
     };
     return errors.length ? { errors } : { values };
 }
 
-// PUT /api/admin/jobs/:jobId { vacancies?, jobTypeId?, companyId?, companyJobId? }.
+// PUT /api/admin/jobs/:jobId { vacancies?, jobTypeId?, clientId?, companyJobId? }.
 // companyJobId (null clears it) may be changed on a job in any status; the other
 // fields only while PROCESSING. The responsible Agent, the country, the job code
 // and the job id are fixed.
@@ -141,7 +142,7 @@ export function parseUpdateJobBody(body) {
         if (vacancies !== undefined) values.vacancies = vacancies;
     }
     if (body.jobTypeId !== undefined) values.jobTypeId = requiredId(body, "jobTypeId", errors);
-    if (body.companyId !== undefined) values.companyId = requiredId(body, "companyId", errors);
+    if (body.clientId !== undefined) values.clientId = requiredId(body, "clientId", errors);
     if (body.companyJobId !== undefined) {
         const companyJobId = normalizeCompanyJobId(body.companyJobId, errors);
         if (companyJobId !== undefined) values.companyJobId = companyJobId;
@@ -149,7 +150,7 @@ export function parseUpdateJobBody(body) {
     for (const field of ["responsibleAgentId", "countryCode", "status", "jobCode"]) {
         if (body[field] !== undefined) errors.push({ field, message: "cannot be changed here" });
     }
-    if (!errors.length && Object.keys(values).length === 0) errors.push({ field: "body", message: "must contain vacancies, jobTypeId, companyId or companyJobId" });
+    if (!errors.length && Object.keys(values).length === 0) errors.push({ field: "body", message: "must contain vacancies, jobTypeId, clientId or companyJobId" });
     return errors.length ? { errors } : { values };
 }
 
@@ -178,7 +179,7 @@ function parseName(body, field, errors) {
     return value;
 }
 
-// POST /api/admin/job-types | /companies { name }, /agents { name, countryCode }
+// POST /api/admin/job-types { name }
 export function parseReferenceBody(body, { withCountry = false } = {}) {
     if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
     const errors = [];
@@ -216,14 +217,15 @@ async function nextJobCode(tx, now) {
 
 const referenceView = (row) => ({ id: row.id, name: row.name, ...(row.countryCode ? { countryCode: row.countryCode } : {}), ...(row.code ? { code: row.code } : {}) });
 
-// GET /api/admin/job-options: the active job types, companies and agents a job can use.
+// GET /api/admin/job-options: the active job types, clients (each with its Agent) and
+// agents a job can use. Only an ACTIVE client of an ACTIVE agent is offered.
 export async function listJobOptions({ db }) {
-    const [jobTypes, companies, agents] = await Promise.all([
+    const [jobTypes, clients, agents] = await Promise.all([
         db.jobType.findMany({ where: { isActive: true }, select: { id: true, code: true, name: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
-        db.company.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
+        db.client.findMany({ where: { isActive: true, agent: { is: { isActive: true } } }, select: { id: true, name: true, agentId: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
         db.agent.findMany({ where: { isActive: true }, select: { id: true, name: true, countryCode: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
     ]);
-    return { jobTypes: jobTypes.map(referenceView), companies: companies.map(referenceView), agents: agents.map(referenceView) };
+    return { jobTypes: jobTypes.map(referenceView), clients: clients.map((row) => ({ id: row.id, name: row.name, agentId: row.agentId })), agents: agents.map(referenceView) };
 }
 
 const auditRow = ({ actor, action, passportId = null, previousStatus, newStatus, reason = null, previousValue = null, newValue = null }) => ({
@@ -250,10 +252,6 @@ export function createJobType({ db, actor, values }) {
     if (!code) throw new CandidateError(400, "INVALID_NAME", "The name must contain letters or digits.");
     return createReference({ db, actor, model: "jobType", data: { code, name: values.name }, action: JOB_AUDIT_ACTION.CREATE_JOB_TYPE, label: "Job type", duplicateMessage: "A job type with this name already exists." });
 }
-export const createCompany = ({ db, actor, values }) =>
-    createReference({ db, actor, model: "company", data: { name: values.name }, action: JOB_AUDIT_ACTION.CREATE_COMPANY, label: "Company", duplicateMessage: "A company with this name already exists." });
-export const createAgent = ({ db, actor, values }) =>
-    createReference({ db, actor, model: "agent", data: { name: values.name, countryCode: values.countryCode }, action: JOB_AUDIT_ACTION.CREATE_AGENT, label: "Agent", duplicateMessage: "An agent with this name already exists in this country." });
 
 // ---------------------------------------------------------------- views
 
@@ -269,7 +267,7 @@ function searchWhere(search) {
             OR: [
                 { jobCode: { contains: word, mode: "insensitive" } },
                 { companyJobId: { contains: word, mode: "insensitive" } },
-                { company: { name: { contains: word, mode: "insensitive" } } },
+                { client: { name: { contains: word, mode: "insensitive" } } },
                 { responsibleAgent: { name: { contains: word, mode: "insensitive" } } },
                 { jobType: { name: { contains: word, mode: "insensitive" } } },
                 { countryCode: { equals: word.toUpperCase() } },
@@ -359,6 +357,25 @@ async function requireActive(tx, model, id, field, label) {
     return row;
 }
 
+// The Client a job is (or will be) for: it must exist and be ACTIVE, and its
+// responsible Agent must be ACTIVE and be the job's Agent. `agentId` is what the
+// caller asked for (undefined: use the Client's Agent). Never trusts the browser:
+// a Client/Agent pair that does not match is refused whatever the form showed.
+async function requireClientWithAgent(tx, clientId, agentId) {
+    // Share-locks the client and its agent for the rest of the transaction, so a
+    // deactivation (which locks FOR UPDATE and then counts PROCESSING jobs)
+    // cannot slip in between this check and the insert.
+    await tx.$queryRaw`SELECT "id" FROM "client" WHERE "id" = ${clientId}::uuid FOR SHARE`;
+    await tx.$queryRaw`SELECT a."id" FROM "agent" a JOIN "client" c ON c."agent_id" = a."id" WHERE c."id" = ${clientId}::uuid FOR SHARE OF a`;
+    const client = await tx.client.findUnique({ where: { id: clientId }, select: { id: true, isActive: true, agentId: true, agent: { select: { id: true, isActive: true, countryCode: true } } } });
+    if (!client) throw new CandidateError(400, "REFERENCE_NOT_FOUND", "The selected client does not exist.");
+    if (!client.isActive) throw new CandidateError(409, "CLIENT_INACTIVE", "This client is inactive. Activate it before creating or moving a job for it.");
+    if (!client.agent) throw new CandidateError(409, "CLIENT_HAS_NO_AGENT", "This client has no responsible agent. Assign an agent to the client first.");
+    if (agentId && agentId !== client.agentId) throw new CandidateError(409, "CLIENT_AGENT_MISMATCH", "The selected agent is not the responsible agent of this client.");
+    if (!client.agent.isActive) throw new CandidateError(409, "AGENT_INACTIVE", "The client's responsible agent is inactive. Assign an active agent to the client first.");
+    return { client, agent: client.agent };
+}
+
 // POST /api/admin/jobs. The job's country is the responsible Agent's country
 // at creation time.
 export async function createJob({ db, actor, values, now = new Date() }) {
@@ -373,16 +390,15 @@ export async function createJob({ db, actor, values, now = new Date() }) {
 async function createJobInTransaction({ db, actor, values, now }) {
     return db.$transaction(async (tx) => {
         await requireActive(tx, "jobType", values.jobTypeId, "jobTypeId", "job type");
-        await requireActive(tx, "company", values.companyId, "companyId", "company");
-        const agent = await requireActive(tx, "agent", values.responsibleAgentId, "responsibleAgentId", "agent");
+        const { agent } = await requireClientWithAgent(tx, values.clientId, values.responsibleAgentId);
         const jobCode = await nextJobCode(tx, now);
         const job = await tx.job.create({
             data: {
                 jobCode,
                 companyJobId: values.companyJobId,
                 jobTypeId: values.jobTypeId,
-                companyId: values.companyId,
-                responsibleAgentId: values.responsibleAgentId,
+                clientId: values.clientId,
+                responsibleAgentId: agent.id,
                 countryCode: agent.countryCode,
                 vacancies: values.vacancies,
                 status: JOB_STATUS.PROCESSING,
@@ -393,14 +409,14 @@ async function createJobInTransaction({ db, actor, values, now }) {
         await tx.auditLog.create({
             data: auditRow({
                 actor, action: JOB_AUDIT_ACTION.CREATE, previousStatus: "NONE", newStatus: JOB_STATUS.PROCESSING, reason: `Job ${job.jobCode} created`,
-                newValue: JSON.stringify({ jobId: job.id, jobCode: job.jobCode, ...values, countryCode: agent.countryCode }),
+                newValue: JSON.stringify({ jobId: job.id, jobCode: job.jobCode, ...values, responsibleAgentId: agent.id, countryCode: agent.countryCode }),
             }),
         });
         return getJob({ db: tx, jobId: job.id, user: actor });
     });
 }
 
-const COMPANY_JOB_ID_TAKEN = "Another job of this company already has this Company Job ID.";
+const COMPANY_JOB_ID_TAKEN = "Another job of this client already has this Company Job ID.";
 
 // PUT /api/admin/jobs/:jobId. The Company Job ID is a plain attribute: changing
 // it touches nothing else (job.id, job_candidate and the Candidate Form links
@@ -420,8 +436,11 @@ async function updateJobInTransaction({ db, actor, jobId, values }) {
         const job = await lockJob(tx, jobId, "update");
         if (Object.keys(values).some((key) => key !== "companyJobId")) requireProcessing(job);
         if (values.jobTypeId) await requireActive(tx, "jobType", values.jobTypeId, "jobTypeId", "job type");
-        if (values.companyId) await requireActive(tx, "company", values.companyId, "companyId", "company");
-        const before = await tx.job.findUnique({ where: { id: jobId }, select: { companyJobId: true, vacancies: true, jobTypeId: true, companyId: true } });
+        if (values.clientId) {
+            const current = await tx.job.findUnique({ where: { id: jobId }, select: { responsibleAgentId: true } });
+            await requireClientWithAgent(tx, values.clientId, current.responsibleAgentId);
+        }
+        const before = await tx.job.findUnique({ where: { id: jobId }, select: { companyJobId: true, vacancies: true, jobTypeId: true, clientId: true, responsibleAgentId: true } });
         await tx.job.update({ where: { id: jobId }, data: values });
         await tx.auditLog.create({
             data: auditRow({
@@ -452,6 +471,16 @@ export async function addCandidateToJob({ db, actor, jobId, passportId }) {
             const active = await tx.jobCandidate.findFirst({ where: { passportId: stored, isActive: true }, select: { jobId: true, job: { select: { jobCode: true } } } });
             if (active?.jobId === jobId) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", `This candidate is already assigned to ${job.jobCode}.`);
             if (active) throw new CandidateError(409, "CANDIDATE_ON_ACTIVE_JOB", `This candidate is already on the PROCESSING job ${active.job.jobCode}. Complete or cancel that job, or remove the candidate from it, first.`);
+
+            // Only a candidate who PASSED the test can be assigned (also a removed candidate put back, and a
+            // candidate being moved to another job after leaving the first). The saved Test details result is
+            // the only source (not stage completion, not the Job details stage, not the legacy job_id); the row
+            // is share-locked so the result cannot change between this check and the insert. Existing
+            // assignments are never touched when a result later changes.
+            const [test] = await tx.$queryRaw`SELECT "test_result" AS "result" FROM "candidate_stages" WHERE "passport_id" = ${stored} AND "stage" = 'TEST_DETAILS' FOR SHARE`;
+            if (test?.result !== TEST_RESULT_PASS) {
+                throw new CandidateError(409, "CANDIDATE_TEST_NOT_PASSED", "Candidate must pass the test before being assigned to a job.");
+            }
 
             const existing = await tx.jobCandidate.findUnique({ where: { jobId_passportId: { jobId, passportId: stored } }, select: { releasedAt: true } });
             const now = new Date();

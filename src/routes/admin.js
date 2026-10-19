@@ -74,8 +74,6 @@ import {
     addCandidateToJob,
     cancelJob,
     completeJob,
-    createAgent,
-    createCompany,
     createJob,
     createJobType,
     getJob,
@@ -96,6 +94,31 @@ import { confirmFormField, rejectFormField } from "../services/candidateFormFiel
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
 import { parseCandidateFormOrigin } from "../config/candidateForm.js";
+import {
+    createAgent,
+    getAgent,
+    isValidUuid,
+    listAgentOptions,
+    listAgents,
+    parseCreateAgentBody,
+    parseListQuery,
+    parseStatusBody,
+    parseUpdateAgentBody,
+    setAgentStatus,
+    updateAgent,
+} from "../services/agentService.js";
+import {
+    changeClientAgent,
+    createClient,
+    getClient,
+    listClients as listEmployerClients,
+    parseChangeAgentBody,
+    parseCreateClientBody,
+    parseUpdateClientBody,
+    setClientStatus,
+    updateClient,
+} from "../services/clientService.js";
+import { parseVerificationBody, setCandidateVerification } from "../services/candidateVerificationService.js";
 import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
@@ -551,6 +574,18 @@ export function createAdminRouter({
         })));
     });
 
+    // Manual verification of a candidate's details or documents (candidateVerificationService.js):
+    // ADMIN and MANAGER only, explicit, audited. The Candidate list Status reads it.
+    router.post("/candidates/:passportId/verification", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseVerificationBody(req.body);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await setCandidateVerification({
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), ...parsed.values,
+        })));
+    });
+
     // Document uploads: the browser sends the file straight to storage, never
     // to this API (candidateService.js, "direct uploads"). Both requests are
     // small JSON bodies (express.json in createApp.js); no route here parses
@@ -802,7 +837,7 @@ export function createAdminRouter({
     // ADMIN and MANAGER manage jobs; an ANALYST reads only the jobs that hold a
     // candidate allocated to them (and sees only those candidates);
     // REGISTRATION_DESK has no access. Membership rules (one PROCESSING job per
-    // candidate) are enforced in the service and by the database.
+    // candidate) and the Client/Agent rules are enforced in the service and by the database.
     const jobParam = (req, res) => {
         if (isValidJobIdParam(req.params.jobId)) return true;
         res.status(404).json({ message: "Job not found", code: "JOB_NOT_FOUND" });
@@ -818,14 +853,12 @@ export function createAdminRouter({
         const client = await resolveDb(db);
         return res.json(await listJobOptions({ db: client }));
     });
-    for (const [path, create, withCountry] of [["/job-types", createJobType, false], ["/companies", createCompany, false], ["/agents", createAgent, true]]) {
-        router.post(path, requireRole(MANAGERS_UP), async (req, res) => {
-            const parsed = parseReferenceBody(req.body, { withCountry });
-            if (!jobBody(res, parsed)) return undefined;
-            const client = await resolveDb(db);
-            return candidateAction(res, async () => res.status(201).json(await create({ db: client, actor: req.user, values: parsed.values })));
-        });
-    }
+    router.post("/job-types", requireRole(MANAGERS_UP), async (req, res) => {
+        const parsed = parseReferenceBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await createJobType({ db: client, actor: req.user, values: parsed.values })));
+    });
 
     router.get("/jobs", requireRole(ALL_ACTIVE), async (req, res) => {
         const parsed = parseJobListQuery(req.query);
@@ -901,6 +934,98 @@ export function createAdminRouter({
         if (!jobBody(res, parsed)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await cancelJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), reason: parsed.values.reason })));
+    });
+
+    // ---------------------------------------------------------------- Agents and Clients (agentService.js, clientService.js)
+    // ADMIN and MANAGER only (every method); no delete route exists: Agents and
+    // Clients are made ACTIVE / INACTIVE, never removed. The employer Client lives
+    // under /client-management because /clients is the legacy candidate-documents area.
+    const entityParam = (name, notFound) => (req, res) => {
+        if (isValidUuid(req.params[name])) return true;
+        res.status(404).json(notFound);
+        return false;
+    };
+    const agentParam = entityParam("agentId", { message: "Agent not found", code: "AGENT_NOT_FOUND" });
+    const clientParam = entityParam("clientId", { message: "Client not found", code: "CLIENT_NOT_FOUND" });
+    const queryErrors = (res, parsed) => {
+        if (!parsed.errors) return false;
+        res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        return true;
+    };
+
+    router.get("/agents", requireRole(MANAGERS_UP), async (req, res) => {
+        const parsed = parseListQuery(req.query);
+        if (queryErrors(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return res.json(await listAgents({ db: client, params: parsed.params }));
+    });
+    router.get("/agent-options", requireRole(MANAGERS_UP), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json(await listAgentOptions({ db: client }));
+    });
+    router.post("/agents", requireRole(MANAGERS_UP), async (req, res) => {
+        const parsed = parseCreateAgentBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await createAgent({ db: client, actor: req.user, values: parsed.values })));
+    });
+    router.get("/agents/:agentId", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!agentParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getAgent({ db: client, agentId: req.params.agentId.toLowerCase() })));
+    });
+    router.patch("/agents/:agentId", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!agentParam(req, res)) return undefined;
+        const parsed = parseUpdateAgentBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await updateAgent({ db: client, actor: req.user, agentId: req.params.agentId.toLowerCase(), values: parsed.values })));
+    });
+    router.patch("/agents/:agentId/status", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!agentParam(req, res)) return undefined;
+        const parsed = parseStatusBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await setAgentStatus({ db: client, actor: req.user, agentId: req.params.agentId.toLowerCase(), status: parsed.values.status })));
+    });
+
+    router.get("/client-management", requireRole(MANAGERS_UP), async (req, res) => {
+        const parsed = parseListQuery(req.query, { idFilter: "agentId" });
+        if (queryErrors(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return res.json(await listEmployerClients({ db: client, params: parsed.params }));
+    });
+    router.post("/client-management", requireRole(MANAGERS_UP), async (req, res) => {
+        const parsed = parseCreateClientBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await createClient({ db: client, actor: req.user, values: parsed.values })));
+    });
+    router.get("/client-management/:clientId", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!clientParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getClient({ db: client, clientId: req.params.clientId.toLowerCase() })));
+    });
+    router.patch("/client-management/:clientId", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!clientParam(req, res)) return undefined;
+        const parsed = parseUpdateClientBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await updateClient({ db: client, actor: req.user, clientId: req.params.clientId.toLowerCase(), values: parsed.values })));
+    });
+    router.patch("/client-management/:clientId/agent", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!clientParam(req, res)) return undefined;
+        const parsed = parseChangeAgentBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await changeClientAgent({ db: client, actor: req.user, clientId: req.params.clientId.toLowerCase(), agentId: parsed.values.agentId })));
+    });
+    router.patch("/client-management/:clientId/status", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!clientParam(req, res)) return undefined;
+        const parsed = parseStatusBody(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await setClientStatus({ db: client, actor: req.user, clientId: req.params.clientId.toLowerCase(), status: parsed.values.status })));
     });
 
     // ---------------------------------------------------------------- audit logs (ADMIN only, read-only)

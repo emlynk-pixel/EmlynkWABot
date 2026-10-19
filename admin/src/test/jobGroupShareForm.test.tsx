@@ -5,13 +5,13 @@ import { CANDIDATE_STAGES, type AdditionalDetailsView, type CandidateDetails, ty
 import type { CandidateJobAssignment, JobGroupShareStatus } from "../api/jobs";
 import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from "./helpers";
 
-// Share Form > "Share link for the job group", and the Company Job ID on a Job.
+// Share Form > "Share link for the job group", and the Client Job ID on a Job.
 // Synthetic data; the backend is stubbed (the rules are in test/jobGroupShare.test.js).
 
 const JOB_ID = "00000000-0000-4000-8000-000000000007";
 const JOB: CandidateJobAssignment = {
     jobId: JOB_ID, jobCode: "JOB-2026-000007", companyJobId: "Y26S01", status: "PROCESSING",
-    jobType: { id: "t1", code: "WELDER", name: "Welder" }, company: { id: "c1", name: "Acme Construction" },
+    jobType: { id: "t1", code: "WELDER", name: "Welder" }, client: { id: "c1", name: "Acme Construction" },
     responsibleAgent: { id: "a1", name: "Ion Popescu", countryCode: "RO" }, countryCode: "RO", vacancies: 5,
     createdAt: "2026-10-01T05:00:00.000Z", completedAt: null, cancelledAt: null, cancelReason: null,
     assignedAt: "2026-10-02T05:00:00.000Z", removed: false, removedAt: null,
@@ -23,20 +23,21 @@ const detailsWith = (current: CandidateJobAssignment | null): CandidateDetails =
         address: "1 Main Street", jobExperience: "5 years", whatsappNumber: "94770000002", contactNumber: null,
     },
     stages: CANDIDATE_STAGES.map((stage) => ({
-        stage, completed: false, completedAt: null, notes: null, legacyJobId: null, testResult: null, testDate: null,
+        stage, completed: false, completedAt: null, notes: null, testAgentName: null, testId: null, jobDate: null, jobCode: null, clientName: null, jobSource: null, jobStatus: null, testResult: null, testDate: null,
         automatic: stage === "CANDIDATE_DETAILS" || stage === "DOCUMENT_SUBMISSION", missing: [],
     })),
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null, VISA_SUBMISSION: null },
     variantDocuments: { POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null } },
     jobAssignments: { current, history: [] },
     requiredDocuments: [],
+    verification: { details: null, documents: null },
 });
 const VIEW: AdditionalDetailsView = { passportId: "N0000002", details: null, suggested: { nameAsInPassport: null, permanentAddress: null, birthday: null }, updatedDate: null };
 const PERSONAL: FormShareStatus = { passportId: "N0000002", state: "LOCKED", submittedAt: null, link: null };
 const GROUP = `/api/admin/jobs/${JOB_ID}/form-share`;
 const GROUP_URL = "https://form.example.test/#k=GroupGroupGroupGroupGroupGroupGroupGroupGrou";
 const group = (state: "OPEN" | "NONE", extra: Partial<JobGroupShareStatus> = {}): JobGroupShareStatus => ({
-    jobId: JOB_ID, jobCode: "JOB-2026-000007", companyJobId: "Y26S01", company: "Acme Construction", jobType: "Welder", jobStatus: "PROCESSING", state,
+    jobId: JOB_ID, jobCode: "JOB-2026-000007", companyJobId: "Y26S01", client: "Acme Construction", jobType: "Welder", jobStatus: "PROCESSING", state,
     counts: { candidates: 4, submitted: 1, remaining: 3 },
     link: state === "OPEN" ? { linkId: "g1", createdAt: "2026-10-17T05:00:00.000Z", createdByName: "Test Admin", expiresAt: "2026-10-20T05:00:00.000Z", lockedUntil: null } : null,
     ...extra,
@@ -69,7 +70,7 @@ describe("Share Form: job group", () => {
         expect(calls.some((c) => c.path.includes("/jobs/"))).toBe(false);
     });
 
-    test("with a PROCESSING job it shows the job code, Company Job ID, company, type and the counts", async () => {
+    test("with a PROCESSING job it shows the job code, Client Job ID, client, type and the counts", async () => {
         backend(JOB, { [`GET ${GROUP}`]: { status: 200, body: group("NONE") } });
         const dialog = await openDialog();
         const section = await within(dialog).findByRole("region", { name: "Job group" });
@@ -81,7 +82,7 @@ describe("Share Form: job group", () => {
         expect(within(section).getByRole("button", { name: "Create job-group link" })).toBeEnabled();
     });
 
-    test("a missing Company Job ID is shown as not assigned", async () => {
+    test("a missing Client Job ID is shown as not assigned", async () => {
         backend({ ...JOB, companyJobId: null }, { [`GET ${GROUP}`]: { status: 200, body: group("NONE", { companyJobId: null }) } });
         const section = await within(await openDialog()).findByRole("region", { name: "Job group" });
         expect(within(section).getByText("Not assigned")).toBeInTheDocument();

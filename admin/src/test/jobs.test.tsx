@@ -17,7 +17,7 @@ const job = (n: number, status: JobStatus = "PROCESSING", extra: Partial<JobList
     companyJobId: null,
     status,
     jobType: { id: "t1", code: "WELDER", name: "Welder" },
-    company: { id: "c1", name: "Acme Construction" },
+    client: { id: "c1", name: "Acme Construction" },
     responsibleAgent: { id: "a1", name: "Ion Popescu", countryCode: "RO" },
     countryCode: "RO",
     vacancies: 5,
@@ -38,11 +38,11 @@ const details = (base: JobListItem, candidates: JobDetails["candidates"] = []): 
 const CAND = { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", assignedAt: "2026-10-02T05:00:00.000Z" };
 const OPTIONS: JobOptions = {
     jobTypes: [{ id: "t1", name: "Welder", code: "WELDER" }],
-    companies: [{ id: "c1", name: "Acme Construction" }],
+    clients: [{ id: "c1", name: "Acme Construction", agentId: "a1" }],
     agents: [{ id: "a1", name: "Ion Popescu", countryCode: "RO" }],
 };
 const SEARCH_RESULT: CandidateList = {
-    items: [{ passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], stages: [] }],
+    items: [{ passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], workflowStatus: { code: "REGISTERED", label: "Registered" }, stages: [] }],
     pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
     filters: { search: "saman" },
 };
@@ -67,7 +67,7 @@ describe("Jobs list", () => {
         backend();
         renderApp("/jobs");
         const rows = within(await table()).getAllByRole("row");
-        expect(within(rows[0]).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Job code", "Company Job ID", "Job type", "Country", "Company", "Responsible agent", "Candidates", "Vacancies", "Status"]);
+        expect(within(rows[0]).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Job code", "Client Job ID", "Job type", "Country", "Client", "Responsible agent", "Candidates", "Vacancies", "Status"]);
         expect(rows).toHaveLength(3);
         const first = within(rows[1]).getAllByRole("cell");
         expect(first.map((c) => c.textContent)).toEqual(["JOB-2026-000002Created 01 Oct 2026", "Not assigned", "Welder", "RO", "Acme Construction", "Ion Popescu", "2", "5", "Processing"]);
@@ -133,7 +133,7 @@ describe("who sees what", () => {
 });
 
 describe("New job", () => {
-    test("needs a type, company and agent; the country comes from the agent; opens the new job", async () => {
+    test("needs a type and client; the agent and the country come from the client; opens the new job", async () => {
         const created = details(job(5, "PROCESSING", { candidateCount: 0 }));
         const { calls } = backend("MANAGER", {
             "POST /api/admin/jobs": { status: 201, body: created },
@@ -147,12 +147,11 @@ describe("New job", () => {
         const create = within(dialog).getByRole("button", { name: "Create job" });
         expect(create).toBeDisabled();
         await user.selectOptions(await within(dialog).findByLabelText("Job type"), "t1");
-        await user.selectOptions(within(dialog).getByLabelText("Company"), "c1");
-        await user.selectOptions(within(dialog).getByLabelText("Responsible agent"), "a1");
+        await user.selectOptions(within(dialog).getByLabelText("Client"), "c1");
         await user.type(within(dialog).getByLabelText(/Vacancies/), "5");
         expect(within(dialog).getByText(/Country: RO/)).toBeInTheDocument();
         await user.click(create);
-        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", companyId: "c1", responsibleAgentId: "a1", vacancies: 5, companyJobId: null }));
+        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", clientId: "c1", responsibleAgentId: "a1", vacancies: 5, companyJobId: null }));
         expect(await screen.findByRole("heading", { name: /JOB-2026-000005/ }, RENDER_STEP)).toBeInTheDocument();
     });
 
@@ -164,8 +163,7 @@ describe("New job", () => {
         await user.click(screen.getByRole("button", { name: "New job" }));
         const dialog = await screen.findByRole("dialog", { name: "New job" });
         await user.selectOptions(await within(dialog).findByLabelText("Job type"), "t1");
-        await user.selectOptions(within(dialog).getByLabelText("Company"), "c1");
-        await user.selectOptions(within(dialog).getByLabelText("Responsible agent"), "a1");
+        await user.selectOptions(within(dialog).getByLabelText("Client"), "c1");
         await user.type(within(dialog).getByLabelText(/Vacancies/), "0");
         expect(within(dialog).getByRole("button", { name: "Create job" })).toBeDisabled();
     });
@@ -215,6 +213,38 @@ describe("Job details", () => {
         for (const name of ["Add to job", "Complete job", "Cancel job"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: /^Remove / })).not.toBeInTheDocument();
         expect(screen.getByRole("link", { name: "KAMAL PERERA" })).toBeInTheDocument();
+    });
+
+    test("JOB-PASS-007: the Add candidate search asks the server for candidates who passed the test only, and says so", async () => {
+        const { calls } = backend("MANAGER", { ...getJob(details(base, [CAND])), "GET /api/admin/candidates": { status: 200, body: { ...SEARCH_RESULT, items: [] } } });
+        renderApp(path);
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
+        expect(within(dialog).getByText("Only candidates who passed the test can be added to a job.")).toBeInTheDocument();
+        await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "failed person");
+        await user.click(within(dialog).getByRole("button", { name: "Search" }));
+        expect(await within(dialog).findByText("No eligible candidates found.")).toBeInTheDocument();
+        const search = calls.find((c) => c.path.startsWith("/api/admin/candidates?"))!;
+        expect(Object.fromEntries(search.url.searchParams)).toMatchObject({ search: "failed person", testResult: "PASS" });
+    });
+
+    test("JOB-PASS-008: if the server refuses a candidate who has not passed, its message is shown and nothing is added", async () => {
+        const { calls } = backend("MANAGER", {
+            ...getJob(details(base, [CAND])),
+            "GET /api/admin/candidates": { status: 200, body: SEARCH_RESULT },
+            [`POST /api/admin/jobs/${base.jobId}/candidates`]: { status: 409, body: { message: "Candidate must pass the test before being assigned to a job.", code: "CANDIDATE_TEST_NOT_PASSED" } },
+        });
+        renderApp(path);
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
+        await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "saman");
+        await user.click(within(dialog).getByRole("button", { name: "Search" }));
+        await user.click(await within(dialog).findByRole("button", { name: "Add SAMAN SILVA" }));
+        expect(await within(dialog).findByRole("alert")).toHaveTextContent("Candidate must pass the test before being assigned to a job.");
+        expect(screen.getByRole("heading", { name: "Assigned candidates (1)" })).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
     });
 
     test("Add to job: search, add, and the active-job conflict is shown (nothing is moved)", async () => {
@@ -295,11 +325,11 @@ describe("Job details", () => {
     });
 });
 
-describe("Company Job ID", () => {
+describe("Client Job ID", () => {
     const base = job(2, "PROCESSING", { companyJobId: "Y26S01" });
     const path = `/jobs/${base.jobId}`;
 
-    test("the list and the details show the internal code and the Company Job ID as two different things", async () => {
+    test("the list and the details show the internal code and the Client Job ID as two different things", async () => {
         backend("MANAGER", {
             "GET /api/admin/jobs": { status: 200, body: page([base, job(1)]) },
             [`GET /api/admin/jobs/${base.jobId}`]: { status: 200, body: details(base, [CAND]) },
@@ -316,7 +346,7 @@ describe("Company Job ID", () => {
         const list = await screen.findByLabelText("Job details", undefined, RENDER_STEP);
         expect(within(list).getByText("Internal job code")).toBeInTheDocument();
         expect(within(list).getByText("JOB-2026-000002")).toBeInTheDocument();
-        expect(within(list).getByText("Company Job ID")).toBeInTheDocument();
+        expect(within(list).getByText("Client Job ID")).toBeInTheDocument();
         expect(within(list).getByText("Y26S01")).toBeInTheDocument();
     });
 
@@ -330,11 +360,11 @@ describe("Company Job ID", () => {
         const user = userEvent.setup();
         const list = await screen.findByLabelText("Job details", undefined, RENDER_STEP);
         expect(within(list).getByText("Not assigned")).toBeInTheDocument();
-        await user.click(within(list).getByRole("button", { name: "Add Company Job ID" }));
-        const dialog = await screen.findByRole("dialog", { name: "Company Job ID" });
+        await user.click(within(list).getByRole("button", { name: "Add Client Job ID" }));
+        const dialog = await screen.findByRole("dialog", { name: "Client Job ID" });
         const save = within(dialog).getByRole("button", { name: "Save" });
         expect(save).toBeDisabled();
-        await user.type(within(dialog).getByLabelText("Company Job ID"), "il-2026-44");
+        await user.type(within(dialog).getByLabelText("Client Job ID"), "il-2026-44");
         await user.click(save);
         await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ companyJobId: "il-2026-44" }));
         expect(await within(await screen.findByLabelText("Job details")).findByText("IL-2026-44")).toBeInTheDocument();
@@ -346,16 +376,16 @@ describe("Company Job ID", () => {
     test("a duplicate within the company is shown as the server's message", async () => {
         backend("ADMIN", {
             [`GET /api/admin/jobs/${base.jobId}`]: { status: 200, body: details(base, []) },
-            [`PUT /api/admin/jobs/${base.jobId}`]: { status: 409, body: { message: "Another job of this company already has this Company Job ID.", code: "COMPANY_JOB_ID_EXISTS" } },
+            [`PUT /api/admin/jobs/${base.jobId}`]: { status: 409, body: { message: "Another job of this company already has this Client Job ID.", code: "COMPANY_JOB_ID_EXISTS" } },
         });
         renderApp(path);
         const user = userEvent.setup();
-        await user.click(await screen.findByRole("button", { name: "Change Company Job ID" }, RENDER_STEP));
-        const dialog = await screen.findByRole("dialog", { name: "Company Job ID" });
-        await user.clear(within(dialog).getByLabelText("Company Job ID"));
-        await user.type(within(dialog).getByLabelText("Company Job ID"), "Y26S02");
+        await user.click(await screen.findByRole("button", { name: "Change Client Job ID" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: "Client Job ID" });
+        await user.clear(within(dialog).getByLabelText("Client Job ID"));
+        await user.type(within(dialog).getByLabelText("Client Job ID"), "Y26S02");
         await user.click(within(dialog).getByRole("button", { name: "Save" }));
-        expect(await within(dialog).findByRole("alert")).toHaveTextContent("already has this Company Job ID");
+        expect(await within(dialog).findByRole("alert")).toHaveTextContent("already has this Client Job ID");
     });
 
     test("an Analyst can see it but not change it", async () => {
@@ -363,10 +393,10 @@ describe("Company Job ID", () => {
         renderApp(path);
         const list = await screen.findByLabelText("Job details", undefined, RENDER_STEP);
         expect(within(list).getByText("Y26S01")).toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: /Company Job ID/ })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Client Job ID/ })).not.toBeInTheDocument();
     });
 
-    test("New job accepts an optional Company Job ID", async () => {
+    test("New job accepts an optional Client Job ID", async () => {
         const created = details(job(5, "PROCESSING", { candidateCount: 0, companyJobId: "Y26S01" }));
         const { calls } = backend("MANAGER", {
             "POST /api/admin/jobs": { status: 201, body: created },
@@ -378,10 +408,9 @@ describe("Company Job ID", () => {
         await user.click(screen.getByRole("button", { name: "New job" }));
         const dialog = await screen.findByRole("dialog", { name: "New job" });
         await user.selectOptions(await within(dialog).findByLabelText("Job type"), "t1");
-        await user.selectOptions(within(dialog).getByLabelText("Company"), "c1");
-        await user.selectOptions(within(dialog).getByLabelText("Responsible agent"), "a1");
-        await user.type(within(dialog).getByLabelText(/Company Job ID/), "Y26S01");
+        await user.selectOptions(within(dialog).getByLabelText("Client"), "c1");
+        await user.type(within(dialog).getByLabelText(/Client Job ID/), "Y26S01");
         await user.click(within(dialog).getByRole("button", { name: "Create job" }));
-        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", companyId: "c1", responsibleAgentId: "a1", vacancies: null, companyJobId: "Y26S01" }));
+        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", clientId: "c1", responsibleAgentId: "a1", vacancies: null, companyJobId: "Y26S01" }));
     });
 });

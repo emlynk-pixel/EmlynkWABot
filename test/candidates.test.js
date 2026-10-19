@@ -421,8 +421,8 @@ describe("optional passport and contact details", () => {
 });
 
 describe("independent stages", () => {
-    test("seven stages in business order: Visa submission sits between IVS interview and Visa approval", () => {
-        assert.deepEqual([...CANDIDATE_STAGES], ["TEST_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"]);
+    test("eight stages in business order: Job details follows Test details; Visa submission sits between IVS interview and Visa approval", () => {
+        assert.deepEqual([...CANDIDATE_STAGES], ["TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"]);
     });
 
     test("Visa submission is completed by an admin like Visa approval: notes and completion, no test fields, audited", async () => {
@@ -446,7 +446,7 @@ describe("independent stages", () => {
         }
         const { stages } = await getCandidate({ db, passportId: "N1023757" });
         assert.deepEqual(stages.map((s) => s.stage), [...CANDIDATE_STAGES]);
-        assert.deepEqual(stages.map((s) => s.completed), [false, false, false, true, true, true, true]);
+        assert.deepEqual(stages.map((s) => s.completed), [false, false, false, false, true, true, true, true]);
     });
 
     test("Candidate Details and Document Submission complete automatically from the record; the list agrees", async () => {
@@ -467,7 +467,7 @@ describe("independent stages", () => {
         result = await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "PASSPORT", variant: null, mimeType: "application/pdf", buffer: PDF });
         assert.equal(stageOf(result, "CANDIDATE_DETAILS").completed, true);
         assert.deepEqual(stageOf(result, "CANDIDATE_DETAILS").missing, []);
-        assert.deepEqual(await listed(), [false, true, false, false, false, false, false]);
+        assert.deepEqual(await listed(), [false, false, true, false, false, false, false, false]);
 
         const uploads = [["MEDICAL", null], ["POLICE_REPORT", "SL_VERIFIED"], ["POLICE_REPORT", "ROMANIA"], ["SCAN", null]];
         for (const [index, [documentType, variant]] of uploads.entries()) {
@@ -475,7 +475,7 @@ describe("independent stages", () => {
             result = await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType, variant, mimeType: "application/pdf", buffer });
         }
         assert.equal(stageOf(result, "DOCUMENT_SUBMISSION").completed, true);
-        assert.deepEqual(await listed(), [false, true, true, false, false, false, false]);
+        assert.deepEqual(await listed(), [false, false, true, true, false, false, false, false]);
         assert.deepEqual(result.requiredDocuments.map((r) => r.documentType), [...REQUIRED_SUBMISSION_DOCUMENTS]);
         assert.ok(result.documents.SCAN);
 
@@ -575,12 +575,15 @@ describe("independent stages", () => {
         assert.deepEqual(parseStageBody({ completed: true, notes: "  x  " }).values, { completed: true, notes: "x" });
     });
 
-    describe("Test details: result and date", () => {
-        test("PASS or FAIL and a real date, Test details only; null clears; a field left out is unchanged; jobId is no longer accepted", () => {
-            const { values } = parseStageBody({ testResult: "PASS", testDate: "2026-09-28" }, "TEST_DETAILS");
+    describe("Test details: agent, test ID, result and date", () => {
+        test("an agent name, a test ID, PASS or FAIL and a real date, Test details only; null clears; a field left out is unchanged", () => {
+            const { values } = parseStageBody({ testAgentName: "  Nimal Perera ", testId: "  T-2026-014 ", testResult: "PASS", testDate: "2026-09-28" }, "TEST_DETAILS");
+            assert.equal(values.testAgentName, "Nimal Perera");
+            assert.equal(values.testId, "T-2026-014");
             assert.equal(values.testResult, "PASS");
             assert.equal(values.testDate.toISOString().slice(0, 10), "2026-09-28");
-            assert.deepEqual(parseStageBody({ testResult: null, testDate: null }, "TEST_DETAILS").values, { testResult: null, testDate: null });
+            assert.deepEqual(parseStageBody({ testAgentName: null, testId: null, testResult: null, testDate: null }, "TEST_DETAILS").values, { testAgentName: null, testId: null, testResult: null, testDate: null });
+            assert.deepEqual(parseStageBody({ testId: "" }, "TEST_DETAILS").values, { testId: null }, "empty text clears it");
             assert.deepEqual(parseStageBody({ notes: "x" }, "TEST_DETAILS").values, { notes: "x" }, "no result is invented");
 
             const fields = (body, stage = "TEST_DETAILS") => parseStageBody(body, stage).errors?.map((e) => e.field);
@@ -588,12 +591,21 @@ describe("independent stages", () => {
             assert.deepEqual(fields({ testResult: "MAYBE" }), ["testResult"]);
             assert.deepEqual(fields({ testDate: "2026-02-30" }), ["testDate"]);
             assert.deepEqual(fields({ testDate: "28/09/2026" }), ["testDate"]);
-            // JOB-018: the free-text job ID is gone from the stage; the job is the Job assignment.
-            assert.deepEqual(fields({ jobId: "JOB-2026-014" }), ["jobId"]);
-            assert.deepEqual(fields({ jobId: null }), ["jobId"]);
-            assert.deepEqual(fields({ jobId: "JOB-1" }, "FINALIZING_JOB"), ["jobId"]);
+            assert.deepEqual(fields({ testId: "x".repeat(51) }), ["testId"]);
+            assert.deepEqual(fields({ testId: 14 }), ["testId"]);
+            assert.deepEqual(fields({ testAgentName: "x".repeat(121) }), ["testAgentName"]);
+            assert.deepEqual(fields({ testId: "T-1" }, "FINALIZING_JOB"), ["testId"]);
+            assert.deepEqual(fields({ testAgentName: "A" }, "JOB_DETAILS"), ["testAgentName"]);
             assert.deepEqual(fields({ testResult: "PASS" }, "IVS_INTERVIEW"), ["testResult"]);
             assert.deepEqual(fields({ testDate: "2026-09-28" }, "VISA_APPROVAL"), ["testDate"]);
+        });
+
+        test("STAGE-JOB-005: the old free-text jobId is refused on every stage (a Job is assigned in Jobs; the test's reference is testId)", () => {
+            for (const stage of ["TEST_DETAILS", "JOB_DETAILS", "VISA_SUBMISSION"]) {
+                const errors = parseStageBody({ jobId: "JOB-2026-014" }, stage).errors;
+                assert.deepEqual(errors.map((e) => e.field), ["jobId"], stage);
+                assert.match(errors[0].message, /testId/);
+            }
         });
 
         test("saved and read back with the notes and completion; other stages are untouched", async () => {
@@ -601,18 +613,18 @@ describe("independent stages", () => {
             await registered(db);
             const save = (body) => updateStage({ db, passportId: "N1023757", stage: "TEST_DETAILS", values: parseStageBody(body, "TEST_DETAILS").values });
 
-            let stage = (await save({ notes: "Trade test", completed: true, testResult: "FAIL", testDate: "2026-09-28" })).stages[0];
-            assert.deepEqual([stage.stage, stage.legacyJobId, stage.testResult, stage.testDate, stage.notes, stage.completed], ["TEST_DETAILS", null, "FAIL", "2026-09-28", "Trade test", true]);
+            let stage = (await save({ notes: "Trade test", completed: true, testAgentName: "Nimal Perera", testId: "T-2026-014", testResult: "FAIL", testDate: "2026-09-28" })).stages[0];
+            assert.deepEqual([stage.stage, stage.testAgentName, stage.testId, stage.testResult, stage.testDate, stage.notes, stage.completed], ["TEST_DETAILS", "Nimal Perera", "T-2026-014", "FAIL", "2026-09-28", "Trade test", true]);
 
-            // Saving only the result keeps the saved date, notes and completion (no "today" substitution).
+            // Saving only the result keeps the saved agent, test ID, date, notes and completion (no "today" substitution).
             stage = (await save({ testResult: "PASS" })).stages[0];
-            assert.deepEqual([stage.testResult, stage.testDate, stage.notes, stage.completed], ["PASS", "2026-09-28", "Trade test", true]);
+            assert.deepEqual([stage.testAgentName, stage.testId, stage.testResult, stage.testDate, stage.notes, stage.completed], ["Nimal Perera", "T-2026-014", "PASS", "2026-09-28", "Trade test", true]);
 
-            stage = (await save({ testResult: null, testDate: null })).stages[0];
-            assert.deepEqual([stage.testResult, stage.testDate], [null, null]);
+            stage = (await save({ testAgentName: null, testId: null, testResult: null, testDate: null })).stages[0];
+            assert.deepEqual([stage.testAgentName, stage.testId, stage.testResult, stage.testDate], [null, null, null, null]);
 
             const { stages } = await getCandidate({ db, passportId: "N1023757" });
-            assert.ok(stages.slice(1).every((s) => s.legacyJobId === null && s.testResult === null && s.testDate === null));
+            assert.ok(stages.slice(1).every((s) => s.testAgentName === null && s.testId === null && s.testResult === null && s.testDate === null));
             // The registration comment's Candidate Details row is not touched.
             assert.deepEqual(db.state.stages.map((s) => [s.stage, s.testResult ?? null, s.notes]), [
                 ["CANDIDATE_DETAILS", null, "Prefers morning calls"],
@@ -624,22 +636,23 @@ describe("independent stages", () => {
             const db = createFakeDb({ stages: [{ passportId: "N1023757", stage: "TEST_DETAILS", completed: true, completedAt: new Date(), notes: "Old note" }] });
             await registered(db);
             const stage = (await getCandidate({ db, passportId: "N1023757" })).stages[0];
-            assert.deepEqual([stage.notes, stage.completed, stage.legacyJobId, stage.testResult, stage.testDate], ["Old note", true, null, null, null]);
+            assert.deepEqual([stage.notes, stage.completed, stage.testAgentName, stage.testId, stage.testResult, stage.testDate], ["Old note", true, null, null, null, null]);
         });
 
-        test("JOB-018: a legacy candidate_stages.job_id is kept and shown read-only as legacyJobId; saving never changes it", async () => {
-            const db = createFakeDb({ stages: [{ passportId: "N1023757", stage: "TEST_DETAILS", completed: false, completedAt: null, notes: null, jobId: "Job12" }] });
+        test("STAGE-JOB-023: a legacy free-text job_id reads only as the Test ID of Test details; it never becomes the Job on Job details", async () => {
+            const db = createFakeDb({ stages: [{ passportId: "N1023757", stage: "TEST_DETAILS", completed: false, notes: null, jobId: "Job12" }, { passportId: "N1023757", stage: "JOB_DETAILS", completed: false, notes: null, jobId: "Job12" }] });
             await registered(db);
-            const before = await getCandidate({ db, passportId: "N1023757" });
-            assert.equal(before.stages[0].legacyJobId, "Job12");
-            assert.equal(before.stages[0].jobId, undefined, "the old field name is gone from the response");
-            assert.deepEqual(before.jobAssignments, { current: null, history: [] }, "the legacy text is not a job assignment");
-            const after = await updateStage({ db, passportId: "N1023757", stage: "TEST_DETAILS", values: parseStageBody({ testResult: "PASS" }, "TEST_DETAILS").values });
-            assert.equal(after.stages[0].legacyJobId, "Job12");
-            assert.equal(db.state.stages.find((x) => x.stage === "TEST_DETAILS").jobId, "Job12");
+            const { stages } = await getCandidate({ db, passportId: "N1023757" });
+            assert.equal(stages.find((s) => s.stage === "TEST_DETAILS").testId, "Job12");
+            const job = stages.find((s) => s.stage === "JOB_DETAILS");
+            assert.deepEqual([job.jobCode, job.clientName], [null, null]);
+            // A saved test_id wins over the legacy value, and the legacy column is never written.
+            await updateStage({ db, passportId: "N1023757", stage: "TEST_DETAILS", values: parseStageBody({ testId: "T-9" }, "TEST_DETAILS").values });
+            assert.equal((await getCandidate({ db, passportId: "N1023757" })).stages[0].testId, "T-9");
+            assert.equal(db.state.stages.find((s) => s.stage === "TEST_DETAILS").jobId, "Job12");
         });
 
-        test("the route takes the result and date for Test details only", async () => {
+        test("the route takes the agent, test ID, result and date for Test details only", async () => {
             const app = express();
             app.use(express.json());
             const db = createFakeDb();
@@ -651,16 +664,56 @@ describe("independent stages", () => {
                 method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
             });
             try {
-                const saved = await put("TEST_DETAILS", { testResult: "PASS", testDate: "2026-09-28" });
+                const saved = await put("TEST_DETAILS", { testAgentName: "Nimal Perera", testId: "T-2026-014", testResult: "PASS", testDate: "2026-09-28" });
                 assert.equal(saved.status, 200);
                 const body = await saved.json();
-                assert.deepEqual([body.stages[0].testResult, body.stages[0].testDate], ["PASS", "2026-09-28"]);
-                assert.equal((await put("TEST_DETAILS", { jobId: "JOB-2026-014" })).status, 400, "the free-text job ID is no longer taken");
+                assert.deepEqual([body.stages[0].testAgentName, body.stages[0].testId, body.stages[0].testResult, body.stages[0].testDate], ["Nimal Perera", "T-2026-014", "PASS", "2026-09-28"]);
                 assert.equal((await put("IVS_INTERVIEW", { testResult: "PASS" })).status, 400);
-                assert.equal((await put("IVS_INTERVIEW", { jobId: "JOB-1" })).status, 400);
+                assert.equal((await put("IVS_INTERVIEW", { testId: "T-1" })).status, 400);
+                assert.equal((await put("TEST_DETAILS", { jobId: "JOB-1" })).status, 400, "the old jobId is refused");
             } finally {
                 server.close();
             }
+        });
+    });
+
+    describe("Job details stage (fake database; the Job assignment itself is covered on PostgreSQL in candidateJobDetailsStage.test.js)", () => {
+        test("JOB_DETAILS follows TEST_DETAILS and is completed by an admin: date, note, completion; the Job and Client are never writable", async () => {
+            const db = createFakeDb();
+            await registered(db);
+            const parse = (body) => parseStageBody(body, "JOB_DETAILS");
+            assert.deepEqual(parse({ jobDate: "2026-10-05", notes: " Interview booked ", completed: true }).values.notes, "Interview booked");
+            assert.equal(parse({ jobDate: "2026-10-05" }).values.jobDate.toISOString().slice(0, 10), "2026-10-05");
+            assert.deepEqual(parse({ jobDate: null }).values, { jobDate: null });
+            assert.deepEqual(parse({ jobDate: "2026-02-30" }).errors.map((e) => e.field), ["jobDate"]);
+            assert.deepEqual(parseStageBody({ jobDate: "2026-10-05" }, "TEST_DETAILS").errors.map((e) => e.field), ["jobDate"]);
+            for (const field of ["jobCode", "clientName", "jobId"]) assert.deepEqual(parse({ [field]: "X", notes: "n" }).errors.map((e) => e.field), [field], field);
+
+            await updateStage({ db, passportId: "N1023757", stage: "JOB_DETAILS", values: parse({ jobDate: "2026-10-05", notes: "Interview booked", completed: true }).values });
+            const { stages } = await getCandidate({ db, passportId: "N1023757" });
+            assert.equal(stages[1].stage, "JOB_DETAILS");
+            assert.deepEqual([stages[1].automatic, stages[1].completed, stages[1].jobDate, stages[1].notes], [false, true, "2026-10-05", "Interview booked"]);
+            assert.ok(stages[1].completedAt);
+            assert.deepEqual([stages[1].jobCode, stages[1].clientName], [null, null], "no Job assignment: nothing is shown");
+            assert.equal(stages[0].completed, false, "Test details is untouched");
+        });
+
+        test("STAGE-JOB-021: a candidate with no JOB_DETAILS row loads, with safe defaults", async () => {
+            const db = createFakeDb();
+            await registered(db);
+            const job = (await getCandidate({ db, passportId: "N1023757" })).stages.find((s) => s.stage === "JOB_DETAILS");
+            assert.deepEqual([job.completed, job.jobDate, job.notes, job.jobCode, job.clientName, job.testId], [false, null, null, null, null, null]);
+        });
+
+        test("completion of the other stages is unchanged by the new stage", async () => {
+            const db = createFakeDb();
+            await registered(db);
+            await updateStage({ db, passportId: "N1023757", stage: "JOB_DETAILS", values: { completed: true } });
+            const { stages } = await getCandidate({ db, passportId: "N1023757" });
+            assert.deepEqual(stages.map((s) => [s.stage, s.completed]), [
+                ["TEST_DETAILS", false], ["JOB_DETAILS", true], ["CANDIDATE_DETAILS", false], ["DOCUMENT_SUBMISSION", false],
+                ["IVS_INTERVIEW", false], ["VISA_SUBMISSION", false], ["VISA_APPROVAL", false], ["FINALIZING_JOB", false],
+            ]);
         });
     });
 });
@@ -831,7 +884,7 @@ describe("candidate list and call log", () => {
         assert.equal(all.pagination.total, 2);
         const anusha = all.items.find((c) => c.passportId === "N1023757");
         assert.deepEqual(anusha.jobTypes, ["Construction Worker", "Caregiver", "Electrician"]);
-        assert.equal(anusha.stages.length, 7);
+        assert.equal(anusha.stages.length, 8);
         assert.equal(anusha.stages.find((s) => s.stage === "VISA_APPROVAL").completed, true);
 
         const byNic = await listCandidates({ db, params: { page: 1, pageSize: 25, search: "965404378" } });
@@ -943,7 +996,7 @@ describe("candidate routes: roles", () => {
         const stage = await desk("PUT", "/N1023757/stages/IVS_INTERVIEW", { completed: true, notes: "Interview booked" });
         assert.equal(stage.status, 200, "stage update");
         assert.equal(stage.body.stages.find((s) => s.stage === "IVS_INTERVIEW").completed, true);
-        assert.equal((await desk("PUT", "/N1023757/stages/TEST_DETAILS", { testResult: "PASS" })).status, 200, "test details");
+        assert.equal((await desk("PUT", "/N1023757/stages/TEST_DETAILS", { testId: "T-1", testResult: "PASS" })).status, 200, "test details");
 
         assert.equal((await desk("POST", "/N1023757/call-logs", { note: "Will bring the medical" })).status, 201, "add a call");
         const calls = await desk("GET", "/N1023757/call-logs");

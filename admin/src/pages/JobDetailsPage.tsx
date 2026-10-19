@@ -81,12 +81,12 @@ function JobDetailsView() {
             <Card className="p-5">
                 <dl aria-label="Job details" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <Detail label="Internal job code">{job.jobCode}</Detail>
-                    <Detail label="Company Job ID">
+                    <Detail label="Client Job ID">
                         {job.companyJobId ?? <span className="text-ink-muted">{NO_COMPANY_JOB_ID}</span>}
-                        {canManage && <button type="button" onClick={() => setDialog("companyJobId")} aria-label={`${job.companyJobId ? "Change" : "Add"} Company Job ID`} className="ml-2 text-label-md text-primary hover:underline">{job.companyJobId ? "Change" : "Add"}</button>}
+                        {canManage && <button type="button" onClick={() => setDialog("companyJobId")} aria-label={`${job.companyJobId ? "Change" : "Add"} Client Job ID`} className="ml-2 text-label-md text-primary hover:underline">{job.companyJobId ? "Change" : "Add"}</button>}
                     </Detail>
                     <Detail label="Job type">{job.jobType.name}</Detail>
-                    <Detail label="Company">{job.company.name}</Detail>
+                    <Detail label="Client">{job.client.name}</Detail>
                     <Detail label="Country">{job.countryCode}</Detail>
                     <Detail label="Responsible agent">{job.responsibleAgent.name}</Detail>
                     <Detail label="Status">{job.status === "PROCESSING" ? "Processing" : job.status === "COMPLETED" ? "Completed" : "Cancelled"}</Detail>
@@ -242,7 +242,7 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
         setError(null);
         setNotice(null);
         try {
-            setResults((await listCandidates(token, { page: 1, pageSize: 100, search: term })).items.slice(0, 20));
+            setResults((await listCandidates(token, { page: 1, pageSize: 100, search: term, testResult: "PASS" })).items.slice(0, 20));
         } catch (caught) {
             setError(message(caught));
         } finally {
@@ -272,7 +272,8 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
                 <input id="add-candidate-search" type="search" value={text} maxLength={100} placeholder="Name, passport ID or NIC" onChange={(event) => setText(event.target.value)} className={filterControl} />
                 <button type="submit" disabled={busy || !text.trim()} className={secondaryButton}>Search</button>
             </form>
-            {results && results.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">No candidates found.</p>}
+            <p className="mt-2 text-label-sm text-ink-muted">Only candidates who passed the test can be added to a job.</p>
+            {results && results.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">No eligible candidates found.</p>}
             {results && results.length > 0 && (
                 <ul aria-label="Candidates found" className="mt-3 divide-y divide-border rounded border border-border">
                     {results.map((candidate) => (
@@ -298,7 +299,7 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
 }
 
 // The employer's own Job ID: a plain label. Changing it never changes the job's identity,
-// its candidates or any Candidate Form link (those all use the internal job id).
+// its candidates (everything uses the internal job id).
 function CompanyJobIdDialog({ token, job, onDone, onClose }: { token: string; job: JobDetails; onDone: (job: JobDetails) => void; onClose: () => void }) {
     const [value, setValue] = useState(job.companyJobId ?? "");
     const [busy, setBusy] = useState(false);
@@ -315,10 +316,10 @@ function CompanyJobIdDialog({ token, job, onDone, onClose }: { token: string; jo
         }
     };
     return (
-        <ActionDialog title="Company Job ID" busy={busy} onClose={onClose}>
+        <ActionDialog title="Client Job ID" busy={busy} onClose={onClose}>
             <form onSubmit={submit}>
-                <p className="text-body-sm text-ink-soft">The employer&apos;s own ID for {job.jobCode} (for example Y26S01). Changing it does not change the job, its candidates or any shared link.</p>
-                <label htmlFor="company-job-id" className="mt-3 block text-label-md text-ink">Company Job ID</label>
+                <p className="text-body-sm text-ink-soft">The employer&apos;s own ID for {job.jobCode} (for example Y26S01). Changing it does not change the job, its candidates.</p>
+                <label htmlFor="company-job-id" className="mt-3 block text-label-md text-ink">Client Job ID</label>
                 <input id="company-job-id" value={value} maxLength={40} disabled={busy} onChange={(event) => setValue(event.target.value)} className={`${inputClass()} mt-1`} />
                 <p className="mt-1 text-label-sm text-ink-muted">Letters, digits, spaces and . _ / # - ; saved in capitals. Leave empty to clear it.</p>
                 <DialogError message={error} />

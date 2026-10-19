@@ -4,7 +4,7 @@ import { listCandidates } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { canRegisterCandidates, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
-import { StageSummary } from "../components/candidate/CandidateStepper";
+import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 import { Icon } from "../components/Icon";
 import { primaryButton } from "../components/Dialog";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
@@ -105,33 +105,43 @@ export function CandidatesPage() {
                                 <thead>
                                     <tr>
                                         <th scope="col" className={th}>Candidate</th>
-                                        <th scope="col" className={th}>NIC</th>
                                         <th scope="col" className={th}>Job type</th>
-                                        <th scope="col" className={th}>Progress</th>
+                                        <th scope="col" className={th}>Status</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {data.items.map((item) => (
-                                        <tr key={item.passportId} onClick={() => open(item.passportId)} className="cursor-pointer hover:bg-canvas">
-                                            <td className={td}>
-                                                <Link to={`/candidates/${encodeURIComponent(item.passportId)}`} onClick={(event) => event.stopPropagation()} className="font-medium text-ink hover:text-primary hover:underline">
-                                                    {item.name ?? item.passportId}
-                                                </Link>
-                                                <span className="block text-label-sm text-ink-subtle">{item.passportId}</span>
-                                            </td>
-                                            <td className={`${td} whitespace-nowrap text-ink-muted`}>{item.nic ?? "—"}</td>
-                                            <td className={`${td} text-ink-muted`}>
-                                                {item.jobTypes.length ? (
-                                                    <span className="flex flex-wrap gap-1.5">
-                                                        {item.jobTypes.map((jobType) => (
-                                                            <span key={jobType} className="rounded bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft">{jobType}</span>
-                                                        ))}
-                                                    </span>
-                                                ) : "—"}
-                                            </td>
-                                            <td className={`${td} whitespace-nowrap`}><StageSummary stages={item.stages} /></td>
-                                        </tr>
-                                    ))}
+                                    {data.items.map((item) => {
+                                        const passport = item.passportId?.trim();
+                                        const nic = item.nic?.trim();
+                                        return (
+                                            <tr key={item.passportId} onClick={() => open(item.passportId)} className="cursor-pointer hover:bg-canvas">
+                                                <td className={td}>
+                                                    <Link to={`/candidates/${encodeURIComponent(item.passportId)}`} onClick={(event) => event.stopPropagation()} className="font-medium text-ink hover:text-primary hover:underline">
+                                                        {item.name ?? item.passportId}
+                                                    </Link>
+                                                    {(passport || nic) && (
+                                                        <div className="flex flex-wrap items-center gap-x-2 text-label-sm text-ink-subtle">
+                                                            {passport && <span title="Passport number">{passport}</span>}
+                                                            {passport && nic && (
+                                                                <span aria-hidden="true" className="select-none text-ink-subtle">|</span>
+                                                            )}
+                                                            {nic && <span title="NIC number">{nic}</span>}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                                <td className={`${td} text-ink-muted`}>
+                                                    {item.jobTypes.length ? (
+                                                        <span className="flex flex-wrap gap-1.5">
+                                                            {item.jobTypes.map((jobType) => (
+                                                                <span key={jobType} className="rounded bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft">{jobType}</span>
+                                                            ))}
+                                                        </span>
+                                                    ) : "—"}
+                                                </td>
+                                                <td className={`${td} whitespace-nowrap`}><WorkflowStatusBadge status={item.workflowStatus} /></td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>

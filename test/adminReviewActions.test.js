@@ -574,7 +574,12 @@ describe("security and error handling", () => {
             "DELETE /follow-ups/:followUpId", // Priority Follow-Ups: ADMIN and MANAGER; the follow-up row only (callLogFollowUps.test.js)
             "DELETE /jobs/:jobId/candidates/:passportId", // Jobs: ADMIN and MANAGER, audited (jobManagement.test.js)
             "DELETE /temporary-documents/:temporaryId",
-            "POST /agents", // Job reference data: ADMIN and MANAGER, audited
+            "PATCH /agents/:agentId", // Agents and Client Management: ADMIN and MANAGER, audited (agentClientManagement.test.js)
+            "PATCH /agents/:agentId/status",
+            "PATCH /client-management/:clientId",
+            "PATCH /client-management/:clientId/agent",
+            "PATCH /client-management/:clientId/status",
+            "POST /agents",
             "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",
             "POST /candidates/:passportId/call-logs/:callLogId/follow-up", // flag a call for follow-up, audited
@@ -585,7 +590,8 @@ describe("security and error handling", () => {
             "POST /candidates/:passportId/form-share/revoke",
             "POST /candidates/:passportId/form-submission/confirm-field", // ADMIN and MANAGER: one field, audited (candidateFormFieldConfirm.test.js)
             "POST /candidates/:passportId/form-submission/reject-field", // ADMIN and MANAGER: dismiss one proposed value, record unchanged, audited
-            "POST /companies",
+            "POST /candidates/:passportId/verification", // Verify details / documents: ADMIN and MANAGER, audited (candidateWorkflowStatus.test.js)
+            "POST /client-management",
             "POST /documents/:documentId/police-date",
             "POST /follow-ups/:followUpId/complete", // the row is kept, audited
             "POST /job-types",

@@ -190,13 +190,13 @@ One link for everyone assigned to one job. Migration `20261018130000_job_company
 
 ### 12.1 Schema
 
-`candidate_form_link` gains `job_id UUID → job.id` (`ON DELETE RESTRICT`, indexed) and the kinds are `SINGLE` and `JOB_GROUP`. CHECK: **exactly one valid target** — `SINGLE`: `passport_id` set, `job_id` NULL; `JOB_GROUP`: `job_id` set, `passport_id` NULL. Partial unique index: **at most one active (unrevoked) group link per job**. RLS stays on, no policies, `anon` / `authenticated` have no privileges (unchanged, re-tested). The link is bound to the **immutable `job.id`** — never the job code, never the Company Job ID, never the legacy `candidate_stages.job_id`.
+`candidate_form_link` gains `job_id UUID → job.id` (`ON DELETE RESTRICT`, indexed) and the kinds are `SINGLE` and `JOB_GROUP`. CHECK: **exactly one valid target** — `SINGLE`: `passport_id` set, `job_id` NULL; `JOB_GROUP`: `job_id` set, `passport_id` NULL. Partial unique index: **at most one active (unrevoked) group link per job**. RLS stays on, no policies, `anon` / `authenticated` have no privileges (unchanged, re-tested). The link is bound to the **immutable `job.id`** — never the job code, never the Client Job ID (`job.company_job_id`), never the legacy `candidate_stages.job_id`.
 
 ### 12.2 Creating a group link (Admin)
 
-Candidate page → Additional details → **Share Form** → *Share link for the job group* (ADMIN and MANAGER only; Analyst and Registration Desk keep only the personal link and the section is not shown or fetched). The section uses the candidate's current PROCESSING job from `job_candidate`: with none it is disabled with a short explanation; otherwise it shows the job code, Company Job ID (or "Not assigned"), company, job type, the number of candidates on the job and how many have submitted. Creating asks for confirmation. `POST /api/admin/jobs/:jobId/form-share`:
+Candidate page → Additional details → **Share Form** → *Share link for the job group* (ADMIN and MANAGER only; Analyst and Registration Desk keep only the personal link and the section is not shown or fetched). The section uses the candidate's current PROCESSING job from `job_candidate`: with none it is disabled with a short explanation; otherwise it shows the job code, Client Job ID (or "Not assigned"), client, job type, the number of candidates on the job and how many have submitted. Creating asks for confirmation. `POST /api/admin/jobs/:jobId/form-share`:
 
-1. lock the job row `FOR SHARE`; the job must be PROCESSING (else `409 JOB_NOT_PROCESSING`; a completion cannot interleave);
+1. lock the job row `FOR UPDATE` (create and revoke for one job queue here, so concurrent clicks replace each other instead of colliding on the one-active-link index; a completion cannot interleave); the job must be PROCESSING (else `409 JOB_NOT_PROCESSING`);
 2. **regeneration rule:** revoke the job's previous active group link, create the new one (same secret rules as a personal link: 256-bit CSPRNG, only a SHA-256 stored, shown once, fragment URL `<form origin>/#k=…`, 3 days);
 3. unlock each current member whose form is LOCKED (`candidate_form_access` row created if missing, `UNLOCKED`, version + 1). Members already UNLOCKED (e.g. by a personal link) are left alone so their open sessions survive; SUBMITTED members are never touched (also enforced by the existing trigger);
 4. audit `CREATE_JOB_FORM_LINK` (job, link id, expiry, how many were unlocked — never the secret).
@@ -205,7 +205,7 @@ Candidate page → Additional details → **Share Form** → *Share link for the
 
 ### 12.3 Verification (public, unchanged inputs)
 
-`POST /api/public/candidate-details/verify { linkSecret, passportNumber, nic }` — same strict validation, rate limits and constant-time comparisons as a personal link. For a JOB_GROUP link the candidate comes from the **typed passport** and must then satisfy **all** of:
+`POST /api/public/candidate-details/verify { linkSecret, passportNumber, nic }` — same strict validation, rate limits and constant-time comparisons as a personal link. For a JOB_GROUP link the job comes only from the stored link, and the candidate is looked up by the **typed passport among that job's active `job_candidate` rows** (one indexed query; it must resolve to exactly one row, otherwise nobody is chosen). The candidate must then satisfy **all** of:
 
 * link not revoked / expired / locked, and **its job is PROCESSING**;
 * the candidate has an active `job_candidate` row for **that exact `job.id`** (live, at this moment — membership is not copied into the link);
@@ -229,13 +229,13 @@ A JOB_GROUP link works **only while `job.status = PROCESSING`**. When the job be
 * **Revoke** a group link: it and every session bound to it stop at once; members it had unlocked and who have not submitted are locked again (version + 1); submitted answers, assignments and other jobs' links are untouched; audit `REVOKE_JOB_FORM_LINK`.
 * Regenerating never reopens a SUBMITTED candidate.
 
-### 12.7 Company Job ID independence
+### 12.7 Client Job ID independence
 
 Changing `job.company_job_id` touches no row in `job_candidate`, `candidate_form_link`, `candidate_form_access` or `candidate_form_response`; the existing group link keeps verifying (tests JOB-ID-004 to JOB-ID-006).
 
 ### 12.8 Candidate Form (public app)
 
-Unchanged: open link → Passport + NIC → form → submit → done. The page never receives the job id, job code, Company Job ID, member count or any other candidate; the `/form` response carries only the caller's own identity and answers (tested).
+Unchanged: open link → Passport + NIC → form → submit → done. The page never receives the job id, job code, Client Job ID, member count or any other candidate; the `/form` response carries only the caller's own identity and answers (tested).
 
 ### 12.9 Residual risks (group links)
 
@@ -243,3 +243,38 @@ Unchanged: open link → Passport + NIC → form → submit → done. The page n
 * A job's members can all use the same link for up to 3 days; revoke or complete the job to stop it earlier.
 * Deploying the new token format (version 3) invalidates sessions issued before the deploy (at most 60 minutes old): those candidates verify again.
 * The group-link failure lock (100) is looser than the personal one (10) by design; the per-passport (5 / hour) and per-IP limits remain the main brute-force control.
+
+---
+
+## 13. Final link architecture (2026-10-19)
+
+The two link kinds stay separate concepts on one table. Reconciled with dev's Agent → Client → Job model (no "company" entity remains; `job.company_job_id` keeps its name as the Client's own external job reference).
+
+| | GROUP (`kind = 'JOB_GROUP'`) | SINGLE (`kind = 'SINGLE'`) |
+|---|---|---|
+| Bound to | `candidate_form_link.job_id` → `job.id` (FK, immutable UUID) | `candidate_form_link.passport_id` → `candidate.passport_id` (FK) |
+| Who can use it | a candidate with an **active** `job_candidate` row for that job, while the job is PROCESSING (checked at verify and on every request) | only the linked candidate |
+| Bearer credential | 256-bit `crypto.randomBytes(32)`, base64url (43 chars) | same |
+| Stored | `token_hash` = SHA-256 of the secret (unique); never the secret | same |
+| URL | `<form origin>/#k=<secret>`: no path id, no query; the fragment never reaches a server or its logs | same |
+| Created / revoked by | ADMIN, MANAGER | the existing Candidates-area RBAC (ADMIN, MANAGER, REGISTRATION_DESK; ANALYST within their allocation), unchanged |
+| One active per | job (partial unique index + job row `FOR UPDATE`) | candidate (access row `FOR UPDATE`; the new link revokes the old) |
+| Submission | per candidate (`candidate_form_access`); the link stays usable for the other members | per candidate; a SUBMITTED form never reopens |
+
+**Passport binding without a new secret.** The task allowed reusing the schema when it already gives the guarantee. It does: the SINGLE link row carries the candidate's `passport_id` as a foreign key, so the server, not the browser, decides the target candidate. The typed Passport + NIC are verification credentials only, compared in constant time against that row. `SHA256(passportId)` is never a credential (a 64-hex value is refused by the input rules; a 43-char hash is just an unknown secret). So **no `CANDIDATE_FORM_LINK_SECRET` and no `passport_binding` column were added**. The only passport-derived keyed value is the existing HMAC `passportReference` (from `CANDIDATE_FORM_TOKEN_SECRET`), used for the per-passport rate limit and in logs (first 12 hex characters).
+
+**Normalisation.** One helper, `canonicalPassport` in `candidateFormVerificationService.js`: trim, remove spaces and hyphens, upper case. It is applied to the typed passport and to the stored passport before the constant-time compare. Removing spaces and hyphens was already the documented rule of this form (§7) and is kept. NIC: `canonicalNic` (trim, remove spaces, upper case).
+
+**Group eligibility (unchanged semantics, now one query).** `job_candidate.job_id = link.job_id AND is_active` (released / removed rows have `is_active = false`; a job leaving PROCESSING deactivates all rows by trigger). The lookup is scoped to that job's members, so a candidate of another job, a removed member and a stranger all find nobody. If a typed passport matched two members (IDs differing only in letter case), nobody is chosen.
+
+**Errors.** Every verification failure is the same `401 VERIFICATION_FAILED` body; only after link + passport + NIC (+ membership) matched is "already submitted" said (409). Malformed or oversized input is 400 / 413 before any lookup. Logs carry the keyed passport reference only, never the secret, session token, passport or NIC.
+
+**Race handling.** Group create / revoke lock the job row `FOR UPDATE`, so concurrent clicks are serialised: each succeeds, the last one wins, exactly one link stays active. With the earlier `FOR SHARE`, 9 of 10 concurrent creates failed with a unique-violation 500 on real PostgreSQL. Submissions use the existing compare-and-set on `candidate_form_access`: 8 devices submitting at once give one 200, seven 409s and one response row.
+
+**Migration reconciliation.** Migration history stays immutable: `20261018130000_job_company_id_and_form_job_group` is byte-identical to what the shared database applied (same checksum). A database built from dev alone, which already ran `20261019120000_client_management`, would fail on that file with `column "company_job_id" already exists`. Two new migrations handle that case:
+- `20261018125900_bridge_dev_first_company_job_id`, which sorts just before it, parks dev's column and adds a temporary `company_id`.
+- `20261023120000_reconcile_job_company_job_id` copies the values back and cleans up.
+
+Both are no-ops on every other database (`DATABASE_IMPLEMENTATION.md` §6.8). Rehearsed on PostgreSQL 16 for fresh, latest dev, original Candidate Form branch and shared-equivalent history. All four end with an identical schema, seeded rows unchanged and no orphan links.
+
+**Tests.** `test/candidateFormLinkArchitecture.test.js`: GROUP-LINK-001 to 010, SINGLE-LINK-001 to 010, SECURITY-001 to 010 (PGlite, real routers).

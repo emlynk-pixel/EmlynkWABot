@@ -106,25 +106,29 @@ export async function verifyFormLinkAccess({ db, linkSecret, passportId, nic, no
     let candidate = link?.candidate ?? null;
     let member = true;
     if (isGroup) {
-        // The candidate comes from the typed passport, then must be a live member of THIS job.
-        candidate = await db.candidate.findFirst({
-            where: { passportId: { equals: passportId, mode: "insensitive" } },
-            select: {
-                passportId: true, nic: true, formAccess: { select: { status: true, version: true } },
-                jobAssignments: { where: { jobId: link.jobId, isActive: true }, select: { jobId: true } },
-            },
+        // The job comes ONLY from the stored link; the candidate is looked up among that
+        // job's live members (job_candidate: this job_id, is_active), one indexed query.
+        // A non-member, a member of another job and a removed member find nobody. It must
+        // resolve to exactly one: if the typed passport matched two members (IDs differing
+        // only in letter case), nobody is chosen and it fails like any other attempt.
+        const rows = await db.jobCandidate.findMany({
+            where: { jobId: link.jobId, isActive: true, candidate: { passportId: { equals: passportId, mode: "insensitive" } } },
+            select: { candidate: { select: { passportId: true, nic: true, formAccess: { select: { status: true, version: true } } } } },
+            take: 2,
         });
-        member = Boolean(candidate && candidate.jobAssignments.length > 0);
+        candidate = rows.length === 1 ? rows[0].candidate : null;
+        member = rows.length === 1;
     }
 
-    // Always both comparisons, whatever was found.
-    const storedPassport = candidate ? candidate.passportId.toUpperCase() : NO_MATCH_PASSPORT;
+    // Always both comparisons, whatever was found. Both sides go through the same canonical form.
+    const storedPassport = candidate ? canonicalPassport(candidate.passportId) : NO_MATCH_PASSPORT;
     const storedNic = candidate?.nic ? canonicalNic(candidate.nic) : NO_MATCH_NIC;
     const passportMatches = safeEqual(storedPassport, passportId);
     const nicMatches = safeEqual(storedNic, nic);
 
     const scopeOpen = isGroup ? link.job?.status === JOB_STATUS.PROCESSING : link?.kind === "SINGLE";
-    const usable = Boolean(link) && scopeOpen && !link.revokedAt && link.expiresAt > now && !(link.lockedUntil && link.lockedUntil > now) && Boolean(candidate);
+    // A group link with nobody matched is still a failed attempt ON that link (counted below).
+    const usable = Boolean(link) && scopeOpen && !link.revokedAt && link.expiresAt > now && !(link.lockedUntil && link.lockedUntil > now) && (isGroup || Boolean(candidate));
     if (!usable) return { outcome: "failed" };
 
     if (!passportMatches || !nicMatches || !member) {

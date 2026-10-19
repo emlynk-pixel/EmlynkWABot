@@ -33,13 +33,18 @@ import { DOCUMENT_PROCESSING_STATUS_STORED, VERIFICATION_STATUS } from "./client
 import { clientSearchWhere } from "./adminClientService.js";
 import { findUsersByWhatsappNumber } from "./userLookupService.js";
 import { openFollowUp } from "./callLogFollowUpService.js";
-import { candidateJobAssignments } from "./jobAssignmentReader.js";
+import { candidateJobAssignments, displayJob } from "./jobAssignmentReader.js";
+import { deriveCandidateWorkflowStatus } from "./candidateWorkflowStatus.js";
+import { setAuditActor } from "./auditActor.js";
 
 // ---------------------------------------------------------------- definitions
 
 // In display order.
 export const CANDIDATE_STAGES = Object.freeze([
     "TEST_DETAILS",
+    // Job Details: the candidate's current Job and its Client, read from the Job
+    // assignment (job_candidate), plus a saved date, note and completion.
+    "JOB_DETAILS",
     "CANDIDATE_DETAILS",
     "DOCUMENT_SUBMISSION",
     "IVS_INTERVIEW",
@@ -253,14 +258,20 @@ export function parseCandidateBody(body, { creating }) {
     return errors.length ? { errors } : { values };
 }
 
+// The stored Test result values (candidate_stages.test_result, TEST_DETAILS). PASS is the only one
+// that makes a candidate eligible for a Job assignment (jobService.js addCandidateToJob).
 export const TEST_RESULTS = Object.freeze(["PASS", "FAIL"]);
+export const TEST_RESULT_PASS = "PASS";
 
-// Stage update: { completed?: boolean, notes?: string | null }, and for
-// TEST_DETAILS also { testResult?: "PASS" | "FAIL" | null, testDate?:
-// "YYYY-MM-DD" | null }. A field left out is unchanged; null (or empty text)
-// clears it. jobId is no longer accepted: a candidate's job is the Job
-// assignment (job_candidate, jobService.js); candidate_stages.job_id is
-// deprecated legacy text, kept read-only.
+const MAX_TEST_ID_LENGTH = 50;
+const MAX_AGENT_NAME_LENGTH = 120;
+
+// Stage update: { completed?: boolean, notes?: string | null }, for
+// TEST_DETAILS also { testAgentName?, testId?: string | null, testResult?:
+// "PASS" | "FAIL" | null, testDate?: "YYYY-MM-DD" | null }, and for JOB_DETAILS
+// also { jobDate?: "YYYY-MM-DD" | null }. A field left out is unchanged; null
+// (or empty text) clears it. The Job ID and Client name of Job Details are not
+// stored here: they are read from the Job assignment and cannot be written.
 export function parseStageBody(body, stage) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
         return { errors: [{ field: "body", message: "must be a JSON object" }] };
@@ -274,13 +285,24 @@ export function parseStageBody(body, stage) {
     if (body.notes !== undefined) {
         values.notes = text(body, "notes", errors);
     }
-    if (body.jobId !== undefined) {
-        errors.push({ field: "jobId", message: "is no longer recorded here: assign the candidate to a Job (Admin > Jobs)" });
+    // Relational data (Job Management) and the retired free-text job ID: never written here.
+    for (const field of ["jobId", "jobCode", "clientName"]) {
+        if (body[field] !== undefined) errors.push({ field, message: field === "jobId" ? "is no longer recorded on a stage: the Test details field is testId, and a candidate's Job is assigned in Jobs" : "comes from the Job assignment and cannot be set here" });
     }
-    for (const field of ["testResult", "testDate"]) {
+    for (const field of ["testAgentName", "testId", "testResult", "testDate"]) {
         if (body[field] !== undefined && stage !== "TEST_DETAILS") errors.push({ field, message: "is only recorded for the Test details stage" });
     }
+    if (body.jobDate !== undefined && stage !== "JOB_DETAILS") errors.push({ field: "jobDate", message: "is only recorded for the Job details stage" });
+    if (stage === "JOB_DETAILS" && body.jobDate !== undefined) {
+        values.jobDate = date(body, "jobDate", errors);
+    }
     if (stage === "TEST_DETAILS") {
+        if (body.testAgentName !== undefined) {
+            values.testAgentName = text(body, "testAgentName", errors, { max: MAX_AGENT_NAME_LENGTH });
+        }
+        if (body.testId !== undefined) {
+            values.testId = text(body, "testId", errors, { max: MAX_TEST_ID_LENGTH });
+        }
         if (body.testResult !== undefined) {
             if (body.testResult === null) values.testResult = null;
             else if (TEST_RESULTS.includes(body.testResult)) values.testResult = body.testResult;
@@ -291,7 +313,7 @@ export function parseStageBody(body, stage) {
         }
     }
     if (!errors.length && Object.keys(values).length === 0 && body.notes === undefined) {
-        errors.push({ field: "body", message: "must contain completed, notes, or (Test details) testResult or testDate" });
+        errors.push({ field: "body", message: "must contain completed, notes, or (Test details) testAgentName, testId, testResult or testDate, or (Job details) jobDate" });
     }
     return errors.length ? { errors } : { values };
 }
@@ -395,16 +417,34 @@ export function automaticStageMissing(user, documents) {
 
 // Every stage in order: saved notes, and completion (automatic stages from
 // their data, with what is still missing; the others as an admin saved it).
-export function stageList(rows, missingByStage) {
+// jobDisplay: displayJob() of the candidate's assignments (jobAssignmentReader.js: the current
+// Job, else the latest historical one), for the derived Job details fields; callers that don't
+// pass it get none.
+export function stageList(rows, missingByStage, jobDisplay = null) {
     const byStage = new Map(rows.map((row) => [row.stage, row]));
     return CANDIDATE_STAGES.map((stage) => {
         const row = byStage.get(stage);
         const missing = missingByStage[stage];
-        // Recorded on TEST_DETAILS only; null on every other stage.
-        const test = { legacyJobId: row?.jobId ?? null, testResult: row?.testResult ?? null, testDate: isoDate(row?.testDate) };
+        // Recorded on TEST_DETAILS only (null elsewhere). testId: the Test ID entered on the stage; rows saved
+        // before it existed hold the old free-text value in job_id, read only as the Test ID (never as a Job).
+        const test = {
+            testAgentName: row?.testAgentName ?? null,
+            testId: row?.testId ?? row?.jobId ?? null,
+            testResult: row?.testResult ?? null,
+            testDate: isoDate(row?.testDate),
+        };
+        // JOB_DETAILS only: the saved date, and the Job and Client read live from the assignment (never stored here).
+        const job = {
+            jobDate: isoDate(row?.jobDetailsDate),
+            jobCode: stage === "JOB_DETAILS" ? jobDisplay?.job?.jobCode ?? null : null,
+            clientName: stage === "JOB_DETAILS" ? jobDisplay?.job?.client?.name ?? null : null,
+            // CURRENT | HISTORICAL | null, and the displayed job's status (PROCESSING, COMPLETED, CANCELLED, or REMOVED).
+            jobSource: stage === "JOB_DETAILS" && jobDisplay?.job ? jobDisplay.source : null,
+            jobStatus: stage === "JOB_DETAILS" ? jobDisplay?.status ?? null : null,
+        };
         return missing
-            ? { stage, automatic: true, completed: missing.length === 0, completedAt: null, notes: row?.notes ?? null, missing, ...test }
-            : { stage, automatic: false, completed: Boolean(row?.completed), completedAt: row?.completedAt ?? null, notes: row?.notes ?? null, missing: [], ...test };
+            ? { stage, automatic: true, completed: missing.length === 0, completedAt: null, notes: row?.notes ?? null, missing, ...test, ...job }
+            : { stage, automatic: false, completed: Boolean(row?.completed), completedAt: row?.completedAt ?? null, notes: row?.notes ?? null, missing: [], ...test, ...job };
     });
 }
 
@@ -543,6 +583,12 @@ export function parseCandidateListQuery(query = {}) {
         if (trimmed.length > 100) errors.push({ field: "search", message: "must be at most 100 characters" });
         else if (trimmed) params.search = trimmed;
     }
+    // testResult=PASS: only candidates whose saved Test details result is PASS (the Job "Add candidate" search).
+    const testResult = single("testResult");
+    if (testResult !== undefined) {
+        if (testResult === TEST_RESULT_PASS) params.testResult = TEST_RESULT_PASS;
+        else errors.push({ field: "testResult", message: `must be ${TEST_RESULT_PASS}` });
+    }
     return errors.length ? { errors } : { params };
 }
 
@@ -569,6 +615,24 @@ const listSelect = {
     whatsappNumber: true, passportIssueDate: true, passportExpiryDate: true,
 };
 
+// ---------------------------------------------------------------- workflow status
+
+// Which of these candidates submitted the Candidate Form, in ONE query. The Candidate Form is a separate
+// application whose table (candidate_form_access) exists only where its migrations ran; where it does
+// not (or cannot be read) nobody has submitted. Read-only: nothing of the form is modelled here.
+async function submittedFormPassportIds(db, passportIds) {
+    if (!passportIds.length || typeof db.$queryRaw !== "function") return new Set();
+    try {
+        const [table] = await db.$queryRaw`SELECT to_regclass('public.candidate_form_access') IS NOT NULL AS "present"`;
+        if (!table?.present) return new Set();
+        const rows = await db.$queryRaw`SELECT "passport_id" AS "passportId" FROM "candidate_form_access" WHERE "status" = 'SUBMITTED' AND "passport_id" = ANY(${passportIds})`;
+        return new Set(rows.map((row) => row.passportId));
+    } catch (error) {
+        console.warn("Candidate Form submissions could not be read; Status will not show Form Submitted:", error?.code ?? error?.message);
+        return new Set();
+    }
+}
+
 // GET /api/admin/candidates. Server-side paging: one COUNT and one bounded
 // query (LIMIT pageSize OFFSET (page - 1) * pageSize, at most 100 rows) whose
 // stages and required documents Prisma loads in one batched query each, never
@@ -580,7 +644,9 @@ const listSelect = {
 // cover the candidates the user may see.
 export async function listCandidates({ db, params, scope = {} }) {
     const search = params.search ? candidateSearchWhere(params.search) : {};
-    const parts = [search, scope].filter((part) => Object.keys(part).length);
+    // Filtered on the database, from the saved Test details row (never from stage completion).
+    const passed = params.testResult === TEST_RESULT_PASS ? { stages: { some: { stage: "TEST_DETAILS", testResult: TEST_RESULT_PASS } } } : {};
+    const parts = [search, scope, passed].filter((part) => Object.keys(part).length);
     const where = parts.length > 1 ? { AND: parts } : parts[0] ?? {};
     const [total, users] = await Promise.all([
         db.candidate.count({ where }),
@@ -588,24 +654,40 @@ export async function listCandidates({ db, params, scope = {} }) {
             where,
             select: {
                 ...listSelect,
-                stages: { select: { stage: true, completed: true } },
+                stages: { select: { stage: true, completed: true, testResult: true } },
                 documents: {
                     where: { documentType: { in: REQUIRED_SUBMISSION_DOCUMENTS } },
-                    select: { documentType: true, verificationStatus: true },
+                    select: { documentType: true, documentVariant: true, verificationStatus: true },
                 },
+                // The workflow Status signals, each loaded for the whole page in one batched query (never per candidate).
+                jobAssignments: { where: { isActive: true }, select: { jobId: true }, take: 1 },
+                verification: { select: { detailsVerifiedAt: true, documentsVerifiedAt: true } },
             },
             orderBy: [{ createdDate: "desc" }, { passportId: "asc" }],
             skip: (params.page - 1) * params.pageSize,
             take: params.pageSize,
         }),
     ]);
+    const submitted = await submittedFormPassportIds(db, users.map((user) => user.passportId));
     return {
-        items: users.map((user) => ({
-            ...candidateSummary(user),
-            stages: stageList(user.stages, automaticStageMissing(user, user.documents)).map(({ stage, completed }) => ({ stage, completed })),
-        })),
+        items: users.map((user) => {
+            const missing = automaticStageMissing(user, user.documents);
+            const stages = stageList(user.stages, missing);
+            const rowOf = (stage) => user.stages.find((row) => row.stage === stage);
+            const workflowStatus = deriveCandidateWorkflowStatus({
+                testResult: rowOf("TEST_DETAILS")?.testResult ?? null,
+                hasCurrentJob: (user.jobAssignments?.length ?? 0) > 0,
+                formSubmitted: submitted.has(user.passportId),
+                // Explicit manual verifications (candidateVerificationService.js), never inferred from data.
+                detailsVerified: Boolean(user.verification?.detailsVerifiedAt),
+                documentsVerified: Boolean(user.verification?.documentsVerifiedAt),
+                // Document submission complete (every required document on record): the Visa-document point.
+                documentSubmissionCompleted: missing.DOCUMENT_SUBMISSION.length === 0,
+            });
+            return { ...candidateSummary(user), workflowStatus, stages: stages.map(({ stage, completed }) => ({ stage, completed })) };
+        }),
         pagination: listPagination(params, total),
-        filters: { search: params.search ?? null },
+        filters: { search: params.search ?? null, ...(params.testResult ? { testResult: params.testResult } : {}) },
     };
 }
 
@@ -643,7 +725,8 @@ export async function getCandidate({ db, passportId }) {
         where: { passportId },
         select: {
             ...userSelect,
-            stages: { select: { stage: true, completed: true, completedAt: true, notes: true, jobId: true, testResult: true, testDate: true } },
+            stages: { select: { stage: true, completed: true, completedAt: true, notes: true, jobId: true, testAgentName: true, testId: true, testResult: true, testDate: true, jobDetailsDate: true } },
+            verification: { select: { detailsVerifiedAt: true, documentsVerifiedAt: true, detailsVerifiedBy: { select: { name: true } }, documentsVerifiedBy: { select: { name: true } } } },
             documents: {
                 where: { documentType: { in: Object.keys(CANDIDATE_DOCUMENT_TYPES) } },
                 select: {
@@ -659,6 +742,11 @@ export async function getCandidate({ db, passportId }) {
     const jobAssignments = await candidateJobAssignments(db, passportId);
     return {
         jobAssignments,
+        // Manual verification state (null when not verified), for the Verify buttons.
+        verification: {
+            details: user.verification?.detailsVerifiedAt ? { at: user.verification.detailsVerifiedAt.toISOString(), by: user.verification.detailsVerifiedBy?.name ?? null } : null,
+            documents: user.verification?.documentsVerifiedAt ? { at: user.verification.documentsVerifiedAt.toISOString(), by: user.verification.documentsVerifiedBy?.name ?? null } : null,
+        },
         candidate: {
             ...candidateSummary(user),
             surname: user.otherName ?? null,
@@ -674,7 +762,7 @@ export async function getCandidate({ db, passportId }) {
             whatsappNumber: user.whatsappNumber ?? null,
             contactNumber: user.contactNumber ?? null,
         },
-        stages: stageList(user.stages, automaticStageMissing(user, user.documents)),
+        stages: stageList(user.stages, automaticStageMissing(user, user.documents), displayJob(jobAssignments)),
         documents,
         variantDocuments: variantDocuments(user.documents),
         requiredDocuments: REQUIRED_SUBMISSION_DOCUMENTS.map((documentType) => {
@@ -739,7 +827,7 @@ export const CANDIDATE_AUDIT_FIELDS = Object.freeze([
     "otherName", "firstName", "address", "nic", "job", "jobExperience", "whatsappNumber", "contactNumber",
     "placeOfBirth", "dateOfBirth", "passportIssueDate", "passportExpiryDate", "nationality", "sex",
 ]);
-const STAGE_AUDIT_FIELDS = Object.freeze(["completed", "notes", "testResult", "testDate"]);
+const STAGE_AUDIT_FIELDS = Object.freeze(["completed", "notes", "testAgentName", "testId", "testResult", "testDate", "jobDate"]);
 const MAX_AUDIT_VALUE_LENGTH = 300;
 
 const isAuditBlank = (value) => value === null || value === undefined || (typeof value === "string" && value.trim() === "");
@@ -859,6 +947,7 @@ export async function updateCandidateDetails({ db, passportId, values, actor = n
     const changes = diffFields(CANDIDATE_AUDIT_FIELDS, user, data);
     try {
         await db.$transaction(async (tx) => {
+            await setAuditActor(tx, actor);
             await tx.candidate.update({ where: { passportId }, data });
             if (actor && changes) {
                 await writeCandidateAudit(tx, {
@@ -902,9 +991,12 @@ export async function updateStage({ db, passportId, stage, values, actor = null,
     }
     if (values.notes !== undefined) data.notes = values.notes;
     if (stage === "TEST_DETAILS") {
+        if (values.testAgentName !== undefined) data.testAgentName = values.testAgentName;
+        if (values.testId !== undefined) data.testId = values.testId;
         if (values.testResult !== undefined) data.testResult = values.testResult;
         if (values.testDate !== undefined) data.testDate = values.testDate;
     }
+    if (stage === "JOB_DETAILS" && values.jobDate !== undefined) data.jobDetailsDate = values.jobDate;
 
     const changes = diffFields(STAGE_AUDIT_FIELDS, current, values);
     await db.$transaction(async (tx) => {
@@ -1114,6 +1206,7 @@ async function storeCandidateDocument({ db, bucket, admin, passportId, documentT
     const replaces = CANDIDATE_DOCUMENT_TYPES[documentType]?.variants ? { documentVariant: variant } : {};
     try {
         await db.$transaction(async (tx) => {
+            await setAuditActor(tx, admin);
             const previous = await tx.document.findMany({
                 where: { passportId, documentType, ...replaces, verificationStatus: VERIFICATION_STATUS.VERIFIED },
                 select: { documentId: true },
@@ -1308,6 +1401,7 @@ export async function removeCandidateDocument({ db, bucket, admin, passportId, d
     const notFound = () => new CandidateError(404, "DOCUMENT_NOT_FOUND", "This document is no longer on record for this candidate. Refresh the page.");
 
     const outcome = await db.$transaction(async (tx) => {
+        await setAuditActor(tx, admin);
         const row = await tx.document.findFirst({
             where: {
                 documentId,

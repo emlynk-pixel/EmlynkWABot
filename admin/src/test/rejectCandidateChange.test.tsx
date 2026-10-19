@@ -16,13 +16,14 @@ const baseDetails = (overrides: Partial<CandidateDetails["candidate"]> = {}): Ca
         address: "1 Main Street", jobExperience: "5 years", whatsappNumber: "94770000002", contactNumber: null, ...overrides,
     },
     stages: CANDIDATE_STAGES.map((stage) => ({
-        stage, completed: false, completedAt: null, notes: null, legacyJobId: null, testResult: null, testDate: null,
+        stage, completed: false, completedAt: null, notes: null, testAgentName: null, testId: null, jobDate: null, jobCode: null, clientName: null, jobSource: null, jobStatus: null, testResult: null, testDate: null,
         automatic: stage === "CANDIDATE_DETAILS" || stage === "DOCUMENT_SUBMISSION", missing: [],
     })),
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null, VISA_SUBMISSION: null },
     variantDocuments: { POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null } },
     jobAssignments: { current: null, history: [] },
     requiredDocuments: [],
+    verification: { details: null, documents: null },
 });
 const VIEW: AdditionalDetailsView = { passportId: "N0000002", details: null, suggested: { nameAsInPassport: null, permanentAddress: null, birthday: null }, updatedDate: null };
 const BIRTH: PendingChange = { field: "basic.birthDate", current: "2003-06-05", submitted: "2003-05-06" };

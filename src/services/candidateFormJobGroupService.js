@@ -16,7 +16,7 @@ import {
 // link for the job group"). Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md.
 //
 // One link for everyone assigned to ONE job. It is bound to the immutable
-// job.id (never the job code, never the company's Job ID, never the legacy
+// job.id (never the job code, never the client's own Job ID, never the legacy
 // candidate_stages.job_id). Who may use it is decided LIVE, at verification and
 // on every protected request: the job is PROCESSING and the candidate has an
 // active job_candidate row for that exact job. Membership is not copied into the
@@ -36,8 +36,12 @@ export const JOB_GROUP_AUDIT_ACTION = Object.freeze({ CREATE: "CREATE_JOB_FORM_L
 // typos lock the whole group; the per-IP and per-passport limits still apply.
 export const GROUP_LINK_MAX_FAILURES = 100;
 
+// FOR UPDATE, not FOR SHARE: two staff creating (or one creating, one revoking)
+// a group link for the same job at once queue here, so the second replaces the
+// first's link instead of both inserting and one failing on the
+// one-active-group-link index. It also blocks a concurrent complete / cancel.
 async function lockProcessingJob(tx, jobId) {
-    const [job] = await tx.$queryRaw`SELECT "id", "job_code" AS "jobCode", "status" FROM "job" WHERE "id" = ${jobId}::uuid FOR SHARE`;
+    const [job] = await tx.$queryRaw`SELECT "id", "job_code" AS "jobCode", "status" FROM "job" WHERE "id" = ${jobId}::uuid FOR UPDATE`;
     if (!job) throw new CandidateError(404, "JOB_NOT_FOUND", "Job not found");
     if (job.status !== JOB_STATUS.PROCESSING) {
         throw new CandidateError(409, "JOB_NOT_PROCESSING", `Job ${job.jobCode} is ${job.status.toLowerCase()}; a job-group link works only for a PROCESSING job.`);
@@ -50,7 +54,7 @@ async function lockProcessingJob(tx, jobId) {
 export async function getJobGroupShareStatus({ db, jobId, now = new Date() }) {
     const job = await db.job.findUnique({
         where: { id: jobId },
-        select: { id: true, jobCode: true, companyJobId: true, status: true, company: { select: { name: true } }, jobType: { select: { name: true } } },
+        select: { id: true, jobCode: true, companyJobId: true, status: true, client: { select: { name: true } }, jobType: { select: { name: true } } },
     });
     if (!job) throw new CandidateError(404, "JOB_NOT_FOUND", "Job not found");
     const [link, members] = await Promise.all([
@@ -68,7 +72,7 @@ export async function getJobGroupShareStatus({ db, jobId, now = new Date() }) {
         jobId: job.id,
         jobCode: job.jobCode,
         companyJobId: job.companyJobId ?? null,
-        company: job.company.name,
+        client: job.client.name,
         jobType: job.jobType.name,
         jobStatus: job.status,
         state: active ? "OPEN" : "NONE",
@@ -129,7 +133,7 @@ export async function createJobGroupShareLink({ db, actor, jobId, formOrigin, no
 // answers, assignments and other links are untouched.
 export async function revokeJobGroupShareLink({ db, actor, jobId, now = new Date() }) {
     await db.$transaction(async (tx) => {
-        const [job] = await tx.$queryRaw`SELECT "job_code" AS "jobCode" FROM "job" WHERE "id" = ${jobId}::uuid FOR SHARE`;
+        const [job] = await tx.$queryRaw`SELECT "job_code" AS "jobCode" FROM "job" WHERE "id" = ${jobId}::uuid FOR UPDATE`;
         if (!job) throw new CandidateError(404, "JOB_NOT_FOUND", "Job not found");
         const links = await tx.candidateFormLink.findMany({ where: { jobId, kind: "JOB_GROUP", revokedAt: null }, select: { linkId: true } });
         if (!links.length) throw new CandidateError(404, "NO_ACTIVE_LINK", "This job has no group link to revoke.");

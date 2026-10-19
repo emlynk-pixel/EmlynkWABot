@@ -129,43 +129,82 @@ On save, the form calls `PUT /api/admin/candidates/:passportId` and, if the comm
 
 ---
 
-## 4. Seven-Stage Deployment Process
+## 4. Eight-Stage Deployment Process
 
-Each candidate has exactly **seven stages**, always in this order:
+Each candidate has exactly **eight stages**, always in this order (six of them, plus Additional details, have a circle on the progress stepper; see below):
 
 ```mermaid
 flowchart LR
-    S1[1. Test Details\n(Admin)] --> S2[2. Candidate Details\n(Automatic)]
-    S2 --> S3[3. Document Submission\n(Automatic)]
-    S3 --> S4[4. IVS Interview\n(Admin)]
-    S4 --> S5[5. Visa Submission\n(Admin)]
-    S5 --> S6[6. Visa Approval\n(Admin)]
-    S6 --> S7[7. Finalizing Job\n(Admin)]
+    S1[1. Test Details\n(Admin)] --> SJ[2. Job Details\n(Admin)]
+    SJ --> S2[3. Candidate Details\n(Automatic)]
+    S2 --> S3[4. Document Submission\n(Automatic)]
+    S3 --> S4[5. IVS Interview\n(Admin)]
+    S4 --> S5[6. Visa Submission\n(Admin)]
+    S5 --> S6[7. Visa Approval\n(Admin)]
+    S6 --> S7[8. Finalizing Job\n(Admin)]
     
     classDef auto fill:#e1bee7,stroke:#8e24aa,stroke-width:2px,color:#000;
     classDef manual fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000;
     
-    class S1,S4,S5,S6,S7 manual;
+    class S1,SJ,S4,S5,S6,S7 manual;
     class S2,S3 auto;
 ```
 
 | # | Stage key | Label | Completed by |
 |---|---|---|---|
 | 1 | `TEST_DETAILS` | Test details | Admin (checkbox) |
-| 2 | `CANDIDATE_DETAILS` | Candidate details | Automatically — when required fields and passport are present |
-| 3 | `DOCUMENT_SUBMISSION` | Document submission | Automatically — when all 5 required documents are present |
-| 4 | `IVS_INTERVIEW` | IVS interview | Admin (checkbox) |
-| 5 | `VISA_SUBMISSION` | Visa submission | Admin (checkbox) |
-| 6 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
-| 7 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
+| 2 | `JOB_DETAILS` | Job details | Admin (checkbox); never automatic, even when a Job is assigned |
+| 3 | `CANDIDATE_DETAILS` | Candidate details | Automatically — when required fields and passport are present |
+| 4 | `DOCUMENT_SUBMISSION` | Document submission | Automatically — when all 5 required documents are present |
+| 5 | `IVS_INTERVIEW` | IVS interview | Admin (checkbox) |
+| 6 | `VISA_SUBMISSION` | Visa submission | Admin (checkbox) |
+| 7 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
+| 8 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
 
-**Jobs.** The candidate page has a **Job assignment** section (above the stepper) read from the Job relation: the current PROCESSING job (code, type, company, responsible agent) and the history (completed, cancelled, removed). `GET /candidates/:passportId` returns it as `jobAssignments: { current, history }`. Assigning a candidate is done in Admin > Jobs (*Add to job*), see `JOB_MANAGEMENT_IMPLEMENTATION.md`. The Test details stage no longer has a free-text Job ID: it shows the assigned job read-only, and an old value as a read-only *Legacy job reference* (`legacyJobId`).
+**Jobs.** The candidate page has a **Job assignment** section (above the stepper) read from the Job relation: the current PROCESSING job (code, Client Job ID, type, client, responsible agent) and the history (completed, cancelled, removed). `GET /candidates/:passportId` returns it as `jobAssignments: { current, history }`. ADMIN and MANAGER can *Assign to Job* there (the same endpoint as Admin > Jobs > *Add to job*); the button is disabled until the Test result is PASS, and the server refuses others with `CANDIDATE_TEST_NOT_PASSED`. See `JOB_MANAGEMENT_IMPLEMENTATION.md`.
 
-The progress stepper on the candidate page shows Test details, Candidate details, Additional details, Document submission, Visa submission and Visa approval. IVS interview and Finalizing the job have no circle (their data and `?stage=` links are unchanged). The candidate list's progress counts all seven stages (`x/7`).
+**Test details** records: *Agent name* (free text: the agent associated with the test, `test_agent_name`), *Test ID* (the test's own reference, `test_id`), *Test result* (Pass / Fail), *Test date* and *Notes*. It used to hold "Client name" (the candidate's own name, read-only) and a free-text "Job ID"; the Job is no longer entered here.
+
+**Job details** records a *Date* (`job_details_date`), a *Note* (the stage's `notes`) and the completion checkbox, and **shows** two read-only values taken live from the candidate's Job assignments (`job_candidate` → `job` → `client`): *Job ID* (the human-readable Job code, e.g. `JOB-2026-000007`, never the UUID) and *Client name*. They are not stored on the stage, so a Client rename or a reassignment to another Job shows immediately; the API refuses to write them (`jobCode`, `clientName`, `jobId`). Which Job is shown follows a fixed priority: **(A)** the current PROCESSING assignment; else **(B)** the latest historical assignment (completed, cancelled, or one the candidate was removed from), with a small note under Job ID ("Completed job (not current)", "Cancelled job (not current)" or "Candidate was removed from this job (not current)"); else **(C)** "Not assigned" (the candidate never had a Job). "Latest" is the newest `job_candidate.assigned_at` (ties: the row's `created_at`, then the job id), so a candidate whose Job B completed after Job A keeps showing Job B. Removing a candidate from a job never deletes the `job_candidate` row (it sets `released_at`), so this history is complete. The fallback is display-only: it never re-activates an assignment, changes a Job, or writes anything to the stage. The old free-text `candidate_stages.job_id` is never read as a Job: it only appears as the Test ID of a Test details row that has no `test_id` yet.
+
+The progress stepper on the candidate page shows Test details, Job details, Candidate details, Additional details, Document submission, Visa submission and Visa approval. IVS interview and Finalizing the job have no circle (their data and `?stage=` links are unchanged). The candidate list's progress counts all seven stages (`x/7`).
 
 Stages are independent: any stage can be opened and edited in any order. The URL uses `?stage=<key>` to select which panel is shown; the default is the first incomplete stage.
 
-### 4.1 Automatic stages (2 and 3)
+### 4.0 Candidate list Status (derived workflow status)
+
+The Candidates list has a **Status** column (it replaced the old *Progress* column; the stepper on the candidate page and every stage are unchanged). The Status is **derived** on the server on every list read from existing data (`src/services/candidateWorkflowStatus.js`, signals gathered in `candidateService.listCandidates`). It is never stored and never edited, so it follows the data automatically.
+
+| Code | Label | Signal (source of truth) |
+|---|---|---|
+| `REGISTERED` | Registered | default: the candidate exists and nothing below applies |
+| `STOPPED_WITH_TEST` | Stopped with Test | `candidate_stages.test_result = 'FAIL'` on `TEST_DETAILS` (the saved result, not stage completion) |
+| `JOB_ASSIGNED` | Job Assigned | an **active** `job_candidate` on a PROCESSING job (never `candidate_stages.job_id` or `candidate.job` text) |
+| `FORM_SUBMITTED` | Form Submitted | `candidate_form_access.status = 'SUBMITTED'` (Candidate Form, read-only, one query per page; see below) |
+| `DETAILS_VERIFIED` | Details Verified | an explicit manual **Verify details** by an ADMIN or MANAGER (`candidate_verification.details_verified_at/by`); possible only while the Candidate details stage is complete. Completing or saving details, or Additional details, never verifies them |
+| `DOCUMENTS_VERIFIED` | Documents Verified | an explicit manual **Verify documents** by an ADMIN or MANAGER (`candidate_verification.documents_verified_at/by`); possible once at least one required document is on record. An upload or an OCR-accepted document (`documents.verification_status = VERIFIED`, which the pipeline also sets automatically) is **not** a verification |
+| `VISA_DOCUMENT_READY` | Visa Document Ready | the **Document submission** stage is completed (every required document on record). The Visa submission stage is not needed and does not count |
+
+**Precedence.** Test FAIL first (Stopped with Test); then, the first that holds: `VISA_DOCUMENT_READY` (Document submission complete) > `DOCUMENTS_VERIFIED` > `DETAILS_VERIFIED` > `FORM_SUBMITTED` > `JOB_ASSIGNED` > `REGISTERED`. The signals are independent. **Test FAIL is an override**, not a step: while the saved result is FAIL the status is *Stopped with Test* whatever else is true (verifications stay on record); when it is no longer FAIL the status is read again from the current data. A FAIL does not remove an existing Job assignment, and a FAIL candidate still cannot be newly assigned a Job (that needs PASS). Because Document submission outranks Documents Verified, *Documents Verified* shows while Document submission is still incomplete, and *Visa Document Ready* takes over once it completes.
+
+**Form Submitted source.** The Candidate Form is a separate application; its table `candidate_form_access` exists only where its migrations ran (the shared database), not in this branch's migrations. The list reads it with one guarded raw query (`to_regclass` check first), modelling nothing of the form: where the table is missing, or cannot be read, nobody shows Form Submitted.
+
+**Manual verification.** `POST /api/admin/candidates/:passportId/verification { kind: "DETAILS" | "DOCUMENTS", verified: boolean }` (ADMIN and MANAGER; 409 `DETAILS_INCOMPLETE` / `DOCUMENTS_MISSING` when there is nothing to verify) writes `candidate_verification` (migration `20261021120000_candidate_verification`) and an audit entry (`VERIFY_DETAILS`, `UNVERIFY_DETAILS`, `VERIFY_DOCUMENTS`, `UNVERIFY_DOCUMENTS`). The candidate page shows a *Verify details* button on Candidate details and *Verify documents* on Document submission (and who verified, when). Repeating the current state does nothing. No Status field is stored or editable.
+
+**Documents Verified** is the manager's sign-off on the required documents *currently on record* (it needs at least one; the whole set is not required). It is separate from the document-processing status: an OCR-accepted `VERIFIED` document is not a manual verification.
+
+**Automatic reset.** A verification is cleared automatically, in the **same transaction** as the change that made it stale (database triggers, migration `20261022120000_candidate_verification_reset`), so there is never changed data with a stale verification and a rolled-back change leaves the verification alone. The edit itself always succeeds; the admin does not remove anything first.
+
+| Verification | Cleared when | Not cleared by |
+|---|---|---|
+| Details Verified | a Candidate details value changes: first name, surname, address, NIC, job types, job experience, WhatsApp number, contact number, place of birth, date of birth, passport issue / expiry date, nationality, sex; or any Additional details value is saved for the first time or changes (all its fields) | saving the same values, the stage comment / completion, Test result, Job assignment or change, call logs, other stages, document uploads or review, Visa stages |
+| Documents Verified | a required document (passport, medical, police report, scan) is added, removed, replaced (the previous one superseded), or changes status (for example a review approval), file or variant | Candidate details edits, Job or test changes, notes and other stages, other document types (NIC, skill video, police slip, visa document) |
+
+Each reset is audited as `DETAILS_VERIFICATION_RESET` / `DOCUMENTS_VERIFICATION_RESET` (actor = the signed-in user whose edit, upload, approval or removal caused it; the reason names the kind of change and, for documents, the type; never field values or file contents). Only a verification that was actually set is cleared and audited, so an edit of unverified data writes nothing. **Limit:** a change made by an automated process with no signed-in user (WhatsApp document processing, OCR passport reconciliation) still resets the verification, but writes no audit entry, because an audit entry needs a user. Admin-driven transactions name the user to the database through `app.actor_id` (`src/services/auditActor.js`).
+
+**Performance.** One COUNT and one bounded page query; job assignment, additional details, stages and required documents are relations of that single query, plus at most two raw reads for the form table. Nothing is queried per candidate.
+
+### 4.1 Automatic stages (3 and 4)
 
 **Stage 2 — Candidate details** is marked complete when the following required fields are filled **and** a `PASSPORT` document is uploaded:
 

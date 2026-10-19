@@ -75,12 +75,11 @@ All core application tables reside in the `public` schema.
 - **Primary Key**: Composite `(passport_id, stage)`.
 - **Important Columns**:
   - `passport_id` (`TEXT`, FK -> `candidate.passport_id` `ON DELETE CASCADE`).
-  - `stage` (`TEXT`): Stage code (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`). A plain text column with no database constraint: a new stage needs no migration.
+  - `stage` (`TEXT`): Stage code (`TEST_DETAILS`, `JOB_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`). A plain text column with no database constraint: a new stage needs no migration.
   - `completed` (`BOOLEAN`, default `false`).
   - `completed_at` (`TIMESTAMPTZ`, nullable).
   - `notes` (`TEXT`, nullable).
-  - `test_result` (`TEXT`, nullable), `test_date` (`DATE`, nullable) — used by `TEST_DETAILS`.
-  - `job_id` (`TEXT`, nullable) — **DEPRECATED legacy free text** (column comment in the database). No longer written by the API and **not** the job assignment; the source of truth is `job_candidate` (§2.17). Kept read-only so old values are not lost (the API returns it as `legacyJobId`). See `JOB_MANAGEMENT_IMPLEMENTATION.md` §10.
+  - `test_agent_name` (`TEXT`), `test_id` (`TEXT`), `test_result` (`TEXT`), `test_date` (`DATE`), all nullable — used by `TEST_DETAILS`. `job_details_date` (`DATE`, nullable) — used by `JOB_DETAILS`, whose note and completion use `notes` / `completed`; its Job and Client are derived from `job_candidate`, never stored. `job_id` (`TEXT`, nullable) is **legacy** free text (formerly the Test details "Job ID"): no longer written, read only as a Test ID when `test_id` is empty, never as a Job. Columns added by `20261020120000_candidate_stage_job_details` (additive).
   - `updated_at` (`TIMESTAMPTZ`).
 - **Triggers**: Change capture trigger inserts queue events into `sheet_sync_queue`.
 
@@ -508,7 +507,7 @@ The candidate table represents job applicants and client records.
 
 ### 3.3 Relationships
 - `documents`: Stored and verified files belonging to this candidate.
-- `candidate_stages`: Seven deployment tracking stages (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`).
+- `candidate_stages`: Eight deployment tracking stages (`TEST_DETAILS`, `JOB_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`).
 - `candidate_call_logs`: Telephone call notes recorded by staff.
 - `call_log_follow_up`: follow-ups (the dashboard's Need Attention page), one row per call marked for follow-up (see §2.5.1).
 - `candidate_allocation`: Work Allocation, the Analyst each allocated candidate is assigned to (see §2.5.2).
@@ -615,18 +614,27 @@ Migrations 6.1 and 6.2 are applied and active on the shared database.
 - Additive only: creates the four tables of §2.13–2.16, their checks, foreign keys and the two immutability triggers. No existing table changes.
 - Enables RLS and revokes all privileges from `anon` and `authenticated` on all four. After applying, check live privileges (ISS-013 in the Candidate Form issues log).
 
-### 6.5 `20261018120000_job_management`
-- **Status**: written 2026-10-17; **not applied to any shared database yet**. Apply with `prisma migrate deploy` (never `migrate dev`: known Supabase shadow-replay issue), then `prisma generate`, then `prisma migrate status`. Deploy the code and the migration together.
-- Additive only: the six tables of §2.17, their checks, FKs, partial unique index, two functions/triggers, RLS + revokes, and a `DEPRECATED` comment on `candidate_stages.job_id`. **No existing table, column or row changes**; the legacy `job_id` values are preserved untouched (audit: 1 value, `Job12`).
+### 6.5 `20261018120000_job_management` and `20261019120000_client_management`
+- **Job Management** (additive): `job_type`, `agent`, `job_code_counter`, `job`, `job_candidate` and the employer table (created as `company`), with CHECKs, the partial unique index `job_candidate_one_active_per_candidate` and the status triggers. RLS on, no `anon` / `authenticated` access. See `JOB_MANAGEMENT_IMPLEMENTATION.md`.
+- **Client Management** (forward-only): renames `company` to `client` in place (rows, UUIDs, primary key and the job foreign key kept; `job.company_id` becomes `client_id`), adds `client.agent_id` (FK to `agent`, `RESTRICT`; backfilled from the client's newest job), contact columns on `agent` and `client`, and `job.company_job_id` (the employer's own external job reference, name kept) with a per-client unique index. Agents and clients are never deleted: `is_active` is the ACTIVE / INACTIVE status. See `AGENT_CLIENT_MANAGEMENT.md`.
+- Relationships: `Agent 1──∞ Client 1──∞ Job`, `Agent 1──∞ Job (responsible_agent_id)`, `Job 1──∞ job_candidate ∞──1 Candidate`.
 
 ### 6.6 `20261018130000_job_company_id_and_form_job_group`
 - **Status**: written 2026-10-17; **not applied to any shared database yet**. Apply after `20261018120000_job_management` (it references `job`), with `prisma migrate deploy` (never `migrate dev`).
 - Additive only: `job.company_job_id` + CHECK + per-company partial unique index; `candidate_form_link.job_id` + FK + index; the `kind` and target CHECKs replaced by the SINGLE / JOB_GROUP versions; the one-active-group-link-per-job partial unique index. No existing row changes (every existing link is `SINGLE`, `job_id` NULL). `candidate_form_link` keeps RLS and its revokes.
 - Why a new migration rather than editing `20261018120000_job_management`: that file was never committed or pushed, but it could not be verified as unapplied on every environment (the preview / production connection strings were not available to check), and the link-table changes alter a table that **is** already applied, so they need a new migration regardless.
+  - **Applied on the shared database in this exact form; never edit it** (its `_prisma_migrations` checksum is the SHA-256 of this file's LF content). It conflicts with dev's `20261019120000_client_management` on a database built from dev first, where `company_job_id` already exists and `company_id` is renamed to `client_id`. That case is handled by the two migrations in §6.8 instead.
+
+### 6.8 `20261018125900_bridge_dev_first_company_job_id` and `20261023120000_reconcile_job_company_job_id`
+- Only for a database that ran dev's migrations (including `20261019120000_client_management`) before the Candidate Form ones. The bridge sorts just before `20261018130000`. It acts only when `job.company_job_id` exists, `job.company_id` does not, and `candidate_form_link.job_id` does not. It parks the values in `company_job_id_reconcile`, drops the CHECK and index that `20261018130000` re-creates under the same names, and adds a temporary empty `company_id` column. `20261018130000` then runs unchanged.
+- `20261023120000` acts only when `company_job_id_reconcile` exists. It copies the values back, drops the parked and temporary columns, and re-creates the unique index on `(client_id, company_job_id)` and the column comment.
+- On a fresh database, a Candidate Form branch database and the shared database, both are no-ops.
+- Rehearsed on PostgreSQL 16 for fresh, latest dev, original Candidate Form branch and shared-equivalent history. All four end with the same schema: one `company_job_id` column, one CHECK, one unique index, no `company` table or `company_id` column. Seeded rows are unchanged and no links are orphaned.
 
 ### 6.7 `20261018140000_candidate_form_field_review`
 - **Status**: written 2026-10-17; **not applied to any shared database yet**. Apply after the two earlier `20261018*` migrations with `prisma migrate deploy`.
 - Additive only: the `candidate_form_field_review` table, its CHECKs, foreign keys, the "decision is final" trigger, RLS and revokes. No existing row or table changes.
+
 
 ---
 

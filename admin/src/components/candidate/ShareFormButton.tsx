@@ -229,8 +229,8 @@ function JobGroupSection({ currentJob }: { currentJob: CandidateJobAssignment | 
                 <>
                     <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 rounded border border-border bg-canvas px-3 py-2 text-body-sm">
                         <dt className="text-ink-muted">Job code</dt><dd className="text-ink">{currentJob.jobCode}</dd>
-                        <dt className="text-ink-muted">Company Job ID</dt><dd className="text-ink">{currentJob.companyJobId ?? "Not assigned"}</dd>
-                        <dt className="text-ink-muted">Company</dt><dd className="text-ink">{currentJob.company.name}</dd>
+                        <dt className="text-ink-muted">Client Job ID</dt><dd className="text-ink">{currentJob.companyJobId ?? "Not assigned"}</dd>
+                        <dt className="text-ink-muted">Client</dt><dd className="text-ink">{currentJob.client.name}</dd>
                         <dt className="text-ink-muted">Job type</dt><dd className="text-ink">{currentJob.jobType.name}</dd>
                         {status && (
                             <>

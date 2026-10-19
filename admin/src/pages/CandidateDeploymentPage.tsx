@@ -120,7 +120,12 @@ export function CandidateDeploymentPage() {
                 </p>
             )}
 
-            <JobAssignmentPanel assignments={details.jobAssignments} candidate={{ passportId: c.passportId, name: c.name }} onChanged={setUpdated} />
+            <JobAssignmentPanel
+                assignments={details.jobAssignments}
+                candidate={{ passportId: c.passportId, name: c.name }}
+                testPassed={details.stages.find((s) => s.stage === "TEST_DETAILS")?.testResult === "PASS"}
+                onChanged={setUpdated}
+            />
 
             <Card className="px-4 py-5">
                 <CandidateStepper steps={steps} current={tab === "additional" ? ADDITIONAL_STEP : current} onSelect={select} />

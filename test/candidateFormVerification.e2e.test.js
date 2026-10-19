@@ -43,10 +43,12 @@ beforeEach(async () => {
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "rate_limits";
         DELETE FROM "candidate_form_response"; DELETE FROM "candidate_form_prefill_snapshot"; DELETE FROM "candidate_form_access"; DELETE FROM "candidate_form_link";
-        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "job_type"; DELETE FROM "company"; DELETE FROM "agent";
+        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_additional_details"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
     `);
     await prisma.candidate.createMany({ data: [A, B, X] });
+    // Only a candidate who passed the test can be assigned to a job (jobAssignmentTestPass.test.js).
+    await prisma.candidateStage.createMany({ data: [A, B, X].map((c) => ({ passportId: c.passportId, stage: "TEST_DETAILS", testResult: "PASS" })) });
     await prisma.candidateAllocation.create({ data: { passportId: A.passportId, analystId: USERS.ANN.adminId } });
 });
 
@@ -102,10 +104,11 @@ const form = (token, options = {}) => pub("/form", { token, body: {}, ...options
 const access = (c) => prisma.candidateFormAccess.findUnique({ where: { passportId: c.passportId } });
 const GENERIC = (r) => { assert.equal(r.status, 401); assert.equal(r.body.code, "VERIFICATION_FAILED"); };
 const newJobWith = async (...members) => {
-    const [jobType, company, agent] = await Promise.all([
-        prisma.jobType.create({ data: { code: "T", name: "T" } }), prisma.company.create({ data: { name: "Co" } }), prisma.agent.create({ data: { name: "Ag", countryCode: "RO" } }),
+    const [jobType, agent] = await Promise.all([
+        prisma.jobType.create({ data: { code: "T", name: "T" } }), prisma.agent.create({ data: { name: "Ag", countryCode: "RO" } }),
     ]);
-    const job = (await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: jobType.id, companyId: company.id, responsibleAgentId: agent.id } })).body;
+    const client = await prisma.client.create({ data: { name: "Co", agentId: agent.id } });
+    const job = (await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: jobType.id, clientId: client.id, responsibleAgentId: agent.id } })).body;
     for (const m of members) await admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { body: { passportId: m.passportId } });
     return job;
 };
@@ -289,7 +292,7 @@ describe("SUBMIT / DBSEC: what the database itself enforces", () => {
         assert.equal((await submit(token)).status, 200);
         assert.equal(JSON.stringify(await prisma.candidate.findUnique({ where: { passportId: A.passportId } })), candidateBefore, "candidate row unchanged");
         assert.equal(await prisma.candidateAdditionalDetails.count(), 0);
-        assert.equal(await prisma.candidateStage.count(), 0);
+        assert.equal(await prisma.candidateStage.count({ where: { NOT: { stage: "TEST_DETAILS" } } }), 0, "no stage written (only the seeded Test result PASS rows exist)");
         const response = await prisma.candidateFormResponse.findUnique({ where: { passportId: A.passportId } });
         assert.equal(response.fullName, "ANUSHA DE SOYSA", "server upper-cases English");
         assert.equal(response.nic, A.nic, "the verified NIC, not typed");
@@ -311,7 +314,7 @@ describe("SUBMIT / DBSEC: what the database itself enforces", () => {
         assert.equal((await access(A)).status, "UNLOCKED");
     });
 
-    test("DBSEC-005/009/010 foreign keys, the link target CHECK and the Company Job ID constraint hold", async () => {
+    test("DBSEC-005/009/010 foreign keys, the link target CHECK and the Client Job ID constraint hold", async () => {
         await assert.rejects(pg.exec(`INSERT INTO "candidate_form_link" ("link_id","kind","job_id","token_hash","created_by","expires_at") VALUES ('z1','JOB_GROUP', gen_random_uuid(), '${"e".repeat(64)}','u-admin', now())`), /foreign key/i);
         await assert.rejects(pg.exec(`INSERT INTO "candidate_form_link" ("link_id","kind","token_hash","created_by","expires_at") VALUES ('z2','SINGLE','${"f".repeat(64)}','u-admin', now())`), /check/i);
         await assert.rejects(pg.exec(`INSERT INTO "candidate_form_access" ("passport_id","status") VALUES ('${X.passportId}','SUBMITTED')`), /check/i, "SUBMITTED needs submitted_at");

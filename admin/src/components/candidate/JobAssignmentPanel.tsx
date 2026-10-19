@@ -19,6 +19,8 @@ import { filterControl } from "../ui";
 // job. It uses the same endpoint as Add to job on the Job page
 // (POST /api/admin/jobs/:jobId/candidates), so the one-PROCESSING-job rule is the
 // server's: a candidate already on a job is refused with 409, never moved.
+// Only a candidate whose Test result is PASS can be assigned (the server also
+// refuses others with CANDIDATE_TEST_NOT_PASSED), so the button stays disabled until then.
 
 function JobLine({ job, historic = false }: { job: CandidateJobAssignment; historic?: boolean }) {
     const { user } = useAuth();
@@ -26,9 +28,9 @@ function JobLine({ job, historic = false }: { job: CandidateJobAssignment; histo
     return (
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Detail label="Internal job code">{code}</Detail>
-            <Detail label="Company Job ID">{job.companyJobId ?? <span className="text-ink-muted">Not assigned</span>}</Detail>
+            <Detail label="Client Job ID">{job.companyJobId ?? <span className="text-ink-muted">Not assigned</span>}</Detail>
             <Detail label="Job type">{job.jobType.name}</Detail>
-            <Detail label="Company">{job.company.name}</Detail>
+            <Detail label="Client">{job.client.name}</Detail>
             <Detail label="Responsible agent">{job.responsibleAgent.name}</Detail>
             {!historic && <Detail label="Status"><JobStatusBadge status={job.status} /></Detail>}
             {historic && <Detail label="Status">{job.removed ? "Removed" : <JobStatusBadge status={job.status} />}</Detail>}
@@ -38,8 +40,10 @@ function JobLine({ job, historic = false }: { job: CandidateJobAssignment; histo
     );
 }
 
-export function JobAssignmentPanel({ assignments, candidate, onChanged }: {
+export function JobAssignmentPanel({ assignments, candidate, testPassed = false, onChanged }: {
     assignments: JobAssignments;
+    // Test details > Test result is PASS.
+    testPassed?: boolean;
     candidate?: { passportId: string; name: string | null };
     // Told with the candidate's fresh details after an assignment, so this card
     // and the Share Form (which reads the current job) update at once.
@@ -55,13 +59,13 @@ export function JobAssignmentPanel({ assignments, candidate, onChanged }: {
                     <div className="flex flex-wrap items-center justify-between gap-2">
                         <h2 className="text-headline-sm text-ink">Current processing job</h2>
                         {canAssign && !assignments.current && (
-                            <button type="button" onClick={() => setAssigning(true)} className={primaryButton}>Assign to Job</button>
+                            <button type="button" disabled={!testPassed} title={testPassed ? undefined : "Only a candidate who passed the test can be assigned to a job"} onClick={() => setAssigning(true)} className={primaryButton}>Assign to Job</button>
                         )}
                     </div>
                     <div className="mt-2">
                         {assignments.current
                             ? <JobLine job={assignments.current} />
-                            : <p className="text-body-sm text-ink-muted">Not assigned to a processing job.</p>}
+                            : <p className="text-body-sm text-ink-muted">Not assigned to a processing job.{canAssign && !testPassed && " Only a candidate whose Test result is PASS can be assigned."}</p>}
                     </div>
                 </div>
                 {assignments.history.length > 0 && (
@@ -137,7 +141,7 @@ function AssignToJobDialog({ token, candidate, onClose, onAssigned }: {
                     <p className="text-body-sm text-ink-soft">Only processing jobs are listed. A candidate can be on one processing job at a time.</p>
                     <form onSubmit={submitSearch} role="search" className="mt-3 flex gap-2">
                         <label htmlFor="assign-job-search" className="sr-only">Search jobs</label>
-                        <input id="assign-job-search" type="search" value={text} maxLength={100} placeholder="Job code, Company Job ID, company…" onChange={(event) => setText(event.target.value)} className={filterControl} />
+                        <input id="assign-job-search" type="search" value={text} maxLength={100} placeholder="Job code, Client Job ID, client…" onChange={(event) => setText(event.target.value)} className={filterControl} />
                         <button type="submit" className={secondaryButton}>Search</button>
                     </form>
                     {jobs.status === "loading" && !jobs.data && <LoadingState label="Loading jobs…" />}
@@ -150,8 +154,8 @@ function AssignToJobDialog({ token, candidate, onClose, onAssigned }: {
                             {items.map((job) => (
                                 <li key={job.jobId} className="flex items-center justify-between gap-3 px-3 py-2">
                                     <div className="min-w-0 text-body-sm">
-                                        <p className="font-medium text-ink">{job.jobCode} <span className="font-normal text-ink-muted">· Company Job ID: {job.companyJobId ?? NO_COMPANY_JOB_ID}</span></p>
-                                        <p className="text-ink-soft">{job.company.name} · {job.jobType.name}</p>
+                                        <p className="font-medium text-ink">{job.jobCode} <span className="font-normal text-ink-muted">· Client Job ID: {job.companyJobId ?? NO_COMPANY_JOB_ID}</span></p>
+                                        <p className="text-ink-soft">{job.client.name} · {job.jobType.name}</p>
                                         <p className="text-label-sm text-ink-muted">{job.countryCode} · {job.responsibleAgent.name} · {job.candidateCount} candidate{job.candidateCount === 1 ? "" : "s"}</p>
                                     </div>
                                     <button type="button" className={secondaryButton} aria-label={`Select ${job.jobCode}`} onClick={() => { setChosen(job); setError(null); }}>Select</button>
@@ -174,7 +178,7 @@ function AssignToJobDialog({ token, candidate, onClose, onAssigned }: {
             ) : (
                 <>
                     <p className="text-body-sm text-ink-soft">
-                        Assign <strong>{name}</strong> to <strong>{chosen.jobCode}</strong> ({chosen.company.name}, {chosen.jobType.name})?
+                        Assign <strong>{name}</strong> to <strong>{chosen.jobCode}</strong> ({chosen.client.name}, {chosen.jobType.name})?
                     </p>
                     <DialogError message={error} />
                     <div className="mt-4 flex justify-end gap-2">

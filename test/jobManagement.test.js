@@ -35,15 +35,17 @@ beforeEach(async () => {
     await pg.exec(`
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "rate_limits"; DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter";
-        DELETE FROM "job_type"; DELETE FROM "company"; DELETE FROM "agent";
+        DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
     `);
     await prisma.candidate.createMany({ data: [1, 2, 3, 4].map(candidate) });
+    // Only a candidate who passed the test can be assigned to a job: these have PASS (the rule has its own tests, jobAssignmentTestPass.test.js).
+    await prisma.candidateStage.createMany({ data: [1, 2, 3, 4].map((i) => ({ passportId: pid(i), stage: "TEST_DETAILS", testResult: "PASS" })) });
     await prisma.candidateAllocation.createMany({ data: [[1, USERS.ANN], [2, USERS.ANN], [3, USERS.BEN]].map(([i, u]) => ({ passportId: pid(i), analystId: u.adminId })) });
     const jobType = await prisma.jobType.create({ data: { code: "WELDER", name: "Welder" } });
-    const company = await prisma.company.create({ data: { name: "Acme Construction" } });
     const agent = await prisma.agent.create({ data: { name: "Ion Popescu", countryCode: "RO" } });
-    ids = { jobType: jobType.id, company: company.id, agent: agent.id };
+    const client = await prisma.client.create({ data: { name: "Acme Construction", agentId: agent.id } });
+    ids = { jobType: jobType.id, client: client.id, agent: agent.id };
 });
 
 async function api(who, method, urlPath, body) {
@@ -68,7 +70,7 @@ async function api(who, method, urlPath, body) {
     }
 }
 const createJob = async (who = USERS.MANAGER, extra = {}) => {
-    const response = await api(who, "POST", "/jobs", { jobTypeId: ids.jobType, companyId: ids.company, responsibleAgentId: ids.agent, vacancies: 5, ...extra });
+    const response = await api(who, "POST", "/jobs", { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent, vacancies: 5, ...extra });
     assert.equal(response.status, 201, JSON.stringify(response.body));
     return response.body;
 };
@@ -83,7 +85,7 @@ describe("creating jobs (JOB-001 to JOB-003)", () => {
         assert.equal(job.jobCode, formatJobCode(jobCodeYear(), 1));
         assert.match(job.jobCode, /^JOB-\d{4}-000001$/);
         assert.equal(job.countryCode, "RO", "copied from the responsible Agent");
-        assert.deepEqual([job.jobType.name, job.company.name, job.responsibleAgent.name, job.vacancies, job.candidateCount], ["Welder", "Acme Construction", "Ion Popescu", 5, 0]);
+        assert.deepEqual([job.jobType.name, job.client.name, job.responsibleAgent.name, job.vacancies, job.candidateCount], ["Welder", "Acme Construction", "Ion Popescu", 5, 0]);
         const audit = await prisma.auditLog.findMany({ where: { action: "CREATE_JOB" } });
         assert.equal(audit.length, 1);
     });
@@ -101,27 +103,28 @@ describe("creating jobs (JOB-001 to JOB-003)", () => {
     });
 
     test("a failed creation does not use up a number", async () => {
-        const bad = await api(USERS.MANAGER, "POST", "/jobs", { jobTypeId: ids.jobType, companyId: ids.company, responsibleAgentId: "11111111-1111-4111-8111-111111111111" });
-        assert.equal(bad.status, 400);
-        assert.equal(bad.body.code, "REFERENCE_NOT_FOUND");
+        const bad = await api(USERS.MANAGER, "POST", "/jobs", { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: "11111111-1111-4111-8111-111111111111" });
+        assert.equal(bad.status, 409);
+        assert.equal(bad.body.code, "CLIENT_AGENT_MISMATCH");
         assert.equal((await createJob()).jobCode, formatJobCode(jobCodeYear(), 1));
     });
 
-    test("JOB-003: Job Type, Company and Agent are required real references, never free text", async () => {
-        for (const field of ["jobTypeId", "companyId", "responsibleAgentId"]) {
-            const body = { jobTypeId: ids.jobType, companyId: ids.company, responsibleAgentId: ids.agent };
+    test("JOB-003: Job Type and Client are required real references (the Agent follows the Client), never free text", async () => {
+        for (const field of ["jobTypeId", "clientId"]) {
+            const body = { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent };
             delete body[field];
             const response = await api(USERS.MANAGER, "POST", "/jobs", body);
             assert.equal(response.status, 400, field);
             assert.deepEqual(response.body.errors.map((e) => e.field), [field]);
         }
-        assert.equal((await api(USERS.MANAGER, "POST", "/jobs", { jobTypeId: "Welder", companyId: ids.company, responsibleAgentId: ids.agent })).status, 400, "free-text job type");
-        assert.equal((await api(USERS.MANAGER, "POST", "/jobs", { jobTypeId: ids.jobType, companyId: ids.company, responsibleAgentId: ids.agent, vacancies: 0 })).status, 400);
+        assert.equal((await api(USERS.MANAGER, "POST", "/jobs", { jobTypeId: "Welder", clientId: ids.client, responsibleAgentId: ids.agent })).status, 400, "free-text job type");
+        assert.equal((await api(USERS.MANAGER, "POST", "/jobs", { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent, vacancies: 0 })).status, 400);
         // An inactive reference cannot be used for a new job.
-        await prisma.company.update({ where: { id: ids.company }, data: { isActive: false } });
-        assert.equal((await api(USERS.MANAGER, "POST", "/jobs", { jobTypeId: ids.jobType, companyId: ids.company, responsibleAgentId: ids.agent })).status, 400);
+        await prisma.client.update({ where: { id: ids.client }, data: { isActive: false } });
+        const inactive = await api(USERS.MANAGER, "POST", "/jobs", { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent });
+        assert.deepEqual([inactive.status, inactive.body.code], [409, "CLIENT_INACTIVE"]);
         // The foreign keys are real.
-        await assert.rejects(pg.exec(`INSERT INTO "job" ("job_code","job_type_id","company_id","responsible_agent_id","country_code","created_by") VALUES ('JOB-2026-999999', gen_random_uuid(), '${ids.company}', '${ids.agent}', 'RO', 'u-admin')`), /foreign key/i);
+        await assert.rejects(pg.exec(`INSERT INTO "job" ("job_code","job_type_id","client_id","responsible_agent_id","country_code","created_by") VALUES ('JOB-2026-999999', gen_random_uuid(), '${ids.client}', '${ids.agent}', 'RO', 'u-admin')`), /foreign key/i);
     });
 
     test("reference data: created by ADMIN / MANAGER, unique by name, listed for the job form", async () => {
@@ -129,11 +132,9 @@ describe("creating jobs (JOB-001 to JOB-003)", () => {
         assert.equal(type.status, 201);
         assert.deepEqual([type.body.name, type.body.code], ["Tile Fitter", "TILE_FITTER"]);
         assert.equal((await api(USERS.MANAGER, "POST", "/job-types", { name: "tile fitter" })).status, 409);
-        assert.equal((await api(USERS.ADMIN, "POST", "/companies", { name: "ACME construction" })).status, 409);
-        assert.equal((await api(USERS.ADMIN, "POST", "/agents", { name: "Maria", countryCode: "ro" })).body.countryCode, "RO");
-        assert.equal((await api(USERS.ADMIN, "POST", "/agents", { name: "Maria", countryCode: "Romania" })).status, 400);
         const options = await api(USERS.MANAGER, "GET", "/job-options");
-        assert.deepEqual([options.body.jobTypes.length, options.body.companies.length, options.body.agents.length], [2, 1, 2]);
+        assert.deepEqual([options.body.jobTypes.length, options.body.clients.length, options.body.agents.length], [2, 1, 1]);
+        assert.deepEqual(options.body.clients[0], { id: ids.client, name: "Acme Construction", agentId: ids.agent }, "each client carries its agent");
     });
 });
 
@@ -300,13 +301,13 @@ describe("roles and the Analyst scope (JOB-015, JOB-016)", () => {
     test("JOB-015: only ADMIN and MANAGER manage jobs; the REGISTRATION_DESK has no access", async () => {
         const job = await createJob();
         const writes = [
-            ["POST", "/jobs", { jobTypeId: ids.jobType, companyId: ids.company, responsibleAgentId: ids.agent }],
+            ["POST", "/jobs", { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent }],
             ["PUT", `/jobs/${job.jobId}`, { vacancies: 2 }],
             ["POST", `/jobs/${job.jobId}/candidates`, { passportId: pid(1) }],
             ["DELETE", `/jobs/${job.jobId}/candidates/${pid(1)}`],
             ["POST", `/jobs/${job.jobId}/complete`, {}],
             ["POST", `/jobs/${job.jobId}/cancel`, { reason: "x" }],
-            ["POST", "/job-types", { name: "Cook" }], ["POST", "/companies", { name: "Co" }], ["POST", "/agents", { name: "A", countryCode: "RO" }],
+            ["POST", "/job-types", { name: "Cook" }], ["POST", "/agents", { name: "A", countryCode: "RO" }], ["POST", "/client-management", { name: "Co", agentId: ids.agent }],
             ["GET", "/job-options"],
         ];
         for (const who of [USERS.ANN, USERS.DESK]) {
@@ -355,7 +356,7 @@ describe("lists, details and the candidate page (JOB-017)", () => {
         assert.equal((await view("processing", "&search=nobody")).items.length, 0);
         assert.equal((await api(USERS.MANAGER, "GET", "/jobs?view=other")).status, 400);
         const detail = (await api(USERS.MANAGER, "GET", `/jobs/${a.jobId}`)).body;
-        assert.deepEqual([detail.jobCode, detail.jobType.name, detail.company.name, detail.countryCode, detail.responsibleAgent.name, detail.vacancies, detail.createdBy], [a.jobCode, "Welder", "Acme Construction", "RO", "Ion Popescu", 5, USERS.MANAGER.name]);
+        assert.deepEqual([detail.jobCode, detail.jobType.name, detail.client.name, detail.countryCode, detail.responsibleAgent.name, detail.vacancies, detail.createdBy], [a.jobCode, "Welder", "Acme Construction", "RO", "Ion Popescu", 5, USERS.MANAGER.name]);
         assert.deepEqual(detail.candidates.map((x) => [x.passportId, x.name]), [[pid(1), "Name1 Sur1"]]);
         assert.equal((await api(USERS.MANAGER, "GET", "/jobs/not-a-uuid")).status, 404);
     });
@@ -365,7 +366,7 @@ describe("lists, details and the candidate page (JOB-017)", () => {
         await add(USERS.MANAGER, job, 1);
         const details = await getCandidate({ db: prisma, passportId: pid(1) });
         assert.equal(details.jobAssignments.current.jobCode, job.jobCode);
-        assert.deepEqual([details.jobAssignments.current.jobType.name, details.jobAssignments.current.company.name, details.jobAssignments.current.responsibleAgent.name], ["Welder", "Acme Construction", "Ion Popescu"]);
+        assert.deepEqual([details.jobAssignments.current.jobType.name, details.jobAssignments.current.client.name, details.jobAssignments.current.responsibleAgent.name], ["Welder", "Acme Construction", "Ion Popescu"]);
         assert.deepEqual(details.jobAssignments.history, []);
         const viaApi = await api(USERS.ANN, "GET", `/candidates/${pid(1)}`);
         assert.equal(viaApi.body.jobAssignments.current.jobCode, job.jobCode);
@@ -373,19 +374,7 @@ describe("lists, details and the candidate page (JOB-017)", () => {
     });
 });
 
-describe("the legacy candidate_stages.job_id (JOB-018 and the migration)", () => {
-    test("JOB-018: the stage text is not the source of truth: it neither assigns a job nor can be written", async () => {
-        await prisma.candidateStage.create({ data: { passportId: pid(1), stage: "TEST_DETAILS", jobId: "Job12" } });
-        const details = await getCandidate({ db: prisma, passportId: pid(1) });
-        assert.deepEqual(details.jobAssignments, { current: null, history: [] });
-        assert.equal(details.stages.find((s) => s.stage === "TEST_DETAILS").legacyJobId, "Job12", "preserved, shown read-only");
-        const job = await createJob();
-        assert.equal((await add(USERS.MANAGER, job, 1)).status, 201, "legacy text does not block or imply an assignment");
-        const put = await api(USERS.MANAGER, "PUT", `/candidates/${pid(1)}/stages/TEST_DETAILS`, { jobId: "Job99" });
-        assert.equal(put.status, 400);
-        assert.equal((await prisma.candidateStage.findFirst({ where: { passportId: pid(1), stage: "TEST_DETAILS" } })).jobId, "Job12");
-    });
-
+describe("the legacy candidate_stages.job_id (migration)", () => {
     test("migration: existing candidate_stages.job_id values survive untouched, no job is invented, RLS is on", async () => {
         const names = migrationNames();
         const target = names.indexOf("20261018120000_job_management");
@@ -415,7 +404,7 @@ describe("the legacy candidate_stages.job_id (JOB-018 and the migration)", () =>
 
 describe("the Job tables are backend-only", () => {
     test("RLS enabled and no privileges for anon / authenticated on the current schema", async () => {
-        const tables = "('job','job_candidate','job_type','company','agent','job_code_counter')";
+        const tables = "('job','job_candidate','job_type','client','agent','job_code_counter')";
         const rls = (await pg.query(`SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ${tables}`)).rows;
         assert.equal(rls.length, 6);
         assert.ok(rls.every((r) => r.relrowsecurity));

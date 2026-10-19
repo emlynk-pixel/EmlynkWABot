@@ -1,4 +1,4 @@
-// Company Job ID (JOB-ID-*) and Candidate Form JOB_GROUP share links (GROUP-*).
+// Client Job ID (job.company_job_id, JOB-ID-*) and Candidate Form JOB_GROUP share links (GROUP-*).
 // On a REAL PostgreSQL (PGlite, every migration applied) through the real Prisma
 // client, the real admin router and the real public router. No Supabase.
 import { after, before, beforeEach, describe, test } from "node:test";
@@ -40,16 +40,18 @@ beforeEach(async () => {
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "rate_limits";
         DELETE FROM "candidate_form_response"; DELETE FROM "candidate_form_prefill_snapshot"; DELETE FROM "candidate_form_access"; DELETE FROM "candidate_form_link";
-        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "job_type"; DELETE FROM "company"; DELETE FROM "agent";
+        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
     `);
     await prisma.candidate.createMany({ data: [A, B, C3, D] });
-    const [jobType, company, agent] = await Promise.all([
+    // Only a candidate who passed the test can be assigned to a job (jobAssignmentTestPass.test.js).
+    await prisma.candidateStage.createMany({ data: [A, B, C3, D].map((c) => ({ passportId: c.passportId, stage: "TEST_DETAILS", testResult: "PASS" })) });
+    const [jobType, agent] = await Promise.all([
         prisma.jobType.create({ data: { code: "WELDER", name: "Welder" } }),
-        prisma.company.create({ data: { name: "Acme Construction" } }),
         prisma.agent.create({ data: { name: "Ion Popescu", countryCode: "RO" } }),
     ]);
-    ids = { jobType: jobType.id, company: company.id, agent: agent.id };
+    const client = await prisma.client.create({ data: { name: "Acme Construction", agentId: agent.id } });
+    ids = { jobType: jobType.id, client: client.id, agent: agent.id };
 });
 
 function app(who, { formOrigin = ORIGIN } = {}) {
@@ -78,7 +80,7 @@ const admin = (who, method, path, options) => call(app(who), method, `/api/admin
 const pub = (path, options) => call(app(USERS.ADMIN), "POST", `${PUBLIC_CANDIDATE_DETAILS_PATH}${path}`, options);
 
 const newJob = async (extra = {}) => {
-    const r = await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, companyId: ids.company, responsibleAgentId: ids.agent, ...extra } });
+    const r = await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent, ...extra } });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     return r.body;
 };
@@ -118,7 +120,7 @@ async function groupSession(secret, c) {
     return r.body.token;
 }
 
-describe("Company Job ID (JOB-ID-001 to JOB-ID-007)", () => {
+describe("Client Job ID (JOB-ID-001 to JOB-ID-007)", () => {
     test("JOB-ID-001: a job can be created without one (null), and with one (normalised)", async () => {
         const bare = await newJob();
         assert.equal(bare.companyJobId, null);
@@ -142,7 +144,7 @@ describe("Company Job ID (JOB-ID-001 to JOB-ID-007)", () => {
         assert.equal((await admin(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { body: { vacancies: 3 } })).status, 409);
     });
 
-    test("validation: control characters, symbols, too long and non-strings are refused; unique per company only", async () => {
+    test("validation: control characters, symbols, too long and non-strings are refused; unique per client only", async () => {
         const job = await newJob();
         for (const bad of ["ab\ncd", "a\u0000b", "<script>", "Y26;DROP", "x".repeat(41), 12, "සිංහල", "ID€"]) {
             assert.equal((await admin(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: bad } })).status, 400, JSON.stringify(bad));
@@ -153,10 +155,10 @@ describe("Company Job ID (JOB-ID-001 to JOB-ID-007)", () => {
         const second = await newJob();
         const clash = await admin(USERS.MANAGER, "PUT", `/jobs/${second.jobId}`, { body: { companyJobId: "y26s01" } });
         assert.deepEqual([clash.status, clash.body.code], [409, "COMPANY_JOB_ID_EXISTS"]);
-        assert.equal((await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, companyId: ids.company, responsibleAgentId: ids.agent, companyJobId: "Y26S01" } })).status, 409);
-        // Another company may use the same identifier.
-        const other = await prisma.company.create({ data: { name: "Other Co" } });
-        const r = await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, companyId: other.id, responsibleAgentId: ids.agent, companyJobId: "Y26S01" } });
+        assert.equal((await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent, companyJobId: "Y26S01" } })).status, 409);
+        // Another client may use the same identifier.
+        const other = await prisma.client.create({ data: { name: "Other Co", agentId: ids.agent } });
+        const r = await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: other.id, responsibleAgentId: ids.agent, companyJobId: "Y26S01" } });
         assert.equal(r.status, 201);
         // Several jobs without one are fine.
         assert.equal((await prisma.job.count({ where: { companyJobId: null } })), 1);
@@ -204,7 +206,7 @@ describe("creating group links (GROUP-001 to GROUP-003, 023)", () => {
         const secret = r.body.url.split("#k=")[1];
         assert.match(r.body.url, new RegExp(`^${ORIGIN}/#k=[A-Za-z0-9_-]{43}$`));
         assert.deepEqual(r.body.status.counts, { candidates: 2, submitted: 0, remaining: 2 });
-        assert.deepEqual([r.body.status.state, r.body.status.jobCode, r.body.status.companyJobId, r.body.status.company, r.body.status.jobType], ["OPEN", job.jobCode, "Y26S01", "Acme Construction", "Welder"]);
+        assert.deepEqual([r.body.status.state, r.body.status.jobCode, r.body.status.companyJobId, r.body.status.client, r.body.status.jobType], ["OPEN", job.jobCode, "Y26S01", "Acme Construction", "Welder"]);
         assert.ok(Date.parse(r.body.expiresAt) - Date.now() > 3 * 24 * 60 * 60 * 1000 - 60_000, "3 days");
         const link = await prisma.candidateFormLink.findFirst({ where: { jobId: job.jobId } });
         assert.deepEqual([link.kind, link.jobId, link.passportId, link.tokenHash], ["JOB_GROUP", job.jobId, null, hashLinkSecret(secret)]);
@@ -484,9 +486,9 @@ describe("job completion, cancellation and revoking (GROUP-017 to GROUP-020)", (
 });
 
 describe("legacy and isolation", () => {
-    test("the legacy candidate_stages.job_id, the job code and the company job id never authorise anything", async () => {
+    test("the legacy candidate_stages.job_id, the job code and the Client Job ID never authorise anything", async () => {
         const job = await newJob({ companyJobId: "Y26S01" });
-        await prisma.candidateStage.create({ data: { passportId: D.passportId, stage: "TEST_DETAILS", jobId: job.jobCode } });
+        await prisma.candidateStage.update({ where: { passportId_stage: { passportId: D.passportId, stage: "TEST_DETAILS" } }, data: { jobId: job.jobCode } });
         await prisma.candidateStage.create({ data: { passportId: D.passportId, stage: "FINALIZING_JOB", jobId: "Y26S01" } }).catch(() => null);
         const secret = await groupLink(job);
         expectGeneric(await verify(secret, D), "legacy text is not membership");

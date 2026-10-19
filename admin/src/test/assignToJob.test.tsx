@@ -11,7 +11,7 @@ import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from
 const PATH = "/candidates/N0000002";
 const jobItem = (n: number, status: JobStatus = "PROCESSING", extra: Partial<JobListItem> = {}): JobListItem => ({
     jobId: `00000000-0000-4000-8000-00000000000${n}`, jobCode: `JOB-2026-00000${n}`, companyJobId: n === 2 ? "Y26S01" : null, status,
-    jobType: { id: "t1", code: "WELDER", name: n === 2 ? "Welder" : "Plumber" }, company: { id: "c1", name: n === 2 ? "Acme Construction" : "Beta Works" },
+    jobType: { id: "t1", code: "WELDER", name: n === 2 ? "Welder" : "Plumber" }, client: { id: "c1", name: n === 2 ? "Acme Construction" : "Beta Works" },
     responsibleAgent: { id: "a1", name: "Ion Popescu", countryCode: "RO" }, countryCode: "RO", vacancies: 5,
     createdAt: "2026-10-01T05:00:00.000Z", completedAt: status === "COMPLETED" ? "2026-10-10T05:00:00.000Z" : null, cancelledAt: null, cancelReason: null,
     candidateCount: 3, ...extra,
@@ -24,13 +24,14 @@ const detailsWith = (current: CandidateJobAssignment | null): CandidateDetails =
         address: "1 Main Street", jobExperience: "5 years", whatsappNumber: "94770000002", contactNumber: null,
     },
     stages: CANDIDATE_STAGES.map((stage) => ({
-        stage, completed: false, completedAt: null, notes: null, legacyJobId: stage === "TEST_DETAILS" ? "Job12" : null, testResult: null, testDate: null,
+        stage, completed: false, completedAt: null, notes: null, testAgentName: null, testId: null, jobDate: null, jobCode: null, clientName: null, jobSource: null, jobStatus: null, testResult: stage === "TEST_DETAILS" ? "PASS" : null, testDate: null,
         automatic: stage === "CANDIDATE_DETAILS" || stage === "DOCUMENT_SUBMISSION", missing: [],
     })),
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null, VISA_SUBMISSION: null },
     variantDocuments: { POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null } },
     jobAssignments: { current, history: [] },
     requiredDocuments: [],
+    verification: { details: null, documents: null },
 });
 const VIEW: AdditionalDetailsView = { passportId: "N0000002", details: null, suggested: { nameAsInPassport: null, permanentAddress: null, birthday: null }, updatedDate: null };
 const page = (items: JobListItem[]): JobList => ({
@@ -53,7 +54,7 @@ function backend(role = "MANAGER", opts: { current?: CandidateJobAssignment | nu
             const view = url.searchParams.get("view");
             const search = (url.searchParams.get("search") ?? "").toLowerCase();
             const source = view === "completed" ? [COMPLETED] : view === "cancelled" ? [CANCELLED] : PROCESSING;
-            return { status: 200, body: page(source.filter((j) => !search || `${j.jobCode} ${j.companyJobId ?? ""} ${j.company.name}`.toLowerCase().includes(search))) };
+            return { status: 200, body: page(source.filter((j) => !search || `${j.jobCode} ${j.companyJobId ?? ""} ${j.client.name}`.toLowerCase().includes(search))) };
         },
         [`POST /api/admin/jobs/${PROCESSING[0].jobId}/candidates`]: opts.assign ?? (() => {
             current = asAssignment(PROCESSING[0]);
@@ -100,10 +101,10 @@ describe("Assign to Job (Candidate Details)", () => {
         const rows = within(list).getAllByRole("listitem");
         expect(rows).toHaveLength(2);
         expect(rows[0]).toHaveTextContent("JOB-2026-000002");
-        expect(rows[0]).toHaveTextContent("Company Job ID: Y26S01");
+        expect(rows[0]).toHaveTextContent("Client Job ID: Y26S01");
         expect(rows[0]).toHaveTextContent("Acme Construction · Welder");
         expect(rows[0]).toHaveTextContent("RO · Ion Popescu");
-        expect(rows[1]).toHaveTextContent("Company Job ID: Not assigned");
+        expect(rows[1]).toHaveTextContent("Client Job ID: Not assigned");
         for (const code of [COMPLETED.jobCode, CANCELLED.jobCode]) expect(within(dialog).queryByText(new RegExp(code))).toBeNull();
         const listCalls = calls.filter((c) => c.path.startsWith("/api/admin/jobs?"));
         expect(listCalls.length).toBeGreaterThan(0);
@@ -187,12 +188,11 @@ describe("Assign to Job (Candidate Details)", () => {
         expect(within(group).getByRole("button", { name: "Create job-group link" })).toBeEnabled();
     });
 
-    test("ASSIGN-UI-011 the old candidate_stages.job_id is never written: the only change sent is the job-candidate assignment, and the legacy value stays read-only", async () => {
+    test("ASSIGN-UI-011 the old candidate_stages.job_id is never written: the only change sent is the job-candidate assignment", async () => {
         const { calls } = backend();
         renderApp(`${PATH}?stage=TEST_DETAILS`);
         const user = userEvent.setup();
         const region = await card();
-        expect(await screen.findByLabelText("Legacy job reference")).toHaveValue("Job12");
         await user.click(within(region).getByRole("button", { name: "Assign to Job" }));
         const dialog = await screen.findByRole("dialog");
         await user.click(await within(dialog).findByRole("button", { name: "Select JOB-2026-000002" }));
@@ -201,11 +201,27 @@ describe("Assign to Job (Candidate Details)", () => {
         const writes = calls.filter((c) => c.method !== "GET");
         expect(writes.map((c) => `${c.method} ${c.path}`)).toEqual([`POST /api/admin/jobs/${PROCESSING[0].jobId}/candidates`]);
         expect(writes[0].body).toEqual({ passportId: "N0000002" });
-        expect(JSON.stringify(writes)).not.toMatch(/jobId"?:|legacyJobId|stages/);
-        // The Test details job field now shows the assigned job; the legacy text is unchanged and read-only.
-        expect(screen.getByLabelText("Job")).toHaveValue("JOB-2026-000002");
-        expect(screen.getByLabelText("Legacy job reference")).toHaveValue("Job12");
-        expect(screen.getByLabelText("Legacy job reference")).toHaveAttribute("readonly");
+        expect(JSON.stringify(writes)).not.toMatch(/jobId"?:|stages/);
+    });
+
+    test("ASSIGN-UI-012 a candidate whose Test result is not PASS cannot be assigned: the button is disabled and says why", async () => {
+        for (const testResult of [null, "FAIL"] as const) {
+            const { calls } = signedInBackend({
+                "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "MANAGER" } } },
+                "GET /api/admin/candidates/N0000002": () => {
+                    const details = detailsWith(null);
+                    return { status: 200, body: { ...details, stages: details.stages.map((s) => (s.stage === "TEST_DETAILS" ? { ...s, testResult } : s)) } };
+                },
+                "GET /api/admin/candidates/N0000002/additional-details": { status: 200, body: VIEW },
+                "GET /api/admin/candidates/N0000002/form-share": { status: 200, body: { passportId: "N0000002", state: "LOCKED", submittedAt: null, link: null } },
+            });
+            const view = renderApp(PATH);
+            const region = await card();
+            expect(within(region).getByRole("button", { name: "Assign to Job" })).toBeDisabled();
+            expect(within(region).getByText(/Only a candidate whose Test result is PASS can be assigned/)).toBeInTheDocument();
+            expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+            view.unmount();
+        }
     });
 
     test("the Job Details page keeps its own Add to job action (one assignment mechanism)", async () => {
