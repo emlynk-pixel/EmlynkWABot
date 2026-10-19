@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { loadCandidateForm } from "./api/candidateDetails";
 import { ApiError } from "./api/client";
+import { ContactAdminScreen } from "./components/ContactAdmin";
 import { LanguageSwitch } from "./components/LanguageSwitch";
 import { ThemeSwitch } from "./components/ThemeSwitch";
 import { isApiConfigured } from "./config/env";
@@ -108,7 +109,7 @@ function CandidateForm() {
     } else if (view.name === "submitted") {
         page = view.justNow
             ? <StatusScreen title="submitted.title" text="submitted.text" tone="success" />
-            : <StatusScreen title="submitted.alreadyTitle" text="submitted.alreadyText" tone="success" />;
+            : <ContactAdminScreen />;
     } else {
         page = (
             <CandidateFormPage

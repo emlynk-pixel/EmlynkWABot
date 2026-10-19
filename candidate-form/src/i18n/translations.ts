@@ -235,8 +235,9 @@ const en = {
     "review.tryAgain": "Try submitting again",
     "submitted.title": "Thank you. Your details were submitted.",
     "submitted.text": "We have received your form. You do not need to do anything else here. If something needs to change, please contact us.",
-    "submitted.alreadyTitle": "Your form has already been submitted",
-    "submitted.alreadyText": "It cannot be changed or submitted again. If something needs to change, please contact us.",
+    // "Contact Admin": always shown in English AND Sinhala together (ContactAdmin.tsx).
+    "contact.title": "We couldn't continue with this form link.",
+    "contact.text": "This link may already have been used, may have expired, or may not belong to your application. Please contact an administrator for assistance.",
     "v.invalidAnswer": "Please check this answer.",
     "v.tooLongShort": "This answer is too long.",
 };
@@ -459,8 +460,8 @@ const si: Record<MessageKey, string> = {
     "review.tryAgain": "නැවත ඉදිරිපත් කිරීමට උත්සාහ කරන්න",
     "submitted.title": "ස්තූතියි. ඔබේ විස්තර ඉදිරිපත් කරන ලදී.",
     "submitted.text": "අපට ඔබේ පෝරමය ලැබී ඇත. ඔබට මෙහි වෙනත් කිසිවක් කිරීමට අවශ්‍ය නැත. යමක් වෙනස් කළ යුතු නම්, කරුණාකර අප අමතන්න.",
-    "submitted.alreadyTitle": "ඔබේ පෝරමය දැනටමත් ඉදිරිපත් කර ඇත",
-    "submitted.alreadyText": "එය වෙනස් කිරීමට හෝ නැවත ඉදිරිපත් කිරීමට නොහැක. යමක් වෙනස් කළ යුතු නම්, කරුණාකර අප අමතන්න.",
+    "contact.title": "මෙම පෝරම සබැඳිය සමඟ ඉදිරියට යාමට නොහැක.",
+    "contact.text": "මෙම සබැඳිය මීට පෙර භාවිතා කර තිබිය හැක, කල් ඉකුත් වී තිබිය හැක, හෝ ඔබගේ අයදුම්පතට අදාළ නොවිය හැක. කරුණාකර සහාය සඳහා පරිපාලකයෙකු අමතන්න.",
     "v.invalidAnswer": "කරුණාකර මෙම පිළිතුර පරීක්ෂා කරන්න.",
     "v.tooLongShort": "මෙම පිළිතුර දිග වැඩිය.",
 };

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { verifyCandidate, verifyFailureOf, type VerifyFailure } from "../api/candidateDetails";
+import { ContactAdmin } from "../components/ContactAdmin";
 import { TextInput } from "../components/inputs";
 import type { MessageKey } from "../i18n/translations";
 import { useLanguage, type Message } from "../i18n/useLanguage";
@@ -106,6 +107,9 @@ export function VerifyPage({ linkSecret, onVerified, onAlreadySubmitted, notice 
             />
             {failure && <p className="form-error" role="alert"><span aria-hidden="true">! </span>{t(FAILURE_MESSAGE[failure])}</p>}
             <button type="submit" className="primary" disabled={busy}>{busy ? t("verify.submitting") : t("verify.submit")}</button>
+            {/* The server answers every mismatch the same way (wrong NIC, another candidate's link,
+                not on this job, revoked, expired), so after it the candidate can also ask for help. */}
+            {failure === "failed" && <ContactAdmin compact />}
         </form>
     );
 }

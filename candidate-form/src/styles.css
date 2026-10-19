@@ -416,6 +416,49 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
     font-weight: 700;
 }
 
+/* "Contact Admin": English and Sinhala together, then the contact numbers. */
+.status-icon-warning { background: var(--important-soft); color: var(--important); }
+.contact-admin { display: flex; flex-direction: column; gap: 14px; text-align: center; }
+.contact-admin h1, .contact-admin .contact-title { margin: 0; font-size: 1.125rem; font-weight: 700; line-height: 1.35; }
+.contact-admin .contact-text { margin: 4px 0 0; color: var(--muted); }
+.contact-admin > div[lang="si"] { padding-top: 12px; border-top: 1px solid var(--border); }
+.contact-numbers {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 6px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+}
+.contact-numbers-heading {
+    margin: 0;
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--ink);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.contact-numbers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.contact-number {
+    margin: 0;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--primary);
+    word-break: break-all;
+}
+/* Under an inline failure: smaller and left-aligned, the form above stays usable. */
+.contact-compact { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--notice-soft); text-align: left; gap: 10px; }
+.contact-compact .contact-title { font-size: 0.9375rem; }
+.contact-compact .contact-text { font-size: 0.875rem; }
+.contact-compact .contact-numbers { padding-top: 10px; }
+.contact-compact .contact-numbers-heading { font-size: 0.875rem; }
+.contact-compact .contact-number { font-size: 0.9375rem; }
+
 /* ---------- buttons ---------- */
 
 button.primary, button.secondary {

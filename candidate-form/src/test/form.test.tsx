@@ -419,12 +419,12 @@ describe("review and save", () => {
         expect(keys[1]).toBe(keys[0]);
     });
 
-    test("SUBMIT-004 already submitted (409): the neutral screen", async () => {
+    test("SUBMIT-004 already submitted (409): the Contact Admin screen", async () => {
         const { user } = await verified({}, { submit: { status: 409, body: { message: "x", code: "ALREADY_SUBMITTED" } } });
         await completeToReview(user);
         await user.click(screen.getByRole("button", { name: en("review.save") }));
         await user.click(screen.getByRole("button", { name: en("review.confirmSubmit") }));
-        expect(await screen.findByRole("heading", { level: 1, name: en("submitted.alreadyTitle") })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { level: 1, name: en("contact.title") })).toBeInTheDocument();
     });
 
     test("SUBMIT-005 the server's field problems are marked on the fields, in the current language", async () => {

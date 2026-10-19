@@ -108,13 +108,13 @@ describe("verification", () => {
         expect(screen.queryByText(/Prisma|P2024/)).toBeNull();
     });
 
-    test("an already submitted form: a neutral screen, no form", async () => {
+    test("an already submitted form: the Contact Admin screen, no form", async () => {
         backend({ verify: { status: 409, body: { message: "This form has already been submitted.", code: "ALREADY_SUBMITTED" } } });
         render(<App />);
         const user = userEvent.setup();
         await fillVerify(user);
         await user.click(screen.getByRole("button", { name: "Verify" }));
-        expect(await screen.findByRole("heading", { level: 1, name: en("submitted.alreadyTitle") })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { level: 1, name: en("contact.title") })).toBeInTheDocument();
         expect(screen.queryByLabelText(/^Passport Number/)).toBeNull();
     });
 

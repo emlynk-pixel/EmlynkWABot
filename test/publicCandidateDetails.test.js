@@ -438,7 +438,7 @@ describe("SECRET: candidate-form holds no backend configuration", () => {
         return entry.isDirectory() ? files(full) : [full];
     });
 
-    test("SECRET-001 sources, configuration and any built bundle contain no backend secret names; only VITE_API_BASE_URL is read", async () => {
+    test("SECRET-001 sources, configuration and any built bundle contain no backend secret names; only the two public settings are read", async () => {
         const all = files(ROOT).filter((file) => !file.endsWith("package-lock.json"));
         assert.ok(all.some((file) => file.endsWith("vite.config.ts")));
         for (const file of all) {
@@ -446,14 +446,15 @@ describe("SECRET: candidate-form holds no backend configuration", () => {
             assert.ok(!FORBIDDEN.test(text), `${path.relative(ROOT, file)} mentions a backend secret`);
         }
         const envReads = all.filter((f) => /\.(ts|tsx)$/.test(f)).flatMap((f) => [...fs.readFileSync(f, "utf8").matchAll(/import\.meta\.env\.([A-Z_]+)/g)].map((m) => m[1]));
-        assert.deepEqual([...new Set(envReads)], ["VITE_API_BASE_URL"]);
+        // The API origin and the optional public "Contact Admin" mobile numbers (no secret).
+        assert.deepEqual([...new Set(envReads)].sort(), ["VITE_API_ADMIN_MOBILE_NUMBERS", "VITE_API_BASE_URL"]);
         const vite = fs.readFileSync(path.join(ROOT, "vite.config.ts"), "utf8");
         assert.match(vite, /const ENV_PREFIX = "VITE_API_"/);
         assert.match(vite, /envPrefix: ENV_PREFIX/);
         assert.match(vite, /sourcemap: false/);
         // Either line ending: a Windows checkout (core.autocrlf) has CRLF.
         const example = fs.readFileSync(path.join(ROOT, ".env.example"), "utf8").split(/\r?\n/).filter((line) => /^[A-Z]/.test(line));
-        assert.deepEqual(example, ["VITE_API_BASE_URL="]);
+        assert.deepEqual(example, ["VITE_API_BASE_URL=", "VITE_API_ADMIN_MOBILE_NUMBERS="]);
         const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
         assert.ok(!Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).some((name) => /supabase|prisma|pg$|googleapis/.test(name)), "no database / Supabase / Google client in the form");
         const dist = path.join(ROOT, "dist");

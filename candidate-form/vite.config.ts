@@ -8,7 +8,8 @@ import { buildMetaContentSecurityPolicy } from "./csp";
 // backend. It talks only to the backend's public API.
 
 // Only variables starting with this prefix can reach the browser bundle. The
-// form needs exactly one: VITE_API_BASE_URL (public, not a secret). Any other
+// form needs two, both public (not secrets): VITE_API_BASE_URL and the
+// optional VITE_API_ADMIN_MOBILE_NUMBERS (the "Contact Admin" numbers). Any other
 // variable, including any other VITE_* value, is never embedded.
 const ENV_PREFIX = "VITE_API_";
 

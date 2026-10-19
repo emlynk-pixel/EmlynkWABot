@@ -19,6 +19,20 @@ export function parseApiBaseUrl(value: string | undefined): string | null {
     }
 }
 
+// The administrators' contact mobile numbers for the "Contact Admin" section:
+// comma-separated list of mobile numbers. Split by comma, trimmed, ignoring empty entries.
+// A public contact setting, not a secret.
+export function parseAdminMobileNumbers(value: string | undefined): string[] {
+    if (!value) return [];
+    return value
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+}
+
+// Read when needed (not at load), so a test can set it.
+export const adminMobileNumbers = (): string[] => parseAdminMobileNumbers(import.meta.env.VITE_API_ADMIN_MOBILE_NUMBERS);
+
 export const API_BASE_URL = parseApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 
 export const isApiConfigured = API_BASE_URL !== null;
