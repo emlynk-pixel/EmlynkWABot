@@ -39,6 +39,8 @@ beforeEach(async () => {
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
     `);
     await prisma.candidate.createMany({ data: [1, 2, 3, 4].map(candidate) });
+    // Only a candidate who passed the test can be assigned to a job: these have PASS (the rule has its own tests, jobAssignmentTestPass.test.js).
+    await prisma.candidateStage.createMany({ data: [1, 2, 3, 4].map((i) => ({ passportId: pid(i), stage: "TEST_DETAILS", testResult: "PASS" })) });
     await prisma.candidateAllocation.createMany({ data: [[1, USERS.ANN], [2, USERS.ANN], [3, USERS.BEN]].map(([i, u]) => ({ passportId: pid(i), analystId: u.adminId })) });
     const jobType = await prisma.jobType.create({ data: { code: "WELDER", name: "Welder" } });
     const agent = await prisma.agent.create({ data: { name: "Ion Popescu", countryCode: "RO" } });

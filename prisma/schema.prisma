@@ -20,24 +20,27 @@ datasource db {
 // status: INVITED | ACTIVE | INACTIVE (middleware/requireActiveUser.js).
 // role:   ADMIN | MANAGER | ANALYST | REGISTRATION_DESK (middleware/requireRole.js).
 model User {
-  adminId               String                @id @map("admin_id")
-  authUserId            String                @unique @map("auth_user_id") @db.Uuid
+  adminId               String                  @id @map("admin_id")
+  authUserId            String                  @unique @map("auth_user_id") @db.Uuid
   name                  String
-  email                 String                @unique
+  email                 String                  @unique
   role                  String
-  status                String                @default("ACTIVE")
-  createdDate           DateTime              @default(now()) @map("created_date")
-  updatedDate           DateTime              @updatedAt @map("updated_date")
+  status                String                  @default("ACTIVE")
+  createdDate           DateTime                @default(now()) @map("created_date")
+  updatedDate           DateTime                @updatedAt @map("updated_date")
   auditLogs             AuditLog[]
   callLogs              CandidateCallLog[]
   // Priority Follow-Ups this user flagged / completed.
-  flaggedFollowUps      CallLogFollowUp[]     @relation("FollowUpFlaggedBy")
-  completedFollowUps    CallLogFollowUp[]     @relation("FollowUpCompletedBy")
+  flaggedFollowUps      CallLogFollowUp[]       @relation("FollowUpFlaggedBy")
+  completedFollowUps    CallLogFollowUp[]       @relation("FollowUpCompletedBy")
   // Work Allocation: the candidates assigned to this user (an Analyst).
   allocatedCandidates   CandidateAllocation[]
+  // Manual verification of a candidate's details / documents (candidate_verification).
+  verifiedDetails       CandidateVerification[] @relation("DetailsVerifiedBy")
+  verifiedDocuments     CandidateVerification[] @relation("DocumentsVerifiedBy")
   // Job Management.
-  createdJobs           Job[]                 @relation("JobCreatedBy")
-  assignedJobCandidates JobCandidate[]        @relation("JobCandidateAssignedBy")
+  createdJobs           Job[]                   @relation("JobCreatedBy")
+  assignedJobCandidates JobCandidate[]          @relation("JobCandidateAssignedBy")
 
   @@map("user")
 }
@@ -126,6 +129,8 @@ model Candidate {
   // unallocated). A relation only, like additionalDetails.
   allocation        CandidateAllocation?
   jobAssignments    JobCandidate[]
+  // Explicit details / documents verification (a relation only).
+  verification      CandidateVerification?
 
   @@map("candidate")
 }
@@ -278,6 +283,25 @@ model JobCandidate {
   @@map("job_candidate")
 }
 
+// Manual verification of a candidate's details and documents (candidateVerificationService.js).
+// One row per candidate, created by the first verification. A *_at / *_by pair is set or cleared
+// together (CHECKs in the migration). The Candidate list Status reads these; nothing derives them.
+// Migration 20261021120000_candidate_verification.
+model CandidateVerification {
+  passportId            String    @id @map("passport_id")
+  detailsVerifiedAt     DateTime? @map("details_verified_at")
+  detailsVerifiedById   String?   @map("details_verified_by")
+  documentsVerifiedAt   DateTime? @map("documents_verified_at")
+  documentsVerifiedById String?   @map("documents_verified_by")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  candidate           Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  detailsVerifiedBy   User?     @relation("DetailsVerifiedBy", fields: [detailsVerifiedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  documentsVerifiedBy User?     @relation("DocumentsVerifiedBy", fields: [documentsVerifiedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@map("candidate_verification")
+}
+
 //added document table
 
 model Document {
@@ -422,20 +446,29 @@ model CandidateAdditionalDetails {
 }
 
 model CandidateStage {
-  passportId  String    @map("passport_id")
-  // TEST_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION | IVS_INTERVIEW
-  // | VISA_APPROVAL | FINALIZING_JOB
-  stage       String
-  completed   Boolean   @default(false)
-  completedAt DateTime? @map("completed_at")
-  notes       String?
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-  // TEST_DETAILS only (null on the other stages): the job ID the admin
-  // enters, the test's result (PASS or FAIL) and the date the candidate
-  // actually sat it. Null until recorded.
-  jobId       String?   @map("job_id")
-  testResult  String?   @map("test_result")
-  testDate    DateTime? @map("test_date") @db.Date
+  passportId     String    @map("passport_id")
+  // TEST_DETAILS | JOB_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION
+  // | IVS_INTERVIEW | VISA_SUBMISSION | VISA_APPROVAL | FINALIZING_JOB
+  stage          String
+  completed      Boolean   @default(false)
+  completedAt    DateTime? @map("completed_at")
+  notes          String?
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  // TEST_DETAILS only (null on the other stages): the agent and the Test ID
+  // the admin enters, the test's result (PASS or FAIL) and the date the
+  // candidate actually sat it. Null until recorded.
+  testAgentName  String?   @map("test_agent_name")
+  testId         String?   @map("test_id")
+  testResult     String?   @map("test_result")
+  testDate       DateTime? @map("test_date") @db.Date
+  // LEGACY free text, entered as "Job ID" on Test details before Job Management.
+  // No longer written. Read only as the Test ID of a row that has no test_id,
+  // never as a Job (the Job is the job_candidate assignment).
+  jobId          String?   @map("job_id")
+  // JOB_DETAILS only: the saved date. The stage's note and completion use the
+  // generic notes / completed columns; its Job and Client are read from
+  // job_candidate, never stored here.
+  jobDetailsDate DateTime? @map("job_details_date") @db.Date
 
   user Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
 

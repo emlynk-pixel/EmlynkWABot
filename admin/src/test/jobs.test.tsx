@@ -42,7 +42,7 @@ const OPTIONS: JobOptions = {
     agents: [{ id: "a1", name: "Ion Popescu", countryCode: "RO" }],
 };
 const SEARCH_RESULT: CandidateList = {
-    items: [{ passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], stages: [] }],
+    items: [{ passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], workflowStatus: { code: "REGISTERED", label: "Registered" }, stages: [] }],
     pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
     filters: { search: "saman" },
 };
@@ -213,6 +213,38 @@ describe("Job details", () => {
         for (const name of ["Add to job", "Complete job", "Cancel job"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: /^Remove / })).not.toBeInTheDocument();
         expect(screen.getByRole("link", { name: "KAMAL PERERA" })).toBeInTheDocument();
+    });
+
+    test("JOB-PASS-007: the Add candidate search asks the server for candidates who passed the test only, and says so", async () => {
+        const { calls } = backend("MANAGER", { ...getJob(details(base, [CAND])), "GET /api/admin/candidates": { status: 200, body: { ...SEARCH_RESULT, items: [] } } });
+        renderApp(path);
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
+        expect(within(dialog).getByText("Only candidates who passed the test can be added to a job.")).toBeInTheDocument();
+        await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "failed person");
+        await user.click(within(dialog).getByRole("button", { name: "Search" }));
+        expect(await within(dialog).findByText("No eligible candidates found.")).toBeInTheDocument();
+        const search = calls.find((c) => c.path.startsWith("/api/admin/candidates?"))!;
+        expect(Object.fromEntries(search.url.searchParams)).toMatchObject({ search: "failed person", testResult: "PASS" });
+    });
+
+    test("JOB-PASS-008: if the server refuses a candidate who has not passed, its message is shown and nothing is added", async () => {
+        const { calls } = backend("MANAGER", {
+            ...getJob(details(base, [CAND])),
+            "GET /api/admin/candidates": { status: 200, body: SEARCH_RESULT },
+            [`POST /api/admin/jobs/${base.jobId}/candidates`]: { status: 409, body: { message: "Candidate must pass the test before being assigned to a job.", code: "CANDIDATE_TEST_NOT_PASSED" } },
+        });
+        renderApp(path);
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
+        await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "saman");
+        await user.click(within(dialog).getByRole("button", { name: "Search" }));
+        await user.click(await within(dialog).findByRole("button", { name: "Add SAMAN SILVA" }));
+        expect(await within(dialog).findByRole("alert")).toHaveTextContent("Candidate must pass the test before being assigned to a job.");
+        expect(screen.getByRole("heading", { name: "Assigned candidates (1)" })).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
     });
 
     test("Add to job: search, add, and the active-job conflict is shown (nothing is moved)", async () => {

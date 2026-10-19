@@ -5,6 +5,7 @@ import { apiRequest, uploadToSignedUrl } from "./client";
 
 export const CANDIDATE_STAGES = [
     "TEST_DETAILS",
+    "JOB_DETAILS",
     "CANDIDATE_DETAILS",
     "DOCUMENT_SUBMISSION",
     "IVS_INTERVIEW",
@@ -16,6 +17,7 @@ export type CandidateStageKey = (typeof CANDIDATE_STAGES)[number];
 
 export const STAGE_LABELS: Record<CandidateStageKey, string> = {
     TEST_DETAILS: "Test details",
+    JOB_DETAILS: "Job details",
     CANDIDATE_DETAILS: "Candidate details",
     DOCUMENT_SUBMISSION: "Document submission",
     IVS_INTERVIEW: "IVS interview",
@@ -46,15 +48,30 @@ export const TEST_RESULT_OPTIONS = [
 ] as const;
 export type TestResult = (typeof TEST_RESULT_OPTIONS)[number]["value"];
 
-// jobId / testResult / testDate (YYYY-MM-DD): recorded on Test details only, null elsewhere.
+// testAgentName / testId / testResult / testDate (YYYY-MM-DD): recorded on Test details only, null elsewhere.
+// jobDate (YYYY-MM-DD) is saved on Job details; jobCode and clientName there are READ from the candidate's
+// current Job assignment (never saved on the stage), null when the candidate has no current Job.
 export type StageState = StageProgress & {
     completedAt: string | null;
     notes: string | null;
     automatic: boolean;
     missing: string[];
-    jobId: string | null;
+    testAgentName: string | null;
+    testId: string | null;
     testResult: TestResult | null;
     testDate: string | null;
+    jobDate: string | null;
+    jobCode: string | null;
+    clientName: string | null;
+    // CURRENT: the candidate's current Job; HISTORICAL: their latest earlier Job (none is current); null: no Job ever.
+    jobSource: "CURRENT" | "HISTORICAL" | null;
+    jobStatus: "PROCESSING" | "COMPLETED" | "CANCELLED" | "REMOVED" | null;
+};
+
+// The derived workflow status of the candidate list (src/services/candidateWorkflowStatus.js): never edited, never stored.
+export type WorkflowStatus = {
+    code: "REGISTERED" | "STOPPED_WITH_TEST" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED" | "VISA_DOCUMENT_READY";
+    label: string;
 };
 
 export type CandidateListItem = {
@@ -63,6 +80,7 @@ export type CandidateListItem = {
     name: string | null;
     nic: string | null;
     jobTypes: string[];
+    workflowStatus: WorkflowStatus;
     stages: StageProgress[];
 };
 
@@ -81,7 +99,11 @@ export type CandidateDocument = {
     receivedDate: string;
 };
 
+export type VerificationState = { at: string; by: string | null } | null;
+
 export type CandidateDetails = {
+    // Manual verification (Verify details / Verify documents); null = not verified.
+    verification: { details: VerificationState; documents: VerificationState };
     candidate: {
         passportId: string;
         uniqueId: string;
@@ -209,9 +231,10 @@ export type CallLogList = { items: CallLogEntry[]; documentStatus?: DocumentStat
 
 const base = (passportId: string) => `/api/admin/candidates/${encodeURIComponent(passportId)}`;
 
-export function listCandidates(token: string, params: { page: number; pageSize: number; search?: string }, signal?: AbortSignal): Promise<CandidateList> {
+export function listCandidates(token: string, params: { page: number; pageSize: number; search?: string; testResult?: "PASS" }, signal?: AbortSignal): Promise<CandidateList> {
     const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
     if (params.search) query.set("search", params.search);
+    if (params.testResult) query.set("testResult", params.testResult);
     return apiRequest<CandidateList>(`/api/admin/candidates?${query.toString()}`, { token, signal });
 }
 
@@ -244,11 +267,16 @@ export function updateCandidate(token: string, passportId: string, body: Candida
     return apiRequest<CandidateDetails>(base(passportId), { method: "PUT", token, body });
 }
 
+// Explicit manual verification of a candidate's details or documents (ADMIN and MANAGER; audited).
+export function setCandidateVerification(token: string, passportId: string, kind: "DETAILS" | "DOCUMENTS", verified: boolean): Promise<CandidateDetails> {
+    return apiRequest<CandidateDetails>(`${base(passportId)}/verification`, { method: "POST", token, body: { kind, verified } });
+}
+
 export function updateCandidateStage(
     token: string,
     passportId: string,
     stage: CandidateStageKey,
-    body: { completed?: boolean; notes?: string | null; jobId?: string | null; testResult?: TestResult | null; testDate?: string | null },
+    body: { completed?: boolean; notes?: string | null; testAgentName?: string | null; testId?: string | null; testResult?: TestResult | null; testDate?: string | null; jobDate?: string | null },
 ): Promise<CandidateDetails> {
     return apiRequest<CandidateDetails>(`${base(passportId)}/stages/${stage}`, { method: "PUT", token, body });
 }

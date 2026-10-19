@@ -242,7 +242,7 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
         setError(null);
         setNotice(null);
         try {
-            setResults((await listCandidates(token, { page: 1, pageSize: 100, search: term })).items.slice(0, 20));
+            setResults((await listCandidates(token, { page: 1, pageSize: 100, search: term, testResult: "PASS" })).items.slice(0, 20));
         } catch (caught) {
             setError(message(caught));
         } finally {
@@ -272,7 +272,8 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
                 <input id="add-candidate-search" type="search" value={text} maxLength={100} placeholder="Name, passport ID or NIC" onChange={(event) => setText(event.target.value)} className={filterControl} />
                 <button type="submit" disabled={busy || !text.trim()} className={secondaryButton}>Search</button>
             </form>
-            {results && results.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">No candidates found.</p>}
+            <p className="mt-2 text-label-sm text-ink-muted">Only candidates who passed the test can be added to a job.</p>
+            {results && results.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">No eligible candidates found.</p>}
             {results && results.length > 0 && (
                 <ul aria-label="Candidates found" className="mt-3 divide-y divide-border rounded border border-border">
                     {results.map((candidate) => (

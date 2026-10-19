@@ -61,7 +61,9 @@ A Job belongs to one **Client** and records its **responsible Agent** (`job.resp
 
 ## 5. Candidate assignment
 
-`POST /api/admin/jobs/:jobId/candidates { passportId }`, one transaction: lock the job `FOR SHARE`, require PROCESSING (`409 JOB_NOT_PROCESSING`), lock the candidate `FOR UPDATE`, refuse if already on this job (`409 CANDIDATE_ALREADY_IN_JOB`) or on another PROCESSING job (`409 CANDIDATE_ON_ACTIVE_JOB`, never moved silently), then insert (or reactivate) the membership. `DELETE …/candidates/:passportId` releases the candidate from a PROCESSING job (row kept, `released_at` set).
+`POST /api/admin/jobs/:jobId/candidates { passportId }`, one transaction: lock the job `FOR SHARE`, require PROCESSING (`409 JOB_NOT_PROCESSING`), lock the candidate `FOR UPDATE`, refuse if already on this job (`409 CANDIDATE_ALREADY_IN_JOB`) or on another PROCESSING job (`409 CANDIDATE_ON_ACTIVE_JOB`, never moved silently), then require the candidate's saved Test details result to be **PASS** (`409 CANDIDATE_TEST_NOT_PASSED`, "Candidate must pass the test before being assigned to a job."), then insert (or reactivate) the membership.
+
+**Only a candidate who passed the test can be assigned.** The rule lives in `addCandidateToJob`, the one service behind every way of assigning (the Job details "Add to job" dialog and the API), so no entry point can skip it. The only source is `candidate_stages.test_result` of the `TEST_DETAILS` row, read under a share lock in the assignment transaction: exactly the controlled value `PASS` counts. A missing row, an empty result, `FAIL`, a completed Test details stage without a result, the Job details stage, the legacy `job_id` and `candidate.job` do not. Putting a removed candidate back on a job, or moving a candidate to another job after they left the first, is a new assignment and needs PASS too. Existing assignments are never changed when a result later moves away from PASS. The Add candidate search asks the server for `GET /candidates?testResult=PASS` (filtered in the database; only `PASS` is a valid value). Analyst Work Allocation (candidate -> Analyst) is a different concept and is not affected. `DELETE …/candidates/:passportId` releases the candidate from a PROCESSING job (row kept, `released_at` set).
 
 The one-PROCESSING-job rule is enforced three times: the service under row locks, the partial unique index `job_candidate_one_active_per_candidate (passport_id) WHERE is_active`, and a trigger that allows `is_active` only on a PROCESSING job.
 
@@ -111,4 +113,4 @@ Audit actions (category **Job**): `CREATE_JOB`, `UPDATE_JOB`, `COMPLETE_JOB`, `C
 
 1. **Reopening** a COMPLETED / CANCELLED job is not implemented.
 2. **Vacancies** are informational: assigning beyond the number is allowed.
-3. Retiring the free-text `candidate_stages.job_id` (and showing the assignment on the Candidate Details page) is left to a later task.
+3. The candidate page's **Job details** stage shows the current Job and its Client from this assignment (read-only; see `20-candidate-management.md` §4). The legacy free-text `candidate_stages.job_id` is no longer written; it is only read as a Test ID when a Test details row has no `test_id`. Dropping the column is a later, separate decision.

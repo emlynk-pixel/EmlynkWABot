@@ -20,6 +20,7 @@ const candidate = (n: number): CandidateListItem => ({
     name: `CANDIDATE ${n}`,
     nic: null,
     jobTypes: ["Driver"],
+    workflowStatus: { code: "REGISTERED", label: "Registered" },
     stages: CANDIDATE_STAGES.map((stage) => ({ stage, completed: false })),
 });
 

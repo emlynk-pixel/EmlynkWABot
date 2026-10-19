@@ -113,6 +113,7 @@ import {
     setClientStatus,
     updateClient,
 } from "../services/clientService.js";
+import { parseVerificationBody, setCandidateVerification } from "../services/candidateVerificationService.js";
 import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
@@ -561,6 +562,18 @@ export function createAdminRouter({
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await updateStage({
             db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user), stage: req.params.stage, values: parsed.values, actor: req.user,
+        })));
+    });
+
+    // Manual verification of a candidate's details or documents (candidateVerificationService.js):
+    // ADMIN and MANAGER only, explicit, audited. The Candidate list Status reads it.
+    router.post("/candidates/:passportId/verification", requireRole(MANAGERS_UP), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseVerificationBody(req.body);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await setCandidateVerification({
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), ...parsed.values,
         })));
     });
 
