@@ -5,6 +5,7 @@ import { apiRequest, uploadToSignedUrl } from "./client";
 
 export const CANDIDATE_STAGES = [
     "TEST_DETAILS",
+    "JOB_DETAILS",
     "CANDIDATE_DETAILS",
     "DOCUMENT_SUBMISSION",
     "IVS_INTERVIEW",
@@ -16,6 +17,7 @@ export type CandidateStageKey = (typeof CANDIDATE_STAGES)[number];
 
 export const STAGE_LABELS: Record<CandidateStageKey, string> = {
     TEST_DETAILS: "Test details",
+    JOB_DETAILS: "Job details",
     CANDIDATE_DETAILS: "Candidate details",
     DOCUMENT_SUBMISSION: "Document submission",
     IVS_INTERVIEW: "IVS interview",
@@ -46,15 +48,24 @@ export const TEST_RESULT_OPTIONS = [
 ] as const;
 export type TestResult = (typeof TEST_RESULT_OPTIONS)[number]["value"];
 
-// jobId / testResult / testDate (YYYY-MM-DD): recorded on Test details only, null elsewhere.
+// testAgentName / testId / testResult / testDate (YYYY-MM-DD): recorded on Test details only, null elsewhere.
+// jobDate (YYYY-MM-DD) is saved on Job details; jobCode and clientName there are READ from the candidate's
+// current Job assignment (never saved on the stage), null when the candidate has no current Job.
 export type StageState = StageProgress & {
     completedAt: string | null;
     notes: string | null;
     automatic: boolean;
     missing: string[];
-    jobId: string | null;
+    testAgentName: string | null;
+    testId: string | null;
     testResult: TestResult | null;
     testDate: string | null;
+    jobDate: string | null;
+    jobCode: string | null;
+    clientName: string | null;
+    // CURRENT: the candidate's current Job; HISTORICAL: their latest earlier Job (none is current); null: no Job ever.
+    jobSource: "CURRENT" | "HISTORICAL" | null;
+    jobStatus: "PROCESSING" | "COMPLETED" | "CANCELLED" | "REMOVED" | null;
 };
 
 export type CandidateListItem = {
@@ -231,7 +242,7 @@ export function updateCandidateStage(
     token: string,
     passportId: string,
     stage: CandidateStageKey,
-    body: { completed?: boolean; notes?: string | null; jobId?: string | null; testResult?: TestResult | null; testDate?: string | null },
+    body: { completed?: boolean; notes?: string | null; testAgentName?: string | null; testId?: string | null; testResult?: TestResult | null; testDate?: string | null; jobDate?: string | null },
 ): Promise<CandidateDetails> {
     return apiRequest<CandidateDetails>(`${base(passportId)}/stages/${stage}`, { method: "PUT", token, body });
 }

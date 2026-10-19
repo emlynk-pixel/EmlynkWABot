@@ -207,7 +207,7 @@ describe("Need Attention page", () => {
     });
 
     test("24, 27. after a delete the original call is still in the candidate's call log; the candidate page still works", async () => {
-        const stages = CANDIDATE_STAGES.map((stage) => ({ stage, completed: false, completedAt: null, notes: null, jobId: null, testResult: null, testDate: null, automatic: false, missing: [] }));
+        const stages = CANDIDATE_STAGES.map((stage) => ({ stage, completed: false, completedAt: null, notes: null, testAgentName: null, testId: null, jobDate: null, jobCode: null, clientName: null, jobSource: null, jobStatus: null, testResult: null, testDate: null, automatic: false, missing: [] }));
         const details: CandidateDetails = {
             candidate: {
                 passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], surname: "SILVA", otherNames: "SAMAN",

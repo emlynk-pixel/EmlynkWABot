@@ -11,8 +11,8 @@ const stages = (done: boolean[]) => CANDIDATE_STAGES.map((stage, i) => ({ stage,
 
 const LIST: CandidateList = {
     items: [
-        { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", jobTypes: ["Driver", "Welder"], stages: stages([true, true, false, false, false, false, false]) },
-        { passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], stages: stages([false, false, false, true, true, true, true]) },
+        { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", jobTypes: ["Driver", "Welder"], stages: stages([true, true, true, false, false, false, false, false]) },
+        { passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], stages: stages([false, false, false, false, true, true, true, true]) },
     ],
     pagination: { page: 1, pageSize: 100, total: 2, totalPages: 1 },
     filters: { search: null },
@@ -24,11 +24,17 @@ const DETAILS: CandidateDetails = {
         dateOfBirth: "1990-03-12", placeOfBirth: "COLOMBO", passportExpiryDate: "2030-05-11", passportIssueDate: "2020-05-12", nationality: null, sex: null,
         address: "1 Main Street", jobExperience: "5 years", whatsappNumber: "94770000002", contactNumber: null,
     },
-    stages: stages([false, false, false, true, true, true, true]).map((s) => ({
+    stages: stages([false, false, false, false, true, true, true, true]).map((s) => ({
         ...s,
         completedAt: null,
         notes: null,
-        jobId: null,
+        testAgentName: null,
+        testId: null,
+        jobDate: null,
+        jobCode: null,
+        clientName: null,
+        jobSource: null,
+        jobStatus: null,
         testResult: null,
         testDate: null,
         automatic: s.stage === "CANDIDATE_DETAILS" || s.stage === "DOCUMENT_SUBMISSION",
@@ -64,9 +70,9 @@ function directUploadRoutes(passportId: string, finalized: CandidateDetails, { s
 
 describe("stepper colours", () => {
     test("stages completed after an incomplete one are 'out of order'", () => {
-        expect(stepTones(stages([false, false, false, true, true, true, true]))).toEqual(["incomplete", "incomplete", "incomplete", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order"]);
-        expect(stepTones(stages([true, true, false, true, false, false, false]))).toEqual(["complete", "complete", "incomplete", "complete-out-of-order", "incomplete", "incomplete", "incomplete"]);
-        expect(stepTones(stages([true, true, true, true, true, true, true]))).toEqual(Array(7).fill("complete"));
+        expect(stepTones(stages([false, false, false, false, true, true, true, true]))).toEqual(["incomplete", "incomplete", "incomplete", "incomplete", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order"]);
+        expect(stepTones(stages([true, true, true, false, true, false, false, false]))).toEqual(["complete", "complete", "complete", "incomplete", "complete-out-of-order", "incomplete", "incomplete", "incomplete"]);
+        expect(stepTones(stages([true, true, true, true, true, true, true, true]))).toEqual(Array(8).fill("complete"));
     });
 });
 
@@ -79,8 +85,8 @@ describe("Candidates list", () => {
         expect(within(table).getByText("Driver")).toBeInTheDocument();
         expect(within(table).getByText("Welder")).toBeInTheDocument();
         // Current stage = first not completed; the count is completed stages.
-        expect(within(table).getByLabelText("Document submission, 2 of 7 stages completed")).toHaveTextContent("Document submission2/7");
-        expect(within(table).getByLabelText("Test details, 4 of 7 stages completed")).toHaveTextContent("Test details4/7");
+        expect(within(table).getByLabelText("Document submission, 3 of 8 stages completed")).toHaveTextContent("Document submission3/8");
+        expect(within(table).getByLabelText("Test details, 4 of 8 stages completed")).toHaveTextContent("Test details4/8");
         expect(screen.getByRole("link", { name: "Add candidate" })).toHaveAttribute("href", "/candidates/new");
 
         await userEvent.setup().type(screen.getByLabelText("Search candidates"), "901234567V{Enter}");
@@ -185,12 +191,12 @@ describe("Candidate deployment", () => {
         renderApp("/candidates/N0000002");
         const stepper = await screen.findByRole("navigation", { name: "Deployment stages" });
         expect(within(stepper).getByRole("button", { name: "1. Test details (incomplete)" })).toHaveAttribute("aria-current", "step");
-        expect(within(stepper).getByRole("button", { name: "5. Visa submission (completed out of order)" })).toBeInTheDocument();
-        expect(within(stepper).getByRole("button", { name: "6. Visa approval (completed out of order)" })).toBeInTheDocument();
+        expect(within(stepper).getByRole("button", { name: "6. Visa submission (completed out of order)" })).toBeInTheDocument();
+        expect(within(stepper).getByRole("button", { name: "7. Visa approval (completed out of order)" })).toBeInTheDocument();
         expect(screen.getByRole("heading", { name: "Test details" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Call log" })).toBeInTheDocument();
 
-        await userEvent.setup().click(within(stepper).getByRole("button", { name: /^4\. Document submission/ }));
+        await userEvent.setup().click(within(stepper).getByRole("button", { name: /^5. Document submission/ }));
         expect(await screen.findByRole("heading", { name: "Document submission" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Export PDF" })).toBeInTheDocument();
         // Completed by the documents themselves: no checkbox, no Save.
@@ -200,44 +206,55 @@ describe("Candidate deployment", () => {
         for (const label of ["Medical", "Police report", "Scans"]) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     });
 
-    describe("Test details: result and date", () => {
-        const withTest = (testResult: "PASS" | "FAIL" | null, testDate: string | null, extra: { notes?: string; completed?: boolean; jobId?: string } = {}): CandidateDetails => ({
+    describe("Test details: agent, test ID, result and date", () => {
+        const withTest = (testResult: "PASS" | "FAIL" | null, testDate: string | null, extra: { notes?: string; completed?: boolean; testId?: string; testAgentName?: string } = {}): CandidateDetails => ({
             ...DETAILS,
-            stages: DETAILS.stages.map((s) => (s.stage === "TEST_DETAILS" ? { ...s, testResult, testDate, jobId: extra.jobId ?? null, notes: extra.notes ?? null, completed: extra.completed ?? false } : s)),
+            stages: DETAILS.stages.map((s) => (s.stage === "TEST_DETAILS" ? { ...s, testResult, testDate, testId: extra.testId ?? null, testAgentName: extra.testAgentName ?? null, notes: extra.notes ?? null, completed: extra.completed ?? false } : s)),
         });
 
-        test("the client name comes from the record; the job ID is entered; nothing is preselected; all three are saved", async () => {
+        test("STAGE-JOB-002..005: the fields are Agent name, Test ID, Test result, Test date and Notes; no Client name and no Job ID", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+            renderApp("/candidates/N0000002?stage=TEST_DETAILS");
+            expect(await screen.findByLabelText("Agent name")).toHaveValue("");
+            expect(screen.getByLabelText("Agent name")).not.toHaveAttribute("readonly");
+            expect(screen.getByLabelText("Test ID")).toHaveValue("");
+            expect(screen.getByLabelText("Test ID")).not.toHaveAttribute("readonly");
+            expect(screen.getByLabelText("Test result")).toBeInTheDocument();
+            expect(screen.getByLabelText("Test date")).toBeInTheDocument();
+            expect(screen.getByLabelText("Notes")).toBeInTheDocument();
+            expect(screen.queryByLabelText("Client name")).not.toBeInTheDocument();
+            expect(screen.queryByLabelText("Job ID")).not.toBeInTheDocument();
+        });
+
+        test("STAGE-JOB-015: the agent and test ID are entered, nothing is preselected, and all four are saved", async () => {
             const { calls } = signedInBackend({
                 "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
-                "PUT /api/admin/candidates/N0000002/stages/TEST_DETAILS": { status: 200, body: withTest("PASS", "2026-09-28", { jobId: "JOB-2026-014" }) },
+                "PUT /api/admin/candidates/N0000002/stages/TEST_DETAILS": { status: 200, body: withTest("PASS", "2026-09-28", { testId: "T-2026-014", testAgentName: "Nimal Perera" }) },
             });
             renderApp("/candidates/N0000002?stage=TEST_DETAILS");
             const user = userEvent.setup();
 
-            expect(await screen.findByLabelText("Client name")).toHaveValue("SAMAN SILVA");
-            expect(screen.getByLabelText("Client name")).toHaveAttribute("readonly");
-            expect(screen.getByLabelText("Job ID")).toHaveValue("");
-            expect(screen.getByLabelText("Job ID")).not.toHaveAttribute("readonly");
-            expect(screen.getByLabelText("Test result")).toHaveValue("");
+            expect(await screen.findByLabelText("Test result")).toHaveValue("");
             expect(within(screen.getByLabelText("Test result")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select result…", "Pass", "Fail"]);
             expect(screen.getByLabelText("Test date")).toHaveValue("");
-            expect(screen.getByLabelText("Notes")).toBeInTheDocument();
             expect(screen.getByRole("checkbox", { name: "Stage completed" })).not.toBeChecked();
 
-            await user.type(screen.getByLabelText("Job ID"), " JOB-2026-014 ");
+            await user.type(screen.getByLabelText("Agent name"), " Nimal Perera ");
+            await user.type(screen.getByLabelText("Test ID"), " T-2026-014 ");
             await user.selectOptions(screen.getByLabelText("Test result"), "PASS");
             await user.type(screen.getByLabelText("Test date"), "2026-09-28");
             await user.click(screen.getByRole("button", { name: "Save changes" }));
 
-            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: null, completed: false, jobId: "JOB-2026-014", testResult: "PASS", testDate: "2026-09-28" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: null, completed: false, testAgentName: "Nimal Perera", testId: "T-2026-014", testResult: "PASS", testDate: "2026-09-28" }));
             await vi.waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled());
-            expect(screen.getByLabelText("Job ID")).toHaveValue("JOB-2026-014");
+            expect(screen.getByLabelText("Agent name")).toHaveValue("Nimal Perera");
+            expect(screen.getByLabelText("Test ID")).toHaveValue("T-2026-014");
             expect(screen.getByLabelText("Test result")).toHaveValue("PASS");
             expect(screen.getByLabelText("Test date")).toHaveValue("2026-09-28");
         });
 
-        test("a saved result and date are shown again; saving other changes keeps the saved date, never today's", async () => {
-            const saved = withTest("FAIL", "2026-09-20", { notes: "Retest booked", completed: true, jobId: "JOB-2026-009" });
+        test("a saved result and date are shown again; saving other changes keeps the saved date, never today's date", async () => {
+            const saved = withTest("FAIL", "2026-09-20", { notes: "Retest booked", completed: true, testId: "T-2026-009", testAgentName: "Ion Popescu" });
             const { calls } = signedInBackend({
                 "GET /api/admin/candidates/N0000002": { status: 200, body: saved },
                 "PUT /api/admin/candidates/N0000002/stages/TEST_DETAILS": { status: 200, body: saved },
@@ -246,20 +263,21 @@ describe("Candidate deployment", () => {
             const user = userEvent.setup();
 
             expect(await screen.findByLabelText("Test result")).toHaveValue("FAIL");
-            expect(screen.getByLabelText("Job ID")).toHaveValue("JOB-2026-009");
+            expect(screen.getByLabelText("Agent name")).toHaveValue("Ion Popescu");
+            expect(screen.getByLabelText("Test ID")).toHaveValue("T-2026-009");
             expect(screen.getByLabelText("Test date")).toHaveValue("2026-09-20");
             expect(screen.getByLabelText("Notes")).toHaveValue("Retest booked");
             expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeChecked();
 
             await user.selectOptions(screen.getByLabelText("Test result"), "PASS");
-            await user.type(screen.getByLabelText("Job ID"), "X");
+            await user.type(screen.getByLabelText("Test ID"), "X");
             await user.click(screen.getByRole("button", { name: "Cancel" }));
             expect(screen.getByLabelText("Test result")).toHaveValue("FAIL");
-            expect(screen.getByLabelText("Job ID")).toHaveValue("JOB-2026-009");
+            expect(screen.getByLabelText("Test ID")).toHaveValue("T-2026-009");
 
             await user.type(screen.getByLabelText("Notes"), " (done)");
             await user.click(screen.getByRole("button", { name: "Save changes" }));
-            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Retest booked (done)", completed: true, jobId: "JOB-2026-009", testResult: "FAIL", testDate: "2026-09-20" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Retest booked (done)", completed: true, testAgentName: "Ion Popescu", testId: "T-2026-009", testResult: "FAIL", testDate: "2026-09-20" }));
         });
 
         test("the other admin-completed stages stay notes and completion only", async () => {
@@ -267,19 +285,139 @@ describe("Candidate deployment", () => {
             renderApp("/candidates/N0000002?stage=IVS_INTERVIEW");
             expect(await screen.findByRole("heading", { name: "IVS interview" })).toBeInTheDocument();
             expect(screen.getByLabelText("Notes")).toBeInTheDocument();
-            expect(screen.queryByLabelText("Test result")).not.toBeInTheDocument();
-            expect(screen.queryByLabelText("Test date")).not.toBeInTheDocument();
-            expect(screen.queryByLabelText("Client name")).not.toBeInTheDocument();
-            expect(screen.queryByLabelText("Job ID")).not.toBeInTheDocument();
+            for (const label of ["Test result", "Test date", "Agent name", "Test ID", "Client name", "Job ID"]) expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
         });
 
-        test("a viewer sees the test details but can't change them", async () => {
+        test("a viewer sees the test details but cannot change them", async () => {
             signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withTest("PASS", "2026-09-28") } });
             renderApp("/candidates/N0000002?stage=TEST_DETAILS");
             expect(await screen.findByLabelText("Test result")).toBeDisabled();
             expect(screen.getByLabelText("Test result")).toHaveValue("PASS");
             expect(screen.getByLabelText("Test date")).toBeDisabled();
-            expect(screen.getByLabelText("Job ID")).toBeDisabled();
+            expect(screen.getByLabelText("Agent name")).toBeDisabled();
+            expect(screen.getByLabelText("Test ID")).toBeDisabled();
+            expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+        });
+    });
+
+    describe("Job details: the current Job and its Client from the Job assignment (STAGE-JOB-001, 006 to 014, 022, 024)", () => {
+        const withJob = (extra: { jobCode?: string | null; clientName?: string | null; jobDate?: string | null; notes?: string | null; completed?: boolean } = {}): CandidateDetails => ({
+            ...DETAILS,
+            stages: DETAILS.stages.map((s) => (s.stage === "JOB_DETAILS"
+                ? { ...s, jobCode: extra.jobCode ?? null, clientName: extra.clientName ?? null, jobDate: extra.jobDate ?? null, notes: extra.notes ?? null, completed: extra.completed ?? false }
+                : s)),
+        });
+        const OPEN = "/candidates/N0000002?stage=JOB_DETAILS";
+        const PUT = "PUT /api/admin/candidates/N0000002/stages/JOB_DETAILS";
+
+        test("STAGE-JOB-001: the stepper order is exactly Test, Job, Candidate, Additional, Document, Visa submission, Visa approval", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+            renderApp("/candidates/N0000002");
+            const stepper = await screen.findByRole("navigation", { name: "Deployment stages" });
+            const labels = within(stepper).getAllByRole("button").map((b) => (b.getAttribute("aria-label") ?? "").replace(/ \(.*\)$/, ""));
+            expect(labels).toEqual(["1. Test details", "2. Job details", "3. Candidate details", "4. Additional details", "5. Document submission", "6. Visa submission", "7. Visa approval"]);
+        });
+
+        test("STAGE-JOB-006: the panel has exactly Job ID, Client name, Date and Note (plus the completion checkbox)", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders" }) } });
+            renderApp(OPEN);
+            expect(await screen.findByRole("heading", { name: "Job details" })).toBeInTheDocument();
+            expect(screen.getByLabelText("Job ID")).toBeInTheDocument();
+            expect(screen.getByLabelText("Client name")).toBeInTheDocument();
+            expect(screen.getByLabelText("Date")).toBeInTheDocument();
+            expect(screen.getByLabelText("Note")).toBeInTheDocument();
+            // Job ID and Client name (read-only), the DatePicker text field, and the Note text area: nothing else.
+            expect(screen.getAllByRole("textbox")).toHaveLength(4);
+            for (const label of ["Agent name", "Test ID", "Test result", "Test date", "Notes"]) expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+        });
+
+        test("STAGE-JOB-007, 008, 010, 011: the assigned Job code and Client name are shown, read-only", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders" }) } });
+            renderApp(OPEN);
+            expect(await screen.findByLabelText("Job ID")).toHaveValue("JOB-2026-000007");
+            expect(screen.getByLabelText("Client name")).toHaveValue("Acme Builders");
+            expect(screen.getByLabelText("Job ID")).toHaveAttribute("readonly");
+            expect(screen.getByLabelText("Client name")).toHaveAttribute("readonly");
+            const user = userEvent.setup();
+            await user.type(screen.getByLabelText("Job ID"), "FAKE-1");
+            await user.type(screen.getByLabelText("Client name"), "Fake Co");
+            expect(screen.getByLabelText("Job ID")).toHaveValue("JOB-2026-000007");
+            expect(screen.getByLabelText("Client name")).toHaveValue("Acme Builders");
+            expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+        });
+
+        test("STAGE-JOB-009: a candidate with no Job shows Not assigned, never stale values", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: withJob() } });
+            renderApp(OPEN);
+            expect(await screen.findByLabelText("Job ID")).toHaveValue("Not assigned");
+            expect(screen.getByLabelText("Client name")).toHaveValue("Not assigned");
+            expect(screen.getByLabelText("Date")).toHaveValue("");
+            expect(screen.getByLabelText("Note")).toHaveValue("");
+            expect(screen.getByRole("checkbox", { name: "Stage completed" })).not.toBeChecked();
+        });
+
+        test("JOB-HISTORY: with no current Job, the latest earlier Job is shown read-only with a small status note; a current Job has no note", async () => {
+            const historical = (jobStatus: "COMPLETED" | "CANCELLED" | "REMOVED"): CandidateDetails => {
+                const base = withJob({ jobCode: "JOB-2026-000003", clientName: "Acme Builders", jobDate: "2026-10-05", notes: "kept", completed: true });
+                return { ...base, stages: base.stages.map((s) => (s.stage === "JOB_DETAILS" ? { ...s, jobSource: "HISTORICAL" as const, jobStatus } : s)) };
+            };
+            const notes = { COMPLETED: "Completed job (not current)", CANCELLED: "Cancelled job (not current)", REMOVED: "Candidate was removed from this job (not current)" } as const;
+            for (const status of ["COMPLETED", "CANCELLED", "REMOVED"] as const) {
+                signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: historical(status) } });
+                const view = renderApp(OPEN);
+                expect(await screen.findByLabelText("Job ID")).toHaveValue("JOB-2026-000003");
+                expect(screen.getByLabelText("Client name")).toHaveValue("Acme Builders");
+                expect(screen.getByLabelText("Job ID")).toHaveAttribute("readonly");
+                expect(screen.getByText(notes[status])).toBeInTheDocument();
+                expect(screen.getByLabelText("Date")).toHaveValue("2026-10-05");
+                expect(screen.getByLabelText("Note")).toHaveValue("kept");
+                view.unmount();
+            }
+            const current = withJob({ jobCode: "JOB-2026-000007", clientName: "Beta Foods" });
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: { ...current, stages: current.stages.map((s) => (s.stage === "JOB_DETAILS" ? { ...s, jobSource: "CURRENT" as const, jobStatus: "PROCESSING" as const } : s)) } } });
+            renderApp(OPEN);
+            expect(await screen.findByLabelText("Job ID")).toHaveValue("JOB-2026-000007");
+            expect(screen.queryByText(/not current/)).not.toBeInTheDocument();
+        });
+
+        test("STAGE-JOB-012, 013, 014: Date, Note and completion are saved by the existing stage save, and only those are sent", async () => {
+            const saved = withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders", jobDate: "2026-10-05", notes: "Visa interview booked", completed: true });
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders" }) },
+                [PUT]: { status: 200, body: saved },
+            });
+            renderApp(OPEN);
+            const user = userEvent.setup();
+            await screen.findByLabelText("Job ID");
+            await user.type(screen.getByLabelText("Date"), "2026-10-05");
+            await user.type(screen.getByLabelText("Note"), "Visa interview booked");
+            await user.click(screen.getByRole("checkbox", { name: "Stage completed" }));
+            await user.click(screen.getByRole("button", { name: "Save changes" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Visa interview booked", completed: true, jobDate: "2026-10-05" }));
+            await vi.waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled());
+            expect(screen.getByLabelText("Date")).toHaveValue("2026-10-05");
+            expect(screen.getByLabelText("Note")).toHaveValue("Visa interview booked");
+            expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeChecked();
+        });
+
+        test("STAGE-JOB-022: a reload after the candidate moved to another Job shows the new Job and Client", async () => {
+            let current = withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders" });
+            signedInBackend({ "GET /api/admin/candidates/N0000002": () => ({ status: 200, body: current }) });
+            const view = renderApp(OPEN);
+            expect(await screen.findByLabelText("Job ID")).toHaveValue("JOB-2026-000007");
+            view.unmount();
+            current = withJob({ jobCode: "JOB-2026-000009", clientName: "Beta Foods" });
+            renderApp(OPEN);
+            expect(await screen.findByLabelText("Job ID")).toHaveValue("JOB-2026-000009");
+            expect(screen.getByLabelText("Client name")).toHaveValue("Beta Foods");
+        });
+
+        test("STAGE-JOB-024: a viewer sees Job details but cannot change Date, Note or completion", async () => {
+            signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders", jobDate: "2026-10-05" }) } });
+            renderApp(OPEN);
+            expect(await screen.findByLabelText("Date")).toBeDisabled();
+            expect(screen.getByLabelText("Note")).toBeDisabled();
+            expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeDisabled();
             expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
         });
     });
@@ -539,7 +677,7 @@ describe("Candidate deployment", () => {
         signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: done } });
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
         expect(await screen.findByText("Stage completed")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "2. Candidate details (completed out of order)" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "3. Candidate details (completed out of order)" })).toBeInTheDocument();
     });
 });
 
@@ -2017,7 +2155,7 @@ describe("REGISTRATION_DESK: the whole Candidates area", () => {
         for (const upload of screen.getAllByRole("button", { name: /Upload|Replace/ })) expect(upload).toBeEnabled();
 
         const user = userEvent.setup();
-        await user.click(within(screen.getByRole("navigation", { name: "Deployment stages" })).getByRole("button", { name: /^6\. Visa approval/ }));
+        await user.click(within(screen.getByRole("navigation", { name: "Deployment stages" })).getByRole("button", { name: /^7. Visa approval/ }));
         expect(await screen.findByRole("checkbox", { name: "Stage completed" })).toBeEnabled();
         expect(screen.getByLabelText("Notes")).toBeEnabled();
     });

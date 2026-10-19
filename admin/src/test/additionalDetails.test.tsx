@@ -16,7 +16,7 @@ const DETAILS: CandidateDetails = {
         address: "1 Main Street", jobExperience: "5 years", whatsappNumber: "94770000002", contactNumber: null,
     },
     stages: CANDIDATE_STAGES.map((stage) => ({
-        stage, completed: false, completedAt: null, notes: null, jobId: null, testResult: null, testDate: null,
+        stage, completed: false, completedAt: null, notes: null, testAgentName: null, testId: null, jobDate: null, jobCode: null, clientName: null, jobSource: null, jobStatus: null, testResult: null, testDate: null,
         automatic: stage === "CANDIDATE_DETAILS" || stage === "DOCUMENT_SUBMISSION", missing: [],
     })),
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null, VISA_SUBMISSION: null },
@@ -49,7 +49,7 @@ function backend(view: AdditionalDetailsView, routes: FetchRoutes = {}, user = A
 // Opened from its progress step (there is no tab bar).
 const openTab = async () => {
     const stepper = await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
-    await userEvent.setup().click(within(stepper).getByRole("button", { name: /^3\. Additional details/ }));
+    await userEvent.setup().click(within(stepper).getByRole("button", { name: /^4. Additional details/ }));
     return screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
 };
 const puts = (calls: { method: string; path: string; body: unknown }[]) => calls.filter((c) => c.method === "PUT" && c.path === PATH);
@@ -278,11 +278,12 @@ describe("progress stepper", () => {
         await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
         expect(labels()).toEqual([
             "1. Test details (incomplete)",
-            "2. Candidate details (incomplete)",
-            "3. Additional details (incomplete)",
-            "4. Document submission (incomplete)",
-            "5. Visa submission (incomplete)",
-            "6. Visa approval (incomplete)",
+            "2. Job details (incomplete)",
+            "3. Candidate details (incomplete)",
+            "4. Additional details (incomplete)",
+            "5. Document submission (incomplete)",
+            "6. Visa submission (incomplete)",
+            "7. Visa approval (incomplete)",
         ]);
     });
 
@@ -291,30 +292,30 @@ describe("progress stepper", () => {
         renderApp("/candidates/N0000002");
         await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
         const user = userEvent.setup();
-        await user.click(stepper().getByRole("button", { name: /^3\. Additional details/ }));
+        await user.click(stepper().getByRole("button", { name: /^4. Additional details/ }));
         expect(await screen.findByRole("form", { name: "Additional details" })).toBeInTheDocument();
-        expect(stepper().getByRole("button", { name: /^3\. Additional details/ })).toHaveAttribute("aria-current", "step");
+        expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAttribute("aria-current", "step");
 
-        await user.click(stepper().getByRole("button", { name: /^4\. Document submission/ }));
+        await user.click(stepper().getByRole("button", { name: /^5. Document submission/ }));
         expect(await screen.findByRole("heading", { name: "Document submission" })).toBeInTheDocument();
         expect(screen.queryByRole("form", { name: "Additional details" })).toBeNull();
-        expect(stepper().getByRole("button", { name: /^4\. Document submission/ })).toHaveAttribute("aria-current", "step");
+        expect(stepper().getByRole("button", { name: /^5. Document submission/ })).toHaveAttribute("aria-current", "step");
     });
 
     test("the step is completed when details are saved", async () => {
         backend(SAVED_VIEW);
         renderApp("/candidates/N0000002");
         await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
-        await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^3\. Additional details/ })).toHaveAccessibleName(/\(completed/), RENDER_STEP);
+        await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName(/\(completed/), RENDER_STEP);
     });
 
     test("the step turns completed right after Save", async () => {
         backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
         renderApp("/candidates/N0000002?tab=additional");
         await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
-        expect(stepper().getByRole("button", { name: /^3\. Additional details/ })).toHaveAccessibleName("3. Additional details (incomplete)");
+        expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
         await userEvent.setup().click(screen.getByRole("button", { name: "Save additional details" }));
-        await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^3\. Additional details/ })).toHaveAccessibleName(/\(completed/));
+        await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName(/\(completed/));
     });
 
     test("IVS interview and Finalizing the job stay reachable by link", async () => {
@@ -341,11 +342,11 @@ describe("progress steps: one shared step UI", () => {
         backend(NEW_VIEW);
         renderApp("/candidates/N0000002");
         await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
-        expect(step(/^5\. Visa submission/)).toBeInTheDocument();
-        expect(step(/^6\. Visa approval/)).toBeInTheDocument();
+        expect(step(/^6. Visa submission/)).toBeInTheDocument();
+        expect(step(/^7. Visa approval/)).toBeInTheDocument();
         expect(stepper().queryByRole("button", { name: /IVS interview/ })).toBeNull();
         expect(stepper().queryByRole("button", { name: /Finalizing the job/ })).toBeNull();
-        expect(stepper().getAllByRole("button")).toHaveLength(6);
+        expect(stepper().getAllByRole("button")).toHaveLength(7);
     });
 
     test("every step, Additional details and Visa submission included, is the same button with the same circle and label markup", async () => {
@@ -361,9 +362,9 @@ describe("progress steps: one shared step UI", () => {
             expect(circleOf(button).endsWith("group-focus-visible:shadow-focus")).toBe(true);
         }
         // Not current and incomplete: Additional details, Document submission and Visa submission look exactly alike.
-        const additional = step(/^3\. Additional details/);
-        const documents = step(/^4\. Document submission/);
-        const visaSubmission = step(/^5\. Visa submission/);
+        const additional = step(/^4. Additional details/);
+        const documents = step(/^5. Document submission/);
+        const visaSubmission = step(/^6. Visa submission/);
         expect(circleOf(additional)).toBe(`${CIRCLE_BASE} ${INCOMPLETE} group-focus-visible:shadow-focus`);
         expect(circleOf(documents)).toBe(circleOf(additional));
         expect(circleOf(visaSubmission)).toBe(circleOf(additional));
@@ -375,25 +376,25 @@ describe("progress steps: one shared step UI", () => {
         backend(NEW_VIEW);
         renderApp("/candidates/N0000002");
         await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
-        const first = step(/^1\. Test details/);
+        const first = step(/^1. Test details/);
         expect(first).toHaveAttribute("aria-current", "step");
         const currentCircle = circleOf(first);
         const currentLabel = labelOf(first);
         expect(currentCircle).toBe(`${CIRCLE_BASE} ${INCOMPLETE_CURRENT} group-focus-visible:shadow-focus`);
 
         const user = userEvent.setup();
-        await user.click(step(/^3\. Additional details/));
+        await user.click(step(/^4. Additional details/));
         await screen.findByRole("form", { name: "Additional details" });
-        expect(step(/^3\. Additional details/)).toHaveAttribute("aria-current", "step");
-        expect(circleOf(step(/^3\. Additional details/))).toBe(currentCircle);
-        expect(labelOf(step(/^3\. Additional details/))).toBe(currentLabel);
-        expect(step(/^1\. Test details/)).not.toHaveAttribute("aria-current");
+        expect(step(/^4. Additional details/)).toHaveAttribute("aria-current", "step");
+        expect(circleOf(step(/^4. Additional details/))).toBe(currentCircle);
+        expect(labelOf(step(/^4. Additional details/))).toBe(currentLabel);
+        expect(step(/^1. Test details/)).not.toHaveAttribute("aria-current");
 
         // Then a stage: the same change, the other way round.
-        await user.click(step(/^5\. Visa submission/));
+        await user.click(step(/^6. Visa submission/));
         expect(await screen.findByRole("heading", { name: "Visa submission" })).toBeInTheDocument();
-        expect(circleOf(step(/^5\. Visa submission/))).toBe(currentCircle);
-        expect(circleOf(step(/^3\. Additional details/))).toBe(circleOf(step(/^4\. Document submission/)));
+        expect(circleOf(step(/^6. Visa submission/))).toBe(currentCircle);
+        expect(circleOf(step(/^4. Additional details/))).toBe(circleOf(step(/^5. Document submission/)));
     });
 
     test("Visa submission is completed by hand, like Visa approval: notes and Stage completed, saved to its own stage", async () => {
@@ -407,7 +408,7 @@ describe("progress steps: one shared step UI", () => {
         await user.click(screen.getByRole("button", { name: "Save changes" }));
         await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT" && c.path === "/api/admin/candidates/N0000002/stages/VISA_SUBMISSION")).toBe(true));
         expect(calls.find((c) => c.path.endsWith("/stages/VISA_SUBMISSION"))!.body).toEqual({ notes: null, completed: true });
-        await vi.waitFor(() => expect(step(/^5\. Visa submission/)).toHaveAccessibleName(/\(completed/));
+        await vi.waitFor(() => expect(step(/^6. Visa submission/)).toHaveAccessibleName(/\(completed/));
     });
 });
 
@@ -420,10 +421,10 @@ describe("one load, versions and resets", () => {
         renderApp("/candidates/N0000002");
         await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
         const user = userEvent.setup();
-        await user.click(stepper().getByRole("button", { name: /^3\. Additional details/ }));
+        await user.click(stepper().getByRole("button", { name: /^4. Additional details/ }));
         await screen.findByRole("form", { name: "Additional details" });
-        await user.click(stepper().getByRole("button", { name: /^4\. Document submission/ }));
-        await user.click(stepper().getByRole("button", { name: /^3\. Additional details/ }));
+        await user.click(stepper().getByRole("button", { name: /^5. Document submission/ }));
+        await user.click(stepper().getByRole("button", { name: /^4. Additional details/ }));
         await screen.findByRole("form", { name: "Additional details" });
         expect(gets(calls)).toHaveLength(1);
     });
@@ -461,8 +462,8 @@ describe("one load, versions and resets", () => {
         await user.click(screen.getByRole("button", { name: "Save additional details" }));
         expect(await screen.findByText("Additional details saved.")).toBeInTheDocument();
 
-        await user.click(stepper().getByRole("button", { name: /^4\. Document submission/ }));
-        await user.click(stepper().getByRole("button", { name: /^3\. Additional details/ }));
+        await user.click(stepper().getByRole("button", { name: /^5. Document submission/ }));
+        await user.click(stepper().getByRole("button", { name: /^4. Additional details/ }));
         await screen.findByRole("form", { name: "Additional details" });
         expect(screen.getByLabelText("Other job skills")).toHaveValue("Welding");
 
@@ -513,11 +514,11 @@ describe("one load, versions and resets", () => {
             </MemoryRouter>,
         );
         const nav = () => within(screen.getByRole("navigation", { name: "Deployment stages" }));
-        await vi.waitFor(() => expect(nav().getByRole("button", { name: /^3\. Additional details/ })).toHaveAccessibleName(/\(completed/), RENDER_STEP);
+        await vi.waitFor(() => expect(nav().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName(/\(completed/), RENDER_STEP);
 
         act(() => go("/candidates/N0000003"));
         expect(await screen.findByRole("heading", { name: "NIMAL FERNANDO" }, RENDER_STEP)).toBeInTheDocument();
-        expect(nav().getByRole("button", { name: /^3\. Additional details/ })).toHaveAccessibleName("3. Additional details (incomplete)");
+        expect(nav().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
         release();
     });
 });

@@ -41,9 +41,26 @@ export async function candidateJobAssignments(db, passportId) {
     const rows = await db.jobCandidate.findMany({
         where: { passportId },
         select: { assignedAt: true, isActive: true, releasedAt: true, job: { select: JOB_SELECT } },
-        orderBy: [{ assignedAt: "desc" }],
+        // Newest assignment first. "Latest" is job_candidate.assigned_at (set when the candidate is
+        // assigned, and again if a removed candidate is put back on the same job); ties fall back to
+        // the row's created_at and then the job id, so the order is always the same.
+        orderBy: [{ assignedAt: "desc" }, { createdAt: "desc" }, { jobId: "desc" }],
     });
     const view = (row) => ({ ...jobSummaryView(row.job), assignedAt: iso(row.assignedAt), removed: Boolean(row.releasedAt), removedAt: iso(row.releasedAt) });
     const active = rows.find((row) => row.isActive);
     return { current: active ? view(active) : null, history: rows.filter((row) => row !== active).map(view) };
+}
+
+// The Job the candidate page's Job details stage shows, from the result of
+// candidateJobAssignments. Display-only: nothing is written or re-activated.
+//   A. the current PROCESSING assignment   -> source CURRENT
+//   B. else the latest historical one      -> source HISTORICAL (history is newest first)
+//   C. else none                           -> source NONE
+// status: the job's status, or REMOVED when the candidate was taken off a job that is still
+// PROCESSING. A job_candidate row is never deleted (removal sets released_at), so the history is complete.
+export function displayJob(assignments) {
+    if (assignments?.current) return { source: "CURRENT", job: assignments.current, status: assignments.current.status };
+    const latest = assignments?.history?.[0];
+    if (latest) return { source: "HISTORICAL", job: latest, status: latest.removed && latest.status === JOB_STATUS.PROCESSING ? "REMOVED" : latest.status };
+    return { source: "NONE", job: null, status: null };
 }

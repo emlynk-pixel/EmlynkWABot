@@ -102,7 +102,7 @@ describe("Candidates Registered", () => {
         assert.deepEqual([r1.name, new Date(r1.registeredAt).toISOString(), r1.registeredBy, r1.registeredByRole], ["Nimal Perera", START, "Dee Desk", "REGISTRATION_DESK"]);
         assert.equal(item(r, "R0000002").registeredBy, "Ann Analyst");
         assert.equal(item(r, "R0000003").registeredBy, null, "no registration entry: not invented");
-        assert.equal(r1.stagesTotal, 7);
+        assert.equal(r1.stagesTotal, 8);
         assert.ok(r1.stagesComplete >= 0 && r1.stagesComplete < 7);
         assert.deepEqual(r.registeredCandidates.items.map((c) => c.passportId), ["R0000003", "R0000002", "R0000001"], "newest first");
     });

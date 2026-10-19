@@ -75,11 +75,11 @@ All core application tables reside in the `public` schema.
 - **Primary Key**: Composite `(passport_id, stage)`.
 - **Important Columns**:
   - `passport_id` (`TEXT`, FK -> `candidate.passport_id` `ON DELETE CASCADE`).
-  - `stage` (`TEXT`): Stage code (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`). A plain text column with no database constraint: a new stage needs no migration.
+  - `stage` (`TEXT`): Stage code (`TEST_DETAILS`, `JOB_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`). A plain text column with no database constraint: a new stage needs no migration.
   - `completed` (`BOOLEAN`, default `false`).
   - `completed_at` (`TIMESTAMPTZ`, nullable).
   - `notes` (`TEXT`, nullable).
-  - `job_id` (`TEXT`, nullable), `test_result` (`TEXT`, nullable), `test_date` (`DATE`, nullable) — used by `TEST_DETAILS`.
+  - `test_agent_name` (`TEXT`), `test_id` (`TEXT`), `test_result` (`TEXT`), `test_date` (`DATE`), all nullable — used by `TEST_DETAILS`. `job_details_date` (`DATE`, nullable) — used by `JOB_DETAILS`, whose note and completion use `notes` / `completed`; its Job and Client are derived from `job_candidate`, never stored. `job_id` (`TEXT`, nullable) is **legacy** free text (formerly the Test details "Job ID"): no longer written, read only as a Test ID when `test_id` is empty, never as a Job. Columns added by `20261020120000_candidate_stage_job_details` (additive).
   - `updated_at` (`TIMESTAMPTZ`).
 - **Triggers**: Change capture trigger inserts queue events into `sheet_sync_queue`.
 
@@ -233,7 +233,7 @@ The candidate table represents job applicants and client records.
 
 ### 3.3 Relationships
 - `documents`: Stored and verified files belonging to this candidate.
-- `candidate_stages`: Seven deployment tracking stages (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`).
+- `candidate_stages`: Eight deployment tracking stages (`TEST_DETAILS`, `JOB_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`).
 - `candidate_call_logs`: Telephone call notes recorded by staff.
 - `call_log_follow_up`: follow-ups (the dashboard's Need Attention page), one row per call marked for follow-up (see §2.5.1).
 - `candidate_allocation`: Work Allocation, the Analyst each allocated candidate is assigned to (see §2.5.2).

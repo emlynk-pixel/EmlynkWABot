@@ -105,7 +105,7 @@ async function seed() {
     await stage(A, "FINALIZING_JOB", { completed: true, completedAt: new Date("2026-10-10T10:00:00Z") });
     await stage(A, "VISA_APPROVAL", { completed: true, completedAt: new Date("2026-10-10T09:00:00Z") });
     await stage(B, "VISA_APPROVAL", { completed: true, completedAt: new Date(START) });
-    await stage(B, "TEST_DETAILS", { testResult: "FAIL", jobId: "J-1" });
+    await stage(B, "TEST_DETAILS", { testResult: "FAIL", testId: "T-1" });
     await stage(C, "FINALIZING_JOB", { completed: true, completedAt: new Date(BEFORE) });
     await stage(C, "VISA_APPROVAL", { completed: true, completedAt: new Date(BEFORE) });
 }
@@ -211,10 +211,12 @@ describe("Incomplete candidates (current snapshot)", () => {
         assert.equal(incomplete.totalCandidates, 3);
         assert.equal(incomplete.incompleteCandidates, 3);
         const byStage = Object.fromEntries(incomplete.byStage.map((s) => [s.stage, s]));
-        assert.deepEqual(incomplete.byStage.map((s) => s.stage), ["TEST_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"]);
+        assert.deepEqual(incomplete.byStage.map((s) => s.stage), ["TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"]);
         assert.equal(byStage.FINALIZING_JOB.count, 1, "A and C finalized (A out of order): only B");
         assert.equal(byStage.IVS_INTERVIEW.count, 3, "nobody completed the interview, finalized or not");
         assert.equal(byStage.VISA_APPROVAL.count, 0);
+        assert.equal(byStage.JOB_DETAILS.count, 3, "nobody marked Job details complete");
+        assert.equal(byStage.JOB_DETAILS.reasons[0].reason, "Not marked complete");
         // A has a passport upload; B and C have no passport document.
         assert.equal(byStage.CANDIDATE_DETAILS.count, 2);
         assert.deepEqual(byStage.CANDIDATE_DETAILS.reasons, [{ reason: "Passport document missing", count: 2 }]);
