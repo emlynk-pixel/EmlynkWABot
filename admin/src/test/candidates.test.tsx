@@ -86,7 +86,7 @@ describe("Candidates list", () => {
         expect(within(table).getByText("Driver")).toBeInTheDocument();
         expect(within(table).getByText("Welder")).toBeInTheDocument();
         // The column is Status, not Progress, and shows exactly what the server derived (no stage arithmetic in the browser).
-        expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Candidate", "NIC", "Job type", "Status"]);
+        expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Candidate", "Job type", "Status"]);
         expect(within(table).queryByText("Progress")).not.toBeInTheDocument();
         const rows = within(table).getAllByRole("row").slice(1);
         expect(within(rows[0]).getByText("Job Assigned")).toBeInTheDocument();
@@ -96,6 +96,105 @@ describe("Candidates list", () => {
 
         await userEvent.setup().type(screen.getByLabelText("Search candidates"), "901234567V{Enter}");
         expect(calls.at(-1)!.path).toBe("/api/admin/candidates?page=1&pageSize=100&search=901234567V");
+    });
+
+    describe("Candidate cell identity layout (Passport and NIC)", () => {
+        test("CANDIDATE-LIST-ID-001: NIC header is not rendered", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+            expect(headers).not.toContain("NIC");
+            expect(headers).toEqual(["Candidate", "Job type", "Status"]);
+        });
+
+        test("CANDIDATE-LIST-ID-002: Candidate name is rendered", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            expect(within(table).getByRole("link", { name: "KAMAL PERERA" })).toBeInTheDocument();
+            expect(within(table).getByRole("link", { name: "SAMAN SILVA" })).toBeInTheDocument();
+        });
+
+        test("CANDIDATE-LIST-ID-003: Passport and NIC render in the same Candidate cell", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const rows = within(table).getAllByRole("row").slice(1);
+            const candidateCell = within(rows[0]).getAllByRole("cell")[0];
+            expect(candidateCell).toHaveTextContent("N0000001");
+            expect(candidateCell).toHaveTextContent("199012345678");
+        });
+
+        test("CANDIDATE-LIST-ID-004: Passport appears before NIC", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const rows = within(table).getAllByRole("row").slice(1);
+            const candidateCell = within(rows[0]).getAllByRole("cell")[0];
+            const text = candidateCell.textContent ?? "";
+            const passportIndex = text.indexOf("N0000001");
+            const separatorIndex = text.indexOf("|");
+            const nicIndex = text.indexOf("199012345678");
+            expect(passportIndex).toBeGreaterThanOrEqual(0);
+            expect(separatorIndex).toBeGreaterThan(passportIndex);
+            expect(nicIndex).toBeGreaterThan(separatorIndex);
+        });
+
+        test("CANDIDATE-LIST-ID-005: No separate NIC table cell/column exists", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const rows = within(table).getAllByRole("row");
+            expect(within(rows[0]).getAllByRole("columnheader")).toHaveLength(3);
+            for (const row of rows.slice(1)) {
+                expect(within(row).getAllByRole("cell")).toHaveLength(3);
+            }
+        });
+
+        test("CANDIDATE-LIST-ID-006: Missing NIC does not render broken separator", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const rows = within(table).getAllByRole("row").slice(1);
+            const cellWithoutNic = within(rows[1]).getAllByRole("cell")[0];
+            expect(cellWithoutNic).toHaveTextContent("N0000002");
+            expect(cellWithoutNic.textContent).not.toContain("|");
+            expect(cellWithoutNic.textContent).not.toContain("null");
+            expect(cellWithoutNic.textContent).not.toContain("undefined");
+        });
+
+        test("CANDIDATE-LIST-ID-007: Missing Passport does not render broken separator", async () => {
+            const listWithMissingPassport: CandidateList = {
+                ...LIST,
+                items: [
+                    { passportId: "", uniqueId: "0003", name: "NO PASSPORT", nic: "200012345678", jobTypes: [], workflowStatus: { code: "REGISTERED", label: "Registered" }, stages: [] },
+                ],
+                pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+            };
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: listWithMissingPassport } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const rows = within(table).getAllByRole("row").slice(1);
+            const cell = within(rows[0]).getAllByRole("cell")[0];
+            expect(cell).toHaveTextContent("200012345678");
+            expect(cell.textContent).not.toContain("|");
+            expect(cell.textContent).not.toContain("null");
+            expect(cell.textContent).not.toContain("undefined");
+        });
+
+        test("CANDIDATE-LIST-ID-008: Search/pagination/row navigation still work", async () => {
+            const { calls } = signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const user = userEvent.setup();
+
+            const link = within(table).getByRole("link", { name: "KAMAL PERERA" });
+            expect(link).toHaveAttribute("href", "/candidates/N0000001");
+
+            await user.type(screen.getByLabelText("Search candidates"), "test{Enter}");
+            expect(calls.at(-1)!.path).toBe("/api/admin/candidates?page=1&pageSize=100&search=test");
+        });
     });
 
     test("every derived status renders its server label", async () => {
