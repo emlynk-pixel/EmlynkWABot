@@ -11,14 +11,15 @@ const stages = (done: boolean[]) => CANDIDATE_STAGES.map((stage, i) => ({ stage,
 
 const LIST: CandidateList = {
     items: [
-        { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", jobTypes: ["Driver", "Welder"], stages: stages([true, true, true, false, false, false, false, false]) },
-        { passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], stages: stages([false, false, false, false, true, true, true, true]) },
+        { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", jobTypes: ["Driver", "Welder"], workflowStatus: { code: "JOB_ASSIGNED", label: "Job Assigned" }, stages: stages([true, true, true, false, false, false, false, false]) },
+        { passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], workflowStatus: { code: "STOPPED_WITH_TEST", label: "Stopped with Test" }, stages: stages([false, false, false, false, true, true, true, true]) },
     ],
     pagination: { page: 1, pageSize: 100, total: 2, totalPages: 1 },
     filters: { search: null },
 };
 
 const DETAILS: CandidateDetails = {
+    verification: { details: null, documents: null },
     candidate: {
         passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: "901234567V", jobTypes: ["Driver"], surname: "SILVA", otherNames: "SAMAN",
         dateOfBirth: "1990-03-12", placeOfBirth: "COLOMBO", passportExpiryDate: "2030-05-11", passportIssueDate: "2020-05-12", nationality: null, sex: null,
@@ -77,20 +78,44 @@ describe("stepper colours", () => {
 });
 
 describe("Candidates list", () => {
-    test("lists candidates with progress and searches through the API", async () => {
+    test("STATUS-016 / 018: lists candidates with the derived Status (not Progress) and searches through the API", async () => {
         const { calls } = signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
         renderApp("/candidates");
         const table = await screen.findByRole("table", { name: "Candidates" });
         expect(within(table).getByRole("link", { name: "KAMAL PERERA" })).toHaveAttribute("href", "/candidates/N0000001");
         expect(within(table).getByText("Driver")).toBeInTheDocument();
         expect(within(table).getByText("Welder")).toBeInTheDocument();
-        // Current stage = first not completed; the count is completed stages.
-        expect(within(table).getByLabelText("Document submission, 3 of 8 stages completed")).toHaveTextContent("Document submission3/8");
-        expect(within(table).getByLabelText("Test details, 4 of 8 stages completed")).toHaveTextContent("Test details4/8");
+        // The column is Status, not Progress, and shows exactly what the server derived (no stage arithmetic in the browser).
+        expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Candidate", "NIC", "Job type", "Status"]);
+        expect(within(table).queryByText("Progress")).not.toBeInTheDocument();
+        const rows = within(table).getAllByRole("row").slice(1);
+        expect(within(rows[0]).getByText("Job Assigned")).toBeInTheDocument();
+        expect(within(rows[1]).getByText("Stopped with Test")).toBeInTheDocument();
+        expect(within(table).queryByText(/\d\/8/)).not.toBeInTheDocument();
         expect(screen.getByRole("link", { name: "Add candidate" })).toHaveAttribute("href", "/candidates/new");
 
         await userEvent.setup().type(screen.getByLabelText("Search candidates"), "901234567V{Enter}");
         expect(calls.at(-1)!.path).toBe("/api/admin/candidates?page=1&pageSize=100&search=901234567V");
+    });
+
+    test("every derived status renders its server label", async () => {
+        const all = ["REGISTERED", "STOPPED_WITH_TEST", "JOB_ASSIGNED", "FORM_SUBMITTED", "DETAILS_VERIFIED", "DOCUMENTS_VERIFIED", "VISA_DOCUMENT_READY"] as const;
+        const labels = ["Registered", "Stopped with Test", "Job Assigned", "Form Submitted", "Details Verified", "Documents Verified", "Visa Document Ready"];
+        const list = { ...LIST, items: all.map((code, n) => ({ ...LIST.items[0], passportId: `N000010${n}`, name: `PERSON ${n}`, workflowStatus: { code, label: labels[n] } })) };
+        signedInBackend({ "GET /api/admin/candidates": { status: 200, body: list } });
+        renderApp("/candidates");
+        const table = await screen.findByRole("table", { name: "Candidates" });
+        for (const label of labels) expect(within(table).getByText(label)).toBeInTheDocument();
+    });
+
+    test("STATUS-017: the candidate page keeps its progress stepper exactly (stages, order, state)", async () => {
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+        renderApp("/candidates/N0000002");
+        const stepper = await screen.findByRole("navigation", { name: "Deployment stages" });
+        expect(within(stepper).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
+            "1. Test details (incomplete)", "2. Job details (incomplete)", "3. Candidate details (incomplete)", "4. Additional details (incomplete)",
+            "5. Document submission (incomplete)", "6. Visa submission (completed out of order)", "7. Visa approval (completed out of order)",
+        ]);
     });
 
     test("a failed search shows its error and Try again, not the previous results", async () => {
@@ -297,6 +322,69 @@ describe("Candidate deployment", () => {
             expect(screen.getByLabelText("Agent name")).toBeDisabled();
             expect(screen.getByLabelText("Test ID")).toBeDisabled();
             expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+        });
+    });
+
+    describe("Verify details / Verify documents (STATUS-FIX)", () => {
+        const withStage = (stage: "CANDIDATE_DETAILS" | "DOCUMENT_SUBMISSION", completed: boolean, verification: CandidateDetails["verification"] = { details: null, documents: null }): CandidateDetails => ({
+            ...DETAILS,
+            verification,
+            stages: DETAILS.stages.map((s) => (s.stage === stage ? { ...s, completed, missing: completed ? [] : s.missing } : s)),
+            requiredDocuments: DETAILS.requiredDocuments.map((r, i) => ({ ...r, included: completed && i === 0 })),
+        });
+
+        test("a manager can explicitly verify complete details; the request carries only the kind; the state then shows who and when", async () => {
+            const verified = withStage("CANDIDATE_DETAILS", true, { details: { at: "2026-10-20T10:00:00.000Z", by: "Test Admin" }, documents: null });
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withStage("CANDIDATE_DETAILS", true) },
+                "POST /api/admin/candidates/N0000002/verification": { status: 200, body: verified },
+            });
+            renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+            const user = userEvent.setup();
+            expect(await screen.findByText("Not verified yet")).toBeInTheDocument();
+            await user.click(screen.getByRole("button", { name: "Verify details" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ kind: "DETAILS", verified: true }));
+            expect(await screen.findByText("Verified by Test Admin on 2026-10-20")).toBeInTheDocument();
+            expect(screen.getByRole("button", { name: "Remove details verification" })).toBeInTheDocument();
+        });
+
+        test("Verify details is disabled until the details are complete (saving or completing never verifies)", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: withStage("CANDIDATE_DETAILS", false) } });
+            renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+            expect(await screen.findByRole("button", { name: "Verify details" })).toBeDisabled();
+        });
+
+        test("Verify documents sits on Document submission and is enabled once a required document is on record", async () => {
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withStage("DOCUMENT_SUBMISSION", true) },
+                "POST /api/admin/candidates/N0000002/verification": { status: 200, body: withStage("DOCUMENT_SUBMISSION", true, { details: null, documents: { at: "2026-10-20T10:00:00.000Z", by: "Test Admin" } }) },
+            });
+            renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+            const user = userEvent.setup();
+            await user.click(await screen.findByRole("button", { name: "Verify documents" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ kind: "DOCUMENTS", verified: true }));
+            expect(await screen.findByText("Verified by Test Admin on 2026-10-20")).toBeInTheDocument();
+        });
+
+        test("an Analyst or the Registration Desk cannot verify: no button, and no 'not verified' prompt", async () => {
+            for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+                signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withStage("CANDIDATE_DETAILS", true) } });
+                const view = renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+                expect(await screen.findByRole("heading", { name: "Candidate details" })).toBeInTheDocument();
+                expect(screen.queryByRole("button", { name: /^Verify details/ })).not.toBeInTheDocument();
+                expect(screen.queryByText("Not verified yet")).not.toBeInTheDocument();
+                view.unmount();
+            }
+        });
+
+        test("an already verified state is shown read-only to a role that cannot change it", async () => {
+            signedInBackend({
+                "GET /auth/me": { status: 200, body: { user: userWithRole("ANALYST") } },
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withStage("CANDIDATE_DETAILS", true, { details: { at: "2026-10-20T10:00:00.000Z", by: "Test Admin" }, documents: null }) },
+            });
+            renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+            expect(await screen.findByText("Verified by Test Admin on 2026-10-20")).toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: /verification|^Verify/ })).not.toBeInTheDocument();
         });
     });
 

@@ -42,7 +42,7 @@ const OPTIONS: JobOptions = {
     agents: [{ id: "a1", name: "Ion Popescu", countryCode: "RO" }],
 };
 const SEARCH_RESULT: CandidateList = {
-    items: [{ passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], stages: [] }],
+    items: [{ passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], workflowStatus: { code: "REGISTERED", label: "Registered" }, stages: [] }],
     pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
     filters: { search: "saman" },
 };

@@ -4,7 +4,7 @@ import { listCandidates } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { canRegisterCandidates, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
-import { StageSummary } from "../components/candidate/CandidateStepper";
+import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 import { Icon } from "../components/Icon";
 import { primaryButton } from "../components/Dialog";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
@@ -107,7 +107,7 @@ export function CandidatesPage() {
                                         <th scope="col" className={th}>Candidate</th>
                                         <th scope="col" className={th}>NIC</th>
                                         <th scope="col" className={th}>Job type</th>
-                                        <th scope="col" className={th}>Progress</th>
+                                        <th scope="col" className={th}>Status</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -129,7 +129,7 @@ export function CandidatesPage() {
                                                     </span>
                                                 ) : "—"}
                                             </td>
-                                            <td className={`${td} whitespace-nowrap`}><StageSummary stages={item.stages} /></td>
+                                            <td className={`${td} whitespace-nowrap`}><WorkflowStatusBadge status={item.workflowStatus} /></td>
                                         </tr>
                                     ))}
                                 </tbody>

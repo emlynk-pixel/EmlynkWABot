@@ -47,6 +47,8 @@ export const canReview = (user: WithRole) => hasRole(user, REVIEW_ROLES);
 export const canCorrectPoliceDates = (user: WithRole) => hasRole(user, POLICE_DATE_ROLES);
 // Deleting a Priority Follow-Up (flagging and completing: every Candidates role).
 export const canDeleteFollowUps = (user: WithRole) => hasRole(user, FOLLOW_UP_DELETE_ROLES);
+// Verifying a candidate's details or documents (Candidate details / Document submission): ADMIN and MANAGER.
+export const canVerifyCandidate = (user: WithRole) => hasRole(user, POLICE_DATE_ROLES);
 // Work Allocation (the page and its API).
 export const canManageAllocations = (user: WithRole) => hasRole(user, ALLOCATION_ROLES);
 // Jobs: ADMIN and MANAGER manage them; an ANALYST reads the jobs holding their

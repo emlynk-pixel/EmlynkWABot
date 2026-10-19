@@ -68,12 +68,19 @@ export type StageState = StageProgress & {
     jobStatus: "PROCESSING" | "COMPLETED" | "CANCELLED" | "REMOVED" | null;
 };
 
+// The derived workflow status of the candidate list (src/services/candidateWorkflowStatus.js): never edited, never stored.
+export type WorkflowStatus = {
+    code: "REGISTERED" | "STOPPED_WITH_TEST" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED" | "VISA_DOCUMENT_READY";
+    label: string;
+};
+
 export type CandidateListItem = {
     passportId: string;
     uniqueId: string;
     name: string | null;
     nic: string | null;
     jobTypes: string[];
+    workflowStatus: WorkflowStatus;
     stages: StageProgress[];
 };
 
@@ -92,7 +99,11 @@ export type CandidateDocument = {
     receivedDate: string;
 };
 
+export type VerificationState = { at: string; by: string | null } | null;
+
 export type CandidateDetails = {
+    // Manual verification (Verify details / Verify documents); null = not verified.
+    verification: { details: VerificationState; documents: VerificationState };
     candidate: {
         passportId: string;
         uniqueId: string;
@@ -237,6 +248,11 @@ export function createCandidate(token: string, body: CandidateRegistration): Pro
 
 export function updateCandidate(token: string, passportId: string, body: CandidateDetailsInput): Promise<CandidateDetails> {
     return apiRequest<CandidateDetails>(base(passportId), { method: "PUT", token, body });
+}
+
+// Explicit manual verification of a candidate's details or documents (ADMIN and MANAGER; audited).
+export function setCandidateVerification(token: string, passportId: string, kind: "DETAILS" | "DOCUMENTS", verified: boolean): Promise<CandidateDetails> {
+    return apiRequest<CandidateDetails>(`${base(passportId)}/verification`, { method: "POST", token, body: { kind, verified } });
 }
 
 export function updateCandidateStage(

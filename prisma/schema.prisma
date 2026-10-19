@@ -20,24 +20,27 @@ datasource db {
 // status: INVITED | ACTIVE | INACTIVE (middleware/requireActiveUser.js).
 // role:   ADMIN | MANAGER | ANALYST | REGISTRATION_DESK (middleware/requireRole.js).
 model User {
-  adminId               String                @id @map("admin_id")
-  authUserId            String                @unique @map("auth_user_id") @db.Uuid
+  adminId               String                  @id @map("admin_id")
+  authUserId            String                  @unique @map("auth_user_id") @db.Uuid
   name                  String
-  email                 String                @unique
+  email                 String                  @unique
   role                  String
-  status                String                @default("ACTIVE")
-  createdDate           DateTime              @default(now()) @map("created_date")
-  updatedDate           DateTime              @updatedAt @map("updated_date")
+  status                String                  @default("ACTIVE")
+  createdDate           DateTime                @default(now()) @map("created_date")
+  updatedDate           DateTime                @updatedAt @map("updated_date")
   auditLogs             AuditLog[]
   callLogs              CandidateCallLog[]
   // Priority Follow-Ups this user flagged / completed.
-  flaggedFollowUps      CallLogFollowUp[]     @relation("FollowUpFlaggedBy")
-  completedFollowUps    CallLogFollowUp[]     @relation("FollowUpCompletedBy")
+  flaggedFollowUps      CallLogFollowUp[]       @relation("FollowUpFlaggedBy")
+  completedFollowUps    CallLogFollowUp[]       @relation("FollowUpCompletedBy")
   // Work Allocation: the candidates assigned to this user (an Analyst).
   allocatedCandidates   CandidateAllocation[]
+  // Manual verification of a candidate's details / documents (candidate_verification).
+  verifiedDetails       CandidateVerification[] @relation("DetailsVerifiedBy")
+  verifiedDocuments     CandidateVerification[] @relation("DocumentsVerifiedBy")
   // Job Management.
-  createdJobs           Job[]                 @relation("JobCreatedBy")
-  assignedJobCandidates JobCandidate[]        @relation("JobCandidateAssignedBy")
+  createdJobs           Job[]                   @relation("JobCreatedBy")
+  assignedJobCandidates JobCandidate[]          @relation("JobCandidateAssignedBy")
 
   @@map("user")
 }
@@ -126,6 +129,8 @@ model Candidate {
   // unallocated). A relation only, like additionalDetails.
   allocation        CandidateAllocation?
   jobAssignments    JobCandidate[]
+  // Explicit details / documents verification (a relation only).
+  verification      CandidateVerification?
 
   @@map("candidate")
 }
@@ -276,6 +281,25 @@ model JobCandidate {
   @@id([jobId, passportId])
   @@index([passportId])
   @@map("job_candidate")
+}
+
+// Manual verification of a candidate's details and documents (candidateVerificationService.js).
+// One row per candidate, created by the first verification. A *_at / *_by pair is set or cleared
+// together (CHECKs in the migration). The Candidate list Status reads these; nothing derives them.
+// Migration 20261021120000_candidate_verification.
+model CandidateVerification {
+  passportId            String    @id @map("passport_id")
+  detailsVerifiedAt     DateTime? @map("details_verified_at")
+  detailsVerifiedById   String?   @map("details_verified_by")
+  documentsVerifiedAt   DateTime? @map("documents_verified_at")
+  documentsVerifiedById String?   @map("documents_verified_by")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  candidate           Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  detailsVerifiedBy   User?     @relation("DetailsVerifiedBy", fields: [detailsVerifiedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  documentsVerifiedBy User?     @relation("DocumentsVerifiedBy", fields: [documentsVerifiedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@map("candidate_verification")
 }
 
 //added document table
