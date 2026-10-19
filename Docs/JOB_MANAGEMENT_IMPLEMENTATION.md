@@ -111,4 +111,4 @@ Audit actions (category **Job**): `CREATE_JOB`, `UPDATE_JOB`, `COMPLETE_JOB`, `C
 
 1. **Reopening** a COMPLETED / CANCELLED job is not implemented.
 2. **Vacancies** are informational: assigning beyond the number is allowed.
-3. Retiring the free-text `candidate_stages.job_id` (and showing the assignment on the Candidate Details page) is left to a later task.
+3. The candidate page's **Job details** stage shows the current Job and its Client from this assignment (read-only; see `20-candidate-management.md` §4). The legacy free-text `candidate_stages.job_id` is no longer written; it is only read as a Test ID when a Test details row has no `test_id`. Dropping the column is a later, separate decision.

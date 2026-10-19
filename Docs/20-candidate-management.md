@@ -129,37 +129,43 @@ On save, the form calls `PUT /api/admin/candidates/:passportId` and, if the comm
 
 ---
 
-## 4. Seven-Stage Deployment Process
+## 4. Eight-Stage Deployment Process
 
-Each candidate has exactly **seven stages**, always in this order:
+Each candidate has exactly **eight stages**, always in this order (six of them, plus Additional details, have a circle on the progress stepper; see below):
 
 ```mermaid
 flowchart LR
-    S1[1. Test Details\n(Admin)] --> S2[2. Candidate Details\n(Automatic)]
-    S2 --> S3[3. Document Submission\n(Automatic)]
-    S3 --> S4[4. IVS Interview\n(Admin)]
-    S4 --> S5[5. Visa Submission\n(Admin)]
-    S5 --> S6[6. Visa Approval\n(Admin)]
-    S6 --> S7[7. Finalizing Job\n(Admin)]
+    S1[1. Test Details\n(Admin)] --> SJ[2. Job Details\n(Admin)]
+    SJ --> S2[3. Candidate Details\n(Automatic)]
+    S2 --> S3[4. Document Submission\n(Automatic)]
+    S3 --> S4[5. IVS Interview\n(Admin)]
+    S4 --> S5[6. Visa Submission\n(Admin)]
+    S5 --> S6[7. Visa Approval\n(Admin)]
+    S6 --> S7[8. Finalizing Job\n(Admin)]
     
     classDef auto fill:#e1bee7,stroke:#8e24aa,stroke-width:2px,color:#000;
     classDef manual fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000;
     
-    class S1,S4,S5,S6,S7 manual;
+    class S1,SJ,S4,S5,S6,S7 manual;
     class S2,S3 auto;
 ```
 
 | # | Stage key | Label | Completed by |
 |---|---|---|---|
 | 1 | `TEST_DETAILS` | Test details | Admin (checkbox) |
-| 2 | `CANDIDATE_DETAILS` | Candidate details | Automatically — when required fields and passport are present |
-| 3 | `DOCUMENT_SUBMISSION` | Document submission | Automatically — when all 5 required documents are present |
-| 4 | `IVS_INTERVIEW` | IVS interview | Admin (checkbox) |
-| 5 | `VISA_SUBMISSION` | Visa submission | Admin (checkbox) |
-| 6 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
-| 7 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
+| 2 | `JOB_DETAILS` | Job details | Admin (checkbox); never automatic, even when a Job is assigned |
+| 3 | `CANDIDATE_DETAILS` | Candidate details | Automatically — when required fields and passport are present |
+| 4 | `DOCUMENT_SUBMISSION` | Document submission | Automatically — when all 5 required documents are present |
+| 5 | `IVS_INTERVIEW` | IVS interview | Admin (checkbox) |
+| 6 | `VISA_SUBMISSION` | Visa submission | Admin (checkbox) |
+| 7 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
+| 8 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
 
-The progress stepper on the candidate page shows Test details, Candidate details, Additional details, Document submission, Visa submission and Visa approval. IVS interview and Finalizing the job have no circle (their data and `?stage=` links are unchanged). The candidate list's progress counts all seven stages (`x/7`).
+**Test details** records: *Agent name* (free text: the agent associated with the test, `test_agent_name`), *Test ID* (the test's own reference, `test_id`), *Test result* (Pass / Fail), *Test date* and *Notes*. It used to hold "Client name" (the candidate's own name, read-only) and a free-text "Job ID"; the Job is no longer entered here.
+
+**Job details** records a *Date* (`job_details_date`), a *Note* (the stage's `notes`) and the completion checkbox, and **shows** two read-only values taken live from the candidate's Job assignments (`job_candidate` → `job` → `client`): *Job ID* (the human-readable Job code, e.g. `JOB-2026-000007`, never the UUID) and *Client name*. They are not stored on the stage, so a Client rename or a reassignment to another Job shows immediately; the API refuses to write them (`jobCode`, `clientName`, `jobId`). Which Job is shown follows a fixed priority: **(A)** the current PROCESSING assignment; else **(B)** the latest historical assignment (completed, cancelled, or one the candidate was removed from), with a small note under Job ID ("Completed job (not current)", "Cancelled job (not current)" or "Candidate was removed from this job (not current)"); else **(C)** "Not assigned" (the candidate never had a Job). "Latest" is the newest `job_candidate.assigned_at` (ties: the row's `created_at`, then the job id), so a candidate whose Job B completed after Job A keeps showing Job B. Removing a candidate from a job never deletes the `job_candidate` row (it sets `released_at`), so this history is complete. The fallback is display-only: it never re-activates an assignment, changes a Job, or writes anything to the stage. The old free-text `candidate_stages.job_id` is never read as a Job: it only appears as the Test ID of a Test details row that has no `test_id` yet.
+
+The progress stepper on the candidate page shows Test details, Job details, Candidate details, Additional details, Document submission, Visa submission and Visa approval. IVS interview and Finalizing the job have no circle (their data and `?stage=` links are unchanged). The candidate list's progress counts all seven stages (`x/7`).
 
 Stages are independent: any stage can be opened and edited in any order. The URL uses `?stage=<key>` to select which panel is shown; the default is the first incomplete stage.
 

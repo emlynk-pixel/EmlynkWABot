@@ -186,7 +186,7 @@ The Summary view presents five high-level KPI tiles, detailed activity tables, d
   - **Registered**: Exact registration time in Sri Lanka timezone (`HH:mm`).
   - **Registered by**: Staff member who created the record, extracted from the `CREATE_CANDIDATE` audit log entry. Shows *—* when no audit entry exists (e.g. registered before registration auditing was introduced, or if passport ID was later corrected).
   - **Documents now**: Number of active documents currently on record (verified or pending review; superseded documents are excluded). Displays *No documents* when count is 0.
-  - **Progress now**: Number of deployment stages complete now (e.g. *2 of 7 stages*).
+  - **Progress now**: Number of deployment stages complete now (e.g. *2 of 8 stages*).
 - **List bounding**: Displays the first 10 rows with an expandable *Show all* toggle. The server caps the list at 200 items (`DAILY_LIST_LIMIT = 200`); if truncated, a note displays *Showing the first N of M*.
 
 ##### 3. Candidates Completed Detail
@@ -240,7 +240,7 @@ Clearly grouped under the *Current state* header with an exact generation timest
 ##### 1. Incomplete Candidates Breakdown
 
 Evaluates actual candidate deployment progress across all 7 independent stages:
-`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`.
+`TEST_DETAILS`, `JOB_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`.
 
 - **Non-Linear Stages**: Stages are independent. Candidates can complete stages out of order; completing a later stage does not artificially complete prior stages.
 - **Process Table**:
@@ -339,8 +339,9 @@ The primary interface for managing candidate registrations and deployment workfl
   - Captures: Passport ID, NIC, First Name, Other Name, Date of Birth, Place of Birth, Passport Issue Date, Passport Expiry Date, Nationality, Sex, WhatsApp Number, Contact Number, Address, Job Experience, and initial stage notes.
   - Prevents duplicates on Passport ID, NIC, and WhatsApp number.
 - **Candidate Deployment & Stage Tracking (`/admin/candidates/:passportId`)**:
-  - Independent seven-stage workflow for each candidate:
-    1. **TEST_DETAILS**: Job ID, test result (`PASS`, `FAIL`), and test date.
+  - Independent eight-stage workflow for each candidate:
+    1. **TEST_DETAILS**: agent name, test ID, test result (`PASS`, `FAIL`), and test date.
+    1b. **JOB_DETAILS** (second): the current Job's code and its Client (read-only, from the Job assignment), a date and a note.
     2. **CANDIDATE_DETAILS**: Bio and contact details. WhatsApp number is locked once set to maintain inbound document matching.
     3. **DOCUMENT_SUBMISSION**: Checklist of 5 required candidate documents (`PASSPORT`, `POLICE_REPORT` [SL Verified + Romania], `MEDICAL`, `AFFIDAVIT`, `SKILL_VIDEO`).
     4. **IVS_INTERVIEW**: Interview completion status and notes.

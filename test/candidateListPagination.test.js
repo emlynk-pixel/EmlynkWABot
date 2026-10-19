@@ -152,7 +152,7 @@ describe("paging", () => {
         assert.deepEqual(Object.keys(row).sort(), ["jobTypes", "name", "nic", "passportId", "stages", "uniqueId"]);
         assert.equal(row.name, "Given247 Surname");
         assert.deepEqual(row.jobTypes, ["Driver"]);
-        assert.equal(row.stages.length, 7);
+        assert.equal(row.stages.length, 8);
         assert.deepEqual(body.filters, { search: null });
     });
 

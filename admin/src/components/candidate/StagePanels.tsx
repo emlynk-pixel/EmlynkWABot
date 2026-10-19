@@ -23,6 +23,15 @@ import { exportDocumentSubmissionPdf } from "./exportPdf";
 
 type PanelProps = { details: CandidateDetails; canEdit: boolean; onChange: (details: CandidateDetails) => void };
 
+const NOT_ASSIGNED = "Not assigned";
+// Shown under Job ID when the displayed Job is the latest earlier one (the candidate has no current Job).
+const HISTORICAL_JOB_NOTE: Record<NonNullable<StageState["jobStatus"]>, string> = {
+    PROCESSING: "Previous job",
+    COMPLETED: "Completed job (not current)",
+    CANCELLED: "Cancelled job (not current)",
+    REMOVED: "Candidate was removed from this job (not current)",
+};
+
 const stageOf = (details: CandidateDetails, stage: CandidateStageKey) => details.stages.find((s) => s.stage === stage)!;
 
 function PanelHeading({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
@@ -89,9 +98,12 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
     const { token } = useAuth();
     const saved = stageOf(details, stage);
     const isTest = stage === "TEST_DETAILS";
+    const isJob = stage === "JOB_DETAILS";
     const [notes, setNotes] = useState(saved.notes ?? "");
     const [completed, setCompleted] = useState(saved.completed);
-    const [jobId, setJobId] = useState(saved.jobId ?? "");
+    const [agentName, setAgentName] = useState(saved.testAgentName ?? "");
+    const [testRef, setTestRef] = useState(saved.testId ?? "");
+    const [jobDate, setJobDate] = useState(saved.jobDate ?? "");
     const [testResult, setTestResult] = useState<TestResult | "">(saved.testResult ?? "");
     const [testDate, setTestDate] = useState(saved.testDate ?? "");
     const [busy, setBusy] = useState(false);
@@ -99,12 +111,15 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
     const notesId = useId();
     const testId = useId();
     const dirty = notes !== (saved.notes ?? "") || completed !== saved.completed
-        || (isTest && (jobId !== (saved.jobId ?? "") || testResult !== (saved.testResult ?? "") || testDate !== (saved.testDate ?? "")));
+        || (isTest && (agentName !== (saved.testAgentName ?? "") || testRef !== (saved.testId ?? "") || testResult !== (saved.testResult ?? "") || testDate !== (saved.testDate ?? "")))
+        || (isJob && jobDate !== (saved.jobDate ?? ""));
 
     const showSaved = (state: StageState) => {
         setNotes(state.notes ?? "");
         setCompleted(state.completed);
-        setJobId(state.jobId ?? "");
+        setAgentName(state.testAgentName ?? "");
+        setTestRef(state.testId ?? "");
+        setJobDate(state.jobDate ?? "");
         setTestResult(state.testResult ?? "");
         setTestDate(state.testDate ?? "");
     };
@@ -118,7 +133,8 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
             const next = await updateCandidateStage(token, details.candidate.passportId, stage, {
                 notes: notes.trim() || null,
                 completed,
-                ...(isTest ? { jobId: jobId.trim() || null, testResult: testResult || null, testDate: testDate || null } : {}),
+                ...(isTest ? { testAgentName: agentName.trim() || null, testId: testRef.trim() || null, testResult: testResult || null, testDate: testDate || null } : {}),
+                ...(isJob ? { jobDate: jobDate || null } : {}),
             });
             showSaved(stageOf(next, stage));
             onChange(next);
@@ -132,7 +148,7 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
     const notesAndFooter = (
         <>
             <div className="mt-4">
-                <label htmlFor={notesId} className="mb-1 block text-label-sm text-ink-muted">Notes</label>
+                <label htmlFor={notesId} className="mb-1 block text-label-sm text-ink-muted">{isJob ? "Note" : "Notes"}</label>
                 <textarea id={notesId} rows={5} maxLength={2000} value={notes} disabled={!canEdit || busy} onChange={(event) => setNotes(event.target.value)} className={textAreaControl} />
             </div>
             <PanelFooter
@@ -166,11 +182,11 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
             <PanelHeading title={STAGE_LABELS[stage]} />
             {isTest && (
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <Field label="Client name" htmlFor={`${testId}-client`}>
-                        <input id={`${testId}-client`} value={details.candidate.name ?? ""} readOnly className={`${fieldControl} bg-canvas text-ink-muted`} />
+                    <Field label="Agent name" htmlFor={`${testId}-agent`}>
+                        <input id={`${testId}-agent`} value={agentName} maxLength={120} disabled={!canEdit || busy} onChange={(event) => setAgentName(event.target.value)} className={fieldControl} />
                     </Field>
-                    <Field label="Job ID" htmlFor={`${testId}-job`}>
-                        <input id={`${testId}-job`} value={jobId} maxLength={50} disabled={!canEdit || busy} onChange={(event) => setJobId(event.target.value)} className={fieldControl} />
+                    <Field label="Test ID" htmlFor={`${testId}-test`}>
+                        <input id={`${testId}-test`} value={testRef} maxLength={50} disabled={!canEdit || busy} onChange={(event) => setTestRef(event.target.value)} className={fieldControl} />
                     </Field>
                     <Field label="Test result" htmlFor={`${testId}-result`}>
                         <select
@@ -186,6 +202,21 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
                     </Field>
                     <Field label="Test date" htmlFor={`${testId}-date`}>
                         <input id={`${testId}-date`} type="date" value={testDate} disabled={!canEdit || busy} onChange={(event) => setTestDate(event.target.value)} className={fieldControl} />
+                    </Field>
+                </div>
+            )}
+            {isJob && (
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {/* Job and Client come from the Job assignment (Jobs): shown, never typed here. */}
+                    <Field label="Job ID" htmlFor={`${testId}-jobcode`}>
+                        <input id={`${testId}-jobcode`} value={saved.jobCode ?? NOT_ASSIGNED} readOnly className={`${fieldControl} bg-canvas text-ink-muted`} />
+                        {saved.jobSource === "HISTORICAL" && saved.jobStatus && <p className="mt-1 text-label-sm text-ink-muted">{HISTORICAL_JOB_NOTE[saved.jobStatus]}</p>}
+                    </Field>
+                    <Field label="Client name" htmlFor={`${testId}-jobclient`}>
+                        <input id={`${testId}-jobclient`} value={saved.clientName ?? NOT_ASSIGNED} readOnly className={`${fieldControl} bg-canvas text-ink-muted`} />
+                    </Field>
+                    <Field label="Date" htmlFor={`${testId}-jobdate`}>
+                        <input id={`${testId}-jobdate`} type="date" value={jobDate} disabled={!canEdit || busy} onChange={(event) => setJobDate(event.target.value)} className={fieldControl} />
                     </Field>
                 </div>
             )}
