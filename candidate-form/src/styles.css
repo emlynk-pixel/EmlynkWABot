@@ -28,10 +28,10 @@
     --important-soft: #fef0c7;
     --focus: #1d4ed8;
     --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 16px rgba(16, 24, 40, 0.06);
-    /* Sinhala needs a font that has it: Windows, Android and Apple each ship one. */
-    /* "Emlynk Sinhala" (below) covers only Sinhala characters, so English keeps the
-       system font; the installed Sinhala fonts stay as fallbacks if it cannot load. */
-    font-family: "Emlynk Sinhala", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Sinhala", "Iskoola Pota", "Nirmala UI", "Sinhala Sangam MN", sans-serif;
+    /* Google's default look: Roboto for English, Noto Sans Sinhala for Sinhala, both
+       self-hosted (below). Their unicode-ranges do not overlap, so each script gets its
+       own font; the installed fonts after them are fallbacks if a file cannot load. */
+    font-family: Roboto, "Noto Sans Sinhala", system-ui, -apple-system, "Segoe UI", Arial, "Nirmala UI", "Iskoola Pota", "Sinhala Sangam MN", sans-serif;
     font-size: 16px;
     line-height: 1.55;
     color: var(--ink);
@@ -76,12 +76,34 @@ body { margin: 0; background: var(--bg); color: var(--ink); }
 p, label, legend, h1, h2, h3, h4, dt, li { overflow-wrap: break-word; }
 dd, input { overflow-wrap: anywhere; }
 
-/* Sinhala: Noto Sans Sinhala (Google Fonts, SIL Open Font License 1.1: static/fonts/OFL.txt),
-   self-hosted so the page's font-src 'self' policy holds and no candidate request goes to a
-   third party. Variable weight 400-700 (one file). unicode-range = Google's Sinhala subset,
-   so the file downloads only when Sinhala text is on the page; swap shows text at once. */
+/* Fonts are self-hosted (static/fonts/) so the page's font-src 'self' policy holds and no
+   candidate request goes to a third party. Each file is a variable-weight Google Fonts subset
+   covering every weight the page uses (400-700); unicode-range makes a file download only
+   when its characters are on the page, and swap shows text at once.
+
+   English: Roboto (SIL Open Font License 1.1: static/fonts/OFL-roboto.txt). Google's latin
+   and latin-ext subsets, except that the zero-width joiners (U+200C-200D) are left to the
+   Sinhala font so Sinhala conjuncts stay in one font. */
 @font-face {
-    font-family: "Emlynk Sinhala";
+    font-family: Roboto;
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url("/fonts/roboto-latin-400-700.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-200B, U+200E-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+    font-family: Roboto;
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url("/fonts/roboto-latin-ext-400-700.woff2") format("woff2");
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* Sinhala: Noto Sans Sinhala (SIL Open Font License 1.1: static/fonts/OFL-noto-sans-sinhala.txt),
+   Google's Sinhala subset. */
+@font-face {
+    font-family: "Noto Sans Sinhala";
     font-style: normal;
     font-weight: 400 700;
     font-display: swap;

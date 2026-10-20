@@ -295,22 +295,43 @@ describe("size guides", () => {
     });
 });
 
-describe("Sinhala font", () => {
+describe("Fonts", () => {
+    const faces = [...styles.matchAll(/@font-face\s*\{[^}]*\}/g)].map((m) => m[0]);
+    const range = (face: string) => face.match(/unicode-range:([^;]*);/)?.[1] ?? "";
+
     test("FONT-001 Noto Sans Sinhala is self-hosted for Sinhala characters only, with swap and system fallbacks; nothing loads from another site", () => {
-        const face = styles.match(/@font-face\s*\{[^}]*\}/)?.[0] ?? "";
-        expect(face).toMatch(/font-family:\s*"Emlynk Sinhala"/);
+        const face = faces.find((f) => /font-family:\s*"Noto Sans Sinhala"/.test(f)) ?? "";
         expect(face).toMatch(/src:\s*url\("\/fonts\/noto-sans-sinhala-sinhala-400-700\.woff2"\) format\("woff2"\)/);
         expect(face).toMatch(/unicode-range:[^;]*U\+0D81-0DF4/);
         expect(face).toMatch(/unicode-range:[^;]*U\+200C-200D/); // ZWJ / ZWNJ for conjuncts
         expect(face).toMatch(/font-display:\s*swap/);
         expect(face).toMatch(/font-weight:\s*400 700/);
-        expect(styles).toMatch(/font-family:\s*"Emlynk Sinhala", system-ui,[^;]*"Noto Sans Sinhala", "Iskoola Pota", "Nirmala UI", "Sinhala Sangam MN", sans-serif;/);
+        expect(styles).toMatch(/font-family:\s*Roboto, "Noto Sans Sinhala", system-ui, -apple-system, "Segoe UI", Arial, "Nirmala UI", "Iskoola Pota", "Sinhala Sangam MN", sans-serif;/);
         expect(styles).not.toMatch(/fonts\.googleapis|fonts\.gstatic|@import/);
-        // The font file and its licence ship with the app (static/ is copied as-is).
+        expect(faces.every((f) => /src:\s*url\("\/fonts\/[\w-]+\.woff2"\) format\("woff2"\);/.test(f))).toBe(true);
+        // The font files and their licences ship with the app (static/ is copied as-is).
         const shipped = Object.keys(import.meta.glob("../../static/fonts/*", { query: "?url", eager: true }));
-        expect(shipped.sort()).toEqual(["../../static/fonts/OFL.txt", "../../static/fonts/noto-sans-sinhala-sinhala-400-700.woff2"]);
+        expect(shipped.sort()).toEqual([
+            "../../static/fonts/OFL-noto-sans-sinhala.txt",
+            "../../static/fonts/OFL-roboto.txt",
+            "../../static/fonts/noto-sans-sinhala-sinhala-400-700.woff2",
+            "../../static/fonts/roboto-latin-400-700.woff2",
+            "../../static/fonts/roboto-latin-ext-400-700.woff2",
+        ]);
         // The page policy still allows fonts only from the app itself.
         expect(buildMetaContentSecurityPolicy("https://api.example.test")).toContain("font-src 'self'");
+    });
+
+    test("FONT-003 Roboto is self-hosted for Latin text (latin + latin-ext), weights 400-700, swap; it never claims Sinhala or the joiners", () => {
+        const roboto = faces.filter((f) => /font-family:\s*Roboto;/.test(f));
+        expect(roboto.map((f) => f.match(/url\("([^"]+)"\)/)?.[1])).toEqual(["/fonts/roboto-latin-400-700.woff2", "/fonts/roboto-latin-ext-400-700.woff2"]);
+        for (const face of roboto) {
+            expect(face).toMatch(/font-display:\s*swap/);
+            expect(face).toMatch(/font-weight:\s*400 700/);
+            expect(range(face)).not.toMatch(/U\+0D|U\+200C|U\+200D|U\+2000-206F|U\+0964|U\+25CC/);
+        }
+        expect(range(roboto[0])).toMatch(/U\+0000-00FF/);
+        expect(range(roboto[0])).toMatch(/U\+2000-200B, U\+200E-206F/);
     });
 
     test("FONT-002 Sinhala texts render as Sinhala (conjuncts keep their zero-width joiner) and the required-field messages switch with the language", async () => {
