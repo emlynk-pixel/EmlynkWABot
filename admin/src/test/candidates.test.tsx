@@ -2148,6 +2148,69 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
         expect(document.querySelectorAll("label .text-critical")).toHaveLength(6);
     });
 
+    // The candidate-details fields in page order (label text without the " *" mark).
+    const FIELD_ORDER = [
+        "Surname", "Other names", "NIC", "WhatsApp number", "Passport ID", "Job type",
+        "Nationality", "Sex", "Date of birth", "Place of birth", "Passport issue date", "Passport expiry date", "Contact number", "Job experience", "Address",
+    ];
+    const REQUIRED_SIX = FIELD_ORDER.slice(0, 6);
+    const fieldLabelsInOrder = () => [...document.querySelectorAll("label")]
+        .map((label) => label.textContent?.replace(/\s*\*$/, "").trim() ?? "")
+        .filter((text) => FIELD_ORDER.includes(text));
+
+    test("REGISTRATION-ORDER-001..005 / 008 new registration: the six required fields come first (Surname | Other names, NIC | WhatsApp, Passport ID | Job type), then the optional ones", async () => {
+        signedInBackend();
+        renderApp("/candidates/new");
+        await screen.findByLabelText("Surname *");
+        expect(fieldLabelsInOrder()).toEqual(FIELD_ORDER);
+        // WhatsApp sits right after NIC, in the required area, not among the optional details.
+        const order = fieldLabelsInOrder();
+        expect(order.indexOf("WhatsApp number")).toBe(order.indexOf("NIC") + 1);
+        for (const label of REQUIRED_SIX) expect(order.indexOf(label), label).toBeLessThan(order.indexOf("Nationality"));
+        // Exactly six required marks, on exactly those six.
+        const marked = [...document.querySelectorAll("label")].filter((label) => label.querySelector(".text-critical")).map((label) => label.textContent?.replace(/\s*\*$/, ""));
+        expect(marked).toEqual(REQUIRED_SIX);
+        // Documents and the comment keep their place after the details.
+        // (Each file input also has its own visually-hidden "Choose file" label.)
+        const all = [...document.querySelectorAll("label")].map((label) => label.textContent?.replace(/\s*\*$/, "").trim()).filter((text) => text !== "Choose file");
+        expect(all.slice(all.indexOf("Address") + 1)).toEqual(["Passport", "NIC document", "Skill video", "Comment"]);
+    });
+
+    test("REGISTRATION-ORDER-006 / 007 every existing field still renders (nothing removed), in the new order", async () => {
+        signedInBackend();
+        renderApp("/candidates/new");
+        await screen.findByLabelText("Surname *");
+        for (const label of FIELD_ORDER) expect(screen.getByLabelText(new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( \\*)?$`)), label).toBeInTheDocument();
+        expect(fieldLabelsInOrder()).toHaveLength(15);
+    });
+
+    test("REGISTRATION-ORDER-009 validation is unchanged: the same six messages, each under its own field, and nothing is sent", async () => {
+        const { calls } = signedInBackend();
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await screen.findByLabelText("Surname *");
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+        const messageUnder = (label: string) => screen.getByLabelText(label).closest("div:has(> label), div:has(label)")?.textContent ?? "";
+        expect(messageUnder("Surname *")).toContain("Enter the surname.");
+        expect(messageUnder("NIC *")).toContain("Enter the NIC.");
+        expect(screen.getByText("Enter the WhatsApp number.")).toBeInTheDocument();
+        expect(screen.getByText("Add at least one job type.")).toBeInTheDocument();
+        expect(screen.queryByText("Enter the job experience.")).toBeNull();
+        expect(screen.queryByText("Enter the passport issue date.")).toBeNull();
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+    });
+
+    test("REGISTRATION-ORDER-010 an existing candidate (Candidate Details) uses the same order, and every value is still in its own field", async () => {
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+        renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+        expect(await screen.findByLabelText("WhatsApp number *")).toHaveValue("94770000002");
+        expect(fieldLabelsInOrder()).toEqual(FIELD_ORDER);
+        expect(screen.getByLabelText("Passport ID *")).toHaveValue("N0000002");
+        expect(screen.getByLabelText("NIC *")).toHaveValue(DETAILS.candidate.nic);
+        expect(screen.getByLabelText("Surname *")).toHaveValue(DETAILS.candidate.surname);
+        expect(screen.getByLabelText("Passport issue date *")).toHaveValue("2020-05-12");
+    });
+
     test("REGISTRATION-REQ-012 an optional value that is given is still checked (issue date after expiry, a bad contact number)", async () => {
         const { calls } = signedInBackend();
         renderApp("/candidates/new");

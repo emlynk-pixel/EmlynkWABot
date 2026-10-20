@@ -267,9 +267,15 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
 
     return (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {/* The six fields registration requires, first: Surname | Other names, NIC | WhatsApp number,
+                Passport ID | Job type. Then the optional details. One layout for new and existing candidates. */}
             <Field label="Surname" required htmlFor={`${id}-surname`} error={errors.surname} submitted="basic.surname">{input("surname")}</Field>
             <Field label="Other names" required htmlFor={`${id}-otherNames`} error={errors.otherNames} submitted="basic.otherNames">{input("otherNames")}</Field>
             <Field label="NIC" required htmlFor={`${id}-nic`} error={errors.nic}>{input("nic", { maxLength: 12 })}</Field>
+            <Field label="WhatsApp number" required htmlFor={`${id}-whatsappNumber`} error={errors.whatsappNumber} help={FIELD_HINTS.whatsappNumber}>
+                <WhatsAppInput id={`${id}-whatsappNumber`} value={value.whatsappNumber} onChange={set("whatsappNumber")} disabled={disabled} locked={whatsappLocked} invalid={Boolean(errors.whatsappNumber)} />
+                {whatsappLocked && <div className="mt-1 text-label-sm text-ink-muted">Registered WhatsApp numbers cannot be changed.</div>}
+            </Field>
             <Field label="Passport ID" required htmlFor={`${id}-passportId`} error={passportId.error} help={FIELD_HINTS.passportId}>
                 <input
                     id={`${id}-passportId`}
@@ -283,6 +289,9 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
                     className={`${fieldControl} ${passportId.onChange ? "" : "bg-canvas text-ink-muted"} ${passportId.error ? "border-critical" : ""}`}
                 />
                 {passportId.hint && <div className="mt-1 text-label-sm" aria-live="polite">{passportId.hint}</div>}
+            </Field>
+            <Field label="Job type" required htmlFor={`${id}-jobTypes`} error={errors.jobTypes}>
+                <JobTypesInput id={`${id}-jobTypes`} value={value.jobTypes} onChange={(next) => onChange({ ...value, jobTypes: next })} disabled={disabled} invalid={Boolean(errors.jobTypes)} />
             </Field>
             <Field label="Nationality" htmlFor={`${id}-nationality`} error={errors.nationality}>{input("nationality", { maxLength: 60 })}</Field>
             <Field label="Sex" htmlFor={`${id}-sex`} error={errors.sex} submitted="basic.sex">
@@ -301,14 +310,7 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
             <Field label="Place of birth" htmlFor={`${id}-placeOfBirth`} error={errors.placeOfBirth} submitted="basic.birthPlace">{input("placeOfBirth")}</Field>
             <Field label="Passport issue date" required={laterRequired} htmlFor={`${id}-passportIssueDate`} error={errors.passportIssueDate} help={FIELD_HINTS.passportIssueDate} submitted="passport.issueDate">{dateInput("passportIssueDate", laterRequired)}</Field>
             <Field label="Passport expiry date" required={laterRequired} htmlFor={`${id}-passportExpiryDate`} error={errors.passportExpiryDate} help={FIELD_HINTS.passportExpiryDate} submitted="passport.expiryDate">{dateInput("passportExpiryDate", laterRequired)}</Field>
-            <Field label="WhatsApp number" required htmlFor={`${id}-whatsappNumber`} error={errors.whatsappNumber} help={FIELD_HINTS.whatsappNumber}>
-                <WhatsAppInput id={`${id}-whatsappNumber`} value={value.whatsappNumber} onChange={set("whatsappNumber")} disabled={disabled} locked={whatsappLocked} invalid={Boolean(errors.whatsappNumber)} />
-                {whatsappLocked && <div className="mt-1 text-label-sm text-ink-muted">Registered WhatsApp numbers cannot be changed.</div>}
-            </Field>
             <Field label="Contact number" htmlFor={`${id}-contactNumber`} error={errors.contactNumber} submitted="contact.alternativePhone">{input("contactNumber", { type: "tel", maxLength: 30 })}</Field>
-            <Field label="Job type" required htmlFor={`${id}-jobTypes`} error={errors.jobTypes} className="md:col-span-2">
-                <JobTypesInput id={`${id}-jobTypes`} value={value.jobTypes} onChange={(next) => onChange({ ...value, jobTypes: next })} disabled={disabled} invalid={Boolean(errors.jobTypes)} />
-            </Field>
             <Field label="Job experience" required={laterRequired} htmlFor={`${id}-jobExperience`} error={errors.jobExperience} className="md:col-span-2" submitted="qualifications.experience">
                 {input("jobExperience", { maxLength: 2000 })}
             </Field>
