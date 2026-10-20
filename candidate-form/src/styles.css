@@ -155,7 +155,13 @@ dd, input { overflow-wrap: anywhere; }
     gap: 4px;
 }
 .segmented button.active { background: var(--primary); color: var(--primary-ink); font-weight: 600; }
-.theme-icon { font-size: 0.9375rem; line-height: 1; }
+/* Theme: two square icon buttons (sun, moon), the same height as the language switch.
+   Active = the primary fill; inactive = a muted icon that warms up on hover. Keyboard
+   focus uses the global :focus-visible ring. */
+.theme-switch button { width: 36px; min-width: 36px; padding: 0; justify-content: center; color: var(--muted); }
+.theme-switch button:hover:not(.active) { background: var(--notice-soft); color: var(--ink); }
+.theme-switch button.active { color: var(--primary-ink); }
+.theme-icon { display: block; flex: none; }
 
 /* ---------- page ---------- */
 
@@ -573,13 +579,6 @@ button:disabled { opacity: 0.6; cursor: default; }
     .step-list { display: flex; flex-direction: column; gap: 2px; }
     .step-list button, .step-list .stage { flex-direction: row; gap: 10px; padding: 4px 8px 4px 2px; font-size: 0.9375rem; text-align: left; }
     .step-list li.current button { background: var(--primary-soft); }
-}
-
-/* Narrow phones: the theme switch shows its icons only (each button keeps its
-   name for screen readers), so both switches fit on one line. */
-@media (max-width: 479px) {
-    .theme-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-    .theme-switch button { min-width: 36px; justify-content: center; }
 }
 
 /* ---------- date picker (components/DatePicker.tsx) ---------- */

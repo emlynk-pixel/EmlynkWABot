@@ -243,17 +243,17 @@ describe("Date fields in the Candidate Form", () => {
         setField("f.birthDate", "1990-05-01");
         await switchLanguage(user, "සිංහල");
         expect(screen.getByLabelText(startsWith(si("f.birthDate")))).toHaveValue("1990-05-01");
-        await user.click(within(screen.getByRole("group", { name: si("theme.label") })).getByRole("button", { name: startsWith(si("theme.dark")) }));
+        await user.click(within(screen.getByRole("group", { name: si("theme.label") })).getByRole("button", { name: startsWith(si("theme.useDark")) }));
         expect(document.documentElement.dataset.theme).toBe("dark");
         expect(screen.getByLabelText(startsWith(si("f.birthDate")))).toHaveValue("1990-05-01");
-        await user.click(within(screen.getByRole("group", { name: si("theme.label") })).getByRole("button", { name: startsWith(si("theme.light")) }));
+        await user.click(within(screen.getByRole("group", { name: si("theme.label") })).getByRole("button", { name: startsWith(si("theme.useLight")) }));
         await switchLanguage(user, "English");
         expect(field("f.birthDate")).toHaveValue("1990-05-01");
     });
 
     test("an open calendar stays usable in the dark theme and nothing about the date is written to browser storage", async () => {
         const { user } = await verified();
-        await user.click(within(screen.getByRole("group", { name: en("theme.label") })).getByRole("button", { name: startsWith(en("theme.dark")) }));
+        await user.click(within(screen.getByRole("group", { name: en("theme.label") })).getByRole("button", { name: startsWith(en("theme.useDark")) }));
         await user.click(screen.getByRole("button", { name: en("date.openCalendar") }));
         const dialog = await screen.findByRole("dialog", { name: en("date.calendar") });
         await user.selectOptions(within(dialog).getByLabelText(en("date.year")), "1985");
