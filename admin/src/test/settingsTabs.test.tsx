@@ -29,7 +29,7 @@ const activeTab = () => tabs().getAllByRole("link").find((l) => l.getAttribute("
 const sidebar = () => within(screen.getByRole("navigation", { name: "Main navigation" }));
 
 describe("Settings tabs", () => {
-    test("1-5, 17. the sidebar has Settings but no Invite User / Change Roles; Settings shows three tabs (no Configurations) and opens Change Roles; one page title", async () => {
+    test("1-5, 17. the sidebar has Settings but no Invite User / Change Roles; Settings shows four tabs (no Configurations) and opens Change Roles; one page title", async () => {
         signedInBackend(routes);
         renderApp("/settings");
         expect(await screen.findByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
@@ -38,7 +38,7 @@ describe("Settings tabs", () => {
         expect(sidebar().queryByRole("link", { name: "Invite User" })).toBeNull();
         expect(sidebar().queryByRole("link", { name: "Change Roles" })).toBeNull();
         expect(sidebar().getByRole("link", { name: "Audit Logs" })).toBeInTheDocument();
-        expect(tabLabels()).toEqual(["Change Roles", "Invite User", "Google Sheet Sync"]);
+        expect(tabLabels()).toEqual(["Change Roles", "Invite User", "Google Sheet Sync", "Job Types"]);
         expect(screen.queryByRole("link", { name: "Configurations" })).toBeNull();
         expect(screen.queryByText(/configuration options/i)).toBeNull();
         expect(activeTab()).toBe("Change Roles");

@@ -63,10 +63,20 @@ export const SHOE_SIZE_GUIDE: readonly { uk: (typeof SHOE_SIZE_PRESETS)[number];
     { uk: "13", eu: "48" },
 ];
 
-// Where the job categories come from. Today a local list; later the same
-// shape from the API, without changing the component that shows them.
-export type JobCategoriesSource = { status: "ready"; codes: readonly string[] } | { status: "loading" } | { status: "error" };
+// "No Preferred Type": the candidate has no job type restriction (stored as this code).
+export const NO_PREFERENCE = "NO_PREFERENCE";
 
-export function useJobCategories(): JobCategoriesSource {
-    return { status: "ready", codes: JOB_CATEGORIES };
+// The job categories the form offers: the ACTIVE job types the server sends with
+// the form (Settings > Job Types, POST /form `jobCategories`), then "No Preferred
+// Type", then OTHER (always last; it opens "Other Job Category"). JOB_CATEGORIES
+// above is only the list the job types were seeded from.
+export function jobCategoryChoices(fromServer: readonly string[]): string[] {
+    return [...fromServer.filter((name) => name !== OTHER_JOB_CATEGORY && name !== NO_PREFERENCE), NO_PREFERENCE, OTHER_JOB_CATEGORY];
+}
+
+// A category's label: its translation when there is one (the original trades,
+// No Preferred Type, Other), otherwise the job type's own name (a type added
+// later in Settings shows at once, in the administrators' spelling).
+export function jobCategoryLabel(code: string, translations: Record<string, string>): string {
+    return translations[`job.${code}`] ?? code;
 }

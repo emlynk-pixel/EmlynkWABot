@@ -1,6 +1,6 @@
 import type { MessageKey, MessageParams } from "../i18n/translations";
 import { isNotApplicable, showsOtherJobCategory, showsSpouse, type CandidateFormData, type FormGroup } from "./model";
-import { CIVIL_STATUS_OPTIONS, ENGLISH_LEVELS, JOB_CATEGORIES, SEX_OPTIONS, SHIRT_SIZES } from "./options";
+import { CIVIL_STATUS_OPTIONS, ENGLISH_LEVELS, JOB_CATEGORIES, SEX_OPTIONS, SHIRT_SIZES, jobCategoryChoices } from "./options";
 
 // The form's checks, done before the candidate moves on (Next) and again for
 // the whole form before Submit. The server checks the same rules again and
@@ -71,7 +71,9 @@ function dateProblem(value: string, { notFuture, today, latest = LATEST_EXPIRY_D
 }
 
 // Every problem in the whole form.
-export function validateForm(data: CandidateFormData, today = todayInSriLanka()): FormErrors {
+// `jobCategories`: the choices offered (jobCategoryChoices of the server's list);
+// by default the original trades, for callers without a server list.
+export function validateForm(data: CandidateFormData, today = todayInSriLanka(), jobCategories: readonly string[] = jobCategoryChoices(JOB_CATEGORIES)): FormErrors {
     const errors: FormErrors = {};
     const add = (path: string, key: MessageKey, params?: MessageParams) => {
         if (!errors[path]) errors[path] = params ? { key, params } : { key };
@@ -130,7 +132,7 @@ export function validateForm(data: CandidateFormData, today = todayInSriLanka())
     if (!errors["passport.issueDate"] && !errors["passport.expiryDate"] && passport.issueDate && passport.expiryDate && passport.expiryDate <= passport.issueDate) {
         add("passport.expiryDate", "v.expiryBeforeIssue");
     }
-    oneOf("qualifications.jobCategory", qualifications.jobCategory, JOB_CATEGORIES);
+    oneOf("qualifications.jobCategory", qualifications.jobCategory, jobCategories);
     if (showsOtherJobCategory(data)) {
         length("qualifications.jobCategoryOther", qualifications.jobCategoryOther, MAX_LENGTH.text);
     }

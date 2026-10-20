@@ -1973,7 +1973,9 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
         await user.type(screen.getByLabelText("Other names *"), "SAMAN");
         await user.type(screen.getByLabelText("NIC *"), "901234567V");
         await user.type(screen.getByLabelText("Passport ID *"), "n0000002");
-        await user.type(screen.getByLabelText("Job type *"), "Driver{Enter}");
+        // Job type: chosen from Settings > Job Types (loaded from the server), not typed.
+        await screen.findByRole("option", { name: "Driver" });
+        await user.selectOptions(screen.getByLabelText("Job type *"), "Driver");
         await user.type(screen.getByLabelText("WhatsApp number *"), "94771234567");
     }
 
@@ -2605,7 +2607,8 @@ describe("WhatsApp number: fixed + prefix", () => {
         await user.type(screen.getByLabelText("Other names *"), "SAMAN");
         await user.type(screen.getByLabelText("NIC *"), "901234567V");
         await user.type(screen.getByLabelText("Passport ID *"), "N0000002");
-        await user.type(screen.getByLabelText("Job type *"), "Driver{Enter}");
+        await screen.findByRole("option", { name: "Driver" });
+        await user.selectOptions(screen.getByLabelText("Job type *"), "Driver");
         await user.type(screen.getByLabelText("Job experience"), "5 years");
         await user.type(screen.getByLabelText("Passport issue date"), "2020-01-15");
         await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-14");

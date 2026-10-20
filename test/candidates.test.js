@@ -93,6 +93,8 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
     });
 
     const db = {
+        // Settings > Job Types: the active names the candidate bodies below use (jobTypeCatalog.js).
+        jobType: { findMany: async () => ["Caregiver", "Construction Worker", "Driver", "Electrician"].map((name) => ({ name })) },
         state,
         candidate: {
             findUnique: async ({ where }) => {

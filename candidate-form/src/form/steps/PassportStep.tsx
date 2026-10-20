@@ -1,20 +1,19 @@
 import { ChoiceCards, DateInput, SelectInput, TextArea, TextInput, VerifiedValue } from "../../components/inputs";
 import { FormSection } from "../../components/FormSection";
-import type { MessageKey } from "../../i18n/translations";
 import { useLanguage } from "../../i18n/useLanguage";
 import { bind, type StepProps } from "../binding";
 import { showsOtherJobCategory } from "../model";
-import { ENGLISH_LEVELS, useJobCategories } from "../options";
+import { ENGLISH_LEVELS, jobCategoryLabel } from "../options";
+import { TRANSLATIONS } from "../../i18n/translations";
 import { EARLIEST_DATE, LATEST_EXPIRY_DATE, MAX_LENGTH, todayInSriLanka } from "../validation";
 
 // Passport & Qualifications. The passport number is the verified one, shown
-// read-only. Job categories come from useJobCategories (a local list today,
-// the API later); "OTHER" opens a free-text category of the candidate's own.
+// read-only. The job categories are the active job types sent with the form
+// (Settings > Job Types), "No Preferred Type" and "OTHER" (which opens a
+// free-text category of the candidate's own).
 export function PassportStep(props: StepProps & { passportNumber: string }) {
-    const { t } = useLanguage();
+    const { t, language } = useLanguage();
     const today = todayInSriLanka();
-    const categories = useJobCategories();
-    const codes = categories.status === "ready" ? categories.codes : [];
     return (
         <>
             <div className="field-grid">
@@ -30,7 +29,7 @@ export function PassportStep(props: StepProps & { passportNumber: string }) {
                         {...bind(props, "qualifications.jobCategory")}
                         label={t("f.jobCategory")}
                         help={t("help.jobCategory")}
-                        options={codes.map((code) => ({ value: code, label: t(`job.${code}` as MessageKey) }))}
+                        options={props.jobCategories.map((code) => ({ value: code, label: jobCategoryLabel(code, TRANSLATIONS[language]) }))}
                     />
                     {showsOtherJobCategory(props.data) && (
                         <TextInput {...bind(props, "qualifications.jobCategoryOther")} label={t("f.jobCategoryOther")} uppercase maxLength={MAX_LENGTH.text} />

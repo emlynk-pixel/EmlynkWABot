@@ -1,5 +1,7 @@
-import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { SEX_OPTIONS, type CandidateDetails, type CandidateDetailsInput } from "../../api/candidates";
+import { getJobTypeChoices, isNoPreference, jobTypeLabel, NO_PREFERRED_JOB_TYPE } from "../../api/jobs";
+import { useAdminResource } from "../../api/useAdminResource";
 import { HelpTip } from "../Form";
 import { DatePicker } from "../DatePicker";
 import { SubmittedHint } from "./submittedChanges";
@@ -181,41 +183,54 @@ function WhatsAppInput({ id, value, onChange, disabled, locked, invalid }: { id:
 }
 
 // Several job types as chips: Enter or a comma adds the typed one.
+const MAX_JOB_TYPES = 10;
+
+// The candidate's job type preferences: chosen from the ACTIVE job types
+// (Settings > Job Types) or "No Preferred Type" (alone: it means any type).
+// A value the candidate already has but the list no longer offers (saved before
+// the list, or deactivated since) stays as a chip, marked, and is kept on save.
 function JobTypesInput({ id, value, onChange, disabled, invalid }: { id: string; value: string[]; onChange: (next: string[]) => void; disabled?: boolean; invalid?: boolean }) {
-    const [draft, setDraft] = useState("");
-    const add = () => {
-        const name = draft.replace(/,/g, " ").trim().slice(0, 60);
-        if (name && !value.some((v) => v.toLowerCase() === name.toLowerCase()) && value.length < 10) onChange([...value, name]);
-        setDraft("");
+    const choices = useAdminResource("job-type-choices", (token, signal) => getJobTypeChoices(token, signal));
+    const active = choices.data?.jobTypes ?? [];
+    const has = (name: string) => value.some((v) => v.toLowerCase() === name.toLowerCase());
+    const noPreference = value.some(isNoPreference);
+    const available = active.filter((name) => !has(name));
+    const pick = (choice: string) => {
+        if (!choice) return;
+        if (choice === NO_PREFERRED_JOB_TYPE.code) onChange([NO_PREFERRED_JOB_TYPE.code]);
+        else if (value.length < MAX_JOB_TYPES || noPreference) onChange([...value.filter((v) => !isNoPreference(v)), choice]);
     };
-    const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-        if (event.key === "Enter" || event.key === ",") {
-            event.preventDefault();
-            add();
-        } else if (event.key === "Backspace" && !draft && value.length) {
-            onChange(value.slice(0, -1));
-        }
-    };
+    const notListed = (v: string) => !isNoPreference(v) && choices.data !== null && !active.some((name) => name.toLowerCase() === v.toLowerCase());
     return (
-        <div className={`flex min-h-10 flex-wrap items-center gap-1.5 rounded border bg-surface px-2 py-1.5 focus-within:border-primary focus-within:shadow-focus ${invalid ? "border-critical" : "border-border-strong"} ${disabled ? "bg-canvas" : ""}`}>
-            {value.map((jobType) => (
-                <span key={jobType} className="inline-flex items-center gap-1 rounded bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft">
-                    {jobType}
-                    {!disabled && (
-                        <button type="button" onClick={() => onChange(value.filter((v) => v !== jobType))} className="text-ink-subtle hover:text-ink" aria-label={`Remove ${jobType}`}>×</button>
-                    )}
-                </span>
-            ))}
-            <input
-                id={id}
-                value={draft}
-                disabled={disabled}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={onKeyDown}
-                onBlur={add}
-                placeholder={value.length ? "" : "Type a job type and press Enter"}
-                className="min-w-[10rem] flex-1 bg-transparent text-body-sm text-ink focus:outline-none"
-            />
+        <div>
+            <div className={`flex min-h-10 flex-wrap items-center gap-1.5 rounded border bg-surface px-2 py-1.5 focus-within:border-primary focus-within:shadow-focus ${invalid ? "border-critical" : "border-border-strong"} ${disabled ? "bg-canvas" : ""}`}>
+                {value.map((jobType) => (
+                    <span key={jobType} className="inline-flex items-center gap-1 rounded bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft" title={notListed(jobType) ? "Not in the current job type list (kept as saved)" : undefined}>
+                        {jobTypeLabel(jobType)}
+                        {notListed(jobType) && <span className="text-ink-subtle">(not in list)</span>}
+                        {!disabled && (
+                            <button type="button" onClick={() => onChange(value.filter((v) => v !== jobType))} className="text-ink-subtle hover:text-ink" aria-label={`Remove ${jobTypeLabel(jobType)}`}>×</button>
+                        )}
+                    </span>
+                ))}
+                <select
+                    id={id}
+                    value=""
+                    disabled={disabled || choices.status === "loading"}
+                    aria-invalid={invalid}
+                    onChange={(event) => pick(event.target.value)}
+                    className="min-w-[10rem] flex-1 bg-transparent text-body-sm text-ink focus:outline-none"
+                >
+                    <option value="">{choices.status === "loading" ? "Loading job types…" : value.length ? "Add another job type…" : "Select a job type…"}</option>
+                    {!noPreference && <option value={NO_PREFERRED_JOB_TYPE.code}>{NO_PREFERRED_JOB_TYPE.label}</option>}
+                    {available.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
+            </div>
+            {choices.status === "error" && (
+                <p role="alert" className="mt-1 text-label-sm text-critical">
+                    The job types could not be loaded. <button type="button" onClick={choices.reload} className="underline">Try again</button>
+                </p>
+            )}
         </div>
     );
 }

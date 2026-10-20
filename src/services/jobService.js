@@ -30,6 +30,9 @@ export const JOB_AUDIT_ACTION = Object.freeze({
     ADD_CANDIDATE: "ADD_CANDIDATE_TO_JOB",
     REMOVE_CANDIDATE: "REMOVE_CANDIDATE_FROM_JOB",
     CREATE_JOB_TYPE: "CREATE_JOB_TYPE",
+    UPDATE_JOB_TYPE: "UPDATE_JOB_TYPE",
+    ACTIVATE_JOB_TYPE: "ACTIVATE_JOB_TYPE",
+    DEACTIVATE_JOB_TYPE: "DEACTIVATE_JOB_TYPE",
 });
 
 export const JOB_VIEWS = Object.freeze({ processing: JOB_STATUS.PROCESSING, completed: JOB_STATUS.COMPLETED, cancelled: JOB_STATUS.CANCELLED });
@@ -247,10 +250,83 @@ async function createReference({ db, actor, model, data, action, label, duplicat
     }
 }
 
+const DUPLICATE_JOB_TYPE = "A job type with this name already exists.";
+
 export function createJobType({ db, actor, values }) {
     const code = codeFromName(values.name);
     if (!code) throw new CandidateError(400, "INVALID_NAME", "The name must contain letters or digits.");
-    return createReference({ db, actor, model: "jobType", data: { code, name: values.name }, action: JOB_AUDIT_ACTION.CREATE_JOB_TYPE, label: "Job type", duplicateMessage: "A job type with this name already exists." });
+    return createReference({ db, actor, model: "jobType", data: { code, name: values.name }, action: JOB_AUDIT_ACTION.CREATE_JOB_TYPE, label: "Job type", duplicateMessage: DUPLICATE_JOB_TYPE });
+}
+
+// Settings > Job Types (ADMIN): every job type, active or not, with how many jobs
+// use it. "No Preferred Type" is not in this table (jobTypeCatalog.js): the page
+// shows it as a system option.
+export async function listJobTypes({ db }) {
+    const rows = await db.jobType.findMany({
+        select: { id: true, code: true, name: true, isActive: true, createdAt: true, updatedAt: true, _count: { select: { jobs: true } } },
+        orderBy: [{ isActive: "desc" }, { name: "asc" }, { id: "asc" }],
+    });
+    return {
+        items: rows.map((row) => ({
+            id: row.id, code: row.code, name: row.name, isActive: row.isActive, jobCount: row._count.jobs,
+            createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+        })),
+    };
+}
+
+// PATCH /api/admin/job-types/:id { name?, isActive? } (ADMIN). Renaming keeps the
+// type's id and code, so every Job on it shows the new name; candidates keep the
+// text they saved. Deactivating only stops NEW selections: existing Jobs (any
+// status) and candidates keep it. Nothing is ever deleted (Jobs reference it).
+export function parseJobTypeUpdate(body) {
+    if (!body || typeof body !== "object" || Array.isArray(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
+    const errors = [];
+    const values = {};
+    for (const key of Object.keys(body)) if (key !== "name" && key !== "isActive") errors.push({ field: key, message: "is not accepted" });
+    if (body.name !== undefined) {
+        const parsed = parseReferenceBody({ name: body.name });
+        if (parsed.errors) errors.push(...parsed.errors);
+        else values.name = parsed.values.name;
+    }
+    if (body.isActive !== undefined) {
+        if (typeof body.isActive !== "boolean") errors.push({ field: "isActive", message: "must be true or false" });
+        else values.isActive = body.isActive;
+    }
+    if (!errors.length && !Object.keys(values).length) errors.push({ field: "body", message: "must contain name or isActive" });
+    return errors.length ? { errors } : { values };
+}
+
+export async function updateJobType({ db, actor, id, values }) {
+    if (!isValidJobIdParam(id)) throw new CandidateError(404, "JOB_TYPE_NOT_FOUND", "Job type not found");
+    try {
+        return await db.$transaction(async (tx) => {
+            const before = await tx.jobType.findUnique({ where: { id }, select: { id: true, name: true, isActive: true } });
+            if (!before) throw new CandidateError(404, "JOB_TYPE_NOT_FOUND", "Job type not found");
+            const changes = {};
+            if (values.name !== undefined && values.name !== before.name) changes.name = values.name;
+            if (values.isActive !== undefined && values.isActive !== before.isActive) changes.isActive = values.isActive;
+            if (Object.keys(changes).length) {
+                await tx.jobType.update({ where: { id }, data: changes });
+                if (changes.name !== undefined) {
+                    await tx.auditLog.create({ data: auditRow({ actor, action: JOB_AUDIT_ACTION.UPDATE_JOB_TYPE, previousStatus: "ACTIVE_OR_INACTIVE", newStatus: "RENAMED", reason: "Job type renamed", previousValue: JSON.stringify({ id, name: before.name }), newValue: JSON.stringify({ id, name: changes.name }) }) });
+                }
+                if (changes.isActive !== undefined) {
+                    await tx.auditLog.create({
+                        data: auditRow({
+                            actor, action: changes.isActive ? JOB_AUDIT_ACTION.ACTIVATE_JOB_TYPE : JOB_AUDIT_ACTION.DEACTIVATE_JOB_TYPE,
+                            previousStatus: before.isActive ? "ACTIVE" : "INACTIVE", newStatus: changes.isActive ? "ACTIVE" : "INACTIVE",
+                            reason: changes.isActive ? "Job type activated" : "Job type deactivated", newValue: JSON.stringify({ id, name: changes.name ?? before.name }),
+                        }),
+                    });
+                }
+            }
+            const row = await tx.jobType.findUnique({ where: { id }, select: { id: true, code: true, name: true, isActive: true, createdAt: true, updatedAt: true, _count: { select: { jobs: true } } } });
+            return { id: row.id, code: row.code, name: row.name, isActive: row.isActive, jobCount: row._count.jobs, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
+        });
+    } catch (error) {
+        if (isUniqueViolation(error)) throw new CandidateError(409, "DUPLICATE", DUPLICATE_JOB_TYPE);
+        throw error;
+    }
 }
 
 // ---------------------------------------------------------------- views
@@ -435,12 +511,11 @@ async function updateJobInTransaction({ db, actor, jobId, values }) {
     return db.$transaction(async (tx) => {
         const job = await lockJob(tx, jobId, "update");
         if (Object.keys(values).some((key) => key !== "companyJobId")) requireProcessing(job);
-        if (values.jobTypeId) await requireActive(tx, "jobType", values.jobTypeId, "jobTypeId", "job type");
-        if (values.clientId) {
-            const current = await tx.job.findUnique({ where: { id: jobId }, select: { responsibleAgentId: true } });
-            await requireClientWithAgent(tx, values.clientId, current.responsibleAgentId);
-        }
         const before = await tx.job.findUnique({ where: { id: jobId }, select: { companyJobId: true, vacancies: true, jobTypeId: true, clientId: true, responsibleAgentId: true } });
+        // A NEW job type must be active; keeping the job's own type (even one deactivated
+        // since) is always allowed, so an edit never fails on a type it does not change.
+        if (values.jobTypeId && values.jobTypeId !== before.jobTypeId) await requireActive(tx, "jobType", values.jobTypeId, "jobTypeId", "job type");
+        if (values.clientId) await requireClientWithAgent(tx, values.clientId, before.responsibleAgentId);
         await tx.job.update({ where: { id: jobId }, data: values });
         await tx.auditLog.create({
             data: auditRow({

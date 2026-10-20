@@ -162,7 +162,7 @@ describe("Admin: Candidate Form submission", () => {
         const link = (await call(app(USERS.ADMIN), "POST", `/api/admin/candidates/${B.passportId}/form-share`)).body.url.split("#k=")[1];
         const token = (await pub("/verify", { body: { linkSecret: link, passportNumber: B.passportId, nic: B.nic } })).body.token;
         const form = await pub("/form", { token, body: {} });
-        assert.deepEqual(Object.keys(form.body).sort(), ["answers", "expiresAt", "identity", "prefilled"]);
+        assert.deepEqual(Object.keys(form.body).sort(), ["answers", "expiresAt", "identity", "jobCategories", "prefilled"]);
         const text = JSON.stringify(form.body);
         assert.ok(!text.includes("KAMAL PERERA") && !text.includes("901234567V") && !text.includes(A.passportId));
     });

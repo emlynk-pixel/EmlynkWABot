@@ -11,6 +11,8 @@ export type StepProps = {
     set: (path: string) => (value: string) => void;
     errors: FormErrors;
     prefilled: ReadonlySet<string>;
+    // The job category choices (jobCategoryChoices: active job types + No Preferred Type + OTHER).
+    jobCategories: readonly string[];
 };
 
 // The DOM id of a field: "basic.fullName" -> "basic-fullName".

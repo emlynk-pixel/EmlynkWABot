@@ -47,6 +47,8 @@ beforeEach(async () => {
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "call_log_follow_up"; DELETE FROM "candidate_call_logs"; DELETE FROM "candidate_allocation";
         DELETE FROM "candidate_additional_details"; DELETE FROM "documents"; DELETE FROM "temporary_data"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
+        -- The active job types this suite's candidates use (Settings > Job Types).
+        INSERT INTO "job_type" ("code", "name") VALUES ('CAREGIVER_SEED', 'Caregiver'), ('DRIVER_SEED', 'Driver') ON CONFLICT DO NOTHING;
         DELETE FROM "sheet_sync_queue";
         UPDATE "user" SET "role" = 'ANALYST', "status" = 'ACTIVE' WHERE "admin_id" IN ('u-ann', 'u-ben', 'u-cal');
         INSERT INTO "candidate" ("passport_id", "unique_id", "first_name", "other_name", "job", "whatsapp_number", "contact_number", "created_date", "updated_date")

@@ -30,6 +30,7 @@ import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { SettingsPage, SheetSyncSettings } from "./pages/SettingsPage";
+import { JobTypesSettings } from "./pages/JobTypesSettings";
 import { SetupPasswordPage } from "./pages/SetupPasswordPage";
 import { WorkAllocationPage } from "./pages/WorkAllocationPage";
 
@@ -109,6 +110,7 @@ export function AppRoutes() {
                     <Route path="roles" element={<AdminRolesPage embedded />} />
                     <Route path="invite" element={<InvitationsPage embedded />} />
                     <Route path="sheet-sync" element={<SheetSyncSettings />} />
+                    <Route path="job-types" element={<JobTypesSettings />} />
                 </Route>
                 <Route path="*" element={<NotFoundPage />} />
             </Route>

@@ -76,6 +76,9 @@ import {
     completeJob,
     createJob,
     createJobType,
+    listJobTypes,
+    parseJobTypeUpdate,
+    updateJobType,
     getJob,
     isValidJobIdParam,
     listJobOptions,
@@ -90,6 +93,7 @@ import {
     updateJob,
 } from "../services/jobService.js";
 import { getFormSubmission } from "../services/candidateFormSubmissionService.js";
+import { activeJobTypeNames, NO_PREFERRED_JOB_TYPE, resolveCandidateJobTypes } from "../services/jobTypeCatalog.js";
 import { confirmFormField, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
@@ -137,7 +141,9 @@ import {
     listCandidates,
     removeCandidateDocument,
     parseCallLogBody,
+    formatJobTypes,
     parseCandidateBody,
+    parseJobTypes,
     parseCandidateListQuery,
     parseFinalizeUploadBody,
     parseRemoveDocumentBody,
@@ -530,13 +536,27 @@ export function createAdminRouter({
         return res.json(await listCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) }));
     });
 
+    // The job type preferences must come from the active list (Settings > Job Types) or be
+    // "No Preferred Type"; a value the candidate already has (`current`) is kept as it is
+    // (jobTypeCatalog.js). Returns the values to save, or answers 400 and returns null.
+    const resolveJobTypes = async (res, client, values, current = []) => {
+        const resolved = await resolveCandidateJobTypes({ db: client, requested: parseJobTypes(values.job), current });
+        if (resolved.errors) {
+            res.status(400).json({ message: "Invalid request body", errors: resolved.errors });
+            return null;
+        }
+        return { ...values, job: formatJobTypes(resolved.jobTypes) };
+    };
+
     router.post("/candidates", requireRole(REGISTRATION_STAFF), async (req, res) => {
         const parsed = parseCandidateBody(req.body, { creating: true });
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values: parsed.values, actor: req.user })));
+        const values = await resolveJobTypes(res, client, parsed.values);
+        if (!values) return undefined;
+        return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values, actor: req.user })));
     });
 
     router.get("/candidates/:passportId", requireRole(CANDIDATE_STAFF), async (req, res) => {
@@ -556,9 +576,13 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.json(await updateCandidateDetails({
-            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), values: parsed.values,
-        })));
+        return candidateAction(res, async () => {
+            const passportId = await storedCandidateId(client, req.params.passportId, req.user);
+            const stored = await client.candidate.findUnique({ where: { passportId }, select: { job: true } });
+            const values = await resolveJobTypes(res, client, parsed.values, parseJobTypes(stored?.job));
+            if (!values) return undefined;
+            return res.json(await updateCandidateDetails({ db: client, actor: req.user, passportId, values }));
+        });
     });
 
     router.put("/candidates/:passportId/stages/:stage", requireRole(CANDIDATE_STAFF), async (req, res) => {
@@ -852,6 +876,24 @@ export function createAdminRouter({
     router.get("/job-options", requireRole(MANAGERS_UP), async (req, res) => {
         const client = await resolveDb(db);
         return res.json(await listJobOptions({ db: client }));
+    });
+    // Candidate job type choices for the Candidates area (registration, Candidate
+    // Details): the ACTIVE names and the "No Preferred Type" system option. Read-only.
+    router.get("/job-type-choices", requireRole(CANDIDATE_STAFF), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json({ jobTypes: await activeJobTypeNames(client), noPreference: NO_PREFERRED_JOB_TYPE });
+    });
+    // Settings > Job Types: ADMIN only, like every Settings tab. Creating stays open to
+    // ADMIN and MANAGER (POST below: the New Job dialog adds a type inline).
+    router.get("/job-types", requireRole(ADMINS_ONLY), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json({ ...(await listJobTypes({ db: client })), noPreference: NO_PREFERRED_JOB_TYPE });
+    });
+    router.patch("/job-types/:id", requireRole(ADMINS_ONLY), async (req, res) => {
+        const parsed = parseJobTypeUpdate(req.body);
+        if (!jobBody(res, parsed)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await updateJobType({ db: client, actor: req.user, id: req.params.id, values: parsed.values })));
     });
     router.post("/job-types", requireRole(MANAGERS_UP), async (req, res) => {
         const parsed = parseReferenceBody(req.body);

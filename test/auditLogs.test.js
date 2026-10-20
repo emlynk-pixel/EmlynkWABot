@@ -55,6 +55,8 @@ beforeEach(async () => {
     await pg.exec(`
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "documents"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
+        -- The active job types this suite's candidates use (Settings > Job Types).
+        INSERT INTO "job_type" ("code", "name") VALUES ('CAREGIVER_SEED', 'Caregiver') ON CONFLICT DO NOTHING;
         DELETE FROM "sheet_sync_queue";
     `);
 });

@@ -1,6 +1,7 @@
 import { businessDateOf } from "../utils/businessDay.js";
 import { CandidateError } from "./candidateService.js";
 import { FORM_ACCESS_STATUS } from "./candidateFormShareService.js";
+import { activeJobTypeNames, isNoPreference, NO_PREFERRED_JOB_TYPE } from "./jobTypeCatalog.js";
 
 // The Candidate Form's data on the server: the field list, the prefill from
 // the existing records, the immutable prefill snapshot, and the one-time
@@ -89,7 +90,9 @@ export const ANSWER_FIELDS = Object.freeze([
     ["contact", "email", "email", "email", { required: true }],
     ["passport", "issueDate", "passportIssueDate", "date", { required: true, notFuture: true }],
     ["passport", "expiryDate", "passportExpiryDate", "date", { required: true }],
-    ["qualifications", "jobCategory", "jobCategory", "code", { required: true, codes: JOB_CATEGORIES }],
+    // The choices are the ACTIVE job types (Settings > Job Types), "No Preferred Type"
+    // (stored as NO_PREFERENCE) and OTHER (then "Other Job Category" is required).
+    ["qualifications", "jobCategory", "jobCategory", "jobCategory", { required: true }],
     ["qualifications", "jobCategoryOther", "jobCategoryOther", "text", { max: MAX.text }],
     ["qualifications", "experience", "experience", "text", { required: true, max: MAX.long }],
     ["qualifications", "otherSkills1", "otherSkills1", "text", { required: true, max: MAX.text }],
@@ -138,8 +141,10 @@ const SEX_FROM_RECORD = Object.freeze({ M: "MALE", F: "FEMALE", X: "OTHER" });
 // what is on record is filled; everything else stays null. Mapping (design
 // doc, "Field mapping"): note that the core candidate's other_name is the
 // SURNAME and first_name the OTHER NAMES (candidateService.js).
-export function prefillFromRecords(candidate, details) {
-    const job = textOrNull(candidate.job)?.toUpperCase();
+// `jobCategories`: the active job type names (the form's choices): the record's job
+// type is prefilled only when it is exactly one of them (or "No Preferred Type").
+export function prefillFromRecords(candidate, details, jobCategories = JOB_CATEGORIES) {
+    const job = textOrNull(candidate.job);
     const marital = details?.maritalStatus;
     const skills = textOrNull(details?.otherJobSkills);
     return {
@@ -155,7 +160,7 @@ export function prefillFromRecords(candidate, details) {
         alternativePhone: textOrNull(candidate.contactNumber),
         passportIssueDate: candidate.passportIssueDate ?? null,
         passportExpiryDate: candidate.passportExpiryDate ?? null,
-        jobCategory: job && JOB_CATEGORIES.includes(job) ? job : null,
+        jobCategory: jobCategoryOf(job, jobCategories),
         experience: textOrNull(candidate.jobExperience),
         otherSkills1: skills && skills.length <= MAX.text ? skills : null,
         shirtSize: SHIRT_SIZES.includes(details?.tshirtSize) ? details.tshirtSize : null,
@@ -207,9 +212,10 @@ export async function loadCandidateForm({ db, passportId, linkId, now = new Date
             },
         });
         if (!candidate) throw new CandidateError(401, "VERIFICATION_REQUIRED", "Please verify your details again.");
+        const jobCategories = await activeJobTypeNames(tx);
         let snapshot = await tx.candidateFormPrefillSnapshot.findUnique({ where: { passportId }, select: SNAPSHOT_SELECT });
         if (!snapshot) {
-            snapshot = prefillFromRecords(candidate, candidate.additionalDetails);
+            snapshot = prefillFromRecords(candidate, candidate.additionalDetails, jobCategories);
             await tx.candidateFormPrefillSnapshot.create({ data: { passportId, ...snapshot, capturedAt: now, capturedViaLinkId: linkId } });
         }
         const { answers, prefilled } = groupedFrom(snapshot);
@@ -217,6 +223,8 @@ export async function loadCandidateForm({ db, passportId, linkId, now = new Date
             identity: { passportNumber: candidate.passportId, nic: candidate.nic, whatsappNumber: candidate.whatsappNumber ?? null },
             answers,
             prefilled,
+            // The job type choices: names only (never ids, status or anything staff-only).
+            jobCategories,
         };
     });
 }
@@ -224,6 +232,15 @@ export async function loadCandidateForm({ db, passportId, linkId, now = new Date
 // ---------------------------------------------------------------- submission
 
 const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+// A job category in the list's own spelling (matched without regard to letter case),
+// NO_PREFERENCE for "No Preferred Type", or null.
+function jobCategoryOf(value, choices) {
+    if (!value) return null;
+    if (isNoPreference(value)) return NO_PREFERRED_JOB_TYPE.code;
+    const key = value.trim().toLowerCase();
+    return choices.find((choice) => choice.toLowerCase() === key) ?? null;
+}
 const NIC_PATTERN = /^(\d{9}[VX]|\d{12})$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_PATTERN = /^\+?\d{9,15}$/;
@@ -252,7 +269,8 @@ function shapeErrors(answers) {
 
 // { values (snapshot/response columns), idempotencyKey } or { errors }.
 // The server's own rules; the form checks the same before sending.
-export function parseSubmission(body, { now = new Date() } = {}) {
+// `jobCategories`: the active job type names (the route reads them from job_type).
+export function parseSubmission(body, { now = new Date(), jobCategories = JOB_CATEGORIES } = {}) {
     if (!isObject(body)) return { errors: [{ field: "body", code: "invalid", message: "must be a JSON object" }] };
     const errors = [];
     for (const key of Object.keys(body)) {
@@ -300,6 +318,9 @@ export function parseSubmission(body, { now = new Date() } = {}) {
                 break;
             case "code":
                 values[column] = options.codes.includes(value) ? value : fail(path, "invalid", "is not one of the choices");
+                break;
+            case "jobCategory":
+                values[column] = jobCategoryOf(value, [...jobCategories, OTHER_JOB_CATEGORY]) ?? fail(path, "invalid", "is not one of the choices");
                 break;
             case "size":
                 values[column] = SIZE_PATTERN.test(value) ? toUpperEnglish(value) : fail(path, "invalid", "must be a short size");

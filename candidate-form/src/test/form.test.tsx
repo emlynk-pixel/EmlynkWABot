@@ -141,15 +141,15 @@ describe("sections and fields", () => {
         expect(passport).toHaveValue(PASSPORT);
     });
 
-    test("FORM-NEW-005 the job categories are exactly the required list, with OTHER last", async () => {
+    test("FORM-NEW-005 / DYNAMIC-JOB-TYPE-003 the job categories are the job types sent with the form, then No Preferred Type, with OTHER last", async () => {
         const { user } = await verified();
         await goToWork(user);
         const options = within(field("f.jobCategory")).getAllByRole("option").map((option) => (option as HTMLOptionElement).value).filter(Boolean);
         expect(options).toEqual([
             "PLASTER", "BLOCK MASON", "TILER", "SHUTTERING CARPENTER", "BARBENDER", "GYPSUM WORKER", "ALUMINIUM WORKER", "WELDER TIG", "WELDER MIG", "WELDER ARC",
-            "PLUMBER", "ELECTRICIAN", "JCB OPERATOR", "EXCAVATOR OPERATOR", "MOTOR GRADER OPERATOR", "BOBCAT OPERATOR", "WHEEL LOADER OPERATOR", "OTHER",
+            "PLUMBER", "ELECTRICIAN", "JCB OPERATOR", "EXCAVATOR OPERATOR", "MOTOR GRADER OPERATOR", "BOBCAT OPERATOR", "WHEEL LOADER OPERATOR", "NO_PREFERENCE", "OTHER",
         ]);
-        expect(options).toEqual([...JOB_CATEGORIES]);
+        expect(options).toEqual([...JOB_CATEGORIES.filter((code) => code !== "OTHER"), "NO_PREFERENCE", "OTHER"]);
     });
 
     test("FORM-NEW-006 / UPPER-005 OTHER opens a required Other Job Category, typed in capitals, sent only with OTHER", async () => {

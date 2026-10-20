@@ -1,7 +1,8 @@
-import type { Language, MessageKey } from "../../i18n/translations";
+import { TRANSLATIONS, type Language, type MessageKey } from "../../i18n/translations";
 import { useLanguage } from "../../i18n/useLanguage";
 import type { FormLoadResponse } from "../../types/api";
 import { showsOtherJobCategory, showsSpouse, type CandidateFormData } from "../model";
+import { jobCategoryLabel } from "../options";
 import { SECTIONS, type SectionId } from "../steps";
 import { valueAt } from "../validation";
 
@@ -9,7 +10,8 @@ import { valueAt } from "../validation";
 // candidate's own answers and their verified identity (from the record) are
 // shown: never the token or anything staff-only.
 
-type Row = { label: MessageKey; path: string; kind?: "date" | "code"; codePrefix?: string };
+// kind "jobCategory": a job type name or code, shown with jobCategoryLabel.
+type Row = { label: MessageKey; path: string; kind?: "date" | "code" | "jobCategory"; codePrefix?: string };
 
 function rowsFor(section: SectionId, data: CandidateFormData): Row[] {
     switch (section) {
@@ -37,7 +39,7 @@ function rowsFor(section: SectionId, data: CandidateFormData): Row[] {
             return [
                 { label: "f.passportIssueDate", path: "passport.issueDate", kind: "date" },
                 { label: "f.passportExpiryDate", path: "passport.expiryDate", kind: "date" },
-                { label: "f.jobCategory", path: "qualifications.jobCategory", kind: "code", codePrefix: "job." },
+                { label: "f.jobCategory", path: "qualifications.jobCategory", kind: "jobCategory" },
                 ...(showsOtherJobCategory(data) ? [{ label: "f.jobCategoryOther" as const, path: "qualifications.jobCategoryOther" }] : []),
                 { label: "f.experience", path: "qualifications.experience" },
                 { label: "f.otherSkills1", path: "qualifications.otherSkills1" },
@@ -96,6 +98,7 @@ export function ReviewStep({ data, identity, onEdit }: { data: CandidateFormData
         if (!value) return <span className="review-empty">{t("review.empty")}</span>;
         if (row.kind === "date") return formatDate(value, language);
         if (row.kind === "code") return t(`${row.codePrefix}${value}` as MessageKey);
+        if (row.kind === "jobCategory") return jobCategoryLabel(value, TRANSLATIONS[language]);
         return value;
     };
     return (

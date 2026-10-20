@@ -36,6 +36,8 @@ beforeEach(async () => {
         DELETE FROM "rate_limits"; DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter";
         DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent"; DELETE FROM "candidate_additional_details"; DELETE FROM "candidate_verification";
         DELETE FROM "documents"; DELETE FROM "candidate_call_logs"; DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
+        -- The active job types this suite's candidates use (Settings > Job Types).
+        INSERT INTO "job_type" ("code", "name") VALUES ('COOK_SEED', 'Cook') ON CONFLICT DO NOTHING; -- ("Welder" is created below)
     `);
     await prisma.candidate.createMany({ data: [{ passportId: P, uniqueId: "7001", firstName: "Nimal", otherName: "Perera", nic: "900000001V" }, { passportId: Q, uniqueId: "7002", firstName: "Kamal", otherName: "Silva", nic: "900000002V" }] });
     const jobType = await prisma.jobType.create({ data: { code: "WELDER", name: "Welder" } });

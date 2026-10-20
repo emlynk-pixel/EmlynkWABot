@@ -23,12 +23,14 @@ export const ACTIVE_RUN_POLL_MS = 5_000;
 //   /settings/roles       Change Roles  (AdminRolesPage, unchanged)
 //   /settings/invite      Invite User   (InvitationsPage, unchanged)
 //   /settings/sheet-sync  Google Sheet Sync
+//   /settings/job-types   Job Types     (JobTypesSettings)
 // /settings opens the first tab (App.tsx). Every tab is ADMIN only, like the
 // pages it holds. The old /roles and /invitations URLs redirect here.
 export const SETTINGS_TABS = [
     { to: "/settings/roles", label: "Change Roles" },
     { to: "/settings/invite", label: "Invite User" },
     { to: "/settings/sheet-sync", label: "Google Sheet Sync" },
+    { to: "/settings/job-types", label: "Job Types" },
 ] as const;
 
 const tabClass = ({ isActive }: { isActive: boolean }) =>

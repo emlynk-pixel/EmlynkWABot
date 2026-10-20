@@ -191,6 +191,7 @@ const en = {
     "job.MOTOR GRADER OPERATOR": "Motor grader operator",
     "job.BOBCAT OPERATOR": "Bobcat operator",
     "job.WHEEL LOADER OPERATOR": "Wheel loader operator",
+    "job.NO_PREFERENCE": "No Preferred Type",
     "job.OTHER": "Other",
 
     // Review
@@ -451,6 +452,7 @@ const si: Record<MessageKey, string> = {
     "job.MOTOR GRADER OPERATOR": "මෝටර් ග්‍රේඩර් ක්‍රියාකරු (MOTOR GRADER OPERATOR)",
     "job.BOBCAT OPERATOR": "බොබ්කැට් ක්‍රියාකරු (BOBCAT OPERATOR)",
     "job.WHEEL LOADER OPERATOR": "වීල් ලෝඩර් ක්‍රියාකරු (WHEEL LOADER OPERATOR)",
+    "job.NO_PREFERENCE": "කැමති රැකියා වර්ගයක් නැත (No Preferred Type)",
     "job.OTHER": "වෙනත්",
 
     "review.verifiedIdentity": "තහවුරු කළ අනන්‍යතාවය",

@@ -78,6 +78,22 @@ export const cancelJob = (token: string, jobId: string, reason: string) => apiRe
 // agents and clients are managed in Admin > Agents and Admin > Client Management).
 export const createJobType = (token: string, name: string) => apiRequest<{ id: string; name: string; code: string }>("/api/admin/job-types", { method: "POST", token, body: { name } });
 
+// "No Preferred Type": a system option for a CANDIDATE's preference (never a Job's
+// type). Stored as its code; shown with its label.
+export const NO_PREFERRED_JOB_TYPE = { code: "NO_PREFERENCE", label: "No Preferred Type" } as const;
+export const isNoPreference = (value: string) => [NO_PREFERRED_JOB_TYPE.code, NO_PREFERRED_JOB_TYPE.label.toUpperCase()].includes(value.trim().toUpperCase());
+export const jobTypeLabel = (value: string) => (isNoPreference(value) ? NO_PREFERRED_JOB_TYPE.label : value);
+
+// Settings > Job Types (ADMIN): every job type, active or not.
+export type ManagedJobType = { id: string; code: string; name: string; isActive: boolean; jobCount: number; createdAt: string; updatedAt: string };
+export type JobTypeList = { items: ManagedJobType[]; noPreference: { code: string; label: string } };
+export const listJobTypes = (token: string, signal?: AbortSignal) => apiRequest<JobTypeList>("/api/admin/job-types", { token, signal });
+export const updateJobType = (token: string, id: string, body: { name?: string; isActive?: boolean }) => apiRequest<ManagedJobType>(`/api/admin/job-types/${encodeURIComponent(id)}`, { method: "PATCH", token, body });
+
+// The candidate job type choices (registration, Candidate Details): active names + No Preferred Type.
+export type JobTypeChoices = { jobTypes: string[]; noPreference: { code: string; label: string } };
+export const getJobTypeChoices = (token: string, signal?: AbortSignal) => apiRequest<JobTypeChoices>("/api/admin/job-type-choices", { token, signal });
+
 // Candidate Form job-group link (src/services/candidateFormJobGroupService.js): ADMIN and MANAGER.
 // Bound to the job's immutable id on the server; the URL carries only an opaque secret.
 export type JobGroupShareStatus = {

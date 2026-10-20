@@ -47,6 +47,8 @@ beforeEach(async () => {
         DELETE FROM "candidate_form_response"; DELETE FROM "candidate_form_prefill_snapshot"; DELETE FROM "candidate_form_access"; DELETE FROM "candidate_form_link";
         DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
+        -- The active job types this suite's candidates use (Settings > Job Types).
+        INSERT INTO "job_type" ("code", "name") VALUES ('WELDER_TIG_SEED', 'WELDER TIG') ON CONFLICT DO NOTHING;
     `);
     await prisma.candidate.createMany({ data: [A, B, C3, D] });
     // Only a candidate who passed the test can be assigned to a job (jobAssignmentTestPass.test.js).

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { App } from "../App";
 import { emptyForm, toPayload } from "../form/model";
+import { JOB_CATEGORIES } from "../form/options";
 import { TRANSLATIONS, type MessageKey } from "../i18n/translations";
 import type { CandidateFormPayload, FormLoadResponse } from "../types/api";
 
@@ -34,7 +35,8 @@ export function prefill(overrides: (p: CandidateFormPayload) => void = () => {})
     overrides(answers);
     const prefilled = [["basic", answers.basic], ["contact", answers.contact], ["passport", answers.passport]]
         .flatMap(([group, values]) => Object.entries(values as Record<string, string | null>).filter(([, v]) => v !== null).map(([k]) => `${group}.${k}`));
-    return { identity: IDENTITY, answers, prefilled, expiresAt: inMinutes(60) };
+    // The active job types the server sends with the form (here the seeded trades).
+    return { identity: IDENTITY, answers, prefilled, jobCategories: JOB_CATEGORIES.filter((code) => code !== "OTHER"), expiresAt: inMinutes(60) };
 }
 
 export type Reply = { status: number; body?: unknown } | "network";
