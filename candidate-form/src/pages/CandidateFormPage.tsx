@@ -218,6 +218,8 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
                 <p className="success" role="status"><span aria-hidden="true">✓ </span>{t("form.verifiedBanner")}</p>
                 <h1>{t("form.title")}</h1>
                 <p className="lead">{t("form.intro")}</p>
+                {/* Said once, at the top: every answer is required, "N/A" only where it is allowed. */}
+                <p className="notice" id="form-all-required">{t("form.allRequired")}</p>
                 {prefilled.size > 0 && <p className="notice subtle">{t("form.prefilledBanner")}</p>}
             </div>
 

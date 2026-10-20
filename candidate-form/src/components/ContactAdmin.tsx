@@ -18,16 +18,23 @@ export function ContactAdmin({ compact = false }: { compact?: boolean }) {
                 <p className="contact-title">{translate("si", "contact.title")}</p>
                 <p className="contact-text">{translate("si", "contact.text")}</p>
             </div>
-            {numbers.length > 0 && (
-                <div className="contact-numbers">
-                    <p className="contact-numbers-heading">Admin Contact Numbers</p>
-                    <div className="contact-numbers-list">
-                        {numbers.map((number, idx) => (
-                            <p key={`${number}-${idx}`} className="contact-number">{number}</p>
-                        ))}
-                    </div>
-                </div>
-            )}
+            <AdminContactNumbers numbers={numbers} heading="Admin Contact Numbers" />
+        </div>
+    );
+}
+
+// The configured admin numbers (VITE_API_ADMIN_MOBILE_NUMBERS), shown as plain
+// text: no call or WhatsApp link. Nothing at all when none are configured.
+export function AdminContactNumbers({ numbers, heading }: { numbers: readonly string[]; heading: React.ReactNode }) {
+    if (numbers.length === 0) return null;
+    return (
+        <div className="contact-numbers">
+            <p className="contact-numbers-heading">{heading}</p>
+            <div className="contact-numbers-list">
+                {numbers.map((number, idx) => (
+                    <p key={`${number}-${idx}`} className="contact-number">{number}</p>
+                ))}
+            </div>
         </div>
     );
 }

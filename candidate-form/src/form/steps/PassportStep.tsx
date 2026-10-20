@@ -21,8 +21,8 @@ export function PassportStep(props: StepProps & { passportNumber: string }) {
                 <div className="span-2">
                     <VerifiedValue id="passport-number" label={t("f.passportNumber")} value={props.passportNumber} />
                 </div>
-                <DateInput {...bind(props, "passport.issueDate")} label={t("f.passportIssueDate")} required min={EARLIEST_DATE} max={today} />
-                <DateInput {...bind(props, "passport.expiryDate")} label={t("f.passportExpiryDate")} required min={EARLIEST_DATE} max={LATEST_EXPIRY_DATE} />
+                <DateInput {...bind(props, "passport.issueDate")} label={t("f.passportIssueDate")} min={EARLIEST_DATE} max={today} />
+                <DateInput {...bind(props, "passport.expiryDate")} label={t("f.passportExpiryDate")} min={EARLIEST_DATE} max={LATEST_EXPIRY_DATE} />
             </div>
             <FormSection title={t("section.work")}>
                 <div className="field-grid">
@@ -30,23 +30,21 @@ export function PassportStep(props: StepProps & { passportNumber: string }) {
                         {...bind(props, "qualifications.jobCategory")}
                         label={t("f.jobCategory")}
                         help={t("help.jobCategory")}
-                        required
                         options={codes.map((code) => ({ value: code, label: t(`job.${code}` as MessageKey) }))}
                     />
                     {showsOtherJobCategory(props.data) && (
-                        <TextInput {...bind(props, "qualifications.jobCategoryOther")} label={t("f.jobCategoryOther")} required uppercase maxLength={MAX_LENGTH.text} />
+                        <TextInput {...bind(props, "qualifications.jobCategoryOther")} label={t("f.jobCategoryOther")} uppercase maxLength={MAX_LENGTH.text} />
                     )}
                     <div className="span-2">
-                        <TextArea {...bind(props, "qualifications.experience")} label={t("f.experience")} uppercase maxLength={MAX_LENGTH.long} rows={3} />
+                        <TextArea {...bind(props, "qualifications.experience")} label={t("f.experience")} hint={t("hint.na")} uppercase maxLength={MAX_LENGTH.long} rows={3} />
                     </div>
-                    <TextInput {...bind(props, "qualifications.otherSkills1")} label={t("f.otherSkills1")} uppercase maxLength={MAX_LENGTH.text} />
-                    <TextInput {...bind(props, "qualifications.otherSkills2")} label={t("f.otherSkills2")} uppercase maxLength={MAX_LENGTH.text} />
+                    <TextInput {...bind(props, "qualifications.otherSkills1")} label={t("f.otherSkills1")} hint={t("hint.na")} uppercase maxLength={MAX_LENGTH.text} />
+                    <TextInput {...bind(props, "qualifications.otherSkills2")} label={t("f.otherSkills2")} hint={t("hint.na")} uppercase maxLength={MAX_LENGTH.text} />
                 </div>
                 <ChoiceCards
                     {...bind(props, "qualifications.englishKnowledge")}
                     label={t("f.englishKnowledge")}
                     help={t("help.englishKnowledge")}
-                    required
                     options={ENGLISH_LEVELS.map((code) => ({ value: code, label: t(`english.${code}`) }))}
                 />
             </FormSection>

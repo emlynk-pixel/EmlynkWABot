@@ -4,7 +4,7 @@ import { useState } from "react";
 import { describe, expect, test, vi } from "vitest";
 import { DatePicker, formatDay, parseDay, type DatePickerLabels } from "../components/DatePicker";
 import styles from "../styles.css?raw";
-import { en, field, setField, si, startsWith, switchLanguage, verified } from "./helpers";
+import { en, field, fillBasic, fillContact, setField, si, startsWith, switchLanguage, verified } from "./helpers";
 
 // The calendar date picker: a text field (YYYY-MM-DD) plus a calendar. The value is always a
 // date-only string. Unit tests use the component directly; the integration tests use the real form.
@@ -194,14 +194,8 @@ describe("Date fields in the Candidate Form", () => {
     test("every date field of the form is a calendar field with a labelled button (birth, passport, father, mother, spouse, guardian)", async () => {
         const { user } = await verified();
         expect(screen.getAllByRole("button", { name: en("date.openCalendar") })).toHaveLength(1); // Personal Details: birth date
-        setField("f.fullName", "shamal");
-        setField("f.surname", "sathsara");
-        setField("f.civilStatus", "MARRIED");
-        setField("f.birthDate", "1990-05-01");
-        setField("f.address", "12 main street");
-        setField("f.district", "colombo");
-        setField("f.dsDivision", "kolonnawa");
-        setField("f.email", "shamal@example.com");
+        fillBasic("MARRIED");
+        fillContact();
         await user.click(screen.getByRole("button", { name: en("form.next") }));
         // Passport issue + expiry, father, mother, spouse (Married), guardian: six.
         expect(await screen.findAllByRole("button", { name: en("date.openCalendar") })).toHaveLength(6);

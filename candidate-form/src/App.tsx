@@ -9,6 +9,7 @@ import type { MessageKey } from "./i18n/translations";
 import { LanguageProvider } from "./i18n/LanguageContext";
 import { useLanguage, type Message } from "./i18n/useLanguage";
 import { CandidateFormPage } from "./pages/CandidateFormPage";
+import { GuidelinesPage } from "./pages/GuidelinesPage";
 import { VerifyPage } from "./pages/VerifyPage";
 import { getLinkSecret } from "./session/linkSecret";
 import { clearSession, getSession } from "./session/tokenStore";
@@ -20,6 +21,9 @@ type View =
     | { name: "verify"; notice?: Message }
     | { name: "loading" }
     | { name: "loadFailed" }
+    // "Before you start": after verification AND a successful form load (so an already
+    // submitted candidate, answered 409 by the server, never gets here).
+    | { name: "guidelines"; expiresAt: string; form: FormLoadResponse }
     | { name: "form"; expiresAt: string; form: FormLoadResponse }
     | { name: "submitted"; justNow: boolean };
 
@@ -81,7 +85,7 @@ function CandidateForm() {
         setView({ name: "loading" });
         try {
             const form = await loadCandidateForm(session.token);
-            setView({ name: "form", expiresAt, form });
+            setView({ name: "guidelines", expiresAt, form });
         } catch (error) {
             if (error instanceof ApiError && error.status === 409) alreadySubmitted();
             else if (error instanceof ApiError && error.status === 401) sessionEnded();
@@ -105,6 +109,17 @@ function CandidateForm() {
             <StatusScreen title="form.loadFailedTitle" text="form.loadFailedText" tone="error">
                 <button type="button" className="primary" onClick={() => void load(new Date(getSession()?.expiresAt ?? Date.now()).toISOString())}>{t("form.retry")}</button>
             </StatusScreen>
+        );
+    } else if (view.name === "guidelines") {
+        const { expiresAt, form } = view;
+        page = (
+            <GuidelinesPage
+                onContinue={() => {
+                    // Only a live session continues; the form page re-checks it too.
+                    if (!getSession()) sessionEnded();
+                    else setView({ name: "form", expiresAt, form });
+                }}
+            />
         );
     } else if (view.name === "submitted") {
         page = view.justNow

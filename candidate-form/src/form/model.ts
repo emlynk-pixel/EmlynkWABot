@@ -100,6 +100,17 @@ export const emptyForm = (): CandidateFormData => ({
     guardian: { name: "", relationship: "", nic: "", birthDate: "", phone: "", address: "" },
 });
 
+// "N/A" (any letter case: n/a, N/a, n/A) is an answer of its own for the fields
+// that allow it (validation.ts NOT_APPLICABLE_FIELDS); it is sent as "N/A".
+export const NOT_APPLICABLE = "N/A";
+export const isNotApplicable = (value: string) => /^n\/a$/i.test(value.trim());
+// A trimmed answer, "N/A" in one spelling, or null when blank.
+const answer = (value: string): string | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    return isNotApplicable(trimmed) ? NOT_APPLICABLE : trimmed;
+};
+
 // Spouse details only go with Married.
 export const showsSpouse = (data: CandidateFormData) => data.basic.civilStatus === "MARRIED";
 // "Other Job Category" only goes with OTHER.
@@ -128,28 +139,28 @@ export function fromPayload(payload: CandidateFormPayload): CandidateFormData {
     };
 }
 
-// What is sent on submit (POST /submit). Blanks become null.
+// What is sent on submit (POST /submit). Blanks become null; "n/a" becomes "N/A".
 // Hidden entries are kept in the form (switching Civil Status back shows the
 // spouse again) but are never sent: no spouse unless Married, no "Other Job
 // Category" unless OTHER is chosen.
 export function toPayload(data: CandidateFormData): CandidateFormPayload {
     const clean = <T extends Record<string, string>>(group: T) =>
-        Object.fromEntries(Object.entries(group).map(([key, value]) => [key, value.trim() || null])) as { [K in keyof T]: string | null };
+        Object.fromEntries(Object.entries(group).map(([key, value]) => [key, answer(value)])) as { [K in keyof T]: string | null };
     const person = (value: Person) => clean(value);
     const nobody = { name: null, surname: null, passportNumber: null, birthDate: null };
     return {
         basic: clean(data.basic),
         contact: clean(data.contact),
         passport: clean(data.passport),
-        qualifications: { ...clean(data.qualifications), jobCategoryOther: showsOtherJobCategory(data) ? data.qualifications.jobCategoryOther.trim() || null : null },
+        qualifications: { ...clean(data.qualifications), jobCategoryOther: showsOtherJobCategory(data) ? answer(data.qualifications.jobCategoryOther) : null },
         measurements: clean(data.measurements),
         family: {
             father: person(data.family.father),
             mother: person(data.family.mother),
             spouse: showsSpouse(data) ? person(data.family.spouse) : nobody,
-            child1: data.family.child1.trim() || null,
-            child2: data.family.child2.trim() || null,
-            child3: data.family.child3.trim() || null,
+            child1: answer(data.family.child1),
+            child2: answer(data.family.child2),
+            child3: answer(data.family.child3),
         },
         guardian: clean(data.guardian),
     };

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 import { CandidateError } from "./candidateService.js";
-import { ANSWER_FIELDS } from "./candidateFormDataService.js";
+import { ANSWER_FIELDS, isNotApplicable } from "./candidateFormDataService.js";
 import { normalizePhoneNumber } from "../utils/phoneNumber.js";
 
 // Per-field "Confirm candidate change" (Admin > Candidate Details).
@@ -119,6 +119,9 @@ export function pendingChange(field, { candidate, details, submitted }) {
     const mapping = CONFIRMABLE_FIELDS[field];
     const raw = submitted?.[field];
     if (!mapping || raw === null || raw === undefined || String(raw).trim() === "") return null;
+    // "N/A" means "does not apply": it is never offered as a value for the record (it
+    // would otherwise be written into e.g. the candidate's other names or job experience).
+    if (isNotApplicable(String(raw))) return null;
     const proposed = mapping.toDb(raw);
     if (proposed.error) return null;
     const stored = (mapping.table === "candidate" ? candidate : details)?.[mapping.column] ?? null;

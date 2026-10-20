@@ -29,7 +29,9 @@
     --focus: #1d4ed8;
     --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 16px rgba(16, 24, 40, 0.06);
     /* Sinhala needs a font that has it: Windows, Android and Apple each ship one. */
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Sinhala", "Iskoola Pota", "Nirmala UI", "Sinhala Sangam MN", sans-serif;
+    /* "Emlynk Sinhala" (below) covers only Sinhala characters, so English keeps the
+       system font; the installed Sinhala fonts stay as fallbacks if it cannot load. */
+    font-family: "Emlynk Sinhala", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Sinhala", "Iskoola Pota", "Nirmala UI", "Sinhala Sangam MN", sans-serif;
     font-size: 16px;
     line-height: 1.55;
     color: var(--ink);
@@ -73,6 +75,20 @@ body { margin: 0; background: var(--bg); color: var(--ink); }
    may break anywhere. */
 p, label, legend, h1, h2, h3, h4, dt, li { overflow-wrap: break-word; }
 dd, input { overflow-wrap: anywhere; }
+
+/* Sinhala: Noto Sans Sinhala (Google Fonts, SIL Open Font License 1.1: static/fonts/OFL.txt),
+   self-hosted so the page's font-src 'self' policy holds and no candidate request goes to a
+   third party. Variable weight 400-700 (one file). unicode-range = Google's Sinhala subset,
+   so the file downloads only when Sinhala text is on the page; swap shows text at once. */
+@font-face {
+    font-family: "Emlynk Sinhala";
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url("/fonts/noto-sans-sinhala-sinhala-400-700.woff2") format("woff2");
+    unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+:lang(si), [lang="si"] { line-height: 1.6; }
 
 .visually-hidden {
     position: absolute;
@@ -459,6 +475,30 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 .contact-compact .contact-numbers-heading { font-size: 0.875rem; }
 .contact-compact .contact-number { font-size: 0.9375rem; }
 
+/* "Before you start": English and Sinhala together, a numbered list, one warning, the numbers. */
+.guidelines h1 { display: flex; flex-direction: column; gap: 2px; }
+.guidelines h1:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
+.guidelines-title-si { font-size: 1.125rem; color: var(--muted); }
+.guidelines-intro p { margin: 0; color: var(--muted); }
+.guidelines-intro { margin-bottom: 16px; }
+.guidelines-list { margin: 0 0 16px; padding-left: 1.5em; display: flex; flex-direction: column; gap: 12px; }
+.guidelines-list li p { margin: 0; }
+.guidelines-list li p[lang="si"], .guidelines-intro p[lang="si"], .guidelines-warning p[lang="si"] { margin-top: 2px; color: var(--muted); font-size: 0.9375rem; }
+.guidelines-warning {
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--important);
+    border-left-width: 4px;
+    border-radius: 10px;
+    background: var(--important-soft);
+}
+.guidelines-warning p { margin: 0; }
+.guidelines-warning-title { font-weight: 700; color: var(--important); margin-bottom: 4px !important; }
+.guidelines-warning-title span[lang="si"]::before { content: " / "; }
+.guidelines .contact-numbers { margin: 0 0 16px; }
+.guidelines-continue { display: flex !important; flex-direction: column; align-items: center; gap: 2px; }
+.guidelines-continue-si { font-weight: 500; font-size: 0.9375rem; }
+
 /* ---------- buttons ---------- */
 
 button.primary, button.secondary {
@@ -475,6 +515,27 @@ button.primary { border: 0; background: var(--primary); color: var(--primary-ink
 button.primary:hover:not(:disabled) { background: var(--primary-hover); }
 button.secondary { border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); }
 button:disabled { opacity: 0.6; cursor: default; }
+
+/* Size guides (shirt, shoe): a link under the field and a compact panel below it. */
+.size-guide { margin-top: 4px; }
+.size-guide-panel {
+    margin-top: 6px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--notice-soft);
+    font-size: 0.9375rem;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+.size-guide-title { margin: 0 0 8px; font-weight: 700; }
+.size-guide-note { margin: 8px 0 4px; color: var(--muted); font-size: 0.875rem; }
+.size-guide-table { width: 100%; max-width: 320px; border-collapse: collapse; }
+.size-guide-table th, .size-guide-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+.size-guide-list { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; }
+.size-guide-list div { display: flex; gap: 8px; }
+.size-guide-list dt { font-weight: 700; min-width: 36px; }
+.size-guide-list dd { margin: 0; }
 
 .link-button {
     min-height: 32px;

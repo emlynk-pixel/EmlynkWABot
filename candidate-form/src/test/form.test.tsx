@@ -7,7 +7,7 @@ import { toUpperEnglish } from "../form/uppercase";
 import { validateForm } from "../form/validation";
 import styles from "../styles.css?raw";
 import {
-    callsTo, completeToReview, en, field, NIC, fillBasic, fillContact, fillGuardian, fillPassport, next, PASSPORT, queryField, setField, si, startsWith,
+    callsTo, completeToReview, en, field, NIC, fillBasic, fillContact, fillFamily, fillGuardian, fillMeasurements, fillPassport, next, PASSPORT, queryField, setField, si, startsWith,
     sectionHeading, stepHeading, switchLanguage, verified, WHATSAPP, type User,
 } from "./helpers";
 
@@ -209,12 +209,18 @@ describe("family", () => {
         expect(toPayload(single).family.spouse.name).toBe("KUMARI");
     });
 
-    test("the family section is marked important; children are optional", async () => {
+    test("the family section is marked important; Child 1 is required (N/A for none), later children only after a real one", async () => {
         const { user } = await verified();
         await goToWork(user);
         expect(sectionHeading("step.family")).toHaveTextContent(en("form.important"));
         expect(screen.getByText(en("family.childrenNote"))).toBeInTheDocument();
-        expect(field("f.child1")).not.toBeRequired();
+        expect(field("f.child1")).toBeRequired();
+        expect(field("f.child2")).not.toBeRequired();
+        setField("f.child1", "nimal");
+        expect(field("f.child2")).toBeRequired();
+        expect(field("f.child3")).not.toBeRequired();
+        setField("f.child2", "N/A");
+        expect(field("f.child3")).not.toBeRequired();
         expect(sectionHeading("step.guardian")).toBeInTheDocument();
     });
 });
@@ -225,13 +231,15 @@ describe("validation", () => {
         await next(user);
         expect(stepHeading("step.personal")).toBeInTheDocument();
         expect(screen.getByText(en("form.fixErrors"))).toBeInTheDocument();
-        // Full name, civil status, birth date, address, district, DS division and email (the prefill has the surname, other names and sex).
-        expect(screen.getAllByText(en("v.required"))).toHaveLength(7);
+        // Every answer is required: full name, civil status, birth date, birth place, and all seven
+        // contact answers (address, city, district, DS and GN division, alternative number, email).
+        // The prefill has the surname, other names and sex.
+        expect(screen.getAllByText(en("v.required"))).toHaveLength(11);
         expect(field("f.fullName")).toHaveAttribute("aria-invalid", "true");
         expect(field("f.email")).toHaveAttribute("aria-invalid", "true");
         await waitFor(() => expect(field("f.fullName")).toHaveFocus());
         fillBasic();
-        expect(screen.getAllByText(en("v.required"))).toHaveLength(4); // the contact ones remain
+        expect(screen.getAllByText(en("v.required"))).toHaveLength(7); // the contact ones remain
         fillContact();
         expect(screen.queryByText(en("v.required"))).toBeNull();
         await next(user);
@@ -246,10 +254,14 @@ describe("validation", () => {
         fillContact();
         await next(user);
         await fillPassport(user);
+        await next(user); // the measurements come next in page order
+        await waitFor(() => expect(field("f.shirtSize")).toHaveFocus());
+        fillMeasurements();
+        fillFamily();
         await next(user); // only the Guardian answers are missing
         expect(stepHeading("step.work")).toBeInTheDocument();
         await waitFor(() => expect(field("f.guardianName")).toHaveFocus());
-        expect(screen.getAllByText(en("v.required"))).toHaveLength(4);
+        expect(screen.getAllByText(en("v.required"))).toHaveLength(6);
     });
 
     test("formats: email, phone, dates, passport expiry after issue", async () => {
@@ -265,7 +277,7 @@ describe("validation", () => {
         expect(screen.getByText(en("v.emailInvalid"))).toBeInTheDocument();
         expect(screen.getByText(en("v.phoneInvalid"))).toBeInTheDocument();
         setField("f.email", "a@b.lk");
-        setField("f.alternativePhone", "");
+        setField("f.alternativePhone", "N/A");
         await next(user);
         await fillPassport(user);
         fillGuardian();
@@ -280,16 +292,17 @@ describe("validation", () => {
         expect(sectionHeading("step.guardian")).toBeInTheDocument();
         await fillPassport(user);
         await next(user);
-        for (const key of ["f.guardianName", "f.guardianNic", "f.guardianPhone", "f.guardianAddress"] as const) {
+        for (const key of ["f.guardianName", "f.guardianRelationship", "f.guardianNic", "f.guardianBirthDate", "f.guardianPhone", "f.guardianAddress"] as const) {
             expect(field(key), key).toHaveAttribute("aria-invalid", "true");
             expect(field(key)).toHaveAccessibleDescription(new RegExp(en("v.required")));
         }
-        expect(field("f.guardianRelationship")).not.toHaveAttribute("aria-invalid");
         setField("f.guardianNic", "abc");
         setField("f.guardianPhone", "phone");
         expect(screen.getByText(en("v.nicInvalid"))).toBeInTheDocument();
         expect(screen.getByText(en("v.phoneInvalid"))).toBeInTheDocument();
         fillGuardian();
+        fillMeasurements();
+        fillFamily();
         await next(user);
         expect(stepHeading("step.review")).toBeInTheDocument();
     });
@@ -302,7 +315,9 @@ describe("validation", () => {
         await user.selectOptions(field("f.civilStatus"), "MARRIED");
         await next(user);
         expect(field("f.spouseName")).toBeInTheDocument();
-        expect(field("f.spouseName")).not.toBeRequired();
+        // Shown (Married) = required, like every shown answer.
+        expect(field("f.spouseName")).toBeRequired();
+        expect(field("f.spouseBirthDate")).toBeRequired();
     });
 
     test("STEP-011 LANG validation messages and step text follow the language without losing answers", async () => {
@@ -517,7 +532,7 @@ describe("accessibility and layout", () => {
                 await next(user);
             }
         }
-        expect(screen.getByRole("progressbar")).toHaveAccessibleName(/^\d+ of 17 required answers completed$/);
+        expect(screen.getByRole("progressbar")).toHaveAccessibleName(/^\d+ of 39 required answers completed$/);
         expect(screen.getByRole("navigation", { name: en("form.sections") })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: en("step.work") })).toHaveAttribute("aria-current", "step");
     });
