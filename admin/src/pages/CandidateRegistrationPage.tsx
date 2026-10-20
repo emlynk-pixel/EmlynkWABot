@@ -174,7 +174,8 @@ export function CandidateRegistrationPage() {
             if (found) return;
         }
 
-        const found = validateDetails(details);
+        // A NEW candidate: only the six registration fields are needed now.
+        const found = validateDetails(details, "registration", { initial: true });
         if (!isPassportId(normalizedId)) found.passportId = "Enter the passport number (6 to 9 letters and digits).";
         setErrors(found);
         if (Object.keys(found).length) return;
@@ -264,6 +265,7 @@ export function CandidateRegistrationPage() {
                                 ? { value: passportId, hint }
                                 : { value: passportId, onChange: changePassportId, onBlur: () => void runLookup(passportId), error: errors.passportId, hint }}
                             whatsappLocked={Boolean(existing?.candidate.whatsappNumber)}
+                            initialRegistration={!existing}
                         />
                     </div>
                     {existing ? (

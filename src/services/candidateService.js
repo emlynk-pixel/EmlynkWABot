@@ -224,14 +224,19 @@ export function parseCandidateBody(body, { creating }) {
     values.firstName = text(body, "otherNames", errors, { required: true, max: MAX_NAME_LENGTH });
     // Optional, everywhere (registration, saving details, completing Candidate Details).
     values.address = text(body, "address", errors, { max: MAX_ADDRESS_LENGTH });
-    values.jobExperience = text(body, "jobExperience", errors, { required: true });
-    // Optional passport and contact details: empty is stored as NULL. The
-    // passport's issue and expiry dates are required (and count toward
-    // completing Candidate Details); older records without them still load.
+    // Initial registration (creating) needs only surname, other names, NIC,
+    // passport ID, job type and WhatsApp number; job experience and the
+    // passport's issue and expiry dates may come later. Saving Candidate
+    // Details still requires them, and Candidate Details only completes once
+    // they are on record (automaticStageMissing). A value that is given is
+    // always checked.
+    values.jobExperience = text(body, "jobExperience", errors, { required: !creating });
+    // Optional passport and contact details: empty is stored as NULL. Older
+    // records without the passport dates still load.
     values.placeOfBirth = text(body, "placeOfBirth", errors, { max: MAX_NAME_LENGTH });
     values.dateOfBirth = date(body, "dateOfBirth", errors);
-    values.passportExpiryDate = date(body, "passportExpiryDate", errors, { required: true });
-    values.passportIssueDate = date(body, "passportIssueDate", errors, { required: true });
+    values.passportExpiryDate = date(body, "passportExpiryDate", errors, { required: !creating });
+    values.passportIssueDate = date(body, "passportIssueDate", errors, { required: !creating });
     if (values.passportIssueDate && values.passportExpiryDate && values.passportIssueDate >= values.passportExpiryDate) {
         errors.push({ field: "passportIssueDate", message: "must be before the passport expiry date" });
     }
