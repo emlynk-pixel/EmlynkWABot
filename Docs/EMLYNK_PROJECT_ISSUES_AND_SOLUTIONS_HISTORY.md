@@ -2699,6 +2699,330 @@ The shared database was brought into the exact target architectural state:
 
 ---
 
+# 47E. Candidate Form and Dev Reconciliation (Client Architecture vs. Legacy Company)
+
+**Date / Phase**: October 2026 / Feature Reconciliation & Merge into `dev`
+
+### Problem
+During parallel development, the Candidate Form branch (`version/candidate-extra-details-form`) was branched from an earlier commit that still referenced the legacy `Company` entity and `job.company_id`. While the candidate form was being developed and hardened, the main active development branch (`dev`) merged the new `Client` management architecture (`version/client-management`), which renamed the `company` table to `client`, introduced the `agent` commercial partner entity, and updated job foreign keys from `company_id` to `client_id`.
+
+### Symptoms & Conflict
+When preparing to integrate the Candidate Form feature stream into `dev`, significant architectural divergence and relational conflicts occurred:
+1. `candidate-form` and backend job-group services referenced `job.company` and `job.company_id`.
+2. Prisma schema on `dev` modeled `client` and `job.client_id`, with no `company` model.
+3. Database migrations diverged on how external job references (`company_job_id` / Client Job ID) were introduced.
+
+### Root Cause
+Parallel development without periodic rebase synchronization against `dev`. The Candidate Form group link feature had introduced `candidate_form_link.job_id` referencing `job(id)` and `job.company_job_id` alongside legacy `company_id`. Concurrently, `dev` refactored the entire employer domain to `Client`.
+
+### Resolution
+The `version/candidate-extra-details-form` branch was reconciled with `dev` across integration commits (`c53b8ff` and `fab7ddc`):
+1. **Model & Relation Alignment**: Updated `jobAssignmentReader.js`, `candidateFormJobGroupService.js`, and associated test suites to use `job.client` and `client_id`, retiring all remaining references to the obsolete `company` entity.
+2. **Schema & Migration Harmonization**: Adjusted the Candidate Form relations so `candidate_form_link.job_id` links directly to `job.id` (UUID), maintaining relational integrity with the updated `job` model.
+3. **Comprehensive Verification**: Ran the full backend test suite (1690+ passing tests) and Admin suite (526+ passing tests) on the reconciled branch before merging cleanly into `dev` (`ea89273`).
+
+### Prevention & Lesson
+Long-lived feature branches must be periodically rebased or merged with `dev` to detect relational model refactorings early, preventing painful end-of-release merge collisions.
+
+---
+
+# 47F. Preserving Applied Migrations and the Bridge / Reconciliation Strategy
+
+**Date / Phase**: October 2026 / Multi-Branch Database Coordination
+
+### Problem
+In shared staging environments (e.g., Supabase), migrations that have already been applied cannot be edited or retroactively removed without causing checksum failures in Prisma's `_prisma_migrations` ledger.
+
+### Symptoms
+When running `npx prisma migrate deploy`, Prisma checks the SHA-256 hash of each local migration file against the `checksum` column in `_prisma_migrations`. If a developer retroactively modifies an applied migration file:
+```text
+Error: P3009
+The migration `20261018130000_job_company_id_and_form_job_group` was modified after it was applied.
+```
+Furthermore, because `version/candidate-extra-details-form` had applied `20261018130000_...` on the shared database, a branch built from `dev` first (which ran `20261019120000_client_management` first) had a different schema state than the shared database.
+
+### Root Cause
+Altering applied migrations violates Prisma's append-only migration ledger. Different branches had applied conflicting DDL operations on the shared database during independent testing cycles.
+
+### Resolution
+Rather than editing historical migration files or performing destructive database resets, the team implemented a forward-only **Bridge and Reconciliation Migration Strategy**:
+1. **`20261018125900_bridge_dev_first_company_job_id`**:
+   - A defensive bridge migration inserted into the timeline immediately before `20261018130000`.
+   - Uses a conditional PL/pgSQL `DO $$` block that executes **only** on a database built from `dev` first (where `company_job_id` exists, `company_id` does not, and `candidate_form_link.job_id` does not).
+   - In that specific state, it temporarily parks existing `company_job_id` values into `company_job_id_reconcile`, drops conflicting constraints/indexes, and creates a temporary `company_id` column so `20261018130000` can execute byte-identically.
+   - On the shared database and on clean databases, it performs a complete no-op.
+2. **`20261023120000_reconcile_job_company_job_id`**:
+   - A forward-only completion migration that executes after both branch streams have run.
+   - Restores the parked `company_job_id_reconcile` values back into `company_job_id`.
+   - Cleans up temporary columns and establishes the definitive unique index `("client_id", "company_job_id")`.
+   - Performs a no-op on databases where the bridge was not activated.
+
+### Prevention & Lesson
+Never edit an applied migration file. Always resolve multi-branch schema divergences using forward-only, idempotent migrations with defensive PL/pgSQL guards (`IF EXISTS`, `IF NOT EXISTS`).
+
+---
+
+# 47G. Candidate Form Security Hardening and Concurrency Controls
+
+**Date / Phase**: October 2026 / Security Audit & Candidate Form Release Hardening
+
+### Problem
+Public-facing web forms are vulnerable to identity enumeration, link brute forcing, race conditions during link creation, and replay/duplicate submissions.
+
+### Symptoms
+Early prototypes:
+- Used knowledge-only factors (Passport Number + WhatsApp), both of which could be acquired or guessed.
+- Lacked row-level concurrency locking on access states, allowing simultaneous administrative clicks to generate orphaned or conflicting links.
+- Could theoretically permit duplicate submissions or race conditions if a candidate double-clicked submit.
+
+### Root Cause
+Public endpoints cannot rely on staff authentication or trusted browser sessions. They require strict defense-in-depth at the cryptographic, database, and application layers.
+
+### Resolution
+Implemented comprehensive security hardening across the candidate form architecture:
+1. **Fragment Secret Delivery**: Links deliver a 256-bit CSPRNG token (`crypto.randomBytes(32)` in base64url) in the URL fragment (`/#k=<secret>`). Fragments are never sent to servers in HTTP requests, keeping secrets out of access logs, proxy logs, and `Referer` headers.
+2. **SHA-256 Stored Hashes**: Only the SHA-256 hash of the secret is stored in `candidate_form_link.token_hash`. Plaintext secrets can never be read back.
+3. **Two-Factor Candidate Verification**: Unlocking requires possessing the link secret plus verifying **Passport Number + NIC Number**.
+4. **Database Row Locks (`FOR UPDATE`)**:
+   - `lockAccessRow(tx, passportId)` serializes link creation and revocation using `SELECT ... FOR UPDATE` on `candidate_form_access`.
+   - `lockProcessingJob(tx, jobId)` serializes job-group link generation and ensures the job is actively in `PROCESSING` status.
+5. **State Machine Concurrency**: Form access strictly follows `LOCKED -> UNLOCKED -> SUBMITTED`. Every state transition increments `version`, instantly invalidating any prior sessions.
+6. **Isolated Storage & Idempotent Submission**: Candidate answers are stored in an append-only `candidate_form_response` table (never directly updating the canonical candidate record). Re-submitting with the same idempotency key returns 200 without creating duplicate response rows.
+7. **Job-Group Live Membership**: Job-group links (`JOB_GROUP`) bind to the immutable `job.id` UUID. Membership is evaluated live against active `job_candidate` records where job status is `PROCESSING`. Cross-job candidates are rejected.
+
+### Prevention & Lesson
+Never allow public endpoints to directly write canonical business tables. Always use fragment-based secrets, constant-time verification, strict database row locks, and immutable response staging tables.
+
+---
+
+# 47H. Candidate Form Contact Admin State and Public Contact Hardening
+
+**Date / Phase**: October 2026 / Public UI Security & Contact Architecture
+
+### Problem
+When candidates encounter terminal access errors (e.g., link expired, link revoked, verification failed, or form already submitted), they require clear guidance on how to contact agency administrators without exposing sensitive internal data or encouraging unmonitored communication.
+
+### Symptoms
+Early designs proposed a direct WhatsApp button linking to `https://wa.me/<number>`. In QA, this raised security and operational issues:
+- `wa.me` links leaked staff mobile numbers in page source code and DOM trees.
+- Candidates could initiate unsolicited WhatsApp messaging without context or verification.
+- Error states risked leaking whether an application existed or belonged to another job.
+
+### Root Cause
+Conflating staff communication channels with public error-handling workflows, and embedding hardcoded contact actions in client-side code.
+
+### Resolution
+1. **Fixed Bilingual Screen**: Designed an integrated English and Sinhala full-screen state for terminal access failures (`We couldn't continue with this form link.` / `මෙම පෝරම සබැඳිය සමඟ ඉදිරියට යාමට නොහැක.`).
+2. **Configurable Administrative Contact Numbers**:
+   - Implemented `VITE_API_ADMIN_MOBILE_NUMBERS` in `candidate-form/src/config/env.ts`.
+   - Accepts comma-separated numbers (e.g., `0771234567, 0719876543`), trims whitespace, filters empty entries, and formats numbers cleanly in tabular numbers.
+   - Numbers can be updated in environment settings without code modifications.
+3. **Complete Removal of WhatsApp Actions**:
+   - Zero `wa.me` URLs, WhatsApp buttons, or messaging links exist in the DOM or source.
+   - Verified by automated tests `CONTACT-ADMIN-007` and `CONTACT-ADMIN-008`.
+4. **Zero Information Leakage**: Error states render no candidate identifiers, job codes, or server-side error details (`CONTACT-ADMIN-009`).
+
+### Prevention & Lesson
+Public error screens should present neutral, bilingual operational instructions. Avoid third-party direct-messaging links, and keep contact phone numbers externalized in environment variables.
+
+---
+
+# 47I. Vercel Candidate Form Multi-Project Preview Deployment
+
+**Date / Phase**: October 2026 / Staging Deployment Configuration
+
+### Problem
+The single Git repository contains two distinct web applications (Admin+Backend at root and Candidate Form in `candidate-form/`). Attempting to deploy both from a single Vercel project causes build failures or deploys the wrong application.
+
+### Symptoms
+- Deploying the repository root on Vercel runs root `vercel.json`, which builds the Admin dashboard into `public/admin` and deploys Express serverless functions. The Candidate Form was not accessible.
+- When creating a second Vercel project, the `candidate-form` folder was not visible in Vercel's directory selector because the default branch (`main`) did not yet have the folder.
+
+### Root Cause
+Monorepo topology where different applications have different build roots, different output directories (`public` vs. `dist`), different domains, and different environment scopes.
+
+### Resolution
+1. **Configured Separate Vercel Project (Project B)**:
+   - Created dedicated Vercel project for the Candidate Form.
+   - Explicitly configured **Root Directory** as `candidate-form`.
+   - Set framework preset to `Vite`, Install Command to `npm ci`, and Build Command to `npm run build`.
+2. **Branch Preview Configuration**:
+   - Configured project tracking to build previews from `stage` (and active feature branches) so the `candidate-form/` directory is resolved correctly.
+3. **Security Headers**:
+   - Defined static security headers in `candidate-form/vercel.json` (`frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `X-Robots-Tag: noindex, nofollow`, `Cache-Control: no-store`).
+
+### Prevention & Lesson
+In multi-application repositories on Vercel, always establish separate Vercel projects for each deployable application, specify explicit Root Directories, and configure preview branches appropriately.
+
+---
+
+# 47J. FORM_NOT_CONFIGURED Due to Missing Backend Origin Configuration
+
+**Date / Phase**: October 2026 / Integration Testing
+
+### Problem
+When staff clicked **Share Form** in the Admin Dashboard, the link creation modal reported an error.
+
+### Symptoms
+`POST /api/admin/candidates/:passportId/form-share` returned HTTP `503 Service Unavailable`:
+```json
+{
+  "code": "FORM_NOT_CONFIGURED",
+  "message": "The Candidate Form is not configured, so no link can be created."
+}
+```
+
+### Root Cause
+The backend service (`candidateFormShareService.js`) checks `if (!formOrigin) throw new CandidateError(503, "FORM_NOT_CONFIGURED", ...)`. In the Vercel Preview environment for Project A (Backend), `CANDIDATE_FORM_ORIGIN` was either missing or set to an invalid URL format.
+
+### Resolution
+1. Added `CANDIDATE_FORM_ORIGIN` to Vercel Project A settings, scoped to both **Preview** and **Production**.
+2. Specified the exact public bare origin of Project B:
+   `https://candidate-form-preview.vercel.app` (no `/admin`, no trailing slash, no fragment).
+3. Redeployed the backend to make the updated environment active.
+4. Subsequent link generation calls succeeded with HTTP 200, returning the generated URL with the random secret fragment.
+
+### Prevention & Lesson
+The backend deliberately fails closed when public form integration is unconfigured. Inter-application origin variables must be configured in Vercel before initiating integration testing.
+
+---
+
+# 47K. Candidate Form Token Secret Backend-Only Deployment Boundary
+
+**Date / Phase**: October 2026 / Security Audit
+
+### Problem
+Risk of cryptographic secrets leaking into public static frontend bundles if environment variables are improperly scoped or named.
+
+### Symptoms
+If a variable like `CANDIDATE_FORM_TOKEN_SECRET` is placed in frontend `.env` files or matches Vite's `envPrefix`, it gets compiled directly into JavaScript bundles distributed to untrusted public browsers.
+
+### Root Cause
+Vite embeds any variable matching `envPrefix` into client-side code via `import.meta.env`. Developers accustomed to unified `.env` files can accidentally expose backend encryption keys.
+
+### Resolution
+1. **Strict Backend-Only Scoping**: `CANDIDATE_FORM_TOKEN_SECRET` is strictly restricted to Vercel Project A (Backend/Admin). It is never added to Project B.
+2. **Restricted Vite Env Prefix**: In `candidate-form/vite.config.ts`, `envPrefix` is set strictly to `VITE_API_`. Vite ignores standard `VITE_*` variables that do not match this prefix.
+3. **Automated Secret Scanner Test (`SECRET-001`)**:
+   - Automated test in `test/publicCandidateDetails.test.js` scans source files, `.env.example`, and any compiled bundle in `candidate-form/dist` for backend secret names (`CANDIDATE_FORM_TOKEN_SECRET`, `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `META_APP_SECRET`).
+   - Asserts that zero backend secrets exist in the public bundle.
+
+### Prevention & Lesson
+Enforce hard prefix boundaries in frontend build tooling, and maintain automated test assertions that fail builds if backend secret keys appear in client assets.
+
+---
+
+# 47L. Prisma Windows Query Engine EPERM File Lock
+
+**Date / Phase**: October 2026 / Local Development & Build Verification
+
+### Problem
+Running `npx prisma generate` or `npm run postinstall` on Windows development machines fails with a file access error.
+
+### Symptoms
+```text
+Error: EPERM: operation not permitted, rename
+'C:\...\node_modules\.prisma\client\query_engine-windows.dll.node.tmp' ->
+'C:\...\node_modules\.prisma\client\query_engine-windows.dll.node'
+```
+
+### Root Cause
+On Windows, executable files and native dynamic link libraries (`.dll.node`) cannot be renamed or overwritten while a running process has them loaded in memory. If a local Express server (`npm start`), development watcher, or test runner is active, Windows holds an exclusive file lock on the query engine DLL.
+
+### Resolution
+1. Terminated all active Node.js processes holding the DLL:
+   ```powershell
+   Get-Process node | Stop-Process -Force
+   ```
+2. Re-executed Prisma generation:
+   ```powershell
+   npx prisma generate
+   ```
+3. Generation succeeded cleanly, updating the client in `generated/prisma`.
+
+### Prevention & Lesson
+Always stop local running Node processes and backend servers before executing Prisma schema migrations or client regeneration on Windows.
+
+---
+
+# 47M. Supabase EMAXCONNSESSION Connection Pool Exhaustion in Serverless Preview
+
+**Date / Phase**: October 2026 / Preview Load & Concurrency Verification
+
+### Problem
+During preview testing of multiple Admin Dashboard endpoints, several API routes intermittently returned HTTP `500 Internal Server Error`, and Prisma migration commands failed.
+
+### Symptoms
+Backend error logs and `npx prisma migrate status` reported:
+```text
+PrismaClientInitializationError: Error querying the database:
+db error: ERROR: EMAXCONNSESSION max clients reached in session mode
+```
+
+### Root Cause
+The Supabase Supavisor session-mode pooler reached its maximum concurrent client threshold. This error is **not** caused by an invalid `DATABASE_URL`, incorrect credentials, or database engine corruption.
+In Vercel serverless deployments, each incoming request can trigger a new function instance with its own Prisma client connection pool. If `DATABASE_POOL_MAX` is configured too high, or if multiple local development processes and developer GUI tools hold persistent session connections, the Supabase session pool limit is rapidly exceeded.
+
+### Resolution
+1. **Conservative Pool Size**: Enforced `DATABASE_POOL_MAX=3` (or default) in backend environment configuration, bounding connection acquisition per serverless function instance.
+2. **Session Cleanup**: Closed idle local Node server instances and local database management tools holding open connections to the remote Supabase pooler.
+3. **Pooler Port Verification**: Verified that runtime connections use the session-mode pooler host (`aws-0-ap-northeast-1.pooler.supabase.com:5432` or port `6543`), which is required for interactive transactions and `FOR UPDATE` row locks.
+
+### Prevention & Lesson
+Serverless functions multiply database connections under concurrency. Never configure large connection pools on serverless backend instances, and keep local test connections disconnected when not in use.
+
+---
+
+# 47N. Vercel Preview Environment-Variable Scoping & Missing Staging Variables
+
+**Date / Phase**: October 2026 / Staging Deployment Setup
+
+### Problem
+Variables added to Vercel Project Settings were not taking effect on deployments from the `stage` branch.
+
+### Symptoms
+Staging deployments failed at startup with missing environment variable errors (`CANDIDATE_FORM_ORIGIN is missing`, `APP_BASE_URL is missing`), even though the administrator had saved the values in the Vercel dashboard.
+
+### Root Cause
+In Vercel Project Settings > Environment Variables, each variable has environment scope checkboxes: **Production**, **Preview**, and **Development**. When configuring new variables, only "Production" was checked by default. Deployments triggered by the `stage` branch are classified as **Preview** deployments by Vercel and therefore did not receive the variables.
+
+### Resolution
+1. Opened Vercel Project Settings for both Project A and Project B.
+2. Edited each environment variable and checked the **Preview** checkbox (alongside **Production**).
+3. Triggered a redeployment of the `stage` branch deployment.
+4. The deployment started successfully with all required environment variables present.
+
+### Prevention & Lesson
+When adding or updating environment variables for staging testing, always verify that the **Preview** scope is explicitly enabled in Vercel.
+
+---
+
+# 47O. Candidate Form Share Link Origin Enforcement & Host Header Protection
+
+**Date / Phase**: October 2026 / Security Review
+
+### Problem
+Risk of generated candidate share links containing incorrect hostnames (e.g., `http://localhost:5174/#k=...`) or being manipulated via HTTP Host Header injection.
+
+### Symptoms
+In development setups, if share links are constructed from the incoming HTTP `Host` or `X-Forwarded-Host` header, staff accessing the Admin Dashboard through internal proxies or localhost generate links that external candidates cannot open. Furthermore, OWASP identifies Host-header injection as a vulnerability if an attacker can manipulate headers to generate links pointing to a malicious phishing origin.
+
+### Root Cause
+Deriving external public URLs from client-supplied HTTP request headers instead of server-controlled environment configurations.
+
+### Resolution
+1. **Strict Configured Origin**: In `src/services/candidateFormShareService.js`, the share URL generator strictly uses the configured `formOrigin`:
+   ```javascript
+   export const shareUrl = (formOrigin, secret) => `${formOrigin}/#k=${secret}`;
+   ```
+2. **Zero Header Reliance**: The backend completely ignores `req.headers.host` and `req.headers['x-forwarded-host']` when constructing share links.
+3. **Fail-Closed Validation**: If `CANDIDATE_FORM_ORIGIN` is missing or invalid, link creation throws `FORM_NOT_CONFIGURED` (503) rather than guessing or defaulting to the request host.
+
+### Prevention & Lesson
+Never use incoming request headers to determine public application URLs. Always construct external shareable links from explicit, validated server environment variables.
+
+---
+
 # 48. Current Project Status
 
 ## Completed
@@ -2719,6 +3043,30 @@ The shared database was brought into the exact target architectural state:
 - User invitation lifecycle (`/admin/settings/invite`) and setup flow verified
 - Role-Based Access Control (RBAC) enforced on every API route (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`)
 - Migration `20261019120000_client_management` successfully deployed and verified on shared Supabase instance
+- Bridge and reconciliation migrations (`20261018125900_bridge_dev_first_company_job_id` and `20261023120000_reconcile_job_company_job_id`) implemented to preserve applied migration history
+
+### Candidate Extra Details Form & Public Security (Integrated)
+- **Candidate Extra Details Form (`candidate-form/`)**:
+  - Independent Vite single-page application deployed to Vercel Project B.
+  - 4-step wizard: Verify -> Personal Details -> Work & Family -> Review & Submit.
+  - Full bilingual support (English and සිංහල) and Light/Dark theme.
+  - Universal calendar `DatePicker` (built on `react-day-picker`) with zero timezone shifting.
+  - Dynamic build-time Content Security Policy (CSP) pinning `connect-src` strictly to backend API origin.
+- **Security & Link Architecture**:
+  - Single-candidate share links with 256-bit CSPRNG secrets delivered in `#k=` URL fragment.
+  - Stored strictly as SHA-256 hashes (`candidate_form_link.token_hash`) with 3-day TTL.
+  - Two-factor verification: Link possession + matching Passport Number + NIC Number.
+  - `JOB_GROUP` share links bound to immutable `job.id` UUID with live `PROCESSING` job membership verification.
+  - Form access state machine (`LOCKED -> UNLOCKED -> SUBMITTED`) with version increments invalidating prior sessions.
+  - Submissions written once to isolated `candidate_form_response` table; canonical candidate record remains untouched by public submissions.
+  - Generic 401 verification responses with timing equalization and rate limiting (per-IP and per-passport).
+- **Admin Review & Reconciliation Workflow**:
+  - Read-only submission view (`GET /api/admin/candidates/:passportId/form-submission`).
+  - Inline field-level review hints: "Candidate submitted: <value> [Confirm] [Revoke]".
+  - Strict server-side allowlists for confirmable fields with full audit logging (`CANDIDATE_FORM_FIELD_CONFIRMED`, `CANDIDATE_FORM_FIELD_REJECTED`).
+- **Contact Admin Hardening**:
+  - Dedicated bilingual terminal access failure screen with configurable administrative mobile numbers (`VITE_API_ADMIN_MOBILE_NUMBERS`).
+  - Total removal of direct WhatsApp actions and `wa.me` links.
 
 ### Master Data & Operational Modules
 - **Agent Management (`/admin/agents`)**: Full CRUD and lifecycle protection (blocked from deactivation while `PROCESSING` jobs exist).
