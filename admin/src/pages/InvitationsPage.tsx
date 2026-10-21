@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { isAdmin, useAuth } from "../auth/AuthProvider";
-import { ALL_ROLES, ROLE_LABELS, ROLES, type Role } from "../auth/roles";
+import { canInviteUsers, invitableRoles, isAdmin, useAuth } from "../auth/AuthProvider";
+import { ROLE_LABELS, ROLES, type Role } from "../auth/roles";
 import { Icon } from "../components/Icon";
 import { deactivateUser, inviteUser, listUsers, type UserSummary } from "../api/admin";
 import { ApiError } from "../api/client";
@@ -15,6 +15,7 @@ const ROLE_HELP: Record<Role, string> = {
     MANAGER: "Everything except user management and Settings.",
     ANALYST: "Reviews documents and works on candidates; no police-date corrections.",
     REGISTRATION_DESK: "Registers and looks up candidates only.",
+    JOB_HANDLER: "Manages Jobs, Agents and Clients; views candidates without changing them.",
 };
 
 const STATUS_BADGE: Record<string, { label: string; icon: "schedule" | "check_circle" | "cancel"; className: string }> = {
@@ -23,13 +24,18 @@ const STATUS_BADGE: Record<string, { label: string; icon: "schedule" | "check_ci
     INACTIVE: { label: "Inactive", icon: "cancel", className: "bg-pending-bg text-pending border-pending-border" },
 };
 
-// Invite User (ADMIN only). Supabase Auth sends the invitation email and owns
-// the password; the role chosen here is stored by the backend in the
+// Invite User. ADMIN invites any role and manages the users (the list, re-send,
+// deactivate); a MANAGER invites a new Job Handler only (no user list: that stays
+// ADMIN's; the server enforces both). Supabase Auth sends the invitation email and
+// owns the password; the role chosen here is stored by the backend in the
 // application account, never in the invitation itself.
 // embedded: shown as a Settings tab (Settings owns the page title).
 export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {}) {
     const { user, token } = useAuth();
-    const allowed = isAdmin(user);
+    const allowed = canInviteUsers(user);
+    const managesUsers = isAdmin(user);
+    const roles = invitableRoles(user);
+    const defaultRole: Role = roles.includes(ROLES.ANALYST) ? ROLES.ANALYST : roles[0] ?? ROLES.JOB_HANDLER;
 
     const [users, setUsers] = useState<UserSummary[]>([]);
     const [loading, setLoading] = useState(true);
@@ -37,7 +43,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
 
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
-    const [role, setRole] = useState<Role>(ROLES.ANALYST);
+    const [role, setRole] = useState<Role>(defaultRole);
     const [submitting, setSubmitting] = useState(false);
     const [formSuccess, setFormSuccess] = useState<string | null>(null);
     const [formError, setFormError] = useState<string | null>(null);
@@ -46,7 +52,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
     const [busyId, setBusyId] = useState<string | null>(null);
 
     const load = useCallback(async () => {
-        if (!allowed || !token) return;
+        if (!managesUsers || !token) return;
         setFetchError(null);
         try {
             setUsers((await listUsers(token)).users);
@@ -55,7 +61,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
         } finally {
             setLoading(false);
         }
-    }, [allowed, token]);
+    }, [managesUsers, token]);
 
     useEffect(() => {
         load();
@@ -84,7 +90,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
             await sendInvite({ name: name.trim(), email: email.trim(), role });
             setName("");
             setEmail("");
-            setRole(ROLES.ANALYST);
+            setRole(defaultRole);
         } catch (err) {
             setFormError(err instanceof ApiError ? err.message : "Failed to send the invitation. Please try again.");
         } finally {
@@ -126,7 +132,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                 <div className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                     <h2 className="text-headline-sm font-semibold">Access Restricted</h2>
-                    <p className="mt-1 text-body-sm text-ink-muted">Only users with the <strong>Admin</strong> role can invite and manage users.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Only users with the <strong>Admin</strong> role (or a <strong>Manager</strong>, for Job Handlers) can invite users.</p>
                 </div>
             </div>
         );
@@ -197,7 +203,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                         </FormField>
                         <FormField id="invite-role" label="Role" required help={ROLE_HELP[role]}>
                             <select id="invite-role" value={role} onChange={(e) => setRole(e.target.value as Role)} className={inputClass()}>
-                                {ALL_ROLES.map((value) => <option key={value} value={value}>{ROLE_LABELS[value]}</option>)}
+                                {roles.map((value) => <option key={value} value={value}>{ROLE_LABELS[value]}</option>)}
                             </select>
                         </FormField>
                     </div>
@@ -214,7 +220,8 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                 </form>
             </div>
 
-            <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
+            {/* The users and their re-send / deactivate actions: ADMIN only. */}
+            {managesUsers && <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
                 <div className="mb-4 flex items-center justify-between border-b border-border pb-4">
                     <div>
                         <h2 className="text-headline-sm font-semibold text-ink">Users</h2>
@@ -283,7 +290,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                         </table>
                     </div>
                 )}
-            </div>
+            </div>}
         </div>
     );
 }

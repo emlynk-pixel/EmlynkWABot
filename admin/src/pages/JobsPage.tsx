@@ -13,7 +13,7 @@ import {
     type JobView,
 } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
-import { canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
+import { canCreateJobTypes, canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../components/Dialog";
 import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
@@ -193,13 +193,15 @@ function JobsView() {
 
 // A reference list (job type) with an inline "add new" row, so
 // the first jobs can be created without a separate management screen.
-function ReferenceSelect({ label, value, onChange, options, disabled, adding, onAdd, extraField }: {
+function ReferenceSelect({ label, value, onChange, options, disabled, adding, onAdd, extraField, canAdd = true }: {
     label: string;
     value: string;
     onChange: (id: string) => void;
     options: { id: string; label: string }[];
     disabled: boolean;
     adding: string;
+    // Whether the "add new" row is offered (creating a job type is ADMIN / MANAGER only).
+    canAdd?: boolean;
     onAdd: (name: string, extra: string) => Promise<void>;
     extraField?: { label: string; placeholder: string };
 }) {
@@ -227,7 +229,7 @@ function ReferenceSelect({ label, value, onChange, options, disabled, adding, on
         <div>
             <div className="flex items-center justify-between">
                 <label htmlFor={id} className="text-label-md text-ink">{label}</label>
-                <button type="button" onClick={() => setOpen((v) => !v)} disabled={disabled} className="text-label-sm text-primary hover:underline">{open ? "Cancel" : adding}</button>
+                {canAdd && <button type="button" onClick={() => setOpen((v) => !v)} disabled={disabled} className="text-label-sm text-primary hover:underline">{open ? "Cancel" : adding}</button>}
             </div>
             {open ? (
                 <div className="mt-1 space-y-2 rounded border border-border bg-canvas p-2">
@@ -255,6 +257,8 @@ type Step = 1 | 2;
 const CANDIDATE_PAGE_SIZE = 50;
 
 function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: () => void; onCreated: (jobId: string) => void }) {
+    const { user } = useAuth();
+    const canAddJobType = canCreateJobTypes(user);
     const options = useAdminResource("job-options", (t, signal) => getJobOptions(t, signal));
     const [step, setStep] = useState<Step>(1);
     const [created, setCreated] = useState<Partial<JobOptions>>({});
@@ -330,7 +334,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
             {options.data && step === 1 && (
                 <form onSubmit={next} className="space-y-3">
                     <ReferenceSelect
-                        label="Job type" value={jobTypeId} onChange={setJobTypeId} disabled={busy} adding="Add job type"
+                        label="Job type" value={jobTypeId} onChange={setJobTypeId} disabled={busy} adding="Add job type" canAdd={canAddJobType}
                         options={merged("jobTypes").map((o) => ({ id: o.id, label: o.name }))}
                         onAdd={async (name) => {
                             const row = await createJobType(token, name);
