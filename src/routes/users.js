@@ -1,15 +1,16 @@
-// User management, mounted at /api/admin/users (ADMIN only). Runs after the
-// admin router's requireActiveUser, so req.user is the ACTIVE caller loaded
-// from public."user".
+// User management, mounted at /api/admin/users (ADMIN only, except one MANAGER
+// action: inviting a Job Handler). Runs after the admin router's
+// requireActiveUser, so req.user is the ACTIVE caller loaded from public."user".
 //
 //   GET  /                     list application users
-//   POST /invite               invite (or re-invite / reactivate) a user
+//   POST /invite               invite (or re-invite / reactivate) a user; MANAGER:
+//                              a new Job Handler only (userAccountService.js)
 //   PUT  /:userId/role         change a user's role
 //   POST /:userId/deactivate   deactivate a user (also revokes a pending invite)
 
 import express from "express";
 
-import { requireRole, ROLES } from "../middleware/requireRole.js";
+import { INVITER_ROLES, canInviteRole, isValidRole, requireRole, ROLES } from "../middleware/requireRole.js";
 import { getSupabaseAuthAdmin } from "../auth/supabaseAuthAdmin.js";
 import {
     deactivateUser,
@@ -31,7 +32,6 @@ export { inviteRedirectUrl };
 
 export function createUsersRouter({ db, authAdmin, env = process.env } = {}) {
     const router = express.Router();
-    router.use(requireRole([ROLES.ADMIN]));
 
     const handle = (work) => async (req, res) => {
         try {
@@ -49,9 +49,14 @@ export function createUsersRouter({ db, authAdmin, env = process.env } = {}) {
         return false;
     };
 
-    router.get("/", handle(async (req, res, client) => res.json({ users: await listUsers({ db: client }) })));
-
-    router.post("/invite", handle(async (req, res, client) => {
+    // Inviting: ADMIN (any role) and MANAGER (a Job Handler only: which role, and which
+    // existing account, is checked in inviteUser). Registered BEFORE the ADMIN-only
+    // gate below, so every other route here, and any added later, stays ADMIN only.
+    router.post("/invite", requireRole(INVITER_ROLES), handle(async (req, res, client) => {
+        // A role this actor may not give is refused before anything else (a MANAGER
+        // asking for ADMIN gets 403, not a validation message about other fields).
+        const requested = typeof req.body?.role === "string" ? req.body.role.trim().toUpperCase() : "";
+        if (isValidRole(requested) && !canInviteRole(req.user.role, requested)) return res.status(403).json({ message: "Insufficient permissions" });
         const parsed = parseInviteBody(req.body);
         if (parsed.errors) return res.status(400).json({ message: "Invalid invitation", errors: parsed.errors });
         // Before anything is sent: a missing or invalid APP_BASE_URL must not
@@ -73,6 +78,10 @@ export function createUsersRouter({ db, authAdmin, env = process.env } = {}) {
         });
         return res.status(result.outcome === "INVITED" ? 201 : 200).json(result);
     }));
+
+    router.use(requireRole([ROLES.ADMIN]));
+
+    router.get("/", handle(async (req, res, client) => res.json({ users: await listUsers({ db: client }) })));
 
     router.put("/:userId/role", handle(async (req, res, client) => {
         if (!validUserId(req, res)) return undefined;

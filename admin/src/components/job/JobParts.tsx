@@ -1,7 +1,8 @@
-import type { JobStatus, JobSummary } from "../../api/jobs";
+import type { JobListItem, JobStatus, JobSummary } from "../../api/jobs";
 import type { ReactNode } from "react";
 import { ToneBadge, type Tone } from "../StatusBadge";
-import { formatDate } from "../format";
+import { formatDate, formatNumber } from "../format";
+import { countryName } from "../master/MasterParts";
 
 // Shared by the Jobs list, Job details and the Candidate Details job section.
 
@@ -21,6 +22,28 @@ export function jobDateNote(job: JobSummary): string {
 }
 
 export const NO_COMPANY_JOB_ID = "Not assigned";
+
+// Filled: at least as many assigned candidates as vacancies (the server's `filled`). Never a limit:
+// 23 / 20 is shown as it is and stays Filled. Separate from the job's status.
+export function FilledBadge() {
+    return <ToneBadge tone="verified">Filled</ToneBadge>;
+}
+
+// "23 / 20" (assigned / vacancies) with Filled once reached; the count alone when the job has no vacancies.
+export function VacancyFill({ job }: { job: Pick<JobListItem, "candidateCount" | "vacancies" | "filled"> }) {
+    return (
+        <span className="inline-flex flex-wrap items-center gap-2">
+            <span className="tabular-nums" aria-label={job.vacancies === null ? `${job.candidateCount} assigned, no vacancies set` : `${job.candidateCount} assigned of ${job.vacancies} vacancies`}>
+                {formatNumber(job.candidateCount)}{job.vacancies === null ? "" : ` / ${formatNumber(job.vacancies)}`}
+            </span>
+            {job.filled && <FilledBadge />}
+        </span>
+    );
+}
+
+// A job's countries by name. The From Country of a job created before it was recorded is null.
+export const NOT_RECORDED = "Not recorded";
+export const jobCountry = (code: string | null) => (code ? countryName(code) : NOT_RECORDED);
 
 export function Detail({ label, children }: { label: string; children: ReactNode }) {
     return (

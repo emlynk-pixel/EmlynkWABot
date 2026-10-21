@@ -3,7 +3,8 @@ import type { JobStatus } from "./jobs";
 
 // Agent Management (src/services/agentService.js). ADMIN and MANAGER only; the
 // server enforces it. An Agent is a business entity (not a login) that belongs
-// to one country and manages many Clients. Never deleted: ACTIVE or INACTIVE.
+// to one country and works with many Clients, and a Client with many Agents
+// (agent_client). Never deleted: ACTIVE or INACTIVE.
 
 export type EntityStatus = "ACTIVE" | "INACTIVE";
 
@@ -63,6 +64,8 @@ export type AgentInput = {
     email?: string | null;
     address?: string | null;
     notes?: string | null;
+    // The Agent's Clients: on edit, the full list (replacement; the server re-checks every id).
+    clientIds?: string[];
 };
 
 export type AgentListParams = { search?: string; country?: string; status?: EntityStatus; page: number };

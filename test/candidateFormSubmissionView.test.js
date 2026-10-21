@@ -66,13 +66,13 @@ const answers = (overrides = {}) => ({
     basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "MARRIED", birthDate: "1990-05-01", birthPlace: "negombo" },
     contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "n 12", alternativePhone: "0771234567", email: "a@example.com" },
     passport: { issueDate: "2020-01-15", expiryDate: "2030-01-14" },
-    qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "5 years", otherSkills1: "forklift", otherSkills2: "", englishKnowledge: "GOOD" },
+    qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "5 years", otherSkills1: "forklift", otherSkills2: "N/A", englishKnowledge: "GOOD" },
     measurements: { shirtSize: "M", waistSize: "32", shoeSize: "eu 42" },
     family: {
         father: { name: "sunil", surname: "de soysa", passportNumber: "n7654321", birthDate: "1960-03-02" },
-        mother: { name: "kamala", surname: "de soysa", passportNumber: "", birthDate: "1962-04-03" },
+        mother: { name: "kamala", surname: "de soysa", passportNumber: "N/A", birthDate: "1962-04-03" },
         spouse: { name: "ruwan", surname: "perera", passportNumber: "n1111111", birthDate: "1988-07-12" },
-        child1: "nimal", child2: "", child3: "",
+        child1: "nimal", child2: "n/a", child3: "",
     },
     guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "1965-02-20", phone: "+94 77 123 4567", address: "45 lake road" },
     ...overrides,
@@ -118,10 +118,11 @@ describe("Admin: Candidate Form submission", () => {
     });
 
     test("ADMIN-FORM-008 empty answers are null (the Admin shows Not recorded), never undefined", async () => {
-        await submitAs(A, answers({ guardian: { name: "kamal perera", relationship: "", nic: "901234567v", birthDate: "", phone: "+94 77 123 4567", address: "45 lake road" } }));
+        // Every shown answer is required now; Child 3 may still be empty (Child 2 is N/A: no more children).
+        await submitAs(A);
         const r = await admin(USERS.ADMIN, `/candidates/${A.passportId}/form-submission`);
-        assert.equal(r.body.submitted["guardian.relationship"], null);
-        assert.equal(r.body.submitted["guardian.birthDate"], null);
+        assert.equal(r.body.submitted["family.child3"], null);
+        assert.equal(r.body.submitted["family.child2"], "N/A");
         assert.ok(Object.values(r.body.submitted).every((value) => value === null || typeof value === "string"));
     });
 
@@ -161,7 +162,7 @@ describe("Admin: Candidate Form submission", () => {
         const link = (await call(app(USERS.ADMIN), "POST", `/api/admin/candidates/${B.passportId}/form-share`)).body.url.split("#k=")[1];
         const token = (await pub("/verify", { body: { linkSecret: link, passportNumber: B.passportId, nic: B.nic } })).body.token;
         const form = await pub("/form", { token, body: {} });
-        assert.deepEqual(Object.keys(form.body).sort(), ["answers", "expiresAt", "identity", "prefilled"]);
+        assert.deepEqual(Object.keys(form.body).sort(), ["answers", "expiresAt", "identity", "jobCategories", "prefilled"]);
         const text = JSON.stringify(form.body);
         assert.ok(!text.includes("KAMAL PERERA") && !text.includes("901234567V") && !text.includes(A.passportId));
     });

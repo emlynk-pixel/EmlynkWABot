@@ -72,15 +72,15 @@ const pendingOf = (r) => Object.fromEntries(r.body.pending.map((p) => [p.field, 
 
 const answers = (overrides = {}) => ({
     basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "SINGLE", birthDate: "2003-05-06", birthPlace: "negombo" },
-    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "", alternativePhone: "+94 77 123 4567", email: "new@example.com" },
+    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "+94 77 123 4567", email: "new@example.com" },
     passport: { issueDate: "2020-01-15", expiryDate: "2031-02-03" },
-    qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "3 years", otherSkills1: "", otherSkills2: "", englishKnowledge: "GOOD" },
+    qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "3 years", otherSkills1: "n/a", otherSkills2: "N/A", englishKnowledge: "GOOD" },
     measurements: { shirtSize: "M", waistSize: "32", shoeSize: "eu 42" },
     family: {
-        father: { name: "sunil", surname: "de soysa", passportNumber: "", birthDate: "1960-03-02" }, mother: { name: "", surname: "", passportNumber: "", birthDate: "" },
-        spouse: { name: "", surname: "", passportNumber: "", birthDate: "" }, child1: "", child2: "", child3: "",
+        father: { name: "sunil", surname: "de soysa", passportNumber: "N/A", birthDate: "1960-03-02" }, mother: { name: "kumari", surname: "de soysa", passportNumber: "N/A", birthDate: "1965-02-03" },
+        spouse: { name: "", surname: "", passportNumber: "", birthDate: "" }, child1: "N/A", child2: "", child3: "",
     },
-    guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "", phone: "+94 77 123 4567", address: "45 lake road" },
+    guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "1960-01-01", phone: "+94 77 123 4567", address: "45 lake road" },
     ...overrides,
 });
 async function submitForm(body = answers()) {

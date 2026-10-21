@@ -30,3 +30,5 @@ export const dangerSolidButton = `${buttonBase} bg-critical text-on-critical hov
 export function DialogError({ message }: { message: string | null }) {
     return message ? <p role="alert" className="mt-3 rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">{message}</p> : null;
 }
+
+export { ConfirmDialog, warningSolidButton, type ConfirmDialogProps, type ConfirmVariant } from "./ConfirmDialog";

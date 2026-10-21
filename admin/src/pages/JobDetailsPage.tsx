@@ -1,18 +1,22 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError } from "../api/client";
 import { listCandidates, type CandidateListItem } from "../api/candidates";
 import { addCandidateToJob, cancelJob, completeJob, getJob, removeCandidateFromJob, updateJob, type JobDetails } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
-import { ActionDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
+import { ActionDialog, ConfirmDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
+import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 import { formatDate, formatDateTime } from "../components/format";
 import { Icon } from "../components/Icon";
-import { Detail, JobStatusBadge, NO_COMPANY_JOB_ID } from "../components/job/JobParts";
+import { Detail, JobStatusBadge, NO_COMPANY_JOB_ID, VacancyFill, jobCountry } from "../components/job/JobParts";
+import { CountrySelect } from "../components/master/MasterParts";
 import { Card, ErrorState, LoadingState } from "../components/States";
 import { filterControl, inputClass, tableCell, tableHead, tableRow, textareaClass } from "../components/ui";
 
-// Admin > Jobs > one job: its details and the assigned candidates. ADMIN and
+// Admin > Jobs > one job, in two tabs: Job Details (the default) and Assigned
+// Candidates. The tab is page state only (no route): switching keeps every open
+// dialog and loaded value, and the actions above the tabs work from either. ADMIN and
 // MANAGER add / remove candidates and complete or cancel a PROCESSING job; an
 // ANALYST sees the job with only their own candidates. A candidate already on
 // another PROCESSING job is refused by the server (409) and the message is
@@ -36,7 +40,13 @@ export function JobDetailsPage() {
     return <JobDetailsView />;
 }
 
-type Dialog = "add" | "complete" | "cancel" | "companyJobId" | { remove: JobDetails["candidates"][number] } | null;
+type Dialog = "add" | "complete" | "cancel" | "companyJobId" | "fromCountry" | { remove: JobDetails["candidates"][number] } | null;
+type Tab = "details" | "candidates";
+
+const tabClass = (active: boolean) =>
+    `-mb-px whitespace-nowrap border-b-2 px-1 pb-2.5 pt-1 text-label-md transition-colors ${active
+        ? "border-primary font-medium text-ink"
+        : "border-transparent text-ink-muted hover:border-border-strong hover:text-ink"}`;
 
 function JobDetailsView() {
     const { user, token } = useAuth();
@@ -45,6 +55,7 @@ function JobDetailsView() {
     const resource = useAdminResource(`job:${jobId}`, (t, signal) => getJob(t, jobId, signal));
     const [updated, setUpdated] = useState<JobDetails | null>(null);
     const [dialog, setDialog] = useState<Dialog>(null);
+    const [tab, setTab] = useState<Tab>("details");
     const job = updated?.jobId === jobId ? updated : resource.data?.jobId === jobId ? resource.data : null;
 
     if (!job) {
@@ -78,69 +89,106 @@ function JobDetailsView() {
                 )}
             </div>
 
-            <Card className="p-5">
-                <dl aria-label="Job details" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <Detail label="Internal job code">{job.jobCode}</Detail>
-                    <Detail label="Client Job ID">
-                        {job.companyJobId ?? <span className="text-ink-muted">{NO_COMPANY_JOB_ID}</span>}
-                        {canManage && <button type="button" onClick={() => setDialog("companyJobId")} aria-label={`${job.companyJobId ? "Change" : "Add"} Client Job ID`} className="ml-2 text-label-md text-primary hover:underline">{job.companyJobId ? "Change" : "Add"}</button>}
-                    </Detail>
-                    <Detail label="Job type">{job.jobType.name}</Detail>
-                    <Detail label="Client">{job.client.name}</Detail>
-                    <Detail label="Country">{job.countryCode}</Detail>
-                    <Detail label="Responsible agent">{job.responsibleAgent.name}</Detail>
-                    <Detail label="Status">{job.status === "PROCESSING" ? "Processing" : job.status === "COMPLETED" ? "Completed" : "Cancelled"}</Detail>
-                    <Detail label="Vacancies">{job.vacancies === null ? "—" : job.vacancies}</Detail>
-                    <Detail label="Created">{formatDateTime(job.createdAt)}{job.createdBy ? ` by ${job.createdBy}` : ""}</Detail>
-                    {job.status === "COMPLETED" && <Detail label="Completed">{formatDateTime(job.completedAt)}</Detail>}
-                    {job.status === "CANCELLED" && <Detail label="Cancelled">{formatDateTime(job.cancelledAt)}</Detail>}
-                    {job.status === "CANCELLED" && <Detail label="Cancel reason">{job.cancelReason}</Detail>}
-                </dl>
-            </Card>
+            <div role="tablist" aria-label="Job sections" className="flex gap-6 overflow-x-auto border-b border-border">
+                <button type="button" role="tab" id="job-tab-details" aria-controls="job-panel-details" aria-selected={tab === "details"} onClick={() => setTab("details")} className={tabClass(tab === "details")}>Job Details</button>
+                <button type="button" role="tab" id="job-tab-candidates" aria-controls="job-panel-candidates" aria-selected={tab === "candidates"} onClick={() => setTab("candidates")} className={tabClass(tab === "candidates")}>Assigned Candidates ({job.candidateCount})</button>
+            </div>
 
-            <Card>
-                <div className="border-b border-border px-4 py-3">
-                    <h2 className="text-headline-sm text-ink">Assigned candidates ({job.candidateCount})</h2>
-                    {!processing && <p className="text-body-sm text-ink-muted">This job is {job.status === "COMPLETED" ? "completed" : "cancelled"}; the assignment history is kept.</p>}
+            {tab === "details" && (
+                <div role="tabpanel" id="job-panel-details" aria-labelledby="job-tab-details">
+                    <Card className="p-5">
+                        <dl aria-label="Job details" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                            <Detail label="Internal job code">{job.jobCode}</Detail>
+                            <Detail label="Client Job ID">
+                                {job.companyJobId ?? <span className="text-ink-muted">{NO_COMPANY_JOB_ID}</span>}
+                                {canManage && <button type="button" onClick={() => setDialog("companyJobId")} aria-label={`${job.companyJobId ? "Change" : "Add"} Client Job ID`} className="ml-2 text-label-md text-primary hover:underline">{job.companyJobId ? "Change" : "Add"}</button>}
+                            </Detail>
+                            <Detail label="Job type">{job.jobType.name}</Detail>
+                            <Detail label="Client">{job.client.name}</Detail>
+                            <Detail label="To Country">{jobCountry(job.countryCode)}</Detail>
+                            <Detail label="From Country">
+                                <span className={job.fromCountryCode ? undefined : "text-ink-muted"}>{jobCountry(job.fromCountryCode)}</span>
+                                {canManage && processing && <button type="button" onClick={() => setDialog("fromCountry")} aria-label="Change From Country" className="ml-2 text-label-md text-primary hover:underline">Change</button>}
+                            </Detail>
+                            <Detail label="Responsible agent">{job.responsibleAgent.name}</Detail>
+                            <Detail label="Status">{job.status === "PROCESSING" ? "Processing" : job.status === "COMPLETED" ? "Completed" : "Cancelled"}</Detail>
+                            <Detail label="Vacancies">{job.vacancies === null ? "—" : job.vacancies}</Detail>
+                            <Detail label="Assigned / vacancies"><VacancyFill job={job} /></Detail>
+                            <Detail label="Created">{formatDateTime(job.createdAt)}{job.createdBy ? ` by ${job.createdBy}` : ""}</Detail>
+                            {job.status === "COMPLETED" && <Detail label="Completed">{formatDateTime(job.completedAt)}</Detail>}
+                            {job.status === "CANCELLED" && <Detail label="Cancelled">{formatDateTime(job.cancelledAt)}</Detail>}
+                            {job.status === "CANCELLED" && <Detail label="Cancel reason">{job.cancelReason}</Detail>}
+                        </dl>
+                    </Card>
                 </div>
-                {job.candidates.length === 0 ? (
-                    <p className="px-4 py-8 text-center text-body-sm text-ink-muted">No candidates are assigned to this job.</p>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table aria-label="Assigned candidates" className="w-full border-collapse">
-                            <thead>
-                                <tr>
-                                    <th className={tableHead}>Name</th>
-                                    <th className={tableHead}>Passport ID</th>
-                                    <th className={tableHead}>NIC</th>
-                                    <th className={tableHead}>Assigned</th>
-                                    {canManage && processing && <th className={tableHead}><span className="sr-only">Actions</span></th>}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {job.candidates.map((candidate) => (
-                                    <tr key={candidate.passportId} className={tableRow}>
-                                        <td className={tableCell}><Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="font-medium text-primary hover:underline">{candidate.name ?? candidate.passportId}</Link></td>
-                                        <td className={tableCell}>{candidate.passportId}</td>
-                                        <td className={tableCell}>{candidate.nic ?? "—"}</td>
-                                        <td className={tableCell}>{formatDate(candidate.assignedAt)}</td>
-                                        {canManage && processing && (
-                                            <td className={`${tableCell} text-right`}>
-                                                <button type="button" onClick={() => setDialog({ remove: candidate })} className="text-label-md text-critical hover:underline" aria-label={`Remove ${candidate.name ?? candidate.passportId} from the job`}>Remove</button>
-                                            </td>
-                                        )}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </Card>
+            )}
 
+            {tab === "candidates" && (
+                <div role="tabpanel" id="job-panel-candidates" aria-labelledby="job-tab-candidates">
+                    <Card>
+                        <div className="border-b border-border px-4 py-3">
+                            <div className="flex flex-wrap items-center gap-3">
+                                <h2 className="text-headline-sm text-ink">Assigned candidates ({job.candidateCount})</h2>
+                                {job.vacancies !== null && <span className="text-body-sm text-ink-muted"><VacancyFill job={job} /></span>}
+                            </div>
+                            {!processing && <p className="text-body-sm text-ink-muted">This job is {job.status === "COMPLETED" ? "completed" : "cancelled"}; the assignment history is kept.</p>}
+                        </div>
+                        {job.candidates.length === 0 ? (
+                            <p className="px-4 py-8 text-center text-body-sm text-ink-muted">No candidates are assigned to this job.</p>
+                        ) : (
+                            <div className="relative overflow-x-auto">
+                                {/* relative: keeps the sr-only (absolute) Actions header inside this scroll box, so a wide table never widens the page */}
+                                <table aria-label="Assigned candidates" className="w-full border-collapse">
+                                    <thead>
+                                        <tr>
+                                            <th className={tableHead}>Name</th>
+                                            <th className={tableHead}>Passport / NIC</th>
+                                            <th className={tableHead}>Status</th>
+                                            <th className={tableHead}>Assigned</th>
+                                            {canManage && processing && <th className={tableHead}><span className="sr-only">Actions</span></th>}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {job.candidates.map((candidate) => (
+                                            <tr key={candidate.passportId} className={tableRow}>
+                                                <td className={tableCell}><Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="font-medium text-primary hover:underline">{candidate.name ?? candidate.passportId}</Link></td>
+                                                <td className={tableCell}>
+                                                    <span className="block">{candidate.passportId}</span>
+                                                    {candidate.nic && <span className="block text-label-sm text-ink-muted">NIC: {candidate.nic}</span>}
+                                                </td>
+                                                <td className={tableCell}>{candidate.workflowStatus ? <WorkflowStatusBadge status={candidate.workflowStatus} /> : <span className="text-ink-muted">—</span>}</td>
+                                                <td className={tableCell}>{formatDate(candidate.assignedAt)}</td>
+                                                {canManage && processing && (
+                                                    <td className={`${tableCell} text-right`}>
+                                                        <button type="button" onClick={() => setDialog({ remove: candidate })} className="text-label-md text-critical hover:underline" aria-label={`Remove ${candidate.name ?? candidate.passportId} from the job`}>Remove</button>
+                                                    </td>
+                                                )}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </Card>
+                </div>
+            )}
+
+            {token && dialog === "fromCountry" && <FromCountryDialog token={token} job={job} onDone={changed} onClose={() => setDialog(null)} />}
             {token && dialog === "companyJobId" && <CompanyJobIdDialog token={token} job={job} onDone={changed} onClose={() => setDialog(null)} />}
             {token && dialog === "add" && <AddCandidateDialog token={token} job={job} onChanged={setUpdated} onClose={() => setDialog(null)} />}
             {token && dialog === "complete" && (
-                <ConfirmDialog title={`Complete ${job.jobCode}?`} confirmLabel="Complete job" run={() => completeJob(token, job.jobId)} onDone={changed} onClose={() => setDialog(null)}>
+                <ConfirmDialog
+                    title={`Complete ${job.jobCode}?`}
+                    confirmLabel="Complete job"
+                    cancelLabel="Keep as is"
+                    variant="warning"
+                    onConfirm={async () => {
+                        const updated = await completeJob(token, job.jobId);
+                        changed(updated);
+                        setDialog(null);
+                    }}
+                    onCancel={() => setDialog(null)}
+                >
                     The job is marked completed. All {job.candidateCount} assignments are kept as history, and the candidates can be assigned to another processing job.
                 </ConfirmDialog>
             )}
@@ -149,9 +197,14 @@ function JobDetailsView() {
                 <ConfirmDialog
                     title="Remove candidate?"
                     confirmLabel="Remove"
-                    run={() => removeCandidateFromJob(token, job.jobId, dialog.remove.passportId)}
-                    onDone={changed}
-                    onClose={() => setDialog(null)}
+                    cancelLabel="Cancel"
+                    variant="destructive"
+                    onConfirm={async () => {
+                        const updated = await removeCandidateFromJob(token, job.jobId, dialog.remove.passportId);
+                        changed(updated);
+                        setDialog(null);
+                    }}
+                    onCancel={() => setDialog(null)}
                 >
                     {dialog.remove.name ?? dialog.remove.passportId} is taken off {job.jobCode} (kept in the job&apos;s history) and can be assigned to another processing job.
                 </ConfirmDialog>
@@ -160,37 +213,6 @@ function JobDetailsView() {
     );
 }
 
-function ConfirmDialog({ title, confirmLabel, run, onDone, onClose, children }: {
-    title: string;
-    confirmLabel: string;
-    run: () => Promise<JobDetails>;
-    onDone: (job: JobDetails) => void;
-    onClose: () => void;
-    children: ReactNode;
-}) {
-    const [busy, setBusy] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const confirm = async () => {
-        setBusy(true);
-        setError(null);
-        try {
-            onDone(await run());
-        } catch (caught) {
-            setError(message(caught));
-            setBusy(false);
-        }
-    };
-    return (
-        <ActionDialog title={title} busy={busy} onClose={onClose}>
-            <p className="text-body-sm text-ink-soft">{children}</p>
-            <DialogError message={error} />
-            <div className="mt-4 flex justify-end gap-2">
-                <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Keep as is</button>
-                <button type="button" disabled={busy} onClick={confirm} className={primaryButton}>{busy ? "Working…" : confirmLabel}</button>
-            </div>
-        </ActionDialog>
-    );
-}
 
 function CancelDialog({ token, job, onDone, onClose }: { token: string; job: JobDetails; onDone: (job: JobDetails) => void; onClose: () => void }) {
     const [reason, setReason] = useState("");
@@ -294,6 +316,38 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
             <div className="mt-4 flex justify-end">
                 <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Done</button>
             </div>
+        </ActionDialog>
+    );
+}
+
+// The From Country (editable while the job is PROCESSING). The To Country is the
+// client's and is never edited here.
+function FromCountryDialog({ token, job, onDone, onClose }: { token: string; job: JobDetails; onDone: (job: JobDetails) => void; onClose: () => void }) {
+    const [value, setValue] = useState(job.fromCountryCode ?? "");
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const submit = async (event: FormEvent) => {
+        event.preventDefault();
+        setBusy(true);
+        setError(null);
+        try {
+            onDone(await updateJob(token, job.jobId, { fromCountryCode: value }));
+        } catch (caught) {
+            setError(message(caught));
+            setBusy(false);
+        }
+    };
+    return (
+        <ActionDialog title="From Country" busy={busy} onClose={onClose}>
+            <form onSubmit={submit}>
+                <p className="mb-3 text-body-sm text-ink-soft">The country the candidates of {job.jobCode} travel from. The To Country ({jobCountry(job.countryCode)}) is the client&apos;s.</p>
+                <CountrySelect label="From Country" value={value} onChange={setValue} disabled={busy} />
+                <DialogError message={error} />
+                <div className="mt-4 flex justify-end gap-2">
+                    <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Cancel</button>
+                    <button type="submit" disabled={busy || !value || value === job.fromCountryCode} className={primaryButton}>{busy ? "Saving…" : "Save"}</button>
+                </div>
+            </form>
         </ActionDialog>
     );
 }

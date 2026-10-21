@@ -135,6 +135,8 @@ describe("verification", () => {
         await user.click(screen.getByRole("button", { name: "Verify" }));
         expect(await screen.findByRole("heading", { level: 1, name: en("form.loadFailedTitle") })).toBeInTheDocument();
         await user.click(screen.getByRole("button", { name: en("form.retry") }));
+        // A successful load goes through "Before you start" like any other.
+        await user.click(await screen.findByRole("button", { name: new RegExp(`^${en("guidelines.continue")}`) }));
         expect(await screen.findByRole("heading", { level: 2, name: en("step.personal") })).toBeInTheDocument();
         expect(callsTo(calls, "form")).toHaveLength(1);
     });

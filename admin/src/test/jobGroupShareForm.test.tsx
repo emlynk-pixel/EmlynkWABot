@@ -12,7 +12,7 @@ const JOB_ID = "00000000-0000-4000-8000-000000000007";
 const JOB: CandidateJobAssignment = {
     jobId: JOB_ID, jobCode: "JOB-2026-000007", companyJobId: "Y26S01", status: "PROCESSING",
     jobType: { id: "t1", code: "WELDER", name: "Welder" }, client: { id: "c1", name: "Acme Construction" },
-    responsibleAgent: { id: "a1", name: "Ion Popescu", countryCode: "RO" }, countryCode: "RO", vacancies: 5,
+    responsibleAgent: { id: "a1", name: "Ion Popescu", countryCode: "RO" }, countryCode: "RO", fromCountryCode: "RO", vacancies: 5,
     createdAt: "2026-10-01T05:00:00.000Z", completedAt: null, cancelledAt: null, cancelReason: null,
     assignedAt: "2026-10-02T05:00:00.000Z", removed: false, removedAt: null,
 };

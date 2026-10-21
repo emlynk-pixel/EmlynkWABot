@@ -1,6 +1,7 @@
 import { businessDateOf } from "../utils/businessDay.js";
 import { CandidateError } from "./candidateService.js";
 import { FORM_ACCESS_STATUS } from "./candidateFormShareService.js";
+import { activeJobTypeNames, isNoPreference, NO_PREFERRED_JOB_TYPE } from "./jobTypeCatalog.js";
 
 // The Candidate Form's data on the server: the field list, the prefill from
 // the existing records, the immutable prefill snapshot, and the one-time
@@ -26,6 +27,30 @@ const MAX = { text: 150, address: 500, long: 1000, email: 254, phone: 20, size: 
 const EARLIEST_DATE = "1900-01-01";
 const LATEST_EXPIRY_DATE = "2100-12-31";
 
+// "N/A": the answer for a field that does not apply to the candidate. Accepted
+// (in any letter case, stored as "N/A") ONLY for these fields; anywhere else it
+// is refused. The form keeps the same list (candidate-form/src/form/validation.ts).
+export const NOT_APPLICABLE = "N/A";
+export const isNotApplicable = (value) => typeof value === "string" && /^n\/a$/i.test(value.trim());
+export const NOT_APPLICABLE_FIELDS = Object.freeze(new Set([
+    "basic.otherNames",
+    "contact.city",
+    "contact.alternativePhone",
+    "qualifications.experience",
+    "qualifications.otherSkills1",
+    "qualifications.otherSkills2",
+    "family.father.name",
+    "family.father.surname",
+    "family.father.passportNumber",
+    "family.mother.name",
+    "family.mother.surname",
+    "family.mother.passportNumber",
+    "family.spouse.passportNumber",
+    "family.child1",
+    "family.child2",
+    "family.child3",
+]));
+
 // Every answer: [group path, key, column, kind, options]. kind:
 //   text   English letters capitalised; max length
 //   email / phone  kept as typed
@@ -36,8 +61,14 @@ const LATEST_EXPIRY_DATE = "2100-12-31";
 //   nic    a Sri Lankan NIC
 // The verified Passport Number and NIC are NOT answers: they come from the
 // candidate's record and cannot be changed through the form.
+//
+// Required: every answer the candidate can see. `required: true` is checked
+// for each field; the conditional ones are checked after all the fields
+// (parseSubmission): a parent's surname, passport and birth date unless the
+// parent's name is "N/A"; the spouse only when Married; Child 2 / Child 3
+// only after a real Child 1 / Child 2; "Other Job Category" only with OTHER.
 const person = (who) => [
-    [`family.${who}`, "name", `${who}Name`, "text", { max: MAX.text }],
+    [`family.${who}`, "name", `${who}Name`, "text", { required: who !== "spouse", max: MAX.text }],
     [`family.${who}`, "surname", `${who}Surname`, "text", { max: MAX.text }],
     [`family.${who}`, "passportNumber", `${who}PassportNumber`, "passport", {}],
     [`family.${who}`, "birthDate", `${who}BirthDate`, "date", { notFuture: true }],
@@ -45,39 +76,41 @@ const person = (who) => [
 export const ANSWER_FIELDS = Object.freeze([
     ["basic", "fullName", "fullName", "text", { required: true, max: MAX.text }],
     ["basic", "surname", "surname", "text", { required: true, max: MAX.text }],
-    ["basic", "otherNames", "otherNames", "text", { max: MAX.text }],
+    ["basic", "otherNames", "otherNames", "text", { required: true, max: MAX.text }],
     ["basic", "sex", "sex", "code", { required: true, codes: SEX_CODES }],
     ["basic", "civilStatus", "civilStatus", "code", { required: true, codes: CIVIL_STATUS_CODES }],
     ["basic", "birthDate", "birthDate", "date", { required: true, notFuture: true }],
-    ["basic", "birthPlace", "birthPlace", "text", { max: MAX.text }],
+    ["basic", "birthPlace", "birthPlace", "text", { required: true, max: MAX.text }],
     ["contact", "address", "address", "text", { required: true, max: MAX.address }],
-    ["contact", "city", "city", "text", { max: MAX.text }],
+    ["contact", "city", "city", "text", { required: true, max: MAX.text }],
     ["contact", "district", "district", "text", { required: true, max: MAX.text }],
     ["contact", "dsDivision", "dsDivision", "text", { required: true, max: MAX.text }],
-    ["contact", "gnDivision", "gnDivision", "text", { max: MAX.text }],
-    ["contact", "alternativePhone", "alternativePhone", "phone", {}],
+    ["contact", "gnDivision", "gnDivision", "text", { required: true, max: MAX.text }],
+    ["contact", "alternativePhone", "alternativePhone", "phone", { required: true }],
     ["contact", "email", "email", "email", { required: true }],
     ["passport", "issueDate", "passportIssueDate", "date", { required: true, notFuture: true }],
     ["passport", "expiryDate", "passportExpiryDate", "date", { required: true }],
-    ["qualifications", "jobCategory", "jobCategory", "code", { required: true, codes: JOB_CATEGORIES }],
+    // The choices are the ACTIVE job types (Settings > Job Types), "No Preferred Type"
+    // (stored as NO_PREFERENCE) and OTHER (then "Other Job Category" is required).
+    ["qualifications", "jobCategory", "jobCategory", "jobCategory", { required: true }],
     ["qualifications", "jobCategoryOther", "jobCategoryOther", "text", { max: MAX.text }],
-    ["qualifications", "experience", "experience", "text", { max: MAX.long }],
-    ["qualifications", "otherSkills1", "otherSkills1", "text", { max: MAX.text }],
-    ["qualifications", "otherSkills2", "otherSkills2", "text", { max: MAX.text }],
+    ["qualifications", "experience", "experience", "text", { required: true, max: MAX.long }],
+    ["qualifications", "otherSkills1", "otherSkills1", "text", { required: true, max: MAX.text }],
+    ["qualifications", "otherSkills2", "otherSkills2", "text", { required: true, max: MAX.text }],
     ["qualifications", "englishKnowledge", "englishKnowledge", "code", { required: true, codes: ENGLISH_LEVELS }],
-    ["measurements", "shirtSize", "shirtSize", "code", { codes: SHIRT_SIZES }],
-    ["measurements", "waistSize", "waistSize", "size", {}],
-    ["measurements", "shoeSize", "shoeSize", "size", {}],
+    ["measurements", "shirtSize", "shirtSize", "code", { required: true, codes: SHIRT_SIZES }],
+    ["measurements", "waistSize", "waistSize", "size", { required: true }],
+    ["measurements", "shoeSize", "shoeSize", "size", { required: true }],
     ...person("father"),
     ...person("mother"),
     ...person("spouse"),
-    ["family", "child1", "child1Name", "text", { max: MAX.text }],
+    ["family", "child1", "child1Name", "text", { required: true, max: MAX.text }],
     ["family", "child2", "child2Name", "text", { max: MAX.text }],
     ["family", "child3", "child3Name", "text", { max: MAX.text }],
     ["guardian", "name", "guardianName", "text", { required: true, max: MAX.text }],
-    ["guardian", "relationship", "guardianRelationship", "text", { max: MAX.text }],
+    ["guardian", "relationship", "guardianRelationship", "text", { required: true, max: MAX.text }],
     ["guardian", "nic", "guardianNic", "nic", { required: true }],
-    ["guardian", "birthDate", "guardianBirthDate", "date", { notFuture: true }],
+    ["guardian", "birthDate", "guardianBirthDate", "date", { required: true, notFuture: true }],
     ["guardian", "phone", "guardianPhone", "phone", { required: true }],
     ["guardian", "address", "guardianAddress", "text", { required: true, max: MAX.address }],
 ]);
@@ -108,8 +141,10 @@ const SEX_FROM_RECORD = Object.freeze({ M: "MALE", F: "FEMALE", X: "OTHER" });
 // what is on record is filled; everything else stays null. Mapping (design
 // doc, "Field mapping"): note that the core candidate's other_name is the
 // SURNAME and first_name the OTHER NAMES (candidateService.js).
-export function prefillFromRecords(candidate, details) {
-    const job = textOrNull(candidate.job)?.toUpperCase();
+// `jobCategories`: the active job type names (the form's choices): the record's job
+// type is prefilled only when it is exactly one of them (or "No Preferred Type").
+export function prefillFromRecords(candidate, details, jobCategories = JOB_CATEGORIES) {
+    const job = textOrNull(candidate.job);
     const marital = details?.maritalStatus;
     const skills = textOrNull(details?.otherJobSkills);
     return {
@@ -125,7 +160,7 @@ export function prefillFromRecords(candidate, details) {
         alternativePhone: textOrNull(candidate.contactNumber),
         passportIssueDate: candidate.passportIssueDate ?? null,
         passportExpiryDate: candidate.passportExpiryDate ?? null,
-        jobCategory: job && JOB_CATEGORIES.includes(job) ? job : null,
+        jobCategory: jobCategoryOf(job, jobCategories),
         experience: textOrNull(candidate.jobExperience),
         otherSkills1: skills && skills.length <= MAX.text ? skills : null,
         shirtSize: SHIRT_SIZES.includes(details?.tshirtSize) ? details.tshirtSize : null,
@@ -177,9 +212,10 @@ export async function loadCandidateForm({ db, passportId, linkId, now = new Date
             },
         });
         if (!candidate) throw new CandidateError(401, "VERIFICATION_REQUIRED", "Please verify your details again.");
+        const jobCategories = await activeJobTypeNames(tx);
         let snapshot = await tx.candidateFormPrefillSnapshot.findUnique({ where: { passportId }, select: SNAPSHOT_SELECT });
         if (!snapshot) {
-            snapshot = prefillFromRecords(candidate, candidate.additionalDetails);
+            snapshot = prefillFromRecords(candidate, candidate.additionalDetails, jobCategories);
             await tx.candidateFormPrefillSnapshot.create({ data: { passportId, ...snapshot, capturedAt: now, capturedViaLinkId: linkId } });
         }
         const { answers, prefilled } = groupedFrom(snapshot);
@@ -187,6 +223,8 @@ export async function loadCandidateForm({ db, passportId, linkId, now = new Date
             identity: { passportNumber: candidate.passportId, nic: candidate.nic, whatsappNumber: candidate.whatsappNumber ?? null },
             answers,
             prefilled,
+            // The job type choices: names only (never ids, status or anything staff-only).
+            jobCategories,
         };
     });
 }
@@ -194,6 +232,15 @@ export async function loadCandidateForm({ db, passportId, linkId, now = new Date
 // ---------------------------------------------------------------- submission
 
 const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+// A job category in the list's own spelling (matched without regard to letter case),
+// NO_PREFERENCE for "No Preferred Type", or null.
+function jobCategoryOf(value, choices) {
+    if (!value) return null;
+    if (isNoPreference(value)) return NO_PREFERRED_JOB_TYPE.code;
+    const key = value.trim().toLowerCase();
+    return choices.find((choice) => choice.toLowerCase() === key) ?? null;
+}
 const NIC_PATTERN = /^(\d{9}[VX]|\d{12})$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_PATTERN = /^\+?\d{9,15}$/;
@@ -222,7 +269,8 @@ function shapeErrors(answers) {
 
 // { values (snapshot/response columns), idempotencyKey } or { errors }.
 // The server's own rules; the form checks the same before sending.
-export function parseSubmission(body, { now = new Date() } = {}) {
+// `jobCategories`: the active job type names (the route reads them from job_type).
+export function parseSubmission(body, { now = new Date(), jobCategories = JOB_CATEGORIES } = {}) {
     if (!isObject(body)) return { errors: [{ field: "body", code: "invalid", message: "must be a JSON object" }] };
     const errors = [];
     for (const key of Object.keys(body)) {
@@ -253,6 +301,11 @@ export function parseSubmission(body, { now = new Date() } = {}) {
             values[column] = options.required ? fail(path, "required", "is required") : null;
             continue;
         }
+        // "N/A" is an answer only where it is allowed; it never reaches a format check.
+        if (isNotApplicable(value)) {
+            values[column] = NOT_APPLICABLE_FIELDS.has(path) ? NOT_APPLICABLE : fail(path, "invalid", "N/A is not accepted for this field");
+            continue;
+        }
         switch (kind) {
             case "text":
                 values[column] = value.length > options.max ? fail(path, "tooLong", `must be at most ${options.max} characters`) : toUpperEnglish(value);
@@ -265,6 +318,9 @@ export function parseSubmission(body, { now = new Date() } = {}) {
                 break;
             case "code":
                 values[column] = options.codes.includes(value) ? value : fail(path, "invalid", "is not one of the choices");
+                break;
+            case "jobCategory":
+                values[column] = jobCategoryOf(value, [...jobCategories, OTHER_JOB_CATEGORY]) ?? fail(path, "invalid", "is not one of the choices");
                 break;
             case "size":
                 values[column] = SIZE_PATTERN.test(value) ? toUpperEnglish(value) : fail(path, "invalid", "must be a short size");
@@ -309,6 +365,29 @@ export function parseSubmission(body, { now = new Date() } = {}) {
         values.jobCategoryOther = null;
         for (let i = errors.length - 1; i >= 0; i--) if (errors[i].field === "qualifications.jobCategoryOther") errors.splice(i, 1);
     }
+    // The conditionally required answers (see ANSWER_FIELDS). A field that already has
+    // a problem keeps that one message.
+    const requireAnswer = (path, column) => {
+        if ((values[column] === null || values[column] === undefined) && !errors.some((e) => e.field === path)) {
+            errors.push({ field: path, code: "required", message: "is required" });
+        }
+    };
+    const real = (value) => value !== null && value !== undefined && value !== NOT_APPLICABLE;
+    for (const who of ["father", "mother"]) {
+        if (values[`${who}Name`] === NOT_APPLICABLE) continue;
+        requireAnswer(`family.${who}.surname`, `${who}Surname`);
+        requireAnswer(`family.${who}.passportNumber`, `${who}PassportNumber`);
+        requireAnswer(`family.${who}.birthDate`, `${who}BirthDate`);
+    }
+    if (values.civilStatus === "MARRIED") {
+        requireAnswer("family.spouse.name", "spouseName");
+        requireAnswer("family.spouse.surname", "spouseSurname");
+        requireAnswer("family.spouse.passportNumber", "spousePassportNumber");
+        requireAnswer("family.spouse.birthDate", "spouseBirthDate");
+    }
+    if (real(values.child1Name)) requireAnswer("family.child2", "child2Name");
+    if (real(values.child1Name) && real(values.child2Name)) requireAnswer("family.child3", "child3Name");
+
     if (values.passportIssueDate && values.passportExpiryDate && values.passportExpiryDate <= values.passportIssueDate) {
         errors.push({ field: "passport.expiryDate", code: "invalid", message: "must be after the issue date" });
     }

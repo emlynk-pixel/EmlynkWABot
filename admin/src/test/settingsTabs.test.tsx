@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useNavigate } from "react-router";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth/AuthProvider";
 import { ADMIN, renderApp, signedInBackend, userWithRole } from "./helpers";
@@ -29,7 +29,7 @@ const activeTab = () => tabs().getAllByRole("link").find((l) => l.getAttribute("
 const sidebar = () => within(screen.getByRole("navigation", { name: "Main navigation" }));
 
 describe("Settings tabs", () => {
-    test("1-5, 17. the sidebar has Settings but no Invite User / Change Roles; Settings shows three tabs (no Configurations) and opens Change Roles; one page title", async () => {
+    test("1-5, 17. the sidebar has Settings but no Invite User / Change Roles; Settings shows four tabs (no Configurations) and opens Change Roles; one page title", async () => {
         signedInBackend(routes);
         renderApp("/settings");
         expect(await screen.findByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
@@ -38,7 +38,7 @@ describe("Settings tabs", () => {
         expect(sidebar().queryByRole("link", { name: "Invite User" })).toBeNull();
         expect(sidebar().queryByRole("link", { name: "Change Roles" })).toBeNull();
         expect(sidebar().getByRole("link", { name: "Audit Logs" })).toBeInTheDocument();
-        expect(tabLabels()).toEqual(["Change Roles", "Invite User", "Google Sheet Sync"]);
+        expect(tabLabels()).toEqual(["Change Roles", "Invite User", "Google Sheet Sync", "Job Types"]);
         expect(screen.queryByRole("link", { name: "Configurations" })).toBeNull();
         expect(screen.queryByText(/configuration options/i)).toBeNull();
         expect(activeTab()).toBe("Change Roles");
@@ -48,7 +48,6 @@ describe("Settings tabs", () => {
 
     test("5, 8, 17. Change Roles tab: the existing role list and role change (PUT, confirmation, success); one page title", async () => {
         const { calls } = signedInBackend({ ...routes, "PUT /api/admin/users/u-2/role": { status: 200, body: { user: { ...USERS[1], role: "MANAGER" } } } });
-        vi.spyOn(window, "confirm").mockReturnValue(true);
         renderApp("/settings/invite");
         const user = userEvent.setup();
         await user.click(await screen.findByRole("link", { name: "Change Roles" }));
@@ -56,6 +55,8 @@ describe("Settings tabs", () => {
         expect(activeTab()).toBe("Change Roles");
         expect(screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent)).toEqual(["Settings"]);
         await user.selectOptions(await screen.findByRole("combobox", { name: "Change role for Ann Analyst" }), "MANAGER");
+        const dialog = await screen.findByRole("dialog", { name: "Confirm Role Change" });
+        await user.click(within(dialog).getByRole("button", { name: "Confirm Change" }));
         expect(await screen.findByText("Role updated successfully.")).toBeInTheDocument();
         expect(calls.filter((c) => c.method === "PUT").map((c) => [c.path, c.body])).toEqual([["/api/admin/users/u-2/role", { role: "MANAGER" }]]);
         expect(screen.getByRole("combobox", { name: "Change role for Test Admin" })).toBeDisabled();
@@ -169,13 +170,17 @@ describe("Settings tabs", () => {
         expect(await screen.findByRole("heading", { name: "Invite User", level: 2 })).toBeInTheDocument();
     });
 
-    for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
-        test(`11-12. ${role}: no Settings, Invite User or Change Roles in the sidebar; every Settings URL shows Access Restricted and requests nothing`, async () => {
-            for (const path of ["/settings", "/settings/roles", "/settings/invite", "/settings/sheet-sync", "/invitations", "/roles"]) {
+    for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
+        test(`11-12. ${role}: no Settings or Change Roles in the sidebar; every Settings URL shows Access Restricted and requests nothing`, async () => {
+            // A MANAGER's /invitations is its Job Handler invitation page (invitations.test.tsx), not a Settings URL.
+            const paths = ["/settings", "/settings/roles", "/settings/invite", "/settings/sheet-sync", "/roles", ...(role === "MANAGER" ? [] : ["/invitations"])];
+            for (const path of paths) {
                 const { calls } = signedInBackend({ ...routes, "GET /auth/me": { status: 200, body: { user: userWithRole(role) } } });
                 const { unmount } = renderApp(path);
                 expect(await screen.findByRole("heading", { name: "Access Restricted" })).toBeInTheDocument();
-                for (const name of ["Settings", "Invite User", "Change Roles"]) expect(sidebar().queryByRole("link", { name })).toBeNull();
+                for (const name of ["Settings", "Change Roles"]) expect(sidebar().queryByRole("link", { name })).toBeNull();
+                if (role === "MANAGER") expect(sidebar().getByRole("link", { name: "Invite User" })).toHaveAttribute("href", "/invitations");
+                else expect(sidebar().queryByRole("link", { name: "Invite User" })).toBeNull();
                 expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
                 expect(screen.queryByRole("combobox", { name: /Change role for/ })).toBeNull();
                 expect(screen.queryByLabelText("Email Address")).toBeNull();

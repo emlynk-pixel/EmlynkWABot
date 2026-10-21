@@ -2,8 +2,9 @@ import type { AgentJobRow, EntityStatus, Pagination } from "./agents";
 import { apiRequest } from "./client";
 
 // Client Management (src/services/clientService.js, /api/admin/client-management).
-// A Client is the employer / customer organisation, with ONE responsible Agent
-// and many Jobs. ADMIN and MANAGER only. Never deleted: ACTIVE or INACTIVE.
+// A Client is the employer / customer organisation. It works with MANY Agents (and
+// an Agent with many Clients: agent_client) and has many Jobs. ADMIN and MANAGER
+// only. Never deleted: ACTIVE or INACTIVE.
 // (The legacy candidate "Clients" area is /api/admin/clients, api/admin.ts.)
 
 export type ClientAgentRef = { agentId: string; name: string; countryCode: string; status: EntityStatus };
@@ -12,9 +13,10 @@ export type ClientRecord = {
     clientId: string;
     name: string;
     status: EntityStatus;
-    // The responsible Agent's country (a Client has none of its own).
-    countryCode: string | null;
-    agent: ClientAgentRef | null;
+    // Every Agent the Client works with (by name); none is primary.
+    agents: ClientAgentRef[];
+    // The distinct countries of its Agents (a Client has no country of its own).
+    countryCodes: string[];
     contactPerson: string | null;
     contactNumber: string | null;
     whatsappNumber: string | null;
@@ -43,13 +45,16 @@ export type ClientDetails = ClientListItem & {
 
 export type ClientInput = {
     name: string;
-    agentId: string;
+    // At least one; on edit, the full list (replacement; the server re-checks every id).
+    agentIds: string[];
     contactPerson?: string | null;
     contactNumber?: string | null;
     whatsappNumber?: string | null;
     email?: string | null;
     address?: string | null;
 };
+
+export type ClientOption = { clientId: string; name: string; status: EntityStatus };
 
 export type ClientListParams = { search?: string; country?: string; status?: EntityStatus; agentId?: string; page: number };
 
@@ -65,7 +70,7 @@ export function listClients(token: string, params: ClientListParams, signal?: Ab
 }
 
 export const getClient = (token: string, clientId: string, signal?: AbortSignal) => apiRequest<ClientDetails>(clientPath(clientId), { token, signal });
+export const getClientOptions = (token: string, signal?: AbortSignal) => apiRequest<{ clients: ClientOption[] }>("/api/admin/client-options", { token, signal });
 export const createClient = (token: string, body: ClientInput) => apiRequest<ClientDetails>("/api/admin/client-management", { method: "POST", token, body });
-export const updateClient = (token: string, clientId: string, body: Partial<Omit<ClientInput, "agentId">>) => apiRequest<ClientDetails>(clientPath(clientId), { method: "PATCH", token, body });
-export const changeClientAgent = (token: string, clientId: string, agentId: string) => apiRequest<ClientDetails>(`${clientPath(clientId)}/agent`, { method: "PATCH", token, body: { agentId } });
+export const updateClient = (token: string, clientId: string, body: Partial<ClientInput>) => apiRequest<ClientDetails>(clientPath(clientId), { method: "PATCH", token, body });
 export const setClientStatus = (token: string, clientId: string, status: EntityStatus) => apiRequest<ClientDetails>(`${clientPath(clientId)}/status`, { method: "PATCH", token, body: { status } });

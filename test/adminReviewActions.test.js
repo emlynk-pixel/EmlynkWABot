@@ -579,6 +579,7 @@ describe("security and error handling", () => {
             "PATCH /client-management/:clientId",
             "PATCH /client-management/:clientId/agent",
             "PATCH /client-management/:clientId/status",
+            "PATCH /job-types/:id", // Settings > Job Types: rename / activate / deactivate, ADMIN only, audited (jobTypes.test.js)
             "POST /agents",
             "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",

@@ -47,6 +47,8 @@ export type FormLoadResponse = {
     identity: { passportNumber: string; nic: string; whatsappNumber: string | null };
     answers: CandidateFormPayload;
     prefilled: string[];
+    // The ACTIVE job types (Settings > Job Types), names only: the job category choices.
+    jobCategories: string[];
     expiresAt: string;
 };
 

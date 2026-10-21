@@ -93,6 +93,8 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
     });
 
     const db = {
+        // Settings > Job Types: the active names the candidate bodies below use (jobTypeCatalog.js).
+        jobType: { findMany: async () => ["Caregiver", "Construction Worker", "Driver", "Electrician"].map((name) => ({ name })) },
         state,
         candidate: {
             findUnique: async ({ where }) => {
@@ -248,9 +250,10 @@ describe("candidate details validation", () => {
     test("required fields, NIC format, job types and dates are checked", () => {
         const { errors } = parseCandidateBody({ passportId: "x", nic: "123", jobTypes: [], dateOfBirth: "2026-02-30" }, { creating: true });
         const fields = errors.map((e) => e.field);
-        for (const field of ["passportId", "surname", "otherNames", "whatsappNumber", "jobExperience", "nic", "jobTypes", "dateOfBirth"]) {
+        for (const field of ["passportId", "surname", "otherNames", "whatsappNumber", "nic", "jobTypes", "dateOfBirth"]) {
             assert.ok(fields.includes(field), `${field} reported`);
         }
+        assert.ok(!fields.includes("jobExperience"), "job experience is not needed to register");
         assert.ok(parseCandidateBody({ ...VALID_BODY, jobTypes: ["A, B"] }, { creating: true }).errors);
     });
 
@@ -311,20 +314,62 @@ describe("optional passport and contact details", () => {
         for (const field of OPTIONAL_FIELDS) assert.equal(candidate[field], null, `${field} reads as null`);
     });
 
-    test("the required fields, including the passport issue and expiry dates (on registration and on every save)", () => {
-        for (const field of ["passportId", "surname", "otherNames", "nic", "whatsappNumber", "jobTypes", "jobExperience", "passportIssueDate", "passportExpiryDate"]) {
+    test("REGISTRATION-REQ-002..007 registration requires exactly the six; saving Candidate Details still requires the passport dates and job experience", () => {
+        for (const field of ["passportId", "surname", "otherNames", "nic", "whatsappNumber", "jobTypes"]) {
+            for (const blank of [undefined, null, ""]) {
+                const body = { ...REQUIRED_ONLY };
+                if (blank === undefined) delete body[field];
+                else body[field] = field === "jobTypes" ? [] : blank;
+                const { errors } = parseCandidateBody(body, { creating: true });
+                assert.deepEqual(errors?.map((e) => e.field), [field], `${field}: ${JSON.stringify(blank)} still required to register`);
+            }
+        }
+        // Not needed to register (REGISTRATION-REQ-001)...
+        for (const field of ["jobExperience", "passportIssueDate", "passportExpiryDate"]) {
             const body = { ...REQUIRED_ONLY };
             delete body[field];
-            const { errors } = parseCandidateBody(body, { creating: true });
-            assert.deepEqual(errors?.map((e) => e.field), [field], `${field} still required`);
+            assert.equal(parseCandidateBody(body, { creating: true }).errors, undefined, `${field} is optional to register`);
         }
-        for (const field of ["passportIssueDate", "passportExpiryDate"]) {
+        // ...but saving Candidate Details (an update) is unchanged.
+        for (const field of ["jobExperience", "passportIssueDate", "passportExpiryDate"]) {
             for (const blank of [undefined, null, ""]) {
                 const { errors } = parseCandidateBody({ ...REQUIRED_ONLY, [field]: blank }, { creating: false });
                 assert.deepEqual(errors, [{ field, message: "is required" }], `${field}: ${JSON.stringify(blank)} on update`);
             }
         }
         assert.ok(parseCandidateBody({ ...REQUIRED_ONLY, passportIssueDate: "2030-01-14", passportExpiryDate: "2020-01-15" }, { creating: true }).errors, "issue must be before expiry");
+    });
+
+    test("REGISTRATION-REQ-001 / 008 / 009 / 010 / 013 a candidate registered with ONLY the six is stored, with every other detail empty, and Candidate Details stays incomplete", async () => {
+        const SIX = { passportId: "N1023757", surname: "De Soysa", otherNames: "Anusha", nic: "965404378V", whatsappNumber: "+94771234567", jobTypes: ["Caregiver"] };
+        const parsed = parseCandidateBody(SIX, { creating: true });
+        assert.equal(parsed.errors, undefined, JSON.stringify(parsed.errors));
+        for (const column of ["address", "dateOfBirth", "placeOfBirth", "passportIssueDate", "passportExpiryDate", "jobExperience", "nationality", "sex", "contactNumber"]) {
+            assert.equal(parsed.values[column], null, `${column} is NULL`);
+        }
+        const db = createFakeDb();
+        await createCandidate({ db, values: parsed.values });
+        const details = await getCandidate({ db, passportId: "N1023757" });
+        assert.equal(details.candidate.nic, "965404378V");
+        // The Candidate Details completion rule is unchanged: the missing details and the passport document are listed.
+        const stage = details.stages.find((s) => s.stage === "CANDIDATE_DETAILS");
+        assert.equal(stage.completed, false);
+        assert.deepEqual(stage.missing, ["passport issue date", "passport expiry date", "job experience", "passport document"]);
+    });
+
+    test("REGISTRATION-REQ-012 an optional value that is given is still checked on registration", () => {
+        const SIX = { passportId: "N1023757", surname: "De Soysa", otherNames: "Anusha", nic: "965404378V", whatsappNumber: "+94771234567", jobTypes: ["Caregiver"] };
+        const fields = (extra) => parseCandidateBody({ ...SIX, ...extra }, { creating: true }).errors?.map((e) => e.field) ?? [];
+        assert.deepEqual(fields({ dateOfBirth: "2026-02-30" }), ["dateOfBirth"]);
+        assert.deepEqual(fields({ passportIssueDate: "not-a-date" }), ["passportIssueDate"]);
+        assert.deepEqual(fields({ passportIssueDate: "2030-01-14", passportExpiryDate: "2020-01-15" }), ["passportIssueDate"]);
+        assert.deepEqual(fields({ sex: "Q" }), ["sex"]);
+        assert.deepEqual(fields({ contactNumber: "12" }), ["contactNumber"]);
+        assert.deepEqual(fields({ jobExperience: "x".repeat(5000) }), ["jobExperience"]);
+        // Identity rules are not loosened: NIC and passport formats, WhatsApp format.
+        assert.deepEqual(fields({ nic: "123" }), ["nic"]);
+        assert.deepEqual(fields({ passportId: "x" }), ["passportId"]);
+        assert.deepEqual(fields({ whatsappNumber: "12" }), ["whatsappNumber"]);
     });
 
     test("values are normalized: sex upper case, phone numbers in the WhatsApp sender format", () => {

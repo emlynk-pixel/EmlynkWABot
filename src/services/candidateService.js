@@ -224,14 +224,19 @@ export function parseCandidateBody(body, { creating }) {
     values.firstName = text(body, "otherNames", errors, { required: true, max: MAX_NAME_LENGTH });
     // Optional, everywhere (registration, saving details, completing Candidate Details).
     values.address = text(body, "address", errors, { max: MAX_ADDRESS_LENGTH });
-    values.jobExperience = text(body, "jobExperience", errors, { required: true });
-    // Optional passport and contact details: empty is stored as NULL. The
-    // passport's issue and expiry dates are required (and count toward
-    // completing Candidate Details); older records without them still load.
+    // Initial registration (creating) needs only surname, other names, NIC,
+    // passport ID, job type and WhatsApp number; job experience and the
+    // passport's issue and expiry dates may come later. Saving Candidate
+    // Details still requires them, and Candidate Details only completes once
+    // they are on record (automaticStageMissing). A value that is given is
+    // always checked.
+    values.jobExperience = text(body, "jobExperience", errors, { required: !creating });
+    // Optional passport and contact details: empty is stored as NULL. Older
+    // records without the passport dates still load.
     values.placeOfBirth = text(body, "placeOfBirth", errors, { max: MAX_NAME_LENGTH });
     values.dateOfBirth = date(body, "dateOfBirth", errors);
-    values.passportExpiryDate = date(body, "passportExpiryDate", errors, { required: true });
-    values.passportIssueDate = date(body, "passportIssueDate", errors, { required: true });
+    values.passportExpiryDate = date(body, "passportExpiryDate", errors, { required: !creating });
+    values.passportIssueDate = date(body, "passportIssueDate", errors, { required: !creating });
     if (values.passportIssueDate && values.passportExpiryDate && values.passportIssueDate >= values.passportExpiryDate) {
         errors.push({ field: "passportIssueDate", message: "must be before the passport expiry date" });
     }
@@ -589,6 +594,13 @@ export function parseCandidateListQuery(query = {}) {
         if (testResult === TEST_RESULT_PASS) params.testResult = TEST_RESULT_PASS;
         else errors.push({ field: "testResult", message: `must be ${TEST_RESULT_PASS}` });
     }
+    // available=true: only candidates who are not currently on a PROCESSING job (no active job_candidate;
+    // the New job candidate selection).
+    const available = single("available");
+    if (available !== undefined) {
+        if (available === "true") params.available = true;
+        else errors.push({ field: "available", message: "must be true" });
+    }
     return errors.length ? { errors } : { params };
 }
 
@@ -646,23 +658,14 @@ export async function listCandidates({ db, params, scope = {} }) {
     const search = params.search ? candidateSearchWhere(params.search) : {};
     // Filtered on the database, from the saved Test details row (never from stage completion).
     const passed = params.testResult === TEST_RESULT_PASS ? { stages: { some: { stage: "TEST_DETAILS", testResult: TEST_RESULT_PASS } } } : {};
-    const parts = [search, scope, passed].filter((part) => Object.keys(part).length);
+    const available = params.available ? { jobAssignments: { none: { isActive: true } } } : {};
+    const parts = [search, scope, passed, available].filter((part) => Object.keys(part).length);
     const where = parts.length > 1 ? { AND: parts } : parts[0] ?? {};
     const [total, users] = await Promise.all([
         db.candidate.count({ where }),
         db.candidate.findMany({
             where,
-            select: {
-                ...listSelect,
-                stages: { select: { stage: true, completed: true, testResult: true } },
-                documents: {
-                    where: { documentType: { in: REQUIRED_SUBMISSION_DOCUMENTS } },
-                    select: { documentType: true, documentVariant: true, verificationStatus: true },
-                },
-                // The workflow Status signals, each loaded for the whole page in one batched query (never per candidate).
-                jobAssignments: { where: { isActive: true }, select: { jobId: true }, take: 1 },
-                verification: { select: { detailsVerifiedAt: true, documentsVerifiedAt: true } },
-            },
+            select: WORKFLOW_STATUS_SELECT,
             orderBy: [{ createdDate: "desc" }, { passportId: "asc" }],
             skip: (params.page - 1) * params.pageSize,
             take: params.pageSize,
@@ -673,22 +676,45 @@ export async function listCandidates({ db, params, scope = {} }) {
         items: users.map((user) => {
             const missing = automaticStageMissing(user, user.documents);
             const stages = stageList(user.stages, missing);
-            const rowOf = (stage) => user.stages.find((row) => row.stage === stage);
-            const workflowStatus = deriveCandidateWorkflowStatus({
-                testResult: rowOf("TEST_DETAILS")?.testResult ?? null,
-                hasCurrentJob: (user.jobAssignments?.length ?? 0) > 0,
-                formSubmitted: submitted.has(user.passportId),
-                // Explicit manual verifications (candidateVerificationService.js), never inferred from data.
-                detailsVerified: Boolean(user.verification?.detailsVerifiedAt),
-                documentsVerified: Boolean(user.verification?.documentsVerifiedAt),
-                // Document submission complete (every required document on record): the Visa-document point.
-                documentSubmissionCompleted: missing.DOCUMENT_SUBMISSION.length === 0,
-            });
+            const workflowStatus = workflowStatusOf(user, submitted.has(user.passportId), missing);
             return { ...candidateSummary(user), workflowStatus, stages: stages.map(({ stage, completed }) => ({ stage, completed })) };
         }),
         pagination: listPagination(params, total),
-        filters: { search: params.search ?? null, ...(params.testResult ? { testResult: params.testResult } : {}) },
+        filters: { search: params.search ?? null, ...(params.testResult ? { testResult: params.testResult } : {}), ...(params.available ? { available: true } : {}) },
     };
+}
+
+// What the workflow Status of a candidate row needs (the list row's summary fields too). The signals are
+// loaded for every row in one batched query each (never per candidate).
+export const WORKFLOW_STATUS_SELECT = Object.freeze({
+    ...listSelect,
+    stages: { select: { stage: true, completed: true, testResult: true } },
+    documents: {
+        where: { documentType: { in: REQUIRED_SUBMISSION_DOCUMENTS } },
+        select: { documentType: true, documentVariant: true, verificationStatus: true },
+    },
+    jobAssignments: { where: { isActive: true }, select: { jobId: true }, take: 1 },
+    verification: { select: { detailsVerifiedAt: true, documentsVerifiedAt: true } },
+});
+
+function workflowStatusOf(user, formSubmitted, missing = automaticStageMissing(user, user.documents)) {
+    return deriveCandidateWorkflowStatus({
+        testResult: user.stages.find((row) => row.stage === "TEST_DETAILS")?.testResult ?? null,
+        hasCurrentJob: (user.jobAssignments?.length ?? 0) > 0,
+        formSubmitted,
+        // Explicit manual verifications (candidateVerificationService.js), never inferred from data.
+        detailsVerified: Boolean(user.verification?.detailsVerifiedAt),
+        documentsVerified: Boolean(user.verification?.documentsVerifiedAt),
+        // Document submission complete (every required document on record): the Visa-document point.
+        documentSubmissionCompleted: missing.DOCUMENT_SUBMISSION.length === 0,
+    });
+}
+
+// The same workflow Status the Candidates list shows, for rows read with WORKFLOW_STATUS_SELECT
+// (Job details' assigned candidates). Map passportId -> { code, label }.
+export async function candidateWorkflowStatuses(db, users) {
+    const submitted = await submittedFormPassportIds(db, users.map((user) => user.passportId));
+    return new Map(users.map((user) => [user.passportId, workflowStatusOf(user, submitted.has(user.passportId))]));
 }
 
 // total (kept for existing callers) and totalItems are the same count.

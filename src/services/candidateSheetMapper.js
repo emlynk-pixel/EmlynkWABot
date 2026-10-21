@@ -30,6 +30,7 @@
 import { SHEET_COLUMNS, SYSTEM_CANDIDATE_ID_FIELD, assertSheetRow } from "./sheetSchema.js";
 import { CANDIDATE_DOCUMENT_TYPES, automaticStageMissing, currentOf, stageList } from "./candidateService.js";
 import { businessDateOf } from "../utils/businessDay.js";
+import { jobTypesLabel } from "./jobTypeCatalog.js";
 
 export const DOCUMENT_NOT_SUBMITTED = "Not Submitted";
 
@@ -142,7 +143,8 @@ export function mapCandidateToSheetRow(aggregate, { mirroredAt, recordStatus = R
         testDate: text(stages.get("TEST_DETAILS")?.testDate),
         birthday: dateOnly(user.dateOfBirth),
         passportExpiryDate: dateOnly(user.passportExpiryDate),
-        job: text(user.job),
+        // "No Preferred Type" is stored as its code (NO_PREFERENCE); the Sheet shows the label.
+        job: text(jobTypesLabel(user.job)),
         idNumber: text(user.nic),
         address: text(user.address),
         whatsappNumber: text(user.whatsappNumber),

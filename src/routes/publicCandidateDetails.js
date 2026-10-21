@@ -7,6 +7,7 @@ import { issueCandidateFormToken, passportReference } from "../services/candidat
 import { ALREADY_SUBMITTED_MESSAGE, parseVerifyBody, VERIFY_FAILED_MESSAGE, verifyFormLinkAccess } from "../services/candidateFormVerificationService.js";
 import { loadCandidateForm, parseSubmission, submitCandidateForm } from "../services/candidateFormDataService.js";
 import { CandidateError } from "../services/candidateService.js";
+import { activeJobTypeNames } from "../services/jobTypeCatalog.js";
 import { createRequireCandidateFormToken } from "../middleware/requireCandidateFormToken.js";
 import { resolveDb } from "../utils/resolveClients.js";
 
@@ -170,13 +171,14 @@ export function createPublicCandidateDetailsRouter({
     // The answers, once. 409 after the form was submitted (by this request's
     // twin, another device, or earlier).
     router.post("/submit", notAvailable, answersJson, requireSubmitSession, respond(async (req, res) => {
-        const parsed = parseSubmission(req.body, { now: now() });
+        const client = await resolveDb(db);
+        // The job category must be one of the job types active NOW (Settings > Job Types).
+        const parsed = parseSubmission(req.body, { now: now(), jobCategories: await activeJobTypeNames(client) });
         if (parsed.errors) {
             // Field paths and codes only: never the submitted values.
             return res.status(400).json({ message: INVALID_ANSWERS_MESSAGE, errors: parsed.errors.map(({ field, code }) => ({ field, code, message: code })) });
         }
         const { passportId, linkId, version, kind, jobId } = req.candidateForm;
-        const client = await resolveDb(db);
         const result = await submitCandidateForm({ db: client, passportId, linkId, version, kind, jobId, values: parsed.values, idempotencyKey: parsed.idempotencyKey, now: now() });
         return res.json(result);
     }));

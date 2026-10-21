@@ -3,6 +3,7 @@ import { submitCandidateForm } from "../api/candidateDetails";
 import { ApiError } from "../api/client";
 import { idOf, setAt, type StepProps } from "../form/binding";
 import { fromPayload, toPayload, type CandidateFormData } from "../form/model";
+import { jobCategoryChoices } from "../form/options";
 import { JOURNEY_OFFSET, JOURNEY_TOTAL, STEPS, SECTIONS, stepOf, type SectionId, type StepId } from "../form/steps";
 import { BasicStep } from "../form/steps/BasicStep";
 import { ContactStep } from "../form/steps/ContactStep";
@@ -61,7 +62,9 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
     const pendingSection = useRef<SectionId | null>(null);
 
     const step = STEPS[stepIndex];
-    const allErrors = useMemo(() => ({ ...serverErrors, ...validateForm(data) }), [data, serverErrors]);
+    // The job category choices: the active job types sent with the form + No Preferred Type + OTHER.
+    const jobCategories = useMemo(() => jobCategoryChoices(form.jobCategories), [form.jobCategories]);
+    const allErrors = useMemo(() => ({ ...serverErrors, ...validateForm(data, undefined, jobCategories) }), [data, serverErrors, jobCategories]);
     const shownErrors: FormErrors = useMemo(
         () => Object.fromEntries(Object.entries(allErrors).filter(([path]) => {
             const owner = stepOf(path);
@@ -107,7 +110,7 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
         });
         if (submitState === "invalid" || submitState === "failed") setSubmitState("idle");
     };
-    const props: StepProps = { data, set, errors: shownErrors, prefilled };
+    const props: StepProps = { data, set, errors: shownErrors, prefilled, jobCategories };
 
     const goTo = (index: number) => {
         setStepIndex(index);
@@ -218,6 +221,8 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
                 <p className="success" role="status"><span aria-hidden="true">✓ </span>{t("form.verifiedBanner")}</p>
                 <h1>{t("form.title")}</h1>
                 <p className="lead">{t("form.intro")}</p>
+                {/* Said once, at the top: every answer is required, "N/A" only where it is allowed. */}
+                <p className="notice" id="form-all-required">{t("form.allRequired")}</p>
                 {prefilled.size > 0 && <p className="notice subtle">{t("form.prefilledBanner")}</p>}
             </div>
 

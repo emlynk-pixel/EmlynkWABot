@@ -2,11 +2,12 @@
 // Supabase Auth owns every credential, session, invitation email and
 // password; this service owns the application profile, its role and its
 // status, and the audit trail. The caller (routes/users.js) has already
-// checked that the actor is an ACTIVE ADMIN; the role checks here are defence
-// in depth for any other caller.
+// checked the actor's role (ADMIN; or MANAGER for an invitation); the role checks
+// here are defence in depth and hold the finer rule (a MANAGER invites a NEW
+// Job Handler only).
 //
 // Invite flow:
-//   ADMIN -> POST /api/admin/users/invite { email, name, role }
+//   ADMIN (any role) or MANAGER (JOB_HANDLER) -> POST /api/admin/users/invite { email, name, role }
 //     -> role validated here (never taken from Supabase user metadata)
 //     -> Supabase Auth Admin inviteUserByEmail (Supabase sends the email)
 //     -> public."user" upserted by email, linked by auth_user_id, INVITED
@@ -24,7 +25,7 @@
 
 import crypto from "node:crypto";
 
-import { ALL_ROLES, ROLES, isValidRole } from "../middleware/requireRole.js";
+import { ALL_ROLES, ROLES, canInviteRole, isValidRole } from "../middleware/requireRole.js";
 import { USER_STATUS } from "../middleware/requireActiveUser.js";
 import { AuthAdminError } from "../auth/supabaseAuthAdmin.js";
 
@@ -60,6 +61,20 @@ const assertAdmin = (actor) => {
     }
 };
 
+// Inviting (requireRole.js INVITABLE_ROLES): ADMIN may invite any role; MANAGER only a Job
+// Handler. A MANAGER's invitation never touches an account that already exists in any other
+// way: re-sending a pending Job Handler invitation is the only re-invite it may do. Anything
+// else (an existing user of another role, a deactivated account, a role change) stays an
+// ADMIN's, because inviting an existing email updates its role and may reactivate it.
+const assertCanInvite = (actor, role, existing) => {
+    if (actor?.status !== USER_STATUS.ACTIVE || !canInviteRole(actor.role, role)) {
+        throw new UserAccountError(403, "FORBIDDEN", "Insufficient permissions");
+    }
+    if (actor.role === ROLES.ADMIN || !existing) return;
+    if (existing.status === USER_STATUS.INVITED && existing.role === ROLES.JOB_HANDLER) return;
+    throw new UserAccountError(403, "ADMIN_REQUIRED", "This email already belongs to an account. Only an administrator can re-invite, reactivate or change it.");
+};
+
 const audit = (client, { actor, action, previousStatus, newStatus, reason, previousValue = null, newValue = null }) =>
     client.auditLog.create({
         data: { auditId: crypto.randomUUID(), adminId: actor.adminId, action, previousStatus, newStatus, reason, previousValue, newValue },
@@ -89,14 +104,16 @@ export async function listUsers({ db }) {
 }
 
 export async function inviteUser({ db, authAdmin, actor, values, redirectTo }) {
-    assertAdmin(actor);
+    const { email, name, role } = values;
+    // Which role this actor may give, before anything else (nothing is read or sent for a refusal).
+    if (actor?.status !== USER_STATUS.ACTIVE || !canInviteRole(actor.role, role)) throw new UserAccountError(403, "FORBIDDEN", "Insufficient permissions");
     // Never let Supabase fall back to its Site URL for the invitation link.
     if (typeof redirectTo !== "string" || redirectTo === "") {
         throw new UserAccountError(503, "INVITE_NOT_CONFIGURED", "Invitations are not configured: no redirect address.");
     }
-    const { email, name, role } = values;
 
     const existing = await db.user.findUnique({ where: { email } });
+    assertCanInvite(actor, role, existing);
     if (existing?.status === USER_STATUS.ACTIVE) {
         throw new UserAccountError(409, "USER_ALREADY_ACTIVE", "An active user with this email already exists.");
     }

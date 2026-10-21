@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { listCandidates } from "../api/candidates";
+import { jobTypeLabel } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
 import { canRegisterCandidates, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
@@ -133,7 +134,7 @@ export function CandidatesPage() {
                                                     {item.jobTypes.length ? (
                                                         <span className="flex flex-wrap gap-1.5">
                                                             {item.jobTypes.map((jobType) => (
-                                                                <span key={jobType} className="rounded bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft">{jobType}</span>
+                                                                <span key={jobType} className="rounded bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft">{jobTypeLabel(jobType)}</span>
                                                             ))}
                                                         </span>
                                                     ) : "—"}

@@ -30,7 +30,7 @@ beforeEach(async () => {
     await pg.exec(`
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "rate_limits"; DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter";
-        DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent";
+        DELETE FROM "job_type"; DELETE FROM "agent_client"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
     `);
     const names = ["Passed", "Failed", "Untested", "DoneNoResult", "DoneFail"];
@@ -45,7 +45,7 @@ beforeEach(async () => {
     });
     const jobType = await prisma.jobType.create({ data: { code: "WELDER", name: "Welder" } });
     const agent = await prisma.agent.create({ data: { name: "Ion Popescu", countryCode: "RO" } });
-    const acme = await prisma.client.create({ data: { name: "Acme Builders", agentId: agent.id } });
+    const acme = await prisma.client.create({ data: { name: "Acme Builders", agentLinks: { create: { agentId: agent.id } } } });
     ids = { jobType: jobType.id, acme: acme.id };
 });
 

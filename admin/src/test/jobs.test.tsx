@@ -20,12 +20,14 @@ const job = (n: number, status: JobStatus = "PROCESSING", extra: Partial<JobList
     client: { id: "c1", name: "Acme Construction" },
     responsibleAgent: { id: "a1", name: "Ion Popescu", countryCode: "RO" },
     countryCode: "RO",
+    fromCountryCode: "RO",
     vacancies: 5,
     createdAt: "2026-10-01T05:00:00.000Z",
     completedAt: status === "COMPLETED" ? "2026-10-10T05:00:00.000Z" : null,
     cancelledAt: status === "CANCELLED" ? "2026-10-11T05:00:00.000Z" : null,
     cancelReason: status === "CANCELLED" ? "Client withdrew" : null,
     candidateCount: n,
+    filled: false,
     ...extra,
 });
 const page = (items: JobListItem[], view: "processing" | "completed" | "cancelled" = "processing"): JobList => ({
@@ -35,10 +37,10 @@ const page = (items: JobListItem[], view: "processing" | "completed" | "cancelle
     filters: { view, search: null },
 });
 const details = (base: JobListItem, candidates: JobDetails["candidates"] = []): JobDetails => ({ ...base, createdBy: "Test Admin", candidateCount: candidates.length, candidates });
-const CAND = { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", assignedAt: "2026-10-02T05:00:00.000Z" };
+const CAND: JobDetails["candidates"][number] = { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", assignedAt: "2026-10-02T05:00:00.000Z", workflowStatus: { code: "JOB_ASSIGNED", label: "Job Assigned" } };
 const OPTIONS: JobOptions = {
     jobTypes: [{ id: "t1", name: "Welder", code: "WELDER" }],
-    clients: [{ id: "c1", name: "Acme Construction", agentId: "a1" }],
+    clients: [{ id: "c1", name: "Acme Construction", agentIds: ["a1"] }],
     agents: [{ id: "a1", name: "Ion Popescu", countryCode: "RO" }],
 };
 const SEARCH_RESULT: CandidateList = {
@@ -61,16 +63,20 @@ function backend(role = "MANAGER", extra: FetchRoutes = {}) {
     });
 }
 const table = () => screen.findByRole("table", { name: "Jobs" }, RENDER_STEP);
+// Job details opens on its Job Details tab; the assigned candidates are on the other tab.
+const openCandidatesTab = async (user: ReturnType<typeof userEvent.setup>) => user.click(await screen.findByRole("tab", { name: /^Assigned Candidates/ }, RENDER_STEP));
+// New job Step 2 lists the eligible candidates (none here unless a test gives some).
+const NO_ELIGIBLE = { "GET /api/admin/candidates": { status: 200, body: { ...SEARCH_RESULT, items: [], pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 } } } };
 
 describe("Jobs list", () => {
     test("Processing is the default view: code, type, country, agent, company, candidates, vacancies, status", async () => {
         backend();
         renderApp("/jobs");
         const rows = within(await table()).getAllByRole("row");
-        expect(within(rows[0]).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Job code", "Client Job ID", "Job type", "Country", "Client", "Responsible agent", "Candidates", "Vacancies", "Status"]);
+        expect(within(rows[0]).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Job code", "Client Job ID", "Job type", "To Country", "From Country", "Client", "Responsible agent", "Candidates", "Vacancies", "Status"]);
         expect(rows).toHaveLength(3);
         const first = within(rows[1]).getAllByRole("cell");
-        expect(first.map((c) => c.textContent)).toEqual(["JOB-2026-000002Created 01 Oct 2026", "Not assigned", "Welder", "RO", "Acme Construction", "Ion Popescu", "2", "5", "Processing"]);
+        expect(first.map((c) => c.textContent)).toEqual(["JOB-2026-000002Created 01 Oct 2026", "Not assigned", "Welder", "Romania", "Romania", "Acme Construction", "Ion Popescu", "2", "2 / 5", "Processing"]);
         expect(within(rows[1]).getByRole("link", { name: "JOB-2026-000002" })).toHaveAttribute("href", "/jobs/00000000-0000-4000-8000-000000000002");
         expect(screen.getByRole("tab", { name: "Processing (2)" })).toHaveAttribute("aria-selected", "true");
         expect(screen.getByRole("tab", { name: "Completed (1)" })).toBeInTheDocument();
@@ -136,6 +142,7 @@ describe("New job", () => {
     test("needs a type and client; the agent and the country come from the client; opens the new job", async () => {
         const created = details(job(5, "PROCESSING", { candidateCount: 0 }));
         const { calls } = backend("MANAGER", {
+            ...NO_ELIGIBLE,
             "POST /api/admin/jobs": { status: 201, body: created },
             [`GET /api/admin/jobs/${created.jobId}`]: { status: 200, body: created },
         });
@@ -144,14 +151,15 @@ describe("New job", () => {
         await table();
         await user.click(screen.getByRole("button", { name: "New job" }));
         const dialog = await screen.findByRole("dialog", { name: "New job" });
-        const create = within(dialog).getByRole("button", { name: "Create job" });
-        expect(create).toBeDisabled();
+        const next = await within(dialog).findByRole("button", { name: "Next" });
+        expect(next).toBeDisabled();
         await user.selectOptions(await within(dialog).findByLabelText("Job type"), "t1");
         await user.selectOptions(within(dialog).getByLabelText("Client"), "c1");
         await user.type(within(dialog).getByLabelText(/Vacancies/), "5");
-        expect(within(dialog).getByText(/Country: RO/)).toBeInTheDocument();
-        await user.click(create);
-        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", clientId: "c1", responsibleAgentId: "a1", vacancies: 5, companyJobId: null }));
+        expect(within(dialog).getByTestId("job-to-country")).toHaveTextContent("Romania");
+        await user.click(next);
+        await user.click(await within(dialog).findByRole("button", { name: "Create job" }));
+        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", clientId: "c1", responsibleAgentId: "a1", vacancies: 5, companyJobId: null, fromCountryCode: "RO", candidateIds: [] }));
         expect(await screen.findByRole("heading", { name: /JOB-2026-000005/ }, RENDER_STEP)).toBeInTheDocument();
     });
 
@@ -165,7 +173,7 @@ describe("New job", () => {
         await user.selectOptions(await within(dialog).findByLabelText("Job type"), "t1");
         await user.selectOptions(within(dialog).getByLabelText("Client"), "c1");
         await user.type(within(dialog).getByLabelText(/Vacancies/), "0");
-        expect(within(dialog).getByRole("button", { name: "Create job" })).toBeDisabled();
+        expect(within(dialog).getByRole("button", { name: "Next" })).toBeDisabled();
     });
 });
 
@@ -178,8 +186,9 @@ describe("Job details", () => {
         backend("MANAGER", getJob(details(base, [CAND])));
         renderApp(path);
         const list = await screen.findByLabelText("Job details", undefined, RENDER_STEP);
-        for (const text of ["JOB-2026-000002", "Welder", "Acme Construction", "RO", "Ion Popescu", "5"]) expect(within(list).getAllByText(text).length).toBeGreaterThan(0);
+        for (const text of ["JOB-2026-000002", "Welder", "Acme Construction", "Romania", "Ion Popescu", "5"]) expect(within(list).getAllByText(text).length).toBeGreaterThan(0);
         expect(within(list).getByText(/Test Admin/)).toBeInTheDocument();
+        await openCandidatesTab(userEvent.setup());
         const rows = within(screen.getByRole("table", { name: "Assigned candidates" })).getAllByRole("row");
         expect(within(rows[1]).getByRole("link", { name: "KAMAL PERERA" })).toHaveAttribute("href", "/candidates/N0000001");
         expect(screen.getByRole("heading", { name: "Assigned candidates (1)" })).toBeInTheDocument();
@@ -190,6 +199,7 @@ describe("Job details", () => {
         const done = job(3, "COMPLETED");
         backend("MANAGER", { [`GET /api/admin/jobs/${done.jobId}`]: { status: 200, body: details(done, [CAND]) } });
         renderApp(`/jobs/${done.jobId}`);
+        await openCandidatesTab(userEvent.setup());
         expect(await screen.findByText(/the assignment history is kept/, undefined, RENDER_STEP)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Add to job" })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Complete job" })).not.toBeInTheDocument();
@@ -211,6 +221,7 @@ describe("Job details", () => {
         renderApp(path);
         await screen.findByLabelText("Job details", undefined, RENDER_STEP);
         for (const name of ["Add to job", "Complete job", "Cancel job"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+        await openCandidatesTab(userEvent.setup());
         expect(screen.queryByRole("button", { name: /^Remove / })).not.toBeInTheDocument();
         expect(screen.getByRole("link", { name: "KAMAL PERERA" })).toBeInTheDocument();
     });
@@ -243,7 +254,7 @@ describe("Job details", () => {
         await user.click(within(dialog).getByRole("button", { name: "Search" }));
         await user.click(await within(dialog).findByRole("button", { name: "Add SAMAN SILVA" }));
         expect(await within(dialog).findByRole("alert")).toHaveTextContent("Candidate must pass the test before being assigned to a job.");
-        expect(screen.getByRole("heading", { name: "Assigned candidates (1)" })).toBeInTheDocument();
+        expect(screen.getByRole("tab", { name: "Assigned Candidates (1)" })).toBeInTheDocument();
         expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
     });
 
@@ -265,12 +276,12 @@ describe("Job details", () => {
         await user.click(within(dialog).getByRole("button", { name: "Search" }));
         await user.click(await within(dialog).findByRole("button", { name: "Add SAMAN SILVA" }));
         expect(await within(dialog).findByRole("alert")).toHaveTextContent("already on the PROCESSING job JOB-2026-000007");
-        expect(screen.getByRole("heading", { name: "Assigned candidates (1)" })).toBeInTheDocument();
+        expect(screen.getByRole("tab", { name: "Assigned Candidates (1)" })).toBeInTheDocument();
 
         await user.click(within(dialog).getByRole("button", { name: "Add SAMAN SILVA" }));
         expect(await within(dialog).findByRole("status")).toHaveTextContent("SAMAN SILVA was added.");
         expect(within(dialog).getByText("On this job")).toBeInTheDocument();
-        expect(await screen.findByRole("heading", { name: "Assigned candidates (2)" })).toBeInTheDocument();
+        expect(await screen.findByRole("tab", { name: "Assigned Candidates (2)" })).toBeInTheDocument();
         expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([{ passportId: "N0000002" }, { passportId: "N0000002" }]);
     });
 
@@ -305,6 +316,7 @@ describe("Job details", () => {
         const dialog = await screen.findByRole("dialog", { name: /Complete JOB-2026-000002/ });
         expect(calls.some((c) => c.method === "POST")).toBe(false);
         await user.click(within(dialog).getByRole("button", { name: "Complete job" }));
+        await openCandidatesTab(user);
         expect(await screen.findByText(/the assignment history is kept/)).toBeInTheDocument();
         expect(screen.getByRole("link", { name: "KAMAL PERERA" })).toBeInTheDocument();
     });
@@ -317,6 +329,7 @@ describe("Job details", () => {
         });
         renderApp(path);
         const user = userEvent.setup();
+        await openCandidatesTab(user);
         await user.click(await screen.findByRole("button", { name: "Remove KAMAL PERERA from the job" }, RENDER_STEP));
         const dialog = await screen.findByRole("dialog", { name: "Remove candidate?" });
         await user.click(within(dialog).getByRole("button", { name: "Remove" }));
@@ -369,7 +382,7 @@ describe("Client Job ID", () => {
         await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ companyJobId: "il-2026-44" }));
         expect(await within(await screen.findByLabelText("Job details")).findByText("IL-2026-44")).toBeInTheDocument();
         // Same job, same candidates: nothing else was touched.
-        expect(screen.getByRole("heading", { name: "Assigned candidates (1)" })).toBeInTheDocument();
+        expect(screen.getByRole("tab", { name: "Assigned Candidates (1)" })).toBeInTheDocument();
         expect(calls.filter((c) => c.method !== "GET").map((c) => c.method)).toEqual(["PUT"]);
     });
 
@@ -399,6 +412,7 @@ describe("Client Job ID", () => {
     test("New job accepts an optional Client Job ID", async () => {
         const created = details(job(5, "PROCESSING", { candidateCount: 0, companyJobId: "Y26S01" }));
         const { calls } = backend("MANAGER", {
+            ...NO_ELIGIBLE,
             "POST /api/admin/jobs": { status: 201, body: created },
             [`GET /api/admin/jobs/${created.jobId}`]: { status: 200, body: created },
         });
@@ -410,7 +424,8 @@ describe("Client Job ID", () => {
         await user.selectOptions(await within(dialog).findByLabelText("Job type"), "t1");
         await user.selectOptions(within(dialog).getByLabelText("Client"), "c1");
         await user.type(within(dialog).getByLabelText(/Client Job ID/), "Y26S01");
-        await user.click(within(dialog).getByRole("button", { name: "Create job" }));
-        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", clientId: "c1", responsibleAgentId: "a1", vacancies: null, companyJobId: "Y26S01" }));
+        await user.click(within(dialog).getByRole("button", { name: "Next" }));
+        await user.click(await within(dialog).findByRole("button", { name: "Create job" }));
+        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", clientId: "c1", responsibleAgentId: "a1", vacancies: null, companyJobId: "Y26S01", fromCountryCode: "RO", candidateIds: [] }));
     });
 });

@@ -102,17 +102,17 @@ async function session(candidate) {
 // Answers that pass every rule.
 const ANSWERS = () => ({
     basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "SINGLE", birthDate: "1990-05-01", birthPlace: "negombo" },
-    contact: { address: "12 galle road", city: "", district: "gampaha", dsDivision: "negombo", gnDivision: "", alternativePhone: "0771234567", email: "Anusha.D@example.com" },
+    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "0771234567", email: "Anusha.D@example.com" },
     passport: { issueDate: "2020-01-15", expiryDate: "2030-01-14" },
-    qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "5 years", otherSkills1: "", otherSkills2: "", englishKnowledge: "GOOD" },
+    qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "5 years", otherSkills1: "n/a", otherSkills2: "N/A", englishKnowledge: "GOOD" },
     measurements: { shirtSize: "M", waistSize: "32", shoeSize: "eu 42" },
     family: {
         father: { name: "sunil", surname: "de soysa", passportNumber: "n7654321", birthDate: "1960-03-02" },
-        mother: { name: "", surname: "", passportNumber: "", birthDate: "" },
+        mother: { name: "kumari", surname: "de soysa", passportNumber: "N/A", birthDate: "1965-02-03" },
         spouse: { name: "kept but hidden", surname: "", passportNumber: "", birthDate: "" },
-        child1: "", child2: "", child3: "",
+        child1: "N/A", child2: "", child3: "",
     },
-    guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "", phone: "+94 77 123 4567", address: "45 lake road" },
+    guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "1960-01-01", phone: "+94 77 123 4567", address: "45 lake road" },
 });
 const submit = (token, answers = ANSWERS(), idempotencyKey = "key-0000000000000001") => pub("/submit", { token, body: { answers, idempotencyKey } });
 const rowOf = async (passportId) => ({
@@ -235,7 +235,9 @@ describe("the form: identity and prefill", () => {
 
     test("the response holds only the form's fields: no stages, documents, allocation, job assignment or IDs", async () => {
         const r = await pub("/form", { token: (await session(A)).token, body: {} });
-        assert.deepEqual(Object.keys(r.body).sort(), ["answers", "expiresAt", "identity", "prefilled"]);
+        // jobCategories: the active job type names (the form's choices), names only.
+        assert.deepEqual(Object.keys(r.body).sort(), ["answers", "expiresAt", "identity", "jobCategories", "prefilled"]);
+        assert.ok(r.body.jobCategories.every((name) => typeof name === "string"));
         const keys = (value, prefix = "") => Object.entries(value).flatMap(([k, v]) => (v && typeof v === "object" ? keys(v, `${prefix}${k}.`) : [`${prefix}${k}`]));
         assert.deepEqual(keys(r.body.answers).sort(), ANSWER_FIELDS.map(([group, key]) => `${group}.${key}`).sort());
         const text = JSON.stringify(r.body);
@@ -255,7 +257,7 @@ describe("the form: identity and prefill", () => {
 });
 
 describe("submission (once)", () => {
-    test("a valid submission is stored in the response table, normalised, with nulls for empty answers; the main tables are untouched", async () => {
+    test("a valid submission is stored in the response table, normalised (N/A in one spelling), with nulls for empty answers; the main tables are untouched", async () => {
         const { token } = await session(A);
         await pub("/form", { token, body: {} });
         const before = await rowOf(A.passportId);
@@ -269,7 +271,9 @@ describe("submission (once)", () => {
         assert.equal(saved.shoeSize, "EU 42");
         assert.equal(saved.fatherPassportNumber, "N7654321");
         assert.equal(saved.guardianNic, "901234567V");
-        assert.equal(saved.city, null);
+        assert.equal(saved.city, "NEGOMBO");
+        assert.deepEqual([saved.otherSkills1, saved.otherSkills2, saved.motherPassportNumber, saved.child1Name], ["N/A", "N/A", "N/A", "N/A"], "n/a in any case is stored as N/A");
+        assert.deepEqual([saved.child2Name, saved.child3Name], [null, null], "no children (Child 1 = N/A): the later child answers are not needed and stay empty");
         assert.equal(saved.spouseName, null, "hidden spouse answers are never stored (civil status SINGLE)");
         assert.equal(saved.jobCategoryOther, null);
         assert.deepEqual(await rowOf(A.passportId), before, "candidate, additional details and stages are unchanged");
@@ -351,6 +355,8 @@ describe("submission (once)", () => {
         const { token } = await session(A);
         const answers = ANSWERS();
         answers.basic.civilStatus = "MARRIED";
+        // Married: the spouse is shown, so every spouse answer is required.
+        answers.family.spouse = { ...answers.family.spouse, surname: "perera", passportNumber: "n/a", birthDate: "1988-07-12" };
         answers.qualifications.jobCategory = "OTHER";
         answers.qualifications.jobCategoryOther = "scaffolder";
         assert.equal((await submit(token, answers)).status, 200);

@@ -10,18 +10,21 @@ type Who = "father" | "mother" | "spouse";
 
 // Family Background: father, mother, spouse (only when Civil Status is
 // Married; entries typed before are kept while hidden, never sent), and up to
-// three children (optional).
+// three children. Every shown answer is required (validation.ts requiredPaths):
+// "N/A" as a parent's name when that parent does not apply (their other
+// answers are then not needed), "N/A" as Child 1 for no children.
 export function FamilyStep(props: StepProps) {
     const { t } = useLanguage();
     const today = todayInSriLanka();
     const person = (who: Who) => {
         const label = (field: "Name" | "Surname" | "Passport" | "BirthDate") => t(`f.${who}${field}` as MessageKey);
+        const parent = who !== "spouse";
         return (
             <FormSection title={t(`family.${who}`)}>
                 <div className="field-grid">
-                    <TextInput {...bind(props, `family.${who}.name`)} label={label("Name")} uppercase maxLength={MAX_LENGTH.text} />
-                    <TextInput {...bind(props, `family.${who}.surname`)} label={label("Surname")} uppercase maxLength={MAX_LENGTH.text} />
-                    <TextInput {...bind(props, `family.${who}.passportNumber`)} label={label("Passport")} uppercase maxLength={30} />
+                    <TextInput {...bind(props, `family.${who}.name`)} label={label("Name")} hint={parent ? t("hint.parentNa") : undefined} uppercase maxLength={MAX_LENGTH.text} />
+                    <TextInput {...bind(props, `family.${who}.surname`)} label={label("Surname")} hint={parent ? t("hint.na") : undefined} uppercase maxLength={MAX_LENGTH.text} />
+                    <TextInput {...bind(props, `family.${who}.passportNumber`)} label={label("Passport")} hint={t("hint.na")} uppercase maxLength={30} />
                     <DateInput {...bind(props, `family.${who}.birthDate`)} label={label("BirthDate")} min={EARLIEST_DATE} max={today} />
                 </div>
             </FormSection>
@@ -36,7 +39,7 @@ export function FamilyStep(props: StepProps) {
             <FormSection title={t("family.children")} note={t("family.childrenNote")}>
                 <div className="field-grid">
                     {(["child1", "child2", "child3"] as const).map((child) => (
-                        <TextInput key={child} {...bind(props, `family.${child}`)} label={t(`f.${child}`)} uppercase maxLength={MAX_LENGTH.text} />
+                        <TextInput key={child} {...bind(props, `family.${child}`)} label={t(`f.${child}`)} hint={child === "child1" ? t("hint.childNa") : t("hint.na")} uppercase maxLength={MAX_LENGTH.text} />
                     ))}
                 </div>
             </FormSection>

@@ -446,6 +446,29 @@ Centralized management for recruitment demand orders (Jobs) placed by employer C
   - `ANALYST`: Scoped read-only access. Analysts can only view Jobs that hold candidates allocated to them, and can only see their own candidates within those jobs. Accessing other jobs returns `404 Not Found`.
   - `REGISTRATION_DESK`: No access to Jobs (routes return 403, hidden from navigation).
 
+#### Job Management enhancements (2026-10-21)
+
+Added on top of the Job Management rules above; nothing above was removed or changed.
+
+- **Job Details tabs.** `/admin/jobs/:jobId` is split into two horizontal tabs: **Job Details** (default) and **Assigned Candidates (N)**. The tab is page state only (no route change), so open dialogs and loaded data survive a switch. The actions (Add to job, Complete job, Cancel job) stay above the tabs and work from either one.
+- **Assigned Candidates table.** Columns: Name | **Passport / NIC** | **Status** | Assigned | Actions.
+  - *Passport / NIC* is one column: the passport on the first line, `NIC: …` underneath in smaller text. A candidate with no NIC shows the passport only (never "null" or an empty label).
+  - *Status* is the candidate's current workflow status, the same derived value the Candidates list shows (`candidateWorkflowStatus.js`; there is no second status system).
+- **Flexible vacancies.** The vacancy count never limits assignment. A job with 20 vacancies accepts the 21st, 22nd, … candidate, through Add to job and through New job alike, and the count is shown as it is (**23 / 20**), never capped.
+  - **Filled** is derived, never stored: assigned candidates ≥ vacancies (a job without vacancies is never Filled). 19 / 20 is not Filled; 20 / 20 and 23 / 20 are. It is shown as a green **Filled** badge next to the count (Jobs list, Job Details).
+  - Filled is **not** a job status. The job stays `PROCESSING` until someone completes it, because `COMPLETED` releases every candidate and would stop further assignment. The vacancy target itself is never rewritten.
+  - For an Analyst, Filled is measured on every candidate of the job, while they still see only their own candidates.
+- **To Country / From Country** (replace the single Country field; the Jobs list shows both as country names).
+  - **To Country** is the selected Client's country (its responsible Agent's country, copied into the existing `job.country_code` when the job is created). It is read-only: the form shows it and follows a change of Client, and the API refuses `countryCode` on create and update. It is a creation-time snapshot, so existing jobs keep the country they were created with.
+  - **From Country** is the new nullable `job.from_country_code` (ISO 3166-1 alpha-2, validated against the server's country list). It defaults to **Romania (RO)** for a new job, can be changed in the form, and can be edited on a PROCESSING job from Job Details (**Change**). Jobs created before the column existed show **Not recorded**; nothing is back-filled or guessed.
+- **New job in two steps** (Jobs > New job). Edit Job is not converted: it keeps its current behaviour and gains the From Country Change action.
+  1. **Job details.** The existing fields plus To Country (read-only) and From Country. The primary button is **Next**: it only validates, and **no job is saved**.
+  2. **Select candidates.** A searchable, paged list of candidates who can be assigned now: test result **PASS** and **not on a PROCESSING job** (`GET /candidates?testResult=PASS&available=true`). Each row shows name, passport, NIC and the workflow Status, with a checkbox. Zero, one or many may be selected, and more than the vacancies is allowed ("N selected for V vacancies (more than the vacancies is allowed)"). **Back** keeps every Step 1 value and the selection.
+  - **Create job** makes one `POST /jobs` with `candidateIds`. Job type is never matched: a candidate whose preference is Carpenter, or No Preferred Type, can be assigned to a Welder job.
+- **Create job + candidates is one transaction.** The job and all of its assignments are created together, through the same assignment step as Add to job (`assignCandidate` in `jobService.js`). The server re-checks, for every candidate: it exists, test result PASS, not on another PROCESSING job (candidate rows locked `FOR UPDATE` in a fixed order, with the partial unique index as the backstop), plus the usual job type / client / agent checks. Repeated IDs (any letter case) count once. If anything fails, such as a candidate taken by someone else after Step 2 loaded, **nothing is created** (no job, no job code used, no partial assignments) and the message names the candidate (`P0000001: … Nothing was created.`). There is no partial-success mode.
+- **Roles are unchanged.** `POST /jobs`, with or without `candidateIds`, is ADMIN and MANAGER only (ANALYST and REGISTRATION_DESK get 403).
+- **Dynamic Job Types are unchanged.** Inactive types are still refused for new jobs and kept on historical jobs; No Preferred Type is never a job's type.
+
 ### Agent Management (`/admin/agents`) — ADMIN and MANAGER
 
 Interface for managing overseas recruitment agency partners (`/admin/agents`).
@@ -830,6 +853,10 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/jobs/:jobId/complete` | ADMIN, MANAGER | Complete Job (auto-releases all active candidate memberships; immutable) |
 | POST | `/jobs/:jobId/cancel` | ADMIN, MANAGER | Cancel Job `{ reason }` (auto-releases all active candidate memberships; immutable) |
 | GET | `/job-options` | ADMIN, MANAGER | Active Job Types, active Clients of active Agents (with `agentId`), and active Agents |
+| POST | `/jobs` (extended) | ADMIN, MANAGER | Also accepts `fromCountryCode?` (default `RO`) and `candidateIds?` (none, one or many; assigned in the same transaction; more than the vacancies allowed). `countryCode` is refused: the To Country is the Client's |
+| PUT | `/jobs/:jobId` (extended) | ADMIN, MANAGER | Also accepts `fromCountryCode` (PROCESSING jobs only); `countryCode` is refused |
+| GET | `/candidates?testResult=PASS&available=true` | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | `available=true`: only candidates not currently on a PROCESSING job (the New job candidate selection) |
+| | *Job responses* | | Every job also carries `fromCountryCode` (null if not recorded) and `filled`; job details add each candidate's `workflowStatus`; `/job-options` clients also carry `countryCode` (the To Country) |
 | POST | `/job-types` | ADMIN, MANAGER | Create Job Type `{ name }` |
 | GET | `/agents?search=&country=&status=&page=` | ADMIN, MANAGER | List Agents (25/page) with active client and processing/completed job counts |
 | POST | `/agents` | ADMIN, MANAGER | Create Agent `{ name, countryCode, contactNumber?, whatsappNumber?, email?, address?, notes?, status? }` |
@@ -939,6 +966,9 @@ All application endpoints enforce server-side role validation via `requireRole` 
 ## 9. Known limitations
 
 - **Database Migrations:** Schema migrations through `20261019120000_client_management` must be applied to target databases using `npx prisma migrate deploy` before deploying application code.
+- **Job enhancements migration:** the Job Management enhancements (2026-10-21) need `20261025120000_job_from_country` (additive: a nullable `job.from_country_code` column and its CHECK; no existing data is changed). It must be deployed **before** the new code, because the job queries read the column. `20261024120000_seed_job_types` (seeds the 17 trade types, idempotent) is applied by the same `prisma migrate deploy`.
+- **Filled is an indicator, not a status.** A job that reaches its vacancies stays `PROCESSING` until it is completed by hand; it is not auto-completed, so that candidates can still be assigned beyond the vacancies.
+- **To Country is a snapshot.** If a Client's Agent later moves to another country, existing jobs keep their original To Country.
 - **Failed submissions can't be retried or closed.** They stay in the *Failed processing* list; the client has to send the file again. Files refused on arrival (wrong type, too large) leave no record at all.
 - **No historical snapshots for current pipeline state.** Incomplete candidate process breakdown and police status are current state snapshots evaluated at query time (`asOf`); historical day-by-day snapshots of incomplete reasons or police countdown states are not stored.
 - **Stage completion reversal affects past days.** *Candidates completed* and *Visa completed* use the stage's stored completion timestamp (`completed_at`). If a stage completion is later unticked or reversed, the historical day will no longer count it because immutable stage completion transition history is not maintained.

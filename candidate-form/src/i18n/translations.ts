@@ -9,8 +9,13 @@
 export const LANGUAGES = ["en", "si"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
-// Each language's own name, written in that language (the switch shows both).
-export const LANGUAGE_NAMES: Record<Language, string> = { en: "English", si: "සිංහල" };
+// Short labels shown in the segmented control; full names are in aria-label / title.
+export const LANGUAGE_NAMES: Record<Language, string> = { en: "EN", si: "SI" };
+// Full accessible names for each button: English in its own script, Sinhala in Sinhala script.
+// Tests and screen readers use these; the visual label is LANGUAGE_NAMES.
+export const LANGUAGE_FULL_NAMES: Record<Language, string> = { en: "English", si: "සිංහල" };
+// Tooltip titles for hover/pointer accessibility (EN = English, SI = Sinhala).
+export const LANGUAGE_TITLES: Record<Language, string> = { en: "English", si: "Sinhala" };
 
 const en = {
     "app.subtitle": "Candidate Details",
@@ -27,8 +32,10 @@ const en = {
     "date.selected": "selected",
     "date.invalidFormat": "Enter the date as YYYY-MM-DD, or choose it from the calendar.",
     "theme.label": "Theme",
-    "theme.light": "Light",
-    "theme.dark": "Dark",
+    "theme.useLight": "Use light theme",
+    "theme.useDark": "Use dark theme",
+    "theme.lightTitle": "Light theme",
+    "theme.darkTitle": "Dark theme",
 
     "notConfigured.title": "Not available",
     "notConfigured.lead": "This form is not configured yet. Please try again later.",
@@ -144,7 +151,7 @@ const en = {
     "family.spouse": "Spouse",
     "family.children": "Children",
     "family.importantNote": "Please fill in your parents' details as fully as you can.",
-    "family.childrenNote": "Optional. Add only the children you have.",
+    "family.childrenNote": "Enter each child's name. If you have no children, enter N/A in Child 1 Name.",
 
     // Short help
     "help.button": "Help: {field}",
@@ -191,6 +198,7 @@ const en = {
     "job.MOTOR GRADER OPERATOR": "Motor grader operator",
     "job.BOBCAT OPERATOR": "Bobcat operator",
     "job.WHEEL LOADER OPERATOR": "Wheel loader operator",
+    "job.NO_PREFERENCE": "No Preferred Type",
     "job.OTHER": "Other",
 
     // Review
@@ -204,6 +212,39 @@ const en = {
 
     // Validation
     "v.required": "This field is required.",
+    "guidelines.title": "Before you start",
+    "guidelines.intro": "Please read these instructions carefully before filling the form.",
+    "guidelines.rule.accurate": "Fill in your information carefully and make sure it is correct.",
+    "guidelines.rule.required": "All visible fields are required.",
+    "guidelines.rule.na": "If a field does not apply to you, enter \"N/A\" where allowed.",
+    "guidelines.rule.review": "Check all your answers before submitting.",
+    "guidelines.rule.personal": "This link is for you only. Do not share it with another person.",
+    "guidelines.rule.locked": "Some verified identity details such as Passport Number and NIC may be locked and cannot be changed.",
+    "guidelines.rule.helpNumbers": "If you need help, contact an administrator using the contact numbers shown below.",
+    "guidelines.rule.help": "If you need help, contact an administrator.",
+    "guidelines.warning.title": "Important",
+    "guidelines.warning.text": "You can submit this form only once. After submission, you cannot edit or submit it again.",
+    "guidelines.numbers": "Admin contact numbers",
+    "guidelines.continue": "I Understand – Continue",
+    "form.allRequired": "All fields are required. If a field does not apply to you, enter 'N/A' where allowed.",
+    "hint.na": "Enter N/A if this does not apply to you.",
+    "hint.parentNa": "Enter N/A if this parent does not apply to you; their other details are then not needed.",
+    "hint.childNa": "Enter N/A if you have no children.",
+    "v.notApplicableRefused": "N/A is not accepted here. Please enter your answer.",
+    "guide.open": "Size guide",
+    "guide.close": "Close size guide",
+    "guide.shoe.title": "Shoe sizes: UK and Europe (EU)",
+    "guide.shoe.uk": "UK",
+    "guide.shoe.eu": "EU (Europe)",
+    "guide.shoe.note": "A general guide only: sizes differ between brands. Choose your UK size in the list. If you only know your EU size, choose Other and type it, for example EU 42.",
+    "guide.shirt.title": "Shirt sizes",
+    "guide.shirt.note": "Choose the size you normally wear.",
+    "shirt.XS": "Extra Small",
+    "shirt.S": "Small",
+    "shirt.M": "Medium",
+    "shirt.L": "Large",
+    "shirt.XL": "Extra Large",
+    "shirt.XXL": "Double Extra Large",
     "v.dateInvalid": "Enter a valid date.",
     "v.dateFuture": "The date cannot be in the future.",
     "v.dateTooEarly": "The date cannot be before 1900.",
@@ -259,8 +300,10 @@ const si: Record<MessageKey, string> = {
     "date.selected": "තෝරාගත්",
     "date.invalidFormat": "දිනය YYYY-MM-DD ආකාරයෙන් ඇතුළත් කරන්න, නැතහොත් දින දර්ශනයෙන් තෝරන්න.",
     "theme.label": "තේමාව",
-    "theme.light": "ආලෝක",
-    "theme.dark": "අඳුරු",
+    "theme.useLight": "ආලෝක තේමාව භාවිතා කරන්න",
+    "theme.useDark": "අඳුරු තේමාව භාවිතා කරන්න",
+    "theme.lightTitle": "ආලෝක තේමාව",
+    "theme.darkTitle": "අඳුරු තේමාව",
 
     "notConfigured.title": "ලබා ගත නොහැක",
     "notConfigured.lead": "මෙම පෝරමය තවම සකස් කර නැත. කරුණාකර පසුව නැවත උත්සාහ කරන්න.",
@@ -373,7 +416,7 @@ const si: Record<MessageKey, string> = {
     "family.spouse": "කලත්‍රයා",
     "family.children": "දරුවන්",
     "family.importantNote": "කරුණාකර ඔබේ දෙමාපියන්ගේ විස්තර හැකි තරම් සම්පූර්ණයෙන් පුරවන්න.",
-    "family.childrenNote": "අනිවාර්ය නොවේ. ඔබට සිටින දරුවන් පමණක් ඇතුළත් කරන්න.",
+    "family.childrenNote": "එක් එක් දරුවාගේ නම ඇතුළත් කරන්න. ඔබට දරුවන් නොමැති නම් පළමු දරුවාගේ නම සඳහා N/A ඇතුළත් කරන්න.",
 
     "help.button": "උදව්: {field}",
     "help.fullName": "ඔබේ ගමන් බලපත්‍රයේ ලියා ඇති පරිදි.",
@@ -418,6 +461,7 @@ const si: Record<MessageKey, string> = {
     "job.MOTOR GRADER OPERATOR": "මෝටර් ග්‍රේඩර් ක්‍රියාකරු (MOTOR GRADER OPERATOR)",
     "job.BOBCAT OPERATOR": "බොබ්කැට් ක්‍රියාකරු (BOBCAT OPERATOR)",
     "job.WHEEL LOADER OPERATOR": "වීල් ලෝඩර් ක්‍රියාකරු (WHEEL LOADER OPERATOR)",
+    "job.NO_PREFERENCE": "කැමති රැකියා වර්ගයක් නැත (No Preferred Type)",
     "job.OTHER": "වෙනත්",
 
     "review.verifiedIdentity": "තහවුරු කළ අනන්‍යතාවය",
@@ -428,7 +472,40 @@ const si: Record<MessageKey, string> = {
     "review.problems": "සමහර අනිවාර්ය පිළිතුරු අඩුයි හෝ නිවැරදි කළ යුතුය:",
     "review.goTo": "{section} වෙත යන්න",
 
-    "v.required": "මෙම කොටස අනිවාර්ය වේ.",
+    "v.required": "මෙම ක්ෂේත්‍රය අනිවාර්ය වේ.",
+    "guidelines.title": "ආරම්භ කිරීමට පෙර",
+    "guidelines.intro": "පෝරමය පිරවීමට පෙර කරුණාකර මෙම උපදෙස් හොඳින් කියවන්න.",
+    "guidelines.rule.accurate": "ඔබේ තොරතුරු සැලකිල්ලෙන් පුරවා, ඒවා නිවැරදි දැයි තහවුරු කරගන්න.",
+    "guidelines.rule.required": "පෙනෙන සියලුම ක්ෂේත්‍ර අනිවාර්ය වේ.",
+    "guidelines.rule.na": "යම් ක්ෂේත්‍රයක් ඔබට අදාළ නොවේ නම්, අවසර ඇති තැන්වල \"N/A\" ලෙස ඇතුළත් කරන්න.",
+    "guidelines.rule.review": "ඉදිරිපත් කිරීමට පෙර ඔබේ සියලුම පිළිතුරු පරීක්ෂා කරන්න.",
+    "guidelines.rule.personal": "මෙම සබැඳිය ඔබට පමණි. එය වෙනත් කෙනෙකු සමඟ බෙදා නොගන්න.",
+    "guidelines.rule.locked": "ගමන් බලපත්‍ර අංකය සහ ජාතික හැඳුනුම්පත් අංකය වැනි තහවුරු කළ තොරතුරු අගුළු දමා තිබිය හැකි අතර ඒවා වෙනස් කළ නොහැක.",
+    "guidelines.rule.helpNumbers": "උදව් අවශ්‍ය නම්, පහත දැක්වෙන දුරකථන අංක හරහා පරිපාලකයෙකු අමතන්න.",
+    "guidelines.rule.help": "උදව් අවශ්‍ය නම්, පරිපාලකයෙකු අමතන්න.",
+    "guidelines.warning.title": "වැදගත්",
+    "guidelines.warning.text": "මෙම පෝරමය ඉදිරිපත් කළ හැක්කේ එක් වරක් පමණි. ඉදිරිපත් කළ පසු එය වෙනස් කිරීමට හෝ නැවත ඉදිරිපත් කිරීමට නොහැක.",
+    "guidelines.numbers": "පරිපාලක දුරකථන අංක",
+    "guidelines.continue": "තේරුණා – ඉදිරියට යන්න",
+    "form.allRequired": "සියලුම ක්ෂේත්‍ර අනිවාර්ය වේ. ඔබට අදාළ නොවන ක්ෂේත්‍ර සඳහා අවසර ඇති තැන්වල 'N/A' ලෙස ඇතුළත් කරන්න.",
+    "hint.na": "මෙය ඔබට අදාළ නොවේ නම් N/A ලෙස ඇතුළත් කරන්න.",
+    "hint.parentNa": "මෙම දෙමාපියා ඔබට අදාළ නොවේ නම් N/A ලෙස ඇතුළත් කරන්න; එවිට ඔහුගේ/ඇයගේ අනෙක් විස්තර අවශ්‍ය නොවේ.",
+    "hint.childNa": "ඔබට දරුවන් නොමැති නම් N/A ලෙස ඇතුළත් කරන්න.",
+    "v.notApplicableRefused": "මෙහි N/A භාවිතා කළ නොහැක. කරුණාකර ඔබේ පිළිතුර ඇතුළත් කරන්න.",
+    "guide.open": "ප්‍රමාණ මාර්ගෝපදේශය",
+    "guide.close": "ප්‍රමාණ මාර්ගෝපදේශය වසන්න",
+    "guide.shoe.title": "සපත්තු ප්‍රමාණ: UK සහ යුරෝපය (EU)",
+    "guide.shoe.uk": "UK (එක්සත් රාජධානිය)",
+    "guide.shoe.eu": "EU (යුරෝපය)",
+    "guide.shoe.note": "මෙය සාමාන්‍ය මාර්ගෝපදේශයක් පමණි: වෙළඳ නාමය අනුව ප්‍රමාණ වෙනස් වේ. ලැයිස්තුවෙන් ඔබේ UK ප්‍රමාණය තෝරන්න. ඔබ දන්නේ EU ප්‍රමාණය පමණක් නම්, \"වෙනත්\" තෝරා එය ටයිප් කරන්න, උදාහරණයක් ලෙස EU 42.",
+    "guide.shirt.title": "කමිස ප්‍රමාණ",
+    "guide.shirt.note": "ඔබ සාමාන්‍යයෙන් අඳින ප්‍රමාණය තෝරන්න.",
+    "shirt.XS": "ඉතා කුඩා",
+    "shirt.S": "කුඩා",
+    "shirt.M": "මධ්‍යම",
+    "shirt.L": "විශාල",
+    "shirt.XL": "ඉතා විශාල",
+    "shirt.XXL": "අති විශාල",
     "v.dateInvalid": "වලංගු දිනයක් ඇතුළත් කරන්න.",
     "v.dateFuture": "දිනය අනාගත දිනයක් විය නොහැක.",
     "v.dateTooEarly": "දිනය 1900 ට පෙර විය නොහැක.",

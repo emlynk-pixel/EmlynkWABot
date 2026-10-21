@@ -11,13 +11,13 @@ export function BasicStep(props: StepProps & { nic: string }) {
     const today = todayInSriLanka();
     return (
         <div className="field-grid">
-            <TextInput {...bind(props, "basic.fullName")} label={t("f.fullName")} help={t("help.fullName")} required uppercase maxLength={MAX_LENGTH.text} />
-            <TextInput {...bind(props, "basic.surname")} label={t("f.surname")} required uppercase maxLength={MAX_LENGTH.text} />
-            <TextInput {...bind(props, "basic.otherNames")} label={t("f.otherNames")} uppercase maxLength={MAX_LENGTH.text} />
+            <TextInput {...bind(props, "basic.fullName")} label={t("f.fullName")} help={t("help.fullName")} uppercase maxLength={MAX_LENGTH.text} />
+            <TextInput {...bind(props, "basic.surname")} label={t("f.surname")} uppercase maxLength={MAX_LENGTH.text} />
+            <TextInput {...bind(props, "basic.otherNames")} label={t("f.otherNames")} hint={t("hint.na")} uppercase maxLength={MAX_LENGTH.text} />
             <VerifiedValue id="basic-nic" label={t("f.nic")} value={props.nic} />
-            <SelectInput {...bind(props, "basic.sex")} label={t("f.sex")} required options={SEX_OPTIONS.map((code) => ({ value: code, label: t(`sex.${code}`) }))} />
-            <SelectInput {...bind(props, "basic.civilStatus")} label={t("f.civilStatus")} required options={CIVIL_STATUS_OPTIONS.map((code) => ({ value: code, label: t(`civil.${code}`) }))} />
-            <DateInput {...bind(props, "basic.birthDate")} label={t("f.birthDate")} required min={EARLIEST_DATE} max={today} />
+            <SelectInput {...bind(props, "basic.sex")} label={t("f.sex")} options={SEX_OPTIONS.map((code) => ({ value: code, label: t(`sex.${code}`) }))} />
+            <SelectInput {...bind(props, "basic.civilStatus")} label={t("f.civilStatus")} options={CIVIL_STATUS_OPTIONS.map((code) => ({ value: code, label: t(`civil.${code}`) }))} />
+            <DateInput {...bind(props, "basic.birthDate")} label={t("f.birthDate")} min={EARLIEST_DATE} max={today} />
             <TextInput {...bind(props, "basic.birthPlace")} label={t("f.birthPlace")} uppercase maxLength={MAX_LENGTH.text} />
         </div>
     );

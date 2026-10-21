@@ -1967,17 +1967,24 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
         expect(calls.some((c) => c.method === "POST")).toBe(false);
     });
 
-    // The fields registration requires, nothing else.
-    async function fillRegistrationMinimum(user: ReturnType<typeof userEvent.setup>) {
+    // The six fields registration requires (REGISTRATION-REQ), nothing else.
+    async function fillRegistrationSix(user: ReturnType<typeof userEvent.setup>) {
         await user.type(await screen.findByLabelText("Surname *"), "SILVA");
         await user.type(screen.getByLabelText("Other names *"), "SAMAN");
         await user.type(screen.getByLabelText("NIC *"), "901234567V");
         await user.type(screen.getByLabelText("Passport ID *"), "n0000002");
-        await user.type(screen.getByLabelText("Job type *"), "Driver{Enter}");
-        await user.type(screen.getByLabelText("Job experience *"), "5 years");
+        // Job type: chosen from Settings > Job Types (loaded from the server), not typed.
+        await screen.findByRole("option", { name: "Driver" });
+        await user.selectOptions(screen.getByLabelText("Job type *"), "Driver");
         await user.type(screen.getByLabelText("WhatsApp number *"), "94771234567");
-        await user.type(screen.getByLabelText("Passport issue date *"), "2020-01-15");
-        await user.type(screen.getByLabelText("Passport expiry date *"), "2030-01-14");
+    }
+
+    // The six, plus job experience and the passport dates (optional to register, given here).
+    async function fillRegistrationMinimum(user: ReturnType<typeof userEvent.setup>) {
+        await fillRegistrationSix(user);
+        await user.type(screen.getByLabelText("Job experience"), "5 years");
+        await user.type(screen.getByLabelText("Passport issue date"), "2020-01-15");
+        await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-14");
     }
 
     async function fillRequired(user: ReturnType<typeof userEvent.setup>) {
@@ -2081,10 +2088,10 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
         renderApp("/candidates/new");
         const user = userEvent.setup();
         await fillRequired(user);
-        await user.clear(screen.getByLabelText("Passport issue date *"));
-        await user.type(screen.getByLabelText("Passport issue date *"), "2031-01-01");
-        await user.clear(screen.getByLabelText("Passport expiry date *"));
-        await user.type(screen.getByLabelText("Passport expiry date *"), "2030-01-01");
+        await user.clear(screen.getByLabelText("Passport issue date"));
+        await user.type(screen.getByLabelText("Passport issue date"), "2031-01-01");
+        await user.clear(screen.getByLabelText("Passport expiry date"));
+        await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-01");
         await user.clear(screen.getByLabelText("WhatsApp number *"));
         await user.type(screen.getByLabelText("WhatsApp number *"), "12");
         await user.type(screen.getByLabelText("Contact number"), "12");
@@ -2095,16 +2102,128 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
         expect(calls.some((c) => c.method === "POST")).toBe(false);
     });
 
-    test("the passport issue and expiry dates are required to register", async () => {
+    test("REGISTRATION-REQ-001 / 008 / 009 / 010 registers with ONLY the six required fields: no address, birth date, passport dates, job experience or passport file", async () => {
+        let created = false;
+        const { calls } = signedInBackend({
+            "POST /api/admin/candidates": () => { created = true; return { status: 201, body: { passportId: "N0000002", uniqueId: "0002" } }; },
+            "GET /api/admin/candidates/N0000002": () => (created ? { status: 200, body: DETAILS } : { status: 404, body: { message: "Candidate not found" } }),
+        });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await fillRegistrationSix(user);
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+        expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
+        expect(calls.find((c) => c.method === "POST" && c.path === "/api/admin/candidates")!.body).toMatchObject({
+            passportId: "N0000002", surname: "SILVA", otherNames: "SAMAN", nic: "901234567V", jobTypes: ["Driver"], whatsappNumber: "94771234567",
+            address: "", dateOfBirth: "", passportIssueDate: "", passportExpiryDate: "", jobExperience: "",
+        });
+        expect(calls.some((c) => c.path.endsWith("/documents/upload-target"))).toBe(false);
+    });
+
+    test("REGISTRATION-REQ-002..007 each of the six is required to register (marked with *), and nothing is sent without it", async () => {
+        const six: [string, string][] = [
+            ["Surname *", "Enter the surname."], ["Other names *", "Enter the other names."], ["NIC *", "Enter the NIC."],
+            ["Passport ID *", "Enter the passport number (6 to 9 letters and digits)."], ["Job type *", "Add at least one job type."], ["WhatsApp number *", "Enter the WhatsApp number."],
+        ];
+        for (const [label, message] of six) {
+            const { calls } = signedInBackend();
+            const view = renderApp("/candidates/new");
+            const user = userEvent.setup();
+            await fillRegistrationSix(user);
+            if (label === "Job type *") await user.click(screen.getByRole("button", { name: "Remove Driver" }));
+            else await user.clear(screen.getByLabelText(label));
+            await user.click(screen.getByRole("button", { name: "Register candidate" }));
+            expect(await screen.findByText(message), label).toBeInTheDocument();
+            expect(calls.some((c) => c.method === "POST"), label).toBe(false);
+            view.unmount();
+        }
+    });
+
+    test("REGISTRATION-REQ-011 / 014 every registration field is still there; only the six carry the required mark", async () => {
+        signedInBackend();
+        renderApp("/candidates/new");
+        await screen.findByLabelText("Surname *");
+        for (const label of ["Surname *", "Other names *", "NIC *", "Passport ID *", "Job type *", "WhatsApp number *"]) expect(screen.getByLabelText(label)).toBeInTheDocument();
+        for (const label of ["Job experience", "Passport issue date", "Passport expiry date", "Address", "Date of birth", "Place of birth", "Nationality", "Sex", "Contact number", "Passport", "NIC document", "Skill video", "Comment"]) {
+            expect(screen.getByLabelText(label), label).toBeInTheDocument();
+        }
+        expect(document.querySelectorAll("label .text-critical")).toHaveLength(6);
+    });
+
+    // The candidate-details fields in page order (label text without the " *" mark).
+    const FIELD_ORDER = [
+        "Surname", "Other names", "NIC", "WhatsApp number", "Passport ID", "Job type",
+        "Nationality", "Sex", "Date of birth", "Place of birth", "Passport issue date", "Passport expiry date", "Contact number", "Job experience", "Address",
+    ];
+    const REQUIRED_SIX = FIELD_ORDER.slice(0, 6);
+    const fieldLabelsInOrder = () => [...document.querySelectorAll("label")]
+        .map((label) => label.textContent?.replace(/\s*\*$/, "").trim() ?? "")
+        .filter((text) => FIELD_ORDER.includes(text));
+
+    test("REGISTRATION-ORDER-001..005 / 008 new registration: the six required fields come first (Surname | Other names, NIC | WhatsApp, Passport ID | Job type), then the optional ones", async () => {
+        signedInBackend();
+        renderApp("/candidates/new");
+        await screen.findByLabelText("Surname *");
+        expect(fieldLabelsInOrder()).toEqual(FIELD_ORDER);
+        // WhatsApp sits right after NIC, in the required area, not among the optional details.
+        const order = fieldLabelsInOrder();
+        expect(order.indexOf("WhatsApp number")).toBe(order.indexOf("NIC") + 1);
+        for (const label of REQUIRED_SIX) expect(order.indexOf(label), label).toBeLessThan(order.indexOf("Nationality"));
+        // Exactly six required marks, on exactly those six.
+        const marked = [...document.querySelectorAll("label")].filter((label) => label.querySelector(".text-critical")).map((label) => label.textContent?.replace(/\s*\*$/, ""));
+        expect(marked).toEqual(REQUIRED_SIX);
+        // Documents and the comment keep their place after the details.
+        // (Each file input also has its own visually-hidden "Choose file" label.)
+        const all = [...document.querySelectorAll("label")].map((label) => label.textContent?.replace(/\s*\*$/, "").trim()).filter((text) => text !== "Choose file");
+        expect(all.slice(all.indexOf("Address") + 1)).toEqual(["Passport", "NIC document", "Skill video", "Comment"]);
+    });
+
+    test("REGISTRATION-ORDER-006 / 007 every existing field still renders (nothing removed), in the new order", async () => {
+        signedInBackend();
+        renderApp("/candidates/new");
+        await screen.findByLabelText("Surname *");
+        for (const label of FIELD_ORDER) expect(screen.getByLabelText(new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( \\*)?$`)), label).toBeInTheDocument();
+        expect(fieldLabelsInOrder()).toHaveLength(15);
+    });
+
+    test("REGISTRATION-ORDER-009 validation is unchanged: the same six messages, each under its own field, and nothing is sent", async () => {
         const { calls } = signedInBackend();
         renderApp("/candidates/new");
         const user = userEvent.setup();
-        await fillRequired(user);
-        await user.clear(screen.getByLabelText("Passport issue date *"));
-        await user.clear(screen.getByLabelText("Passport expiry date *"));
+        await screen.findByLabelText("Surname *");
         await user.click(screen.getByRole("button", { name: "Register candidate" }));
-        expect(screen.getByText("Enter the passport issue date.")).toBeInTheDocument();
-        expect(screen.getByText("Enter the passport expiry date.")).toBeInTheDocument();
+        const messageUnder = (label: string) => screen.getByLabelText(label).closest("div:has(> label), div:has(label)")?.textContent ?? "";
+        expect(messageUnder("Surname *")).toContain("Enter the surname.");
+        expect(messageUnder("NIC *")).toContain("Enter the NIC.");
+        expect(screen.getByText("Enter the WhatsApp number.")).toBeInTheDocument();
+        expect(screen.getByText("Add at least one job type.")).toBeInTheDocument();
+        expect(screen.queryByText("Enter the job experience.")).toBeNull();
+        expect(screen.queryByText("Enter the passport issue date.")).toBeNull();
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+    });
+
+    test("REGISTRATION-ORDER-010 an existing candidate (Candidate Details) uses the same order, and every value is still in its own field", async () => {
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+        renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+        expect(await screen.findByLabelText("WhatsApp number *")).toHaveValue("94770000002");
+        expect(fieldLabelsInOrder()).toEqual(FIELD_ORDER);
+        expect(screen.getByLabelText("Passport ID *")).toHaveValue("N0000002");
+        expect(screen.getByLabelText("NIC *")).toHaveValue(DETAILS.candidate.nic);
+        expect(screen.getByLabelText("Surname *")).toHaveValue(DETAILS.candidate.surname);
+        expect(screen.getByLabelText("Passport issue date *")).toHaveValue("2020-05-12");
+    });
+
+    test("REGISTRATION-REQ-012 an optional value that is given is still checked (issue date after expiry, a bad contact number)", async () => {
+        const { calls } = signedInBackend();
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await fillRegistrationSix(user);
+        await user.type(screen.getByLabelText("Passport issue date"), "2031-01-01");
+        await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-01");
+        await user.type(screen.getByLabelText("Contact number"), "12");
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+        expect(screen.getByText("Must be before the expiry date.")).toBeInTheDocument();
+        expect(screen.getByText("Enter a phone number, e.g. 0771234567.")).toBeInTheDocument();
         expect(calls.some((c) => c.method === "POST")).toBe(false);
     });
 
@@ -2488,10 +2607,11 @@ describe("WhatsApp number: fixed + prefix", () => {
         await user.type(screen.getByLabelText("Other names *"), "SAMAN");
         await user.type(screen.getByLabelText("NIC *"), "901234567V");
         await user.type(screen.getByLabelText("Passport ID *"), "N0000002");
-        await user.type(screen.getByLabelText("Job type *"), "Driver{Enter}");
-        await user.type(screen.getByLabelText("Job experience *"), "5 years");
-        await user.type(screen.getByLabelText("Passport issue date *"), "2020-01-15");
-        await user.type(screen.getByLabelText("Passport expiry date *"), "2030-01-14");
+        await screen.findByRole("option", { name: "Driver" });
+        await user.selectOptions(screen.getByLabelText("Job type *"), "Driver");
+        await user.type(screen.getByLabelText("Job experience"), "5 years");
+        await user.type(screen.getByLabelText("Passport issue date"), "2020-01-15");
+        await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-14");
         await user.click(screen.getByRole("button", { name: "Register candidate" }));
         await screen.findByRole("navigation", { name: "Deployment stages" });
         expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ whatsappNumber: "447700900123" });

@@ -28,8 +28,10 @@
     --important-soft: #fef0c7;
     --focus: #1d4ed8;
     --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 16px rgba(16, 24, 40, 0.06);
-    /* Sinhala needs a font that has it: Windows, Android and Apple each ship one. */
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Sinhala", "Iskoola Pota", "Nirmala UI", "Sinhala Sangam MN", sans-serif;
+    /* Google's default look: Roboto for English, Noto Sans Sinhala for Sinhala, both
+       self-hosted (below). Their unicode-ranges do not overlap, so each script gets its
+       own font; the installed fonts after them are fallbacks if a file cannot load. */
+    font-family: Roboto, "Noto Sans Sinhala", system-ui, -apple-system, "Segoe UI", Arial, "Nirmala UI", "Iskoola Pota", "Sinhala Sangam MN", sans-serif;
     font-size: 16px;
     line-height: 1.55;
     color: var(--ink);
@@ -74,6 +76,42 @@ body { margin: 0; background: var(--bg); color: var(--ink); }
 p, label, legend, h1, h2, h3, h4, dt, li { overflow-wrap: break-word; }
 dd, input { overflow-wrap: anywhere; }
 
+/* Fonts are self-hosted (static/fonts/) so the page's font-src 'self' policy holds and no
+   candidate request goes to a third party. Each file is a variable-weight Google Fonts subset
+   covering every weight the page uses (400-700); unicode-range makes a file download only
+   when its characters are on the page, and swap shows text at once.
+
+   English: Roboto (SIL Open Font License 1.1: static/fonts/OFL-roboto.txt). Google's latin
+   and latin-ext subsets, except that the zero-width joiners (U+200C-200D) are left to the
+   Sinhala font so Sinhala conjuncts stay in one font. */
+@font-face {
+    font-family: Roboto;
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url("/fonts/roboto-latin-400-700.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-200B, U+200E-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+    font-family: Roboto;
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url("/fonts/roboto-latin-ext-400-700.woff2") format("woff2");
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* Sinhala: Noto Sans Sinhala (SIL Open Font License 1.1: static/fonts/OFL-noto-sans-sinhala.txt),
+   Google's Sinhala subset. */
+@font-face {
+    font-family: "Noto Sans Sinhala";
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url("/fonts/noto-sans-sinhala-sinhala-400-700.woff2") format("woff2");
+    unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+:lang(si), [lang="si"] { line-height: 1.6; }
+
 .visually-hidden {
     position: absolute;
     width: 1px;
@@ -89,9 +127,23 @@ dd, input { overflow-wrap: anywhere; }
 /* One visible focus style for everything that can take focus. */
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
-/* ---------- header ---------- */
+/* ---------- header – sticky ---------- */
 
-.site-header { background: var(--surface); border-bottom: 1px solid var(--border); }
+.site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    /* Subtle shadow to lift the header off the content when scrolled. */
+    box-shadow: 0 1px 4px rgba(16, 24, 40, 0.06);
+    /* Prevent bleed-through on browsers that composite layers */
+    will-change: transform;
+}
+/* Dark theme: slightly stronger shadow lift */
+:root[data-theme="dark"] .site-header {
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
 
 .site-header-inner {
     max-width: 1120px;
@@ -116,45 +168,78 @@ dd, input { overflow-wrap: anywhere; }
     background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
     color: #ffffff;
     font-weight: 700;
+    letter-spacing: -0.01em;
 }
 .brand-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
 .brand-name { font-weight: 700; font-size: 1.0625rem; }
 .brand-sub { color: var(--muted); font-size: 0.875rem; }
 
-.header-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.header-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
-.segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 999px; padding: 2px; background: var(--surface); }
+/* ---------- segmented control (language + theme) ---------- */
+
+.segmented {
+    display: inline-flex;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 3px;
+    background: var(--surface-2);
+    gap: 1px;
+}
 .segmented button {
-    min-height: 36px;
-    padding: 4px 12px;
+    min-height: 30px;
+    padding: 3px 11px;
     border: 0;
     border-radius: 999px;
     background: transparent;
-    color: var(--ink);
+    color: var(--muted);
     font: inherit;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 4px;
+    transition: background 0.15s ease, color 0.15s ease;
 }
-.segmented button.active { background: var(--primary); color: var(--primary-ink); font-weight: 600; }
-.theme-icon { font-size: 0.9375rem; line-height: 1; }
+.segmented button:hover:not(.active) { background: var(--notice-soft); color: var(--ink); }
+.segmented button.active {
+    background: var(--primary);
+    color: var(--primary-ink);
+    font-weight: 700;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12);
+}
+
+/* Theme switch: icon-only square buttons inside the same segmented shell. */
+.theme-switch button {
+    width: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0;
+    justify-content: center;
+    color: var(--muted);
+}
+.theme-switch button:hover:not(.active) { background: var(--notice-soft); color: var(--ink); }
+.theme-switch button.active { color: var(--primary-ink); }
+.theme-icon { display: block; flex: none; }
 
 /* ---------- page ---------- */
 
-.shell { max-width: 1120px; margin: 0 auto; padding: 16px 16px 56px; }
+/* Extra top clearance so the sticky header never overlaps the first content line. */
+.shell { max-width: 1120px; margin: 0 auto; padding: 20px 16px 64px; }
 
 .panel {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 16px;
-    padding: 20px 16px;
+    padding: 22px 18px;
     box-shadow: var(--shadow);
 }
 
 /* The verification card stays narrow. */
-.shell > form.panel, .shell > section.panel { max-width: 520px; margin: 8px auto 0; }
+.shell > form.panel, .shell > section.panel { max-width: 520px; margin: 10px auto 0; }
 
 h1 { font-size: 1.5rem; line-height: 1.3; margin: 0 0 6px; }
 h2 { font-size: 1.25rem; line-height: 1.35; margin: 0 0 4px; }
@@ -193,11 +278,11 @@ h3, h4 { font-size: 1.0625rem; line-height: 1.4; margin: 0 0 12px; }
 
 /* ---------- the form: intro, progress, steps ---------- */
 
-.form-intro { margin-bottom: 14px; }
+.form-intro { margin-bottom: 18px; }
 .form-intro .lead { margin-bottom: 0; }
 
-.progress-block { margin-bottom: 16px; }
-.progress-text { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 0.875rem; color: var(--muted); margin-bottom: 6px; }
+.progress-block { margin-bottom: 18px; }
+.progress-text { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 0.875rem; color: var(--muted); margin-bottom: 8px; }
 .progress-step { font-weight: 600; color: var(--ink); }
 
 progress {
@@ -260,9 +345,9 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 .step-head h2:focus { outline: none; }
 .step-head h2:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
 
-.step-actions { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); margin-top: 8px; padding-top: 18px; }
+.step-actions { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); margin-top: 14px; padding-top: 20px; }
 
-.save-area { margin-top: 8px; }
+.save-area { margin-top: 10px; }
 
 /* ---------- fields ---------- */
 
@@ -275,7 +360,7 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 .form-section { border-top: 1px solid var(--border); padding-top: 18px; margin-top: 10px; }
 .section-note { color: var(--muted); font-size: 0.875rem; margin: -6px 0 12px; }
 
-.field { margin: 0 0 16px; min-width: 0; }
+.field { margin: 0 0 18px; min-width: 0; }
 
 .label-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
 .field label, .field legend { font-weight: 600; }
@@ -293,9 +378,11 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
     font-size: 0.875rem;
     font-weight: 700;
     cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
+.help-toggle:hover { background: var(--primary-soft); border-color: var(--primary); }
 .help-toggle[aria-expanded="true"] { background: var(--primary-soft); border-color: var(--primary); }
-.help-text { margin: 0 0 8px; padding: 8px 10px; border-radius: 8px; background: var(--primary-soft); color: var(--ink); font-size: 0.875rem; }
+.help-text { margin: 0 0 8px; padding: 8px 12px; border-radius: 8px; background: var(--primary-soft); color: var(--ink); font-size: 0.875rem; border: 1px solid var(--border); }
 
 .hint { color: var(--muted); font-size: 0.875rem; margin: 0 0 6px; }
 
@@ -313,15 +400,30 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
     padding: 10px 12px;
     border: 1px solid var(--border-strong);
     border-radius: 10px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.field input:not([type="radio"]):hover:not(:disabled),
+.field select:hover:not(:disabled),
+.field textarea:hover:not(:disabled) {
+    border-color: var(--border-strong);
+    box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.06);
+}
+.field input:not([type="radio"]):focus,
+.field select:focus,
+.field textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
 }
 .field textarea { resize: vertical; }
 /* Date controls keep to the screen's width on small phones. */
 .field input[type="date"] { appearance: none; -webkit-appearance: none; }
 .field input::placeholder { color: var(--muted); opacity: 1; }
 
-.field input:disabled, .field select:disabled, .field textarea:disabled { background: var(--notice-soft); }
+.field input:disabled, .field select:disabled, .field textarea:disabled { background: var(--notice-soft); box-shadow: none; cursor: not-allowed; }
 
 .field-invalid input:not([type="radio"]), .field-invalid select, .field-invalid textarea { border-color: var(--error); border-width: 2px; }
+.field-invalid input:not([type="radio"]):focus, .field-invalid select:focus, .field-invalid textarea:focus { box-shadow: 0 0 0 3px rgba(180, 35, 24, 0.12); }
 
 .error { color: var(--error); font-size: 0.875rem; margin: 6px 0 0; font-weight: 600; }
 
@@ -371,8 +473,9 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 
 /* ---------- review ---------- */
 
-.review { display: grid; gap: 12px; }
-.review-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: var(--surface-2); }
+.review { display: grid; gap: 14px; }
+.review-card { border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; background: var(--surface-2); transition: box-shadow 0.15s ease; }
+.review-card:hover { box-shadow: 0 2px 8px rgba(16, 24, 40, 0.06); }
 .review-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
 .review-card-head h3 { flex: 1 1 12rem; }
 .review-card h3 { margin-bottom: 8px; }
@@ -459,6 +562,30 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 .contact-compact .contact-numbers-heading { font-size: 0.875rem; }
 .contact-compact .contact-number { font-size: 0.9375rem; }
 
+/* "Before you start": English and Sinhala together, a numbered list, one warning, the numbers. */
+.guidelines h1 { display: flex; flex-direction: column; gap: 2px; }
+.guidelines h1:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
+.guidelines-title-si { font-size: 1.125rem; color: var(--muted); }
+.guidelines-intro p { margin: 0; color: var(--muted); }
+.guidelines-intro { margin-bottom: 16px; }
+.guidelines-list { margin: 0 0 16px; padding-left: 1.5em; display: flex; flex-direction: column; gap: 12px; }
+.guidelines-list li p { margin: 0; }
+.guidelines-list li p[lang="si"], .guidelines-intro p[lang="si"], .guidelines-warning p[lang="si"] { margin-top: 2px; color: var(--muted); font-size: 0.9375rem; }
+.guidelines-warning {
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--important);
+    border-left-width: 4px;
+    border-radius: 10px;
+    background: var(--important-soft);
+}
+.guidelines-warning p { margin: 0; }
+.guidelines-warning-title { font-weight: 700; color: var(--important); margin-bottom: 4px !important; }
+.guidelines-warning-title span[lang="si"]::before { content: " / "; }
+.guidelines .contact-numbers { margin: 0 0 16px; }
+.guidelines-continue { display: flex !important; flex-direction: column; align-items: center; gap: 2px; }
+.guidelines-continue-si { font-weight: 500; font-size: 0.9375rem; }
+
 /* ---------- buttons ---------- */
 
 button.primary, button.secondary {
@@ -470,11 +597,49 @@ button.primary, button.secondary {
     padding: 11px 18px;
     border-radius: 10px;
     cursor: pointer;
+    transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
-button.primary { border: 0; background: var(--primary); color: var(--primary-ink); }
-button.primary:hover:not(:disabled) { background: var(--primary-hover); }
-button.secondary { border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); }
+button.primary {
+    border: 0;
+    background: var(--primary);
+    color: var(--primary-ink);
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.1);
+}
+button.primary:hover:not(:disabled) {
+    background: var(--primary-hover);
+    box-shadow: 0 2px 8px rgba(29, 78, 216, 0.22);
+}
+button.secondary {
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--ink);
+}
+button.secondary:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+}
 button:disabled { opacity: 0.6; cursor: default; }
+
+/* Size guides (shirt, shoe): a link under the field and a compact panel below it. */
+.size-guide { margin-top: 4px; }
+.size-guide-panel {
+    margin-top: 6px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--notice-soft);
+    font-size: 0.9375rem;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+.size-guide-title { margin: 0 0 8px; font-weight: 700; }
+.size-guide-note { margin: 8px 0 4px; color: var(--muted); font-size: 0.875rem; }
+.size-guide-table { width: 100%; max-width: 320px; border-collapse: collapse; }
+.size-guide-table th, .size-guide-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+.size-guide-list { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; }
+.size-guide-list div { display: flex; gap: 8px; }
+.size-guide-list dt { font-weight: 700; min-width: 36px; }
+.size-guide-list dd { margin: 0; }
 
 .link-button {
     min-height: 32px;
@@ -491,8 +656,8 @@ button:disabled { opacity: 0.6; cursor: default; }
 /* ---------- wider screens ---------- */
 
 @media (min-width: 640px) {
-    .shell { padding-top: 24px; }
-    .panel { padding: 26px 30px; }
+    .shell { padding-top: 28px; }
+    .panel { padding: 28px 32px; }
     .choice-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
@@ -508,17 +673,11 @@ button:disabled { opacity: 0.6; cursor: default; }
     /* The steps beside the form, with their names. */
     .candidate-form { display: grid; grid-template-columns: 270px minmax(0, 1fr); column-gap: 28px; align-items: start; }
     .form-intro { grid-column: 1 / -1; }
-    .progress-block { position: sticky; top: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+    /* progress-block top offset accounts for the sticky header (approx 57px) + breathing room */
+    .progress-block { position: sticky; top: 73px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
     .step-list { display: flex; flex-direction: column; gap: 2px; }
     .step-list button, .step-list .stage { flex-direction: row; gap: 10px; padding: 4px 8px 4px 2px; font-size: 0.9375rem; text-align: left; }
     .step-list li.current button { background: var(--primary-soft); }
-}
-
-/* Narrow phones: the theme switch shows its icons only (each button keeps its
-   name for screen readers), so both switches fit on one line. */
-@media (max-width: 479px) {
-    .theme-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-    .theme-switch button { min-width: 36px; justify-content: center; }
 }
 
 /* ---------- date picker (components/DatePicker.tsx) ---------- */

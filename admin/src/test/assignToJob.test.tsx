@@ -12,9 +12,9 @@ const PATH = "/candidates/N0000002";
 const jobItem = (n: number, status: JobStatus = "PROCESSING", extra: Partial<JobListItem> = {}): JobListItem => ({
     jobId: `00000000-0000-4000-8000-00000000000${n}`, jobCode: `JOB-2026-00000${n}`, companyJobId: n === 2 ? "Y26S01" : null, status,
     jobType: { id: "t1", code: "WELDER", name: n === 2 ? "Welder" : "Plumber" }, client: { id: "c1", name: n === 2 ? "Acme Construction" : "Beta Works" },
-    responsibleAgent: { id: "a1", name: "Ion Popescu", countryCode: "RO" }, countryCode: "RO", vacancies: 5,
+    responsibleAgent: { id: "a1", name: "Ion Popescu", countryCode: "RO" }, countryCode: "RO", fromCountryCode: "RO", vacancies: 5,
     createdAt: "2026-10-01T05:00:00.000Z", completedAt: status === "COMPLETED" ? "2026-10-10T05:00:00.000Z" : null, cancelledAt: null, cancelReason: null,
-    candidateCount: 3, ...extra,
+    candidateCount: 3, filled: false, ...extra,
 });
 const asAssignment = (job: JobListItem): CandidateJobAssignment => ({ ...job, assignedAt: "2026-10-17T05:00:00.000Z", removed: false, removedAt: null });
 const detailsWith = (current: CandidateJobAssignment | null): CandidateDetails => ({

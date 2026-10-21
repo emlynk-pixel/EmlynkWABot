@@ -4,7 +4,7 @@ import { ApiError } from "../../api/client";
 import { getCandidate, type CandidateDetails, type JobAssignments } from "../../api/candidates";
 import { addCandidateToJob, listJobs, type CandidateJobAssignment, type JobListItem } from "../../api/jobs";
 import { useAdminResource } from "../../api/useAdminResource";
-import { canManageJobs, canViewJobs, useAuth } from "../../auth/AuthProvider";
+import { canManageCandidates, canManageJobs, canViewJobs, useAuth } from "../../auth/AuthProvider";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { formatDate } from "../format";
 import { Detail, JobStatusBadge, NO_COMPANY_JOB_ID } from "../job/JobParts";
@@ -51,7 +51,9 @@ export function JobAssignmentPanel({ assignments, candidate, testPassed = false,
 }) {
     const { user, token } = useAuth();
     const [assigning, setAssigning] = useState(false);
-    const canAssign = canManageJobs(user) && Boolean(candidate && onChanged && token);
+    // A JOB_HANDLER reads this page only (it assigns from the Jobs module): the action is offered
+    // to roles that both manage jobs and change candidates (ADMIN and MANAGER, as before).
+    const canAssign = canManageJobs(user) && canManageCandidates(user) && Boolean(candidate && onChanged && token);
     return (
         <Card className="p-5">
             <section aria-label="Job assignment" className="space-y-4">

@@ -69,11 +69,19 @@ export function renderApp(initialPath = "/") {
     );
 }
 
+// The candidate job type choices (Settings > Job Types, active) + No Preferred Type.
+export const JOB_TYPE_CHOICES = { jobTypes: ["Caregiver", "Driver", "Welder"], noPreference: { code: "NO_PREFERENCE", label: "No Preferred Type" } };
+
 // Signed-in session: a Supabase session already in storage (as after a page
 // reload) + GET /auth/me, plus any other routes.
 export function signedInBackend(routes: FetchRoutes = {}) {
     fakeAuth.setSession(SESSION_TOKEN, ADMIN.email);
-    return stubBackend({ "GET /auth/me": { status: 200, body: { user: ADMIN } }, "GET /api/admin/overview": { status: 200, body: OVERVIEW }, ...routes });
+    return stubBackend({
+        "GET /auth/me": { status: 200, body: { user: ADMIN } },
+        "GET /api/admin/overview": { status: 200, body: OVERVIEW },
+        "GET /api/admin/job-type-choices": { status: 200, body: JOB_TYPE_CHOICES },
+        ...routes,
+    });
 }
 
 export const CLIENT_REF = { passportId: "N1234567", uniqueId: "0001", name: "KAMAL NIMAL PERERA" };

@@ -43,8 +43,10 @@ beforeEach(async () => {
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "rate_limits";
         DELETE FROM "candidate_form_response"; DELETE FROM "candidate_form_prefill_snapshot"; DELETE FROM "candidate_form_access"; DELETE FROM "candidate_form_link";
-        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent";
+        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "job_type"; DELETE FROM "agent_client"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_additional_details"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
+        -- The active job types this suite's candidates use (Settings > Job Types).
+        INSERT INTO "job_type" ("code", "name") VALUES ('WELDER_TIG_SEED', 'WELDER TIG') ON CONFLICT DO NOTHING;
     `);
     await prisma.candidate.createMany({ data: [A, B, X] });
     // Only a candidate who passed the test can be assigned to a job (jobAssignmentTestPass.test.js).
@@ -89,15 +91,15 @@ const session = async (secret, c) => {
 };
 const ANSWERS = () => ({
     basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "SINGLE", birthDate: "1990-05-01", birthPlace: "negombo" },
-    contact: { address: "12 galle road", city: "", district: "gampaha", dsDivision: "negombo", gnDivision: "", alternativePhone: "0771234567", email: "a@example.com" },
+    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "0771234567", email: "a@example.com" },
     passport: { issueDate: "2020-01-15", expiryDate: "2030-01-14" },
-    qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "5 years", otherSkills1: "", otherSkills2: "", englishKnowledge: "GOOD" },
+    qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "5 years", otherSkills1: "n/a", otherSkills2: "N/A", englishKnowledge: "GOOD" },
     measurements: { shirtSize: "M", waistSize: "32", shoeSize: "eu 42" },
     family: {
-        father: { name: "", surname: "", passportNumber: "", birthDate: "" }, mother: { name: "", surname: "", passportNumber: "", birthDate: "" },
-        spouse: { name: "", surname: "", passportNumber: "", birthDate: "" }, child1: "", child2: "", child3: "",
+        father: { name: "n/a", surname: "", passportNumber: "", birthDate: "" }, mother: { name: "kumari", surname: "de soysa", passportNumber: "N/A", birthDate: "1965-02-03" },
+        spouse: { name: "", surname: "", passportNumber: "", birthDate: "" }, child1: "N/A", child2: "", child3: "",
     },
-    guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "", phone: "+94 77 123 4567", address: "45 lake road" },
+    guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "1960-01-01", phone: "+94 77 123 4567", address: "45 lake road" },
 });
 const submit = (token, key = "key-0000000000000001") => pub("/submit", { token, body: { answers: ANSWERS(), idempotencyKey: key } });
 const form = (token, options = {}) => pub("/form", { token, body: {}, ...options });
@@ -107,7 +109,7 @@ const newJobWith = async (...members) => {
     const [jobType, agent] = await Promise.all([
         prisma.jobType.create({ data: { code: "T", name: "T" } }), prisma.agent.create({ data: { name: "Ag", countryCode: "RO" } }),
     ]);
-    const client = await prisma.client.create({ data: { name: "Co", agentId: agent.id } });
+    const client = await prisma.client.create({ data: { name: "Co", agentLinks: { create: { agentId: agent.id } } } });
     const job = (await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: jobType.id, clientId: client.id, responsibleAgentId: agent.id } })).body;
     for (const m of members) await admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { body: { passportId: m.passportId } });
     return job;
