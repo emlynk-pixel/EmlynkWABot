@@ -1,19 +1,21 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
-import { createAgent, listAgents, setAgentStatus, updateAgent, type AgentInput, type AgentListItem, type AgentRecord, type EntityStatus } from "../api/agents";
+import { createAgent, getAgent, listAgents, setAgentStatus, updateAgent, type AgentDetails, type AgentInput, type AgentListItem, type AgentRecord, type EntityStatus } from "../api/agents";
+import { getClientOptions } from "../api/clientManagement";
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageMasterData, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../components/Dialog";
 import { formatNumber } from "../components/format";
 import { Icon } from "../components/Icon";
-import { CountrySelect, EntityStatusBadge, RestrictedPage, StatusDialog, TextField, countryName, errorMessage, fieldErrors } from "../components/master/MasterParts";
+import { CountrySelect, EntityStatusBadge, MultiSelect, RestrictedPage, StatusDialog, TextField, countryName, errorMessage, fieldErrors } from "../components/master/MasterParts";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl, tableCell, tableHead, tableRow, textareaClass } from "../components/ui";
 
 // Admin > Agents (ADMIN and MANAGER). An Agent is a business entity, not a
-// login: a recruiting partner in one country that manages many Clients. Agents
-// are never deleted; INACTIVE agents keep their history but take no new Client.
+// login: a recruiting partner in one country that works with many Clients (and a
+// Client with many Agents). Agents are never deleted; INACTIVE agents keep their
+// history but take no new Client.
 // Search, country, status and the page live in the URL; the server filters.
 
 export function AgentsPage() {
@@ -169,8 +171,18 @@ function AgentRow({ agent, onEdit, onStatus }: { agent: AgentListItem; onEdit: (
     );
 }
 
-// Add and edit share one form. The id is system-generated and never shown as an input.
-export function AgentFormDialog({ token, agent, onClose, onSaved }: { token: string; agent?: AgentRecord; onClose: () => void; onSaved: () => void }) {
+// Add and edit share one form. The id is system-generated and never shown as an input. The
+// agent's Clients are chosen here too: on edit the list starts with every current client
+// (loaded when the dialog is opened from the list) and is saved as the full list.
+export function AgentFormDialog({ token, agent, onClose, onSaved }: { token: string; agent?: AgentRecord | AgentDetails; onClose: () => void; onSaved: () => void }) {
+    const clientOptions = useAdminResource("client-options", (t, signal) => getClientOptions(t, signal));
+    const known = agent && "clients" in agent ? agent.clients.map((client) => client.clientId) : null;
+    const loadLinks = Boolean(agent) && !known;
+    const links = useAdminResource(`agent-form:${loadLinks ? agent!.agentId : "none"}`, (t, signal) => (loadLinks ? getAgent(t, agent!.agentId, signal) : Promise.resolve(null)));
+    const [clientIds, setClientIds] = useState<string[] | null>(() => known ?? (agent ? null : []));
+    useEffect(() => {
+        if (clientIds === null && links.data) setClientIds(links.data.clients.map((client) => client.clientId));
+    }, [clientIds, links.data]);
     const [name, setName] = useState(agent?.name ?? "");
     const [countryCode, setCountryCode] = useState(agent?.countryCode ?? "");
     const [contactNumber, setContactNumber] = useState(agent?.contactNumber ?? "");
@@ -191,6 +203,7 @@ export function AgentFormDialog({ token, agent, onClose, onSaved }: { token: str
             name: name.trim(), countryCode,
             contactNumber: contactNumber.trim() || null, whatsappNumber: whatsappNumber.trim() || null,
             email: email.trim() || null, address: address.trim() || null, notes: notes.trim() || null,
+            clientIds: clientIds ?? [],
         };
         try {
             if (agent) await updateAgent(token, agent.agentId, body);
@@ -209,6 +222,18 @@ export function AgentFormDialog({ token, agent, onClose, onSaved }: { token: str
             <form onSubmit={submit} className="space-y-3">
                 <TextField label="Agent name" value={name} onChange={setName} disabled={busy} error={errors.name} required maxLength={120} />
                 <CountrySelect value={countryCode} onChange={setCountryCode} disabled={busy} error={errors.countryCode} />
+                {clientIds === null || !clientOptions.data ? (
+                    clientOptions.status === "error" || links.status === "error"
+                        ? <p className="text-body-sm text-critical">The clients could not be loaded. Close and try again.</p>
+                        : <p className="text-body-sm text-ink-muted">Loading clients…</p>
+                ) : (
+                    <MultiSelect
+                        label="Clients" selected={clientIds} onChange={setClientIds} disabled={busy} error={errors.clientIds}
+                        options={clientOptions.data.clients.map((client) => ({ id: client.clientId, label: client.name, hint: client.status === "INACTIVE" ? "inactive" : undefined }))}
+                        empty="No clients yet. Clients can be added later."
+                        hint="A client can work with several agents. A client must keep at least one agent."
+                    />
+                )}
                 <TextField label="Contact number" value={contactNumber} onChange={setContactNumber} disabled={busy} error={errors.contactNumber} maxLength={30} />
                 <TextField label="WhatsApp number" value={whatsappNumber} onChange={setWhatsappNumber} disabled={busy} error={errors.whatsappNumber} maxLength={30} />
                 <TextField label="Email" type="email" value={email} onChange={setEmail} disabled={busy} error={errors.email} maxLength={254} />
@@ -221,7 +246,7 @@ export function AgentFormDialog({ token, agent, onClose, onSaved }: { token: str
                 <DialogError message={error} />
                 <div className="flex justify-end gap-2 pt-1">
                     <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Cancel</button>
-                    <button type="submit" disabled={busy || !name.trim() || !countryCode} className={primaryButton}>{busy ? "Saving…" : agent ? "Save changes" : "Add agent"}</button>
+                    <button type="submit" disabled={busy || !name.trim() || !countryCode || clientIds === null} className={primaryButton}>{busy ? "Saving…" : agent ? "Save changes" : "Add agent"}</button>
                 </div>
             </form>
         </ActionDialog>

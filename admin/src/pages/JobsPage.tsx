@@ -276,10 +276,14 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
         return [...loaded, ...added] as JobOptions[K];
     };
     const client = merged("clients").find((c) => c.id === clientId);
-    // The responsible agent is the client's own (the server enforces it); shown, not chosen.
-    const agent = merged("agents").find((a) => a.id === client?.agentId);
-    // The To Country is the client's country: shown, never typed (the server sets it).
-    const toCountry = client?.countryCode ?? agent?.countryCode ?? null;
+    // The responsible agent is one of the client's active agents: taken as is when it has one,
+    // chosen here when it has several (never pre-picked). The server re-checks the pair.
+    const clientAgents = merged("agents").filter((a) => client?.agentIds.includes(a.id));
+    const [chosenAgentId, setChosenAgentId] = useState("");
+    const agent = clientAgents.length === 1 ? clientAgents[0] : clientAgents.find((a) => a.id === chosenAgentId);
+    // The To Country is the responsible agent's country: shown, never typed (the server sets it).
+    const toCountry = agent?.countryCode ?? null;
+    const agentField = useId();
     const vacanciesNumber = vacancies.trim() === "" ? null : Number(vacancies);
     const vacanciesValid = vacanciesNumber === null || (Number.isInteger(vacanciesNumber) && vacanciesNumber >= 1 && vacanciesNumber <= 100000);
     const ready = Boolean(jobTypeId && clientId && agent && fromCountryCode) && vacanciesValid;
@@ -336,21 +340,32 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
                     />
                     <div>
                         <label htmlFor={clientField} className="text-label-md text-ink">Client</label>
-                        <select id={clientField} value={clientId} disabled={busy} onChange={(event) => setClientId(event.target.value)} className={`${inputClass()} mt-1`}>
+                        <select id={clientField} value={clientId} disabled={busy} onChange={(event) => { setClientId(event.target.value); setChosenAgentId(""); }} className={`${inputClass()} mt-1`}>
                             <option value="">Select a client…</option>
                             {merged("clients").map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
                         {merged("clients").length === 0 && <p className="mt-1 text-label-sm text-ink-muted">No active client with an active agent yet. Add one in Client Management.</p>}
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div>
-                            <span className="text-label-md text-ink">Responsible agent</span>
-                            <p className="mt-1 text-body-sm text-ink" data-testid="job-agent">{agent ? `${agent.name} (${agent.countryCode})` : <span className="text-ink-muted">Taken from the selected client</span>}</p>
-                        </div>
+                        {clientAgents.length > 1 ? (
+                            <div>
+                                <label htmlFor={agentField} className="text-label-md text-ink">Responsible agent</label>
+                                <select id={agentField} value={chosenAgentId} disabled={busy} onChange={(event) => setChosenAgentId(event.target.value)} className={`${inputClass()} mt-1`}>
+                                    <option value="">Select an agent…</option>
+                                    {clientAgents.map((a) => <option key={a.id} value={a.id}>{a.name} ({a.countryCode})</option>)}
+                                </select>
+                                <p className="mt-1 text-label-sm text-ink-muted">This client works with several agents.</p>
+                            </div>
+                        ) : (
+                            <div>
+                                <span className="text-label-md text-ink">Responsible agent</span>
+                                <p className="mt-1 text-body-sm text-ink" data-testid="job-agent">{agent ? `${agent.name} (${agent.countryCode})` : <span className="text-ink-muted">Taken from the selected client</span>}</p>
+                            </div>
+                        )}
                         <div>
                             <span className="text-label-md text-ink">To Country</span>
                             <p className="mt-1 text-body-sm text-ink" data-testid="job-to-country">
-                                {toCountry ? jobCountry(toCountry) : <span className="text-ink-muted">{client ? "The client has no country" : "Taken from the selected client"}</span>}
+                                {toCountry ? jobCountry(toCountry) : <span className="text-ink-muted">{clientAgents.length > 1 ? "The chosen agent's country" : "Taken from the selected client"}</span>}
                             </p>
                         </div>
                     </div>

@@ -72,6 +72,81 @@ export function CountrySelect({ label = "Country", value, onChange, disabled, er
     );
 }
 
+// Horizontal page tabs (Client details, Agent details), in the Settings / Job details style.
+// The tab is page state: tab `${idPrefix}-tab-${key}` controls panel `${idPrefix}-panel-${key}`.
+export function PageTabs<K extends string>({ label, idPrefix, tabs, value, onChange }: { label: string; idPrefix: string; tabs: { key: K; label: string }[]; value: K; onChange: (key: K) => void }) {
+    return (
+        <div role="tablist" aria-label={label} className="flex gap-6 overflow-x-auto border-b border-border">
+            {tabs.map((tab) => (
+                <button
+                    key={tab.key} type="button" role="tab" id={`${idPrefix}-tab-${tab.key}`} aria-controls={`${idPrefix}-panel-${tab.key}`} aria-selected={value === tab.key}
+                    onClick={() => onChange(tab.key)}
+                    className={`-mb-px whitespace-nowrap border-b-2 px-1 pb-2.5 pt-1 text-label-md transition-colors ${value === tab.key ? "border-primary font-medium text-ink" : "border-transparent text-ink-muted hover:border-border-strong hover:text-ink"}`}
+                >
+                    {tab.label}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+export type MultiOption = { id: string; label: string; hint?: string; disabled?: boolean };
+
+// Several related records (an Agent's Clients, a Client's Agents): a searchable checkbox list
+// with the selection shown as removable chips. Each id is selected at most once; a disabled
+// option (e.g. an inactive agent) cannot be added, but if it is already selected it stays
+// shown and can be removed. The server re-checks every id.
+export function MultiSelect({ label, options, selected, onChange, disabled, error, required, hint, empty }: {
+    label: string; options: MultiOption[]; selected: string[]; onChange: (ids: string[]) => void; disabled: boolean;
+    error?: string; required?: boolean; hint?: string; empty: string;
+}) {
+    const id = useId();
+    const [search, setSearch] = useState("");
+    const chosen = new Set(selected);
+    const term = search.trim().toLowerCase();
+    const shown = options.filter((option) => !term || option.label.toLowerCase().includes(term) || option.hint?.toLowerCase().includes(term));
+    const toggle = (optionId: string) => onChange(chosen.has(optionId) ? selected.filter((x) => x !== optionId) : [...selected, optionId]);
+    const labelOf = (optionId: string) => options.find((option) => option.id === optionId)?.label ?? optionId;
+    return (
+        <fieldset aria-describedby={hint || error ? `${id}-note` : undefined}>
+            <legend className="text-label-md text-ink">{label}{required ? " *" : <span className="text-ink-muted"> (optional)</span>}</legend>
+            {selected.length > 0 && (
+                <ul aria-label={`Selected ${label.toLowerCase()}`} className="mt-1 flex flex-wrap gap-1.5">
+                    {selected.map((optionId) => (
+                        <li key={optionId} className="inline-flex items-center gap-1 rounded-full border border-border bg-canvas py-0.5 pl-2.5 pr-1 text-label-sm text-ink">
+                            {labelOf(optionId)}
+                            <button type="button" disabled={disabled} onClick={() => toggle(optionId)} aria-label={`Remove ${labelOf(optionId)}`} className="rounded-full px-1 text-ink-muted hover:text-critical">×</button>
+                        </li>
+                    ))}
+                </ul>
+            )}
+            {options.length > 6 && (
+                <input type="search" aria-label={`Search ${label.toLowerCase()}`} value={search} disabled={disabled} placeholder="Search…" onChange={(event) => setSearch(event.target.value)} className={`${inputClass()} mt-2`} />
+            )}
+            {options.length === 0 ? (
+                <p className="mt-1 text-body-sm text-ink-muted">{empty}</p>
+            ) : (
+                <ul aria-label={label} className={`mt-2 max-h-48 divide-y divide-border overflow-y-auto rounded border ${error ? "border-critical" : "border-border"}`}>
+                    {shown.map((option) => {
+                        const boxId = `${id}-${option.id}`;
+                        const isChosen = chosen.has(option.id);
+                        return (
+                            <li key={option.id} className="flex items-center gap-2 px-3 py-1.5">
+                                <input id={boxId} type="checkbox" checked={isChosen} disabled={disabled || (option.disabled && !isChosen)} onChange={() => toggle(option.id)} className="size-4 shrink-0 accent-primary" />
+                                <label htmlFor={boxId} className="min-w-0 flex-1 cursor-pointer text-body-sm text-ink">
+                                    {option.label}{option.hint && <span className="ml-1 text-label-sm text-ink-muted">{option.hint}</span>}
+                                </label>
+                            </li>
+                        );
+                    })}
+                    {shown.length === 0 && <li className="px-3 py-2 text-body-sm text-ink-muted">No match.</li>}
+                </ul>
+            )}
+            {error ? <p id={`${id}-note`} className="mt-1 text-label-sm text-critical">{error}</p> : hint && <p id={`${id}-note`} className="mt-1 text-label-sm text-ink-muted">{hint}</p>}
+        </fieldset>
+    );
+}
+
 // Field errors from a 400 response ({ errors: [{ field, message }] }) keyed by field.
 export function fieldErrors(caught: unknown): Record<string, string> {
     const out: Record<string, string> = {};

@@ -55,14 +55,15 @@ export type CandidateJobAssignment = JobSummary & { assignedAt: string | null; r
 
 export type JobOptions = {
     jobTypes: { id: string; name: string; code: string }[];
-    // Active clients of active agents; agentId is the client's responsible agent.
-    // countryCode: the client's country (its agent's), the job's To Country.
-    clients: { id: string; name: string; agentId: string; countryCode: string | null }[];
+    // Active clients with at least one active agent; agentIds are those agents (any can be the
+    // job's responsible agent; with several, one must be chosen). The To Country is the chosen
+    // agent's country (agents[].countryCode).
+    clients: { id: string; name: string; agentIds: string[] }[];
     agents: { id: string; name: string; countryCode: string }[];
 };
 
-// responsibleAgentId is optional: the server uses the client's own agent, and refuses any other.
-// The To Country is never sent (the client's). candidateIds are assigned with the job in one
+// responsibleAgentId must be one of the client's agents (optional only when it has exactly one).
+// The To Country is never sent (the responsible agent's). candidateIds are assigned with the job in one
 // transaction (none, one or many; the vacancies never limit them).
 export type CreateJobInput = { jobTypeId: string; clientId: string; responsibleAgentId?: string; vacancies: number | null; companyJobId?: string | null; fromCountryCode?: string; candidateIds?: string[] };
 export type UpdateJobInput = { vacancies?: number | null; jobTypeId?: string; clientId?: string; companyJobId?: string | null; fromCountryCode?: string };
