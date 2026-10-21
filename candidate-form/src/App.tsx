@@ -145,9 +145,9 @@ function CandidateForm() {
             <header className="site-header">
                 <div className="site-header-inner">
                     <p className="brand">
-                        <span className="brand-mark" aria-hidden="true">E</span>
+                        <span className="brand-mark" aria-hidden="true">C</span>
                         <span className="brand-text">
-                            <span className="brand-name">Emlynk</span>
+                            <span className="brand-name">Candidate Form</span>
                             <span className="brand-sub">{t("app.subtitle")}</span>
                         </span>
                     </p>
