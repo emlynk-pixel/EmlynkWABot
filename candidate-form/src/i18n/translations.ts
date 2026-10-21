@@ -9,8 +9,13 @@
 export const LANGUAGES = ["en", "si"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
-// Each language's own name, written in that language (the switch shows both).
-export const LANGUAGE_NAMES: Record<Language, string> = { en: "English", si: "සිංහල" };
+// Short labels shown in the segmented control; full names are in aria-label / title.
+export const LANGUAGE_NAMES: Record<Language, string> = { en: "EN", si: "SI" };
+// Full accessible names for each button: English in its own script, Sinhala in Sinhala script.
+// Tests and screen readers use these; the visual label is LANGUAGE_NAMES.
+export const LANGUAGE_FULL_NAMES: Record<Language, string> = { en: "English", si: "සිංහල" };
+// Tooltip titles for hover/pointer accessibility (EN = English, SI = Sinhala).
+export const LANGUAGE_TITLES: Record<Language, string> = { en: "English", si: "Sinhala" };
 
 const en = {
     "app.subtitle": "Candidate Details",

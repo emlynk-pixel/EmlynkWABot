@@ -127,9 +127,23 @@ dd, input { overflow-wrap: anywhere; }
 /* One visible focus style for everything that can take focus. */
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
-/* ---------- header ---------- */
+/* ---------- header – sticky ---------- */
 
-.site-header { background: var(--surface); border-bottom: 1px solid var(--border); }
+.site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    /* Subtle shadow to lift the header off the content when scrolled. */
+    box-shadow: 0 1px 4px rgba(16, 24, 40, 0.06);
+    /* Prevent bleed-through on browsers that composite layers */
+    will-change: transform;
+}
+/* Dark theme: slightly stronger shadow lift */
+:root[data-theme="dark"] .site-header {
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
 
 .site-header-inner {
     max-width: 1120px;
@@ -154,51 +168,78 @@ dd, input { overflow-wrap: anywhere; }
     background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
     color: #ffffff;
     font-weight: 700;
+    letter-spacing: -0.01em;
 }
 .brand-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
 .brand-name { font-weight: 700; font-size: 1.0625rem; }
 .brand-sub { color: var(--muted); font-size: 0.875rem; }
 
-.header-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.header-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
-.segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 999px; padding: 2px; background: var(--surface); }
+/* ---------- segmented control (language + theme) ---------- */
+
+.segmented {
+    display: inline-flex;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 3px;
+    background: var(--surface-2);
+    gap: 1px;
+}
 .segmented button {
-    min-height: 36px;
-    padding: 4px 12px;
+    min-height: 30px;
+    padding: 3px 11px;
     border: 0;
     border-radius: 999px;
     background: transparent;
-    color: var(--ink);
+    color: var(--muted);
     font: inherit;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 4px;
+    transition: background 0.15s ease, color 0.15s ease;
 }
-.segmented button.active { background: var(--primary); color: var(--primary-ink); font-weight: 600; }
-/* Theme: two square icon buttons (sun, moon), the same height as the language switch.
-   Active = the primary fill; inactive = a muted icon that warms up on hover. Keyboard
-   focus uses the global :focus-visible ring. */
-.theme-switch button { width: 36px; min-width: 36px; padding: 0; justify-content: center; color: var(--muted); }
+.segmented button:hover:not(.active) { background: var(--notice-soft); color: var(--ink); }
+.segmented button.active {
+    background: var(--primary);
+    color: var(--primary-ink);
+    font-weight: 700;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12);
+}
+
+/* Theme switch: icon-only square buttons inside the same segmented shell. */
+.theme-switch button {
+    width: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0;
+    justify-content: center;
+    color: var(--muted);
+}
 .theme-switch button:hover:not(.active) { background: var(--notice-soft); color: var(--ink); }
 .theme-switch button.active { color: var(--primary-ink); }
 .theme-icon { display: block; flex: none; }
 
 /* ---------- page ---------- */
 
-.shell { max-width: 1120px; margin: 0 auto; padding: 16px 16px 56px; }
+/* Extra top clearance so the sticky header never overlaps the first content line. */
+.shell { max-width: 1120px; margin: 0 auto; padding: 20px 16px 64px; }
 
 .panel {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 16px;
-    padding: 20px 16px;
+    padding: 22px 18px;
     box-shadow: var(--shadow);
 }
 
 /* The verification card stays narrow. */
-.shell > form.panel, .shell > section.panel { max-width: 520px; margin: 8px auto 0; }
+.shell > form.panel, .shell > section.panel { max-width: 520px; margin: 10px auto 0; }
 
 h1 { font-size: 1.5rem; line-height: 1.3; margin: 0 0 6px; }
 h2 { font-size: 1.25rem; line-height: 1.35; margin: 0 0 4px; }
@@ -237,11 +278,11 @@ h3, h4 { font-size: 1.0625rem; line-height: 1.4; margin: 0 0 12px; }
 
 /* ---------- the form: intro, progress, steps ---------- */
 
-.form-intro { margin-bottom: 14px; }
+.form-intro { margin-bottom: 18px; }
 .form-intro .lead { margin-bottom: 0; }
 
-.progress-block { margin-bottom: 16px; }
-.progress-text { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 0.875rem; color: var(--muted); margin-bottom: 6px; }
+.progress-block { margin-bottom: 18px; }
+.progress-text { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 0.875rem; color: var(--muted); margin-bottom: 8px; }
 .progress-step { font-weight: 600; color: var(--ink); }
 
 progress {
@@ -304,9 +345,9 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 .step-head h2:focus { outline: none; }
 .step-head h2:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
 
-.step-actions { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); margin-top: 8px; padding-top: 18px; }
+.step-actions { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); margin-top: 14px; padding-top: 20px; }
 
-.save-area { margin-top: 8px; }
+.save-area { margin-top: 10px; }
 
 /* ---------- fields ---------- */
 
@@ -319,7 +360,7 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 .form-section { border-top: 1px solid var(--border); padding-top: 18px; margin-top: 10px; }
 .section-note { color: var(--muted); font-size: 0.875rem; margin: -6px 0 12px; }
 
-.field { margin: 0 0 16px; min-width: 0; }
+.field { margin: 0 0 18px; min-width: 0; }
 
 .label-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
 .field label, .field legend { font-weight: 600; }
@@ -337,9 +378,11 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
     font-size: 0.875rem;
     font-weight: 700;
     cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
+.help-toggle:hover { background: var(--primary-soft); border-color: var(--primary); }
 .help-toggle[aria-expanded="true"] { background: var(--primary-soft); border-color: var(--primary); }
-.help-text { margin: 0 0 8px; padding: 8px 10px; border-radius: 8px; background: var(--primary-soft); color: var(--ink); font-size: 0.875rem; }
+.help-text { margin: 0 0 8px; padding: 8px 12px; border-radius: 8px; background: var(--primary-soft); color: var(--ink); font-size: 0.875rem; border: 1px solid var(--border); }
 
 .hint { color: var(--muted); font-size: 0.875rem; margin: 0 0 6px; }
 
@@ -357,15 +400,30 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
     padding: 10px 12px;
     border: 1px solid var(--border-strong);
     border-radius: 10px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.field input:not([type="radio"]):hover:not(:disabled),
+.field select:hover:not(:disabled),
+.field textarea:hover:not(:disabled) {
+    border-color: var(--border-strong);
+    box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.06);
+}
+.field input:not([type="radio"]):focus,
+.field select:focus,
+.field textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
 }
 .field textarea { resize: vertical; }
 /* Date controls keep to the screen's width on small phones. */
 .field input[type="date"] { appearance: none; -webkit-appearance: none; }
 .field input::placeholder { color: var(--muted); opacity: 1; }
 
-.field input:disabled, .field select:disabled, .field textarea:disabled { background: var(--notice-soft); }
+.field input:disabled, .field select:disabled, .field textarea:disabled { background: var(--notice-soft); box-shadow: none; cursor: not-allowed; }
 
 .field-invalid input:not([type="radio"]), .field-invalid select, .field-invalid textarea { border-color: var(--error); border-width: 2px; }
+.field-invalid input:not([type="radio"]):focus, .field-invalid select:focus, .field-invalid textarea:focus { box-shadow: 0 0 0 3px rgba(180, 35, 24, 0.12); }
 
 .error { color: var(--error); font-size: 0.875rem; margin: 6px 0 0; font-weight: 600; }
 
@@ -415,8 +473,9 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 
 /* ---------- review ---------- */
 
-.review { display: grid; gap: 12px; }
-.review-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: var(--surface-2); }
+.review { display: grid; gap: 14px; }
+.review-card { border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; background: var(--surface-2); transition: box-shadow 0.15s ease; }
+.review-card:hover { box-shadow: 0 2px 8px rgba(16, 24, 40, 0.06); }
 .review-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
 .review-card-head h3 { flex: 1 1 12rem; }
 .review-card h3 { margin-bottom: 8px; }
@@ -538,10 +597,27 @@ button.primary, button.secondary {
     padding: 11px 18px;
     border-radius: 10px;
     cursor: pointer;
+    transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
-button.primary { border: 0; background: var(--primary); color: var(--primary-ink); }
-button.primary:hover:not(:disabled) { background: var(--primary-hover); }
-button.secondary { border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); }
+button.primary {
+    border: 0;
+    background: var(--primary);
+    color: var(--primary-ink);
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.1);
+}
+button.primary:hover:not(:disabled) {
+    background: var(--primary-hover);
+    box-shadow: 0 2px 8px rgba(29, 78, 216, 0.22);
+}
+button.secondary {
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--ink);
+}
+button.secondary:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+}
 button:disabled { opacity: 0.6; cursor: default; }
 
 /* Size guides (shirt, shoe): a link under the field and a compact panel below it. */
@@ -580,8 +656,8 @@ button:disabled { opacity: 0.6; cursor: default; }
 /* ---------- wider screens ---------- */
 
 @media (min-width: 640px) {
-    .shell { padding-top: 24px; }
-    .panel { padding: 26px 30px; }
+    .shell { padding-top: 28px; }
+    .panel { padding: 28px 32px; }
     .choice-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
@@ -597,7 +673,8 @@ button:disabled { opacity: 0.6; cursor: default; }
     /* The steps beside the form, with their names. */
     .candidate-form { display: grid; grid-template-columns: 270px minmax(0, 1fr); column-gap: 28px; align-items: start; }
     .form-intro { grid-column: 1 / -1; }
-    .progress-block { position: sticky; top: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+    /* progress-block top offset accounts for the sticky header (approx 57px) + breathing room */
+    .progress-block { position: sticky; top: 73px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
     .step-list { display: flex; flex-direction: column; gap: 2px; }
     .step-list button, .step-list .stage { flex-direction: row; gap: 10px; padding: 4px 8px 4px 2px; font-size: 0.9375rem; text-align: left; }
     .step-list li.current button { background: var(--primary-soft); }
