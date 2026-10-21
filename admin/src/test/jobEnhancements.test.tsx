@@ -29,7 +29,7 @@ const details = (extra: Partial<JobDetails> = {}): JobDetails => ({
 });
 const OPTIONS: JobOptions = {
     jobTypes: [{ id: "t1", name: "Welder", code: "WELDER" }],
-    clients: [{ id: "c1", name: "Acme Construction", agentId: "a1", countryCode: "RO" }, { id: "c2", name: "Berlin Bau", agentId: "a2", countryCode: "DE" }],
+    clients: [{ id: "c1", name: "Acme Construction", agentIds: ["a1"] }, { id: "c2", name: "Berlin Bau", agentIds: ["a2"] }],
     agents: [{ id: "a1", name: "Ion Popescu", countryCode: "RO" }, { id: "a2", name: "Hans Weber", countryCode: "DE" }],
 };
 const eligible = (n: number, extra: Partial<CandidateListItem> = {}): CandidateListItem => ({

@@ -39,7 +39,7 @@ beforeEach(async () => {
     await pg.exec(`
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "rate_limits"; DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter";
-        DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent";
+        DELETE FROM "job_type"; DELETE FROM "agent_client"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
     `);
     const all = [...PASSED, FAILED, UNTESTED, NO_PREFERENCE];
@@ -54,8 +54,8 @@ beforeEach(async () => {
     const welder = await prisma.jobType.create({ data: { code: "WELDER", name: "Welder" } });
     const ro = await prisma.agent.create({ data: { name: "Ion Popescu", countryCode: "RO" } });
     const de = await prisma.agent.create({ data: { name: "Hans Weber", countryCode: "DE" } });
-    const acme = await prisma.client.create({ data: { name: "Acme Construction", agentId: ro.id } });
-    const berlin = await prisma.client.create({ data: { name: "Berlin Bau", agentId: de.id } });
+    const acme = await prisma.client.create({ data: { name: "Acme Construction", agentLinks: { create: { agentId: ro.id } } } });
+    const berlin = await prisma.client.create({ data: { name: "Berlin Bau", agentLinks: { create: { agentId: de.id } } } });
     const noCountry = await prisma.client.create({ data: { name: "Legacy Client" } });
     ids = { jobType: welder.id, acme: acme.id, berlin: berlin.id, noCountry: noCountry.id };
 });
@@ -266,9 +266,10 @@ describe("the eligible candidates of Step 2 (GET /candidates?testResult=PASS&ava
 });
 
 describe("To Country and From Country (COUNTRY-001 to COUNTRY-005)", () => {
-    test("COUNTRY-001/002: the To Country is the selected client's country (its agent's), for each client; it cannot be sent", async () => {
+    test("COUNTRY-001/002: the To Country is the responsible agent's country, for each client; it cannot be sent", async () => {
         const options = (await api(USERS.MANAGER, "GET", "/job-options")).body;
-        assert.deepEqual(options.clients.map((c) => [c.name, c.countryCode]), [["Acme Construction", "RO"], ["Berlin Bau", "DE"]], "a client without an agent is not offered");
+        const countryOf = (agentId) => options.agents.find((a) => a.id === agentId).countryCode;
+        assert.deepEqual(options.clients.map((c) => [c.name, c.agentIds.map(countryOf)]), [["Acme Construction", ["RO"]], ["Berlin Bau", ["DE"]]], "a client without an agent is not offered");
         assert.equal((await createOk({ clientId: ids.acme })).countryCode, "RO");
         assert.equal((await createOk({ clientId: ids.berlin })).countryCode, "DE");
         assert.equal((await create({ clientId: ids.berlin, countryCode: "RO" })).status, 400);

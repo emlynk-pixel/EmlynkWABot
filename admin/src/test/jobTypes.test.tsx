@@ -167,7 +167,7 @@ describe("candidate job type picker", () => {
 
 describe("New job", () => {
     test("DYNAMIC-JOB-TYPE-004 / 007 the Job type list is the server's active types; No Preferred Type is never offered for a Job", async () => {
-        const OPTIONS: JobOptions = { jobTypes: [{ id: "t1", name: "PLUMBER", code: "PLUMBER" }, { id: "t9", name: "Rebar Worker", code: "REBAR_WORKER" }], clients: [{ id: "c1", name: "Acme", agentId: "a1" }], agents: [{ id: "a1", name: "Ion", countryCode: "RO" }] } as JobOptions;
+        const OPTIONS: JobOptions = { jobTypes: [{ id: "t1", name: "PLUMBER", code: "PLUMBER" }, { id: "t9", name: "Rebar Worker", code: "REBAR_WORKER" }], clients: [{ id: "c1", name: "Acme", agentIds: ["a1"] }], agents: [{ id: "a1", name: "Ion", countryCode: "RO" }] } as JobOptions;
         const empty: JobList = {
             items: [], pagination: { page: 1, pageSize: 50, total: 0, totalItems: 0, totalPages: 1, hasNextPage: false, hasPreviousPage: false },
             counts: { processing: 0, completed: 0, cancelled: 0 }, filters: { view: "processing", search: null },

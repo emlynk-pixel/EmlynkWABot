@@ -43,7 +43,7 @@ beforeEach(async () => {
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "rate_limits";
         DELETE FROM "candidate_form_response"; DELETE FROM "candidate_form_prefill_snapshot"; DELETE FROM "candidate_form_access"; DELETE FROM "candidate_form_link";
-        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent";
+        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "job_type"; DELETE FROM "agent_client"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_additional_details"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
         -- The active job types this suite's candidates use (Settings > Job Types).
         INSERT INTO "job_type" ("code", "name") VALUES ('WELDER_TIG_SEED', 'WELDER TIG') ON CONFLICT DO NOTHING;
@@ -109,7 +109,7 @@ const newJobWith = async (...members) => {
     const [jobType, agent] = await Promise.all([
         prisma.jobType.create({ data: { code: "T", name: "T" } }), prisma.agent.create({ data: { name: "Ag", countryCode: "RO" } }),
     ]);
-    const client = await prisma.client.create({ data: { name: "Co", agentId: agent.id } });
+    const client = await prisma.client.create({ data: { name: "Co", agentLinks: { create: { agentId: agent.id } } } });
     const job = (await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: jobType.id, clientId: client.id, responsibleAgentId: agent.id } })).body;
     for (const m of members) await admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { body: { passportId: m.passportId } });
     return job;

@@ -40,7 +40,7 @@ const details = (base: JobListItem, candidates: JobDetails["candidates"] = []): 
 const CAND: JobDetails["candidates"][number] = { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", assignedAt: "2026-10-02T05:00:00.000Z", workflowStatus: { code: "JOB_ASSIGNED", label: "Job Assigned" } };
 const OPTIONS: JobOptions = {
     jobTypes: [{ id: "t1", name: "Welder", code: "WELDER" }],
-    clients: [{ id: "c1", name: "Acme Construction", agentId: "a1", countryCode: "RO" }],
+    clients: [{ id: "c1", name: "Acme Construction", agentIds: ["a1"] }],
     agents: [{ id: "a1", name: "Ion Popescu", countryCode: "RO" }],
 };
 const SEARCH_RESULT: CandidateList = {

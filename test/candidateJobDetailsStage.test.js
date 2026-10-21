@@ -32,7 +32,7 @@ beforeEach(async () => {
     await pg.exec(`
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "rate_limits"; DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter";
-        DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent";
+        DELETE FROM "job_type"; DELETE FROM "agent_client"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
     `);
     await prisma.candidate.createMany({ data: [[P1, "7001", "Nimal", "Perera", "900000001V"], [P2, "7002", "Kamal", "Silva", "900000002V"]].map(([passportId, uniqueId, firstName, otherName, nic]) => ({ passportId, uniqueId, firstName, otherName, nic })) });
@@ -41,8 +41,8 @@ beforeEach(async () => {
     await prisma.candidateAllocation.create({ data: { passportId: P1, analystId: USERS.ANALYST.adminId } });
     const jobType = await prisma.jobType.create({ data: { code: "WELDER", name: "Welder" } });
     const agent = await prisma.agent.create({ data: { name: "Ion Popescu", countryCode: "RO" } });
-    const acme = await prisma.client.create({ data: { name: "Acme Builders", agentId: agent.id } });
-    const beta = await prisma.client.create({ data: { name: "Beta Foods", agentId: agent.id } });
+    const acme = await prisma.client.create({ data: { name: "Acme Builders", agentLinks: { create: { agentId: agent.id } } } });
+    const beta = await prisma.client.create({ data: { name: "Beta Foods", agentLinks: { create: { agentId: agent.id } } } });
     ids = { jobType: jobType.id, agent: agent.id, acme: acme.id, beta: beta.id };
 });
 

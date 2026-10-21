@@ -35,7 +35,7 @@ beforeEach(async () => {
     await pg.exec(`
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "rate_limits"; DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter";
-        DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent";
+        DELETE FROM "job_type"; DELETE FROM "agent_client"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
     `);
     await prisma.candidate.createMany({ data: [1, 2, 3, 4].map(candidate) });
@@ -44,7 +44,7 @@ beforeEach(async () => {
     await prisma.candidateAllocation.createMany({ data: [[1, USERS.ANN], [2, USERS.ANN], [3, USERS.BEN]].map(([i, u]) => ({ passportId: pid(i), analystId: u.adminId })) });
     const jobType = await prisma.jobType.create({ data: { code: "WELDER", name: "Welder" } });
     const agent = await prisma.agent.create({ data: { name: "Ion Popescu", countryCode: "RO" } });
-    const client = await prisma.client.create({ data: { name: "Acme Construction", agentId: agent.id } });
+    const client = await prisma.client.create({ data: { name: "Acme Construction", agentLinks: { create: { agentId: agent.id } } } });
     ids = { jobType: jobType.id, client: client.id, agent: agent.id };
 });
 
@@ -134,7 +134,7 @@ describe("creating jobs (JOB-001 to JOB-003)", () => {
         assert.equal((await api(USERS.MANAGER, "POST", "/job-types", { name: "tile fitter" })).status, 409);
         const options = await api(USERS.MANAGER, "GET", "/job-options");
         assert.deepEqual([options.body.jobTypes.length, options.body.clients.length, options.body.agents.length], [2, 1, 1]);
-        assert.deepEqual(options.body.clients[0], { id: ids.client, name: "Acme Construction", agentId: ids.agent, countryCode: "RO" }, "each client carries its agent and its country (the job's To Country)");
+        assert.deepEqual(options.body.clients[0], { id: ids.client, name: "Acme Construction", agentIds: [ids.agent] }, "each client carries its active agents (the To Country is the chosen agent's)");
     });
 });
 

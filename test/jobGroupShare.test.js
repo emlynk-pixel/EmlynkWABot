@@ -40,7 +40,7 @@ beforeEach(async () => {
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "rate_limits";
         DELETE FROM "candidate_form_response"; DELETE FROM "candidate_form_prefill_snapshot"; DELETE FROM "candidate_form_access"; DELETE FROM "candidate_form_link";
-        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "job_type"; DELETE FROM "client"; DELETE FROM "agent";
+        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "job_type"; DELETE FROM "agent_client"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
         -- The active job types this suite's candidates use (Settings > Job Types).
         INSERT INTO "job_type" ("code", "name") VALUES ('WELDER_TIG_SEED', 'WELDER TIG') ON CONFLICT DO NOTHING;
@@ -52,7 +52,7 @@ beforeEach(async () => {
         prisma.jobType.create({ data: { code: "WELDER", name: "Welder" } }),
         prisma.agent.create({ data: { name: "Ion Popescu", countryCode: "RO" } }),
     ]);
-    const client = await prisma.client.create({ data: { name: "Acme Construction", agentId: agent.id } });
+    const client = await prisma.client.create({ data: { name: "Acme Construction", agentLinks: { create: { agentId: agent.id } } } });
     ids = { jobType: jobType.id, client: client.id, agent: agent.id };
 });
 
@@ -159,7 +159,7 @@ describe("Client Job ID (JOB-ID-001 to JOB-ID-007)", () => {
         assert.deepEqual([clash.status, clash.body.code], [409, "COMPANY_JOB_ID_EXISTS"]);
         assert.equal((await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent, companyJobId: "Y26S01" } })).status, 409);
         // Another client may use the same identifier.
-        const other = await prisma.client.create({ data: { name: "Other Co", agentId: ids.agent } });
+        const other = await prisma.client.create({ data: { name: "Other Co", agentLinks: { create: { agentId: ids.agent } } } });
         const r = await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: other.id, responsibleAgentId: ids.agent, companyJobId: "Y26S01" } });
         assert.equal(r.status, 201);
         // Several jobs without one are fine.

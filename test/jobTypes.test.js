@@ -40,7 +40,7 @@ beforeEach(async () => {
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "rate_limits";
         DELETE FROM "candidate_form_response"; DELETE FROM "candidate_form_prefill_snapshot"; DELETE FROM "candidate_form_access"; DELETE FROM "candidate_form_link";
-        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "client"; DELETE FROM "agent";
+        DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter"; DELETE FROM "agent_client"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
         -- Back to exactly the seeded list (the migration's 17), all active.
         DELETE FROM "job_type" WHERE "code" NOT IN (${SEEDED.map((name) => `'${name.replace(/ /g, "_")}'`).join(", ")});
@@ -86,7 +86,7 @@ const register = async (jobTypes, who = USERS.ADMIN) => {
 const pass = (passportId) => prisma.candidateStage.create({ data: { passportId, stage: "TEST_DETAILS", testResult: "PASS" } });
 async function newJob(jobTypeName) {
     const agent = await prisma.agent.create({ data: { name: `Agent ${jobTypeName}`, countryCode: "RO" } });
-    const client = await prisma.client.create({ data: { name: `Client ${jobTypeName}`, agentId: agent.id } });
+    const client = await prisma.client.create({ data: { name: `Client ${jobTypeName}`, agentLinks: { create: { agentId: agent.id } } } });
     const jobType = await typeByName(jobTypeName);
     const r = await admin(USERS.MANAGER, "POST", "/jobs", { jobTypeId: jobType.id, clientId: client.id });
     assert.equal(r.status, 201, JSON.stringify(r.body));
@@ -168,7 +168,7 @@ describe("Settings > Job Types (management)", () => {
         assert.equal(refused.status, 400);
         assert.match(refused.body.errors[0].message, /not an active job type/);
         const agent = await prisma.agent.create({ data: { name: "A", countryCode: "RO" } });
-        const client = await prisma.client.create({ data: { name: "C", agentId: agent.id } });
+        const client = await prisma.client.create({ data: { name: "C", agentLinks: { create: { agentId: agent.id } } } });
         assert.equal((await admin(USERS.MANAGER, "POST", "/jobs", { jobTypeId: created.body.id, clientId: client.id })).status, 400);
     });
 
@@ -205,7 +205,7 @@ describe("Settings > Job Types (management)", () => {
         assert.equal((await admin(USERS.ADMIN, "PATCH", "/job-types/NO_PREFERENCE", { isActive: false })).status, 404);
         assert.ok(!(await admin(USERS.MANAGER, "GET", "/job-options")).body.jobTypes.some((t) => /no.?pref/i.test(t.name)), "never offered for a Job");
         const agent = await prisma.agent.create({ data: { name: "A", countryCode: "RO" } });
-        const client = await prisma.client.create({ data: { name: "C", agentId: agent.id } });
+        const client = await prisma.client.create({ data: { name: "C", agentLinks: { create: { agentId: agent.id } } } });
         for (const jobTypeId of ["NO_PREFERENCE", "No Preferred Type"]) {
             assert.equal((await admin(USERS.MANAGER, "POST", "/jobs", { jobTypeId, clientId: client.id })).status, 400, jobTypeId);
         }

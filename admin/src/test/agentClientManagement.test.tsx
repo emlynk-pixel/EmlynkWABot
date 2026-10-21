@@ -24,8 +24,8 @@ const agentDetails = (extra: Partial<AgentDetails> = {}): AgentDetails => ({
 });
 
 const client = (extra: Partial<ClientListItem> = {}): ClientListItem => ({
-    clientId: CLIENT_ID, name: "Acme Builders", status: "ACTIVE", countryCode: "LK",
-    agent: { agentId: AGENT_ID, name: "Nimal Perera", countryCode: "LK", status: "ACTIVE" },
+    clientId: CLIENT_ID, name: "Acme Builders", status: "ACTIVE", countryCodes: ["LK"],
+    agents: [{ agentId: AGENT_ID, name: "Nimal Perera", countryCode: "LK", status: "ACTIVE" }],
     contactPerson: "Mr Silva", contactNumber: null, whatsappNumber: null, email: null, address: null,
     createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", processingJobs: 1, completedJobs: 2, cancelledJobs: 0, ...extra,
 });
@@ -39,8 +39,10 @@ const AGENT_OPTIONS = { agents: [
     { agentId: "00000000-0000-4000-8000-0000000000a3", name: "Retired Agent", countryCode: "LK", status: "INACTIVE" },
 ] };
 
+const CLIENT_OPTIONS = { clients: [{ clientId: CLIENT_ID, name: "Acme Builders", status: "ACTIVE" }] };
+
 function backend(role: string, routes: FetchRoutes = {}) {
-    return signedInBackend({ ...asRole(role), "GET /api/admin/agent-options": { status: 200, body: AGENT_OPTIONS }, ...routes });
+    return signedInBackend({ ...asRole(role), "GET /api/admin/agent-options": { status: 200, body: AGENT_OPTIONS }, "GET /api/admin/client-options": { status: 200, body: CLIENT_OPTIONS }, ...routes });
 }
 
 describe("navigation and roles", () => {
@@ -121,9 +123,10 @@ describe("Agents list", () => {
         expect(save).toBeDisabled();
         await user.selectOptions(within(dialog).getByLabelText(/Country/), "LK");
         await user.type(within(dialog).getByLabelText(/Contact number/), "0771234567");
+        await within(dialog).findByRole("list", { name: "Clients" });
         await user.click(save);
         await waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({
-            name: "Nimal Perera", countryCode: "LK", contactNumber: "0771234567", whatsappNumber: null, email: null, address: null, notes: null,
+            name: "Nimal Perera", countryCode: "LK", contactNumber: "0771234567", whatsappNumber: null, email: null, address: null, notes: null, clientIds: [],
         }));
         await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     });
@@ -141,6 +144,7 @@ describe("Agents list", () => {
         await user.type(within(dialog).getByLabelText(/Agent name/), "A");
         await user.selectOptions(within(dialog).getByLabelText(/Country/), "LK");
         await user.type(within(dialog).getByLabelText(/Contact number/), "12");
+        await within(dialog).findByRole("list", { name: "Clients" });
         await user.click(within(dialog).getByRole("button", { name: "Add agent" }));
         expect(await within(dialog).findByText(/must be a phone number/)).toBeInTheDocument();
     });
@@ -173,8 +177,11 @@ describe("Agent details", () => {
         backend("MANAGER", { [`GET /api/admin/agents/${AGENT_ID}`]: { status: 200, body: agentDetails() } });
         renderApp(`/agents/${AGENT_ID}`);
         expect(await screen.findByRole("heading", { name: "Nimal Perera" }, RENDER_STEP)).toBeInTheDocument();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("tab", { name: "Clients (1)" }));
         const clients = screen.getByRole("table", { name: "Clients of this agent" });
         expect(within(clients).getByRole("link", { name: "Acme Builders" })).toHaveAttribute("href", `/client-management/${CLIENT_ID}`);
+        await user.click(screen.getByRole("tab", { name: /^Jobs/ }));
         const jobs = screen.getByRole("table", { name: "Jobs of this agent" });
         expect(within(jobs).getByRole("link", { name: "JOB-2026-000001" })).toHaveAttribute("href", `/jobs/${JOB_ROW.jobId}`);
         expect(screen.getByRole("tab", { name: "Processing (3)" })).toHaveAttribute("aria-selected", "true");
@@ -190,14 +197,14 @@ describe("Agent details", () => {
 });
 
 describe("Client Management list", () => {
-    test("shows client, country, responsible agent, processing and completed jobs, status", async () => {
+    test("shows client, country, processing and completed jobs, status (no Responsible agent column)", async () => {
         backend("MANAGER", { "GET /api/admin/client-management": { status: 200, body: clientList([client()]) } });
         renderApp("/client-management");
         const table = await screen.findByRole("table", { name: "Clients" }, RENDER_STEP);
-        expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Client", "Country", "Responsible agent", "Processing jobs", "Completed jobs", "Status", "Actions"]);
+        expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Client", "Country", "Processing jobs", "Completed jobs", "Status", "Actions"]);
         const row = within(table).getAllByRole("row")[1];
-        expect(within(row).getAllByRole("cell").map((c) => c.textContent?.trim()).slice(0, 6)).toEqual(["Acme Builders", "Sri Lanka", "Nimal Perera", "1", "2", "Active"]);
-        expect(within(row).getByRole("link", { name: "Nimal Perera" })).toHaveAttribute("href", `/agents/${AGENT_ID}`);
+        expect(within(row).getAllByRole("cell").map((c) => c.textContent?.trim()).slice(0, 5)).toEqual(["Acme Builders", "Sri Lanka", "1", "2", "Active"]);
+        expect(within(row).queryByRole("link", { name: "Nimal Perera" })).not.toBeInTheDocument();
     });
 
     test("agent, country, status and search filters go to the server", async () => {
@@ -215,7 +222,7 @@ describe("Client Management list", () => {
         });
     });
 
-    test("Add client offers ACTIVE agents only and sends the agent's id, not its name", async () => {
+    test("Add client: ACTIVE agents can be ticked (inactive ones cannot) and their ids are sent, not names", async () => {
         const { calls } = backend("MANAGER", {
             "GET /api/admin/client-management": { status: 200, body: clientList([]) },
             "POST /api/admin/client-management": { status: 201, body: clientDetails() },
@@ -225,19 +232,21 @@ describe("Client Management list", () => {
         await screen.findByText("No clients yet", {}, RENDER_STEP);
         await user.click(screen.getByRole("button", { name: "Add client" }));
         const dialog = await screen.findByRole("dialog", { name: "Add client" });
-        const select = await within(dialog).findByLabelText(/Responsible agent/);
-        expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select an agent…", "Nimal Perera (Sri Lanka)", "Ion Popescu (Romania)"]);
+        const list = await within(dialog).findByRole("list", { name: "Agents" });
+        expect(within(list).getAllByRole("checkbox").map((box) => [box.closest("li")!.textContent, (box as HTMLInputElement).disabled])).toEqual([
+            ["Nimal PereraSri Lanka", false], ["Ion PopescuRomania", false], ["Retired AgentSri Lanka · inactive", true],
+        ]);
         expect(within(dialog).getByRole("button", { name: "Add client" })).toBeDisabled();
         await user.type(within(dialog).getByLabelText(/Client name/), "Acme Builders");
-        await user.selectOptions(select, AGENT_ID);
+        await user.click(within(list).getByRole("checkbox", { name: /Nimal Perera/ }));
         expect(within(dialog).getByText(/Country: Sri Lanka/)).toBeInTheDocument();
         await user.click(within(dialog).getByRole("button", { name: "Add client" }));
         await waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({
-            name: "Acme Builders", agentId: AGENT_ID, contactPerson: null, contactNumber: null, whatsappNumber: null, email: null, address: null,
+            name: "Acme Builders", agentIds: [AGENT_ID], contactPerson: null, contactNumber: null, whatsappNumber: null, email: null, address: null,
         }));
     });
 
-    test("editing a client cannot change its agent (that is a separate action)", async () => {
+    test("editing a client starts with its agents and saves them as the full list", async () => {
         const { calls } = backend("MANAGER", {
             "GET /api/admin/client-management": { status: 200, body: clientList([client()]) },
             [`PATCH /api/admin/client-management/${CLIENT_ID}`]: { status: 200, body: clientDetails() },
@@ -246,11 +255,11 @@ describe("Client Management list", () => {
         const user = userEvent.setup();
         await user.click(await screen.findByRole("button", { name: "Edit Acme Builders" }, RENDER_STEP));
         const dialog = await screen.findByRole("dialog", { name: "Edit client" });
-        expect(within(dialog).queryByRole("combobox")).not.toBeInTheDocument();
+        expect(within(dialog).getByRole("checkbox", { name: /Nimal Perera/ })).toBeChecked();
         await user.clear(within(dialog).getByLabelText(/Client name/));
         await user.type(within(dialog).getByLabelText(/Client name/), "Acme Group");
         await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
-        await waitFor(() => expect(calls.find((c) => c.method === "PATCH")!.body).toMatchObject({ name: "Acme Group" }));
+        await waitFor(() => expect(calls.find((c) => c.method === "PATCH")!.body).toMatchObject({ name: "Acme Group", agentIds: [AGENT_ID] }));
         expect(calls.find((c) => c.method === "PATCH")!.body).not.toHaveProperty("agentId");
     });
 
@@ -269,11 +278,14 @@ describe("Client Management list", () => {
 });
 
 describe("Client details", () => {
-    test("shows the responsible agent, the jobs by status and links to the Job record", async () => {
+    test("shows the agents, the jobs by status and links to the Job record", async () => {
         backend("MANAGER", { [`GET /api/admin/client-management/${CLIENT_ID}`]: { status: 200, body: clientDetails() } });
         renderApp(`/client-management/${CLIENT_ID}`);
         expect(await screen.findByRole("heading", { name: "Acme Builders" }, RENDER_STEP)).toBeInTheDocument();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("tab", { name: "Agents (1)" }));
         expect(screen.getByRole("link", { name: "Nimal Perera" })).toHaveAttribute("href", `/agents/${AGENT_ID}`);
+        await user.click(screen.getByRole("tab", { name: /^Job Details/ }));
         const jobs = screen.getByRole("table", { name: "Jobs of this client" });
         const cells = within(jobs).getAllByRole("row")[1];
         expect(within(cells).getByRole("link", { name: "JOB-2026-000001" })).toHaveAttribute("href", `/jobs/${JOB_ROW.jobId}`);
@@ -281,20 +293,19 @@ describe("Client details", () => {
         expect(screen.getByRole("tab", { name: "Completed (2)" })).toBeInTheDocument();
     });
 
-    test("Change agent lists the other ACTIVE agents only and sends the new agent's id", async () => {
+    test("Edit agents (Agents tab) adds another ACTIVE agent and sends the full list of ids", async () => {
         const { calls } = backend("MANAGER", {
             [`GET /api/admin/client-management/${CLIENT_ID}`]: { status: 200, body: clientDetails() },
-            [`PATCH /api/admin/client-management/${CLIENT_ID}/agent`]: { status: 200, body: clientDetails() },
+            [`PATCH /api/admin/client-management/${CLIENT_ID}`]: { status: 200, body: clientDetails() },
         });
         renderApp(`/client-management/${CLIENT_ID}`);
         const user = userEvent.setup();
-        await user.click(await screen.findByRole("button", { name: "Change agent" }, RENDER_STEP));
-        const dialog = await screen.findByRole("dialog", { name: "Change responsible agent" });
-        const select = within(dialog).getByLabelText(/New agent/);
-        expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select an agent…", "Ion Popescu (Romania)"]);
+        await user.click(await screen.findByRole("tab", { name: "Agents (1)" }, RENDER_STEP));
+        await user.click(screen.getByRole("button", { name: "Edit agents" }));
+        const dialog = await screen.findByRole("dialog", { name: "Edit client" });
         expect(within(dialog).getByText(/existing jobs keep the agent/i)).toBeInTheDocument();
-        await user.selectOptions(select, OTHER_AGENT_ID);
-        await user.click(within(dialog).getByRole("button", { name: "Change agent" }));
-        await waitFor(() => expect(calls.find((c) => c.method === "PATCH")!.body).toEqual({ agentId: OTHER_AGENT_ID }));
+        await user.click(within(dialog).getByRole("checkbox", { name: /Ion Popescu/ }));
+        await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+        await waitFor(() => expect(calls.find((c) => c.method === "PATCH")!.body).toMatchObject({ agentIds: [AGENT_ID, OTHER_AGENT_ID] }));
     });
 });
