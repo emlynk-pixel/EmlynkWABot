@@ -456,7 +456,11 @@ model Job {
   jobTypeId          String    @map("job_type_id") @db.Uuid
   clientId           String    @map("client_id") @db.Uuid
   responsibleAgentId String    @map("responsible_agent_id") @db.Uuid
+  // "To Country": the Client's (= its Agent's) country, copied when the job is created.
   countryCode        String    @map("country_code") @db.Char(2)
+  // "From Country" (migration 20261025120000_job_from_country): RO by default for a
+  // new job, editable; NULL for a job created before it was recorded.
+  fromCountryCode    String?   @map("from_country_code") @db.Char(2)
   vacancies          Int?
   status             String    @default("PROCESSING")
   createdById        String    @map("created_by")

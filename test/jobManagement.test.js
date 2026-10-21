@@ -134,7 +134,7 @@ describe("creating jobs (JOB-001 to JOB-003)", () => {
         assert.equal((await api(USERS.MANAGER, "POST", "/job-types", { name: "tile fitter" })).status, 409);
         const options = await api(USERS.MANAGER, "GET", "/job-options");
         assert.deepEqual([options.body.jobTypes.length, options.body.clients.length, options.body.agents.length], [2, 1, 1]);
-        assert.deepEqual(options.body.clients[0], { id: ids.client, name: "Acme Construction", agentId: ids.agent }, "each client carries its agent");
+        assert.deepEqual(options.body.clients[0], { id: ids.client, name: "Acme Construction", agentId: ids.agent, countryCode: "RO" }, "each client carries its agent and its country (the job's To Country)");
     });
 });
 

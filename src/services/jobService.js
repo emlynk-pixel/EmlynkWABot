@@ -1,9 +1,10 @@
 import crypto from "node:crypto";
 
-import { CandidateError, TEST_RESULT_PASS, listPagination, resolveCandidatePassportId } from "./candidateService.js";
+import { CandidateError, TEST_RESULT_PASS, WORKFLOW_STATUS_SELECT, candidateWorkflowStatuses, listPagination, resolveCandidatePassportId } from "./candidateService.js";
 import { candidateScope, isCandidateScoped } from "./candidateAccess.js";
 import { JOB_SELECT, JOB_STATUS, jobSummaryView } from "./jobAssignmentReader.js";
 import { clientName } from "../utils/clientName.js";
+import { normalizeCountryCode } from "../utils/countries.js";
 
 export { JOB_STATUS };
 
@@ -44,6 +45,10 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const COUNTRY_PATTERN = /^[A-Za-z]{2}$/;
 const COMPANY_JOB_ID_PATTERN = /^[A-Z0-9][A-Z0-9 ._/#-]{0,39}$/;
 const PASSPORT_ID_PATTERN = /^[A-Za-z0-9-]{1,20}$/;
+// A new job's From Country unless the request names another (Romania).
+export const DEFAULT_FROM_COUNTRY = "RO";
+// The most candidates one New job request may assign (the vacancies never limit it).
+export const MAX_CREATE_CANDIDATES = 500;
 
 export const isValidJobIdParam = (value) => typeof value === "string" && UUID_PATTERN.test(value);
 const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -84,6 +89,31 @@ function parseVacancies(value, errors) {
     return value;
 }
 
+function parseFromCountry(value, errors) {
+    const code = normalizeCountryCode(value);
+    if (!code) {
+        errors.push({ field: "fromCountryCode", message: "must be a 2-letter country code from the list (e.g. RO)" });
+        return undefined;
+    }
+    return code;
+}
+
+// candidateIds: passport IDs to assign when the job is created (none, one or many; more than the
+// vacancies is allowed). A repeated ID counts once. The service re-checks every rule.
+function parseCandidateIds(value, errors) {
+    if (!Array.isArray(value) || value.length > MAX_CREATE_CANDIDATES || value.some((id) => typeof id !== "string" || !PASSPORT_ID_PATTERN.test(id.trim()))) {
+        errors.push({ field: "candidateIds", message: `must be a list of at most ${MAX_CREATE_CANDIDATES} passport IDs` });
+        return undefined;
+    }
+    const seen = new Set();
+    return value.map((id) => id.trim()).filter((id) => {
+        const key = id.toUpperCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
 // GET /api/admin/jobs?view=processing|completed|cancelled&search=&page=
 export function parseJobListQuery(query = {}) {
     const errors = [];
@@ -116,9 +146,10 @@ export function parseJobListQuery(query = {}) {
     return errors.length ? { errors } : { params };
 }
 
-// POST /api/admin/jobs { jobTypeId, clientId, responsibleAgentId?, vacancies? }
+// POST /api/admin/jobs { jobTypeId, clientId, responsibleAgentId?, vacancies?, companyJobId?, fromCountryCode?, candidateIds? }
 // responsibleAgentId is optional: omitted, the Client's own Agent is used. Given, it
-// must be that Agent (the service rejects any other combination).
+// must be that Agent (the service rejects any other combination). The To Country is
+// never sent: it is the Client's country. fromCountryCode defaults to RO.
 export function parseCreateJobBody(body) {
     if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
     const errors = [];
@@ -128,14 +159,17 @@ export function parseCreateJobBody(body) {
         responsibleAgentId: body.responsibleAgentId === undefined || body.responsibleAgentId === null ? undefined : requiredId(body, "responsibleAgentId", errors),
         vacancies: body.vacancies === undefined ? null : parseVacancies(body.vacancies, errors),
         companyJobId: body.companyJobId === undefined ? null : normalizeCompanyJobId(body.companyJobId, errors),
+        fromCountryCode: body.fromCountryCode === undefined ? DEFAULT_FROM_COUNTRY : parseFromCountry(body.fromCountryCode, errors),
+        candidateIds: body.candidateIds === undefined ? [] : parseCandidateIds(body.candidateIds, errors),
     };
+    if (body.countryCode !== undefined) errors.push({ field: "countryCode", message: "cannot be set: the To Country is the client's country" });
     return errors.length ? { errors } : { values };
 }
 
-// PUT /api/admin/jobs/:jobId { vacancies?, jobTypeId?, clientId?, companyJobId? }.
+// PUT /api/admin/jobs/:jobId { vacancies?, jobTypeId?, clientId?, companyJobId?, fromCountryCode? }.
 // companyJobId (null clears it) may be changed on a job in any status; the other
-// fields only while PROCESSING. The responsible Agent, the country, the job code
-// and the job id are fixed.
+// fields only while PROCESSING. The responsible Agent, the To Country (countryCode),
+// the job code and the job id are fixed.
 export function parseUpdateJobBody(body) {
     if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
     const errors = [];
@@ -150,10 +184,14 @@ export function parseUpdateJobBody(body) {
         const companyJobId = normalizeCompanyJobId(body.companyJobId, errors);
         if (companyJobId !== undefined) values.companyJobId = companyJobId;
     }
+    if (body.fromCountryCode !== undefined) {
+        const code = parseFromCountry(body.fromCountryCode, errors);
+        if (code !== undefined) values.fromCountryCode = code;
+    }
     for (const field of ["responsibleAgentId", "countryCode", "status", "jobCode"]) {
         if (body[field] !== undefined) errors.push({ field, message: "cannot be changed here" });
     }
-    if (!errors.length && Object.keys(values).length === 0) errors.push({ field: "body", message: "must contain vacancies, jobTypeId, clientId or companyJobId" });
+    if (!errors.length && Object.keys(values).length === 0) errors.push({ field: "body", message: "must contain vacancies, jobTypeId, clientId, companyJobId or fromCountryCode" });
     return errors.length ? { errors } : { values };
 }
 
@@ -220,15 +258,16 @@ async function nextJobCode(tx, now) {
 
 const referenceView = (row) => ({ id: row.id, name: row.name, ...(row.countryCode ? { countryCode: row.countryCode } : {}), ...(row.code ? { code: row.code } : {}) });
 
-// GET /api/admin/job-options: the active job types, clients (each with its Agent) and
-// agents a job can use. Only an ACTIVE client of an ACTIVE agent is offered.
+// GET /api/admin/job-options: the active job types, clients (each with its Agent and its
+// country, the job's To Country) and agents a job can use. Only an ACTIVE client of an
+// ACTIVE agent is offered.
 export async function listJobOptions({ db }) {
     const [jobTypes, clients, agents] = await Promise.all([
         db.jobType.findMany({ where: { isActive: true }, select: { id: true, code: true, name: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
-        db.client.findMany({ where: { isActive: true, agent: { is: { isActive: true } } }, select: { id: true, name: true, agentId: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
+        db.client.findMany({ where: { isActive: true, agent: { is: { isActive: true } } }, select: { id: true, name: true, agentId: true, agent: { select: { countryCode: true } } }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
         db.agent.findMany({ where: { isActive: true }, select: { id: true, name: true, countryCode: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
     ]);
-    return { jobTypes: jobTypes.map(referenceView), clients: clients.map((row) => ({ id: row.id, name: row.name, agentId: row.agentId })), agents: agents.map(referenceView) };
+    return { jobTypes: jobTypes.map(referenceView), clients: clients.map((row) => ({ id: row.id, name: row.name, agentId: row.agentId, countryCode: row.agent?.countryCode ?? null })), agents: agents.map(referenceView) };
 }
 
 const auditRow = ({ actor, action, passportId = null, previousStatus, newStatus, reason = null, previousValue = null, newValue = null }) => ({
@@ -334,7 +373,21 @@ export async function updateJobType({ db, actor, id, values }) {
 // The jobs an Analyst may see hold a candidate allocated to them.
 const memberWhere = (user) => ({ releasedAt: null, ...(isCandidateScoped(user) ? { candidate: candidateScope(user) } : {}) });
 
-const listRow = (row) => ({ ...jobSummaryView(row), candidateCount: row._count.candidates });
+// Filled: the job has at least as many assigned candidates as vacancies (all of its candidates,
+// whoever may see them). Derived, never stored, and it never limits assigning: 23 / 20 is still
+// Filled and the vacancies stay 20. A job without vacancies is never Filled. The job's status
+// (PROCESSING / COMPLETED / CANCELLED) is separate and only changes by Complete / Cancel.
+export const isJobFilled = (vacancies, assigned) => typeof vacancies === "number" && assigned >= vacancies;
+
+// Assigned (not removed) candidates per job, every candidate counted: what Filled is measured on
+// when the user's own count is scoped (an Analyst sees only their candidates).
+async function assignedCounts(db, jobIds) {
+    if (!jobIds.length) return new Map();
+    const groups = await db.jobCandidate.groupBy({ by: ["jobId"], where: { jobId: { in: jobIds }, releasedAt: null }, _count: { _all: true } });
+    return new Map(groups.map((group) => [group.jobId, group._count._all]));
+}
+
+const listRow = (row, assigned) => ({ ...jobSummaryView(row), candidateCount: row._count.candidates, filled: isJobFilled(row.vacancies, assigned) });
 
 function searchWhere(search) {
     const words = search.split(/\s+/).filter(Boolean).slice(0, 5);
@@ -371,8 +424,9 @@ export async function listJobs({ db, params, user }) {
         db.job.groupBy({ by: ["status"], where: isCandidateScoped(user) ? { candidates: { some: memberWhere(user) } } : {}, _count: { _all: true } }),
     ]);
     const countOf = (status) => counts.find((group) => group.status === status)?._count._all ?? 0;
+    const scoped = isCandidateScoped(user) ? await assignedCounts(db, rows.map((row) => row.id)) : null;
     return {
-        items: rows.map(listRow),
+        items: rows.map((row) => listRow(row, scoped ? scoped.get(row.id) ?? 0 : row._count.candidates)),
         pagination: listPagination(params, total),
         counts: { processing: countOf(JOB_STATUS.PROCESSING), completed: countOf(JOB_STATUS.COMPLETED), cancelled: countOf(JOB_STATUS.CANCELLED) },
         filters: { view: params.view, search: params.search ?? null },
@@ -389,22 +443,27 @@ export async function getJob({ db, jobId, user }) {
             createdBy: { select: { name: true } },
             candidates: {
                 where: memberWhere(user),
-                select: { assignedAt: true, candidate: { select: { passportId: true, uniqueId: true, firstName: true, otherName: true, nic: true } } },
+                // The workflow signals too: each candidate's Status is the Candidates list's own (candidateService.js).
+                select: { assignedAt: true, candidate: { select: WORKFLOW_STATUS_SELECT } },
                 orderBy: [{ assignedAt: "asc" }, { passportId: "asc" }],
             },
         },
     });
     if (!row) throw new CandidateError(404, "JOB_NOT_FOUND", "Job not found");
+    const statuses = await candidateWorkflowStatuses(db, row.candidates.map((member) => member.candidate));
+    const assigned = isCandidateScoped(user) ? (await assignedCounts(db, [row.id])).get(row.id) ?? 0 : row.candidates.length;
     return {
         ...jobSummaryView(row),
         createdBy: row.createdBy?.name ?? null,
         candidateCount: row.candidates.length,
+        filled: isJobFilled(row.vacancies, assigned),
         candidates: row.candidates.map((member) => ({
             passportId: member.candidate.passportId,
             uniqueId: member.candidate.uniqueId,
             name: clientName(member.candidate),
             nic: member.candidate.nic ?? null,
             assignedAt: iso(member.assignedAt),
+            workflowStatus: statuses.get(member.candidate.passportId),
         })),
     };
 }
@@ -452,18 +511,30 @@ async function requireClientWithAgent(tx, clientId, agentId) {
     return { client, agent: client.agent };
 }
 
-// POST /api/admin/jobs. The job's country is the responsible Agent's country
-// at creation time.
+// POST /api/admin/jobs. The job's To Country (country_code) is the Client's country
+// (its responsible Agent's) at creation time. candidateIds are assigned in the SAME
+// transaction as the job is created: every one passes every assignment rule or
+// nothing is created at all (never a job with half its candidates). The vacancies
+// never limit how many are assigned.
 export async function createJob({ db, actor, values, now = new Date() }) {
+    const passportIds = [];
+    for (const requested of values.candidateIds ?? []) {
+        const stored = await resolveCandidatePassportId({ db, passportId: requested });
+        if (!stored) throw new CandidateError(404, "CANDIDATE_NOT_FOUND", `Candidate ${requested} was not found. Nothing was created.`);
+        passportIds.push(stored);
+    }
+    // One per stored candidate (two spellings of one passport ID count once), locked in a fixed
+    // order so two creations that share candidates cannot deadlock.
+    const unique = [...new Set(passportIds)].sort();
     try {
-        return await createJobInTransaction({ db, actor, values, now });
+        return await createJobInTransaction({ db, actor, values, passportIds: unique, now });
     } catch (error) {
         if (isUniqueViolation(error)) throw new CandidateError(409, "COMPANY_JOB_ID_EXISTS", COMPANY_JOB_ID_TAKEN);
         throw error;
     }
 }
 
-async function createJobInTransaction({ db, actor, values, now }) {
+async function createJobInTransaction({ db, actor, values, passportIds, now }) {
     return db.$transaction(async (tx) => {
         await requireActive(tx, "jobType", values.jobTypeId, "jobTypeId", "job type");
         const { agent } = await requireClientWithAgent(tx, values.clientId, values.responsibleAgentId);
@@ -476,18 +547,29 @@ async function createJobInTransaction({ db, actor, values, now }) {
                 clientId: values.clientId,
                 responsibleAgentId: agent.id,
                 countryCode: agent.countryCode,
+                fromCountryCode: values.fromCountryCode ?? DEFAULT_FROM_COUNTRY,
                 vacancies: values.vacancies,
                 status: JOB_STATUS.PROCESSING,
                 createdById: actor.adminId,
             },
-            select: { id: true, jobCode: true },
+            select: { id: true, jobCode: true, status: true },
         });
+        const fields = Object.fromEntries(Object.entries(values).filter(([key]) => key !== "candidateIds"));
         await tx.auditLog.create({
             data: auditRow({
                 actor, action: JOB_AUDIT_ACTION.CREATE, previousStatus: "NONE", newStatus: JOB_STATUS.PROCESSING, reason: `Job ${job.jobCode} created`,
-                newValue: JSON.stringify({ jobId: job.id, jobCode: job.jobCode, ...values, responsibleAgentId: agent.id, countryCode: agent.countryCode }),
+                newValue: JSON.stringify({ jobId: job.id, jobCode: job.jobCode, ...fields, responsibleAgentId: agent.id, countryCode: agent.countryCode, candidates: passportIds.length }),
             }),
         });
+        for (const passportId of passportIds) {
+            try {
+                await assignCandidate(tx, { actor, job, passportId });
+            } catch (error) {
+                // Named, and the whole creation rolls back with it.
+                if (error instanceof CandidateError) throw new CandidateError(error.status, error.code, `${passportId}: ${error.message} Nothing was created.`);
+                throw error;
+            }
+        }
         return getJob({ db: tx, jobId: job.id, user: actor });
     });
 }
@@ -528,11 +610,51 @@ async function updateJobInTransaction({ db, actor, jobId, values }) {
     });
 }
 
-// POST /api/admin/jobs/:jobId/candidates. All five rules are checked inside
-// one transaction under row locks (job FOR SHARE, candidate FOR UPDATE), so two
-// staff members assigning the same candidate to two jobs queue on the
-// candidate's lock and the second sees the first's assignment (409). The
-// partial unique index is the backstop: a violation is the same 409.
+// Assigns one candidate to a PROCESSING job inside the caller's transaction (Add to job, and
+// New job with selected candidates). Every rule is checked here under row locks (the caller
+// holds the job; the candidate FOR UPDATE), so two staff members assigning the same candidate
+// to two jobs queue on the candidate's lock and the second sees the first's assignment (409).
+// The partial unique index is the backstop: a violation is the same 409. The job's vacancies
+// are never checked: a job may hold more candidates than vacancies (23 / 20).
+async function assignCandidate(tx, { actor, job, passportId }) {
+    const jobId = job.id;
+    const locked = await tx.$queryRaw`SELECT "passport_id" FROM "candidate" WHERE "passport_id" = ${passportId} FOR UPDATE`;
+    if (!locked.length) throw new CandidateError(404, "CANDIDATE_NOT_FOUND", "Candidate not found");
+
+    const active = await tx.jobCandidate.findFirst({ where: { passportId, isActive: true }, select: { jobId: true, job: { select: { jobCode: true } } } });
+    if (active?.jobId === jobId) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", `This candidate is already assigned to ${job.jobCode}.`);
+    if (active) throw new CandidateError(409, "CANDIDATE_ON_ACTIVE_JOB", `This candidate is already on the PROCESSING job ${active.job.jobCode}. Complete or cancel that job, or remove the candidate from it, first.`);
+
+    // Only a candidate who PASSED the test can be assigned (also a removed candidate put back, and a
+    // candidate being moved to another job after leaving the first). The saved Test details result is
+    // the only source (not stage completion, not the Job details stage, not the legacy job_id); the row
+    // is share-locked so the result cannot change between this check and the insert. Existing
+    // assignments are never touched when a result later changes. The candidate's job type preference
+    // is never compared with the job's type: assignment stays open by Job Type.
+    const [test] = await tx.$queryRaw`SELECT "test_result" AS "result" FROM "candidate_stages" WHERE "passport_id" = ${passportId} AND "stage" = 'TEST_DETAILS' FOR SHARE`;
+    if (test?.result !== TEST_RESULT_PASS) {
+        throw new CandidateError(409, "CANDIDATE_TEST_NOT_PASSED", "Candidate must pass the test before being assigned to a job.");
+    }
+
+    const existing = await tx.jobCandidate.findUnique({ where: { jobId_passportId: { jobId, passportId } }, select: { releasedAt: true } });
+    const now = new Date();
+    try {
+        if (existing) {
+            // Removed earlier from this same job: the same membership row is reused.
+            await tx.jobCandidate.update({ where: { jobId_passportId: { jobId, passportId } }, data: { isActive: true, releasedAt: null, assignedAt: now, assignedBy: actor.adminId } });
+        } else {
+            await tx.jobCandidate.create({ data: { jobId, passportId, assignedAt: now, assignedBy: actor.adminId, isActive: true } });
+        }
+    } catch (error) {
+        if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ON_ACTIVE_JOB", "This candidate was just assigned to a PROCESSING job. Nothing was changed; refresh and check.");
+        throw error;
+    }
+    await tx.auditLog.create({
+        data: auditRow({ actor, action: JOB_AUDIT_ACTION.ADD_CANDIDATE, passportId, previousStatus: "NOT_ASSIGNED", newStatus: "ASSIGNED", reason: `Assigned to ${job.jobCode}`, newValue: JSON.stringify({ jobId, jobCode: job.jobCode }) }),
+    });
+}
+
+// POST /api/admin/jobs/:jobId/candidates (job FOR SHARE, then assignCandidate).
 export async function addCandidateToJob({ db, actor, jobId, passportId }) {
     const stored = await resolveCandidatePassportId({ db, passportId });
     if (!stored) throw new CandidateError(404, "CANDIDATE_NOT_FOUND", "Candidate not found");
@@ -540,34 +662,7 @@ export async function addCandidateToJob({ db, actor, jobId, passportId }) {
         return await db.$transaction(async (tx) => {
             const job = await lockJob(tx, jobId, "share");
             requireProcessing(job);
-            const locked = await tx.$queryRaw`SELECT "passport_id" FROM "candidate" WHERE "passport_id" = ${stored} FOR UPDATE`;
-            if (!locked.length) throw new CandidateError(404, "CANDIDATE_NOT_FOUND", "Candidate not found");
-
-            const active = await tx.jobCandidate.findFirst({ where: { passportId: stored, isActive: true }, select: { jobId: true, job: { select: { jobCode: true } } } });
-            if (active?.jobId === jobId) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", `This candidate is already assigned to ${job.jobCode}.`);
-            if (active) throw new CandidateError(409, "CANDIDATE_ON_ACTIVE_JOB", `This candidate is already on the PROCESSING job ${active.job.jobCode}. Complete or cancel that job, or remove the candidate from it, first.`);
-
-            // Only a candidate who PASSED the test can be assigned (also a removed candidate put back, and a
-            // candidate being moved to another job after leaving the first). The saved Test details result is
-            // the only source (not stage completion, not the Job details stage, not the legacy job_id); the row
-            // is share-locked so the result cannot change between this check and the insert. Existing
-            // assignments are never touched when a result later changes.
-            const [test] = await tx.$queryRaw`SELECT "test_result" AS "result" FROM "candidate_stages" WHERE "passport_id" = ${stored} AND "stage" = 'TEST_DETAILS' FOR SHARE`;
-            if (test?.result !== TEST_RESULT_PASS) {
-                throw new CandidateError(409, "CANDIDATE_TEST_NOT_PASSED", "Candidate must pass the test before being assigned to a job.");
-            }
-
-            const existing = await tx.jobCandidate.findUnique({ where: { jobId_passportId: { jobId, passportId: stored } }, select: { releasedAt: true } });
-            const now = new Date();
-            if (existing) {
-                // Removed earlier from this same job: the same membership row is reused.
-                await tx.jobCandidate.update({ where: { jobId_passportId: { jobId, passportId: stored } }, data: { isActive: true, releasedAt: null, assignedAt: now, assignedBy: actor.adminId } });
-            } else {
-                await tx.jobCandidate.create({ data: { jobId, passportId: stored, assignedAt: now, assignedBy: actor.adminId, isActive: true } });
-            }
-            await tx.auditLog.create({
-                data: auditRow({ actor, action: JOB_AUDIT_ACTION.ADD_CANDIDATE, passportId: stored, previousStatus: "NOT_ASSIGNED", newStatus: "ASSIGNED", reason: `Assigned to ${job.jobCode}`, newValue: JSON.stringify({ jobId, jobCode: job.jobCode }) }),
-            });
+            await assignCandidate(tx, { actor, job, passportId: stored });
             return getJob({ db: tx, jobId, user: actor });
         });
     } catch (error) {

@@ -1,9 +1,11 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
+import { listCandidates, type CandidateList, type CandidateListItem } from "../api/candidates";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ApiError } from "../api/client";
 import {
     createJob,
     createJobType,
+    DEFAULT_FROM_COUNTRY,
     getJobOptions,
     JOB_VIEWS,
     listJobs,
@@ -14,9 +16,11 @@ import { useAdminResource } from "../api/useAdminResource";
 import { canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../components/Dialog";
+import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 import { formatNumber } from "../components/format";
 import { Icon } from "../components/Icon";
-import { JobStatusBadge, NO_COMPANY_JOB_ID, jobDateNote } from "../components/job/JobParts";
+import { JobStatusBadge, NO_COMPANY_JOB_ID, VacancyFill, jobCountry, jobDateNote } from "../components/job/JobParts";
+import { CountrySelect } from "../components/master/MasterParts";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl, inputClass, tableCell, tableHead, tableRow } from "../components/ui";
 
@@ -139,7 +143,8 @@ function JobsView() {
                                     <th className={tableHead}>Job code</th>
                                     <th className={tableHead}>Client Job ID</th>
                                     <th className={tableHead}>Job type</th>
-                                    <th className={tableHead}>Country</th>
+                                    <th className={tableHead}>To Country</th>
+                                    <th className={tableHead}>From Country</th>
                                     <th className={tableHead}>Client</th>
                                     <th className={tableHead}>Responsible agent</th>
                                     <th className={`${tableHead} text-right`}>Candidates</th>
@@ -156,11 +161,12 @@ function JobsView() {
                                         </td>
                                         <td className={tableCell}>{job.companyJobId ?? <span className="text-ink-muted">{NO_COMPANY_JOB_ID}</span>}</td>
                                         <td className={tableCell}>{job.jobType.name}</td>
-                                        <td className={tableCell}>{job.countryCode}</td>
+                                        <td className={tableCell}>{jobCountry(job.countryCode)}</td>
+                                        <td className={tableCell}>{jobCountry(job.fromCountryCode)}</td>
                                         <td className={tableCell}>{job.client.name}</td>
                                         <td className={tableCell}>{job.responsibleAgent.name}</td>
                                         <td className={`${tableCell} text-right tabular-nums`}>{formatNumber(job.candidateCount)}</td>
-                                        <td className={`${tableCell} text-right tabular-nums`}>{job.vacancies === null ? "—" : formatNumber(job.vacancies)}</td>
+                                        <td className={`${tableCell} text-right`}>{job.vacancies === null ? "—" : <VacancyFill job={job} />}</td>
                                         <td className={tableCell}><JobStatusBadge status={job.status} /></td>
                                     </tr>
                                 ))}
@@ -240,13 +246,24 @@ function ReferenceSelect({ label, value, onChange, options, disabled, adding, on
     );
 }
 
+// New job, in two steps. Step 1 is the job's details (nothing is saved; Next only checks them);
+// Step 2 picks the candidates to assign right away: candidates who passed the test and are not on
+// a PROCESSING job (any job type preference, No Preferred Type too), none, one or many, and more
+// than the vacancies if needed. Create job sends the job and the selection together: the server
+// re-checks every rule and creates the job with all of them, or nothing.
+type Step = 1 | 2;
+const CANDIDATE_PAGE_SIZE = 50;
+
 function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: () => void; onCreated: (jobId: string) => void }) {
     const options = useAdminResource("job-options", (t, signal) => getJobOptions(t, signal));
+    const [step, setStep] = useState<Step>(1);
     const [created, setCreated] = useState<Partial<JobOptions>>({});
     const [jobTypeId, setJobTypeId] = useState("");
     const [clientId, setClientId] = useState("");
+    const [fromCountryCode, setFromCountryCode] = useState(DEFAULT_FROM_COUNTRY);
     const [vacancies, setVacancies] = useState("");
     const [companyJobId, setCompanyJobId] = useState("");
+    const [selected, setSelected] = useState<Map<string, CandidateListItem>>(() => new Map());
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const vacanciesId = useId();
@@ -261,17 +278,33 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     const client = merged("clients").find((c) => c.id === clientId);
     // The responsible agent is the client's own (the server enforces it); shown, not chosen.
     const agent = merged("agents").find((a) => a.id === client?.agentId);
+    // The To Country is the client's country: shown, never typed (the server sets it).
+    const toCountry = client?.countryCode ?? agent?.countryCode ?? null;
     const vacanciesNumber = vacancies.trim() === "" ? null : Number(vacancies);
     const vacanciesValid = vacanciesNumber === null || (Number.isInteger(vacanciesNumber) && vacanciesNumber >= 1 && vacanciesNumber <= 100000);
-    const ready = Boolean(jobTypeId && clientId && agent) && vacanciesValid;
+    const ready = Boolean(jobTypeId && clientId && agent && fromCountryCode) && vacanciesValid;
 
-    const submit = async (event: FormEvent) => {
+    const next = (event: FormEvent) => {
         event.preventDefault();
+        if (!ready) return;
+        setError(null);
+        setStep(2);
+    };
+    const toggle = (candidate: CandidateListItem) => setSelected((previous) => {
+        const nextSelection = new Map(previous);
+        if (nextSelection.has(candidate.passportId)) nextSelection.delete(candidate.passportId);
+        else nextSelection.set(candidate.passportId, candidate);
+        return nextSelection;
+    });
+    const submit = async () => {
         if (!ready) return;
         setBusy(true);
         setError(null);
         try {
-            const job = await createJob(token, { jobTypeId, clientId, responsibleAgentId: agent?.id, vacancies: vacanciesNumber, companyJobId: companyJobId.trim() || null });
+            const job = await createJob(token, {
+                jobTypeId, clientId, responsibleAgentId: agent?.id, vacancies: vacanciesNumber, companyJobId: companyJobId.trim() || null,
+                fromCountryCode, candidateIds: [...selected.keys()],
+            });
             onCreated(job.jobId);
         } catch (caught) {
             setError(message(caught));
@@ -281,10 +314,17 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
 
     return (
         <ActionDialog title="New job" busy={busy} onClose={onClose}>
+            <ol aria-label="New job steps" className="mb-4 flex gap-4 border-b border-border text-label-md">
+                {(["Job details", "Select candidates"] as const).map((label, index) => (
+                    <li key={label} aria-current={step === index + 1 ? "step" : undefined} className={`-mb-px border-b-2 pb-2 ${step === index + 1 ? "border-primary font-medium text-ink" : "border-transparent text-ink-muted"}`}>
+                        {index + 1}. {label}
+                    </li>
+                ))}
+            </ol>
             {options.status === "loading" && !options.data && <LoadingState label="Loading…" />}
             {options.status === "error" && <ErrorState message={options.error.message} onRetry={options.reload} />}
-            {options.data && (
-                <form onSubmit={submit} className="space-y-3">
+            {options.data && step === 1 && (
+                <form onSubmit={next} className="space-y-3">
                     <ReferenceSelect
                         label="Job type" value={jobTypeId} onChange={setJobTypeId} disabled={busy} adding="Add job type"
                         options={merged("jobTypes").map((o) => ({ id: o.id, label: o.name }))}
@@ -302,10 +342,19 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
                         </select>
                         {merged("clients").length === 0 && <p className="mt-1 text-label-sm text-ink-muted">No active client with an active agent yet. Add one in Client Management.</p>}
                     </div>
-                    <div>
-                        <span className="text-label-md text-ink">Responsible agent</span>
-                        <p className="mt-1 text-body-sm text-ink" data-testid="job-agent">{agent ? `${agent.name} (${agent.countryCode})` : <span className="text-ink-muted">Taken from the selected client</span>}</p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div>
+                            <span className="text-label-md text-ink">Responsible agent</span>
+                            <p className="mt-1 text-body-sm text-ink" data-testid="job-agent">{agent ? `${agent.name} (${agent.countryCode})` : <span className="text-ink-muted">Taken from the selected client</span>}</p>
+                        </div>
+                        <div>
+                            <span className="text-label-md text-ink">To Country</span>
+                            <p className="mt-1 text-body-sm text-ink" data-testid="job-to-country">
+                                {toCountry ? jobCountry(toCountry) : <span className="text-ink-muted">{client ? "The client has no country" : "Taken from the selected client"}</span>}
+                            </p>
+                        </div>
                     </div>
+                    <CountrySelect label="From Country" value={fromCountryCode} onChange={setFromCountryCode} disabled={busy} />
                     <div>
                         <label htmlFor={vacanciesId} className="text-label-md text-ink">Vacancies <span className="text-ink-muted">(optional)</span></label>
                         <input id={vacanciesId} inputMode="numeric" value={vacancies} disabled={busy} onChange={(event) => setVacancies(event.target.value)} className={`${inputClass(!vacanciesValid)} mt-1`} />
@@ -315,14 +364,92 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
                         <label htmlFor={companyJobIdField} className="text-label-md text-ink">Client Job ID <span className="text-ink-muted">(optional, the employer&apos;s own ID; can be added later)</span></label>
                         <input id={companyJobIdField} value={companyJobId} maxLength={40} disabled={busy} onChange={(event) => setCompanyJobId(event.target.value)} className={`${inputClass()} mt-1`} />
                     </div>
-                    <p className="text-body-sm text-ink-muted">Country: {agent ? agent.countryCode : "taken from the responsible agent"}. The job code is generated when you save.</p>
-                    <DialogError message={error} />
+                    <p className="text-body-sm text-ink-muted">Nothing is saved yet: choose the candidates next. The job code is generated when the job is created.</p>
                     <div className="flex justify-end gap-2 pt-1">
                         <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Cancel</button>
-                        <button type="submit" disabled={busy || !ready} className={primaryButton}>{busy ? "Creating…" : "Create job"}</button>
+                        <button type="submit" disabled={busy || !ready} className={primaryButton}>Next</button>
                     </div>
                 </form>
             )}
+            {options.data && step === 2 && (
+                <div className="space-y-3">
+                    <CandidatePicker token={token} selected={selected} onToggle={toggle} disabled={busy} />
+                    <p role="status" className="text-body-sm text-ink" data-testid="selected-count">
+                        {selected.size === 0 ? "No candidates selected. The job can be created without candidates." : `${formatNumber(selected.size)} selected`}
+                        {vacanciesNumber !== null && selected.size > 0 && <span className="text-ink-muted">{` for ${formatNumber(vacanciesNumber)} vacancies`}{selected.size > vacanciesNumber ? " (more than the vacancies is allowed)" : ""}</span>}
+                    </p>
+                    <DialogError message={error} />
+                    <div className="flex flex-wrap justify-between gap-2 pt-1">
+                        <button type="button" disabled={busy} onClick={() => { setError(null); setStep(1); }} className={secondaryButton}>Back</button>
+                        <div className="flex gap-2">
+                            <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Cancel</button>
+                            <button type="button" disabled={busy || !ready} onClick={submit} className={primaryButton}>{busy ? "Creating…" : "Create job"}</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </ActionDialog>
+    );
+}
+
+// The candidates who can be assigned now (the server's list: test PASS and not on a PROCESSING job),
+// searchable and paged. The selection is kept across searches and pages.
+function CandidatePicker({ token, selected, onToggle, disabled }: { token: string; selected: Map<string, CandidateListItem>; onToggle: (candidate: CandidateListItem) => void; disabled: boolean }) {
+    const [text, setText] = useState("");
+    const [query, setQuery] = useState({ search: "", page: 1 });
+    const [list, setList] = useState<CandidateList | null>(null);
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const [attempt, setAttempt] = useState(0);
+    useEffect(() => {
+        const controller = new AbortController();
+        setLoadError(null);
+        listCandidates(token, { page: query.page, pageSize: CANDIDATE_PAGE_SIZE, search: query.search || undefined, testResult: "PASS", available: true }, controller.signal)
+            .then(setList)
+            .catch((caught) => {
+                if (!controller.signal.aborted) setLoadError(message(caught));
+            });
+        return () => controller.abort();
+    }, [token, query, attempt]);
+    const search = (event: FormEvent) => {
+        event.preventDefault();
+        setQuery({ search: text.trim(), page: 1 });
+    };
+    const items = list?.items ?? [];
+    return (
+        <div>
+            <form onSubmit={search} role="search" className="flex gap-2">
+                <label htmlFor="new-job-candidate-search" className="sr-only">Search candidates</label>
+                <input id="new-job-candidate-search" type="search" value={text} maxLength={100} placeholder="Name, passport ID or NIC" onChange={(event) => setText(event.target.value)} className={filterControl} />
+                <button type="submit" disabled={disabled} className={secondaryButton}>Search</button>
+            </form>
+            <p className="mt-2 text-label-sm text-ink-muted">Candidates who passed the test and are not on a processing job.</p>
+            {loadError && <ErrorState message={loadError} onRetry={() => setAttempt((n) => n + 1)} />}
+            {!loadError && !list && <LoadingState label="Loading candidates…" />}
+            {!loadError && list && items.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">{query.search ? "No eligible candidates match your search." : "No candidates can be assigned right now."}</p>}
+            {!loadError && items.length > 0 && (
+                <ul aria-label="Eligible candidates" className="mt-3 max-h-72 divide-y divide-border overflow-y-auto rounded border border-border">
+                    {items.map((candidate) => {
+                        const id = `pick-${candidate.passportId}`;
+                        return (
+                            <li key={candidate.passportId} className="flex items-center gap-3 px-3 py-2">
+                                <input id={id} type="checkbox" checked={selected.has(candidate.passportId)} disabled={disabled} onChange={() => onToggle(candidate)} className="size-4 shrink-0 accent-primary" />
+                                <label htmlFor={id} className="min-w-0 flex-1 cursor-pointer">
+                                    <span className="block truncate text-body-sm text-ink">{candidate.name ?? candidate.passportId}</span>
+                                    <span className="block text-label-sm text-ink-muted">{[candidate.passportId, candidate.nic ? `NIC: ${candidate.nic}` : null].filter(Boolean).join(" • ")}</span>
+                                </label>
+                                <WorkflowStatusBadge status={candidate.workflowStatus} />
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
+            {list && list.pagination.totalPages > 1 && (
+                <div className="mt-2 flex items-center justify-between text-label-sm text-ink-muted">
+                    <button type="button" disabled={disabled || query.page <= 1} onClick={() => setQuery((q) => ({ ...q, page: q.page - 1 }))} className="text-primary hover:underline disabled:text-ink-muted disabled:no-underline">Previous</button>
+                    <span>Page {query.page} of {list.pagination.totalPages}</span>
+                    <button type="button" disabled={disabled || query.page >= list.pagination.totalPages} onClick={() => setQuery((q) => ({ ...q, page: q.page + 1 }))} className="text-primary hover:underline disabled:text-ink-muted disabled:no-underline">Next page</button>
+                </div>
+            )}
+        </div>
     );
 }

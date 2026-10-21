@@ -1,3 +1,4 @@
+import type { WorkflowStatus } from "./candidates";
 import { apiRequest } from "./client";
 
 // Job Management (src/services/jobService.js). ADMIN and MANAGER manage jobs;
@@ -22,7 +23,10 @@ export type JobSummary = {
     jobType: { id: string; code: string; name: string };
     client: { id: string; name: string };
     responsibleAgent: { id: string; name: string; countryCode: string };
+    // To Country: the client's country (its agent's) when the job was created.
     countryCode: string;
+    // From Country: RO by default for a new job; null for a job created before it was recorded.
+    fromCountryCode: string | null;
     vacancies: number | null;
     createdAt: string | null;
     completedAt: string | null;
@@ -30,7 +34,9 @@ export type JobSummary = {
     cancelReason: string | null;
 };
 
-export type JobListItem = JobSummary & { candidateCount: number };
+// filled: at least as many assigned candidates as vacancies (derived on the server; more than the
+// vacancies is allowed and stays filled). Separate from the job's status.
+export type JobListItem = JobSummary & { candidateCount: number; filled: boolean };
 
 export type JobList = {
     items: JobListItem[];
@@ -39,7 +45,8 @@ export type JobList = {
     filters: { view: JobView; search: string | null };
 };
 
-export type JobCandidateRow = { passportId: string; uniqueId: string; name: string | null; nic: string | null; assignedAt: string | null };
+// workflowStatus: the Candidates list's own Status (src/services/candidateWorkflowStatus.js).
+export type JobCandidateRow = { passportId: string; uniqueId: string; name: string | null; nic: string | null; assignedAt: string | null; workflowStatus: WorkflowStatus };
 
 export type JobDetails = JobListItem & { createdBy: string | null; candidates: JobCandidateRow[] };
 
@@ -49,13 +56,19 @@ export type CandidateJobAssignment = JobSummary & { assignedAt: string | null; r
 export type JobOptions = {
     jobTypes: { id: string; name: string; code: string }[];
     // Active clients of active agents; agentId is the client's responsible agent.
-    clients: { id: string; name: string; agentId: string }[];
+    // countryCode: the client's country (its agent's), the job's To Country.
+    clients: { id: string; name: string; agentId: string; countryCode: string | null }[];
     agents: { id: string; name: string; countryCode: string }[];
 };
 
 // responsibleAgentId is optional: the server uses the client's own agent, and refuses any other.
-export type CreateJobInput = { jobTypeId: string; clientId: string; responsibleAgentId?: string; vacancies: number | null; companyJobId?: string | null };
-export type UpdateJobInput = { vacancies?: number | null; jobTypeId?: string; clientId?: string; companyJobId?: string | null };
+// The To Country is never sent (the client's). candidateIds are assigned with the job in one
+// transaction (none, one or many; the vacancies never limit them).
+export type CreateJobInput = { jobTypeId: string; clientId: string; responsibleAgentId?: string; vacancies: number | null; companyJobId?: string | null; fromCountryCode?: string; candidateIds?: string[] };
+export type UpdateJobInput = { vacancies?: number | null; jobTypeId?: string; clientId?: string; companyJobId?: string | null; fromCountryCode?: string };
+
+// A new job's From Country unless changed (src/services/jobService.js DEFAULT_FROM_COUNTRY).
+export const DEFAULT_FROM_COUNTRY = "RO";
 
 const jobPath = (jobId: string) => `/api/admin/jobs/${encodeURIComponent(jobId)}`;
 
