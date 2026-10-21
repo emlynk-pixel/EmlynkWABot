@@ -170,7 +170,10 @@ function contentDisposition(fileName) {
 // Work Allocation: an ANALYST only sees and changes the candidates allocated
 // to them (services/candidateAccess.js), on every candidate route and in the
 // lists that name candidates; ADMIN, MANAGER and REGISTRATION_DESK see all.
-const { ADMIN, MANAGER, ANALYST, REGISTRATION_DESK } = ROLES;
+// JOB_HANDLER: Jobs, Agents and Clients (manage), Candidates (read only: the
+// list, the details and what the details page reads); nothing else. Every
+// candidate WRITE route keeps its own tier, which JOB_HANDLER is not in.
+const { ADMIN, MANAGER, ANALYST, REGISTRATION_DESK, JOB_HANDLER } = ROLES;
 // The set of roles allowed for each endpoint tier.
 const ALL_ACTIVE = [ADMIN, MANAGER, ANALYST];                   // overview, reports, etc
 const CANDIDATE_STAFF = [ADMIN, MANAGER, ANALYST, REGISTRATION_DESK]; // the Candidates area
@@ -178,6 +181,10 @@ const ANALYSTS_UP = [ADMIN, MANAGER, ANALYST];                  // analyst or ab
 const MANAGERS_UP = [ADMIN, MANAGER];                           // manager or above
 const ADMINS_ONLY = [ADMIN];                                    // administrators only
 const REGISTRATION_STAFF = [ADMIN, MANAGER, REGISTRATION_DESK]; // registering a new candidate
+const CANDIDATE_READERS = [...CANDIDATE_STAFF, JOB_HANDLER];    // candidate READS only (GET)
+const JOB_READERS = [ADMIN, MANAGER, ANALYST, JOB_HANDLER];     // job lists and details
+const JOB_MANAGERS = [ADMIN, MANAGER, JOB_HANDLER];             // job writes (create, edit, members, close)
+const MASTER_DATA_STAFF = [ADMIN, MANAGER, JOB_HANDLER];        // Agents and Client Management
 // (an ANALYST works only on candidates allocated to them, and a new
 // candidate is unallocated, so registration is not an Analyst action)
 
@@ -528,7 +535,7 @@ export function createAdminRouter({
         return passportId;
     };
 
-    router.get("/candidates", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.get("/candidates", requireRole(CANDIDATE_READERS), async (req, res) => {
         const parsed = parseCandidateListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -560,7 +567,7 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values, actor: req.user })));
     });
 
-    router.get("/candidates/:passportId", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.get("/candidates/:passportId", requireRole(CANDIDATE_READERS), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         // Also the registration lookup: the response carries the stored passport ID.
@@ -670,7 +677,7 @@ export function createAdminRouter({
         })));
     });
 
-    router.get("/candidates/:passportId/call-logs", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.get("/candidates/:passportId/call-logs", requireRole(CANDIDATE_READERS), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await listCallLogs({ db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user) })));
@@ -726,7 +733,7 @@ export function createAdminRouter({
 
     // Additional details (candidateAdditionalDetailsService.js): always the
     // existing candidate of the passport ID in the URL; never creates one.
-    router.get("/candidates/:passportId/additional-details", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.get("/candidates/:passportId/additional-details", requireRole(CANDIDATE_READERS), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await getAdditionalDetails({
@@ -756,7 +763,7 @@ export function createAdminRouter({
     // What the candidate submitted through the Candidate Form, read-only, from
     // candidate_form_response (with the original prefill for comparison). Admin
     // API only; within the user's candidate scope like every candidate route.
-    router.get("/candidates/:passportId/form-submission", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.get("/candidates/:passportId/form-submission", requireRole(CANDIDATE_READERS), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await getFormSubmission({
@@ -859,9 +866,10 @@ export function createAdminRouter({
     });
 
     // ---------------------------------------------------------------- Jobs (jobService.js)
-    // ADMIN and MANAGER manage jobs; an ANALYST reads only the jobs that hold a
-    // candidate allocated to them (and sees only those candidates);
-    // REGISTRATION_DESK has no access. Membership rules (one PROCESSING job per
+    // ADMIN, MANAGER and JOB_HANDLER manage jobs; an ANALYST reads only the jobs that
+    // hold a candidate allocated to them (and sees only those candidates);
+    // REGISTRATION_DESK has no access. Creating a job type and the job-group Candidate
+    // Form link stay ADMIN / MANAGER. Membership rules (one PROCESSING job per
     // candidate) and the Client/Agent rules are enforced in the service and by the database.
     const jobParam = (req, res) => {
         if (isValidJobIdParam(req.params.jobId)) return true;
@@ -874,13 +882,13 @@ export function createAdminRouter({
         return false;
     };
 
-    router.get("/job-options", requireRole(MANAGERS_UP), async (req, res) => {
+    router.get("/job-options", requireRole(JOB_MANAGERS), async (req, res) => {
         const client = await resolveDb(db);
         return res.json(await listJobOptions({ db: client }));
     });
     // Candidate job type choices for the Candidates area (registration, Candidate
     // Details): the ACTIVE names and the "No Preferred Type" system option. Read-only.
-    router.get("/job-type-choices", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.get("/job-type-choices", requireRole(CANDIDATE_READERS), async (req, res) => {
         const client = await resolveDb(db);
         return res.json({ jobTypes: await activeJobTypeNames(client), noPreference: NO_PREFERRED_JOB_TYPE });
     });
@@ -903,27 +911,27 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.status(201).json(await createJobType({ db: client, actor: req.user, values: parsed.values })));
     });
 
-    router.get("/jobs", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/jobs", requireRole(JOB_READERS), async (req, res) => {
         const parsed = parseJobListQuery(req.query);
         if (parsed.errors) return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         const client = await resolveDb(db);
         return res.json(await listJobs({ db: client, params: parsed.params, user: req.user }));
     });
 
-    router.post("/jobs", requireRole(MANAGERS_UP), async (req, res) => {
+    router.post("/jobs", requireRole(JOB_MANAGERS), async (req, res) => {
         const parsed = parseCreateJobBody(req.body);
         if (!jobBody(res, parsed)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.status(201).json(await createJob({ db: client, actor: req.user, values: parsed.values })));
     });
 
-    router.get("/jobs/:jobId", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/jobs/:jobId", requireRole(JOB_READERS), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await getJob({ db: client, jobId: req.params.jobId.toLowerCase(), user: req.user })));
     });
 
-    router.put("/jobs/:jobId", requireRole(MANAGERS_UP), async (req, res) => {
+    router.put("/jobs/:jobId", requireRole(JOB_MANAGERS), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
         const parsed = parseUpdateJobBody(req.body);
         if (!jobBody(res, parsed)) return undefined;
@@ -931,7 +939,7 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await updateJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), values: parsed.values })));
     });
 
-    router.post("/jobs/:jobId/candidates", requireRole(MANAGERS_UP), async (req, res) => {
+    router.post("/jobs/:jobId/candidates", requireRole(JOB_MANAGERS), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
         const parsed = parseAddCandidateBody(req.body);
         if (!jobBody(res, parsed)) return undefined;
@@ -939,7 +947,7 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.status(201).json(await addCandidateToJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), ...parsed.values })));
     });
 
-    router.delete("/jobs/:jobId/candidates/:passportId", requireRole(MANAGERS_UP), async (req, res) => {
+    router.delete("/jobs/:jobId/candidates/:passportId", requireRole(JOB_MANAGERS), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
         if (!isValidCandidateIdParam(req.params.passportId)) return res.status(404).json({ message: "Candidate not found", code: "CANDIDATE_NOT_FOUND" });
         const client = await resolveDb(db);
@@ -965,13 +973,13 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await revokeJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase() })));
     });
 
-    router.post("/jobs/:jobId/complete", requireRole(MANAGERS_UP), async (req, res) => {
+    router.post("/jobs/:jobId/complete", requireRole(JOB_MANAGERS), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await completeJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase() })));
     });
 
-    router.post("/jobs/:jobId/cancel", requireRole(MANAGERS_UP), async (req, res) => {
+    router.post("/jobs/:jobId/cancel", requireRole(JOB_MANAGERS), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
         const parsed = parseCancelBody(req.body);
         if (!jobBody(res, parsed)) return undefined;
@@ -980,7 +988,7 @@ export function createAdminRouter({
     });
 
     // ---------------------------------------------------------------- Agents and Clients (agentService.js, clientService.js)
-    // ADMIN and MANAGER only (every method); no delete route exists: Agents and
+    // ADMIN, MANAGER and JOB_HANDLER (every method); no delete route exists: Agents and
     // Clients are made ACTIVE / INACTIVE, never removed. The employer Client lives
     // under /client-management because /clients is the legacy candidate-documents area.
     const entityParam = (name, notFound) => (req, res) => {
@@ -996,35 +1004,35 @@ export function createAdminRouter({
         return true;
     };
 
-    router.get("/agents", requireRole(MANAGERS_UP), async (req, res) => {
+    router.get("/agents", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         const parsed = parseListQuery(req.query);
         if (queryErrors(res, parsed)) return undefined;
         const client = await resolveDb(db);
         return res.json(await listAgents({ db: client, params: parsed.params }));
     });
-    router.get("/agent-options", requireRole(MANAGERS_UP), async (req, res) => {
+    router.get("/agent-options", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         const client = await resolveDb(db);
         return res.json(await listAgentOptions({ db: client }));
     });
-    router.post("/agents", requireRole(MANAGERS_UP), async (req, res) => {
+    router.post("/agents", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         const parsed = parseCreateAgentBody(req.body);
         if (!jobBody(res, parsed)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.status(201).json(await createAgent({ db: client, actor: req.user, values: parsed.values })));
     });
-    router.get("/agents/:agentId", requireRole(MANAGERS_UP), async (req, res) => {
+    router.get("/agents/:agentId", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         if (!agentParam(req, res)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await getAgent({ db: client, agentId: req.params.agentId.toLowerCase() })));
     });
-    router.patch("/agents/:agentId", requireRole(MANAGERS_UP), async (req, res) => {
+    router.patch("/agents/:agentId", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         if (!agentParam(req, res)) return undefined;
         const parsed = parseUpdateAgentBody(req.body);
         if (!jobBody(res, parsed)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await updateAgent({ db: client, actor: req.user, agentId: req.params.agentId.toLowerCase(), values: parsed.values })));
     });
-    router.patch("/agents/:agentId/status", requireRole(MANAGERS_UP), async (req, res) => {
+    router.patch("/agents/:agentId/status", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         if (!agentParam(req, res)) return undefined;
         const parsed = parseStatusBody(req.body);
         if (!jobBody(res, parsed)) return undefined;
@@ -1032,43 +1040,43 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await setAgentStatus({ db: client, actor: req.user, agentId: req.params.agentId.toLowerCase(), status: parsed.values.status })));
     });
 
-    router.get("/client-management", requireRole(MANAGERS_UP), async (req, res) => {
+    router.get("/client-management", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         const parsed = parseListQuery(req.query, { idFilter: "agentId" });
         if (queryErrors(res, parsed)) return undefined;
         const client = await resolveDb(db);
         return res.json(await listEmployerClients({ db: client, params: parsed.params }));
     });
     // Every client (all statuses, unpaged) for the Agent form's client selector.
-    router.get("/client-options", requireRole(MANAGERS_UP), async (req, res) => {
+    router.get("/client-options", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         const client = await resolveDb(db);
         return res.json(await listClientOptions({ db: client }));
     });
-    router.post("/client-management", requireRole(MANAGERS_UP), async (req, res) => {
+    router.post("/client-management", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         const parsed = parseCreateClientBody(req.body);
         if (!jobBody(res, parsed)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.status(201).json(await createClient({ db: client, actor: req.user, values: parsed.values })));
     });
-    router.get("/client-management/:clientId", requireRole(MANAGERS_UP), async (req, res) => {
+    router.get("/client-management/:clientId", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         if (!clientParam(req, res)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await getClient({ db: client, clientId: req.params.clientId.toLowerCase() })));
     });
-    router.patch("/client-management/:clientId", requireRole(MANAGERS_UP), async (req, res) => {
+    router.patch("/client-management/:clientId", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         if (!clientParam(req, res)) return undefined;
         const parsed = parseUpdateClientBody(req.body);
         if (!jobBody(res, parsed)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await updateClient({ db: client, actor: req.user, clientId: req.params.clientId.toLowerCase(), values: parsed.values })));
     });
-    router.patch("/client-management/:clientId/agent", requireRole(MANAGERS_UP), async (req, res) => {
+    router.patch("/client-management/:clientId/agent", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         if (!clientParam(req, res)) return undefined;
         const parsed = parseChangeAgentBody(req.body);
         if (!jobBody(res, parsed)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await changeClientAgent({ db: client, actor: req.user, clientId: req.params.clientId.toLowerCase(), agentId: parsed.values.agentId })));
     });
-    router.patch("/client-management/:clientId/status", requireRole(MANAGERS_UP), async (req, res) => {
+    router.patch("/client-management/:clientId/status", requireRole(MASTER_DATA_STAFF), async (req, res) => {
         if (!clientParam(req, res)) return undefined;
         const parsed = parseStatusBody(req.body);
         if (!jobBody(res, parsed)) return undefined;

@@ -18,7 +18,8 @@ datasource db {
 // auth_user_id = auth.users.id (a foreign key to auth.users where that schema
 // exists, i.e. on Supabase; see migration 20261009120000_supabase_auth_cutover).
 // status: INVITED | ACTIVE | INACTIVE (middleware/requireActiveUser.js).
-// role:   ADMIN | MANAGER | ANALYST | REGISTRATION_DESK (middleware/requireRole.js).
+// role:   ADMIN | MANAGER | ANALYST | REGISTRATION_DESK | JOB_HANDLER (middleware/requireRole.js;
+//         plain TEXT validated by the application, no database CHECK).
 model User {
   adminId               String                     @id @map("admin_id")
   authUserId            String                     @unique @map("auth_user_id") @db.Uuid
