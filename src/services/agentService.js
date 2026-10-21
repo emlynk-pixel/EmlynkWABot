@@ -9,9 +9,15 @@ import { normalizePhoneNumber } from "../utils/phoneNumber.js";
 //
 // An Agent is a BUSINESS entity (the overseas recruiting partner), never a
 // login: it has no link to the user table. One Agent belongs to ONE country and
-// manages MANY Clients (client.agent_id). Agents are never hard-deleted: they
+// works with MANY Clients, and a Client with many Agents (agent_client; migration
+// 20261026120000_agent_client_many_to_many). Agents are never hard-deleted: they
 // are ACTIVE or INACTIVE (agent.is_active). An INACTIVE Agent keeps its history
-// but cannot be given a new Client or a new Job.
+// and its links but cannot be given a new Client or a new Job.
+//
+// Links are edited as a full list (replacement): the clientIds of an Agent (here)
+// or the agentIds of a Client (clientService.js) become exactly the given set, in
+// one transaction. Lock order everywhere: client rows first, then agent rows (Job
+// creation share-locks them in the same order), so no two writers deadlock.
 //
 // Roles (the routes check them): ADMIN, MANAGER manage; the other roles have no
 // access to the Agents API.
@@ -22,7 +28,11 @@ export const AGENT_AUDIT_ACTION = Object.freeze({
     CREATED: "AGENT_CREATED",
     UPDATED: "AGENT_UPDATED",
     STATUS_CHANGED: "AGENT_STATUS_CHANGED",
+    CLIENTS_CHANGED: "AGENT_CLIENTS_CHANGED",
 });
+
+// The most links one request may set (a selector list, never a bulk import).
+export const MAX_LINKED_IDS = 200;
 
 export const AGENT_LIST_PAGE_SIZE = 25;
 const MAX_NAME_LENGTH = 120;
@@ -85,6 +95,24 @@ export function parseEmail(body, field, errors) {
         return undefined;
     }
     return value.toLowerCase();
+}
+
+// A list of related ids (agentIds / clientIds): UUIDs only, lower-cased, a repeated id
+// counts once, order kept. `min` 1 = at least one is required. Returns undefined
+// when absent (or invalid, with an error added).
+export function parseIdList(body, field, errors, { min = 0 } = {}) {
+    const raw = body[field];
+    if (raw === undefined) return undefined;
+    if (!Array.isArray(raw) || raw.length > MAX_LINKED_IDS || raw.some((id) => !isValidUuid(id))) {
+        errors.push({ field, message: `must be a list of at most ${MAX_LINKED_IDS} IDs from the list` });
+        return undefined;
+    }
+    const ids = [...new Set(raw.map((id) => id.toLowerCase()))];
+    if (ids.length < min) {
+        errors.push({ field, message: "must contain at least one ID" });
+        return undefined;
+    }
+    return ids;
 }
 
 export function parseStatus(body, errors, field = "status") {
@@ -183,6 +211,8 @@ export function parseCreateAgentBody(body) {
     values.address = parseText(body, "address", errors) ?? null;
     values.notes = parseText(body, "notes", errors, { max: MAX_NOTES_LENGTH, multiline: true }) ?? null;
     if (body.status !== undefined) values.status = parseStatus(body, errors);
+    // The Clients the new Agent works with (optional; none is allowed).
+    values.clientIds = parseIdList(body, "clientIds", errors) ?? [];
     return errors.length ? { errors } : { values };
 }
 
@@ -202,6 +232,11 @@ export function parseUpdateAgentBody(body) {
     if (body.email !== undefined) values.email = parseEmail(body, "email", errors);
     if (body.address !== undefined) values.address = parseText(body, "address", errors);
     if (body.notes !== undefined) values.notes = parseText(body, "notes", errors, { max: MAX_NOTES_LENGTH, multiline: true });
+    // Replacement: the Agent's Clients become exactly this list.
+    if (body.clientIds !== undefined) {
+        const clientIds = parseIdList(body, "clientIds", errors);
+        if (clientIds !== undefined) values.clientIds = clientIds;
+    }
     for (const field of ["id", "agentId", "status", "isActive", "createdAt", "updatedAt"]) {
         if (body[field] !== undefined) errors.push({ field, message: field === "status" ? "is changed with the status action" : "cannot be changed" });
     }
@@ -248,10 +283,11 @@ function listWhere(params) {
 
 const jobCount = (groups, match, status) => groups.find((group) => match(group) && group.status === status)?._count._all ?? 0;
 
-// Counts come from the relational data (clients and jobs), for the agents given.
+// Counts come from the relational data (agent_client links and jobs), for the agents given.
+// activeClients: ACTIVE Clients linked to the Agent (one link per pair, so never double-counted).
 async function agentCounts(db, agentIds) {
     const [clients, jobs] = await Promise.all([
-        db.client.groupBy({ by: ["agentId"], where: { agentId: { in: agentIds }, isActive: true }, _count: { _all: true } }),
+        db.agentClient.groupBy({ by: ["agentId"], where: { agentId: { in: agentIds }, client: { isActive: true } }, _count: { _all: true } }),
         db.job.groupBy({ by: ["responsibleAgentId", "status"], where: { responsibleAgentId: { in: agentIds } }, _count: { _all: true } }),
     ]);
     return (agentId) => {
@@ -316,12 +352,14 @@ export const jobRow = (job) => ({
 
 export const MAX_DETAIL_JOBS = MAX_JOBS_SHOWN;
 
-// GET /api/admin/agents/:agentId
+// GET /api/admin/agents/:agentId. clients: the Clients linked to the Agent (agent_client).
+// jobs: the Jobs whose responsible Agent is this Agent (job.responsible_agent_id, one row
+// per job), so a Job is never repeated however many Clients the Agent shares.
 export async function getAgent({ db, agentId }) {
     const row = await db.agent.findUnique({ where: { id: agentId }, select: AGENT_SELECT });
     if (!row) throw new CandidateError(404, "AGENT_NOT_FOUND", "Agent not found");
     const [clients, jobsByStatus, counts, clientJobs] = await Promise.all([
-        db.client.findMany({ where: { agentId }, select: { id: true, name: true, isActive: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
+        db.client.findMany({ where: { agentLinks: { some: { agentId } } }, select: { id: true, name: true, isActive: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
         Promise.all(Object.values(JOB_STATUS).map((status) => db.job.findMany({
             where: { responsibleAgentId: agentId, status }, select: JOB_ROW_SELECT,
             orderBy: [{ createdAt: "desc" }, { jobCode: "desc" }], take: MAX_JOBS_SHOWN,
@@ -348,18 +386,23 @@ export async function getAgent({ db, agentId }) {
 
 const DUPLICATE_MESSAGE = "An agent with this name already exists in this country.";
 
-// POST /api/admin/agents
+// POST /api/admin/agents. clientIds (optional) are linked in the same transaction.
 export async function createAgent({ db, actor, values }) {
     try {
         const id = await db.$transaction(async (tx) => {
-            const { status, ...fields } = values;
-            const row = await tx.agent.create({ data: { ...fields, isActive: status !== ENTITY_STATUS.INACTIVE }, select: { id: true } });
+            const { status, clientIds = [], ...fields } = values;
+            const isActive = status !== ENTITY_STATUS.INACTIVE;
+            if (!isActive && clientIds.length) throw new CandidateError(409, "AGENT_INACTIVE", "An inactive agent cannot be given clients. Create it as active, or add the clients later.");
+            // The new row cannot be locked by anyone else; the Clients are locked (client-first order).
+            await lockClients(tx, clientIds);
+            const row = await tx.agent.create({ data: { ...fields, isActive }, select: { id: true } });
             await tx.auditLog.create({
                 data: auditRow({
                     actor, action: AGENT_AUDIT_ACTION.CREATED, previousStatus: "NONE", newStatus: status ?? ENTITY_STATUS.ACTIVE, reason: "Agent created",
-                    newValue: JSON.stringify({ agentId: row.id, name: values.name, countryCode: values.countryCode }),
+                    newValue: JSON.stringify({ agentId: row.id, name: values.name, countryCode: values.countryCode, clientIds }),
                 }),
             });
+            if (clientIds.length) await tx.agentClient.createMany({ data: clientIds.map((clientId) => ({ agentId: row.id, clientId })), skipDuplicates: true });
             return row.id;
         });
         return await getAgent({ db, agentId: id });
@@ -374,6 +417,48 @@ async function lockAgent(tx, agentId) {
     if (!rows.length) throw new CandidateError(404, "AGENT_NOT_FOUND", "Agent not found");
 }
 
+// Locks the given Clients FOR UPDATE in id order (a fixed order: no deadlock between two
+// writers) and checks that every one exists: an unknown id refuses the whole request.
+async function lockClients(tx, clientIds) {
+    if (!clientIds.length) return;
+    const sorted = [...clientIds].sort();
+    const rows = await tx.$queryRaw`SELECT "id"::text AS "id" FROM "client" WHERE "id" = ANY(${sorted}::uuid[]) ORDER BY "id" FOR UPDATE`;
+    const found = new Set(rows.map((row) => row.id));
+    const missing = sorted.filter((id) => !found.has(id));
+    if (missing.length) throw new CandidateError(400, "CLIENT_NOT_FOUND", `Client not found: ${missing.join(", ")}`);
+}
+
+// Sets the Agent's Clients to exactly `clientIds` (the caller holds the Clients' and then the
+// Agent's locks). Adds the new links, keeps the unchanged ones, removes the deselected ones.
+// A new link needs an ACTIVE Agent; a Client cannot be left without any Agent.
+async function replaceAgentClients(tx, { actor, agent, clientIds, current }) {
+    const wanted = new Set(clientIds);
+    const added = clientIds.filter((id) => !current.includes(id));
+    const removed = current.filter((id) => !wanted.has(id));
+    if (!added.length && !removed.length) return false;
+    if (added.length && !agent.isActive) throw new CandidateError(409, "AGENT_INACTIVE", "This agent is inactive and cannot be given new clients. Activate it first.");
+    if (removed.length) {
+        const others = await tx.agentClient.groupBy({ by: ["clientId"], where: { clientId: { in: removed }, agentId: { not: agent.id } }, _count: { _all: true } });
+        const orphaned = removed.filter((clientId) => !others.some((group) => group.clientId === clientId));
+        if (orphaned.length) {
+            const names = await tx.client.findMany({ where: { id: { in: orphaned } }, select: { name: true }, orderBy: { name: "asc" } });
+            throw new CandidateError(409, "CLIENT_NEEDS_AGENT", `A client must keep at least one agent. Add another agent to ${names.map((c) => c.name).join(", ")} before removing it from this agent.`);
+        }
+        await tx.agentClient.deleteMany({ where: { agentId: agent.id, clientId: { in: removed } } });
+    }
+    if (added.length) await tx.agentClient.createMany({ data: added.map((clientId) => ({ agentId: agent.id, clientId })), skipDuplicates: true });
+    await tx.auditLog.create({
+        data: auditRow({
+            actor, action: AGENT_AUDIT_ACTION.CLIENTS_CHANGED, previousStatus: statusOf(agent.isActive), newStatus: statusOf(agent.isActive),
+            reason: `Agent's clients changed: ${added.length} added, ${removed.length} removed`,
+            previousValue: JSON.stringify({ agentId: agent.id, clientIds: current }), newValue: JSON.stringify({ agentId: agent.id, clientIds, added, removed }),
+        }),
+    });
+    return true;
+}
+
+const linkedClientIds = async (tx, agentId) => (await tx.agentClient.findMany({ where: { agentId }, select: { clientId: true }, orderBy: { clientId: "asc" } })).map((row) => row.clientId);
+
 const processingJobsOf = (tx, agentId) => tx.job.count({ where: { responsibleAgentId: agentId, status: JOB_STATUS.PROCESSING } });
 
 const AGENT_CHANGE_FIELDS = ["name", "countryCode", "contactNumber", "whatsappNumber", "email", "address", "notes"];
@@ -383,17 +468,34 @@ const AGENT_REDACTED = ["contactNumber", "whatsappNumber", "email", "address", "
 // changes, so client.agent_id and job.responsible_agent_id stay valid. The
 // country cannot change while the agent has PROCESSING jobs (each job copied the
 // country at creation, and they must keep matching).
+// clientIds (optional): the Agent's Clients become exactly this list (replacement), in the
+// same transaction as the other fields; any refusal saves nothing.
 export async function updateAgent({ db, actor, agentId, values }) {
+    const { clientIds, ...fields } = values;
     try {
         await db.$transaction(async (tx) => {
-            await lockAgent(tx, agentId);
+            let current = null;
+            if (clientIds !== undefined) {
+                // Client rows first (the current and the requested ones), then the Agent row.
+                if (!(await tx.agent.findUnique({ where: { id: agentId }, select: { id: true } }))) throw new CandidateError(404, "AGENT_NOT_FOUND", "Agent not found");
+                const seen = await linkedClientIds(tx, agentId);
+                const locked = [...new Set([...seen, ...clientIds])];
+                await lockClients(tx, locked);
+                await lockAgent(tx, agentId);
+                current = await linkedClientIds(tx, agentId);
+                // A link added by someone else between the first read and the locks: refuse, nothing saved.
+                if (current.some((id) => !locked.includes(id))) throw new CandidateError(409, "CHANGED_MEANWHILE", "This agent's clients were changed meanwhile. Reload and try again.");
+            } else {
+                await lockAgent(tx, agentId);
+            }
             const before = await tx.agent.findUnique({ where: { id: agentId }, select: AGENT_SELECT });
-            if (values.countryCode && values.countryCode !== before.countryCode && (await processingJobsOf(tx, agentId)) > 0) {
+            if (fields.countryCode && fields.countryCode !== before.countryCode && (await processingJobsOf(tx, agentId)) > 0) {
                 throw new CandidateError(409, "AGENT_HAS_PROCESSING_JOBS", "The country cannot be changed while this agent has PROCESSING jobs. Complete or cancel them first.");
             }
-            const { previous, next, changed } = changeSet(before, values, AGENT_CHANGE_FIELDS, { redact: AGENT_REDACTED });
+            if (clientIds !== undefined) await replaceAgentClients(tx, { actor, agent: { id: agentId, isActive: before.isActive }, clientIds, current });
+            const { previous, next, changed } = changeSet(before, fields, AGENT_CHANGE_FIELDS, { redact: AGENT_REDACTED });
             if (!changed.length) return;
-            await tx.agent.update({ where: { id: agentId }, data: values });
+            await tx.agent.update({ where: { id: agentId }, data: fields });
             await tx.auditLog.create({
                 data: auditRow({
                     actor, action: AGENT_AUDIT_ACTION.UPDATED, previousStatus: statusOf(before.isActive), newStatus: statusOf(before.isActive),

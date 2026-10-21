@@ -115,6 +115,7 @@ import {
     changeClientAgent,
     createClient,
     getClient,
+    listClientOptions,
     listClients as listEmployerClients,
     parseChangeAgentBody,
     parseCreateClientBody,
@@ -1036,6 +1037,11 @@ export function createAdminRouter({
         if (queryErrors(res, parsed)) return undefined;
         const client = await resolveDb(db);
         return res.json(await listEmployerClients({ db: client, params: parsed.params }));
+    });
+    // Every client (all statuses, unpaged) for the Agent form's client selector.
+    router.get("/client-options", requireRole(MANAGERS_UP), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json(await listClientOptions({ db: client }));
     });
     router.post("/client-management", requireRole(MANAGERS_UP), async (req, res) => {
         const parsed = parseCreateClientBody(req.body);

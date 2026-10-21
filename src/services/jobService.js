@@ -147,9 +147,9 @@ export function parseJobListQuery(query = {}) {
 }
 
 // POST /api/admin/jobs { jobTypeId, clientId, responsibleAgentId?, vacancies?, companyJobId?, fromCountryCode?, candidateIds? }
-// responsibleAgentId is optional: omitted, the Client's own Agent is used. Given, it
-// must be that Agent (the service rejects any other combination). The To Country is
-// never sent: it is the Client's country. fromCountryCode defaults to RO.
+// responsibleAgentId must be one of the Client's Agents; it may be omitted only when the
+// Client has exactly one (requireClientWithAgent). The To Country is never sent: it is
+// the responsible Agent's country. fromCountryCode defaults to RO.
 export function parseCreateJobBody(body) {
     if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
     const errors = [];
@@ -162,7 +162,7 @@ export function parseCreateJobBody(body) {
         fromCountryCode: body.fromCountryCode === undefined ? DEFAULT_FROM_COUNTRY : parseFromCountry(body.fromCountryCode, errors),
         candidateIds: body.candidateIds === undefined ? [] : parseCandidateIds(body.candidateIds, errors),
     };
-    if (body.countryCode !== undefined) errors.push({ field: "countryCode", message: "cannot be set: the To Country is the client's country" });
+    if (body.countryCode !== undefined) errors.push({ field: "countryCode", message: "cannot be set: the To Country is the responsible agent's country" });
     return errors.length ? { errors } : { values };
 }
 
@@ -258,16 +258,22 @@ async function nextJobCode(tx, now) {
 
 const referenceView = (row) => ({ id: row.id, name: row.name, ...(row.countryCode ? { countryCode: row.countryCode } : {}), ...(row.code ? { code: row.code } : {}) });
 
-// GET /api/admin/job-options: the active job types, clients (each with its Agent and its
-// country, the job's To Country) and agents a job can use. Only an ACTIVE client of an
-// ACTIVE agent is offered.
+// GET /api/admin/job-options: the active job types, clients and agents a job can use. Only an
+// ACTIVE client with at least one ACTIVE linked agent is offered; agentIds are its ACTIVE
+// agents (agent_client), any of which can be the job's responsible agent. The To Country is
+// the chosen agent's country (agents carry countryCode): a client of agents in several
+// countries has no single country, so nothing is pre-chosen for it.
 export async function listJobOptions({ db }) {
     const [jobTypes, clients, agents] = await Promise.all([
         db.jobType.findMany({ where: { isActive: true }, select: { id: true, code: true, name: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
-        db.client.findMany({ where: { isActive: true, agent: { is: { isActive: true } } }, select: { id: true, name: true, agentId: true, agent: { select: { countryCode: true } } }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
+        db.client.findMany({
+            where: { isActive: true, agentLinks: { some: { agent: { isActive: true } } } },
+            select: { id: true, name: true, agentLinks: { where: { agent: { isActive: true } }, select: { agentId: true }, orderBy: { agentId: "asc" } } },
+            orderBy: [{ name: "asc" }, { id: "asc" }],
+        }),
         db.agent.findMany({ where: { isActive: true }, select: { id: true, name: true, countryCode: true }, orderBy: [{ name: "asc" }, { id: "asc" }] }),
     ]);
-    return { jobTypes: jobTypes.map(referenceView), clients: clients.map((row) => ({ id: row.id, name: row.name, agentId: row.agentId, countryCode: row.agent?.countryCode ?? null })), agents: agents.map(referenceView) };
+    return { jobTypes: jobTypes.map(referenceView), clients: clients.map((row) => ({ id: row.id, name: row.name, agentIds: row.agentLinks.map((link) => link.agentId) })), agents: agents.map(referenceView) };
 }
 
 const auditRow = ({ actor, action, passportId = null, previousStatus, newStatus, reason = null, previousValue = null, newValue = null }) => ({
@@ -492,27 +498,35 @@ async function requireActive(tx, model, id, field, label) {
     return row;
 }
 
-// The Client a job is (or will be) for: it must exist and be ACTIVE, and its
-// responsible Agent must be ACTIVE and be the job's Agent. `agentId` is what the
-// caller asked for (undefined: use the Client's Agent). Never trusts the browser:
-// a Client/Agent pair that does not match is refused whatever the form showed.
+// The Client a job is (or will be) for: it must exist and be ACTIVE, and the job's
+// responsible Agent must be one of the Client's Agents (agent_client) and ACTIVE.
+// `agentId` is what the caller asked for. Omitted, it is the Client's Agent only when
+// the Client has exactly ONE; a Client with several Agents needs an explicit choice
+// (409 AGENT_REQUIRED): no Agent is ever picked by order, so the job's To Country (the
+// chosen Agent's country) is never a guess. Never trusts the browser: a Client/Agent
+// pair that is not linked is refused whatever the form showed.
 async function requireClientWithAgent(tx, clientId, agentId) {
-    // Share-locks the client and its agent for the rest of the transaction, so a
-    // deactivation (which locks FOR UPDATE and then counts PROCESSING jobs)
-    // cannot slip in between this check and the insert.
+    // Share-locks the client, then the chosen agent (client-first, like every writer of
+    // these rows), for the rest of the transaction, so a deactivation or a link change
+    // (which lock FOR UPDATE) cannot slip in between this check and the insert.
     await tx.$queryRaw`SELECT "id" FROM "client" WHERE "id" = ${clientId}::uuid FOR SHARE`;
-    await tx.$queryRaw`SELECT a."id" FROM "agent" a JOIN "client" c ON c."agent_id" = a."id" WHERE c."id" = ${clientId}::uuid FOR SHARE OF a`;
-    const client = await tx.client.findUnique({ where: { id: clientId }, select: { id: true, isActive: true, agentId: true, agent: { select: { id: true, isActive: true, countryCode: true } } } });
+    const client = await tx.client.findUnique({ where: { id: clientId }, select: { id: true, isActive: true, agentLinks: { select: { agentId: true }, orderBy: { agentId: "asc" } } } });
     if (!client) throw new CandidateError(400, "REFERENCE_NOT_FOUND", "The selected client does not exist.");
     if (!client.isActive) throw new CandidateError(409, "CLIENT_INACTIVE", "This client is inactive. Activate it before creating or moving a job for it.");
-    if (!client.agent) throw new CandidateError(409, "CLIENT_HAS_NO_AGENT", "This client has no responsible agent. Assign an agent to the client first.");
-    if (agentId && agentId !== client.agentId) throw new CandidateError(409, "CLIENT_AGENT_MISMATCH", "The selected agent is not the responsible agent of this client.");
-    if (!client.agent.isActive) throw new CandidateError(409, "AGENT_INACTIVE", "The client's responsible agent is inactive. Assign an active agent to the client first.");
-    return { client, agent: client.agent };
+    const linked = client.agentLinks.map((link) => link.agentId);
+    if (!linked.length) throw new CandidateError(409, "CLIENT_HAS_NO_AGENT", "This client has no agent. Add an agent to the client first.");
+    if (agentId && !linked.includes(agentId)) throw new CandidateError(409, "CLIENT_AGENT_MISMATCH", "The selected agent is not one of this client's agents.");
+    if (!agentId && linked.length > 1) throw new CandidateError(409, "AGENT_REQUIRED", "This client works with several agents. Choose the responsible agent for the job.");
+    const chosen = agentId ?? linked[0];
+    await tx.$queryRaw`SELECT "id" FROM "agent" WHERE "id" = ${chosen}::uuid FOR SHARE`;
+    const agent = await tx.agent.findUnique({ where: { id: chosen }, select: { id: true, isActive: true, countryCode: true } });
+    if (!agent.isActive) throw new CandidateError(409, "AGENT_INACTIVE", "The responsible agent is inactive. Choose an active agent of this client, or activate it first.");
+    return { client, agent };
 }
 
-// POST /api/admin/jobs. The job's To Country (country_code) is the Client's country
-// (its responsible Agent's) at creation time. candidateIds are assigned in the SAME
+// POST /api/admin/jobs. The job's To Country (country_code) is its responsible Agent's
+// country at creation time (a snapshot: later Agent or link changes never rewrite it).
+// candidateIds are assigned in the SAME
 // transaction as the job is created: every one passes every assignment rule or
 // nothing is created at all (never a job with half its candidates). The vacancies
 // never limit how many are assigned.
