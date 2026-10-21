@@ -390,14 +390,17 @@ model JobType {
 }
 
 // The employer / customer organisation a job belongs to (formerly "company";
-// migration 20261019120000_client_management). Each Client has ONE responsible
-// Agent (one Agent manages many Clients); a Client has many Jobs. Never
-// hard-deleted: is_active = INACTIVE. Its country is its Agent's country.
+// migration 20261019120000_client_management). A Client works with MANY Agents
+// and an Agent with many Clients (agent_client, migration
+// 20261026120000_agent_client_many_to_many); a Client has many Jobs. Never
+// hard-deleted: is_active = INACTIVE. A Client has no country of its own: a Job's
+// To Country is its responsible Agent's country (job.country_code).
 model Client {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name           String
-  // Null only for a client that predates agent assignment (see the migration).
-  agentId        String?  @map("agent_id") @db.Uuid
+  // DEPRECATED: the single Agent before agent_client. Not read or written by the
+  // application (agentLinks is the source); kept until a later migration drops it.
+  legacyAgentId  String?  @map("agent_id") @db.Uuid
   contactPerson  String?  @map("contact_person")
   contactNumber  String?  @map("contact_number")
   whatsappNumber String?  @map("whatsapp_number")
@@ -407,11 +410,27 @@ model Client {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  agent Agent? @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  jobs  Job[]
+  legacyAgent Agent?        @relation("ClientLegacyAgent", fields: [legacyAgentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  agentLinks  AgentClient[]
+  jobs        Job[]
 
-  @@index([agentId])
+  @@index([legacyAgentId], map: "client_agent_id_idx")
   @@map("client")
+}
+
+// Agent <-> Client association (many-to-many). One row per pair (the primary key);
+// removing a link deletes only this row (RESTRICT protects the Agent and the Client).
+model AgentClient {
+  agentId   String   @map("agent_id") @db.Uuid
+  clientId  String   @map("client_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  agent  Agent  @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([agentId, clientId])
+  @@index([clientId])
+  @@map("agent_client")
 }
 
 // The agent responsible for a job; country_code (ISO 3166-1 alpha-2) is the
@@ -429,8 +448,9 @@ model Agent {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  clients Client[]
-  jobs    Job[]
+  clientLinks   AgentClient[]
+  legacyClients Client[]      @relation("ClientLegacyAgent")
+  jobs          Job[]
 
   @@map("agent")
 }
