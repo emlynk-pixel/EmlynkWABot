@@ -211,7 +211,9 @@ describe("dashboard shell", () => {
             await signedIn("/", userWithRole(role));
             const masterData = role === "MANAGER" ? ["Agents", "Client Management"] : [];
             const allocation = role === "MANAGER" ? ["Work Allocation"] : [];
-            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", ...masterData, ...allocation, "Missing Documents", "Police Workflow", "Daily Report"]);
+            // A MANAGER invites Job Handlers (its own Invite User page; no Settings).
+            const invite = role === "MANAGER" ? ["Invite User"] : [];
+            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", ...masterData, ...allocation, "Missing Documents", "Police Workflow", "Daily Report", ...invite]);
             document.body.innerHTML = "";
         }
     });

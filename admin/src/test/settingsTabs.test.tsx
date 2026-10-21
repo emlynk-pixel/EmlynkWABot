@@ -169,13 +169,17 @@ describe("Settings tabs", () => {
         expect(await screen.findByRole("heading", { name: "Invite User", level: 2 })).toBeInTheDocument();
     });
 
-    for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
-        test(`11-12. ${role}: no Settings, Invite User or Change Roles in the sidebar; every Settings URL shows Access Restricted and requests nothing`, async () => {
-            for (const path of ["/settings", "/settings/roles", "/settings/invite", "/settings/sheet-sync", "/invitations", "/roles"]) {
+    for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
+        test(`11-12. ${role}: no Settings or Change Roles in the sidebar; every Settings URL shows Access Restricted and requests nothing`, async () => {
+            // A MANAGER's /invitations is its Job Handler invitation page (invitations.test.tsx), not a Settings URL.
+            const paths = ["/settings", "/settings/roles", "/settings/invite", "/settings/sheet-sync", "/roles", ...(role === "MANAGER" ? [] : ["/invitations"])];
+            for (const path of paths) {
                 const { calls } = signedInBackend({ ...routes, "GET /auth/me": { status: 200, body: { user: userWithRole(role) } } });
                 const { unmount } = renderApp(path);
                 expect(await screen.findByRole("heading", { name: "Access Restricted" })).toBeInTheDocument();
-                for (const name of ["Settings", "Invite User", "Change Roles"]) expect(sidebar().queryByRole("link", { name })).toBeNull();
+                for (const name of ["Settings", "Change Roles"]) expect(sidebar().queryByRole("link", { name })).toBeNull();
+                if (role === "MANAGER") expect(sidebar().getByRole("link", { name: "Invite User" })).toHaveAttribute("href", "/invitations");
+                else expect(sidebar().queryByRole("link", { name: "Invite User" })).toBeNull();
                 expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
                 expect(screen.queryByRole("combobox", { name: /Change role for/ })).toBeNull();
                 expect(screen.queryByLabelText("Email Address")).toBeNull();

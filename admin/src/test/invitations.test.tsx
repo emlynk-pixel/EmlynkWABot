@@ -11,20 +11,20 @@ const USERS = [
 const list = { status: 200, body: { users: USERS } };
 
 describe("Invite User page", () => {
-    test("ADMIN: invite form with all four roles, and the user list with statuses", async () => {
+    test("ADMIN: invite form with all five roles, and the user list with statuses", async () => {
         signedInBackend({ "GET /api/admin/users": list });
         renderApp("/invitations");
         expect(await screen.findByRole("heading", { name: "Invite User" })).toBeInTheDocument();
         const roleOptions = within(screen.getByRole("combobox", { name: /^Role/ })).getAllByRole("option").map((o) => o.getAttribute("value"));
-        expect(roleOptions).toEqual(["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]);
+        expect(roleOptions).toEqual(["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         expect(await screen.findByText("Pending Person")).toBeInTheDocument();
         expect(screen.getByText("Invitation sent")).toBeInTheDocument();
         expect(screen.getByText("Inactive")).toBeInTheDocument();
         expect(screen.queryByText(/VIEWER/i)).not.toBeInTheDocument();
     });
 
-    test("non-ADMIN roles see Access Restricted and request nothing", async () => {
-        for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+    test("ANALYST, REGISTRATION_DESK and JOB_HANDLER see Access Restricted and request nothing", async () => {
+        for (const role of ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } } });
             const { unmount } = renderApp("/invitations");
             expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
