@@ -4,6 +4,7 @@ import { ROLE_LABELS, ROLES, type Role } from "../auth/roles";
 import { Icon } from "../components/Icon";
 import { deactivateUser, inviteUser, listUsers, type UserSummary } from "../api/admin";
 import { ApiError } from "../api/client";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { FormField, fieldA11y } from "../components/Form";
 import { inputClass } from "../components/ui";
 import { MAX_EMAIL_LENGTH, MAX_NAME_LENGTH, emailError, nameError } from "../components/validation";
@@ -50,6 +51,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
     const [fieldErrors, setFieldErrors] = useState<{ name?: string | null; email?: string | null }>({});
     const [actionError, setActionError] = useState<string | null>(null);
     const [busyId, setBusyId] = useState<string | null>(null);
+    const [pendingDeactivate, setPendingDeactivate] = useState<UserSummary | null>(null);
 
     const load = useCallback(async () => {
         if (!managesUsers || !token) return;
@@ -111,13 +113,18 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
         }
     }
 
-    async function deactivate(target: UserSummary) {
-        const what = target.status === "INVITED" ? "revoke this invitation" : `deactivate ${target.name}`;
-        if (!confirm(`Are you sure you want to ${what}? They will no longer be able to use the admin console.`)) return;
+    function deactivate(target: UserSummary) {
+        setPendingDeactivate(target);
+    }
+
+    async function confirmDeactivate() {
+        if (!pendingDeactivate) return;
+        const target = pendingDeactivate;
         setBusyId(target.userId);
         setActionError(null);
         try {
             await deactivateUser(token ?? "", target.userId);
+            setPendingDeactivate(null);
             await load();
         } catch (err) {
             setActionError(err instanceof ApiError ? err.message : "Failed to deactivate the user.");
@@ -291,6 +298,30 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                     </div>
                 )}
             </div>}
+
+            {pendingDeactivate && (
+                <ConfirmDialog
+                    open={Boolean(pendingDeactivate)}
+                    title={pendingDeactivate.status === "INVITED" ? "Revoke Invitation" : "Deactivate User"}
+                    message={
+                        pendingDeactivate.status === "INVITED" ? (
+                            <span>
+                                Are you sure you want to revoke the invitation for <strong>{pendingDeactivate.name}</strong> ({pendingDeactivate.email})? They will no longer be able to use the admin console.
+                            </span>
+                        ) : (
+                            <span>
+                                Are you sure you want to deactivate <strong>{pendingDeactivate.name}</strong>? They will no longer be able to use the admin console.
+                            </span>
+                        )
+                    }
+                    confirmLabel={pendingDeactivate.status === "INVITED" ? "Revoke invitation" : "Deactivate"}
+                    cancelLabel="Cancel"
+                    variant="warning"
+                    loading={busyId === pendingDeactivate.userId}
+                    onCancel={() => setPendingDeactivate(null)}
+                    onConfirm={confirmDeactivate}
+                />
+            )}
         </div>
     );
 }

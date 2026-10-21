@@ -4,6 +4,7 @@ import { ALL_ROLES, ROLE_LABELS, type Role } from "../auth/roles";
 import { Icon } from "../components/Icon";
 import { listUsers, updateUserRole, type UserSummary } from "../api/admin";
 import { ApiError } from "../api/client";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { inputClass } from "../components/ui";
 
 const dateFormat = new Intl.DateTimeFormat("en-GB", {
@@ -27,6 +28,7 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
     const [updatingId, setUpdatingId] = useState<string | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
     const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+    const [pendingRoleChange, setPendingRoleChange] = useState<{ user: UserSummary; newRole: Role } | null>(null);
 
     async function loadAdmins() {
         if (!isAdmin) return;
@@ -48,17 +50,17 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
         }
     }, [isAdmin]);
 
-    async function handleRoleChange(adminId: string, newRole: string) {
-        if (!confirm(`Are you sure you want to change this user's role to ${ROLE_LABELS[newRole as Role] ?? newRole}?`)) {
-            return;
-        }
+    async function confirmRoleChange() {
+        if (!pendingRoleChange) return;
+        const { user: targetUser, newRole } = pendingRoleChange;
 
-        setUpdatingId(adminId);
+        setUpdatingId(targetUser.userId);
         setActionError(null);
         setActionSuccess(null);
         try {
-            await updateUserRole(token as string, adminId, newRole);
+            await updateUserRole(token as string, targetUser.userId, newRole);
             setActionSuccess("Role updated successfully.");
+            setPendingRoleChange(null);
             loadAdmins();
         } catch (err) {
             setActionError(err instanceof ApiError ? err.message : "Failed to update role.");
@@ -164,7 +166,12 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                                                 className={inputClass(false, { extra: "w-auto" })}
                                                 value={account.role}
                                                 disabled={updatingId === account.userId || account.userId === user?.userId}
-                                                onChange={(e) => handleRoleChange(account.userId, e.target.value)}
+                                                onChange={(e) => {
+                                                    const nextRole = e.target.value as Role;
+                                                    if (nextRole !== account.role) {
+                                                        setPendingRoleChange({ user: account, newRole: nextRole });
+                                                    }
+                                                }}
                                             >
                                                 {ALL_ROLES.map((role) => <option key={role} value={role}>{ROLE_LABELS[role]}</option>)}
                                             </select>
@@ -176,6 +183,26 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                     </div>
                 </div>
             </section>
+
+            {pendingRoleChange && (
+                <ConfirmDialog
+                    open={Boolean(pendingRoleChange)}
+                    title="Confirm Role Change"
+                    message={
+                        <span>
+                            Are you sure you want to change <strong>{pendingRoleChange.user.name}</strong>’s role from{" "}
+                            <strong>{ROLE_LABELS[pendingRoleChange.user.role as Role] ?? pendingRoleChange.user.role}</strong> to{" "}
+                            <strong>{ROLE_LABELS[pendingRoleChange.newRole] ?? pendingRoleChange.newRole}</strong>?
+                        </span>
+                    }
+                    confirmLabel="Confirm Change"
+                    cancelLabel="Cancel"
+                    variant="normal"
+                    loading={updatingId === pendingRoleChange.user.userId}
+                    onCancel={() => setPendingRoleChange(null)}
+                    onConfirm={confirmRoleChange}
+                />
+            )}
         </div>
     );
 }

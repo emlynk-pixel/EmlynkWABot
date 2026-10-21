@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useNavigate } from "react-router";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth/AuthProvider";
 import { ADMIN, renderApp, signedInBackend, userWithRole } from "./helpers";
@@ -48,7 +48,6 @@ describe("Settings tabs", () => {
 
     test("5, 8, 17. Change Roles tab: the existing role list and role change (PUT, confirmation, success); one page title", async () => {
         const { calls } = signedInBackend({ ...routes, "PUT /api/admin/users/u-2/role": { status: 200, body: { user: { ...USERS[1], role: "MANAGER" } } } });
-        vi.spyOn(window, "confirm").mockReturnValue(true);
         renderApp("/settings/invite");
         const user = userEvent.setup();
         await user.click(await screen.findByRole("link", { name: "Change Roles" }));
@@ -56,6 +55,8 @@ describe("Settings tabs", () => {
         expect(activeTab()).toBe("Change Roles");
         expect(screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent)).toEqual(["Settings"]);
         await user.selectOptions(await screen.findByRole("combobox", { name: "Change role for Ann Analyst" }), "MANAGER");
+        const dialog = await screen.findByRole("dialog", { name: "Confirm Role Change" });
+        await user.click(within(dialog).getByRole("button", { name: "Confirm Change" }));
         expect(await screen.findByText("Role updated successfully.")).toBeInTheDocument();
         expect(calls.filter((c) => c.method === "PUT").map((c) => [c.path, c.body])).toEqual([["/api/admin/users/u-2/role", { role: "MANAGER" }]]);
         expect(screen.getByRole("combobox", { name: "Change role for Test Admin" })).toBeDisabled();

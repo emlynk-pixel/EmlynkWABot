@@ -1,11 +1,11 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError } from "../api/client";
 import { listCandidates, type CandidateListItem } from "../api/candidates";
 import { addCandidateToJob, cancelJob, completeJob, getJob, removeCandidateFromJob, updateJob, type JobDetails } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
-import { ActionDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
+import { ActionDialog, ConfirmDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
 import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 import { formatDate, formatDateTime } from "../components/format";
 import { Icon } from "../components/Icon";
@@ -177,7 +177,18 @@ function JobDetailsView() {
             {token && dialog === "companyJobId" && <CompanyJobIdDialog token={token} job={job} onDone={changed} onClose={() => setDialog(null)} />}
             {token && dialog === "add" && <AddCandidateDialog token={token} job={job} onChanged={setUpdated} onClose={() => setDialog(null)} />}
             {token && dialog === "complete" && (
-                <ConfirmDialog title={`Complete ${job.jobCode}?`} confirmLabel="Complete job" run={() => completeJob(token, job.jobId)} onDone={changed} onClose={() => setDialog(null)}>
+                <ConfirmDialog
+                    title={`Complete ${job.jobCode}?`}
+                    confirmLabel="Complete job"
+                    cancelLabel="Keep as is"
+                    variant="warning"
+                    onConfirm={async () => {
+                        const updated = await completeJob(token, job.jobId);
+                        changed(updated);
+                        setDialog(null);
+                    }}
+                    onCancel={() => setDialog(null)}
+                >
                     The job is marked completed. All {job.candidateCount} assignments are kept as history, and the candidates can be assigned to another processing job.
                 </ConfirmDialog>
             )}
@@ -186,9 +197,14 @@ function JobDetailsView() {
                 <ConfirmDialog
                     title="Remove candidate?"
                     confirmLabel="Remove"
-                    run={() => removeCandidateFromJob(token, job.jobId, dialog.remove.passportId)}
-                    onDone={changed}
-                    onClose={() => setDialog(null)}
+                    cancelLabel="Cancel"
+                    variant="destructive"
+                    onConfirm={async () => {
+                        const updated = await removeCandidateFromJob(token, job.jobId, dialog.remove.passportId);
+                        changed(updated);
+                        setDialog(null);
+                    }}
+                    onCancel={() => setDialog(null)}
                 >
                     {dialog.remove.name ?? dialog.remove.passportId} is taken off {job.jobCode} (kept in the job&apos;s history) and can be assigned to another processing job.
                 </ConfirmDialog>
@@ -197,37 +213,6 @@ function JobDetailsView() {
     );
 }
 
-function ConfirmDialog({ title, confirmLabel, run, onDone, onClose, children }: {
-    title: string;
-    confirmLabel: string;
-    run: () => Promise<JobDetails>;
-    onDone: (job: JobDetails) => void;
-    onClose: () => void;
-    children: ReactNode;
-}) {
-    const [busy, setBusy] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const confirm = async () => {
-        setBusy(true);
-        setError(null);
-        try {
-            onDone(await run());
-        } catch (caught) {
-            setError(message(caught));
-            setBusy(false);
-        }
-    };
-    return (
-        <ActionDialog title={title} busy={busy} onClose={onClose}>
-            <p className="text-body-sm text-ink-soft">{children}</p>
-            <DialogError message={error} />
-            <div className="mt-4 flex justify-end gap-2">
-                <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Keep as is</button>
-                <button type="button" disabled={busy} onClick={confirm} className={primaryButton}>{busy ? "Working…" : confirmLabel}</button>
-            </div>
-        </ActionDialog>
-    );
-}
 
 function CancelDialog({ token, job, onDone, onClose }: { token: string; job: JobDetails; onDone: (job: JobDetails) => void; onClose: () => void }) {
     const [reason, setReason] = useState("");
