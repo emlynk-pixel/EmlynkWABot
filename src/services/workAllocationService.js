@@ -5,13 +5,18 @@ import { USER_STATUS } from "../middleware/requireActiveUser.js";
 import {
     automaticStageMissing,
     CandidateError,
+    CANDIDATE_STAGES,
     candidateSearchWhere,
     candidateSummary,
+    candidateWorkflowStatuses,
     CANDIDATE_LIST_PAGE_SIZE,
     listPagination,
-    REQUIRED_SUBMISSION_DOCUMENTS,
+    parseJobTypes,
     stageList,
+    WORKFLOW_STATUS_SELECT,
 } from "./candidateService.js";
+import { WORKFLOW_STATUS } from "./candidateWorkflowStatus.js";
+import { businessDayRange, isValidBusinessDate } from "../utils/businessDay.js";
 
 // Work Allocation (Admin > Work Allocation; ADMIN and MANAGER only, checked
 // by the routes). Which Analyst each candidate is assigned to:
@@ -42,9 +47,21 @@ const isObject = (value) => Boolean(value) && typeof value === "object" && !Arra
 // ---------------------------------------------------------------- list
 
 // GET /api/admin/work-allocation/candidates?status=&analystId=&search=&page=
-//   status     UNALLOCATED (default) | ALLOCATED
-//   analystId  with ALLOCATED: only that Analyst's candidates
-//   search     the Candidates list's search (candidateSearchWhere)
+//      &registeredFrom=&registeredTo=&jobType=&workflowStatus=&stage=
+//   status          UNALLOCATED (default) | ALLOCATED: allocation to an Analyst
+//                   (candidate_allocation), never job assignment. A candidate's jobs
+//                   (one, several or none) do not change it.
+//   analystId       with ALLOCATED: only that Analyst's candidates
+//   search          the Candidates list's search (candidateSearchWhere)
+//   registeredFrom / registeredTo   YYYY-MM-DD, inclusive Sri Lanka calendar days of the
+//                   registration (candidate.created_date)
+//   jobType         one of the candidate's job types (exact name, any letter case)
+//   workflowStatus  the Candidates list's Status code (candidateWorkflowStatus.js)
+//   stage           the current stage (the first one not completed), or COMPLETE
+// Every filter is applied on the server BEFORE paging, so the totals and the pages are
+// those of the whole filtered list, never of one loaded page.
+export const ALLOCATION_STAGE_FILTERS = Object.freeze([...CANDIDATE_STAGES, "COMPLETE"]);
+const MAX_JOB_TYPE_FILTER_LENGTH = 120;
 export function parseAllocationListQuery(query = {}) {
     const errors = [];
     const params = { status: ALLOCATION_STATUS.UNALLOCATED, page: 1, pageSize: CANDIDATE_LIST_PAGE_SIZE };
@@ -78,12 +95,47 @@ export function parseAllocationListQuery(query = {}) {
         if (trimmed.length > 100) errors.push({ field: "search", message: "must be at most 100 characters" });
         else if (trimmed) params.search = trimmed;
     }
+    for (const field of ["registeredFrom", "registeredTo"]) {
+        const value = single(field);
+        if (value === undefined) continue;
+        if (isValidBusinessDate(value)) params[field] = value;
+        else errors.push({ field, message: "must be a date as YYYY-MM-DD" });
+    }
+    if (params.registeredFrom && params.registeredTo && params.registeredFrom > params.registeredTo) {
+        errors.push({ field: "registeredTo", message: "must not be before registeredFrom" });
+    }
+    const jobType = single("jobType");
+    if (jobType !== undefined) {
+        const trimmed = jobType.trim();
+        if (trimmed.length > MAX_JOB_TYPE_FILTER_LENGTH) errors.push({ field: "jobType", message: `must be at most ${MAX_JOB_TYPE_FILTER_LENGTH} characters` });
+        else if (trimmed) params.jobType = trimmed;
+    }
+    const workflowStatus = single("workflowStatus");
+    if (workflowStatus !== undefined) {
+        if (Object.values(WORKFLOW_STATUS).includes(workflowStatus)) params.workflowStatus = workflowStatus;
+        else errors.push({ field: "workflowStatus", message: `must be one of: ${Object.values(WORKFLOW_STATUS).join(", ")}` });
+    }
+    const stage = single("stage");
+    if (stage !== undefined) {
+        if (ALLOCATION_STAGE_FILTERS.includes(stage)) params.stage = stage;
+        else errors.push({ field: "stage", message: `must be one of: ${ALLOCATION_STAGE_FILTERS.join(", ")}` });
+    }
     return errors.length ? { errors } : { params };
 }
 
 function allocationWhere(params) {
     const parts = [];
     if (params.search) parts.push(candidateSearchWhere(params.search));
+    if (params.registeredFrom || params.registeredTo) {
+        parts.push({
+            createdDate: {
+                ...(params.registeredFrom ? { gte: businessDayRange(params.registeredFrom).start } : {}),
+                ...(params.registeredTo ? { lt: businessDayRange(params.registeredTo).end } : {}),
+            },
+        });
+    }
+    // A database pre-filter (substring); the exact job type match is applied after (derivedFilter).
+    if (params.jobType) parts.push({ job: { contains: params.jobType, mode: "insensitive" } });
     if (params.status === ALLOCATION_STATUS.UNALLOCATED) parts.push({ allocation: { is: null } });
     else parts.push({ allocation: params.analystId ? { is: { analystId: params.analystId } } : { isNot: null } });
     return parts.length > 1 ? { AND: parts } : parts[0];
@@ -91,29 +143,73 @@ function allocationWhere(params) {
 
 const analystView = (user) => (user ? { analystId: user.adminId, name: user.name, active: user.status === USER_STATUS.ACTIVE && user.role === ROLES.ANALYST } : null);
 
-// Same order and paging as the Candidates list: newest registered first,
-// passport ID for ties, 100 a page; one COUNT and one bounded query.
+// What a row needs: the Candidates list's Status signals (WORKFLOW_STATUS_SELECT, so Status and
+// the stages are computed exactly as there) plus this page's own columns.
+const ALLOCATION_SELECT = Object.freeze({
+    ...WORKFLOW_STATUS_SELECT,
+    contactNumber: true, createdDate: true,
+    allocation: { select: { assignedDate: true, analyst: { select: { adminId: true, name: true, role: true, status: true } } } },
+});
+const ORDER = [{ createdDate: "desc" }, { passportId: "asc" }];
+
+// The most candidates one filtered request may evaluate in memory (Status, stage and the
+// exact job type are derived values: they are computed for every candidate the database
+// pre-filters return, then paged). Far above today's candidate count; past it the request is
+// refused with a clear message instead of getting slow.
+export const MAX_DERIVED_FILTER_CANDIDATES = 20_000;
+
+const needsDerivedFilter = (params) => Boolean(params.jobType || params.workflowStatus || params.stage);
+
+// Stages (with their completion) and the current stage of a row.
+function progressOf(row) {
+    const stages = stageList(row.stages, automaticStageMissing(row, row.documents));
+    return { stages, currentStage: stages.find((stage) => !stage.completed)?.stage ?? null };
+}
+
+// Whether a row matches the derived filters. status: its workflow Status code.
+function derivedMatch(row, status, params) {
+    if (params.jobType) {
+        const wanted = params.jobType.toLowerCase();
+        if (!parseJobTypes(row.job).some((type) => type.toLowerCase() === wanted)) return false;
+    }
+    if (params.workflowStatus && status !== params.workflowStatus) return false;
+    if (params.stage) {
+        const { currentStage } = progressOf(row);
+        if (params.stage === "COMPLETE" ? currentStage !== null : currentStage !== params.stage) return false;
+    }
+    return true;
+}
+
+// Same order and paging as the Candidates list: newest registered first, passport ID for
+// ties, 100 a page. Without a derived filter: one COUNT and one bounded query. With one:
+// the database pre-filter, then the derived filter over all its rows, then the page.
 export async function listAllocationCandidates({ db, params }) {
     const where = allocationWhere(params);
-    const [total, rows] = await Promise.all([
-        db.candidate.count({ where }),
-        db.candidate.findMany({
-            where,
-            select: {
-                passportId: true, uniqueId: true, firstName: true, otherName: true, nic: true, job: true, jobExperience: true,
-                whatsappNumber: true, contactNumber: true, passportIssueDate: true, passportExpiryDate: true, createdDate: true,
-                stages: { select: { stage: true, completed: true } },
-                documents: { where: { documentType: { in: REQUIRED_SUBMISSION_DOCUMENTS } }, select: { documentType: true, verificationStatus: true } },
-                allocation: { select: { assignedDate: true, analyst: { select: { adminId: true, name: true, role: true, status: true } } } },
-            },
-            orderBy: [{ createdDate: "desc" }, { passportId: "asc" }],
-            skip: (params.page - 1) * params.pageSize,
-            take: params.pageSize,
-        }),
-    ]);
+    let total;
+    let rows;
+    if (!needsDerivedFilter(params)) {
+        [total, rows] = await Promise.all([
+            db.candidate.count({ where }),
+            db.candidate.findMany({ where, select: ALLOCATION_SELECT, orderBy: ORDER, skip: (params.page - 1) * params.pageSize, take: params.pageSize }),
+        ]);
+    } else {
+        const candidates = await db.candidate.count({ where });
+        if (candidates > MAX_DERIVED_FILTER_CANDIDATES) {
+            throw new CandidateError(422, "TOO_MANY_TO_FILTER", "Too many candidates match. Add a registration date range or a search to narrow the list.");
+        }
+        const all = await db.candidate.findMany({ where, select: WORKFLOW_STATUS_SELECT, orderBy: ORDER });
+        const statuses = await candidateWorkflowStatuses(db, all);
+        const matching = all.filter((row) => derivedMatch(row, statuses.get(row.passportId)?.code, params));
+        total = matching.length;
+        const pageIds = matching.slice((params.page - 1) * params.pageSize, params.page * params.pageSize).map((row) => row.passportId);
+        const loaded = pageIds.length ? await db.candidate.findMany({ where: { passportId: { in: pageIds } }, select: ALLOCATION_SELECT }) : [];
+        const byId = new Map(loaded.map((row) => [row.passportId, row]));
+        rows = pageIds.map((id) => byId.get(id)).filter(Boolean);
+    }
+    const statuses = await candidateWorkflowStatuses(db, rows);
     return {
         items: rows.map((row) => {
-            const stages = stageList(row.stages, automaticStageMissing(row, row.documents));
+            const { stages, currentStage } = progressOf(row);
             return {
                 ...candidateSummary(row),
                 whatsappNumber: row.whatsappNumber ?? null,
@@ -121,13 +217,18 @@ export async function listAllocationCandidates({ db, params }) {
                 registeredDate: row.createdDate.toISOString(),
                 stagesCompleted: stages.filter((stage) => stage.completed).length,
                 stagesTotal: stages.length,
-                currentStage: stages.find((stage) => !stage.completed)?.stage ?? null,
+                currentStage,
+                workflowStatus: statuses.get(row.passportId) ?? null,
                 analyst: analystView(row.allocation?.analyst),
                 assignedDate: row.allocation?.assignedDate?.toISOString() ?? null,
             };
         }),
         pagination: listPagination(params, total),
-        filters: { status: params.status, analystId: params.analystId ?? null, search: params.search ?? null },
+        filters: {
+            status: params.status, analystId: params.analystId ?? null, search: params.search ?? null,
+            registeredFrom: params.registeredFrom ?? null, registeredTo: params.registeredTo ?? null, jobType: params.jobType ?? null,
+            workflowStatus: params.workflowStatus ?? null, stage: params.stage ?? null,
+        },
     };
 }
 

@@ -2150,7 +2150,7 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
     test("REGISTRATION-REQ-002..007 each of the six is required to register (marked with *), and nothing is sent without it", async () => {
         const six: [string, string][] = [
             ["Surname *", "Enter the surname."], ["Other names *", "Enter the other names."], ["NIC *", "Enter the NIC."],
-            ["Passport ID *", "Enter the passport number (6 to 9 letters and digits)."], ["Job type *", "Add at least one job type."], ["WhatsApp number *", "Enter the WhatsApp number."],
+            ["Passport ID *", "Passport number must start with P or N followed by 7 digits. Example: P1234567"], ["Job type *", "Add at least one job type."], ["WhatsApp number *", "Enter the WhatsApp number."],
         ];
         for (const [label, message] of six) {
             const { calls } = signedInBackend();
@@ -2702,8 +2702,8 @@ describe("field hints", () => {
         expect(screen.queryByRole("tooltip")).toBeNull();
     });
 
-    test("the hints state the rules actually applied (passport 6-9 letters and digits, no fixed prefix; mobile with country code; dates required)", () => {
-        expect(FIELD_HINTS.passportId).toMatch(/6 to 9 letters and digits/);
+    test("the hints state the rules actually applied (passport P or N + 7 digits, never PN; mobile with country code; dates required)", () => {
+        expect(FIELD_HINTS.passportId).toBe("Passport number must start with P or N followed by 7 digits. Example: P1234567");
         expect(FIELD_HINTS.passportId).not.toMatch(/\bPN\b/);
         expect(FIELD_HINTS.whatsappNumber).toMatch(/\+/);
         expect(FIELD_HINTS.passportIssueDate).toMatch(/Required/);

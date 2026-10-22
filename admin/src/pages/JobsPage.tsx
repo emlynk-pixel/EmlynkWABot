@@ -32,6 +32,9 @@ import { filterControl, inputClass, tableCell, tableHead, tableRow } from "../co
 // With no view chosen it opens Processing, or All when there is no Processing
 // job (but other jobs exist) rather than an empty list; a view picked from the
 // tabs (Processing too) is kept as chosen.
+// The Client is not shown in the list or on Job Details (the job keeps its client on the
+// server, for its responsible agent, To Country, history and Client Management); New job
+// still asks for it, because the client decides which agents can be responsible for the job.
 
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
 
@@ -132,7 +135,7 @@ function JobsView() {
                             type="search"
                             value={searchText}
                             maxLength={100}
-                            placeholder="Job code, Client Job ID, client, agent…"
+                            placeholder="Job code, Client Job ID, agent…"
                             onChange={(event) => setSearchText(event.target.value)}
                             className={`${filterControl} w-64`}
                         />
@@ -158,7 +161,6 @@ function JobsView() {
                                     <th className={tableHead}>Job type</th>
                                     <th className={tableHead}>To Country</th>
                                     <th className={tableHead}>From Country</th>
-                                    <th className={tableHead}>Client</th>
                                     <th className={tableHead}>Responsible agent</th>
                                     <th className={`${tableHead} text-right`}>Candidates</th>
                                     <th className={`${tableHead} text-right`}>Vacancies</th>
@@ -176,7 +178,6 @@ function JobsView() {
                                         <td className={tableCell}>{job.jobType.name}</td>
                                         <td className={tableCell}>{jobCountry(job.countryCode)}</td>
                                         <td className={tableCell}>{jobCountry(job.fromCountryCode)}</td>
-                                        <td className={tableCell}>{job.client.name}</td>
                                         <td className={tableCell}>{job.responsibleAgent.name}</td>
                                         <td className={`${tableCell} text-right tabular-nums`}>{formatNumber(job.candidateCount)}</td>
                                         <td className={`${tableCell} text-right`}>{job.vacancies === null ? "—" : <VacancyFill job={job} />}</td>
@@ -262,8 +263,8 @@ function ReferenceSelect({ label, value, onChange, options, disabled, adding, on
 }
 
 // New job, in two steps. Step 1 is the job's details (nothing is saved; Next only checks them);
-// Step 2 picks the candidates to assign right away: candidates who passed the test and are not on
-// a PROCESSING job (any job type preference, No Preferred Type too), none, one or many, and more
+// Step 2 picks the candidates to assign right away: candidates who passed the test (they may already
+// be on other PROCESSING jobs; any job type preference, No Preferred Type too), none, one or many, and more
 // than the vacancies if needed. Create job sends the job and the selection together: the server
 // re-checks every rule and creates the job with all of them, or nothing.
 type Step = 1 | 2;
@@ -424,7 +425,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     );
 }
 
-// The candidates who can be assigned now (the server's list: test PASS and not on a PROCESSING job),
+// The candidates who can be assigned now (the server's list: test PASS; candidates on other jobs included),
 // searchable and paged. The selection is kept across searches and pages.
 function CandidatePicker({ token, selected, onToggle, disabled }: { token: string; selected: Map<string, CandidateListItem>; onToggle: (candidate: CandidateListItem) => void; disabled: boolean }) {
     const [text, setText] = useState("");
@@ -435,7 +436,7 @@ function CandidatePicker({ token, selected, onToggle, disabled }: { token: strin
     useEffect(() => {
         const controller = new AbortController();
         setLoadError(null);
-        listCandidates(token, { page: query.page, pageSize: CANDIDATE_PAGE_SIZE, search: query.search || undefined, testResult: "PASS", available: true }, controller.signal)
+        listCandidates(token, { page: query.page, pageSize: CANDIDATE_PAGE_SIZE, search: query.search || undefined, testResult: "PASS" }, controller.signal)
             .then(setList)
             .catch((caught) => {
                 if (!controller.signal.aborted) setLoadError(message(caught));
@@ -454,7 +455,7 @@ function CandidatePicker({ token, selected, onToggle, disabled }: { token: strin
                 <input id="new-job-candidate-search" type="search" value={text} maxLength={100} placeholder="Name, passport ID or NIC" onChange={(event) => setText(event.target.value)} className={filterControl} />
                 <button type="submit" disabled={disabled} className={secondaryButton}>Search</button>
             </form>
-            <p className="mt-2 text-label-sm text-ink-muted">Candidates who passed the test and are not on a processing job.</p>
+            <p className="mt-2 text-label-sm text-ink-muted">Candidates who passed the test. A candidate can be on several processing jobs.</p>
             {loadError && <ErrorState message={loadError} onRetry={() => setAttempt((n) => n + 1)} />}
             {!loadError && !list && <LoadingState label="Loading candidates…" />}
             {!loadError && list && items.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">{query.search ? "No eligible candidates match your search." : "No candidates can be assigned right now."}</p>}

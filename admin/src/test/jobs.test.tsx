@@ -73,10 +73,12 @@ describe("Jobs list", () => {
         backend();
         renderApp("/jobs");
         const rows = within(await table()).getAllByRole("row");
-        expect(within(rows[0]).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Job code", "Client Job ID", "Job type", "To Country", "From Country", "Client", "Responsible agent", "Candidates", "Vacancies", "Status"]);
+        // JOBS-CLEANUP: no Client column (the job keeps its client on the server).
+        expect(within(rows[0]).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Job code", "Client Job ID", "Job type", "To Country", "From Country", "Responsible agent", "Candidates", "Vacancies", "Status"]);
         expect(rows).toHaveLength(3);
         const first = within(rows[1]).getAllByRole("cell");
-        expect(first.map((c) => c.textContent)).toEqual(["JOB-2026-000002Created 01 Oct 2026", "Not assigned", "Welder", "Romania", "Romania", "Acme Construction", "Ion Popescu", "2", "2 / 5", "Processing"]);
+        expect(first.map((c) => c.textContent)).toEqual(["JOB-2026-000002Created 01 Oct 2026", "Not assigned", "Welder", "Romania", "Romania", "Ion Popescu", "2", "2 / 5", "Processing"]);
+        expect(within(await table()).queryByText("Acme Construction")).toBeNull();
         expect(within(rows[1]).getByRole("link", { name: "JOB-2026-000002" })).toHaveAttribute("href", "/jobs/00000000-0000-4000-8000-000000000002");
         expect(screen.getByRole("tab", { name: "Processing (2)" })).toHaveAttribute("aria-selected", "true");
         expect(screen.getByRole("tab", { name: "Completed (1)" })).toBeInTheDocument();
@@ -186,7 +188,10 @@ describe("Job details", () => {
         backend("MANAGER", getJob(details(base, [CAND])));
         renderApp(path);
         const list = await screen.findByLabelText("Job details", undefined, RENDER_STEP);
-        for (const text of ["JOB-2026-000002", "Welder", "Acme Construction", "Romania", "Ion Popescu", "5"]) expect(within(list).getAllByText(text).length).toBeGreaterThan(0);
+        for (const text of ["JOB-2026-000002", "Welder", "Romania", "Ion Popescu", "5"]) expect(within(list).getAllByText(text).length).toBeGreaterThan(0);
+        // JOBS-CLEANUP: Job Details no longer shows the Client.
+        expect(within(list).queryByText("Client")).toBeNull();
+        expect(within(list).queryByText("Acme Construction")).toBeNull();
         expect(within(list).getByText(/Test Admin/)).toBeInTheDocument();
         await openCandidatesTab(userEvent.setup());
         const rows = within(screen.getByRole("table", { name: "Assigned candidates" })).getAllByRole("row");

@@ -36,9 +36,13 @@ export function jobSummaryView(job) {
     };
 }
 
-// { current, history }: current = the PROCESSING job the candidate is active
-// on (or null); history = every other assignment, newest first (COMPLETED and
-// CANCELLED jobs, and jobs the candidate was removed from: `removed: true`).
+// { current, active, history }:
+//   active  = every PROCESSING job the candidate is active on, newest assignment first
+//             (a candidate may be on several jobs at once);
+//   current = active[0] or null (the newest active job; kept for callers that show one job,
+//             such as the Job details stage);
+//   history = every other assignment, newest first (COMPLETED and CANCELLED jobs, and jobs the
+//             candidate was removed from: `removed: true`).
 export async function candidateJobAssignments(db, passportId) {
     const rows = await db.jobCandidate.findMany({
         where: { passportId },
@@ -49,8 +53,8 @@ export async function candidateJobAssignments(db, passportId) {
         orderBy: [{ assignedAt: "desc" }, { createdAt: "desc" }, { jobId: "desc" }],
     });
     const view = (row) => ({ ...jobSummaryView(row.job), assignedAt: iso(row.assignedAt), removed: Boolean(row.releasedAt), removedAt: iso(row.releasedAt) });
-    const active = rows.find((row) => row.isActive);
-    return { current: active ? view(active) : null, history: rows.filter((row) => row !== active).map(view) };
+    const active = rows.filter((row) => row.isActive).map(view);
+    return { current: active[0] ?? null, active, history: rows.filter((row) => !row.isActive).map(view) };
 }
 
 // The Job the candidate page's Job details stage shows, from the result of

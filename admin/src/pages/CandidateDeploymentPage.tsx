@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useLocation, useParams, useSearchParams } from "react-router";
-import { CANDIDATE_STAGES, STAGE_LABELS, getAdditionalDetails, getCandidate, getFormSubmission, type AdditionalDetailsView, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
+import { CANDIDATE_STAGES, STAGE_LABELS, activeJobsOf, getAdditionalDetails, getCandidate, getFormSubmission, type AdditionalDetailsView, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { canConfirmSubmittedChanges, canManageCandidates, useAuth } from "../auth/AuthProvider";
 import { useBreadcrumbLabel } from "../components/Breadcrumbs";
+import { CONFLICT_FIELD_PARAM, useConflictFocus } from "../components/candidate/formConflicts";
 import { AdditionalDetailsPanel } from "../components/candidate/AdditionalDetailsPanel";
 import { CallLogDialog } from "../components/candidate/CallLogDialog";
 import { CandidateStepper, type StepperStep } from "../components/candidate/CandidateStepper";
@@ -67,6 +68,11 @@ export function CandidateDeploymentPage() {
     const details = updated ?? resource.data;
     const loaded = details && details.candidate.passportId.toUpperCase() === passportId.toUpperCase() ? details.candidate : null;
     useBreadcrumbLabel(loaded ? loaded.name ?? loaded.passportId : null);
+    // Opened from the Candidates list's "!" (?field=<form field>): scroll to and focus that field once the
+    // record, the Candidate Form review state and (for Additional details) its form are on screen.
+    const focusField = searchParams.get(CONFLICT_FIELD_PARAM);
+    const additionalReady = searchParams.get("tab") !== "additional" || Boolean(ofThisCandidate(savedAdditional) ?? ofThisCandidate(additional.data));
+    useConflictFocus(focusField, Boolean(loaded) && Boolean(submission.data) && additionalReady);
     if (!details || details.candidate.passportId.toUpperCase() !== passportId.toUpperCase()) {
         return resource.status === "error"
             ? <Card><ErrorState message={resource.error.message} onRetry={resource.reload} /></Card>
@@ -104,7 +110,7 @@ export function CandidateDeploymentPage() {
     };
 
     return (
-        <SubmittedChangesProvider pending={pendingChanges} rejected={rejectedFields} canConfirm={canConfirmSubmittedChanges(user)} passportId={c.passportId} token={token} onConfirmed={afterConfirm}>
+        <SubmittedChangesProvider pending={pendingChanges} rejected={rejectedFields} canConfirm={canConfirmSubmittedChanges(user)} passportId={c.passportId} token={token} onConfirmed={afterConfirm} focusField={focusField}>
         <section aria-labelledby="page-title" className="mx-auto max-w-5xl space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div className="min-w-0">
@@ -146,6 +152,7 @@ export function CandidateDeploymentPage() {
                         resource={{ data: additionalView, status: additional.status, errorMessage: additional.status === "error" ? additional.error.message : null, reload: additional.reload }}
                         canEdit={canEdit}
                         currentJob={details.jobAssignments.current}
+                        activeJobs={activeJobsOf(details.jobAssignments)}
                         onSaved={setSavedAdditional}
                     />
                 </Card>

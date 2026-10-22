@@ -172,7 +172,7 @@ describe("paging", () => {
     test("rows keep their shape: name, NIC, job types and every stage", async () => {
         const { body } = await get();
         const row = body.items.find((item) => item.passportId === "P0000247");
-        assert.deepEqual(Object.keys(row).sort(), ["jobTypes", "name", "nic", "passportId", "stages", "uniqueId", "workflowStatus"]);
+        assert.deepEqual(Object.keys(row).sort(), ["formConflicts", "jobTypes", "name", "nic", "passportId", "stages", "uniqueId", "workflowStatus"]);
         assert.equal(row.name, "Given247 Surname");
         assert.deepEqual(row.jobTypes, ["Driver"]);
         assert.equal(row.stages.length, 8);

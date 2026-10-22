@@ -67,10 +67,12 @@ type Context = {
     canConfirm: boolean;
     ask: (change: PendingChange, action: Action) => void;
     takeConfirmed: (keys: readonly string[]) => string[];
+    // The field the page was opened for (the Candidates list's "!", ?field=), highlighted more strongly.
+    focusField: string | null;
 };
 const SubmittedChanges = createContext<Context | null>(null);
 
-export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, passportId, token, onConfirmed, children }: {
+export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, passportId, token, onConfirmed, focusField = null, children }: {
     pending: readonly PendingChange[];
     // Fields whose candidate-submitted change staff already rejected.
     rejected?: readonly string[];
@@ -79,6 +81,7 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
     token: string | null;
     // Told after a confirmation (or a refused one) so the record and the hints are reloaded.
     onConfirmed: () => void;
+    focusField?: string | null;
     children: ReactNode;
 }) {
     const [asking, setAsking] = useState<{ change: PendingChange; action: Action } | null>(null);
@@ -97,7 +100,8 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
         canConfirm: canConfirm && Boolean(token),
         ask: (change, action) => { setError(null); setAsking({ change, action }); },
         takeConfirmed,
-    }), [pending, rejected, canConfirm, token, takeConfirmed]);
+        focusField,
+    }), [pending, rejected, canConfirm, token, takeConfirmed, focusField]);
 
     const close = () => { if (!busy) { setAsking(null); setError(null); } };
     const confirm = async () => {
@@ -169,6 +173,15 @@ export function SubmittedHint({ field }: { field: string }) {
             )}
         </p>
     );
+}
+
+// Whether a field of the record has an unresolved Candidate Form change (pending: shown highlighted),
+// and whether it is the one the page was opened for (focused: highlighted more strongly). Both are
+// false outside the Candidate page and as soon as the change is confirmed or revoked.
+export function useFieldConflict(field?: string): { pending: boolean; focused: boolean } {
+    const context = useContext(SubmittedChanges);
+    const pending = Boolean(field && context?.pending.has(field));
+    return { pending, focused: pending && context?.focusField === field };
 }
 
 // For a form of the record: hands over the keys confirmed since the last refresh (none outside the Candidate page).

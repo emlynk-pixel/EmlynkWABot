@@ -12,11 +12,12 @@ export { JOB_STATUS };
 //
 // A Job belongs to one Client (the employer), one Job Type and one responsible
 // Agent. The Agent must be the Client's own Agent (checked on create and update). A
-// candidate is assigned through job_candidate; at most ONE PROCESSING job per
-// candidate (service check under row locks, and the partial unique index
-// job_candidate_one_active_per_candidate as the database's own guarantee).
-// COMPLETED / CANCELLED keep every assignment row (history) and release the
-// candidates. Jobs are never deleted; reopening is not supported.
+// candidate is assigned through job_candidate and may be active on SEVERAL PROCESSING
+// jobs at once (migration 20261029120000_job_candidate_multiple_active); never twice on
+// the SAME job (service check under row locks, and the primary key (job_id, passport_id)
+// as the database's own guarantee). Assigning to or removing from one job never touches
+// the candidate's other jobs. COMPLETED / CANCELLED keep every assignment row (history)
+// and release that job's candidates only. Jobs are never deleted; reopening is not supported.
 //
 // Roles (the routes check them; the service applies the Analyst scope):
 //   ADMIN, MANAGER   manage jobs and reference data
@@ -629,17 +630,17 @@ async function updateJobInTransaction({ db, actor, jobId, values }) {
 // Assigns one candidate to a PROCESSING job inside the caller's transaction (Add to job, and
 // New job with selected candidates). Every rule is checked here under row locks (the caller
 // holds the job; the candidate FOR UPDATE), so two staff members assigning the same candidate
-// to two jobs queue on the candidate's lock and the second sees the first's assignment (409).
-// The partial unique index is the backstop: a violation is the same 409. The job's vacancies
-// are never checked: a job may hold more candidates than vacancies (23 / 20).
+// to the same job queue on the candidate's lock and the second sees the first's assignment
+// (409 CANDIDATE_ALREADY_IN_JOB). The candidate's assignments to OTHER jobs are allowed and
+// left untouched. The job's vacancies are never checked: a job may hold more candidates than
+// vacancies (23 / 20).
 async function assignCandidate(tx, { actor, job, passportId }) {
     const jobId = job.id;
     const locked = await tx.$queryRaw`SELECT "passport_id" FROM "candidate" WHERE "passport_id" = ${passportId} FOR UPDATE`;
     if (!locked.length) throw new CandidateError(404, "CANDIDATE_NOT_FOUND", "Candidate not found");
 
-    const active = await tx.jobCandidate.findFirst({ where: { passportId, isActive: true }, select: { jobId: true, job: { select: { jobCode: true } } } });
-    if (active?.jobId === jobId) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", `This candidate is already assigned to ${job.jobCode}.`);
-    if (active) throw new CandidateError(409, "CANDIDATE_ON_ACTIVE_JOB", `This candidate is already on the PROCESSING job ${active.job.jobCode}. Complete or cancel that job, or remove the candidate from it, first.`);
+    const onThisJob = await tx.jobCandidate.findFirst({ where: { jobId, passportId, isActive: true }, select: { jobId: true } });
+    if (onThisJob) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", `This candidate is already assigned to ${job.jobCode}.`);
 
     // Only a candidate who PASSED the test can be assigned (also a removed candidate put back, and a
     // candidate being moved to another job after leaving the first). The saved Test details result is
@@ -662,7 +663,7 @@ async function assignCandidate(tx, { actor, job, passportId }) {
             await tx.jobCandidate.create({ data: { jobId, passportId, assignedAt: now, assignedBy: actor.adminId, isActive: true } });
         }
     } catch (error) {
-        if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ON_ACTIVE_JOB", "This candidate was just assigned to a PROCESSING job. Nothing was changed; refresh and check.");
+        if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", `This candidate was just assigned to ${job.jobCode}. Nothing was changed; refresh and check.`);
         throw error;
     }
     await tx.auditLog.create({
@@ -682,7 +683,7 @@ export async function addCandidateToJob({ db, actor, jobId, passportId }) {
             return getJob({ db: tx, jobId, user: actor });
         });
     } catch (error) {
-        if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ON_ACTIVE_JOB", "This candidate was just assigned to a PROCESSING job. Nothing was changed; refresh and check.");
+        if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", "This candidate was just assigned to this job. Nothing was changed; refresh and check.");
         throw error;
     }
 }

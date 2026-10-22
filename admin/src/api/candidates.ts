@@ -83,6 +83,9 @@ export type CandidateListItem = {
     jobTypes: string[];
     workflowStatus: WorkflowStatus;
     stages: StageProgress[];
+    // Candidate Form fields whose submitted value still waits for review (Confirm / Revoke); [] = none.
+    // Absent from an older server.
+    formConflicts?: string[];
 };
 
 export type CandidateList = {
@@ -100,7 +103,10 @@ export type CandidateDocument = {
     receivedDate: string;
 };
 
-export type JobAssignments = { current: CandidateJobAssignment | null; history: CandidateJobAssignment[] };
+// active: every PROCESSING job the candidate is on (newest first; a candidate may hold several).
+// current: active[0] (kept for screens that show one job). active may be absent from an older server.
+export type JobAssignments = { current: CandidateJobAssignment | null; active?: CandidateJobAssignment[]; history: CandidateJobAssignment[] };
+export const activeJobsOf = (assignments: JobAssignments): CandidateJobAssignment[] => assignments.active ?? (assignments.current ? [assignments.current] : []);
 export type VerificationState = { at: string; by: string | null } | null;
 
 export type CandidateDetails = {
@@ -240,7 +246,7 @@ export type CallLogList = { items: CallLogEntry[]; documentStatus?: DocumentStat
 
 const base = (passportId: string) => `/api/admin/candidates/${encodeURIComponent(passportId)}`;
 
-// available: only candidates not on a PROCESSING job (New job candidate selection).
+// available: only candidates not on any PROCESSING job (no longer used by the Job pages: a candidate may hold several jobs).
 export function listCandidates(token: string, params: { page: number; pageSize: number; search?: string; testResult?: "PASS"; available?: boolean }, signal?: AbortSignal): Promise<CandidateList> {
     const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
     if (params.search) query.set("search", params.search);

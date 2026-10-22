@@ -19,9 +19,9 @@ import { filterControl, inputClass, tableCell, tableHead, tableRow, textareaClas
 // Candidates. The tab is page state only (no route): switching keeps every open
 // dialog and loaded value, and the actions above the tabs work from either. ADMIN and
 // MANAGER add / remove candidates and complete or cancel a PROCESSING job; an
-// ANALYST sees the job with only their own candidates. A candidate already on
-// another PROCESSING job is refused by the server (409) and the message is
-// shown here; nothing is moved silently.
+// ANALYST sees the job with only their own candidates. A candidate may also be on
+// other PROCESSING jobs (they are never touched); one already on THIS job is refused
+// by the server (409) and the message is shown here.
 
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
 
@@ -104,7 +104,6 @@ function JobDetailsView() {
                                 {canManage && <button type="button" onClick={() => setDialog("companyJobId")} aria-label={`${job.companyJobId ? "Change" : "Add"} Client Job ID`} className="ml-2 text-label-md text-primary hover:underline">{job.companyJobId ? "Change" : "Add"}</button>}
                             </Detail>
                             <Detail label="Job type">{job.jobType.name}</Detail>
-                            <Detail label="Client">{job.client.name}</Detail>
                             <Detail label="To Country">{jobCountry(job.countryCode)}</Detail>
                             <Detail label="From Country">
                                 <span className={job.fromCountryCode ? undefined : "text-ink-muted"}>{jobCountry(job.fromCountryCode)}</span>
@@ -246,8 +245,8 @@ function CancelDialog({ token, job, onDone, onClose }: { token: string; job: Job
 }
 
 // Search the candidates and add them one at a time. The dialog stays open so
-// several can be added; a refusal (already on another PROCESSING job, already
-// here) is shown next to the search.
+// several can be added; a refusal (already on this job, test not passed) is shown
+// next to the search.
 function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string; job: JobDetails; onChanged: (job: JobDetails) => void; onClose: () => void }) {
     const [text, setText] = useState("");
     const [results, setResults] = useState<CandidateListItem[] | null>(null);
@@ -321,7 +320,7 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
 }
 
 // The From Country (editable while the job is PROCESSING). The To Country is the
-// client's and is never edited here.
+// responsible agent's country, fixed when the job was created, and is never edited here.
 function FromCountryDialog({ token, job, onDone, onClose }: { token: string; job: JobDetails; onDone: (job: JobDetails) => void; onClose: () => void }) {
     const [value, setValue] = useState(job.fromCountryCode ?? "");
     const [busy, setBusy] = useState(false);
@@ -340,7 +339,7 @@ function FromCountryDialog({ token, job, onDone, onClose }: { token: string; job
     return (
         <ActionDialog title="From Country" busy={busy} onClose={onClose}>
             <form onSubmit={submit}>
-                <p className="mb-3 text-body-sm text-ink-soft">The country the candidates of {job.jobCode} travel from. The To Country ({jobCountry(job.countryCode)}) is the client&apos;s.</p>
+                <p className="mb-3 text-body-sm text-ink-soft">The country the candidates of {job.jobCode} travel from. The To Country ({jobCountry(job.countryCode)}) is fixed when the job is created.</p>
                 <CountrySelect label="From Country" value={value} onChange={setValue} disabled={busy} />
                 <DialogError message={error} />
                 <div className="mt-4 flex justify-end gap-2">

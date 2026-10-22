@@ -21,7 +21,9 @@ import { DialogError, primaryButton, secondaryButton } from "../components/Dialo
 import { documentTypeLabel } from "../components/format";
 import { Icon } from "../components/Icon";
 import { Card, EmptyState } from "../components/States";
+import { CANDIDATE_PASSPORT_HELP, isCandidatePassportNumber, normalizeNewPassportNumber } from "../components/validation";
 
+// Looking up an EXISTING candidate (older passport numbers too): 6 to 9 letters and digits.
 const PASSPORT_PATTERN = /^[A-Z0-9]{6,9}$/;
 const normalizePassportId = (value: string) => value.replace(/[\s-]/g, "").toUpperCase();
 const isPassportId = (value: string) => PASSPORT_PATTERN.test(value) && /\d/.test(value);
@@ -176,7 +178,8 @@ export function CandidateRegistrationPage() {
 
         // A NEW candidate: only the six registration fields are needed now.
         const found = validateDetails(details, "registration", { initial: true });
-        if (!isPassportId(normalizedId)) found.passportId = "Enter the passport number (6 to 9 letters and digits).";
+        // A NEW candidate's number must be P or N + 7 digits (the server checks the same).
+        if (!isCandidatePassportNumber(passportId)) found.passportId = CANDIDATE_PASSPORT_HELP;
         setErrors(found);
         if (Object.keys(found).length) return;
 
@@ -184,7 +187,7 @@ export function CandidateRegistrationPage() {
         setError(null);
         let created: string;
         try {
-            created = (await createCandidate(token, { ...details, passportId: normalizedId, comment })).passportId;
+            created = (await createCandidate(token, { ...details, passportId: normalizeNewPassportNumber(passportId), comment })).passportId;
         } catch (caught) {
             const exists = caught instanceof ApiError && caught.status === 409 && /passport ID/i.test(caught.message);
             setBusy(false);

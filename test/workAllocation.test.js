@@ -564,7 +564,7 @@ describe("Work Allocation API: lists and workload", () => {
         assert.ok(unallocated.items.every((item) => item.analyst === null));
         assert.deepEqual(Object.keys(unallocated.items[0]).sort(), [
             "analyst", "assignedDate", "contactNumber", "currentStage", "jobTypes", "name", "nic", "passportId", "registeredDate",
-            "stagesCompleted", "stagesTotal", "uniqueId", "whatsappNumber",
+            "stagesCompleted", "stagesTotal", "uniqueId", "whatsappNumber", "workflowStatus",
         ]);
         const allocated = (await api(USERS.MANAGER, "GET", "/work-allocation/candidates?status=ALLOCATED")).body;
         assert.deepEqual(allocated.items.map((item) => [item.passportId, item.analyst.name]), [

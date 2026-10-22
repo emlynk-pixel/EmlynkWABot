@@ -535,9 +535,10 @@ describe("jobs use the relational Client + Agent (REL-005 to REL-008)", () => {
         assert.deepEqual([stored.id, stored.jobCode, stored.companyJobId], [job.jobId, job.jobCode, "Y26S01"]);
         const members = await prisma.jobCandidate.findMany({ where: { jobId: job.jobId } });
         assert.deepEqual(members.map((m) => [m.passportId, m.isActive]), [[pid(1), true]]);
-        // One PROCESSING job per candidate still holds.
+        // A second PROCESSING job for the same candidate is allowed; the same job twice is not.
         const second = await mkJobOk(client.clientId);
-        assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${second.jobId}/candidates`, { passportId: pid(1) })).body.code, "CANDIDATE_ON_ACTIVE_JOB");
+        assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${second.jobId}/candidates`, { passportId: pid(1) })).status, 201);
+        assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { passportId: pid(1) })).body.code, "CANDIDATE_ALREADY_IN_JOB");
         // Work Allocation still works and is unchanged by any of this.
         const allocation = await api(USERS.MANAGER, "GET", "/work-allocation/candidates");
         assert.equal(allocation.status, 200);

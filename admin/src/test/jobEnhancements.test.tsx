@@ -189,8 +189,10 @@ describe("New job in two steps", () => {
         await user.click(within(dialog).getByRole("button", { name: "Next" }));
         const list = await within(dialog).findByRole("list", { name: "Eligible candidates" });
         const request = calls.find((c) => c.path.startsWith("/api/admin/candidates?"))!;
-        // FAIL candidates and those actively on a job are left out by the server (testResult=PASS, available=true).
-        expect(Object.fromEntries(request.url.searchParams)).toMatchObject({ testResult: "PASS", available: "true" });
+        // FAIL candidates are left out by the server (testResult=PASS); candidates on other jobs are listed too
+        // (a candidate may hold several jobs), so `available` is no longer sent.
+        expect(Object.fromEntries(request.url.searchParams)).toMatchObject({ testResult: "PASS" });
+        expect(request.url.searchParams.has("available")).toBe(false);
         const items = within(list).getAllByRole("listitem");
         expect(items).toHaveLength(3);
         expect(items[1]).toHaveTextContent("ELIGIBLE 2");

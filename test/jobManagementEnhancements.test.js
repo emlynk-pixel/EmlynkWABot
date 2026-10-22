@@ -189,14 +189,13 @@ describe("New job with selected candidates (JOB-CREATE-001 to JOB-CREATE-012)", 
         assert.equal((await createOk()).jobCode, formatJobCode(jobCodeYear(), 1), "the refused creations used no job code");
     });
 
-    test("JOB-CREATE-006: a candidate already on a PROCESSING job is refused (no job, the other job untouched)", async () => {
+    test("JOB-CREATE-006 (multiple jobs): a candidate already on a PROCESSING job can be put on a new job too; the first job is untouched", async () => {
         const first = await createOk({ candidateIds: [pid(1)] });
-        const response = await create({ candidateIds: [pid(2), pid(1)] });
-        assert.equal(response.status, 409);
-        assert.equal(response.body.code, "CANDIDATE_ON_ACTIVE_JOB");
-        assert.match(response.body.message, new RegExp(first.jobCode));
-        assert.equal(await jobCount(), 1);
-        assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(2) } }), 0);
+        const second = await createOk({ candidateIds: [pid(2), pid(1)] });
+        assert.equal(await jobCount(), 2);
+        assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(1), isActive: true } }), 2);
+        assert.equal(await prisma.jobCandidate.count({ where: { jobId: first.jobId, isActive: true } }), 1);
+        assert.equal(await prisma.jobCandidate.count({ where: { jobId: second.jobId, isActive: true } }), 2);
     });
 
     test("JOB-CREATE-007: repeated IDs (also in another letter case) are assigned once", async () => {
@@ -227,11 +226,11 @@ describe("New job with selected candidates (JOB-CREATE-001 to JOB-CREATE-012)", 
         assert.equal(await prisma.jobCandidate.count(), 0);
     });
 
-    test("two creations racing for the same candidate: exactly one gets them, the other creates nothing", async () => {
+    test("two creations racing for the same candidate: both are created, the candidate is on both, one row per job", async () => {
         const results = await Promise.all([create({ candidateIds: [pid(1), pid(2)] }), create({ candidateIds: [pid(3), pid(1)] })]);
-        assert.deepEqual(results.map((r) => r.status).sort(), [201, 409]);
-        assert.equal(await jobCount(), 1);
-        assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(1), isActive: true } }), 1);
+        assert.deepEqual(results.map((r) => r.status), [201, 201]);
+        assert.equal(await jobCount(), 2);
+        assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(1), isActive: true } }), 2);
     });
 
     test("JOB-CREATE-012: only ADMIN and MANAGER create jobs (with or without candidates)", async () => {

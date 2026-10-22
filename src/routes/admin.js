@@ -92,7 +92,7 @@ import {
     removeCandidateFromJob,
     updateJob,
 } from "../services/jobService.js";
-import { getFormSubmission } from "../services/candidateFormSubmissionService.js";
+import { getFormSubmission, pendingConflictsByCandidate } from "../services/candidateFormSubmissionService.js";
 import { activeJobTypeNames, NO_PREFERRED_JOB_TYPE, resolveCandidateJobTypes } from "../services/jobTypeCatalog.js";
 import { confirmFormField, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
@@ -541,7 +541,11 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await listCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) }));
+        const list = await listCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) });
+        // formConflicts: the Candidate Form fields still waiting for review ([] = none), for the list's
+        // "!" indicator. Same rule as the candidate page's pending changes; derived, never stored.
+        const conflicts = await pendingConflictsByCandidate(client, list.items.map((item) => item.passportId));
+        return res.json({ ...list, items: list.items.map((item) => ({ ...item, formConflicts: conflicts.get(item.passportId) ?? [] })) });
     });
 
     // The job type preferences must come from the active list (Settings > Job Types) or be
@@ -827,7 +831,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return res.json(await listAllocationCandidates({ db: client, params: parsed.params }));
+        return candidateAction(res, async () => res.json(await listAllocationCandidates({ db: client, params: parsed.params })));
     });
 
     router.get("/work-allocation/analysts", requireRole(ALLOCATION_MANAGER_ROLES), async (req, res) => {

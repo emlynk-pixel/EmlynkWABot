@@ -1,6 +1,6 @@
 import { ANSWER_FIELDS } from "./candidateFormDataService.js";
 import { FORM_ACCESS_STATUS } from "./candidateFormShareService.js";
-import { CONFIRM_SELECT, pendingChanges } from "./candidateFormFieldConfirmService.js";
+import { CONFIRMABLE_FIELDS, CONFIRM_SELECT, pendingChanges, submittedValueOf } from "./candidateFormFieldConfirmService.js";
 
 // Admin view of what the candidate submitted through the Candidate Form
 // (GET /api/admin/candidates/:passportId/form-submission). READ ONLY and
@@ -61,3 +61,39 @@ export async function getFormSubmission({ db, passportId }) {
         reviews: reviews.map((review) => ({ field: review.fieldKey, status: review.status })),
     };
 }
+
+// ---------------------------------------------------------------- unresolved conflicts (list indicator)
+//
+// For a page of candidates: Map(passportId -> the form field keys that still need review), with
+// only the candidates that have at least one. It is EXACTLY the "pending" of getFormSubmission
+// (pendingChanges of candidateFormFieldConfirmService.js), computed in a few batched queries
+// instead of one request per candidate, so the list indicator and the candidate page always
+// agree: a field counts only when the submitted value has a real home in Candidate Details /
+// Additional Details (CONFIRMABLE_FIELDS), is valid, is not "N/A", differs from the current
+// value after the field's own normalisation (case and surrounding spaces; phone numbers by
+// digits), and has no CONFIRMED / REJECTED decision yet. Derived on every read: nothing about it
+// is stored, so it disappears by itself once the last field is confirmed or rejected.
+export async function pendingConflictsByCandidate(db, passportIds) {
+    const ids = [...new Set(passportIds)];
+    if (!ids.length) return new Map();
+    const responses = await db.candidateFormResponse.findMany({ where: { passportId: { in: ids } } });
+    if (!responses.length) return new Map();
+    const submittedIds = responses.map((row) => row.passportId);
+    const [candidates, details, reviews] = await Promise.all([
+        db.candidate.findMany({ where: { passportId: { in: submittedIds } }, select: { passportId: true, ...CONFIRM_SELECT.candidate } }),
+        db.candidateAdditionalDetails.findMany({ where: { passportId: { in: submittedIds } }, select: { passportId: true, ...CONFIRM_SELECT.details } }),
+        db.candidateFormFieldReview.findMany({ where: { passportId: { in: submittedIds } }, select: { passportId: true, fieldKey: true } }),
+    ]);
+    const candidateOf = new Map(candidates.map((row) => [row.passportId, row]));
+    const detailsOf = new Map(details.map((row) => [row.passportId, row]));
+    const reviewedOf = new Map();
+    for (const review of reviews) reviewedOf.set(review.passportId, (reviewedOf.get(review.passportId) ?? new Set()).add(review.fieldKey));
+    const conflicts = new Map();
+    for (const response of responses) {
+        const submitted = Object.fromEntries(Object.keys(CONFIRMABLE_FIELDS).map((field) => [field, submittedValueOf(response, field)]));
+        const pending = pendingChanges({ candidate: candidateOf.get(response.passportId), details: detailsOf.get(response.passportId), submitted }, reviewedOf.get(response.passportId) ?? new Set());
+        if (pending.length) conflicts.set(response.passportId, pending.map((change) => change.field));
+    }
+    return conflicts;
+}
+

@@ -25,7 +25,7 @@ import crypto from "node:crypto";
 import { validateDocumentFile, ALLOWED_MIME_TYPES, MAX_FILE_SIZE } from "../utils/fileValidation.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { clientName } from "../utils/clientName.js";
-import { normalizePassportId } from "../utils/passportId.js";
+import { CANDIDATE_PASSPORT_MESSAGE, parseCandidatePassportNumber } from "../utils/passportId.js";
 import { normalizePhoneNumber } from "../utils/phoneNumber.js";
 import { clientFolderPath, extensionForMimeType, standardFileName } from "../utils/storageNaming.js";
 import { MAX_NAME_ATTEMPTS, removeObject } from "./permanentStorageService.js";
@@ -213,8 +213,9 @@ export function parseCandidateBody(body, { creating }) {
     if (creating) {
         const raw = text(body, "passportId", errors, { required: true, max: 20 });
         if (raw !== null) {
-            const passportId = normalizePassportId(raw);
-            if (!passportId) errors.push({ field: "passportId", message: "must be a passport number (6 to 9 letters and digits)" });
+            // P or N + 7 digits (utils/passportId.js); only a new candidate's number is checked this strictly.
+            const passportId = parseCandidatePassportNumber(raw);
+            if (!passportId) errors.push({ field: "passportId", message: CANDIDATE_PASSPORT_MESSAGE });
             else values.passportId = passportId;
         }
         values.comment = text(body, "comment", errors);
@@ -594,8 +595,8 @@ export function parseCandidateListQuery(query = {}) {
         if (testResult === TEST_RESULT_PASS) params.testResult = TEST_RESULT_PASS;
         else errors.push({ field: "testResult", message: `must be ${TEST_RESULT_PASS}` });
     }
-    // available=true: only candidates who are not currently on a PROCESSING job (no active job_candidate;
-    // the New job candidate selection).
+    // available=true: only candidates who are not currently on any PROCESSING job (no active job_candidate).
+    // Candidates may hold several jobs, so the Job pages no longer send it; kept for API compatibility.
     const available = single("available");
     if (available !== undefined) {
         if (available === "true") params.available = true;
