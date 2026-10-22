@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import type { CandidateList } from "../api/candidates";
-import type { JobDetails, JobList, JobListItem, JobOptions, JobStatus } from "../api/jobs";
+import type { CreateJobInput, JobDetails, JobList, JobListItem, JobOptions, JobStatus } from "../api/jobs";
 import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from "./helpers";
 
 // Admin > Jobs: the Processing / Completed / Cancelled views, Job details,
@@ -544,8 +544,9 @@ describe("Multiple Job Types UI", () => {
         await vi.waitFor(() => {
             const postCall = calls.find((c) => c.method === "POST");
             expect(postCall).toBeDefined();
-            expect(postCall!.body.jobTypeIds).toEqual(["t2", "t3"]);
-            expect(postCall!.body.jobTypeId).toBe("t2");
+            const body = postCall!.body as CreateJobInput;
+            expect(body.jobTypeIds).toEqual(["t2", "t3"]);
+            expect(body.jobTypeId).toBe("t2");
         });
     });
 });
