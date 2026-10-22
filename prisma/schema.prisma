@@ -142,6 +142,7 @@ model Candidate {
   formResponse      CandidateFormResponse?
   formSnapshot      CandidateFormPrefillSnapshot?
   formDraft         CandidateFormDraft?
+  formSheetSync     CandidateFormSheetSync?
   // Job Management: every job the candidate was assigned to (history). The
   // row with is_active = true is the current PROCESSING job. Relation only.
   jobAssignments    JobCandidate[]
@@ -310,6 +311,38 @@ model CandidateFormDraft {
   candidate Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
 
   @@map("candidate_form_draft")
+}
+
+// The outbox of the Candidate Form -> Google Sheet submission sync (formSubmissionSync.js,
+// tab "Candidate Form Submissions"; separate from the operational mirror's sheet_sync_queue).
+// One row per submission, written by submitCandidateForm in the SAME transaction as
+// candidate_form_response; a candidate submits once, so passport_id is UNIQUE and a repeated
+// or retried submit can never enqueue a second row. submission_id is the stable ID of the
+// submission (the Sheet's _SUBMISSION_ID), never the passport number or NIC. A row means
+// "this submission needs to be in the Sheet", never a data snapshot (no PII): the worker
+// re-reads the response when it processes the row. Rows are kept after COMPLETED.
+// status: PENDING | PROCESSING | COMPLETED | FAILED (dead letter, permanent errors only).
+// Migration 20261028120000_candidate_form_sheet_sync.
+model CandidateFormSheetSync {
+  submissionId   String    @id @default(dbgenerated("(gen_random_uuid())::text")) @map("submission_id")
+  passportId     String    @unique @map("passport_id")
+  status         String    @default("PENDING")
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime  @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  leaseOwner     String?   @map("lease_owner")
+  leaseExpiresAt DateTime? @map("lease_expires_at") @db.Timestamptz(3)
+  // APPENDED | UPDATED | NOT_IN_DATABASE (codes only, never values).
+  lastResult     String?   @map("last_result")
+  lastErrorClass String?   @map("last_error_class")
+  lastErrorCode  String?   @map("last_error_code")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz(3)
+
+  candidate Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@map("candidate_form_sheet_sync")
 }
 
 // What the form was prefilled with from the existing records, taken once at

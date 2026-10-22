@@ -546,6 +546,11 @@ export async function submitCandidateForm({ db, passportId, linkId, version, kin
         await tx.candidateFormResponse.create({ data: { passportId, ...values, nic: candidate.nic, submittedAt: now, submittedViaLinkId: linkId } });
         // The saved progress is superseded by the submission (and its personal data is not kept twice).
         await tx.candidateFormDraft.deleteMany({ where: { passportId } });
+        // The Google Sheet sync outbox (formSubmissionSync.js): this submission, once (passport_id is
+        // unique), in the same transaction, so it is queued exactly when it is saved and never otherwise.
+        // Nothing here calls Google: the sheet-sync worker does that later, and a failure there never
+        // reaches the candidate.
+        await tx.candidateFormSheetSync.create({ data: { passportId, createdAt: now, updatedAt: now, nextAttemptAt: now } });
         return { submittedAt: now.toISOString() };
     });
 }

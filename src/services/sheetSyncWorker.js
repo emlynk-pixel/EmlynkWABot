@@ -20,7 +20,11 @@
 //      while SHEET_SYNC_ENABLED is off; during the first-write pilot,
 //      SHEET_SYNC_PILOT_CANDIDATE_IDS, it writes only those candidates).
 //      A successful write reconciliation settles the queue rows it covered;
-//   3. now and then: prune old completed queue rows.
+//   3. the Candidate Form submissions (formSubmissionSync.js): the due rows of their own outbox
+//      go to their own tab, in real time (every tick), only while SHEET_SYNC_ENABLED is true.
+//      Separate from the reconciliation: nothing in it reads or changes the mirror's queue,
+//      runs or integration state, and a failure in it never fails or delays the above;
+//   4. now and then: prune old completed queue rows.
 // Google writes happen only while holding the writer lease (one writer per
 // Sheet, whatever the number of processes).
 //
@@ -151,7 +155,7 @@ function testFailure(result) {
 // (() => runSheetHealthCheck(...)) used for every run.
 // targetHint: fixed hint to publish (default: the active destination's).
 export function createSheetSyncWorker({
-    store, engine, healthCheck, forDestination = null, destinations = null, config, tuning, targetHint = null,
+    store, engine, healthCheck, forDestination = null, destinations = null, config, tuning, targetHint = null, formSubmissions = null,
     clock = () => new Date(), log = console, owner = `${os.hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`,
     timings = WORKER_TIMINGS,
 } = {}) {
@@ -346,11 +350,23 @@ export function createSheetSyncWorker({
         });
         // No queue processing here: queue rows wait for the next reconciliation.
         const runId = await processRun();
+        // The Candidate Form submissions: their own outbox and tab (never the mirror's), after the
+        // run so a reconciliation is not delayed by them. A problem here is logged and retried by
+        // the rows themselves; it never reaches the mirror or the loop.
+        let formBatchFull = false;
+        if (formSubmissions && config.enabled === true) {
+            try {
+                const form = await formSubmissions.processDue({ owner, destination: active, withWriterLease });
+                formBatchFull = (form?.claimed ?? 0) >= (formSubmissions.batchSize ?? Infinity);
+            } catch (error) {
+                emit("error", "sheet_sync.form_submissions_tick_failed", classifySyncError(error));
+            }
+        }
         if (now.getTime() - lastPruneAt >= timings.pruneEveryMs) {
             lastPruneAt = now.getTime();
             await store.pruneCompleted(new Date(now.getTime() - timings.completedRetentionMs));
         }
-        return { runId };
+        return { runId, formBatchFull };
     }
 
     let stopped = false;
@@ -364,7 +380,7 @@ export function createSheetSyncWorker({
                 let busy = false;
                 try {
                     const result = await tick();
-                    busy = Boolean(result.runId);
+                    busy = Boolean(result.runId) || Boolean(result.formBatchFull);
                 } catch (error) {
                     emit("error", "sheet_sync.tick_failed", classifySyncError(error));
                 }
