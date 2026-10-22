@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { DialogError, buttonBase, dangerSolidButton, primaryButton, secondaryButton } from "./Dialog";
+import { DialogError, buttonBase, dangerSolidButton, primaryButton, secondaryButton } from "./dialogParts";
 import { Icon } from "./Icon";
 
 export type ConfirmVariant = "normal" | "info" | "warning" | "destructive" | "danger";
