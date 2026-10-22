@@ -3023,6 +3023,293 @@ Never use incoming request headers to determine public application URLs. Always 
 
 ---
 
+# 47P. Google Sheet Sync & Candidate Form Submission Sync: Deployment & Debugging History
+
+**Date / Phase**: October 2026 / Cloud Run Worker Deployment & Google Sheet Outbox Verification
+
+This section records the operational blockers, routing anomalies, write gate behaviors, and deployment requirements encountered while deploying and verifying the Google Sheet synchronization features on Cloud Run (`emlynk-sheet-sync-worker`, region `asia-south1`).
+
+---
+
+### 47P.1 Candidate Form Submission Succeeded but Google Sheet Stayed Empty
+
+#### Problem
+A candidate successfully submitted the Candidate Extra Details Form, and the submission was stored in PostgreSQL, but no corresponding row appeared in the Google Sheet's `Candidate Form Submissions` tab.
+
+#### Symptoms
+- The candidate wizard displayed the green success confirmation screen with a valid timestamp.
+- The PostgreSQL database confirmed that `candidate_form_response` was stored with all submitted answers.
+- The outbox table `candidate_form_sheet_sync` contained the row for the candidate's passport ID:
+  ```json
+  {
+    "submissionId": "e5d7e9de-5f80-4c1e-a41b-27b003eda58a",
+    "passportId": "PN25847",
+    "status": "PENDING",
+    "attempts": 0,
+    "leaseOwner": null,
+    "lastResult": null,
+    "lastErrorClass": null,
+    "lastErrorCode": null
+  }
+  ```
+- The row remained in `PENDING` indefinitely, and `attempts` remained `0`.
+- The Google Sheet `Candidate Form Submissions` tab remained completely empty.
+
+#### Investigation
+1. **Database Identity**: Verified that local/backend API processes and the Cloud Run worker were connected to the exact same hosted Supabase database instance.
+2. **Atomic Outbox Creation**: Confirmed that `submitCandidateForm` in `src/services/candidateFormDataService.js` correctly enqueues the outbox row in the same transaction as `candidate_form_response`.
+3. **Worker Code Audit**: Inspected `src/services/sheetSyncWorker.js:357`:
+   ```javascript
+   let formBatchFull = false;
+   if (formSubmissions && config.enabled === true) {
+       try {
+           const form = await formSubmissions.processDue({ owner, destination: active, withWriterLease });
+           ...
+       }
+   }
+   ```
+4. **State Audit**: Queried `sheet_sync_state`:
+   - `write_gate: "DISABLED"`
+   - `SHEET_SYNC_ENABLED` was `"false"`.
+
+#### Root Cause
+The worker loop deliberately guards form submission processing with `config.enabled === true`. When `SHEET_SYNC_ENABLED` is `"false"` (the safe default in `deploy/sheet-sync-worker.env.yaml`), `config.enabled` evaluates to `false`. The worker tick loop completely bypasses `formSubmissions.processDue()`. The outbox row was never claimed, remaining in `PENDING` with `attempts = 0`.
+
+#### Solution
+1. Changed `SHEET_SYNC_ENABLED` to `"true"` in `deploy/sheet-sync-worker.env.yaml`.
+2. Redeployed the Cloud Run worker service so the container loaded the updated environment.
+3. Upon startup, the worker claimed the due `PENDING` row under the shared writer lease, created the 74-column header row in the blank tab, and appended the submission row with `lastResult: 'APPENDED'`.
+
+---
+
+### 47P.2 `POST /tasks/reconcile` Returned 404 (Dockerfile Default Entrypoint)
+
+#### Problem
+Triggering a manual reconciliation via `POST /tasks/reconcile` against the Cloud Run worker returned `HTTP 404 Not Found`.
+
+#### Symptoms
+```text
+HTTP/2 404
+content-type: text/html; charset=utf-8
+content-length: 159
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST /tasks/reconcile</pre>
+</body>
+</html>
+```
+
+#### Root Cause
+The repository uses a single root `Dockerfile` shared by multiple backend services. The default entrypoint is:
+```dockerfile
+CMD ["node", "src/app.js"]
+```
+When `emlynk-sheet-sync-worker` was deployed without container command overrides, Cloud Run started `node src/app.js` (the Express API backend). The Express API does not mount `/tasks/reconcile`, resulting in an Express default 404.
+
+Furthermore, [src/sheetSyncWorkerProcess.js](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/src/sheetSyncWorkerProcess.js) is a module export library rather than an executable; running `node src/sheetSyncWorkerProcess.js` executes no top-level listeners and exits immediately with code 0. The true standalone worker executable is [src/sheetSyncWorker.js](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/src/sheetSyncWorker.js).
+
+#### Solution
+Configured the Cloud Run service deployment to override container execution parameters:
+- `--command=node`
+- `--args=src/sheetSyncWorker.js`
+
+---
+
+### 47P.3 `POST /tasks/reconcile` Still Returned 404 After Command Override
+
+#### Problem
+Even after overriding the Cloud Run command to execute `node src/sheetSyncWorker.js`, calling `POST /tasks/reconcile` continued to return `404 Not Found`. Meanwhile, `GET /health` returned `200 {"status":"OK"}`.
+
+#### Symptoms
+- `GET /health` → `200 {"status":"OK"}` (confirmed the worker process was running and listening).
+- `POST /tasks/reconcile` → `404 Not Found` (plain empty 404 from the worker HTTP server).
+
+#### Root Cause
+In [src/sheetSyncWorkerProcess.js](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/src/sheetSyncWorkerProcess.js#L52), the route was originally gated as follows:
+```javascript
+// Old logic:
+if (req.method === "POST" && path === "/tasks/reconcile" && verifyScheduler) {
+    if (!(await verifyScheduler(req.headers.authorization))) { ... }
+    ...
+}
+return send(404);
+```
+In `src/sheetSyncWorker.js:98-105`, `verifyScheduler` is created **only if** both `SHEET_SYNC_SCHEDULER_AUDIENCE` and `SHEET_SYNC_SCHEDULER_INVOKER` are present in `process.env`. In `deploy/sheet-sync-worker.env.yaml`, these variables were commented out by default. Because `verifyScheduler` was `null`, the condition `&& verifyScheduler` evaluated to `false`, causing the server to fall through to `return send(404);`.
+
+#### Solution
+Refactored `createSheetSyncHttpServer` in `src/sheetSyncWorkerProcess.js` so that the endpoint is always registered. Token verification is applied defence-in-depth if `verifyScheduler` is configured, while Cloud Run IAM (`--no-allow-unauthenticated`) serves as the outer authorization boundary:
+```javascript
+if (req.method === "POST" && path === "/tasks/reconcile") {
+    if (verifyScheduler) {
+        if (!(await verifyScheduler(req.headers.authorization))) {
+            log.warn(JSON.stringify({ event: "sheet_sync.trigger_rejected" }));
+            return send(401, { message: "Unauthorized" });
+        }
+    }
+    const run = await requestReconcile();
+    log.log(JSON.stringify({ event: "sheet_sync.run_requested", kind: "RECONCILE", trigger: "SCHEDULER", runId: run.runId, created: run.created }));
+    return send(202, run);
+}
+```
+Updated `test/sheetSyncWorkerProcess.test.js` to assert that the endpoint returns `202 Accepted` when scheduler env vars are omitted.
+
+---
+
+### 47P.4 Cloud Run POST Returned 411 Length Required
+
+#### Problem
+Triggering `POST /tasks/reconcile` via `curl` returned `HTTP 411 Length Required`.
+
+#### Symptoms
+```text
+HTTP/2 411
+date: Thu, 22 Oct 2026 08:44:56 GMT
+content-type: text/html; charset=UTF-8
+server: Google Frontend
+content-length: 310
+
+<html><head>
+<meta http-equiv="content-type" content="text/html;charset=utf-8">
+<title>411 Length Required</title>
+</head>
+<body text=#000000 bgcolor=#ffffff>
+<h1>Error: Length Required</h1>
+<h2>The server encountered an error and could not complete your request.<p>Please try again in 30 seconds.</h2>
+```
+
+#### Root Cause
+When executing `curl -X POST https://<service-url>/tasks/reconcile` without a request body, `curl` omits the `Content-Length` header. The Google Cloud Run Google Frontend (GFE) edge reverse-proxy requires a `Content-Length` header on all `POST` requests and rejects empty `POST` requests before they reach the container.
+
+#### Solution
+Supplied an explicit empty JSON payload and `Content-Type` header:
+```cmd
+FOR /F "tokens=*" %i IN ('gcloud auth print-identity-token') DO SET GCLOUD_TOKEN=%i
+curl -i -X POST -H "Authorization: Bearer %GCLOUD_TOKEN%" -H "Content-Type: application/json" -d "{}" https://emlynk-sheet-sync-worker-76153319636.asia-south1.run.app/tasks/reconcile
+```
+The request successfully reached the container, returning `202 Accepted` with a queued run ID.
+
+---
+
+### 47P.5 Reconcile Run Succeeded but Did Not Write (`dryRun: true`)
+
+#### Problem
+Reconciliation completed with `status: "SUCCEEDED"`, but no changes were applied to the Google Sheet.
+
+#### Symptoms
+Querying `sheet_sync_runs` for run `8caf5eaf-ba35-4a9b-834e-a0bc8bda95ee`:
+```json
+{
+  "runId": "8caf5eaf-ba35-4a9b-834e-a0bc8bda95ee",
+  "status": "SUCCEEDED",
+  "dryRun": true,
+  "summary": {
+    "dryRun": true,
+    "updated": 0,
+    "appended": 0,
+    "sheetRows": 8,
+    "unchanged": 8,
+    "databaseCandidates": 8
+  }
+}
+```
+
+#### Root Cause
+`SHEET_SYNC_ENABLED` was set to `"false"`. By design, when writes are disabled, the worker acquires a Google OAuth token with the read-only scope (`spreadsheets.readonly`). Reconciliations run in dry-run mode, calculating drift and validating schemas without committing writes.
+
+#### Solution
+Enabled write authorization by setting `SHEET_SYNC_ENABLED="true"` and redeploying the worker.
+
+---
+
+### 47P.6 Local Environment File and Cloud Run Revision Did Not Match
+
+#### Problem
+The local configuration file `deploy/sheet-sync-worker.env.yaml` was edited to `SHEET_SYNC_ENABLED: "true"`, but Cloud Run logs still showed `writeGate: "DISABLED"`.
+
+#### Symptoms
+- Local file inspection: `SHEET_SYNC_ENABLED: "true"`.
+- Remote container logs: `{"event":"sheet_sync.worker_config","writeGate":"DISABLED","gateReason":"FALSE"}`.
+
+#### Root Cause
+Cloud Run revisions are **immutable deployment artifacts**. Editing local configuration files on a development workstation does not alter the active revision running in Google Cloud. An explicit deployment command is required to compile a new service revision with the updated environment file.
+
+#### Solution
+1. Redeployed Cloud Run with the updated environment file:
+   ```cmd
+   gcloud run deploy emlynk-sheet-sync-worker ^
+     --project=project-aa11e15e-a951-4e1b-a65 ^
+     --region=asia-south1 ^
+     --image=asia-south1-docker.pkg.dev/project-aa11e15e-a951-4e1b-a65/emlynk-ocr/sheet-sync-worker:latest ^
+     --env-vars-file=deploy/sheet-sync-worker.env.yaml
+   ```
+2. Verified active revision environment variables:
+   ```cmd
+   gcloud run services describe emlynk-sheet-sync-worker --project=project-aa11e15e-a951-4e1b-a65 --region=asia-south1 --format="yaml(spec.template.spec.containers[0].env)"
+   ```
+
+---
+
+### 47P.7 Cloud Scheduler Expected but No Jobs Existed in Project
+
+#### Problem
+Attempts to inspect or run automated reconciliation cron jobs failed.
+
+#### Symptoms
+- Running `gcloud scheduler jobs list --location asia-south1` returned:
+  `ERROR: (gcloud.scheduler.jobs.list) Cloud Scheduler API has not been used in project project-aa11e15e-a951-4e1b-a65 before or it is disabled.`
+- After enabling the Cloud Scheduler API (`gcloud services enable cloudscheduler.googleapis.com`), listing jobs returned:
+  `Listed 0 items.`
+
+#### Root Cause
+While the architecture documentation specified automated reconciliation at 06:00, 12:00, and 18:00 Asia/Colombo (`0 6,12,18 * * *`), the Cloud Scheduler job had never been provisioned in the Google Cloud project.
+
+#### Resolution & Current Operational Reality
+1. Documented that Cloud Scheduler cron jobs are **not currently provisioned** in the GCP project.
+2. Verified that the Sheet Sync Worker operates autonomously via its internal polling loop (`SHEET_SYNC_POLL_INTERVAL_MS=10000`) because Cloud Run is deployed with `--min-instances=1` and `--no-cpu-throttling`.
+3. Candidate Form submissions are processed continuously via the worker's polling loop.
+4. Operational Mirror reconciliations can be triggered on demand via the Admin Console ("Sync Now") or via the operator CLI (`npm run sheet:request -- reconcile`).
+5. Provisioning the Cloud Scheduler cron job remains an operational deployment step:
+   ```cmd
+   gcloud scheduler jobs create http emlynk-sheet-sync-reconcile ^
+     --project=project-aa11e15e-a951-4e1b-a65 ^
+     --location=asia-south1 ^
+     --schedule="0 6,12,18 * * *" ^
+     --time-zone=Asia/Colombo ^
+     --uri="https://emlynk-sheet-sync-worker-76153319636.asia-south1.run.app/tasks/reconcile" ^
+     --http-method=POST ^
+     --headers="Content-Type=application/json" ^
+     --message-body="{}" ^
+     --oidc-service-account-email="emlynk-sheet-sync-scheduler@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com" ^
+     --oidc-token-audience="https://emlynk-sheet-sync-worker-76153319636.asia-south1.run.app"
+   ```
+
+---
+
+### 47P.8 Root Dockerfile Reused for Worker Service
+
+#### Problem
+Risk of worker container crashing or running the incorrect application if built without entrypoint awareness.
+
+#### Explanation & Requirement
+The root `Dockerfile` is shared across the entire backend monorepo and defaults to:
+```dockerfile
+CMD ["node", "src/app.js"]
+```
+Building a dedicated Dockerfile for every microservice creates maintenance churn. Reusing the root Dockerfile for `emlynk-sheet-sync-worker` is acceptable and supported, provided that **every deployment command explicitly overrides the container command and arguments**:
+```text
+--command=node
+--args=src/sheetSyncWorker.js
+```
+Omitting these flags causes Cloud Run to start the Express API backend instead of the sheet sync worker.
+
+---
+
 # 48. Current Project Status
 
 ## Completed
@@ -3094,12 +3381,13 @@ Never use incoming request headers to determine public application URLs. Always 
 - Structured vector PDF export via jsPDF with repeated headers and pagination
 
 ### Google Sheet Sync & Worker Architecture
-- One-way DB → Google Sheet operational mirror
-- Dynamic header mapping (41 columns, position-independent)
-- Queue/outbox reconciliation architecture
-- Cloud Run worker (`emlynk-sheet-sync-worker`) running on Google Cloud Run
+- One-way DB → Google Sheet operational mirror (`Emlynk Candidate Operational Mirror`, 41 columns, position-independent)
+- Staged Candidate Form Submissions sync (`Candidate Form Submissions`, 74 columns, isolated outbox)
+- Queue/outbox reconciliation architecture (`sheet_sync_queue` and `candidate_form_sheet_sync`)
+- Cloud Run worker (`emlynk-sheet-sync-worker`) running on Google Cloud Run with `--min-instances=1`
 - Sync Destination dropdown and validation protocol in Admin Settings (`/admin/settings/sheet-sync`)
-- Automated schedule (06:00, 12:00, 18:00 Asia/Colombo)
+- Automated schedule design (06:00, 12:00, 18:00 Asia/Colombo)
+- Consolidated reference: [Docs/GOOGLE_SHEET_INTEGRATION.md](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/GOOGLE_SHEET_INTEGRATION.md)
 
 ---
 
@@ -3109,6 +3397,11 @@ Never use incoming request headers to determine public application URLs. Always 
 
 - **Previous Status**: Live deployment was on hold due to closed billing account.
 - **Current Status**: **RESOLVED**. The Google Cloud billing account was reactivated, payment was completed, billing status was confirmed active (`billingEnabled: true`), Cloud Build succeeded, and the latest worker container image was deployed to Cloud Run.
+
+## Cloud Scheduler Automated Cron — PENDING PROVISIONING
+
+- **Current Status**: Cloud Scheduler API was enabled, but automated jobs are not currently provisioned (`gcloud scheduler jobs list` returned 0 items).
+- **Operational Impact**: None on Candidate Form sync (worker processes due outbox rows continuously via its internal polling loop). Operational Mirror reconciliations can be triggered on demand via Admin Settings "Sync Now" or operator CLI until Cloud Scheduler job is provisioned.
 
 ## Local Direct Supabase DB Connection
 
