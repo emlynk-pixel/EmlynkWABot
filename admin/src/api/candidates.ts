@@ -216,7 +216,8 @@ export type CallLogEntry = {
 export type CandidateActivityKind =
     | "DOCUMENT_RECEIVED" | "DOCUMENT_VERIFIED" | "DOCUMENT_REMOVED"
     | "CANDIDATE_REGISTERED" | "DETAILS_UPDATED" | "ADDITIONAL_DETAILS_UPDATED"
-    | "STAGE_COMPLETED" | "STAGE_REOPENED" | "STAGE_UPDATED";
+    | "STAGE_COMPLETED" | "STAGE_REOPENED" | "STAGE_UPDATED"
+    | "CANDIDATE_FORM_SUBMITTED";
 export type CandidateActivity = {
     activityId: string;
     kind: CandidateActivityKind;
@@ -227,6 +228,10 @@ export type CandidateActivity = {
     variant: string | null;
     stage: CandidateStageKey | null;
     fields: string[];
+    // CANDIDATE_FORM_SUBMITTED only: the kind of share link it came through (null:
+    // no longer on record) and, for a job link, the job's code.
+    formLink?: "SINGLE" | "JOB_GROUP" | null;
+    jobCode?: string | null;
 };
 
 // documentStatus: the candidate's documents now, not when a call was made.
