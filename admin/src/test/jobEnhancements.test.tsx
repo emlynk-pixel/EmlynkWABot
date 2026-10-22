@@ -217,7 +217,7 @@ describe("New job in two steps", () => {
         await user.click(within(dialog).getByRole("checkbox", { name: /ELIGIBLE 3/ }));
         await user.click(within(dialog).getByRole("button", { name: "Create job" }));
         await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({
-            jobTypeId: "t1", clientId: "c1", responsibleAgentId: "a1", vacancies: 2, companyJobId: null, fromCountryCode: "LK",
+            jobTypeId: "t1", jobTypeIds: ["t1"], clientId: "c1", responsibleAgentId: "a1", vacancies: 2, companyJobId: null, fromCountryCode: "LK",
             candidateIds: ["P0000001", "P0000002", "P0000003"],
         }));
         expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
@@ -244,7 +244,7 @@ describe("New job in two steps", () => {
         await user.click(within(dialog).getByRole("button", { name: "Next" }));
         await user.click(await within(dialog).findByRole("checkbox", { name: /ELIGIBLE 2/ }));
         await user.click(within(dialog).getByRole("button", { name: "Back" }));
-        expect((within(dialog).getByLabelText("Job type") as HTMLSelectElement).value).toBe("t1");
+        expect(within(dialog).getByText("Welder")).toBeInTheDocument();
         expect((within(dialog).getByLabelText("Client") as HTMLSelectElement).value).toBe("c1");
         expect((within(dialog).getByLabelText(/From Country/) as HTMLSelectElement).value).toBe("IN");
         expect(within(dialog).getByLabelText(/Vacancies/)).toHaveValue("7");

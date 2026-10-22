@@ -10,6 +10,10 @@ export const JOB_SELECT = Object.freeze({
     id: true, jobCode: true, companyJobId: true, status: true, countryCode: true, fromCountryCode: true, vacancies: true,
     createdAt: true, completedAt: true, cancelledAt: true, cancelReason: true,
     jobType: { select: { id: true, code: true, name: true } },
+    jobTypes: {
+        select: { jobType: { select: { id: true, code: true, name: true } } },
+        orderBy: { createdAt: "asc" },
+    },
     client: { select: { id: true, name: true } },
     responsibleAgent: { select: { id: true, name: true, countryCode: true } },
 });
@@ -17,12 +21,18 @@ export const JOB_SELECT = Object.freeze({
 const iso = (value) => (value ? value.toISOString() : null);
 
 export function jobSummaryView(job) {
+    const types = (job.jobTypes && job.jobTypes.length > 0)
+        ? job.jobTypes.map((link) => (link.jobType ? { id: link.jobType.id, code: link.jobType.code, name: link.jobType.name } : { id: link.id, code: link.code, name: link.name }))
+        : (job.jobType ? [{ id: job.jobType.id, code: job.jobType.code, name: job.jobType.name }] : []);
+    const primary = types[0] ?? (job.jobType ? { id: job.jobType.id, code: job.jobType.code, name: job.jobType.name } : null);
+
     return {
         jobId: job.id,
         jobCode: job.jobCode,
         companyJobId: job.companyJobId ?? null,
         status: job.status,
-        jobType: { id: job.jobType.id, code: job.jobType.code, name: job.jobType.name },
+        jobType: primary,
+        jobTypes: types,
         client: { id: job.client.id, name: job.client.name },
         responsibleAgent: { id: job.responsibleAgent.id, name: job.responsibleAgent.name, countryCode: job.responsibleAgent.countryCode },
         // To Country: the Client's country when the job was created. From Country: null when not recorded.

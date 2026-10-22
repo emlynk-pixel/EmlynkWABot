@@ -39,7 +39,11 @@ const page = (items: JobListItem[], view: "processing" | "completed" | "cancelle
 const details = (base: JobListItem, candidates: JobDetails["candidates"] = []): JobDetails => ({ ...base, createdBy: "Test Admin", candidateCount: candidates.length, candidates });
 const CAND: JobDetails["candidates"][number] = { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", assignedAt: "2026-10-02T05:00:00.000Z", workflowStatus: { code: "JOB_ASSIGNED", label: "Job Assigned" } };
 const OPTIONS: JobOptions = {
-    jobTypes: [{ id: "t1", name: "Welder", code: "WELDER" }],
+    jobTypes: [
+        { id: "t1", name: "Welder", code: "WELDER" },
+        { id: "t2", name: "Plumber", code: "PLUMBER" },
+        { id: "t3", name: "Aluminium Worker", code: "ALUMINIUM_WORKER" },
+    ],
     clients: [{ id: "c1", name: "Acme Construction", agentIds: ["a1"] }],
     agents: [{ id: "a1", name: "Ion Popescu", countryCode: "RO" }],
 };
@@ -161,7 +165,7 @@ describe("New job", () => {
         expect(within(dialog).getByTestId("job-to-country")).toHaveTextContent("Romania");
         await user.click(next);
         await user.click(await within(dialog).findByRole("button", { name: "Create job" }));
-        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", clientId: "c1", responsibleAgentId: "a1", vacancies: 5, companyJobId: null, fromCountryCode: "RO", candidateIds: [] }));
+        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", jobTypeIds: ["t1"], clientId: "c1", responsibleAgentId: "a1", vacancies: 5, companyJobId: null, fromCountryCode: "RO", candidateIds: [] }));
         expect(await screen.findByRole("heading", { name: /JOB-2026-000005/ }, RENDER_STEP)).toBeInTheDocument();
     });
 
@@ -431,6 +435,118 @@ describe("Client Job ID", () => {
         await user.type(within(dialog).getByLabelText(/Client Job ID/), "Y26S01");
         await user.click(within(dialog).getByRole("button", { name: "Next" }));
         await user.click(await within(dialog).findByRole("button", { name: "Create job" }));
-        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", clientId: "c1", responsibleAgentId: "a1", vacancies: null, companyJobId: "Y26S01", fromCountryCode: "RO", candidateIds: [] }));
+        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", jobTypeIds: ["t1"], clientId: "c1", responsibleAgentId: "a1", vacancies: null, companyJobId: "Y26S01", fromCountryCode: "RO", candidateIds: [] }));
     });
 });
+
+describe("Multiple Job Types UI", () => {
+    const multiTypeJob = job(10, "PROCESSING", {
+        jobTypes: [
+            { id: "t3", code: "ALUMINIUM_WORKER", name: "Aluminium Worker" },
+            { id: "t1", code: "WELDER", name: "Welder" },
+            { id: "t2", code: "PLUMBER", name: "Plumber" },
+        ],
+    });
+
+    test("Jobs list displays multiple types cleanly with +N indicator", async () => {
+        backend("MANAGER", {
+            "GET /api/admin/jobs": { status: 200, body: page([multiTypeJob]) },
+        });
+        renderApp("/jobs");
+        const rows = within(await table()).getAllByRole("row");
+        const dataRow = rows[1];
+        expect(within(dataRow).getByText(/Aluminium Worker, Welder/)).toBeInTheDocument();
+        expect(within(dataRow).getByText("+1")).toBeInTheDocument();
+        expect(within(dataRow).getByTitle("Aluminium Worker, Welder, Plumber")).toBeInTheDocument();
+    });
+
+    test("Job Details displays all Job Types as chips and allows Edit for Manager", async () => {
+        const { calls } = backend("MANAGER", {
+            [`GET /api/admin/jobs/${multiTypeJob.jobId}`]: { status: 200, body: details(multiTypeJob) },
+            [`PUT /api/admin/jobs/${multiTypeJob.jobId}`]: { status: 200, body: details(multiTypeJob) },
+        });
+        renderApp(`/jobs/${multiTypeJob.jobId}`);
+        const user = userEvent.setup();
+        const detailsTab = await screen.findByRole("tab", { name: "Job Details" }, RENDER_STEP);
+        expect(detailsTab).toHaveAttribute("aria-selected", "true");
+
+        // Displays all 3 chips
+        expect(screen.getByText("Aluminium Worker")).toBeInTheDocument();
+        expect(screen.getByText("Welder")).toBeInTheDocument();
+        expect(screen.getByText("Plumber")).toBeInTheDocument();
+
+        // Edit button
+        const editBtn = screen.getByRole("button", { name: "Edit Job types" });
+        await user.click(editBtn);
+
+        const dialog = await screen.findByRole("dialog", { name: /Edit Job types/ });
+        expect(within(dialog).getByText("Aluminium Worker")).toBeInTheDocument();
+        expect(within(dialog).getByText("Welder")).toBeInTheDocument();
+        expect(within(dialog).getByText("Plumber")).toBeInTheDocument();
+
+        // Remove Plumber chip
+        const removePlumber = within(dialog).getByRole("button", { name: "Remove Plumber" });
+        await user.click(removePlumber);
+        expect(within(dialog).queryByRole("button", { name: "Remove Plumber" })).not.toBeInTheDocument();
+
+        // Save
+        await user.click(within(dialog).getByRole("button", { name: "Save" }));
+        await vi.waitFor(() => {
+            const putCall = calls.find((c) => c.method === "PUT");
+            expect(putCall).toBeDefined();
+            expect(putCall!.body).toEqual({ jobTypeId: "t3", jobTypeIds: ["t3", "t1"] });
+        });
+    });
+
+    test("Job Details does not show Edit Job Types to Analyst", async () => {
+        backend("ANALYST", {
+            [`GET /api/admin/jobs/${multiTypeJob.jobId}`]: { status: 200, body: details(multiTypeJob) },
+        });
+        renderApp(`/jobs/${multiTypeJob.jobId}`);
+        await screen.findByRole("tab", { name: "Job Details" }, RENDER_STEP);
+        expect(screen.queryByRole("button", { name: "Edit Job types" })).not.toBeInTheDocument();
+    });
+
+    test("New Job modal allows multi-selecting job types and removing chips", async () => {
+        const created = details(job(11, "PROCESSING", { candidateCount: 0 }));
+        const { calls } = backend("MANAGER", {
+            ...NO_ELIGIBLE,
+            "POST /api/admin/jobs": { status: 201, body: created },
+            [`GET /api/admin/jobs/${created.jobId}`]: { status: 200, body: created },
+        });
+        renderApp("/jobs");
+        const user = userEvent.setup();
+        await table();
+        await user.click(screen.getByRole("button", { name: "New job" }));
+        const dialog = await screen.findByRole("dialog", { name: "New job" });
+
+        // Select t1 (Welder)
+        await user.selectOptions(await within(dialog).findByLabelText("Job type"), "t1");
+        expect(within(dialog).getByText("Welder")).toBeInTheDocument();
+
+        // Select t2 (Plumber)
+        await user.selectOptions(within(dialog).getByLabelText("Job type"), "t2");
+        expect(within(dialog).getByText("Plumber")).toBeInTheDocument();
+
+        // Remove Welder chip
+        await user.click(within(dialog).getByRole("button", { name: "Remove Welder" }));
+        expect(within(dialog).queryByRole("button", { name: "Remove Welder" })).not.toBeInTheDocument();
+
+        // Add Aluminium Worker (t3)
+        await user.selectOptions(within(dialog).getByLabelText("Job type"), "t3");
+        expect(within(dialog).getByText("Aluminium Worker")).toBeInTheDocument();
+
+        await user.selectOptions(within(dialog).getByLabelText("Client"), "c1");
+        await user.type(within(dialog).getByLabelText(/Vacancies/), "3");
+        await user.click(within(dialog).getByRole("button", { name: "Next" }));
+        await user.click(await within(dialog).findByRole("button", { name: "Create job" }));
+
+        await vi.waitFor(() => {
+            const postCall = calls.find((c) => c.method === "POST");
+            expect(postCall).toBeDefined();
+            expect(postCall!.body.jobTypeIds).toEqual(["t2", "t3"]);
+            expect(postCall!.body.jobTypeId).toBe("t2");
+        });
+    });
+});
+

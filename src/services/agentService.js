@@ -334,21 +334,33 @@ export const JOB_ROW_SELECT = Object.freeze({
     id: true, jobCode: true, companyJobId: true, status: true, createdAt: true, completedAt: true, cancelledAt: true,
     client: { select: { id: true, name: true } },
     jobType: { select: { id: true, name: true } },
+    jobTypes: {
+        select: { jobType: { select: { id: true, name: true } } },
+        orderBy: { createdAt: "asc" },
+    },
     responsibleAgent: { select: { id: true, name: true } },
 });
 
-export const jobRow = (job) => ({
-    jobId: job.id,
-    jobCode: job.jobCode,
-    companyJobId: job.companyJobId ?? null,
-    status: job.status,
-    client: { id: job.client.id, name: job.client.name },
-    jobType: { id: job.jobType.id, name: job.jobType.name },
-    responsibleAgent: { id: job.responsibleAgent.id, name: job.responsibleAgent.name },
-    createdAt: iso(job.createdAt),
-    completedAt: iso(job.completedAt),
-    cancelledAt: iso(job.cancelledAt),
-});
+export const jobRow = (job) => {
+    const types = (job.jobTypes && job.jobTypes.length > 0)
+        ? job.jobTypes.map((link) => (link.jobType ? { id: link.jobType.id, name: link.jobType.name } : { id: link.id, name: link.name }))
+        : (job.jobType ? [{ id: job.jobType.id, name: job.jobType.name }] : []);
+    const primary = types[0] ?? (job.jobType ? { id: job.jobType.id, name: job.jobType.name } : null);
+
+    return {
+        jobId: job.id,
+        jobCode: job.jobCode,
+        companyJobId: job.companyJobId ?? null,
+        status: job.status,
+        client: { id: job.client.id, name: job.client.name },
+        jobType: primary,
+        jobTypes: types,
+        responsibleAgent: { id: job.responsibleAgent.id, name: job.responsibleAgent.name },
+        createdAt: iso(job.createdAt),
+        completedAt: iso(job.completedAt),
+        cancelledAt: iso(job.cancelledAt),
+    };
+};
 
 export const MAX_DETAIL_JOBS = MAX_JOBS_SHOWN;
 

@@ -2,10 +2,11 @@ import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError } from "../api/client";
 import { listCandidates, type CandidateListItem } from "../api/candidates";
-import { addCandidateToJob, cancelJob, completeJob, getJob, removeCandidateFromJob, updateJob, type JobDetails } from "../api/jobs";
+import { addCandidateToJob, cancelJob, completeJob, createJobType, getJob, getJobOptions, removeCandidateFromJob, updateJob, type JobDetails, type JobOptions } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
-import { canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
+import { canCreateJobTypes, canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
 import { ActionDialog, ConfirmDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
+import { JobTypesMultiSelect } from "./JobsPage";
 import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 import { formatDate, formatDateTime } from "../components/format";
@@ -41,7 +42,7 @@ export function JobDetailsPage() {
     return <JobDetailsView />;
 }
 
-type Dialog = "add" | "complete" | "cancel" | "companyJobId" | "fromCountry" | { remove: JobDetails["candidates"][number] } | null;
+type Dialog = "add" | "complete" | "cancel" | "companyJobId" | "fromCountry" | "jobTypes" | { remove: JobDetails["candidates"][number] } | null;
 type Tab = "details" | "candidates";
 
 const tabClass = (active: boolean) =>
@@ -103,7 +104,18 @@ function JobDetailsView() {
                                 {job.companyJobId ?? <span className="text-ink-muted">{NO_COMPANY_JOB_ID}</span>}
                                 {canManage && <button type="button" onClick={() => setDialog("companyJobId")} aria-label={`${job.companyJobId ? "Change" : "Add"} Client Job ID`} className="ml-2 text-label-md text-primary hover:underline">{job.companyJobId ? "Change" : "Add"}</button>}
                             </Detail>
-                            <Detail label="Job type">{job.jobType.name}</Detail>
+                            <Detail label={job.jobTypes && job.jobTypes.length > 1 ? "Job types" : "Job type"}>
+                                <div className="flex flex-wrap items-center gap-1.5" data-testid="job-details-types">
+                                    {((job.jobTypes && job.jobTypes.length > 0) ? job.jobTypes : (job.jobType ? [job.jobType] : [])).map((t) => (
+                                        <span key={t.id} className="inline-flex items-center rounded border border-border bg-canvas-subtle px-2 py-0.5 text-label-md font-medium text-ink">
+                                            {t.name}
+                                        </span>
+                                    ))}
+                                    {canManage && processing && (
+                                        <button type="button" onClick={() => setDialog("jobTypes")} aria-label="Edit Job types" className="ml-1 text-label-md text-primary hover:underline">Edit</button>
+                                    )}
+                                </div>
+                            </Detail>
                             <Detail label="To Country">{jobCountry(job.countryCode)}</Detail>
                             <Detail label="From Country">
                                 <span className={job.fromCountryCode ? undefined : "text-ink-muted"}>{jobCountry(job.fromCountryCode)}</span>
@@ -174,6 +186,7 @@ function JobDetailsView() {
 
             {token && dialog === "fromCountry" && <FromCountryDialog token={token} job={job} onDone={changed} onClose={() => setDialog(null)} />}
             {token && dialog === "companyJobId" && <CompanyJobIdDialog token={token} job={job} onDone={changed} onClose={() => setDialog(null)} />}
+            {token && dialog === "jobTypes" && <EditJobTypesDialog token={token} job={job} onDone={changed} onClose={() => setDialog(null)} />}
             {token && dialog === "add" && <AddCandidateDialog token={token} job={job} onChanged={setUpdated} onClose={() => setDialog(null)} />}
             {token && dialog === "complete" && (
                 <ConfirmDialog
@@ -209,6 +222,69 @@ function JobDetailsView() {
                 </ConfirmDialog>
             )}
         </section>
+    );
+}
+
+function EditJobTypesDialog({ token, job, onDone, onClose }: { token: string; job: JobDetails; onDone: (job: JobDetails) => void; onClose: () => void }) {
+    const { user } = useAuth();
+    const canAddJobType = canCreateJobTypes(user);
+    const options = useAdminResource("job-options", (t, signal) => getJobOptions(t, signal));
+    const initialIds = (job.jobTypes && job.jobTypes.length > 0)
+        ? job.jobTypes.map((t) => t.id)
+        : (job.jobType ? [job.jobType.id] : []);
+    const [selectedIds, setSelectedIds] = useState<string[]>(initialIds);
+    const [created, setCreated] = useState<JobOptions["jobTypes"]>([]);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const mergedOptions = [...(options.data?.jobTypes ?? []), ...created];
+    const canSave = selectedIds.length > 0;
+
+    const submit = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!canSave) return;
+        setBusy(true);
+        setError(null);
+        try {
+            const updated = await updateJob(token, job.jobId, {
+                jobTypeIds: selectedIds,
+                jobTypeId: selectedIds[0],
+            });
+            onDone(updated);
+        } catch (caught) {
+            setError(message(caught));
+            setBusy(false);
+        }
+    };
+
+    return (
+        <ActionDialog title={`Edit Job types for ${job.jobCode}`} busy={busy} onClose={onClose}>
+            {options.status === "loading" && !options.data && <LoadingState label="Loading…" />}
+            {options.status === "error" && <ErrorState message={options.error.message} onRetry={options.reload} />}
+            {options.data && (
+                <form onSubmit={submit} className="space-y-3">
+                    <p className="text-body-sm text-ink-muted">Add or remove Job types associated with this Job. At least one Job type is required.</p>
+                    <JobTypesMultiSelect
+                        label="Job types"
+                        value={selectedIds}
+                        onChange={setSelectedIds}
+                        disabled={busy}
+                        canAdd={canAddJobType}
+                        options={mergedOptions}
+                        onAdd={async (name) => {
+                            const row = await createJobType(token, name);
+                            setCreated((prev) => [...prev, row]);
+                            setSelectedIds((prev) => [...prev, row.id]);
+                        }}
+                    />
+                    <DialogError message={error} />
+                    <div className="mt-4 flex justify-end gap-2">
+                        <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Cancel</button>
+                        <button type="submit" disabled={busy || !canSave} className={primaryButton}>{busy ? "Saving…" : "Save"}</button>
+                    </div>
+                </form>
+            )}
+        </ActionDialog>
     );
 }
 

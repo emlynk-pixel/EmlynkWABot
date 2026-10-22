@@ -175,7 +175,23 @@ function JobsView() {
                                             <div className="text-label-sm text-ink-muted">{jobDateNote(job)}</div>
                                         </td>
                                         <td className={tableCell}>{job.companyJobId ?? <span className="text-ink-muted">{NO_COMPANY_JOB_ID}</span>}</td>
-                                        <td className={tableCell}>{job.jobType.name}</td>
+                                        <td className={tableCell}>
+                                            {(() => {
+                                                const types = (job.jobTypes && job.jobTypes.length > 0)
+                                                    ? job.jobTypes
+                                                    : (job.jobType ? [job.jobType] : []);
+                                                if (types.length === 0) return <span className="text-ink-muted">—</span>;
+                                                if (types.length === 1) return <span>{types[0].name}</span>;
+                                                if (types.length === 2) return <span>{types.map((t) => t.name).join(", ")}</span>;
+                                                const shown = types.slice(0, 2).map((t) => t.name).join(", ");
+                                                const remaining = types.length - 2;
+                                                return (
+                                                    <span title={types.map((t) => t.name).join(", ")}>
+                                                        {shown} <span className="inline-block rounded bg-canvas-subtle px-1.5 py-0.5 text-label-sm font-medium text-ink-muted">+{remaining}</span>
+                                                    </span>
+                                                );
+                                            })()}
+                                        </td>
                                         <td className={tableCell}>{jobCountry(job.countryCode)}</td>
                                         <td className={tableCell}>{jobCountry(job.fromCountryCode)}</td>
                                         <td className={tableCell}>{job.responsibleAgent.name}</td>
@@ -205,59 +221,139 @@ function JobsView() {
     );
 }
 
-// A reference list (job type) with an inline "add new" row, so
-// the first jobs can be created without a separate management screen.
-function ReferenceSelect({ label, value, onChange, options, disabled, adding, onAdd, extraField, canAdd = true }: {
-    label: string;
-    value: string;
-    onChange: (id: string) => void;
-    options: { id: string; label: string }[];
-    disabled: boolean;
-    adding: string;
-    // Whether the "add new" row is offered (creating a job type is ADMIN / MANAGER only).
+// Multi-select control for Job Types with chips, inline adding, and duplicate prevention.
+export function JobTypesMultiSelect({
+    label = "Job type",
+    value,
+    onChange,
+    options,
+    disabled = false,
+    adding = "Add job type",
+    canAdd = true,
+    onAdd,
+}: {
+    label?: string;
+    value: string[];
+    onChange: (ids: string[]) => void;
+    options: { id: string; name?: string; label?: string }[];
+    disabled?: boolean;
+    adding?: string;
     canAdd?: boolean;
-    onAdd: (name: string, extra: string) => Promise<void>;
-    extraField?: { label: string; placeholder: string };
+    onAdd?: (name: string) => Promise<void>;
 }) {
     const id = useId();
-    const [open, setOpen] = useState(false);
+    const [openAdd, setOpenAdd] = useState(false);
     const [name, setName] = useState("");
-    const [extra, setExtra] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const add = async () => {
+
+    const normalizedOptions = options.map((o) => ({ id: o.id, name: o.name ?? o.label ?? o.id }));
+    const available = normalizedOptions.filter((o) => !value.includes(o.id));
+    const selected = value.map((selectedId) => normalizedOptions.find((o) => o.id === selectedId) ?? { id: selectedId, name: selectedId });
+
+    const addType = async () => {
+        if (!onAdd || !name.trim()) return;
         setBusy(true);
         setError(null);
         try {
-            await onAdd(name.trim(), extra.trim());
-            setOpen(false);
+            await onAdd(name.trim());
+            setOpenAdd(false);
             setName("");
-            setExtra("");
         } catch (caught) {
             setError(message(caught));
         } finally {
             setBusy(false);
         }
     };
+
     return (
         <div>
             <div className="flex items-center justify-between">
-                <label htmlFor={id} className="text-label-md text-ink">{label}</label>
-                {canAdd && <button type="button" onClick={() => setOpen((v) => !v)} disabled={disabled} className="text-label-sm text-primary hover:underline">{open ? "Cancel" : adding}</button>}
+                <label htmlFor={id} className="text-label-md text-ink">
+                    {label} <span className="text-critical">*</span>
+                </label>
+                {canAdd && onAdd && (
+                    <button
+                        type="button"
+                        onClick={() => setOpenAdd((v) => !v)}
+                        disabled={disabled || busy}
+                        className="text-label-sm text-primary hover:underline"
+                    >
+                        {openAdd ? "Cancel" : adding}
+                    </button>
+                )}
             </div>
-            {open ? (
+
+            {openAdd ? (
                 <div className="mt-1 space-y-2 rounded border border-border bg-canvas p-2">
-                    <input aria-label={`${label} name`} value={name} maxLength={120} placeholder="Name" onChange={(event) => setName(event.target.value)} className={inputClass()} />
-                    {extraField && <input aria-label={extraField.label} value={extra} maxLength={2} placeholder={extraField.placeholder} onChange={(event) => setExtra(event.target.value.toUpperCase())} className={inputClass()} />}
-                    <button type="button" disabled={busy || !name.trim() || (Boolean(extraField) && extra.trim().length !== 2)} onClick={add} className={primaryButton}>{`Save ${label.toLowerCase()}`}</button>
+                    <input
+                        aria-label="New job type name"
+                        value={name}
+                        maxLength={120}
+                        placeholder="Name"
+                        disabled={busy}
+                        onChange={(event) => setName(event.target.value)}
+                        className={inputClass()}
+                    />
+                    <button
+                        type="button"
+                        disabled={busy || !name.trim()}
+                        onClick={addType}
+                        className={primaryButton}
+                    >
+                        {busy ? "Saving…" : "Save job type"}
+                    </button>
                     <DialogError message={error} />
                 </div>
-            ) : (
-                <select id={id} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className={`${inputClass()} mt-1`}>
-                    <option value="">Select…</option>
-                    {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-                </select>
-            )}
+            ) : null}
+
+            {/* Selected Job Types chips */}
+            <div className="mt-1.5 flex min-h-[36px] flex-wrap items-center gap-1.5 rounded border border-border bg-canvas p-1.5" data-testid="selected-job-types">
+                {selected.length === 0 ? (
+                    <span className="text-label-sm text-ink-muted">Select at least one job type</span>
+                ) : (
+                    selected.map((item) => (
+                        <span
+                            key={item.id}
+                            className="inline-flex items-center gap-1 rounded-md border border-border bg-canvas-subtle px-2 py-0.5 text-label-md font-medium text-ink"
+                        >
+                            <span>{item.name}</span>
+                            {!disabled && (
+                                <button
+                                    type="button"
+                                    onClick={() => onChange(value.filter((valId) => valId !== item.id))}
+                                    aria-label={`Remove ${item.name}`}
+                                    className="ml-0.5 rounded text-ink-muted hover:text-ink focus:outline-none"
+                                >
+                                    <Icon name="close" className="size-3.5" />
+                                </button>
+                            )}
+                        </span>
+                    ))
+                )}
+            </div>
+
+            {/* Dropdown to add more */}
+            <select
+                id={id}
+                value=""
+                aria-label={label}
+                disabled={disabled || busy || available.length === 0}
+                onChange={(event) => {
+                    const selectedVal = event.target.value;
+                    if (selectedVal && !value.includes(selectedVal)) {
+                        onChange([...value, selectedVal]);
+                    }
+                }}
+                className={`${inputClass()} mt-1.5`}
+            >
+                <option value="">{available.length === 0 ? "All available job types selected" : "Select…"}</option>
+                {available.map((option) => (
+                    <option key={option.id} value={option.id}>
+                        {option.name}
+                    </option>
+                ))}
+            </select>
         </div>
     );
 }
@@ -276,7 +372,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     const options = useAdminResource("job-options", (t, signal) => getJobOptions(t, signal));
     const [step, setStep] = useState<Step>(1);
     const [created, setCreated] = useState<Partial<JobOptions>>({});
-    const [jobTypeId, setJobTypeId] = useState("");
+    const [jobTypeIds, setJobTypeIds] = useState<string[]>([]);
     const [clientId, setClientId] = useState("");
     const [fromCountryCode, setFromCountryCode] = useState(DEFAULT_FROM_COUNTRY);
     const [vacancies, setVacancies] = useState("");
@@ -304,7 +400,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     const agentField = useId();
     const vacanciesNumber = vacancies.trim() === "" ? null : Number(vacancies);
     const vacanciesValid = vacanciesNumber === null || (Number.isInteger(vacanciesNumber) && vacanciesNumber >= 1 && vacanciesNumber <= 100000);
-    const ready = Boolean(jobTypeId && clientId && agent && fromCountryCode) && vacanciesValid;
+    const ready = Boolean(jobTypeIds.length > 0 && clientId && agent && fromCountryCode) && vacanciesValid;
 
     const next = (event: FormEvent) => {
         event.preventDefault();
@@ -324,8 +420,14 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
         setError(null);
         try {
             const job = await createJob(token, {
-                jobTypeId, clientId, responsibleAgentId: agent?.id, vacancies: vacanciesNumber, companyJobId: companyJobId.trim() || null,
-                fromCountryCode, candidateIds: [...selected.keys()],
+                jobTypeId: jobTypeIds[0],
+                jobTypeIds,
+                clientId,
+                responsibleAgentId: agent?.id,
+                vacancies: vacanciesNumber,
+                companyJobId: companyJobId.trim() || null,
+                fromCountryCode,
+                candidateIds: [...selected.keys()],
             });
             onCreated(job.jobId);
         } catch (caught) {
@@ -347,13 +449,18 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
             {options.status === "error" && <ErrorState message={options.error.message} onRetry={options.reload} />}
             {options.data && step === 1 && (
                 <form onSubmit={next} className="space-y-3">
-                    <ReferenceSelect
-                        label="Job type" value={jobTypeId} onChange={setJobTypeId} disabled={busy} adding="Add job type" canAdd={canAddJobType}
-                        options={merged("jobTypes").map((o) => ({ id: o.id, label: o.name }))}
+                    <JobTypesMultiSelect
+                        label="Job type"
+                        value={jobTypeIds}
+                        onChange={setJobTypeIds}
+                        disabled={busy}
+                        adding="Add job type"
+                        canAdd={canAddJobType}
+                        options={merged("jobTypes").map((o) => ({ id: o.id, name: o.name }))}
                         onAdd={async (name) => {
                             const row = await createJobType(token, name);
                             setCreated((c) => ({ ...c, jobTypes: [...(c.jobTypes ?? []), row] }));
-                            setJobTypeId(row.id);
+                            setJobTypeIds((prev) => [...prev, row.id]);
                         }}
                     />
                     <div>

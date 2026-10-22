@@ -54,7 +54,12 @@ async function lockProcessingJob(tx, jobId) {
 export async function getJobGroupShareStatus({ db, jobId, now = new Date() }) {
     const job = await db.job.findUnique({
         where: { id: jobId },
-        select: { id: true, jobCode: true, companyJobId: true, status: true, client: { select: { name: true } }, jobType: { select: { name: true } } },
+        select: {
+            id: true, jobCode: true, companyJobId: true, status: true,
+            client: { select: { name: true } },
+            jobType: { select: { name: true } },
+            jobTypes: { select: { jobType: { select: { name: true } } }, orderBy: { createdAt: "asc" } },
+        },
     });
     if (!job) throw new CandidateError(404, "JOB_NOT_FOUND", "Job not found");
     const [link, members] = await Promise.all([
@@ -73,7 +78,12 @@ export async function getJobGroupShareStatus({ db, jobId, now = new Date() }) {
         jobCode: job.jobCode,
         companyJobId: job.companyJobId ?? null,
         client: job.client.name,
-        jobType: job.jobType.name,
+        jobType: (job.jobTypes && job.jobTypes.length > 0)
+            ? job.jobTypes.map((t) => t.jobType?.name || t.name).join(", ")
+            : (job.jobType?.name ?? ""),
+        jobTypes: (job.jobTypes && job.jobTypes.length > 0)
+            ? job.jobTypes.map((t) => t.jobType?.name || t.name)
+            : (job.jobType ? [job.jobType.name] : []),
         jobStatus: job.status,
         state: active ? "OPEN" : "NONE",
         counts: { candidates: members.length, submitted, remaining: members.length - submitted },
