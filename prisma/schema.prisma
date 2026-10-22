@@ -141,6 +141,7 @@ model Candidate {
   formAccess        CandidateFormAccess?
   formResponse      CandidateFormResponse?
   formSnapshot      CandidateFormPrefillSnapshot?
+  formDraft         CandidateFormDraft?
   // Job Management: every job the candidate was assigned to (history). The
   // row with is_active = true is the current PROCESSING job. Relation only.
   jobAssignments    JobCandidate[]
@@ -292,6 +293,23 @@ model CandidateFormFieldReview {
   @@id([passportId, fieldKey])
   @@index([reviewedById])
   @@map("candidate_form_field_review")
+}
+
+// The candidate's saved progress through the Candidate Form (candidateFormDataService.js
+// saveCandidateFormDraft): the answers of every step they passed with Next, one row per
+// candidate. `answers` holds the form's groups ("basic", "contact", ...) exactly as they
+// were validated; a step is saved when all of its groups are present. It is a draft, never
+// a submission: candidate_form_response and candidate_form_access are untouched until the
+// final submit, which also deletes this row. Migration 20261027120000_candidate_form_draft.
+model CandidateFormDraft {
+  passportId String   @id @map("passport_id")
+  answers    Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @default(now()) @map("updated_at")
+
+  candidate Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("candidate_form_draft")
 }
 
 // What the form was prefilled with from the existing records, taken once at

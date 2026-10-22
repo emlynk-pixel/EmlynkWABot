@@ -281,6 +281,20 @@ h3, h4 { font-size: 1.0625rem; line-height: 1.4; margin: 0 0 12px; }
 .form-intro { margin-bottom: 18px; }
 .form-intro .lead { margin-bottom: 0; }
 
+/* The "all fields required / N/A" notice stays in view below the sticky header while the form
+   scrolls. Its own opaque block (the page colour) keeps the fields from showing through. The
+   offsets are measured by the page (--site-header-h, --form-notice-h; the fallbacks are the
+   usual sizes). */
+.sticky-notice {
+    position: sticky;
+    top: var(--site-header-h, 57px);
+    z-index: 50;
+    margin: 0 0 12px;
+    padding: 6px 0;
+    background: var(--bg);
+}
+.sticky-notice .notice { margin: 0; }
+
 .progress-block { margin-bottom: 18px; }
 .progress-text { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 0.875rem; color: var(--muted); margin-bottom: 8px; }
 .progress-step { font-weight: 600; color: var(--ink); }
@@ -671,10 +685,9 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 @media (min-width: 1024px) {
     /* The steps beside the form, with their names. */
-    .candidate-form { display: grid; grid-template-columns: 270px minmax(0, 1fr); column-gap: 28px; align-items: start; }
-    .form-intro { grid-column: 1 / -1; }
-    /* progress-block top offset accounts for the sticky header (approx 57px) + breathing room */
-    .progress-block { position: sticky; top: 73px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+    .form-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); column-gap: 28px; align-items: start; }
+    /* progress-block top offset: the sticky header + the sticky notice + breathing room */
+    .progress-block { position: sticky; top: calc(var(--site-header-h, 57px) + var(--form-notice-h, 0px) + 28px); padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
     .step-list { display: flex; flex-direction: column; gap: 2px; }
     .step-list button, .step-list .stage { flex-direction: row; gap: 10px; padding: 4px 8px 4px 2px; font-size: 0.9375rem; text-align: left; }
     .step-list li.current button { background: var(--primary-soft); }

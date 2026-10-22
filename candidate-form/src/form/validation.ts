@@ -1,5 +1,5 @@
 import type { MessageKey, MessageParams } from "../i18n/translations";
-import { isNotApplicable, showsOtherJobCategory, showsSpouse, type CandidateFormData, type FormGroup } from "./model";
+import { NOT_APPLICABLE_FIELDS, isNotApplicable, isNotApplicableFor, showsOtherJobCategory, showsSpouse, type CandidateFormData, type FormGroup } from "./model";
 import { CIVIL_STATUS_OPTIONS, ENGLISH_LEVELS, JOB_CATEGORIES, SEX_OPTIONS, SHIRT_SIZES, jobCategoryChoices } from "./options";
 
 // The form's checks, done before the candidate moves on (Next) and again for
@@ -24,34 +24,12 @@ const PASSPORT_PATTERN = /^[A-Z0-9]{1,20}$/;
 const SIZE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ./-]{0,9}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-// "N/A": the answer for a field that does not apply to the candidate (no
-// other names, no second phone, no children, ...). Any letter case is accepted
-// and sent as "N/A" (model.ts). Only the fields below take it; everywhere
-// else (names, addresses, sizes, the guardian, dates, ...) a real answer is
-// needed and "N/A" is refused. The server keeps the same list
-// (candidateFormDataService.js NOT_APPLICABLE_FIELDS).
-export const NOT_APPLICABLE_FIELDS: ReadonlySet<string> = new Set([
-    "basic.otherNames",
-    "contact.city",
-    "contact.alternativePhone",
-    "qualifications.experience",
-    "qualifications.otherSkills1",
-    "qualifications.otherSkills2",
-    // A parent who does not apply (unknown, not in the candidate's life): "N/A" as the name;
-    // then that parent's other answers are not needed. A parent may have no passport.
-    "family.father.name",
-    "family.father.surname",
-    "family.father.passportNumber",
-    "family.mother.name",
-    "family.mother.surname",
-    "family.mother.passportNumber",
-    // A married candidate's spouse exists: only the passport may be "N/A".
-    "family.spouse.passportNumber",
-    "family.child1",
-    "family.child2",
-    "family.child3",
-]);
-const naAllowed = (path: string, value: string) => NOT_APPLICABLE_FIELDS.has(path) && isNotApplicable(value);
+// "N/A" (model.ts: NOT_APPLICABLE_FIELDS, isNotApplicableFor): the answer for a field that does
+// not apply to the candidate (no other names, no second phone, no children, ...). Only those
+// fields take it; everywhere else (names, addresses, sizes, the guardian, dates, ...) a real
+// answer is needed and "N/A" is refused. The server keeps the same list and rules.
+export { NOT_APPLICABLE_FIELDS };
+const naAllowed = (path: string, value: string) => NOT_APPLICABLE_FIELDS.has(path) && isNotApplicableFor(path, value);
 
 // Today in Sri Lanka (YYYY-MM-DD).
 export function todayInSriLanka(now: Date = new Date()): string {
@@ -175,7 +153,7 @@ export function errorsIn(errors: FormErrors, groups: readonly FormGroup[]): Form
 }
 
 // Whether a parent applies: "N/A" as the name says they do not.
-export const parentApplies = (data: CandidateFormData, who: "father" | "mother") => !isNotApplicable(data.family[who].name);
+export const parentApplies = (data: CandidateFormData, who: "father" | "mother") => !isNotApplicableFor(`family.${who}.name`, data.family[who].name);
 
 const PERSON_FIELDS = ["name", "surname", "passportNumber", "birthDate"] as const;
 const CHILDREN = ["child1", "child2", "child3"] as const;
@@ -211,7 +189,7 @@ export function requiredPaths(data: CandidateFormData): string[] {
     }
     for (let i = 1; i < CHILDREN.length; i += 1) {
         const before = data.family[CHILDREN[i - 1]];
-        if (!before.trim() || isNotApplicable(before)) for (const later of CHILDREN.slice(i)) skip.add(`family.${later}`);
+        if (!before.trim() || isNotApplicableFor(`family.${CHILDREN[i - 1]}`, before)) for (const later of CHILDREN.slice(i)) skip.add(`family.${later}`);
     }
     return visiblePaths(data).filter((path) => !skip.has(path));
 }

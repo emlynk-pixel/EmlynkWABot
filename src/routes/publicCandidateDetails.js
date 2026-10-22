@@ -5,7 +5,7 @@ import { isUsableTokenSecret, parseCandidateFormOrigin } from "../config/candida
 import { createPostgresRateLimitStore } from "../middleware/postgresRateLimitStore.js";
 import { issueCandidateFormToken, passportReference } from "../services/candidateFormTokenService.js";
 import { ALREADY_SUBMITTED_MESSAGE, parseVerifyBody, VERIFY_FAILED_MESSAGE, verifyFormLinkAccess } from "../services/candidateFormVerificationService.js";
-import { loadCandidateForm, parseSubmission, submitCandidateForm } from "../services/candidateFormDataService.js";
+import { loadCandidateForm, parseDraftBody, parseSubmission, saveCandidateFormDraft, submitCandidateForm } from "../services/candidateFormDataService.js";
 import { CandidateError } from "../services/candidateService.js";
 import { activeJobTypeNames } from "../services/jobTypeCatalog.js";
 import { createRequireCandidateFormToken } from "../middleware/requireCandidateFormToken.js";
@@ -19,6 +19,7 @@ import { resolveDb } from "../utils/resolveClients.js";
 //   POST /verify   share-link secret + Passport + NIC -> short-lived candidate
 //                  token (Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md)
 //   POST /form     the candidate's identity (read-only) and the prefill
+//   POST /draft    one step's answers, saved when the candidate clicks Next
 //   POST /submit   the answers, once; then the form is locked for good
 // /form and /submit take the candidate ONLY from the token
 // (middleware/requireCandidateFormToken.js). Everything is POST, so CORS
@@ -170,6 +171,25 @@ export function createPublicCandidateDetailsRouter({
 
     // The answers, once. 409 after the form was submitted (by this request's
     // twin, another device, or earlier).
+    // Saves the answers of one step (Next). The candidate and the lock version come only from the
+    // token; a submitted form is refused (409) by requireSession. Validated with the submission's rules.
+    router.post("/draft", notAvailable, answersJson, requireSession, respond(async (req, res) => {
+        const client = await resolveDb(db);
+        const parsed = parseDraftBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ message: INVALID_ANSWERS_MESSAGE, errors: parsed.errors.map(({ field, code }) => ({ field, code, message: code })) });
+        }
+        const { passportId, version } = req.candidateForm;
+        const result = await saveCandidateFormDraft({
+            db: client, passportId, version, step: parsed.step, groups: parsed.groups, answers: parsed.answers,
+            jobCategories: await activeJobTypeNames(client), now: now(),
+        });
+        if (result.errors) {
+            return res.status(400).json({ message: INVALID_ANSWERS_MESSAGE, errors: result.errors.map(({ field, code }) => ({ field, code, message: code })) });
+        }
+        return res.json({ savedSteps: result.savedSteps, savedAt: result.savedAt });
+    }));
+
     router.post("/submit", notAvailable, answersJson, requireSubmitSession, respond(async (req, res) => {
         const client = await resolveDb(db);
         // The job category must be one of the job types active NOW (Settings > Job Types).
