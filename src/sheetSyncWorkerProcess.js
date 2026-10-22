@@ -39,7 +39,7 @@ export function createOidcVerifier({ audience, invoker, client }) {
 }
 
 // requestReconcile() -> { runId, status, created }; verifyScheduler: from
-// createOidcVerifier, or null (endpoint disabled).
+// createOidcVerifier, or null (defence-in-depth token verification disabled).
 export function createSheetSyncHttpServer({ requestReconcile, verifyScheduler = null, log = console }) {
     return http.createServer(async (req, res) => {
         const path = new URL(req.url ?? "/", "http://localhost").pathname;
@@ -49,10 +49,12 @@ export function createSheetSyncHttpServer({ requestReconcile, verifyScheduler = 
         };
         try {
             if ((req.method === "GET" || req.method === "HEAD") && path === "/health") return send(200, { status: "OK" });
-            if (req.method === "POST" && path === "/tasks/reconcile" && verifyScheduler) {
-                if (!(await verifyScheduler(req.headers.authorization))) {
-                    log.warn(JSON.stringify({ event: "sheet_sync.trigger_rejected" }));
-                    return send(401, { message: "Unauthorized" });
+            if (req.method === "POST" && path === "/tasks/reconcile") {
+                if (verifyScheduler) {
+                    if (!(await verifyScheduler(req.headers.authorization))) {
+                        log.warn(JSON.stringify({ event: "sheet_sync.trigger_rejected" }));
+                        return send(401, { message: "Unauthorized" });
+                    }
                 }
                 const run = await requestReconcile();
                 log.log(JSON.stringify({ event: "sheet_sync.run_requested", kind: "RECONCILE", trigger: "SCHEDULER", runId: run.runId, created: run.created }));
