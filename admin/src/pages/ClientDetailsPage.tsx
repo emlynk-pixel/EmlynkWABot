@@ -4,6 +4,7 @@ import { getClientDetails, setPoliceDate, type ClientDetails } from "../api/admi
 import { ApiError } from "../api/client";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth, canCorrectPoliceDates } from "../auth/AuthProvider";
+import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../components/Dialog";
 import { DocumentsTable } from "../components/DocumentsTable";
 import { documentTypeLabel, formatDate, formatDateTime, formatDay, todayInSriLanka } from "../components/format";
@@ -152,6 +153,7 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
     const missing = data.missingDocumentTypes;
     const [dateDialog, setDateDialog] = useState(false);
     const [notice, setNotice] = useState<string | null>(null);
+    useBreadcrumbLabel(`${client.name ?? client.passportId} (${client.passportId})`);
     const slip = data.police.latestSlip;
     const { user } = useAuth();
     const canSetPoliceDate = canCorrectPoliceDates(user);
@@ -159,11 +161,6 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
     return (
         <div className="space-y-6">
             <div className="space-y-1">
-                <nav aria-label="Breadcrumb" className="text-label-sm text-ink-muted">
-                    <Link to="/clients" className="hover:text-primary">Clients</Link>
-                    <span aria-hidden="true" className="px-1.5">/</span>
-                    <span className="text-ink">{client.name ?? client.passportId} ({client.passportId})</span>
-                </nav>
                 <div className="flex flex-wrap items-center gap-3">
                     <h1 id="page-title" className="text-headline-xl text-ink">{client.name ?? client.passportId}</h1>
                     <span className="rounded bg-canvas-muted px-2 py-0.5 text-label-caps uppercase text-ink-muted">Unique ID {client.uniqueId}</span>

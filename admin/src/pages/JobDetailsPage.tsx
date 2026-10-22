@@ -6,6 +6,7 @@ import { addCandidateToJob, cancelJob, completeJob, getJob, removeCandidateFromJ
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
 import { ActionDialog, ConfirmDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
+import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 import { formatDate, formatDateTime } from "../components/format";
 import { Icon } from "../components/Icon";
@@ -57,11 +58,11 @@ function JobDetailsView() {
     const [dialog, setDialog] = useState<Dialog>(null);
     const [tab, setTab] = useState<Tab>("details");
     const job = updated?.jobId === jobId ? updated : resource.data?.jobId === jobId ? resource.data : null;
+    useBreadcrumbLabel(job?.jobCode);
 
     if (!job) {
         return (
             <div className="mx-auto max-w-5xl space-y-4">
-                <Link to="/jobs" className="text-label-md text-primary hover:underline">Jobs</Link>
                 <Card>{resource.status === "error" ? <ErrorState message={resource.error.message} onRetry={resource.reload} /> : <LoadingState label="Loading job…" />}</Card>
             </div>
         );
@@ -77,8 +78,7 @@ function JobDetailsView() {
         <section aria-labelledby="page-title" className="mx-auto max-w-5xl space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div className="min-w-0">
-                    <Link to="/jobs" className="text-label-md text-primary hover:underline">Jobs</Link>
-                    <h1 id="page-title" className="mt-1 flex flex-wrap items-center gap-3 text-headline-lg text-ink">{job.jobCode}<JobStatusBadge status={job.status} /></h1>
+                    <h1 id="page-title" className="flex flex-wrap items-center gap-3 text-headline-lg text-ink">{job.jobCode}<JobStatusBadge status={job.status} /></h1>
                 </div>
                 {canManage && processing && (
                     <div className="flex flex-wrap gap-2">

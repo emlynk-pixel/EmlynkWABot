@@ -5,6 +5,7 @@ import { getClient, type ClientJobRow } from "../api/clientManagement";
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageMasterData, useAuth } from "../auth/AuthProvider";
 import { primaryButton, secondaryButton } from "../components/Dialog";
+import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { formatDate } from "../components/format";
 import { Detail, JobStatusBadge } from "../components/job/JobParts";
 import { EntityStatusBadge, PageTabs, RestrictedPage, countryName } from "../components/master/MasterParts";
@@ -17,11 +18,13 @@ import { ClientFormDialog, ClientStatusDialog } from "./ClientManagementPage";
 // tab is page state only; Edit (details and agents) and the status action sit above the tabs.
 // Jobs link to the Job record; this page does not repeat Job Management.
 
-type JobTab = "processing" | "completed" | "cancelled";
+// Processing opens first; with no Processing job (but other jobs), All does.
+type JobTab = "processing" | "completed" | "cancelled" | "all";
 const JOB_TABS: { key: JobTab; label: string }[] = [
     { key: "processing", label: "Processing" },
     { key: "completed", label: "Completed" },
     { key: "cancelled", label: "Cancelled" },
+    { key: "all", label: "All" },
 ];
 type Section = "jobs" | "details" | "agents";
 
@@ -37,8 +40,9 @@ function ClientDetailsView() {
     const detail = useAdminResource(`client-management:${clientId}`, (t, signal) => getClient(t, clientId, signal));
     const agents = useAdminResource("agent-options", (t, signal) => getAgentOptions(t, signal));
     const [section, setSection] = useState<Section>("jobs");
-    const [tab, setTab] = useState<JobTab>("processing");
+    const [chosenTab, setTab] = useState<JobTab | null>(null);
     const [dialog, setDialog] = useState<"edit" | "status" | null>(null);
+    useBreadcrumbLabel(detail.data?.name);
 
     if (detail.status === "loading" && !detail.data) return <LoadingState label="Loading client…" />;
     if (detail.status === "error" && !detail.data) return <ErrorState message={detail.error.status === 404 ? "Client not found." : detail.error.message} onRetry={detail.reload} />;
@@ -48,13 +52,14 @@ function ClientDetailsView() {
         setDialog(null);
         detail.reload();
     };
-    const counts: Record<JobTab, number> = { processing: client.processingJobs, completed: client.completedJobs, cancelled: client.cancelledJobs };
-    const rows: ClientJobRow[] = client.jobs[tab];
-    const totalJobs = counts.processing + counts.completed + counts.cancelled;
+    const totalJobs = client.processingJobs + client.completedJobs + client.cancelledJobs;
+    const counts: Record<JobTab, number> = { processing: client.processingJobs, completed: client.completedJobs, cancelled: client.cancelledJobs, all: totalJobs };
+    const tab: JobTab = chosenTab ?? (counts.processing === 0 && totalJobs > 0 ? "all" : "processing");
+    const newestFirst = (a: ClientJobRow, b: ClientJobRow) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
+    const rows: ClientJobRow[] = tab === "all" ? [...client.jobs.processing, ...client.jobs.completed, ...client.jobs.cancelled].sort(newestFirst) : client.jobs[tab];
 
     return (
         <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
-            <nav aria-label="Breadcrumb" className="text-body-sm text-ink-muted"><Link to="/client-management" className="text-primary hover:underline">Client Management</Link> / {client.name}</nav>
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                     <h1 id="page-title" className="text-headline-lg text-ink">{client.name}</h1>
@@ -90,7 +95,7 @@ function ClientDetailsView() {
                             </div>
                         </div>
                         {rows.length === 0 ? (
-                            <p className="px-4 py-6 text-body-sm text-ink-muted">No {tab} jobs.</p>
+                            <p className="px-4 py-6 text-body-sm text-ink-muted">{tab === "all" ? "No jobs." : `No ${tab} jobs.`}</p>
                         ) : (
                             <div className="relative overflow-x-auto">
                                 <table aria-label="Jobs of this client" className="w-full border-collapse">

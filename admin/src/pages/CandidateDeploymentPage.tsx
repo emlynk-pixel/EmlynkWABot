@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation, useParams, useSearchParams } from "react-router";
+import { useLocation, useParams, useSearchParams } from "react-router";
 import { CANDIDATE_STAGES, STAGE_LABELS, getAdditionalDetails, getCandidate, getFormSubmission, type AdditionalDetailsView, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { canConfirmSubmittedChanges, canManageCandidates, useAuth } from "../auth/AuthProvider";
+import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { AdditionalDetailsPanel } from "../components/candidate/AdditionalDetailsPanel";
 import { CallLogDialog } from "../components/candidate/CallLogDialog";
 import { CandidateStepper, type StepperStep } from "../components/candidate/CandidateStepper";
@@ -64,6 +65,8 @@ export function CandidateDeploymentPage() {
     const additionalView = ofThisCandidate(savedAdditional) ?? ofThisCandidate(additional.data);
 
     const details = updated ?? resource.data;
+    const loaded = details && details.candidate.passportId.toUpperCase() === passportId.toUpperCase() ? details.candidate : null;
+    useBreadcrumbLabel(loaded ? loaded.name ?? loaded.passportId : null);
     if (!details || details.candidate.passportId.toUpperCase() !== passportId.toUpperCase()) {
         return resource.status === "error"
             ? <Card><ErrorState message={resource.error.message} onRetry={resource.reload} /></Card>
@@ -105,8 +108,7 @@ export function CandidateDeploymentPage() {
         <section aria-labelledby="page-title" className="mx-auto max-w-5xl space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div className="min-w-0">
-                    <Link to="/candidates" className="text-label-md text-primary hover:underline">Candidates</Link>
-                    <h1 id="page-title" className="mt-1 truncate text-headline-lg text-ink">{c.name ?? c.passportId}</h1>
+                    <h1 id="page-title" className="truncate text-headline-lg text-ink">{c.name ?? c.passportId}</h1>
                     <p className="text-body-sm text-ink-muted">{[c.passportId, c.nic].filter(Boolean).join(" • ")}</p>
                 </div>
                 <button type="button" onClick={() => setCallLogOpen(true)} className={`${secondaryButton} inline-flex items-center gap-1.5`}>

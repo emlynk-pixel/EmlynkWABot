@@ -28,6 +28,7 @@ import { useAdminResource } from "../api/useAdminResource";
 import { useAuth, canReview, canCorrectPoliceDates } from "../auth/AuthProvider";
 import { Confidence } from "../components/Confidence";
 import { documentTypeLabel, formatDateTime, formatDay, formatFileSize, humanize, shortId, todayInSriLanka } from "../components/format";
+import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { ActionDialog, DialogError, dangerButton, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
 import { Icon } from "../components/Icon";
 import { AUDIT_ACTIONS, FAILURE_REASONS, IDENTITY_NOTES, REVIEW_REASONS, failureLabel, reviewReasonLabel, reviewReasonTone } from "../components/reviewLabels";
@@ -246,6 +247,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const identity = item.processing?.identity;
     const idLabel = shortId((item.document.documentId ?? item.document.temporaryId ?? item.reviewId.replace(/^(pending|document|failed)-/, "")));
     const isFailed = item.kind === "FAILED";
+    useBreadcrumbLabel(idLabel);
     const failure = isFailed ? FAILURE_REASONS[item.failure?.code ?? ""] : undefined;
 
     const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | "deleteTemporary" | "type" | "client" | "retry" | "replace" | "version" | null>(null);
@@ -558,10 +560,6 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
         return (
             <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2 text-label-md">
-                    <Link to="/review" className="inline-flex items-center gap-1 text-primary hover:underline">
-                        <Icon name="chevron_left" className="size-4" />Review Queue
-                    </Link>
-                    <span aria-hidden="true" className="text-ink-subtle">/</span>
                     <h1 id="page-title" className="font-semibold text-ink">{idLabel}</h1>
                 </div>
                 <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">
@@ -580,10 +578,6 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     return (
         <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2 text-label-md">
-                <Link to="/review" className="inline-flex items-center gap-1 text-primary hover:underline">
-                    <Icon name="chevron_left" className="size-4" />Review Queue
-                </Link>
-                <span aria-hidden="true" className="text-ink-subtle">/</span>
                 <h1 id="page-title" className="font-semibold text-ink">{idLabel}</h1>
                 <span className="text-label-sm text-ink-muted">{item.kind === "PENDING" ? "Waiting file" : isFailed ? "Failed submission" : "Stored document"}</span>
             </div>
