@@ -10,7 +10,8 @@ import { activeJobTypeNames, isNoPreference, NO_PREFERRED_JOB_TYPE } from "./job
 // The public form NEVER writes the main candidate tables (candidate,
 // candidate_additional_details, candidate_stages). It reads them once, to
 // prefill, and writes only candidate_form_prefill_snapshot (the original
-// values, once) and candidate_form_response (the answers, once).
+// values, once), candidate_form_draft (the saved steps, until the final
+// submit) and candidate_form_response (the answers, once).
 
 export const SEX_CODES = Object.freeze(["MALE", "FEMALE", "OTHER"]);
 export const CIVIL_STATUS_CODES = Object.freeze(["SINGLE", "MARRIED", "DIVORCED", "WIDOWED"]);
@@ -31,7 +32,11 @@ const LATEST_EXPIRY_DATE = "2100-12-31";
 // (in any letter case, stored as "N/A") ONLY for these fields; anywhere else it
 // is refused. The form keeps the same list (candidate-form/src/form/validation.ts).
 export const NOT_APPLICABLE = "N/A";
+// "N/A" in any letter case. The fields that allow it also take the bare "NA" ("na", "Na", ...);
+// everywhere else only the slash form counts as N/A (and is refused), so a real answer that
+// happens to read "Na" is not mistaken for it.
 export const isNotApplicable = (value) => typeof value === "string" && /^n\/a$/i.test(value.trim());
+const isNotApplicableLoose = (value) => typeof value === "string" && /^n\/?a$/i.test(value.trim());
 export const NOT_APPLICABLE_FIELDS = Object.freeze(new Set([
     "basic.otherNames",
     "contact.city",
@@ -50,6 +55,9 @@ export const NOT_APPLICABLE_FIELDS = Object.freeze(new Set([
     "family.child2",
     "family.child3",
 ]));
+
+// Whether `value` is an N/A answer for the field at `path` (see isNotApplicable).
+export const isNotApplicableFor = (path, value) => (NOT_APPLICABLE_FIELDS.has(path) ? isNotApplicableLoose(value) : isNotApplicable(value));
 
 // Every answer: [group path, key, column, kind, options]. kind:
 //   text   English letters capitalised; max length
@@ -219,13 +227,95 @@ export async function loadCandidateForm({ db, passportId, linkId, now = new Date
             await tx.candidateFormPrefillSnapshot.create({ data: { passportId, ...snapshot, capturedAt: now, capturedViaLinkId: linkId } });
         }
         const { answers, prefilled } = groupedFrom(snapshot);
+        // The steps the candidate saved with Next replace the prefill of their groups.
+        const draft = await tx.candidateFormDraft.findUnique({ where: { passportId }, select: { answers: true, updatedAt: true } });
+        const saved = isObject(draft?.answers) ? draft.answers : {};
+        const savedSteps = savedStepsOf(saved);
+        const savedGroups = new Set(savedSteps.flatMap((step) => DRAFT_STEPS[step]));
+        for (const group of savedGroups) answers[group] = saved[group];
         return {
             identity: { passportNumber: candidate.passportId, nic: candidate.nic, whatsappNumber: candidate.whatsappNumber ?? null },
             answers,
-            prefilled,
+            prefilled: prefilled.filter((path) => !savedGroups.has(path.split(".")[0])),
             // The job type choices: names only (never ids, status or anything staff-only).
             jobCategories,
+            // Saved progress: the steps saved with Next ([] when none) and when the last one was.
+            savedSteps,
+            draftSavedAt: savedSteps.length && draft ? draft.updatedAt.toISOString() : null,
         };
+    });
+}
+
+// ---------------------------------------------------------------- draft (saved progress)
+//
+// A candidate's progress is saved when they click Next on a step (never while typing): the
+// form sends that step's answers, the server checks them with the SAME rules as the final
+// submission (parseAnswerValues, limited to the step's groups), and merges them into the
+// candidate's one draft row. So a failed check saves nothing, saving a step never touches
+// another step, repeating a save (a double click, a retry after a lost response) leaves the
+// same row, and there is never a second row. A draft is not a submission: the lock
+// (candidate_form_access) and candidate_form_response are not touched, and the final submit
+// deletes the draft.
+
+// The form's steps and the groups of answers each one carries.
+export const DRAFT_STEPS = Object.freeze({
+    personal: Object.freeze(["basic", "contact"]),
+    work: Object.freeze(["passport", "qualifications", "measurements", "family", "guardian"]),
+});
+
+// A step is saved when all of its groups are in the draft.
+export const savedStepsOf = (answers) => Object.keys(DRAFT_STEPS).filter((step) => DRAFT_STEPS[step].every((group) => isObject(answers?.[group])));
+
+// POST /api/public/candidate-details/draft { step, answers: { <the step's groups> } } -> { values?, groups, errors? }
+export function parseDraftBody(body) {
+    if (!isObject(body)) return { errors: [{ field: "body", code: "invalid", message: "must be a JSON object" }] };
+    const errors = [];
+    for (const key of Object.keys(body)) {
+        if (key !== "step" && key !== "answers") errors.push({ field: key, code: "unknown", message: "is not accepted" });
+    }
+    if (typeof body.step !== "string" || !Object.hasOwn(DRAFT_STEPS, body.step)) {
+        errors.push({ field: "step", code: "invalid", message: `must be one of: ${Object.keys(DRAFT_STEPS).join(", ")}` });
+    }
+    errors.push(...shapeErrors(body.answers));
+    if (errors.length) return { errors };
+    const groups = DRAFT_STEPS[body.step];
+    for (const key of Object.keys(body.answers)) {
+        if (!groups.includes(key)) errors.push({ field: key, code: "unknown", message: "does not belong to this step" });
+    }
+    return errors.length ? { errors } : { step: body.step, groups, answers: body.answers };
+}
+
+// The validated values of some groups, back as the grouped answers the form shows.
+function groupedAnswers(values, groups) {
+    const { answers } = groupedFrom(values);
+    return Object.fromEntries(groups.map((group) => [group, answers[group]]));
+}
+
+// Saves one step. { savedSteps, savedAt } or { errors } (nothing saved). 401 when the session no
+// longer covers the form, 409 once it has been submitted. The lock row is read FOR SHARE, so a
+// submission cannot slip in between this check and the write (it waits, then finds no draft to
+// keep: the submit deletes it), and a save after the submission finds the form SUBMITTED.
+export async function saveCandidateFormDraft({ db, passportId, version, step, groups, answers, jobCategories = JOB_CATEGORIES, now = new Date() }) {
+    return db.$transaction(async (tx) => {
+        const [access] = await tx.$queryRaw`SELECT "status", "version" FROM "candidate_form_access" WHERE "passport_id" = ${passportId} FOR SHARE`;
+        if (access?.status === FORM_ACCESS_STATUS.SUBMITTED) throw new CandidateError(409, "ALREADY_SUBMITTED", "This form has already been submitted.");
+        if (access?.status !== FORM_ACCESS_STATUS.UNLOCKED || access.version !== version) {
+            throw new CandidateError(401, "VERIFICATION_REQUIRED", "Please verify your details again.");
+        }
+        const existing = await tx.candidateFormDraft.findUnique({ where: { passportId }, select: { answers: true } });
+        const civilStatus = isObject(existing?.answers?.basic) ? existing.answers.basic.civilStatus ?? null : null;
+        const parsed = parseAnswerValues(answers, { now, jobCategories, groups, civilStatus });
+        if (parsed.errors.length) return { errors: parsed.errors };
+
+        const merged = JSON.stringify(groupedAnswers(parsed.values, groups));
+        // One atomic statement: this step's groups replace themselves, every other group stays.
+        const [row] = await tx.$queryRaw`
+            INSERT INTO "candidate_form_draft" ("passport_id", "answers", "created_at", "updated_at")
+            VALUES (${passportId}, ${merged}::jsonb, ${now}, ${now})
+            ON CONFLICT ("passport_id") DO UPDATE
+                SET "answers" = "candidate_form_draft"."answers" || EXCLUDED."answers", "updated_at" = EXCLUDED."updated_at"
+            RETURNING "answers", "updated_at"`;
+        return { step, savedSteps: savedStepsOf(row.answers), savedAt: new Date(row.updated_at).toISOString() };
     });
 }
 
@@ -282,14 +372,26 @@ export function parseSubmission(body, { now = new Date(), jobCategories = JOB_CA
     errors.push(...shapeErrors(body.answers));
     if (errors.length) return { errors };
 
+    const parsed = parseAnswerValues(body.answers, { now, jobCategories });
+    return parsed.errors.length ? { errors: parsed.errors } : { values: parsed.values, idempotencyKey: body.idempotencyKey };
+}
+
+// The rules for the answers themselves: { values, errors }. `groups` (null = the whole form)
+// limits the check to those groups of the form (a draft step); the rules that reach across
+// groups are applied only where their groups are included. `civilStatus` is the saved one,
+// for a step that does not carry the Basic group itself (the spouse depends on it).
+function parseAnswerValues(answers, { now, jobCategories, groups = null, civilStatus = null }) {
+    const errors = [];
+    const has = (group) => !groups || groups.includes(group);
     const today = businessDateOf(now);
-    const read = (group, key) => group.split(".").reduce((value, part) => value?.[part], body.answers)?.[key];
+    const read = (group, key) => group.split(".").reduce((value, part) => value?.[part], answers)?.[key];
     const values = {};
     const fail = (path, code, message) => {
         errors.push({ field: path, code, message });
         return null;
     };
     for (const [group, key, column, kind, options] of ANSWER_FIELDS) {
+        if (!has(group.split(".")[0])) continue;
         const path = `${group}.${key}`;
         const raw = read(group, key);
         if (raw !== undefined && raw !== null && typeof raw !== "string") {
@@ -302,7 +404,7 @@ export function parseSubmission(body, { now = new Date(), jobCategories = JOB_CA
             continue;
         }
         // "N/A" is an answer only where it is allowed; it never reaches a format check.
-        if (isNotApplicable(value)) {
+        if (isNotApplicableFor(path, value)) {
             values[column] = NOT_APPLICABLE_FIELDS.has(path) ? NOT_APPLICABLE : fail(path, "invalid", "N/A is not accepted for this field");
             continue;
         }
@@ -353,17 +455,20 @@ export function parseSubmission(body, { now = new Date(), jobCategories = JOB_CA
 
     // Hidden answers are never stored: spouse only when married, the other
     // category only with OTHER (which then requires it).
-    if (values.civilStatus !== "MARRIED") {
+    const married = (has("basic") ? values.civilStatus : civilStatus) === "MARRIED";
+    if (has("family") && !married) {
         for (const column of ["spouseName", "spouseSurname", "spousePassportNumber", "spouseBirthDate"]) values[column] = null;
         for (let i = errors.length - 1; i >= 0; i--) if (errors[i].field.startsWith("family.spouse.")) errors.splice(i, 1);
     }
-    if (values.jobCategory === OTHER_JOB_CATEGORY) {
-        if (!values.jobCategoryOther && !errors.some((e) => e.field === "qualifications.jobCategoryOther")) {
-            errors.push({ field: "qualifications.jobCategoryOther", code: "required", message: "is required" });
+    if (has("qualifications")) {
+        if (values.jobCategory === OTHER_JOB_CATEGORY) {
+            if (!values.jobCategoryOther && !errors.some((e) => e.field === "qualifications.jobCategoryOther")) {
+                errors.push({ field: "qualifications.jobCategoryOther", code: "required", message: "is required" });
+            }
+        } else {
+            values.jobCategoryOther = null;
+            for (let i = errors.length - 1; i >= 0; i--) if (errors[i].field === "qualifications.jobCategoryOther") errors.splice(i, 1);
         }
-    } else {
-        values.jobCategoryOther = null;
-        for (let i = errors.length - 1; i >= 0; i--) if (errors[i].field === "qualifications.jobCategoryOther") errors.splice(i, 1);
     }
     // The conditionally required answers (see ANSWER_FIELDS). A field that already has
     // a problem keeps that one message.
@@ -373,26 +478,28 @@ export function parseSubmission(body, { now = new Date(), jobCategories = JOB_CA
         }
     };
     const real = (value) => value !== null && value !== undefined && value !== NOT_APPLICABLE;
-    for (const who of ["father", "mother"]) {
-        if (values[`${who}Name`] === NOT_APPLICABLE) continue;
-        requireAnswer(`family.${who}.surname`, `${who}Surname`);
-        requireAnswer(`family.${who}.passportNumber`, `${who}PassportNumber`);
-        requireAnswer(`family.${who}.birthDate`, `${who}BirthDate`);
+    if (has("family")) {
+        for (const who of ["father", "mother"]) {
+            if (values[`${who}Name`] === NOT_APPLICABLE) continue;
+            requireAnswer(`family.${who}.surname`, `${who}Surname`);
+            requireAnswer(`family.${who}.passportNumber`, `${who}PassportNumber`);
+            requireAnswer(`family.${who}.birthDate`, `${who}BirthDate`);
+        }
+        if (married) {
+            requireAnswer("family.spouse.name", "spouseName");
+            requireAnswer("family.spouse.surname", "spouseSurname");
+            requireAnswer("family.spouse.passportNumber", "spousePassportNumber");
+            requireAnswer("family.spouse.birthDate", "spouseBirthDate");
+        }
+        if (real(values.child1Name)) requireAnswer("family.child2", "child2Name");
+        if (real(values.child1Name) && real(values.child2Name)) requireAnswer("family.child3", "child3Name");
     }
-    if (values.civilStatus === "MARRIED") {
-        requireAnswer("family.spouse.name", "spouseName");
-        requireAnswer("family.spouse.surname", "spouseSurname");
-        requireAnswer("family.spouse.passportNumber", "spousePassportNumber");
-        requireAnswer("family.spouse.birthDate", "spouseBirthDate");
-    }
-    if (real(values.child1Name)) requireAnswer("family.child2", "child2Name");
-    if (real(values.child1Name) && real(values.child2Name)) requireAnswer("family.child3", "child3Name");
 
-    if (values.passportIssueDate && values.passportExpiryDate && values.passportExpiryDate <= values.passportIssueDate) {
+    if (has("passport") && values.passportIssueDate && values.passportExpiryDate && values.passportExpiryDate <= values.passportIssueDate) {
         errors.push({ field: "passport.expiryDate", code: "invalid", message: "must be after the issue date" });
     }
 
-    return errors.length ? { errors } : { values, idempotencyKey: body.idempotencyKey };
+    return { values, errors };
 }
 
 // POST /api/public/candidate-details/submit. All or nothing, once:
@@ -437,6 +544,13 @@ export async function submitCandidateForm({ db, passportId, linkId, version, kin
             });
         }
         await tx.candidateFormResponse.create({ data: { passportId, ...values, nic: candidate.nic, submittedAt: now, submittedViaLinkId: linkId } });
+        // The saved progress is superseded by the submission (and its personal data is not kept twice).
+        await tx.candidateFormDraft.deleteMany({ where: { passportId } });
+        // The Google Sheet sync outbox (formSubmissionSync.js): this submission, once (passport_id is
+        // unique), in the same transaction, so it is queued exactly when it is saved and never otherwise.
+        // Nothing here calls Google: the sheet-sync worker does that later, and a failure there never
+        // reaches the candidate.
+        await tx.candidateFormSheetSync.create({ data: { passportId, createdAt: now, updatedAt: now, nextAttemptAt: now } });
         return { submittedAt: now.toISOString() };
     });
 }

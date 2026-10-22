@@ -1,5 +1,5 @@
 import { ApiError, postJson } from "./client";
-import type { CandidateFormPayload, FormLoadResponse, SubmitResponse, VerifyRequest, VerifyResponse } from "../types/api";
+import type { CandidateFormPayload, DraftResponse, DraftStep, FormLoadResponse, SubmitResponse, VerifyRequest, VerifyResponse } from "../types/api";
 
 const BASE = "/api/public/candidate-details";
 
@@ -11,6 +11,12 @@ export function verifyCandidate(input: VerifyRequest, signal?: AbortSignal): Pro
 // The verified candidate's identity (read-only) and the prefill.
 export function loadCandidateForm(token: string, signal?: AbortSignal): Promise<FormLoadResponse> {
     return postJson<FormLoadResponse>(`${BASE}/form`, {}, { token, signal });
+}
+
+// Saves one step's answers (Next). Safe to repeat: the server keeps one draft per candidate and
+// replaces that step's answers with these.
+export function saveDraftStep(token: string, step: DraftStep, answers: Partial<CandidateFormPayload>, signal?: AbortSignal): Promise<DraftResponse> {
+    return postJson<DraftResponse>(`${BASE}/draft`, { step, answers }, { token, signal });
 }
 
 // The answers, once. A retry of the same submission must reuse the same key.

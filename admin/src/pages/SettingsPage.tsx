@@ -10,6 +10,7 @@ import { inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Card, ErrorState, LoadingState, SectionHeading } from "../components/States";
 import { ToneBadge, type Tone } from "../components/StatusBadge";
+import { SETTINGS_TABS } from "../layout/navigation";
 
 // While a run is queued or running, the status is refreshed this often.
 export const ACTIVE_RUN_POLL_MS = 5_000;
@@ -26,12 +27,8 @@ export const ACTIVE_RUN_POLL_MS = 5_000;
 //   /settings/job-types   Job Types     (JobTypesSettings)
 // /settings opens the first tab (App.tsx). Every tab is ADMIN only, like the
 // pages it holds. The old /roles and /invitations URLs redirect here.
-export const SETTINGS_TABS = [
-    { to: "/settings/roles", label: "Change Roles" },
-    { to: "/settings/invite", label: "Invite User" },
-    { to: "/settings/sheet-sync", label: "Google Sheet Sync" },
-    { to: "/settings/job-types", label: "Job Types" },
-] as const;
+// The tabs themselves are listed in layout/navigation.ts (the breadcrumb names them too).
+export { SETTINGS_TABS };
 
 const tabClass = ({ isActive }: { isActive: boolean }) =>
     `-mb-px whitespace-nowrap border-b-2 px-1 pb-2.5 pt-1 text-label-md transition-colors ${isActive

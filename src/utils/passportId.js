@@ -11,3 +11,19 @@ export function normalizePassportId(value) {
 
     return looksValid ? normalized : null;
 }
+
+// A NEW candidate's own passport number (registration): exactly one letter, P or N, then exactly 7
+// digits (P1234567, N1234567). Surrounding spaces are trimmed and lowercase p / n is accepted and
+// stored in capitals; anything else (PN1234567, A1234567, P 1234567, P123456, ...) is refused.
+// Only for passport numbers being SET: lookups (normalizePassportId above, the Candidate Form
+// verification, search, document linking) stay permissive, because older candidates' numbers
+// predate this rule and must keep working. The admin form has the same rule
+// (admin/src/components/validation.ts).
+export const CANDIDATE_PASSPORT_PATTERN = /^[PN][0-9]{7}$/;
+export const CANDIDATE_PASSPORT_MESSAGE = "must start with P or N followed by 7 digits (e.g. P1234567)";
+export function parseCandidatePassportNumber(value) {
+    if (typeof value !== "string") return null;
+    const candidate = value.trim().toUpperCase();
+    return CANDIDATE_PASSPORT_PATTERN.test(candidate) ? candidate : null;
+}
+

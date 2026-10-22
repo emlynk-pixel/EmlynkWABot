@@ -17,7 +17,7 @@ const jobItem = (n: number, status: JobStatus = "PROCESSING", extra: Partial<Job
     candidateCount: 3, filled: false, ...extra,
 });
 const asAssignment = (job: JobListItem): CandidateJobAssignment => ({ ...job, assignedAt: "2026-10-17T05:00:00.000Z", removed: false, removedAt: null });
-const detailsWith = (current: CandidateJobAssignment | null): CandidateDetails => ({
+const detailsWith = (current: CandidateJobAssignment | null, active: CandidateJobAssignment[] = current ? [current] : []): CandidateDetails => ({
     candidate: {
         passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: "901234567V", jobTypes: ["Driver"], surname: "SILVA", otherNames: "SAMAN",
         dateOfBirth: "1990-03-12", placeOfBirth: "COLOMBO", passportExpiryDate: "2030-05-11", passportIssueDate: null, nationality: null, sex: null,
@@ -29,7 +29,7 @@ const detailsWith = (current: CandidateJobAssignment | null): CandidateDetails =
     })),
     documents: { PASSPORT: null, NIC: null, SKILL_VIDEO: null, MEDICAL: null, POLICE_SLIP: null, POLICE_REPORT: null, SCAN: null, VISA_SUBMISSION: null },
     variantDocuments: { POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null } },
-    jobAssignments: { current, history: [] },
+    jobAssignments: { current, active, history: [] },
     requiredDocuments: [],
     verification: { details: null, documents: null },
 });
@@ -44,10 +44,11 @@ const CANCELLED = jobItem(4, "CANCELLED");
 
 // A stateful stub: the candidate's details change once the assignment is made.
 function backend(role = "MANAGER", opts: { current?: CandidateJobAssignment | null; assign?: FetchRoutes[string] } = {}) {
-    let current = opts.current ?? null;
+    // The candidate's active jobs, newest first (a candidate may hold several).
+    const active: CandidateJobAssignment[] = opts.current ? [opts.current] : [];
     return signedInBackend({
         "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role } } },
-        "GET /api/admin/candidates/N0000002": () => ({ status: 200, body: detailsWith(current) }),
+        "GET /api/admin/candidates/N0000002": () => ({ status: 200, body: detailsWith(active[0] ?? null, [...active]) }),
         "GET /api/admin/candidates/N0000002/additional-details": { status: 200, body: VIEW },
         "GET /api/admin/candidates/N0000002/form-share": { status: 200, body: { passportId: "N0000002", state: "LOCKED", submittedAt: null, link: null } },
         "GET /api/admin/jobs": (url) => {
@@ -57,7 +58,7 @@ function backend(role = "MANAGER", opts: { current?: CandidateJobAssignment | nu
             return { status: 200, body: page(source.filter((j) => !search || `${j.jobCode} ${j.companyJobId ?? ""} ${j.client.name}`.toLowerCase().includes(search))) };
         },
         [`POST /api/admin/jobs/${PROCESSING[0].jobId}/candidates`]: opts.assign ?? (() => {
-            current = asAssignment(PROCESSING[0]);
+            active.unshift(asAssignment(PROCESSING[0]));
             return { status: 201, body: { ...PROCESSING[0], createdBy: "Test Admin", candidateCount: 4, candidates: [] } };
         }),
         [`GET /api/admin/jobs/${PROCESSING[0].jobId}/form-share`]: {
@@ -133,22 +134,35 @@ describe("Assign to Job (Candidate Details)", () => {
         expect(within(region).getByText("Acme Construction")).toBeInTheDocument();
         expect(within(region).getByText("Welder")).toBeInTheDocument();
         expect(within(region).getByText("Processing")).toBeInTheDocument();
-        expect(within(region).queryByRole("button", { name: "Assign to Job" })).toBeNull();
+        // MULTI-JOB: the candidate can still be assigned to another job.
+        expect(within(region).getByRole("button", { name: "Assign to Job" })).toBeInTheDocument();
         expect(within(region).queryByText("Not assigned to a processing job.")).toBeNull();
     });
 
-    test("ASSIGN-UI-008 a candidate already on a processing job has no way to be assigned to another; a stale screen gets the server's CANDIDATE_ON_ACTIVE_JOB message and nothing moves", async () => {
-        // Already assigned: read-only card, a link to the job, no Assign action.
+    test("ASSIGN-UI-008 (multiple jobs) a candidate on one processing job can be assigned to another; the job they are on can't be picked again; both are shown", async () => {
         backend("MANAGER", { current: asAssignment(PROCESSING[1]) });
-        const first = renderApp(PATH);
+        renderApp(PATH);
+        const user = userEvent.setup();
         const region = await card();
         expect(within(region).getByRole("link", { name: "JOB-2026-000001" })).toBeInTheDocument();
-        expect(within(region).queryByRole("button", { name: /Assign/ })).toBeNull();
-        first.unmount();
+        await user.click(within(region).getByRole("button", { name: "Assign to Job" }));
+        const dialog = await screen.findByRole("dialog", { name: "Assign SAMAN SILVA to a job" });
+        const list = await within(dialog).findByRole("list", { name: "Processing jobs" });
+        // Job 1 (already on it): no Select, marked as assigned. Job 2: selectable.
+        expect(within(list).queryByRole("button", { name: "Select JOB-2026-000001" })).toBeNull();
+        expect(within(list).getByText("Already assigned")).toBeInTheDocument();
+        await user.click(within(list).getByRole("button", { name: "Select JOB-2026-000002" }));
+        await user.click(within(dialog).getByRole("button", { name: "Confirm assignment" }));
+        const jobs = await within(region).findByRole("list", { name: "Current processing jobs" }, RENDER_STEP);
+        expect(within(jobs).getAllByRole("listitem")).toHaveLength(2);
+        expect(within(jobs).getByRole("link", { name: "JOB-2026-000001" })).toBeInTheDocument();
+        expect(within(jobs).getByRole("link", { name: "JOB-2026-000002" })).toBeInTheDocument();
+        expect(within(region).getByRole("heading", { name: "Current processing jobs (2)" })).toBeInTheDocument();
+    });
 
-        // The screen was stale (assigned meanwhile by someone else): the server refuses.
+    test("ASSIGN-UI-008b a refusal from the server (already on this job) is shown in the dialog and nothing changes", async () => {
         const { calls } = backend("MANAGER", {
-            assign: { status: 409, body: { message: "This candidate is already on the PROCESSING job JOB-2026-000001. Complete or cancel that job, or remove the candidate from it, first.", code: "CANDIDATE_ON_ACTIVE_JOB" } },
+            assign: { status: 409, body: { message: "This candidate is already assigned to JOB-2026-000002.", code: "CANDIDATE_ALREADY_IN_JOB" } },
         });
         renderApp(PATH);
         const user = userEvent.setup();
@@ -156,8 +170,7 @@ describe("Assign to Job (Candidate Details)", () => {
         const dialog = await screen.findByRole("dialog");
         await user.click(await within(dialog).findByRole("button", { name: "Select JOB-2026-000002" }));
         await user.click(within(dialog).getByRole("button", { name: "Confirm assignment" }));
-        expect(await within(dialog).findByRole("alert")).toHaveTextContent("already on the PROCESSING job JOB-2026-000001");
-        // Still open, still unassigned, nothing was moved or retried.
+        expect(await within(dialog).findByRole("alert")).toHaveTextContent("already assigned to JOB-2026-000002");
         expect(within(await card()).getByText("Not assigned to a processing job.")).toBeInTheDocument();
         expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
     });

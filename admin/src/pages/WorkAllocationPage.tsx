@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { ApiError } from "../api/client";
-import { STAGE_LABELS } from "../api/candidates";
+import { CANDIDATE_STAGES, STAGE_LABELS, type CandidateStageKey, type WorkflowStatus } from "../api/candidates";
+import { getJobTypeChoices } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
 import {
     assignCandidates,
@@ -10,6 +11,7 @@ import {
     listAllocationCandidates,
     unassignCandidates,
     type AllocationCandidate,
+    type AllocationFilters,
     type AllocationStatus,
 } from "../api/workAllocation";
 import { canManageAllocations, useAuth } from "../auth/AuthProvider";
@@ -18,17 +20,35 @@ import { ActionDialog, DialogError, dangerSolidButton, primaryButton, secondaryB
 import { formatDate, formatNumber } from "../components/format";
 import { Icon } from "../components/Icon";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
+import { DatePicker } from "../components/DatePicker";
+import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 
 // Admin > Work Allocation (ADMIN and MANAGER): assign candidates to
 // Analysts. The list is paged on the server (100 a page, newest registered
 // first), like Candidates. Selection is per page: Select all ticks the rows
-// on this page only, and changing page, view or search clears it, so a
+// on this page only, and changing page, view, search or a filter clears it, so a
 // selection can never silently grow beyond what is on screen. One request
 // assigns the whole selection (all or nothing on the server).
+// Filters (registration date range, job type, Status, current stage) are URL parameters sent to
+// the server, which applies them BEFORE paging: the count and every page are those of the whole
+// filtered list, never a filter over the rows already loaded.
 
 const th = "h-[34px] whitespace-nowrap border-b border-border bg-canvas px-3 text-left text-label-caps uppercase text-ink-subtle";
 const td = "h-11 border-b border-canvas-muted px-3 py-2 text-body-sm align-middle";
 const countInput = "h-8 w-16 rounded border border-border-strong bg-surface px-2 text-right text-body-sm tabular-nums text-ink focus:border-primary focus:shadow-focus focus:outline-none";
+
+// The filters (all applied on the server, before paging): URL parameter -> API filter.
+const FILTER_PARAMS = { from: "registeredFrom", to: "registeredTo", jobType: "jobType", wstatus: "workflowStatus", stage: "stage" } as const;
+const STATUS_OPTIONS: { code: WorkflowStatus["code"]; label: string }[] = [
+    { code: "REGISTERED", label: "Registered" },
+    { code: "STOPPED_WITH_TEST", label: "Stopped with Test" },
+    { code: "JOB_ASSIGNED", label: "Job Assigned" },
+    { code: "FORM_SUBMITTED", label: "Form Submitted" },
+    { code: "DETAILS_VERIFIED", label: "Details Verified" },
+    { code: "DOCUMENTS_VERIFIED", label: "Documents Verified" },
+    { code: "VISA_DOCUMENT_READY", label: "Visa Document Ready" },
+];
+const filterSelect = "h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
 
 const VIEWS: { status: AllocationStatus; label: string }[] = [
     { status: "UNALLOCATED", label: "Unallocated" },
@@ -60,7 +80,10 @@ function WorkAllocationView() {
     const pageNumber = Number(searchParams.get("page"));
     const page = Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber : 1;
 
-    const list = useAdminResource(`work-allocation?${searchParams.toString()}`, (t, signal) => listAllocationCandidates(t, { status, analystId: analystFilter, search, page }, signal));
+    const filters: AllocationFilters = Object.fromEntries(Object.entries(FILTER_PARAMS).map(([param, key]) => [key, searchParams.get(param) || null]));
+    const filtered = Object.values(filters).some(Boolean);
+    const list = useAdminResource(`work-allocation?${searchParams.toString()}`, (t, signal) => listAllocationCandidates(t, { status, analystId: analystFilter, search, page, filters }, signal));
+    const jobTypeChoices = useAdminResource("job-type-choices", (t, signal) => getJobTypeChoices(t, signal));
     const analysts = useAdminResource("work-allocation-analysts", (t, signal) => listAllocationAnalysts(t, signal));
 
     const [searchText, setSearchText] = useState(search ?? "");
@@ -96,6 +119,7 @@ function WorkAllocationView() {
         event.preventDefault();
         go({ search: searchText.trim() || null });
     };
+    const clearFilters = () => go(Object.fromEntries(Object.keys(FILTER_PARAMS).map((param) => [param, null])));
 
     const items = list.status === "error" ? [] : list.data?.items ?? [];
     const allOnPage = items.length > 0 && items.every((item) => selected.has(item.passportId));
@@ -251,7 +275,9 @@ function WorkAllocationView() {
         setSearchParams(next, { replace: true });
         // searchParams is read once per recovery; the list key changes with it.
     }, [pastLastPage, lastPage]);
-    const emptyTitle = search
+    const emptyTitle = filtered
+        ? "No candidates match these filters."
+        : search
         ? "No candidates match this search."
         : page > 1
             ? "There are no candidates on this page."
@@ -299,6 +325,52 @@ function WorkAllocationView() {
                 </form>
             </div>
 
+            <section aria-label="Filters" className="rounded-lg border border-border bg-surface p-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto] lg:items-end">
+                    <label className="block text-label-sm text-ink-muted" htmlFor="allocation-from">
+                        Registered from
+                        <DatePicker id="allocation-from" value={searchParams.get("from") ?? ""} max={searchParams.get("to") ?? undefined} clearable onChange={(date) => go({ from: date || null })} className={`${filterSelect} mt-1`} />
+                    </label>
+                    <label className="block text-label-sm text-ink-muted" htmlFor="allocation-to">
+                        Registered to
+                        <DatePicker id="allocation-to" value={searchParams.get("to") ?? ""} min={searchParams.get("from") ?? undefined} clearable onChange={(date) => go({ to: date || null })} className={`${filterSelect} mt-1`} />
+                    </label>
+                    <label className="block text-label-sm text-ink-muted">
+                        Job type
+                        <select aria-label="Job type" value={searchParams.get("jobType") ?? ""} onChange={(event) => go({ jobType: event.target.value || null })} className={`${filterSelect} mt-1`}>
+                            <option value="">All job types</option>
+                            {(() => {
+                                const names = [...(jobTypeChoices.data?.jobTypes ?? []), ...(jobTypeChoices.data ? [jobTypeChoices.data.noPreference.code] : [])];
+                                const chosen = searchParams.get("jobType");
+                                if (chosen && !names.includes(chosen)) names.push(chosen);
+                                return names.map((name) => <option key={name} value={name}>{name === jobTypeChoices.data?.noPreference.code ? jobTypeChoices.data.noPreference.label : name}</option>);
+                            })()}
+                        </select>
+                    </label>
+                    <label className="block text-label-sm text-ink-muted">
+                        Status
+                        <select aria-label="Status" value={searchParams.get("wstatus") ?? ""} onChange={(event) => go({ wstatus: event.target.value || null })} className={`${filterSelect} mt-1`}>
+                            <option value="">All statuses</option>
+                            {STATUS_OPTIONS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+                        </select>
+                    </label>
+                    <label className="block text-label-sm text-ink-muted">
+                        Current stage
+                        <select aria-label="Current stage" value={searchParams.get("stage") ?? ""} onChange={(event) => go({ stage: event.target.value || null })} className={`${filterSelect} mt-1`}>
+                            <option value="">All stages</option>
+                            {CANDIDATE_STAGES.map((stage: CandidateStageKey) => <option key={stage} value={stage}>{STAGE_LABELS[stage]}</option>)}
+                            <option value="COMPLETE">All stages completed</option>
+                        </select>
+                    </label>
+                    <button type="button" onClick={clearFilters} disabled={!filtered} className={`${secondaryButton} w-full lg:w-auto`}>Clear filters</button>
+                </div>
+                {filtered && data && (
+                    <p className="mt-2 text-label-sm text-ink-muted" aria-live="polite">
+                        {formatNumber(data.pagination.total)} {data.pagination.total === 1 ? "candidate matches" : "candidates match"} the filters (all pages).
+                    </p>
+                )}
+            </section>
+
             {notice && <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
             {actionError && !confirm && <p role="alert" className="rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">{actionError}</p>}
 
@@ -327,7 +399,9 @@ function WorkAllocationView() {
                     {data && data.items.length === 0 && !pastLastPage && (
                         <EmptyState
                             title={emptyTitle}
-                            action={search
+                            action={filtered
+                                ? <button type="button" onClick={clearFilters} className="text-label-md text-primary hover:underline">Clear filters</button>
+                                : search
                                 ? <button type="button" onClick={() => go({ search: null })} className="text-label-md text-primary hover:underline">Clear search</button>
                                 : page > 1
                                     ? <button type="button" onClick={() => go({ page: null })} className="text-label-md text-primary hover:underline">Go to the first page</button>
@@ -374,6 +448,7 @@ function WorkAllocationView() {
                                                     <td className={`${td} text-ink-muted`}>
                                                         <span className="block">{item.currentStage ? STAGE_LABELS[item.currentStage] : "All stages completed"}</span>
                                                         <span className="block text-label-sm tabular-nums text-ink-subtle">{item.stagesCompleted}/{item.stagesTotal}</span>
+                                                        {item.workflowStatus && <span className="mt-1 block"><WorkflowStatusBadge status={item.workflowStatus} /></span>}
                                                     </td>
                                                     <td className={`${td} text-ink-muted`}>
                                                         {item.analyst ? (

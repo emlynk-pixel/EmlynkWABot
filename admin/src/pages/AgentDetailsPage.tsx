@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import { getAgent, setAgentStatus, type AgentJobRow } from "../api/agents";
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageMasterData, useAuth } from "../auth/AuthProvider";
+import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { formatDate } from "../components/format";
 import { Detail, JobStatusBadge } from "../components/job/JobParts";
 import { EntityStatusBadge, PageTabs, RestrictedPage, StatusDialog, countryName } from "../components/master/MasterParts";
@@ -17,11 +18,13 @@ import { AgentFormDialog } from "./AgentsPage";
 // status action sit above the tabs. Jobs link to the Job record; this page does not repeat
 // Job Management.
 
-type JobTab = "processing" | "completed" | "cancelled";
+// Processing opens first; with no Processing job (but other jobs), All does.
+type JobTab = "processing" | "completed" | "cancelled" | "all";
 const JOB_TABS: { key: JobTab; label: string }[] = [
     { key: "processing", label: "Processing" },
     { key: "completed", label: "Completed" },
     { key: "cancelled", label: "Cancelled" },
+    { key: "all", label: "All" },
 ];
 type Section = "jobs" | "details" | "clients";
 
@@ -36,8 +39,9 @@ function AgentDetailsView() {
     const { token } = useAuth();
     const detail = useAdminResource(`agent:${agentId}`, (t, signal) => getAgent(t, agentId, signal));
     const [section, setSection] = useState<Section>("jobs");
-    const [tab, setTab] = useState<JobTab>("processing");
+    const [chosenTab, setTab] = useState<JobTab | null>(null);
     const [dialog, setDialog] = useState<"edit" | "status" | null>(null);
+    useBreadcrumbLabel(detail.data?.name);
 
     if (detail.status === "loading" && !detail.data) return <LoadingState label="Loading agent…" />;
     if (detail.status === "error" && !detail.data) return <ErrorState message={detail.error.status === 404 ? "Agent not found." : detail.error.message} onRetry={detail.reload} />;
@@ -47,13 +51,14 @@ function AgentDetailsView() {
         setDialog(null);
         detail.reload();
     };
-    const counts: Record<JobTab, number> = { processing: agent.processingJobs, completed: agent.completedJobs, cancelled: agent.cancelledJobs };
-    const rows: AgentJobRow[] = agent.jobs[tab];
-    const totalJobs = counts.processing + counts.completed + counts.cancelled;
+    const totalJobs = agent.processingJobs + agent.completedJobs + agent.cancelledJobs;
+    const counts: Record<JobTab, number> = { processing: agent.processingJobs, completed: agent.completedJobs, cancelled: agent.cancelledJobs, all: totalJobs };
+    const tab: JobTab = chosenTab ?? (counts.processing === 0 && totalJobs > 0 ? "all" : "processing");
+    const newestFirst = (a: AgentJobRow, b: AgentJobRow) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
+    const rows: AgentJobRow[] = tab === "all" ? [...agent.jobs.processing, ...agent.jobs.completed, ...agent.jobs.cancelled].sort(newestFirst) : agent.jobs[tab];
 
     return (
         <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
-            <nav aria-label="Breadcrumb" className="text-body-sm text-ink-muted"><Link to="/agents" className="text-primary hover:underline">Agents</Link> / {agent.name}</nav>
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                     <h1 id="page-title" className="text-headline-lg text-ink">{agent.name}</h1>
@@ -89,7 +94,7 @@ function AgentDetailsView() {
                             </div>
                         </div>
                         {rows.length === 0 ? (
-                            <p className="px-4 py-6 text-body-sm text-ink-muted">No {tab} jobs.</p>
+                            <p className="px-4 py-6 text-body-sm text-ink-muted">{tab === "all" ? "No jobs." : `No ${tab} jobs.`}</p>
                         ) : (
                             <div className="relative overflow-x-auto">
                                 <table aria-label="Jobs of this agent" className="w-full border-collapse">

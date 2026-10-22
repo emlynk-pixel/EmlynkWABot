@@ -179,7 +179,7 @@ describe("Client Details: police slip date", () => {
         signedInBackend({ "GET /api/admin/clients/N1234567": { status: 200, body: CLIENT_DETAILS } });
         renderApp("/clients/N1234567");
         expect(await screen.findByText("Incomplete")).toBeInTheDocument();
-        const breadcrumb = screen.getAllByRole("navigation", { name: "Breadcrumb" }).find((nav) => nav.tagName === "NAV" && within(nav).queryByRole("link"))!;
+        const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
         expect(within(breadcrumb).getByRole("link", { name: "Clients" })).toHaveAttribute("href", "/clients");
     });
 });

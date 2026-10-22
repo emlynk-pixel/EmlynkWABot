@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
 import { App } from "../App";
 import { emptyForm, toPayload } from "../form/model";
 import { JOB_CATEGORIES } from "../form/options";
@@ -40,22 +40,29 @@ export function prefill(overrides: (p: CandidateFormPayload) => void = () => {})
 }
 
 export type Reply = { status: number; body?: unknown } | "network";
-export type Routes = { verify?: Reply; form?: Reply; submit?: Reply | ((call: number) => Reply) };
+export type Routes = { verify?: Reply; form?: Reply; draft?: Reply | ((call: number) => Reply); submit?: Reply | ((call: number) => Reply) };
 export type User = ReturnType<typeof userEvent.setup>;
 export type Call = { url: string; path: string; init: RequestInit; body: unknown };
 
 const OK_VERIFY: Reply = { status: 200, body: { token: TOKEN, expiresAt: inMinutes(60) } };
 
-// Stubs fetch for the three public endpoints and records every request.
+// Stubs fetch for the public endpoints (draft: a save of one step, answered 200 unless told otherwise) and records every request.
 export function backend(routes: Routes = {}) {
     const calls: Call[] = [];
     let submits = 0;
+    let drafts = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
         const path = new URL(String(url), "http://localhost").pathname;
         calls.push({ url: String(url), path, init, body: typeof init.body === "string" ? JSON.parse(init.body) : undefined });
         let reply: Reply = { status: 404, body: { message: "Not found" } };
         if (path.endsWith("/verify")) reply = routes.verify ?? OK_VERIFY;
         if (path.endsWith("/form")) reply = routes.form ?? { status: 200, body: prefill() };
+        if (path.endsWith("/draft")) {
+            drafts += 1;
+            const step = (typeof init.body === "string" ? JSON.parse(init.body) : {}).step;
+            const r = routes.draft ?? { status: 200, body: { savedSteps: [step], savedAt: new Date().toISOString() } };
+            reply = typeof r === "function" ? r(drafts) : r;
+        }
         if (path.endsWith("/submit")) {
             submits += 1;
             const r = routes.submit ?? { status: 200, body: { submittedAt: new Date().toISOString() } };
@@ -66,7 +73,7 @@ export function backend(routes: Routes = {}) {
     }));
     return calls;
 }
-export const callsTo = (calls: Call[], endpoint: "verify" | "form" | "submit") => calls.filter((c) => c.path.endsWith(`/${endpoint}`));
+export const callsTo = (calls: Call[], endpoint: "verify" | "form" | "draft" | "submit") => calls.filter((c) => c.path.endsWith(`/${endpoint}`));
 
 export async function fillVerify(user: User, passport = PASSPORT, nic = NIC) {
     await user.type(screen.getByLabelText(/^(Passport Number|ගමන් බලපත්‍ර අංකය)/), passport);
@@ -102,7 +109,11 @@ export const queryField = (key: MessageKey) => screen.queryByLabelText(startsWit
 export const stepHeading = (key: MessageKey) => screen.getByRole("heading", { level: 2, name: startsWith(en(key)) });
 // A section inside a step (Basic, Contact, Passport & Qualifications, Measurements, Family, Guardian).
 export const sectionHeading = (key: MessageKey) => screen.getByRole("heading", { level: 3, name: startsWith(en(key)) });
-export const next = (user: User) => user.click(screen.getByRole("button", { name: en("form.next") }));
+// Clicks Next and waits until the step has finished saving (a step that fails its checks never starts to).
+export async function next(user: User) {
+    await user.click(screen.getByRole("button", { name: en("form.next") }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: en("form.saving") })).toBeNull());
+}
 
 // Valid answers for EVERY field (all are required), step by step, with "N/A"
 // where the form allows it (no other names, no second phone, no skills, no

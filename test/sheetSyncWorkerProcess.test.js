@@ -45,13 +45,15 @@ describe("HTTP surface", () => {
         }
     });
 
-    test("without scheduler settings the reconcile trigger does not exist (404), and records nothing", async () => {
+    test("without scheduler settings the reconcile trigger is exposed (202) and records a run", async () => {
         const server = createSheetSyncHttpServer({ requestReconcile, verifyScheduler: createOidcVerifier({ audience: AUDIENCE, invoker: null, client: fakeOauthClient }), log: silent });
         const url = await serve(server);
         try {
             const before = requests;
-            assert.equal((await fetch(`${url}/tasks/reconcile`, { method: "POST", headers: { Authorization: `Bearer good:${INVOKER}:true:${AUDIENCE}` } })).status, 404);
-            assert.equal(requests, before);
+            const res = await fetch(`${url}/tasks/reconcile`, { method: "POST" });
+            assert.equal(res.status, 202);
+            assert.deepEqual(await res.json(), { runId: "00000000-0000-4000-8000-000000000001", status: "QUEUED", created: true });
+            assert.equal(requests, before + 1);
         } finally {
             server.close();
         }

@@ -2,10 +2,12 @@ import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError } from "../api/client";
 import { listCandidates, type CandidateListItem } from "../api/candidates";
-import { addCandidateToJob, cancelJob, completeJob, getJob, removeCandidateFromJob, updateJob, type JobDetails } from "../api/jobs";
+import { addCandidateToJob, cancelJob, completeJob, createJobType, getJob, getJobOptions, removeCandidateFromJob, updateJob, type JobDetails, type JobOptions } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
-import { canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
+import { canCreateJobTypes, canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
 import { ActionDialog, ConfirmDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
+import { JobTypesMultiSelect } from "./JobsPage";
+import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 import { formatDate, formatDateTime } from "../components/format";
 import { Icon } from "../components/Icon";
@@ -18,9 +20,9 @@ import { filterControl, inputClass, tableCell, tableHead, tableRow, textareaClas
 // Candidates. The tab is page state only (no route): switching keeps every open
 // dialog and loaded value, and the actions above the tabs work from either. ADMIN and
 // MANAGER add / remove candidates and complete or cancel a PROCESSING job; an
-// ANALYST sees the job with only their own candidates. A candidate already on
-// another PROCESSING job is refused by the server (409) and the message is
-// shown here; nothing is moved silently.
+// ANALYST sees the job with only their own candidates. A candidate may also be on
+// other PROCESSING jobs (they are never touched); one already on THIS job is refused
+// by the server (409) and the message is shown here.
 
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
 
@@ -40,7 +42,7 @@ export function JobDetailsPage() {
     return <JobDetailsView />;
 }
 
-type Dialog = "add" | "complete" | "cancel" | "companyJobId" | "fromCountry" | { remove: JobDetails["candidates"][number] } | null;
+type Dialog = "add" | "complete" | "cancel" | "companyJobId" | "fromCountry" | "jobTypes" | { remove: JobDetails["candidates"][number] } | null;
 type Tab = "details" | "candidates";
 
 const tabClass = (active: boolean) =>
@@ -57,11 +59,11 @@ function JobDetailsView() {
     const [dialog, setDialog] = useState<Dialog>(null);
     const [tab, setTab] = useState<Tab>("details");
     const job = updated?.jobId === jobId ? updated : resource.data?.jobId === jobId ? resource.data : null;
+    useBreadcrumbLabel(job?.jobCode);
 
     if (!job) {
         return (
             <div className="mx-auto max-w-5xl space-y-4">
-                <Link to="/jobs" className="text-label-md text-primary hover:underline">Jobs</Link>
                 <Card>{resource.status === "error" ? <ErrorState message={resource.error.message} onRetry={resource.reload} /> : <LoadingState label="Loading job…" />}</Card>
             </div>
         );
@@ -77,8 +79,7 @@ function JobDetailsView() {
         <section aria-labelledby="page-title" className="mx-auto max-w-5xl space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div className="min-w-0">
-                    <Link to="/jobs" className="text-label-md text-primary hover:underline">Jobs</Link>
-                    <h1 id="page-title" className="mt-1 flex flex-wrap items-center gap-3 text-headline-lg text-ink">{job.jobCode}<JobStatusBadge status={job.status} /></h1>
+                    <h1 id="page-title" className="flex flex-wrap items-center gap-3 text-headline-lg text-ink">{job.jobCode}<JobStatusBadge status={job.status} /></h1>
                 </div>
                 {canManage && processing && (
                     <div className="flex flex-wrap gap-2">
@@ -103,8 +104,18 @@ function JobDetailsView() {
                                 {job.companyJobId ?? <span className="text-ink-muted">{NO_COMPANY_JOB_ID}</span>}
                                 {canManage && <button type="button" onClick={() => setDialog("companyJobId")} aria-label={`${job.companyJobId ? "Change" : "Add"} Client Job ID`} className="ml-2 text-label-md text-primary hover:underline">{job.companyJobId ? "Change" : "Add"}</button>}
                             </Detail>
-                            <Detail label="Job type">{job.jobType.name}</Detail>
-                            <Detail label="Client">{job.client.name}</Detail>
+                            <Detail label={job.jobTypes && job.jobTypes.length > 1 ? "Job types" : "Job type"}>
+                                <div className="flex flex-wrap items-center gap-1.5" data-testid="job-details-types">
+                                    {((job.jobTypes && job.jobTypes.length > 0) ? job.jobTypes : (job.jobType ? [job.jobType] : [])).map((t) => (
+                                        <span key={t.id} className="inline-flex items-center rounded border border-border bg-canvas-subtle px-2 py-0.5 text-label-md font-medium text-ink">
+                                            {t.name}
+                                        </span>
+                                    ))}
+                                    {canManage && processing && (
+                                        <button type="button" onClick={() => setDialog("jobTypes")} aria-label="Edit Job types" className="ml-1 text-label-md text-primary hover:underline">Edit</button>
+                                    )}
+                                </div>
+                            </Detail>
                             <Detail label="To Country">{jobCountry(job.countryCode)}</Detail>
                             <Detail label="From Country">
                                 <span className={job.fromCountryCode ? undefined : "text-ink-muted"}>{jobCountry(job.fromCountryCode)}</span>
@@ -175,6 +186,7 @@ function JobDetailsView() {
 
             {token && dialog === "fromCountry" && <FromCountryDialog token={token} job={job} onDone={changed} onClose={() => setDialog(null)} />}
             {token && dialog === "companyJobId" && <CompanyJobIdDialog token={token} job={job} onDone={changed} onClose={() => setDialog(null)} />}
+            {token && dialog === "jobTypes" && <EditJobTypesDialog token={token} job={job} onDone={changed} onClose={() => setDialog(null)} />}
             {token && dialog === "add" && <AddCandidateDialog token={token} job={job} onChanged={setUpdated} onClose={() => setDialog(null)} />}
             {token && dialog === "complete" && (
                 <ConfirmDialog
@@ -213,6 +225,69 @@ function JobDetailsView() {
     );
 }
 
+function EditJobTypesDialog({ token, job, onDone, onClose }: { token: string; job: JobDetails; onDone: (job: JobDetails) => void; onClose: () => void }) {
+    const { user } = useAuth();
+    const canAddJobType = canCreateJobTypes(user);
+    const options = useAdminResource("job-options", (t, signal) => getJobOptions(t, signal));
+    const initialIds = (job.jobTypes && job.jobTypes.length > 0)
+        ? job.jobTypes.map((t) => t.id)
+        : (job.jobType ? [job.jobType.id] : []);
+    const [selectedIds, setSelectedIds] = useState<string[]>(initialIds);
+    const [created, setCreated] = useState<JobOptions["jobTypes"]>([]);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const mergedOptions = [...(options.data?.jobTypes ?? []), ...created];
+    const canSave = selectedIds.length > 0;
+
+    const submit = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!canSave) return;
+        setBusy(true);
+        setError(null);
+        try {
+            const updated = await updateJob(token, job.jobId, {
+                jobTypeIds: selectedIds,
+                jobTypeId: selectedIds[0],
+            });
+            onDone(updated);
+        } catch (caught) {
+            setError(message(caught));
+            setBusy(false);
+        }
+    };
+
+    return (
+        <ActionDialog title={`Edit Job types for ${job.jobCode}`} busy={busy} onClose={onClose}>
+            {options.status === "loading" && !options.data && <LoadingState label="Loading…" />}
+            {options.status === "error" && <ErrorState message={options.error.message} onRetry={options.reload} />}
+            {options.data && (
+                <form onSubmit={submit} className="space-y-3">
+                    <p className="text-body-sm text-ink-muted">Add or remove Job types associated with this Job. At least one Job type is required.</p>
+                    <JobTypesMultiSelect
+                        label="Job types"
+                        value={selectedIds}
+                        onChange={setSelectedIds}
+                        disabled={busy}
+                        canAdd={canAddJobType}
+                        options={mergedOptions}
+                        onAdd={async (name) => {
+                            const row = await createJobType(token, name);
+                            setCreated((prev) => [...prev, row]);
+                            setSelectedIds((prev) => [...prev, row.id]);
+                        }}
+                    />
+                    <DialogError message={error} />
+                    <div className="mt-4 flex justify-end gap-2">
+                        <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Cancel</button>
+                        <button type="submit" disabled={busy || !canSave} className={primaryButton}>{busy ? "Saving…" : "Save"}</button>
+                    </div>
+                </form>
+            )}
+        </ActionDialog>
+    );
+}
+
 
 function CancelDialog({ token, job, onDone, onClose }: { token: string; job: JobDetails; onDone: (job: JobDetails) => void; onClose: () => void }) {
     const [reason, setReason] = useState("");
@@ -246,8 +321,8 @@ function CancelDialog({ token, job, onDone, onClose }: { token: string; job: Job
 }
 
 // Search the candidates and add them one at a time. The dialog stays open so
-// several can be added; a refusal (already on another PROCESSING job, already
-// here) is shown next to the search.
+// several can be added; a refusal (already on this job, test not passed) is shown
+// next to the search.
 function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string; job: JobDetails; onChanged: (job: JobDetails) => void; onClose: () => void }) {
     const [text, setText] = useState("");
     const [results, setResults] = useState<CandidateListItem[] | null>(null);
@@ -321,7 +396,7 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
 }
 
 // The From Country (editable while the job is PROCESSING). The To Country is the
-// client's and is never edited here.
+// responsible agent's country, fixed when the job was created, and is never edited here.
 function FromCountryDialog({ token, job, onDone, onClose }: { token: string; job: JobDetails; onDone: (job: JobDetails) => void; onClose: () => void }) {
     const [value, setValue] = useState(job.fromCountryCode ?? "");
     const [busy, setBusy] = useState(false);
@@ -340,7 +415,7 @@ function FromCountryDialog({ token, job, onDone, onClose }: { token: string; job
     return (
         <ActionDialog title="From Country" busy={busy} onClose={onClose}>
             <form onSubmit={submit}>
-                <p className="mb-3 text-body-sm text-ink-soft">The country the candidates of {job.jobCode} travel from. The To Country ({jobCountry(job.countryCode)}) is the client&apos;s.</p>
+                <p className="mb-3 text-body-sm text-ink-soft">The country the candidates of {job.jobCode} travel from. The To Country ({jobCountry(job.countryCode)}) is fixed when the job is created.</p>
                 <CountrySelect label="From Country" value={value} onChange={setValue} disabled={busy} />
                 <DialogError message={error} />
                 <div className="mt-4 flex justify-end gap-2">

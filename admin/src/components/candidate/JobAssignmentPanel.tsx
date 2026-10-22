@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { ApiError } from "../../api/client";
-import { getCandidate, type CandidateDetails, type JobAssignments } from "../../api/candidates";
+import { activeJobsOf, getCandidate, type CandidateDetails, type JobAssignments } from "../../api/candidates";
 import { addCandidateToJob, listJobs, type CandidateJobAssignment, type JobListItem } from "../../api/jobs";
 import { useAdminResource } from "../../api/useAdminResource";
 import { canManageCandidates, canManageJobs, canViewJobs, useAuth } from "../../auth/AuthProvider";
@@ -11,14 +11,13 @@ import { Detail, JobStatusBadge, NO_COMPANY_JOB_ID } from "../job/JobParts";
 import { Card, EmptyState, ErrorState, LoadingState } from "../States";
 import { filterControl } from "../ui";
 
-// The candidate's Job assignment, read from the Job relation (job_candidate):
-// the PROCESSING job they are on now, and the completed / cancelled history.
-// Never from the old free-text candidate_stages.job_id.
+// The candidate's Job assignments, read from the Job relation (job_candidate): every
+// PROCESSING job they are on now (a candidate may hold several), and the completed /
+// cancelled / removed history. Never from the old free-text candidate_stages.job_id.
 //
-// ADMIN and MANAGER get "Assign to Job" when the candidate has no PROCESSING
-// job. It uses the same endpoint as Add to job on the Job page
-// (POST /api/admin/jobs/:jobId/candidates), so the one-PROCESSING-job rule is the
-// server's: a candidate already on a job is refused with 409, never moved.
+// ADMIN and MANAGER get "Assign to Job" (also when the candidate already has jobs). It uses
+// the same endpoint as Add to job on the Job page (POST /api/admin/jobs/:jobId/candidates);
+// the server refuses the same job twice (409), and other jobs are never touched.
 // Only a candidate whose Test result is PASS can be assigned (the server also
 // refuses others with CANDIDATE_TEST_NOT_PASSED), so the button stays disabled until then.
 
@@ -54,19 +53,24 @@ export function JobAssignmentPanel({ assignments, candidate, testPassed = false,
     // A JOB_HANDLER reads this page only (it assigns from the Jobs module): the action is offered
     // to roles that both manage jobs and change candidates (ADMIN and MANAGER, as before).
     const canAssign = canManageJobs(user) && canManageCandidates(user) && Boolean(candidate && onChanged && token);
+    const active = activeJobsOf(assignments);
     return (
         <Card className="p-5">
             <section aria-label="Job assignment" className="space-y-4">
                 <div>
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h2 className="text-headline-sm text-ink">Current processing job</h2>
-                        {canAssign && !assignments.current && (
+                        <h2 className="text-headline-sm text-ink">{active.length > 1 ? `Current processing jobs (${active.length})` : "Current processing job"}</h2>
+                        {canAssign && (
                             <button type="button" disabled={!testPassed} title={testPassed ? undefined : "Only a candidate who passed the test can be assigned to a job"} onClick={() => setAssigning(true)} className={primaryButton}>Assign to Job</button>
                         )}
                     </div>
                     <div className="mt-2">
-                        {assignments.current
-                            ? <JobLine job={assignments.current} />
+                        {active.length > 0
+                            ? (
+                                <ul aria-label="Current processing jobs" className="divide-y divide-border">
+                                    {active.map((job) => <li key={job.jobId} className="py-3 first:pt-0 last:pb-0"><JobLine job={job} /></li>)}
+                                </ul>
+                            )
                             : <p className="text-body-sm text-ink-muted">Not assigned to a processing job.{canAssign && !testPassed && " Only a candidate whose Test result is PASS can be assigned."}</p>}
                     </div>
                 </div>
@@ -83,6 +87,7 @@ export function JobAssignmentPanel({ assignments, candidate, testPassed = false,
                 <AssignToJobDialog
                     token={token}
                     candidate={candidate}
+                    assignedJobIds={active.map((job) => job.jobId)}
                     onClose={() => setAssigning(false)}
                     onAssigned={(details) => {
                         setAssigning(false);
@@ -97,11 +102,12 @@ export function JobAssignmentPanel({ assignments, candidate, testPassed = false,
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
 
 // Pick one PROCESSING job (searchable), confirm, assign. Only PROCESSING jobs are
-// requested, so completed and cancelled jobs can't be chosen; the server still
-// checks everything (job status, one PROCESSING job per candidate).
-function AssignToJobDialog({ token, candidate, onClose, onAssigned }: {
+// requested, so completed and cancelled jobs can't be chosen; jobs the candidate is
+// already on are shown but can't be picked. The server still checks everything.
+function AssignToJobDialog({ token, candidate, assignedJobIds = [], onClose, onAssigned }: {
     token: string;
     candidate: { passportId: string; name: string | null };
+    assignedJobIds?: readonly string[];
     onClose: () => void;
     onAssigned: (details: CandidateDetails) => void;
 }) {
@@ -140,7 +146,7 @@ function AssignToJobDialog({ token, candidate, onClose, onAssigned }: {
         <ActionDialog title={`Assign ${name} to a job`} busy={busy} onClose={onClose}>
             {!chosen ? (
                 <>
-                    <p className="text-body-sm text-ink-soft">Only processing jobs are listed. A candidate can be on one processing job at a time.</p>
+                    <p className="text-body-sm text-ink-soft">Only processing jobs are listed. A candidate can be on several processing jobs, but only once on each.</p>
                     <form onSubmit={submitSearch} role="search" className="mt-3 flex gap-2">
                         <label htmlFor="assign-job-search" className="sr-only">Search jobs</label>
                         <input id="assign-job-search" type="search" value={text} maxLength={100} placeholder="Job code, Client Job ID, client…" onChange={(event) => setText(event.target.value)} className={filterControl} />
@@ -160,7 +166,9 @@ function AssignToJobDialog({ token, candidate, onClose, onAssigned }: {
                                         <p className="text-ink-soft">{job.client.name} · {job.jobType.name}</p>
                                         <p className="text-label-sm text-ink-muted">{job.countryCode} · {job.responsibleAgent.name} · {job.candidateCount} candidate{job.candidateCount === 1 ? "" : "s"}</p>
                                     </div>
-                                    <button type="button" className={secondaryButton} aria-label={`Select ${job.jobCode}`} onClick={() => { setChosen(job); setError(null); }}>Select</button>
+                                    {assignedJobIds.includes(job.jobId)
+                                        ? <span className="shrink-0 text-label-sm text-ink-muted">Already assigned</span>
+                                        : <button type="button" className={secondaryButton} aria-label={`Select ${job.jobCode}`} onClick={() => { setChosen(job); setError(null); }}>Select</button>}
                                 </li>
                             ))}
                         </ul>

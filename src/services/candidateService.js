@@ -25,7 +25,7 @@ import crypto from "node:crypto";
 import { validateDocumentFile, ALLOWED_MIME_TYPES, MAX_FILE_SIZE } from "../utils/fileValidation.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { clientName } from "../utils/clientName.js";
-import { normalizePassportId } from "../utils/passportId.js";
+import { CANDIDATE_PASSPORT_MESSAGE, parseCandidatePassportNumber } from "../utils/passportId.js";
 import { normalizePhoneNumber } from "../utils/phoneNumber.js";
 import { clientFolderPath, extensionForMimeType, standardFileName } from "../utils/storageNaming.js";
 import { MAX_NAME_ATTEMPTS, removeObject } from "./permanentStorageService.js";
@@ -213,8 +213,9 @@ export function parseCandidateBody(body, { creating }) {
     if (creating) {
         const raw = text(body, "passportId", errors, { required: true, max: 20 });
         if (raw !== null) {
-            const passportId = normalizePassportId(raw);
-            if (!passportId) errors.push({ field: "passportId", message: "must be a passport number (6 to 9 letters and digits)" });
+            // P or N + 7 digits (utils/passportId.js); only a new candidate's number is checked this strictly.
+            const passportId = parseCandidatePassportNumber(raw);
+            if (!passportId) errors.push({ field: "passportId", message: CANDIDATE_PASSPORT_MESSAGE });
             else values.passportId = passportId;
         }
         values.comment = text(body, "comment", errors);
@@ -594,8 +595,8 @@ export function parseCandidateListQuery(query = {}) {
         if (testResult === TEST_RESULT_PASS) params.testResult = TEST_RESULT_PASS;
         else errors.push({ field: "testResult", message: `must be ${TEST_RESULT_PASS}` });
     }
-    // available=true: only candidates who are not currently on a PROCESSING job (no active job_candidate;
-    // the New job candidate selection).
+    // available=true: only candidates who are not currently on any PROCESSING job (no active job_candidate).
+    // Candidates may hold several jobs, so the Job pages no longer send it; kept for API compatibility.
     const available = single("available");
     if (available !== undefined) {
         if (available === "true") params.available = true;
@@ -1483,7 +1484,7 @@ export async function removeCandidateDocument({ db, bucket, admin, passportId, d
 // shown with the calls as Candidate History (candidateActivity, below).
 export async function listCallLogs({ db, passportId }) {
     await requireCandidate(db, passportId);
-    const [rows, documents, audits, stages] = await Promise.all([
+    const [rows, documents, audits, stages, formResponse] = await Promise.all([
         db.candidateCallLog.findMany({
             where: { passportId },
             select: {
@@ -1512,8 +1513,15 @@ export async function listCallLogs({ db, passportId }) {
             where: { passportId, completed: true, completedAt: { not: null } },
             select: { stage: true, completedAt: true },
         }),
+        // The Candidate Form answers: one row, written only by a successful submission
+        // (candidateFormDataService.js submitCandidateForm). Only when and through which
+        // kind of link, never the answers or the link secret.
+        db.candidateFormResponse.findUnique({
+            where: { passportId },
+            select: { submittedAt: true, submittedViaLink: { select: { kind: true, job: { select: { jobCode: true } } } } },
+        }),
     ]);
-    const { activity, truncated } = candidateActivity({ documents, audits, stages, complete: documents.length < HISTORY_QUERY_LIMIT && audits.length < HISTORY_QUERY_LIMIT });
+    const { activity, truncated } = candidateActivity({ documents, audits, stages, formResponse, complete: documents.length < HISTORY_QUERY_LIMIT && audits.length < HISTORY_QUERY_LIMIT });
     return {
         items: rows.map((row) => {
             const followUp = row.followUps?.[0];
@@ -1551,6 +1559,11 @@ export async function listCallLogs({ db, passportId }) {
 //                       were audited comes from candidate_stages.completed_at
 //                       (no actor). The automatic stages (Candidate details,
 //                       Document submission) keep no completion history.
+//   CANDIDATE_FORM_SUBMITTED   the candidate submitted the Candidate Form, at
+//                       candidate_form_response.submitted_at (one row per
+//                       candidate, written once, only on success). formLink:
+//                       SINGLE or JOB_GROUP (with the job's code), or null
+//                       when the link is no longer on record.
 // Newest first, at most MAX_CANDIDATE_ACTIVITY entries.
 export const MAX_CANDIDATE_ACTIVITY = 100;
 const HISTORY_QUERY_LIMIT = 200;
@@ -1574,7 +1587,7 @@ function parseAuditJson(value) {
     }
 }
 
-export function candidateActivity({ documents, audits, stages, complete = true }) {
+export function candidateActivity({ documents, audits, stages, formResponse = null, complete = true }) {
     const entry = (activityId, kind, occurredAt, actorName, extra = {}) => ({
         activityId, kind, occurredAt, actorName: actorName ?? null, source: null, documentType: null, variant: null, stage: null, fields: [], ...extra,
     });
@@ -1639,6 +1652,13 @@ export function candidateActivity({ documents, audits, stages, complete = true }
         if (!isCandidateStage(row.stage) || !row.completedAt) continue;
         const audited = stageCompletions.some((c) => c.stage === row.stage && Math.abs(new Date(c.at) - new Date(row.completedAt)) <= SAME_SAVE_MS);
         if (!audited) activity.push(entry(`stage:${row.stage}`, "STAGE_COMPLETED", row.completedAt, null, { stage: row.stage }));
+    }
+
+    if (formResponse?.submittedAt) {
+        const link = formResponse.submittedViaLink;
+        activity.push(entry("form:submitted", "CANDIDATE_FORM_SUBMITTED", formResponse.submittedAt, null, {
+            formLink: link?.kind ?? null, jobCode: link?.kind === "JOB_GROUP" ? link.job?.jobCode ?? null : null,
+        }));
     }
 
     activity.sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt) || (a.activityId < b.activityId ? -1 : a.activityId > b.activityId ? 1 : 0));

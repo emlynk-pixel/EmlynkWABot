@@ -9,6 +9,7 @@ import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge
 import { Icon } from "../components/Icon";
 import { primaryButton } from "../components/Dialog";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
+import { ConflictIndicator } from "../components/candidate/formConflicts";
 import { useRef } from "react";
 
 // The server returns one page at a time (at most 100 candidates).
@@ -117,9 +118,12 @@ export function CandidatesPage() {
                                         return (
                                             <tr key={item.passportId} onClick={() => open(item.passportId)} className="cursor-pointer hover:bg-canvas">
                                                 <td className={td}>
-                                                    <Link to={`/candidates/${encodeURIComponent(item.passportId)}`} onClick={(event) => event.stopPropagation()} className="font-medium text-ink hover:text-primary hover:underline">
-                                                        {item.name ?? item.passportId}
-                                                    </Link>
+                                                    <span className="inline-flex items-center gap-1.5">
+                                                        <Link to={`/candidates/${encodeURIComponent(item.passportId)}`} onClick={(event) => event.stopPropagation()} className="font-medium text-ink hover:text-primary hover:underline">
+                                                            {item.name ?? item.passportId}
+                                                        </Link>
+                                                        <ConflictIndicator passportId={item.passportId} fields={item.formConflicts} />
+                                                    </span>
                                                     {(passport || nic) && (
                                                         <div className="flex flex-wrap items-center gap-x-2 text-label-sm text-ink-subtle">
                                                             {passport && <span title="Passport number">{passport}</span>}

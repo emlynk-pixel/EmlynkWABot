@@ -236,7 +236,8 @@ describe("the form: identity and prefill", () => {
     test("the response holds only the form's fields: no stages, documents, allocation, job assignment or IDs", async () => {
         const r = await pub("/form", { token: (await session(A)).token, body: {} });
         // jobCategories: the active job type names (the form's choices), names only.
-        assert.deepEqual(Object.keys(r.body).sort(), ["answers", "expiresAt", "identity", "jobCategories", "prefilled"]);
+        // savedSteps / draftSavedAt: the candidate's own saved progress (Next), nothing else.
+        assert.deepEqual(Object.keys(r.body).sort(), ["answers", "draftSavedAt", "expiresAt", "identity", "jobCategories", "prefilled", "savedSteps"]);
         assert.ok(r.body.jobCategories.every((name) => typeof name === "string"));
         const keys = (value, prefix = "") => Object.entries(value).flatMap(([k, v]) => (v && typeof v === "object" ? keys(v, `${prefix}${k}.`) : [`${prefix}${k}`]));
         assert.deepEqual(keys(r.body.answers).sort(), ANSWER_FIELDS.map(([group, key]) => `${group}.${key}`).sort());

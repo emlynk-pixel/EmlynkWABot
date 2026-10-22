@@ -35,3 +35,13 @@ export function nameError(value: string): string | null {
     if (trimmed.length > MAX_NAME_LENGTH) return `Name must be at most ${MAX_NAME_LENGTH} characters.`;
     return null;
 }
+
+// A NEW candidate's own passport number: P or N, then exactly 7 digits (P1234567, N1234567).
+// Lowercase p / n is accepted (shown and sent in capitals); spaces, other letters and other
+// lengths are not. The server applies the same rule (src/utils/passportId.js). Looking up an
+// existing candidate stays more permissive: older passport numbers predate this rule.
+export const CANDIDATE_PASSPORT_PATTERN = /^[PN][0-9]{7}$/;
+export const CANDIDATE_PASSPORT_HELP = "Passport number must start with P or N followed by 7 digits. Example: P1234567";
+export const normalizeNewPassportNumber = (value: string) => value.trim().toUpperCase();
+export const isCandidatePassportNumber = (value: string) => CANDIDATE_PASSPORT_PATTERN.test(normalizeNewPassportNumber(value));
+

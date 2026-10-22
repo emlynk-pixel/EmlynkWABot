@@ -1,5 +1,5 @@
 import { apiRequest } from "./client";
-import type { CandidateStageKey } from "./candidates";
+import type { CandidateStageKey, WorkflowStatus } from "./candidates";
 
 // Work Allocation (src/services/workAllocationService.js): which Analyst each
 // candidate is assigned to. ADMIN and MANAGER only; the server checks it.
@@ -20,6 +20,8 @@ export type AllocationCandidate = {
     stagesCompleted: number;
     stagesTotal: number;
     currentStage: CandidateStageKey | null;
+    // The Candidates list's Status (absent from an older server).
+    workflowStatus?: WorkflowStatus | null;
     analyst: AllocationAnalystRef | null;
     assignedDate: string | null;
 };
@@ -27,7 +29,17 @@ export type AllocationCandidate = {
 export type AllocationCandidateList = {
     items: AllocationCandidate[];
     pagination: { page: number; pageSize: number; total: number; totalPages: number; totalItems?: number; hasNextPage?: boolean; hasPreviousPage?: boolean };
-    filters: { status: AllocationStatus; analystId: string | null; search: string | null };
+    filters: AllocationFilters & { status: AllocationStatus; analystId: string | null; search: string | null };
+};
+
+// The list's filters, all applied on the server before paging (totals are those of the whole
+// filtered list). stage: the current stage (first not completed) or COMPLETE.
+export type AllocationFilters = {
+    registeredFrom?: string | null;
+    registeredTo?: string | null;
+    jobType?: string | null;
+    workflowStatus?: WorkflowStatus["code"] | null;
+    stage?: CandidateStageKey | "COMPLETE" | null;
 };
 
 export type AllocationAnalyst = { analystId: string; name: string; email?: string; assignedCount: number };
@@ -44,12 +56,13 @@ export type AssignResult = { assigned: number; reassigned: number; unchanged: nu
 
 export function listAllocationCandidates(
     token: string,
-    params: { status: AllocationStatus; analystId?: string; search?: string; page: number },
+    params: { status: AllocationStatus; analystId?: string; search?: string; page: number; filters?: AllocationFilters },
     signal?: AbortSignal,
 ): Promise<AllocationCandidateList> {
     const query = new URLSearchParams({ status: params.status, page: String(params.page) });
     if (params.analystId) query.set("analystId", params.analystId);
     if (params.search) query.set("search", params.search);
+    for (const [key, value] of Object.entries(params.filters ?? {})) if (value) query.set(key, value);
     return apiRequest<AllocationCandidateList>(`/api/admin/work-allocation/candidates?${query.toString()}`, { token, signal });
 }
 

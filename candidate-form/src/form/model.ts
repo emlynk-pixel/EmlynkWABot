@@ -100,15 +100,42 @@ export const emptyForm = (): CandidateFormData => ({
     guardian: { name: "", relationship: "", nic: "", birthDate: "", phone: "", address: "" },
 });
 
-// "N/A" (any letter case: n/a, N/a, n/A) is an answer of its own for the fields
-// that allow it (validation.ts NOT_APPLICABLE_FIELDS); it is sent as "N/A".
+// "N/A" is an answer of its own for the fields that allow it (NOT_APPLICABLE_FIELDS); any letter
+// case and with or without the slash (n/a, N/A, NA, na, Na) counts there, and it is sent as "N/A".
+// Everywhere else only the slash form counts as N/A (and is refused), so a real answer that reads
+// "Na" is not mistaken for it. The server keeps the same list and rules
+// (candidateFormDataService.js NOT_APPLICABLE_FIELDS, isNotApplicableFor).
 export const NOT_APPLICABLE = "N/A";
+export const NOT_APPLICABLE_FIELDS: ReadonlySet<string> = new Set([
+    "basic.otherNames",
+    "contact.city",
+    "contact.alternativePhone",
+    "qualifications.experience",
+    "qualifications.otherSkills1",
+    "qualifications.otherSkills2",
+    // A parent who does not apply (unknown, not in the candidate's life): "N/A" as the name;
+    // then that parent's other answers are not needed. A parent may have no passport.
+    "family.father.name",
+    "family.father.surname",
+    "family.father.passportNumber",
+    "family.mother.name",
+    "family.mother.surname",
+    "family.mother.passportNumber",
+    // A married candidate's spouse exists: only the passport may be "N/A".
+    "family.spouse.passportNumber",
+    "family.child1",
+    "family.child2",
+    "family.child3",
+]);
+// The slash form, in any letter case.
 export const isNotApplicable = (value: string) => /^n\/a$/i.test(value.trim());
+// Whether `value` is an N/A answer for the field at `path`.
+export const isNotApplicableFor = (path: string, value: string) => (NOT_APPLICABLE_FIELDS.has(path) ? /^n\/?a$/i : /^n\/a$/i).test(value.trim());
 // A trimmed answer, "N/A" in one spelling, or null when blank.
-const answer = (value: string): string | null => {
+const answer = (path: string, value: string): string | null => {
     const trimmed = value.trim();
     if (!trimmed) return null;
-    return isNotApplicable(trimmed) ? NOT_APPLICABLE : trimmed;
+    return isNotApplicableFor(path, trimmed) ? NOT_APPLICABLE : trimmed;
 };
 
 // Spouse details only go with Married.
@@ -144,24 +171,24 @@ export function fromPayload(payload: CandidateFormPayload): CandidateFormData {
 // spouse again) but are never sent: no spouse unless Married, no "Other Job
 // Category" unless OTHER is chosen.
 export function toPayload(data: CandidateFormData): CandidateFormPayload {
-    const clean = <T extends Record<string, string>>(group: T) =>
-        Object.fromEntries(Object.entries(group).map(([key, value]) => [key, answer(value)])) as { [K in keyof T]: string | null };
-    const person = (value: Person) => clean(value);
+    const clean = <T extends Record<string, string>>(prefix: string, group: T) =>
+        Object.fromEntries(Object.entries(group).map(([key, value]) => [key, answer(`${prefix}.${key}`, value)])) as { [K in keyof T]: string | null };
+    const person = (who: "father" | "mother" | "spouse") => clean(`family.${who}`, data.family[who]);
     const nobody = { name: null, surname: null, passportNumber: null, birthDate: null };
     return {
-        basic: clean(data.basic),
-        contact: clean(data.contact),
-        passport: clean(data.passport),
-        qualifications: { ...clean(data.qualifications), jobCategoryOther: showsOtherJobCategory(data) ? answer(data.qualifications.jobCategoryOther) : null },
-        measurements: clean(data.measurements),
+        basic: clean("basic", data.basic),
+        contact: clean("contact", data.contact),
+        passport: clean("passport", data.passport),
+        qualifications: { ...clean("qualifications", data.qualifications), jobCategoryOther: showsOtherJobCategory(data) ? answer("qualifications.jobCategoryOther", data.qualifications.jobCategoryOther) : null },
+        measurements: clean("measurements", data.measurements),
         family: {
-            father: person(data.family.father),
-            mother: person(data.family.mother),
-            spouse: showsSpouse(data) ? person(data.family.spouse) : nobody,
-            child1: answer(data.family.child1),
-            child2: answer(data.family.child2),
-            child3: answer(data.family.child3),
+            father: person("father"),
+            mother: person("mother"),
+            spouse: showsSpouse(data) ? person("spouse") : nobody,
+            child1: answer("family.child1", data.family.child1),
+            child2: answer("family.child2", data.family.child2),
+            child3: answer("family.child3", data.family.child3),
         },
-        guardian: clean(data.guardian),
+        guardian: clean("guardian", data.guardian),
     };
 }

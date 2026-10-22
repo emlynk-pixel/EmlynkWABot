@@ -25,6 +25,17 @@ export const isNoPreference = (value) => typeof value === "string"
 export const jobTypeLabel = (value) => (isNoPreference(value) ? NO_PREFERRED_JOB_TYPE.label : value);
 export const jobTypesLabel = (job) => (typeof job === "string" ? job.split(",").map((part) => jobTypeLabel(part.trim())).filter(Boolean).join(", ") : job);
 
+// Checks if a candidate's preferred job types qualify for a job's job types:
+// - matches if candidate has NO_PREFERENCE (or no preferences recorded)
+// - matches if candidate's preferences intersect with ANY of the job's job types
+export function candidateMatchesJobTypes(candidateJobTypes, jobTypes) {
+    if (!candidateJobTypes || !candidateJobTypes.length) return true;
+    if (candidateJobTypes.some(isNoPreference)) return true;
+    if (!jobTypes || !jobTypes.length) return true;
+    const names = new Set(jobTypes.map((t) => (typeof t === "string" ? t : t.name).trim().toLowerCase()));
+    return candidateJobTypes.some((pref) => names.has(pref.trim().toLowerCase()));
+}
+
 // The active job type names, A to Z (the names as the administrators wrote them).
 export async function activeJobTypeNames(db) {
     const rows = await db.jobType.findMany({ where: { isActive: true }, select: { name: true }, orderBy: [{ name: "asc" }, { id: "asc" }] });

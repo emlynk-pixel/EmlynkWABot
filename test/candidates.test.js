@@ -123,6 +123,8 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
         },
         // Job assignments (jobAssignmentReader.js): none in these tests; jobManagement.test.js covers them on a real database.
         jobCandidate: { findMany: async () => [] },
+        // Candidate Form answers (Candidate History): none in these tests; candidateFormActivity.test.js covers them on a real database.
+        candidateFormResponse: { findUnique: async () => null, findMany: async () => [] },
         candidateStage: {
             findMany: async ({ where }) => state.stages.filter((s) => matches(s, where)),
             create: async ({ data }) => {

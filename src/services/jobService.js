@@ -3,20 +3,22 @@ import crypto from "node:crypto";
 import { CandidateError, TEST_RESULT_PASS, WORKFLOW_STATUS_SELECT, candidateWorkflowStatuses, listPagination, resolveCandidatePassportId } from "./candidateService.js";
 import { candidateScope, isCandidateScoped } from "./candidateAccess.js";
 import { JOB_SELECT, JOB_STATUS, jobSummaryView } from "./jobAssignmentReader.js";
+import { candidateMatchesJobTypes } from "./jobTypeCatalog.js";
 import { clientName } from "../utils/clientName.js";
 import { normalizeCountryCode } from "../utils/countries.js";
 
-export { JOB_STATUS };
+export { JOB_STATUS, candidateMatchesJobTypes };
 
 // Job Management (Admin > Jobs). Docs/JOB_MANAGEMENT_IMPLEMENTATION.md.
 //
 // A Job belongs to one Client (the employer), one Job Type and one responsible
 // Agent. The Agent must be the Client's own Agent (checked on create and update). A
-// candidate is assigned through job_candidate; at most ONE PROCESSING job per
-// candidate (service check under row locks, and the partial unique index
-// job_candidate_one_active_per_candidate as the database's own guarantee).
-// COMPLETED / CANCELLED keep every assignment row (history) and release the
-// candidates. Jobs are never deleted; reopening is not supported.
+// candidate is assigned through job_candidate and may be active on SEVERAL PROCESSING
+// jobs at once (migration 20261029120000_job_candidate_multiple_active); never twice on
+// the SAME job (service check under row locks, and the primary key (job_id, passport_id)
+// as the database's own guarantee). Assigning to or removing from one job never touches
+// the candidate's other jobs. COMPLETED / CANCELLED keep every assignment row (history)
+// and release that job's candidates only. Jobs are never deleted; reopening is not supported.
 //
 // Roles (the routes check them; the service applies the Analyst scope):
 //   ADMIN, MANAGER   manage jobs and reference data
@@ -37,7 +39,8 @@ export const JOB_AUDIT_ACTION = Object.freeze({
     DEACTIVATE_JOB_TYPE: "DEACTIVATE_JOB_TYPE",
 });
 
-export const JOB_VIEWS = Object.freeze({ processing: JOB_STATUS.PROCESSING, completed: JOB_STATUS.COMPLETED, cancelled: JOB_STATUS.CANCELLED });
+// all: every status (no status filter).
+export const JOB_VIEWS = Object.freeze({ processing: JOB_STATUS.PROCESSING, completed: JOB_STATUS.COMPLETED, cancelled: JOB_STATUS.CANCELLED, all: null });
 export const JOB_LIST_PAGE_SIZE = 50;
 const MAX_VACANCIES = 100_000;
 const MAX_NAME_LENGTH = 120;
@@ -115,7 +118,7 @@ function parseCandidateIds(value, errors) {
     });
 }
 
-// GET /api/admin/jobs?view=processing|completed|cancelled&search=&page=
+// GET /api/admin/jobs?view=processing|completed|cancelled|all&search=&page=
 export function parseJobListQuery(query = {}) {
     const errors = [];
     const params = { view: "processing", page: 1, pageSize: JOB_LIST_PAGE_SIZE };
@@ -147,15 +150,56 @@ export function parseJobListQuery(query = {}) {
     return errors.length ? { errors } : { params };
 }
 
-// POST /api/admin/jobs { jobTypeId, clientId, responsibleAgentId?, vacancies?, companyJobId?, fromCountryCode?, candidateIds? }
+// Parses one or more jobType IDs from body.jobTypeIds (array) or body.jobTypeId (legacy single).
+// Returns an array of normalized UUID strings, or undefined with errors pushed.
+function parseJobTypeIds(body, errors) {
+    if (body.jobTypeIds !== undefined) {
+        if (!Array.isArray(body.jobTypeIds)) {
+            errors.push({ field: "jobTypeIds", message: "must be an array of job type IDs" });
+            return undefined;
+        }
+        if (body.jobTypeIds.length === 0) {
+            errors.push({ field: "jobTypeIds", message: "must select at least one job type" });
+            return undefined;
+        }
+        const seen = new Set();
+        const ids = [];
+        let hasDuplicate = false;
+        for (const item of body.jobTypeIds) {
+            if (typeof item !== "string" || !UUID_PATTERN.test(item.trim())) {
+                errors.push({ field: "jobTypeIds", message: "each job type must be an ID from the list" });
+                return undefined;
+            }
+            const normalized = item.trim().toLowerCase();
+            if (seen.has(normalized)) hasDuplicate = true;
+            seen.add(normalized);
+            ids.push(normalized);
+        }
+        if (hasDuplicate) {
+            errors.push({ field: "jobTypeIds", message: "duplicate job types are not allowed" });
+            return undefined;
+        }
+        return ids;
+    }
+    if (body.jobTypeId !== undefined) {
+        const id = requiredId(body, "jobTypeId", errors);
+        return id ? [id] : undefined;
+    }
+    errors.push({ field: "jobTypeId", message: "must select at least one job type" });
+    return undefined;
+}
+
+// POST /api/admin/jobs { jobTypeIds? | jobTypeId, clientId, responsibleAgentId?, vacancies?, companyJobId?, fromCountryCode?, candidateIds? }
 // responsibleAgentId must be one of the Client's Agents; it may be omitted only when the
 // Client has exactly one (requireClientWithAgent). The To Country is never sent: it is
 // the responsible Agent's country. fromCountryCode defaults to RO.
 export function parseCreateJobBody(body) {
     if (!isObject(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
     const errors = [];
+    const jobTypeIds = parseJobTypeIds(body, errors);
     const values = {
-        jobTypeId: requiredId(body, "jobTypeId", errors),
+        jobTypeIds,
+        jobTypeId: jobTypeIds?.[0],
         clientId: requiredId(body, "clientId", errors),
         responsibleAgentId: body.responsibleAgentId === undefined || body.responsibleAgentId === null ? undefined : requiredId(body, "responsibleAgentId", errors),
         vacancies: body.vacancies === undefined ? null : parseVacancies(body.vacancies, errors),
@@ -167,7 +211,7 @@ export function parseCreateJobBody(body) {
     return errors.length ? { errors } : { values };
 }
 
-// PUT /api/admin/jobs/:jobId { vacancies?, jobTypeId?, clientId?, companyJobId?, fromCountryCode? }.
+// PUT /api/admin/jobs/:jobId { vacancies?, jobTypeIds? | jobTypeId?, clientId?, companyJobId?, fromCountryCode? }.
 // companyJobId (null clears it) may be changed on a job in any status; the other
 // fields only while PROCESSING. The responsible Agent, the To Country (countryCode),
 // the job code and the job id are fixed.
@@ -179,7 +223,39 @@ export function parseUpdateJobBody(body) {
         const vacancies = parseVacancies(body.vacancies, errors);
         if (vacancies !== undefined) values.vacancies = vacancies;
     }
-    if (body.jobTypeId !== undefined) values.jobTypeId = requiredId(body, "jobTypeId", errors);
+    if (body.jobTypeIds !== undefined) {
+        if (!Array.isArray(body.jobTypeIds)) {
+            errors.push({ field: "jobTypeIds", message: "must be an array of job type IDs" });
+        } else if (body.jobTypeIds.length === 0) {
+            errors.push({ field: "jobTypeIds", message: "must select at least one job type" });
+        } else {
+            const seen = new Set();
+            const ids = [];
+            let hasDuplicate = false;
+            for (const item of body.jobTypeIds) {
+                if (typeof item !== "string" || !UUID_PATTERN.test(item.trim())) {
+                    errors.push({ field: "jobTypeIds", message: "each job type must be an ID from the list" });
+                    break;
+                }
+                const normalized = item.trim().toLowerCase();
+                if (seen.has(normalized)) hasDuplicate = true;
+                seen.add(normalized);
+                ids.push(normalized);
+            }
+            if (hasDuplicate) {
+                errors.push({ field: "jobTypeIds", message: "duplicate job types are not allowed" });
+            } else if (!errors.some((e) => e.field === "jobTypeIds")) {
+                values.jobTypeIds = ids;
+                values.jobTypeId = ids[0];
+            }
+        }
+    } else if (body.jobTypeId !== undefined) {
+        const id = requiredId(body, "jobTypeId", errors);
+        if (id !== undefined) {
+            values.jobTypeId = id;
+            values.jobTypeIds = [id];
+        }
+    }
     if (body.clientId !== undefined) values.clientId = requiredId(body, "clientId", errors);
     if (body.companyJobId !== undefined) {
         const companyJobId = normalizeCompanyJobId(body.companyJobId, errors);
@@ -192,7 +268,7 @@ export function parseUpdateJobBody(body) {
     for (const field of ["responsibleAgentId", "countryCode", "status", "jobCode"]) {
         if (body[field] !== undefined) errors.push({ field, message: "cannot be changed here" });
     }
-    if (!errors.length && Object.keys(values).length === 0) errors.push({ field: "body", message: "must contain vacancies, jobTypeId, clientId, companyJobId or fromCountryCode" });
+    if (!errors.length && Object.keys(values).length === 0) errors.push({ field: "body", message: "must contain vacancies, jobTypeId, jobTypeIds, clientId, companyJobId or fromCountryCode" });
     return errors.length ? { errors } : { values };
 }
 
@@ -309,12 +385,12 @@ export function createJobType({ db, actor, values }) {
 // shows it as a system option.
 export async function listJobTypes({ db }) {
     const rows = await db.jobType.findMany({
-        select: { id: true, code: true, name: true, isActive: true, createdAt: true, updatedAt: true, _count: { select: { jobs: true } } },
+        select: { id: true, code: true, name: true, isActive: true, createdAt: true, updatedAt: true, _count: { select: { jobLinks: true } } },
         orderBy: [{ isActive: "desc" }, { name: "asc" }, { id: "asc" }],
     });
     return {
         items: rows.map((row) => ({
-            id: row.id, code: row.code, name: row.name, isActive: row.isActive, jobCount: row._count.jobs,
+            id: row.id, code: row.code, name: row.name, isActive: row.isActive, jobCount: row._count.jobLinks,
             createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
         })),
     };
@@ -366,8 +442,8 @@ export async function updateJobType({ db, actor, id, values }) {
                     });
                 }
             }
-            const row = await tx.jobType.findUnique({ where: { id }, select: { id: true, code: true, name: true, isActive: true, createdAt: true, updatedAt: true, _count: { select: { jobs: true } } } });
-            return { id: row.id, code: row.code, name: row.name, isActive: row.isActive, jobCount: row._count.jobs, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
+            const row = await tx.jobType.findUnique({ where: { id }, select: { id: true, code: true, name: true, isActive: true, createdAt: true, updatedAt: true, _count: { select: { jobLinks: true } } } });
+            return { id: row.id, code: row.code, name: row.name, isActive: row.isActive, jobCount: row._count.jobLinks, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
         });
     } catch (error) {
         if (isUniqueViolation(error)) throw new CandidateError(409, "DUPLICATE", DUPLICATE_JOB_TYPE);
@@ -406,6 +482,7 @@ function searchWhere(search) {
                 { client: { name: { contains: word, mode: "insensitive" } } },
                 { responsibleAgent: { name: { contains: word, mode: "insensitive" } } },
                 { jobType: { name: { contains: word, mode: "insensitive" } } },
+                { jobTypes: { some: { jobType: { name: { contains: word, mode: "insensitive" } } } } },
                 { countryCode: { equals: word.toUpperCase() } },
             ],
         })),
@@ -414,7 +491,7 @@ function searchWhere(search) {
 
 // GET /api/admin/jobs
 export async function listJobs({ db, params, user }) {
-    const parts = [{ status: JOB_VIEWS[params.view] }];
+    const parts = JOB_VIEWS[params.view] ? [{ status: JOB_VIEWS[params.view] }] : [];
     if (isCandidateScoped(user)) parts.push({ candidates: { some: memberWhere(user) } });
     if (params.search) parts.push(searchWhere(params.search));
     const where = { AND: parts };
@@ -551,14 +628,17 @@ export async function createJob({ db, actor, values, now = new Date() }) {
 
 async function createJobInTransaction({ db, actor, values, passportIds, now }) {
     return db.$transaction(async (tx) => {
-        await requireActive(tx, "jobType", values.jobTypeId, "jobTypeId", "job type");
+        const typeIds = values.jobTypeIds && values.jobTypeIds.length > 0 ? values.jobTypeIds : [values.jobTypeId];
+        for (const typeId of typeIds) {
+            await requireActive(tx, "jobType", typeId, "jobTypeIds", "job type");
+        }
         const { agent } = await requireClientWithAgent(tx, values.clientId, values.responsibleAgentId);
         const jobCode = await nextJobCode(tx, now);
         const job = await tx.job.create({
             data: {
                 jobCode,
                 companyJobId: values.companyJobId,
-                jobTypeId: values.jobTypeId,
+                jobTypeId: typeIds[0],
                 clientId: values.clientId,
                 responsibleAgentId: agent.id,
                 countryCode: agent.countryCode,
@@ -566,6 +646,9 @@ async function createJobInTransaction({ db, actor, values, passportIds, now }) {
                 vacancies: values.vacancies,
                 status: JOB_STATUS.PROCESSING,
                 createdById: actor.adminId,
+                jobTypes: {
+                    create: typeIds.map((jobTypeId) => ({ jobTypeId })),
+                },
             },
             select: { id: true, jobCode: true, status: true },
         });
@@ -573,7 +656,7 @@ async function createJobInTransaction({ db, actor, values, passportIds, now }) {
         await tx.auditLog.create({
             data: auditRow({
                 actor, action: JOB_AUDIT_ACTION.CREATE, previousStatus: "NONE", newStatus: JOB_STATUS.PROCESSING, reason: `Job ${job.jobCode} created`,
-                newValue: JSON.stringify({ jobId: job.id, jobCode: job.jobCode, ...fields, responsibleAgentId: agent.id, countryCode: agent.countryCode, candidates: passportIds.length }),
+                newValue: JSON.stringify({ jobId: job.id, jobCode: job.jobCode, ...fields, jobTypeIds: typeIds, responsibleAgentId: agent.id, countryCode: agent.countryCode, candidates: passportIds.length }),
             }),
         });
         for (const passportId of passportIds) {
@@ -608,17 +691,57 @@ async function updateJobInTransaction({ db, actor, jobId, values }) {
     return db.$transaction(async (tx) => {
         const job = await lockJob(tx, jobId, "update");
         if (Object.keys(values).some((key) => key !== "companyJobId")) requireProcessing(job);
-        const before = await tx.job.findUnique({ where: { id: jobId }, select: { companyJobId: true, vacancies: true, jobTypeId: true, clientId: true, responsibleAgentId: true } });
-        // A NEW job type must be active; keeping the job's own type (even one deactivated
-        // since) is always allowed, so an edit never fails on a type it does not change.
-        if (values.jobTypeId && values.jobTypeId !== before.jobTypeId) await requireActive(tx, "jobType", values.jobTypeId, "jobTypeId", "job type");
+        const before = await tx.job.findUnique({
+            where: { id: jobId },
+            select: {
+                companyJobId: true, vacancies: true, jobTypeId: true, clientId: true, responsibleAgentId: true,
+                jobTypes: { select: { jobTypeId: true } },
+            },
+        });
+        const beforeTypeIds = new Set([
+            ...(before?.jobTypes?.map((l) => l.jobTypeId) ?? []),
+            ...(before?.jobTypeId ? [before.jobTypeId] : []),
+        ]);
+
+        const nextTypeIds = values.jobTypeIds ?? (values.jobTypeId ? [values.jobTypeId] : null);
+        if (nextTypeIds) {
+            // A NEW job type must be active; keeping the job's own type (even one deactivated
+            // since) is always allowed, so an edit never fails on a type it does not change.
+            for (const id of nextTypeIds) {
+                if (!beforeTypeIds.has(id)) {
+                    await requireActive(tx, "jobType", id, "jobTypeIds", "job type");
+                }
+            }
+            await tx.jobJobType.deleteMany({
+                where: { jobId, jobTypeId: { notIn: nextTypeIds } },
+            });
+            const existingLinks = await tx.jobJobType.findMany({
+                where: { jobId },
+                select: { jobTypeId: true },
+            });
+            const existingIds = new Set(existingLinks.map((l) => l.jobTypeId));
+            const toAdd = nextTypeIds.filter((id) => !existingIds.has(id));
+            if (toAdd.length > 0) {
+                await tx.jobJobType.createMany({
+                    data: toAdd.map((jobTypeId) => ({ jobId, jobTypeId })),
+                });
+            }
+        }
+
         if (values.clientId) await requireClientWithAgent(tx, values.clientId, before.responsibleAgentId);
-        await tx.job.update({ where: { id: jobId }, data: values });
+
+        const updateData = { ...values };
+        delete updateData.jobTypeIds;
+        if (nextTypeIds) {
+            updateData.jobTypeId = nextTypeIds[0];
+        }
+
+        await tx.job.update({ where: { id: jobId }, data: updateData });
         await tx.auditLog.create({
             data: auditRow({
                 actor, action: JOB_AUDIT_ACTION.UPDATE, previousStatus: job.status, newStatus: job.status, reason: `Job ${job.jobCode} updated`,
-                previousValue: JSON.stringify({ jobId, ...Object.fromEntries(Object.keys(values).map((key) => [key, before[key]])) }),
-                newValue: JSON.stringify({ jobId, ...values }),
+                previousValue: JSON.stringify({ jobId, ...Object.fromEntries(Object.keys(values).map((key) => [key, before[key]])), jobTypeIds: [...beforeTypeIds] }),
+                newValue: JSON.stringify({ jobId, ...values, ...(nextTypeIds ? { jobTypeIds: nextTypeIds } : {}) }),
             }),
         });
         return getJob({ db: tx, jobId, user: actor });
@@ -628,17 +751,17 @@ async function updateJobInTransaction({ db, actor, jobId, values }) {
 // Assigns one candidate to a PROCESSING job inside the caller's transaction (Add to job, and
 // New job with selected candidates). Every rule is checked here under row locks (the caller
 // holds the job; the candidate FOR UPDATE), so two staff members assigning the same candidate
-// to two jobs queue on the candidate's lock and the second sees the first's assignment (409).
-// The partial unique index is the backstop: a violation is the same 409. The job's vacancies
-// are never checked: a job may hold more candidates than vacancies (23 / 20).
+// to the same job queue on the candidate's lock and the second sees the first's assignment
+// (409 CANDIDATE_ALREADY_IN_JOB). The candidate's assignments to OTHER jobs are allowed and
+// left untouched. The job's vacancies are never checked: a job may hold more candidates than
+// vacancies (23 / 20).
 async function assignCandidate(tx, { actor, job, passportId }) {
     const jobId = job.id;
     const locked = await tx.$queryRaw`SELECT "passport_id" FROM "candidate" WHERE "passport_id" = ${passportId} FOR UPDATE`;
     if (!locked.length) throw new CandidateError(404, "CANDIDATE_NOT_FOUND", "Candidate not found");
 
-    const active = await tx.jobCandidate.findFirst({ where: { passportId, isActive: true }, select: { jobId: true, job: { select: { jobCode: true } } } });
-    if (active?.jobId === jobId) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", `This candidate is already assigned to ${job.jobCode}.`);
-    if (active) throw new CandidateError(409, "CANDIDATE_ON_ACTIVE_JOB", `This candidate is already on the PROCESSING job ${active.job.jobCode}. Complete or cancel that job, or remove the candidate from it, first.`);
+    const onThisJob = await tx.jobCandidate.findFirst({ where: { jobId, passportId, isActive: true }, select: { jobId: true } });
+    if (onThisJob) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", `This candidate is already assigned to ${job.jobCode}.`);
 
     // Only a candidate who PASSED the test can be assigned (also a removed candidate put back, and a
     // candidate being moved to another job after leaving the first). The saved Test details result is
@@ -661,7 +784,7 @@ async function assignCandidate(tx, { actor, job, passportId }) {
             await tx.jobCandidate.create({ data: { jobId, passportId, assignedAt: now, assignedBy: actor.adminId, isActive: true } });
         }
     } catch (error) {
-        if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ON_ACTIVE_JOB", "This candidate was just assigned to a PROCESSING job. Nothing was changed; refresh and check.");
+        if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", `This candidate was just assigned to ${job.jobCode}. Nothing was changed; refresh and check.`);
         throw error;
     }
     await tx.auditLog.create({
@@ -681,7 +804,7 @@ export async function addCandidateToJob({ db, actor, jobId, passportId }) {
             return getJob({ db: tx, jobId, user: actor });
         });
     } catch (error) {
-        if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ON_ACTIVE_JOB", "This candidate was just assigned to a PROCESSING job. Nothing was changed; refresh and check.");
+        if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", "This candidate was just assigned to this job. Nothing was changed; refresh and check.");
         throw error;
     }
 }

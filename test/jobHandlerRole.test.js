@@ -183,10 +183,12 @@ describe("Jobs (JOB-HANDLER-JOB-001 to 005)", () => {
         ok(await api(JH, "DELETE", `/jobs/${job.jobId}/candidates/${PID}`));
         assert.equal(ok(await api(JH, "POST", `/jobs/${job.jobId}/candidates`, { passportId: PID }), 201).candidateCount, 1);
         const second = ok(await api(JH, "POST", "/jobs", { jobTypeId: ids.jobType, clientId: ids.client }), 201);
-        assert.equal((await api(JH, "POST", `/jobs/${second.jobId}/candidates`, { passportId: PID })).body.code, "CANDIDATE_ON_ACTIVE_JOB", "one active job per candidate");
+        assert.equal((await api(JH, "POST", `/jobs/${job.jobId}/candidates`, { passportId: PID })).body.code, "CANDIDATE_ALREADY_IN_JOB", "never twice on the same job");
         await prisma.candidateStage.updateMany({ where: { passportId: PID }, data: { testResult: "FAIL" } });
-        ok(await api(JH, "DELETE", `/jobs/${job.jobId}/candidates/${PID}`));
-        assert.equal((await api(JH, "POST", `/jobs/${second.jobId}/candidates`, { passportId: PID })).body.code, "CANDIDATE_TEST_NOT_PASSED", "PASS still required");
+        assert.equal((await api(JH, "POST", `/jobs/${second.jobId}/candidates`, { passportId: PID })).body.code, "CANDIDATE_TEST_NOT_PASSED", "PASS still required (also for a second job)");
+        await prisma.candidateStage.updateMany({ where: { passportId: PID }, data: { testResult: "PASS" } });
+        assert.equal(ok(await api(JH, "POST", `/jobs/${second.jobId}/candidates`, { passportId: PID }), 201).candidateCount, 1, "a JOB_HANDLER can put the candidate on a second job");
+        assert.equal(await prisma.jobCandidate.count({ where: { passportId: PID, isActive: true } }), 2);
         assert.equal((await prisma.auditLog.findFirst({ where: { action: "ADD_CANDIDATE_TO_JOB" } })).adminId, JH.adminId);
     });
 

@@ -50,6 +50,14 @@ export type FormLoadResponse = {
     // The ACTIVE job types (Settings > Job Types), names only: the job category choices.
     jobCategories: string[];
     expiresAt: string;
+    // Saved progress: the steps the candidate saved with Next (their answers are already in
+    // `answers`) and when the last one was saved. Absent from an older server.
+    savedSteps?: string[];
+    draftSavedAt?: string | null;
 };
+
+// The steps whose answers are saved with Next.
+export type DraftStep = "personal" | "work";
+export type DraftResponse = { savedSteps: string[]; savedAt: string };
 
 export type SubmitResponse = { submittedAt: string };

@@ -35,3 +35,11 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/invitations", label: "Invite User", icon: "person_add", roles: [ROLES.MANAGER] },
     { to: "/settings", label: "Settings", icon: "settings", roles: ADMIN_ONLY },
 ];
+
+// Settings' tabs, one URL each (SettingsPage.tsx); the breadcrumb names them too.
+export const SETTINGS_TABS = [
+    { to: "/settings/roles", label: "Change Roles" },
+    { to: "/settings/invite", label: "Invite User" },
+    { to: "/settings/sheet-sync", label: "Google Sheet Sync" },
+    { to: "/settings/job-types", label: "Job Types" },
+] as const;

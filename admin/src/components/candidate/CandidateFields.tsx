@@ -4,7 +4,7 @@ import { getJobTypeChoices, isNoPreference, jobTypeLabel, NO_PREFERRED_JOB_TYPE 
 import { useAdminResource } from "../../api/useAdminResource";
 import { HelpTip } from "../Form";
 import { DatePicker } from "../DatePicker";
-import { SubmittedHint } from "./submittedChanges";
+import { SubmittedHint, useFieldConflict } from "./submittedChanges";
 
 export const fieldControl = "h-10 w-full rounded border border-border-strong bg-surface px-3 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
 export const textAreaControl = "w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
@@ -125,10 +125,16 @@ export function completionGaps(value: CandidateDetailsInput): Record<string, str
 }
 
 // submitted: the Candidate Form path of this field; shows "Candidate submitted: ... [Confirm]" when the candidate sent a different value.
+// While the field has an unresolved Candidate Form change it is outlined (more strongly when it is the
+// field the page was opened for); the outline goes as soon as the change is confirmed or revoked.
 export function Field({ label, required, error, htmlFor, children, className = "", help, submitted }: { label: string; required?: boolean; error?: string; htmlFor: string; children: ReactNode; className?: string; help?: string; submitted?: string }) {
     const text = <>{label}{required && <span className="text-critical"> *</span>}</>;
+    const conflict = useFieldConflict(submitted);
+    const highlight = conflict.focused
+        ? "rounded-md bg-critical-bg p-2 -m-2 ring-2 ring-critical"
+        : conflict.pending ? "rounded-md bg-review-bg p-2 -m-2 ring-1 ring-review-border" : "";
     return (
-        <div className={className}>
+        <div className={`${className} ${highlight}`.trim()} data-conflict-field={submitted} data-conflict={conflict.pending ? (conflict.focused ? "focused" : "pending") : undefined}>
             {help ? (
                 <div className="mb-1 flex items-center gap-1.5">
                     <label htmlFor={htmlFor} className="block text-label-sm text-ink-muted">{text}</label>
@@ -146,7 +152,7 @@ export function Field({ label, required, error, htmlFor, children, className = "
 
 // Field hints. They describe the rules the server applies.
 export const FIELD_HINTS = {
-    passportId: "6 to 9 letters and digits with at least one digit, as printed on the passport (e.g. N1234567). Spaces and dashes are ignored.",
+    passportId: "Passport number must start with P or N followed by 7 digits. Example: P1234567",
     whatsappNumber: "The mobile number with country code after + (e.g. 94771234567, 919876543210). It can't be changed once saved.",
     passportIssueDate: "As printed on the passport. Required, and before the expiry date.",
     passportExpiryDate: "As printed on the passport. Required, and after the issue date.",

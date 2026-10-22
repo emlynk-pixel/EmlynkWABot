@@ -53,15 +53,15 @@ before(async () => {
     // On the day: R1 at 00:00 with NO documents (desk); R2 mid-day with two
     // documents, one superseded (analyst); R3 at 23:59:59.999 with no audit
     // entry (registered before registrations were audited).
-    await register("R0000001", "Nimal", "900000011V", "+94771110001", START, DESK);
-    await register("R0000002", "Sunil", "900000012V", "+94771110002", "2026-10-12T05:00:00Z", ANALYST);
-    await register("R0000003", "Kamal", "900000013V", "+94771110003", LAST_MS, null);
-    await addDocument("R0000002", "PASSPORT", "2026-10-12T05:10:00Z");
-    await addDocument("R0000002", "MEDICAL", "2026-10-12T05:20:00Z", "SUPERSEDED");
-    await addDocument("R0000002", "MEDICAL", "2026-10-12T05:30:00Z");
+    await register("N9000001", "Nimal", "900000011V", "+94771110001", START, DESK);
+    await register("N9000002", "Sunil", "900000012V", "+94771110002", "2026-10-12T05:00:00Z", ANALYST);
+    await register("N9000003", "Kamal", "900000013V", "+94771110003", LAST_MS, null);
+    await addDocument("N9000002", "PASSPORT", "2026-10-12T05:10:00Z");
+    await addDocument("N9000002", "MEDICAL", "2026-10-12T05:20:00Z", "SUPERSEDED");
+    await addDocument("N9000002", "MEDICAL", "2026-10-12T05:30:00Z");
     // Outside the day on either side.
-    await register("R0000004", "Saman", "900000014V", "+94771110004", BEFORE, DESK);
-    await register("R0000005", "Ruwan", "900000015V", "+94771110005", NEXT, DESK);
+    await register("N9000004", "Saman", "900000014V", "+94771110004", BEFORE, DESK);
+    await register("N9000005", "Ruwan", "900000015V", "+94771110005", NEXT, DESK);
 });
 after(async () => database?.close());
 
@@ -71,7 +71,7 @@ const item = (r, passportId) => r.registeredCandidates.items.find((c) => c.passp
 describe("Candidates Registered", () => {
     test("1-3. a candidate registered with no documents counts and is listed; Documents Submitted stays independent", async () => {
         const r = await report();
-        const r1 = item(r, "R0000001");
+        const r1 = item(r, "N9000001");
         assert.ok(r1, "listed");
         assert.equal(r1.documents, 0);
         // The day's documents come from document activity only: here, none
@@ -83,28 +83,28 @@ describe("Candidates Registered", () => {
 
     test("4-5. a candidate with documents counts once; the count does not depend on documents", async () => {
         const r = await report();
-        assert.equal(r.registeredCandidates.items.filter((c) => c.passportId === "R0000002").length, 1);
-        assert.equal(item(r, "R0000002").documents, 2, "current documents, superseded not counted");
+        assert.equal(r.registeredCandidates.items.filter((c) => c.passportId === "N9000002").length, 1);
+        assert.equal(item(r, "N9000002").documents, 2, "current documents, superseded not counted");
         assert.equal(r.registeredCandidates.total, 3);
     });
 
     test("6-8. the selected day decides, on Sri Lanka midnight boundaries", async () => {
-        assert.deepEqual((await report()).registeredCandidates.items.map((c) => c.passportId).sort(), ["R0000001", "R0000002", "R0000003"]);
+        assert.deepEqual((await report()).registeredCandidates.items.map((c) => c.passportId).sort(), ["N9000001", "N9000002", "N9000003"]);
         const previous = await report("2026-10-11");
-        assert.deepEqual(previous.registeredCandidates.items.map((c) => c.passportId), ["R0000004"], "23:59:59.999 on the 11th belongs to the 11th");
+        assert.deepEqual(previous.registeredCandidates.items.map((c) => c.passportId), ["N9000004"], "23:59:59.999 on the 11th belongs to the 11th");
         const next = await report("2026-10-13");
-        assert.deepEqual(next.registeredCandidates.items.map((c) => c.passportId), ["R0000005"], "00:00 on the 13th belongs to the 13th");
+        assert.deepEqual(next.registeredCandidates.items.map((c) => c.passportId), ["N9000005"], "00:00 on the 13th belongs to the 13th");
     });
 
     test("9-12. each row: passport number, name, registration time, who registered (when recorded) and progress", async () => {
         const r = await report();
-        const r1 = item(r, "R0000001");
+        const r1 = item(r, "N9000001");
         assert.deepEqual([r1.name, new Date(r1.registeredAt).toISOString(), r1.registeredBy, r1.registeredByRole], ["Nimal Perera", START, "Dee Desk", "REGISTRATION_DESK"]);
-        assert.equal(item(r, "R0000002").registeredBy, "Ann Analyst");
-        assert.equal(item(r, "R0000003").registeredBy, null, "no registration entry: not invented");
+        assert.equal(item(r, "N9000002").registeredBy, "Ann Analyst");
+        assert.equal(item(r, "N9000003").registeredBy, null, "no registration entry: not invented");
         assert.equal(r1.stagesTotal, 8);
         assert.ok(r1.stagesComplete >= 0 && r1.stagesComplete < 7);
-        assert.deepEqual(r.registeredCandidates.items.map((c) => c.passportId), ["R0000003", "R0000002", "R0000001"], "newest first");
+        assert.deepEqual(r.registeredCandidates.items.map((c) => c.passportId), ["N9000003", "N9000002", "N9000001"], "newest first");
     });
 
     test("16. a day without registrations: zero and an empty list", async () => {

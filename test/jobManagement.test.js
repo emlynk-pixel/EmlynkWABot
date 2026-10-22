@@ -162,19 +162,36 @@ describe("assigning candidates (JOB-004 to JOB-008)", () => {
         assert.equal((await rows(job.jobId)).length, 1);
     });
 
-    test("JOB-006: a candidate cannot be on two PROCESSING jobs: 409 CANDIDATE_ON_ACTIVE_JOB, never moved silently", async () => {
+    test("JOB-006 (multiple jobs): a candidate can be on two PROCESSING jobs; the same job twice is refused; the first job is untouched", async () => {
         const first = await createJob();
         const second = await createJob();
         await add(USERS.MANAGER, first, 1);
-        const conflict = await add(USERS.ADMIN, second, 1);
-        assert.equal(conflict.status, 409);
-        assert.equal(conflict.body.code, "CANDIDATE_ON_ACTIVE_JOB");
-        assert.ok(conflict.body.message.includes(first.jobCode), "names the job the candidate is on");
-        assert.equal((await rows(second.jobId)).length, 0);
+        assert.equal((await add(USERS.ADMIN, second, 1)).status, 201, "job B as well as job A");
+        assert.equal((await rows(second.jobId)).length, 1);
         assert.equal((await rows(first.jobId)).length, 1);
-        assert.equal(await activeCount(1), 1);
+        assert.equal(await activeCount(1), 2);
+        const again = await add(USERS.ADMIN, first, 1);
+        assert.deepEqual([again.status, again.body.code], [409, "CANDIDATE_ALREADY_IN_JOB"]);
+        assert.equal(await activeCount(1), 2, "a refused duplicate changes nothing");
         // Other candidates are unaffected.
         assert.equal((await add(USERS.ADMIN, second, 2)).status, 201);
+    });
+
+    test("MULTI-JOB: removing the candidate from job A leaves job B; completing job B leaves job C; history stays", async () => {
+        const [a, b, c] = [await createJob(), await createJob(), await createJob()];
+        for (const job of [a, b, c]) assert.equal((await add(USERS.MANAGER, job, 1)).status, 201);
+        assert.equal((await api(USERS.MANAGER, "DELETE", `/jobs/${a.jobId}/candidates/${pid(1)}`)).status, 200);
+        assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${b.jobId}/complete`)).status, 200);
+        const memberships = await prisma.jobCandidate.findMany({ where: { passportId: pid(1) }, select: { jobId: true, isActive: true, releasedAt: true } });
+        const byJob = Object.fromEntries(memberships.map((m) => [m.jobId, m]));
+        assert.deepEqual([byJob[a.jobId].isActive, byJob[a.jobId].releasedAt !== null], [false, true], "A: removed, row kept");
+        assert.deepEqual([byJob[b.jobId].isActive, byJob[b.jobId].releasedAt], [false, null], "B: completed, row kept");
+        assert.equal(byJob[c.jobId].isActive, true, "C: still active");
+        const details = await getCandidate({ db: prisma, passportId: pid(1) });
+        assert.deepEqual(details.jobAssignments.active.map((j) => j.jobCode), [c.jobCode]);
+        assert.deepEqual(details.jobAssignments.history.map((j) => j.jobCode).sort(), [a.jobCode, b.jobCode].sort());
+        // Job Details of C still lists the candidate.
+        assert.deepEqual((await api(USERS.MANAGER, "GET", `/jobs/${c.jobId}`)).body.candidates.map((x) => x.passportId), [pid(1)]);
     });
 
     test("JOB-007 / JOB-008: nothing can be assigned to a COMPLETED or CANCELLED job", async () => {
@@ -277,23 +294,32 @@ describe("completing and cancelling (JOB-009 to JOB-013)", () => {
     });
 });
 
-describe("the one-PROCESSING-job rule under concurrency and in the database (JOB-014)", () => {
-    test("JOB-014: two assignments of the same candidate at the same time -> exactly one succeeds", async () => {
+describe("multiple jobs under concurrency and in the database (JOB-014)", () => {
+    test("JOB-014: the same candidate assigned to three jobs at the same time -> all three succeed, one row each", async () => {
         const jobs = [await createJob(), await createJob(), await createJob()];
         const results = await Promise.all(jobs.map((job, n) => add(n % 2 ? USERS.ADMIN : USERS.MANAGER, job, 4)));
-        assert.deepEqual(results.map((r) => r.status).sort(), [201, 409, 409]);
-        assert.ok(results.filter((r) => r.status === 409).every((r) => r.body.code === "CANDIDATE_ON_ACTIVE_JOB"));
-        assert.equal(await activeCount(4), 1);
-        assert.equal((await prisma.jobCandidate.count({ where: { passportId: pid(4) } })), 1, "the losers left no row behind");
+        assert.deepEqual(results.map((r) => r.status), [201, 201, 201]);
+        assert.equal(await activeCount(4), 3);
+        assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(4) } }), 3);
     });
 
-    test("the database itself refuses a second active membership, however it is written", async () => {
+    test("JOB-014b: the same candidate assigned to the SAME job twice at once -> exactly one succeeds, one row", async () => {
+        const job = await createJob();
+        const results = await Promise.all([add(USERS.ADMIN, job, 4), add(USERS.MANAGER, job, 4)]);
+        assert.deepEqual(results.map((r) => r.status).sort(), [201, 409]);
+        assert.equal(results.find((r) => r.status === 409).body.code, "CANDIDATE_ALREADY_IN_JOB");
+        assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(4) } }), 1);
+    });
+
+    test("the database allows several active memberships on different jobs, and refuses the same job twice, however it is written", async () => {
         const [a, b] = [await createJob(), await createJob()];
         await pg.exec(`INSERT INTO "job_candidate" ("job_id","passport_id","assigned_by") VALUES ('${a.jobId}','${pid(4)}','u-admin')`);
-        await assert.rejects(pg.exec(`INSERT INTO "job_candidate" ("job_id","passport_id","assigned_by") VALUES ('${b.jobId}','${pid(4)}','u-admin')`), /job_candidate_one_active_per_candidate|unique/i);
-        // Inactive history rows are not limited.
-        await pg.exec(`INSERT INTO "job_candidate" ("job_id","passport_id","assigned_by","is_active") VALUES ('${b.jobId}','${pid(4)}','u-admin', false)`);
-        assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(4) } }), 2);
+        await pg.exec(`INSERT INTO "job_candidate" ("job_id","passport_id","assigned_by") VALUES ('${b.jobId}','${pid(4)}','u-admin')`);
+        await assert.rejects(pg.exec(`INSERT INTO "job_candidate" ("job_id","passport_id","assigned_by") VALUES ('${a.jobId}','${pid(4)}','u-admin')`), /job_candidate_pkey|duplicate|unique/i);
+        assert.equal(await activeCount(4), 2);
+        const indexes = (await pg.query(`SELECT indexname FROM pg_indexes WHERE tablename = 'job_candidate'`)).rows.map((r) => r.indexname);
+        assert.ok(!indexes.includes("job_candidate_one_active_per_candidate"), "the single-active index is gone");
+        assert.ok(indexes.includes("job_candidate_pkey") && indexes.includes("job_candidate_passport_id_idx"));
     });
 });
 
@@ -355,6 +381,12 @@ describe("lists, details and the candidate page (JOB-017)", () => {
         assert.equal((await view("processing", `&search=${a.jobCode.toLowerCase()}`)).items.length, 1);
         assert.equal((await view("processing", "&search=nobody")).items.length, 0);
         assert.equal((await api(USERS.MANAGER, "GET", "/jobs?view=other")).status, 400);
+        // JOB-FILTER: All lists every status (newest first), with the same counts, search and pages.
+        assert.deepEqual((await view("all")).items.map((j) => j.jobCode), [c.jobCode, b.jobCode, a.jobCode]);
+        assert.deepEqual((await view("all")).counts, { processing: 1, completed: 1, cancelled: 1 });
+        assert.deepEqual((await view("all")).filters, { view: "all", search: null });
+        assert.deepEqual((await view("all", `&search=${b.jobCode.toLowerCase()}`)).items.map((j) => j.jobCode), [b.jobCode]);
+        assert.equal((await view("all", "&page=2")).items.length, 0);
         const detail = (await api(USERS.MANAGER, "GET", `/jobs/${a.jobId}`)).body;
         assert.deepEqual([detail.jobCode, detail.jobType.name, detail.client.name, detail.countryCode, detail.responsibleAgent.name, detail.vacancies, detail.createdBy], [a.jobCode, "Welder", "Acme Construction", "RO", "Ion Popescu", 5, USERS.MANAGER.name]);
         assert.deepEqual(detail.candidates.map((x) => [x.passportId, x.name]), [[pid(1), "Name1 Sur1"]]);
@@ -370,7 +402,8 @@ describe("lists, details and the candidate page (JOB-017)", () => {
         assert.deepEqual(details.jobAssignments.history, []);
         const viaApi = await api(USERS.ANN, "GET", `/candidates/${pid(1)}`);
         assert.equal(viaApi.body.jobAssignments.current.jobCode, job.jobCode);
-        assert.deepEqual((await getCandidate({ db: prisma, passportId: pid(2) })).jobAssignments, { current: null, history: [] });
+        assert.deepEqual(details.jobAssignments.active.map((j) => j.jobCode), [job.jobCode]);
+        assert.deepEqual((await getCandidate({ db: prisma, passportId: pid(2) })).jobAssignments, { current: null, active: [], history: [] });
     });
 });
 

@@ -309,7 +309,7 @@ describe("job assignment and No Preferred Type", () => {
         for (const c of [plumber, open]) await pass(c.passportId);
         assert.equal((await assign(plumberJob, plumber.passportId)).status, 201);
         assert.equal((await assign(plumberJob, open.passportId)).status, 201, "No Preferred Type -> type A");
-        // Off job A, then onto job B (one PROCESSING job at a time stays the rule).
+        // Off job A, then onto job B (it could also have stayed on A: a candidate may hold several jobs).
         assert.equal((await admin(USERS.MANAGER, "DELETE", `/jobs/${plumberJob.jobId}/candidates/${open.passportId}`)).status, 200);
         assert.equal((await assign(welderJob, open.passportId)).status, 201, "No Preferred Type -> type B");
     });
@@ -321,7 +321,7 @@ describe("job assignment and No Preferred Type", () => {
         assert.equal((await assign(welderJob, plumber.passportId)).status, 201);
     });
 
-    test("JOB-ASSIGN-TYPE-005 / 006 No Preferred Type bypasses nothing: Test PASS, a PROCESSING job and one job at a time still apply", async () => {
+    test("JOB-ASSIGN-TYPE-005 / 006 No Preferred Type bypasses nothing: Test PASS, a PROCESSING job and never the same job twice still apply", async () => {
         const job = await newJob("PLUMBER");
         const open = await register(["No Preferred Type"]);
         const notPassed = await assign(job, open.passportId);
@@ -331,8 +331,9 @@ describe("job assignment and No Preferred Type", () => {
         assert.equal((await admin(USERS.MANAGER, "POST", `/jobs/${done.jobId}/complete`, {})).status, 200);
         assert.equal((await assign(done, open.passportId)).body.code, "JOB_NOT_PROCESSING");
         assert.equal((await assign(job, open.passportId)).status, 201);
+        assert.equal((await assign(job, open.passportId)).body.code, "CANDIDATE_ALREADY_IN_JOB");
         const other = await newJob("ELECTRICIAN");
-        assert.equal((await assign(other, open.passportId)).body.code, "CANDIDATE_ON_ACTIVE_JOB");
+        assert.equal((await assign(other, open.passportId)).status, 201, "a second job is allowed");
     });
 
     test("JOB-ASSIGN-TYPE-007 the Add-to-job candidate list (PASS search) and the server agree: both list / accept typed and No Preferred Type candidates", async () => {

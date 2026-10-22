@@ -189,14 +189,13 @@ describe("New job with selected candidates (JOB-CREATE-001 to JOB-CREATE-012)", 
         assert.equal((await createOk()).jobCode, formatJobCode(jobCodeYear(), 1), "the refused creations used no job code");
     });
 
-    test("JOB-CREATE-006: a candidate already on a PROCESSING job is refused (no job, the other job untouched)", async () => {
+    test("JOB-CREATE-006 (multiple jobs): a candidate already on a PROCESSING job can be put on a new job too; the first job is untouched", async () => {
         const first = await createOk({ candidateIds: [pid(1)] });
-        const response = await create({ candidateIds: [pid(2), pid(1)] });
-        assert.equal(response.status, 409);
-        assert.equal(response.body.code, "CANDIDATE_ON_ACTIVE_JOB");
-        assert.match(response.body.message, new RegExp(first.jobCode));
-        assert.equal(await jobCount(), 1);
-        assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(2) } }), 0);
+        const second = await createOk({ candidateIds: [pid(2), pid(1)] });
+        assert.equal(await jobCount(), 2);
+        assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(1), isActive: true } }), 2);
+        assert.equal(await prisma.jobCandidate.count({ where: { jobId: first.jobId, isActive: true } }), 1);
+        assert.equal(await prisma.jobCandidate.count({ where: { jobId: second.jobId, isActive: true } }), 2);
     });
 
     test("JOB-CREATE-007: repeated IDs (also in another letter case) are assigned once", async () => {
@@ -227,11 +226,11 @@ describe("New job with selected candidates (JOB-CREATE-001 to JOB-CREATE-012)", 
         assert.equal(await prisma.jobCandidate.count(), 0);
     });
 
-    test("two creations racing for the same candidate: exactly one gets them, the other creates nothing", async () => {
+    test("two creations racing for the same candidate: both are created, the candidate is on both, one row per job", async () => {
         const results = await Promise.all([create({ candidateIds: [pid(1), pid(2)] }), create({ candidateIds: [pid(3), pid(1)] })]);
-        assert.deepEqual(results.map((r) => r.status).sort(), [201, 409]);
-        assert.equal(await jobCount(), 1);
-        assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(1), isActive: true } }), 1);
+        assert.deepEqual(results.map((r) => r.status), [201, 201]);
+        assert.equal(await jobCount(), 2);
+        assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(1), isActive: true } }), 2);
     });
 
     test("JOB-CREATE-012: only ADMIN and MANAGER create jobs (with or without candidates)", async () => {
@@ -318,5 +317,136 @@ describe("the assigned candidates' Status and identity", () => {
         assert.equal(byId[pid(2)].nic, null);
         const listed = (await api(USERS.MANAGER, "GET", "/candidates?search=P0000001")).body.items[0];
         assert.deepEqual(listed.workflowStatus, byId[pid(1)].workflowStatus, "one status source");
+    });
+});
+
+describe("Multiple Job Types per Job (additive many-to-many)", () => {
+    let t1, t2, t3;
+    beforeEach(async () => {
+        t1 = ids.jobType; // WELDER
+        const plumber = await prisma.jobType.create({ data: { code: "PLUMBER", name: "Plumber" } });
+        const aluminium = await prisma.jobType.create({ data: { code: "ALUMINIUM_WORKER", name: "Aluminium Worker" } });
+        t2 = plumber.id;
+        t3 = aluminium.id;
+    });
+
+    test("create Job with one Job Type via jobTypeIds or legacy jobTypeId", async () => {
+        const j1 = await createOk({ jobTypeIds: [t1] });
+        assert.equal(j1.jobTypes.length, 1);
+        assert.equal(j1.jobTypes[0].id, t1);
+        assert.equal(j1.jobType.id, t1);
+        // DB check
+        const inDb = await prisma.job.findUnique({ where: { id: j1.jobId }, include: { jobTypes: true } });
+        assert.equal(inDb.jobTypeId, t1); // legacy field preserved
+        assert.equal(inDb.jobTypes.length, 1);
+        assert.equal(inDb.jobTypes[0].jobTypeId, t1);
+
+        // Legacy payload with jobTypeId
+        const j2 = await createOk({ jobTypeId: t2 });
+        assert.equal(j2.jobTypes.length, 1);
+        assert.equal(j2.jobTypes[0].id, t2);
+        assert.equal(j2.jobType.id, t2);
+    });
+
+    test("create Job with multiple Job Types", async () => {
+        const j = await createOk({ jobTypeIds: [t3, t1, t2] });
+        assert.equal(j.jobTypes.length, 3);
+        assert.deepEqual(j.jobTypes.map((t) => t.id), [t3, t1, t2]);
+        assert.equal(j.jobType.id, t3); // primary is first
+
+        const inDb = await prisma.job.findUnique({ where: { id: j.jobId }, include: { jobTypes: true } });
+        assert.equal(inDb.jobTypeId, t3);
+        assert.equal(inDb.jobTypes.length, 3);
+    });
+
+    test("cannot create Job with zero Job Types", async () => {
+        const emptyRes = await api(USERS.MANAGER, "POST", "/jobs", { clientId: ids.acme, jobTypeIds: [] });
+        assert.equal(emptyRes.status, 400);
+
+        const noneRes = await api(USERS.MANAGER, "POST", "/jobs", { clientId: ids.acme });
+        assert.equal(noneRes.status, 400);
+    });
+
+    test("duplicate Job Type selection is prevented on create and update", async () => {
+        const dupCreate = await api(USERS.MANAGER, "POST", "/jobs", { clientId: ids.acme, jobTypeIds: [t1, t2, t1] });
+        assert.equal(dupCreate.status, 400);
+
+        const j = await createOk({ jobTypeIds: [t1] });
+        const dupUpdate = await api(USERS.MANAGER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [t2, t2] });
+        assert.equal(dupUpdate.status, 400);
+    });
+
+    test("edit Job adds and removes Job Types", async () => {
+        const j = await createOk({ jobTypeIds: [t1, t2] });
+        assert.equal(j.jobTypes.length, 2);
+
+        // Add t3 and remove t2
+        const updated = await api(USERS.MANAGER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [t1, t3] });
+        assert.equal(updated.status, 200);
+        assert.deepEqual(updated.body.jobTypes.map((t) => t.id), [t1, t3]);
+        assert.equal(updated.body.jobType.id, t1);
+
+        const inDb = await prisma.job.findUnique({ where: { id: j.jobId }, include: { jobTypes: true } });
+        assert.equal(inDb.jobTypeId, t1);
+        assert.deepEqual(inDb.jobTypes.map((t) => t.jobTypeId).sort(), [t1, t3].sort());
+
+        // Cannot update to empty array
+        const emptyUpdate = await api(USERS.MANAGER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [] });
+        assert.equal(emptyUpdate.status, 400);
+    });
+
+    test("RBAC: ANALYST and REGISTRATION_DESK cannot create or update job types", async () => {
+        assert.equal((await create({ jobTypeIds: [t1] }, USERS.ANN)).status, 403);
+        assert.equal((await create({ jobTypeIds: [t1] }, USERS.DESK)).status, 403);
+
+        const j = await createOk({ jobTypeIds: [t1] });
+        assert.equal((await api(USERS.ANN, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [t1, t2] })).status, 403);
+        assert.equal((await api(USERS.DESK, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [t1, t2] })).status, 403);
+    });
+
+    test("cannot edit job types on COMPLETED or CANCELLED jobs", async () => {
+        const j = await createOk({ jobTypeIds: [t1] });
+        await api(USERS.MANAGER, "POST", `/jobs/${j.jobId}/complete`);
+        const res = await api(USERS.MANAGER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [t1, t2] });
+        assert.equal(res.status, 409);
+        assert.equal(res.body.code, "JOB_NOT_PROCESSING");
+    });
+
+    test("existing legacy Job still retains its Job Type after migration backfill", async () => {
+        const migrationSql = fs.readFileSync(path.join(import.meta.dirname, "..", "prisma", "migrations", "20261030120000_job_multiple_job_types", "migration.sql"), "utf8");
+        const j = await createOk({ jobTypeIds: [t1] });
+        await pg.exec(migrationSql);
+        const details = (await api(USERS.MANAGER, "GET", `/jobs/${j.jobId}`)).body;
+        assert.equal(details.jobType.id, t1);
+        assert.equal(details.jobTypes.length, 1);
+        assert.equal(details.jobTypes[0].id, t1);
+    });
+
+    test("Candidate selection qualification: candidate matches ANY job type or NO_PREFERENCE", async () => {
+        const { candidateMatchesJobTypes } = await import("../src/services/jobTypeCatalog.js");
+        const jobTypes = [{ id: t1, code: "WELDER", name: "Welder" }, { id: t2, code: "PLUMBER", name: "Plumber" }];
+
+        assert.equal(candidateMatchesJobTypes(["WELDER"], jobTypes), true);
+        assert.equal(candidateMatchesJobTypes(["PLUMBER"], jobTypes), true);
+        assert.equal(candidateMatchesJobTypes(["Plumber"], jobTypes), true);
+        assert.equal(candidateMatchesJobTypes(["NO_PREFERENCE"], jobTypes), true);
+        assert.equal(candidateMatchesJobTypes([], jobTypes), true);
+        assert.equal(candidateMatchesJobTypes(["CARPENTER"], jobTypes), false);
+        assert.equal(candidateMatchesJobTypes(["ELECTRICIAN", "PLUMBER"], jobTypes), true);
+    });
+
+    test("Candidate can still be assigned to multiple Jobs & duplicate on same Job is rejected", async () => {
+        const jobA = await createOk({ jobTypeIds: [t1, t2] });
+        const jobB = await createOk({ jobTypeIds: [t2, t3] });
+
+        const resA = await add(jobA, 1);
+        assert.equal(resA.status, 201);
+
+        const resB = await add(jobB, 1);
+        assert.equal(resB.status, 201);
+
+        const dupRes = await add(jobA, 1);
+        assert.equal(dupRes.status, 409);
+        assert.equal(dupRes.body.code, "CANDIDATE_ALREADY_IN_JOB");
     });
 });

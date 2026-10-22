@@ -474,6 +474,7 @@ const ACTIVITY_ICON: Record<CandidateActivity["kind"], IconName> = {
     STAGE_COMPLETED: "task_alt",
     STAGE_REOPENED: "task_alt",
     STAGE_UPDATED: "task_alt",
+    CANDIDATE_FORM_SUBMITTED: "fact_check",
 };
 
 // Something that happened to the candidate: one short line, in green.

@@ -6,13 +6,20 @@ import { apiRequest } from "./client";
 // enforces both.
 
 export type JobStatus = "PROCESSING" | "COMPLETED" | "CANCELLED";
-export type JobView = "processing" | "completed" | "cancelled";
+// all: every status. The server counts each status; All is their sum.
+export type JobStatusView = "processing" | "completed" | "cancelled";
+export type JobView = JobStatusView | "all";
 
-export const JOB_VIEWS: { view: JobView; label: string; status: JobStatus }[] = [
+export const JOB_VIEWS: { view: JobView; label: string; status: JobStatus | null }[] = [
     { view: "processing", label: "Processing", status: "PROCESSING" },
     { view: "completed", label: "Completed", status: "COMPLETED" },
     { view: "cancelled", label: "Cancelled", status: "CANCELLED" },
+    { view: "all", label: "All", status: null },
 ];
+export const jobViewCount = (counts: Record<JobStatusView, number>, view: JobView) =>
+    view === "all" ? counts.processing + counts.completed + counts.cancelled : counts[view];
+
+export type JobTypeRef = { id: string; code: string; name: string };
 
 export type JobSummary = {
     jobId: string;
@@ -20,7 +27,8 @@ export type JobSummary = {
     // The employer's own Job ID (an editable label, never an identifier; shown as "Client Job ID"); null until known.
     companyJobId: string | null;
     status: JobStatus;
-    jobType: { id: string; code: string; name: string };
+    jobType: JobTypeRef;
+    jobTypes?: JobTypeRef[];
     client: { id: string; name: string };
     responsibleAgent: { id: string; name: string; countryCode: string };
     // To Country: the client's country (its agent's) when the job was created.
@@ -41,7 +49,7 @@ export type JobListItem = JobSummary & { candidateCount: number; filled: boolean
 export type JobList = {
     items: JobListItem[];
     pagination: { page: number; pageSize: number; total: number; totalPages: number; totalItems?: number; hasNextPage?: boolean; hasPreviousPage?: boolean };
-    counts: Record<JobView, number>;
+    counts: Record<JobStatusView, number>;
     filters: { view: JobView; search: string | null };
 };
 
@@ -65,8 +73,8 @@ export type JobOptions = {
 // responsibleAgentId must be one of the client's agents (optional only when it has exactly one).
 // The To Country is never sent (the responsible agent's). candidateIds are assigned with the job in one
 // transaction (none, one or many; the vacancies never limit them).
-export type CreateJobInput = { jobTypeId: string; clientId: string; responsibleAgentId?: string; vacancies: number | null; companyJobId?: string | null; fromCountryCode?: string; candidateIds?: string[] };
-export type UpdateJobInput = { vacancies?: number | null; jobTypeId?: string; clientId?: string; companyJobId?: string | null; fromCountryCode?: string };
+export type CreateJobInput = { jobTypeId?: string; jobTypeIds?: string[]; clientId: string; responsibleAgentId?: string; vacancies: number | null; companyJobId?: string | null; fromCountryCode?: string; candidateIds?: string[] };
+export type UpdateJobInput = { vacancies?: number | null; jobTypeId?: string; jobTypeIds?: string[]; clientId?: string; companyJobId?: string | null; fromCountryCode?: string };
 
 // A new job's From Country unless changed (src/services/jobService.js DEFAULT_FROM_COUNTRY).
 export const DEFAULT_FROM_COUNTRY = "RO";

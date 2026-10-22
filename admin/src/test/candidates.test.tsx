@@ -286,7 +286,9 @@ describe("Candidates list", () => {
             expect(header.getAllByRole("link", { name: "Register Candidate" })).toHaveLength(1);
             expect(header.getByRole("link", { name: "Register Candidate" })).toHaveAttribute("href", "/candidates/new");
             for (const name of ["Sync", "Dark mode", "Sign out"]) expect(header.getByRole("button", { name })).toBeInTheDocument();
-            expect(header.getByRole("navigation", { name: "Breadcrumb" })).toBeInTheDocument();
+            // The one breadcrumb tops the content, not the header.
+            expect(header.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
+            expect(screen.getAllByRole("navigation", { name: "Breadcrumb" })).toHaveLength(1);
             expect(screen.getAllByRole("link", { name: "Register Candidate" })).toHaveLength(1);
         });
     }
@@ -1543,6 +1545,31 @@ describe("Candidate History: calls and candidate activity", () => {
         expect(screen.queryByText("Showing the latest candidate activity only.")).toBeNull();
     });
 
+    test("FORM-LOG-002 / 003: a Candidate Form submission shows in the history with its date and time, next to the calls (which are unchanged)", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": {
+                status: 200,
+                body: {
+                    ...CALLS,
+                    activity: [
+                        { activityId: "form:submitted", kind: "CANDIDATE_FORM_SUBMITTED", occurredAt: "2026-10-12T03:15:00.000Z", actorName: null, source: null, documentType: null, variant: null, stage: null, fields: [], formLink: "JOB_GROUP", jobCode: "JOB-2026-000007" },
+                        ...CALLS.activity,
+                    ],
+                },
+            },
+        });
+        renderApp("/candidates/N0000002");
+        const items = await historyItems(await openCallLog());
+        expect(items[0].textContent).toBe("12 Oct 2026 · 08:45Candidate activityby the candidateCandidate Form submittedThrough the job form link (JOB-2026-000007)");
+        expect(items[0].getAttribute("data-kind")).toBe("candidate-activity");
+        // Both calls are still there, as before.
+        expect(items.filter((item) => item.getAttribute("data-kind") === "call-log").map((item) => item.textContent)).toEqual([
+            "11 Oct 2026 · 11:29Call logShamal SathsaraPassport is not uploaded. Need upload before 15 October.",
+            "07 Oct 2026 · 11:46Call logShamal SathsaraCalled candidate regarding missing documents.",
+        ]);
+    });
+
     test("an activity with no actor or source on record says neither", async () => {
         signedInBackend({
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
@@ -2123,7 +2150,7 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
     test("REGISTRATION-REQ-002..007 each of the six is required to register (marked with *), and nothing is sent without it", async () => {
         const six: [string, string][] = [
             ["Surname *", "Enter the surname."], ["Other names *", "Enter the other names."], ["NIC *", "Enter the NIC."],
-            ["Passport ID *", "Enter the passport number (6 to 9 letters and digits)."], ["Job type *", "Add at least one job type."], ["WhatsApp number *", "Enter the WhatsApp number."],
+            ["Passport ID *", "Passport number must start with P or N followed by 7 digits. Example: P1234567"], ["Job type *", "Add at least one job type."], ["WhatsApp number *", "Enter the WhatsApp number."],
         ];
         for (const [label, message] of six) {
             const { calls } = signedInBackend();
@@ -2675,8 +2702,8 @@ describe("field hints", () => {
         expect(screen.queryByRole("tooltip")).toBeNull();
     });
 
-    test("the hints state the rules actually applied (passport 6-9 letters and digits, no fixed prefix; mobile with country code; dates required)", () => {
-        expect(FIELD_HINTS.passportId).toMatch(/6 to 9 letters and digits/);
+    test("the hints state the rules actually applied (passport P or N + 7 digits, never PN; mobile with country code; dates required)", () => {
+        expect(FIELD_HINTS.passportId).toBe("Passport number must start with P or N followed by 7 digits. Example: P1234567");
         expect(FIELD_HINTS.passportId).not.toMatch(/\bPN\b/);
         expect(FIELD_HINTS.whatsappNumber).toMatch(/\+/);
         expect(FIELD_HINTS.passportIssueDate).toMatch(/Required/);

@@ -8,6 +8,7 @@ import {
     DEFAULT_FROM_COUNTRY,
     getJobOptions,
     JOB_VIEWS,
+    jobViewCount,
     listJobs,
     type JobOptions,
     type JobView,
@@ -24,10 +25,16 @@ import { CountrySelect } from "../components/master/MasterParts";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl, inputClass, tableCell, tableHead, tableRow } from "../components/ui";
 
-// Admin > Jobs: Processing / Completed / Cancelled views of the jobs, newest
+// Admin > Jobs: Processing / Completed / Cancelled / All views of the jobs, newest
 // first, paged on the server. ADMIN and MANAGER create and manage jobs; an
 // ANALYST sees only jobs holding their own candidates (the server scopes the
 // list and the candidate counts). The view, search and page live in the URL.
+// With no view chosen it opens Processing, or All when there is no Processing
+// job (but other jobs exist) rather than an empty list; a view picked from the
+// tabs (Processing too) is kept as chosen.
+// The Client is not shown in the list or on Job Details (the job keeps its client on the
+// server, for its responsible agent, To Country, history and Client Management); New job
+// still asks for it, because the client decides which agents can be responsible for the job.
 
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
 
@@ -62,6 +69,14 @@ function JobsView() {
     const [creating, setCreating] = useState(false);
 
     const list = useAdminResource(`jobs?${searchParams.toString()}`, (t, signal) => listJobs(t, { view, search, page }, signal));
+    const counts = list.data?.counts;
+    const fallBackToAll = requested === null && list.status !== "error" && !!counts && counts.processing === 0 && jobViewCount(counts, "all") > 0;
+    useEffect(() => {
+        if (!fallBackToAll) return;
+        const next = new URLSearchParams(searchParams);
+        next.set("view", "all");
+        setSearchParams(next, { replace: true });
+    }, [fallBackToAll, searchParams, setSearchParams]);
 
     const go = (changes: Record<string, string | null>) => {
         const next = new URLSearchParams(searchParams);
@@ -77,8 +92,9 @@ function JobsView() {
         go({ search: searchText.trim() || null });
     };
 
-    const items = list.status === "error" ? [] : list.data?.items ?? [];
-    const counts = list.data?.counts;
+    // Right after the fall back, the Processing list (empty) is still held until All arrives.
+    const switching = fallBackToAll || (list.status === "loading" && list.data?.filters?.view !== view);
+    const items = list.status === "error" || fallBackToAll ? [] : list.data?.items ?? [];
 
     return (
         <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
@@ -98,17 +114,17 @@ function JobsView() {
 
             <Card>
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-                    <div role="tablist" aria-label="Job status" className="flex gap-1">
+                    <div role="tablist" aria-label="Job status" className="flex flex-wrap gap-1">
                         {JOB_VIEWS.map((v) => (
                             <button
                                 key={v.view}
                                 type="button"
                                 role="tab"
                                 aria-selected={v.view === view}
-                                onClick={() => go({ view: v.view === "processing" ? null : v.view })}
+                                onClick={() => go({ view: v.view })}
                                 className={`h-8 rounded px-3 text-label-md ${v.view === view ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
                             >
-                                {v.label}{counts ? ` (${formatNumber(counts[v.view])})` : ""}
+                                {v.label}{counts ? ` (${formatNumber(jobViewCount(counts, v.view))})` : ""}
                             </button>
                         ))}
                     </div>
@@ -119,7 +135,7 @@ function JobsView() {
                             type="search"
                             value={searchText}
                             maxLength={100}
-                            placeholder="Job code, Client Job ID, client, agent…"
+                            placeholder="Job code, Client Job ID, agent…"
                             onChange={(event) => setSearchText(event.target.value)}
                             className={`${filterControl} w-64`}
                         />
@@ -127,12 +143,12 @@ function JobsView() {
                     </form>
                 </div>
 
-                {list.status === "loading" && !list.data && <LoadingState label="Loading jobs…" />}
+                {((list.status === "loading" && !list.data) || (switching && items.length === 0)) && <LoadingState label="Loading jobs…" />}
                 {list.status === "error" && <ErrorState message={list.error.message} onRetry={list.reload} />}
-                {list.status !== "error" && list.data && items.length === 0 && (
+                {list.status !== "error" && list.data && !switching && items.length === 0 && (
                     <EmptyState
-                        title={search ? "No jobs match your search" : `No ${view} jobs`}
-                        description={canManage && view === "processing" && !search ? "Create a job to start assigning candidates." : undefined}
+                        title={search ? "No jobs match your search" : view === "all" ? "No jobs" : `No ${view} jobs`}
+                        description={canManage && (view === "processing" || view === "all") && !search ? "Create a job to start assigning candidates." : undefined}
                     />
                 )}
                 {items.length > 0 && (
@@ -145,7 +161,6 @@ function JobsView() {
                                     <th className={tableHead}>Job type</th>
                                     <th className={tableHead}>To Country</th>
                                     <th className={tableHead}>From Country</th>
-                                    <th className={tableHead}>Client</th>
                                     <th className={tableHead}>Responsible agent</th>
                                     <th className={`${tableHead} text-right`}>Candidates</th>
                                     <th className={`${tableHead} text-right`}>Vacancies</th>
@@ -160,10 +175,25 @@ function JobsView() {
                                             <div className="text-label-sm text-ink-muted">{jobDateNote(job)}</div>
                                         </td>
                                         <td className={tableCell}>{job.companyJobId ?? <span className="text-ink-muted">{NO_COMPANY_JOB_ID}</span>}</td>
-                                        <td className={tableCell}>{job.jobType.name}</td>
+                                        <td className={tableCell}>
+                                            {(() => {
+                                                const types = (job.jobTypes && job.jobTypes.length > 0)
+                                                    ? job.jobTypes
+                                                    : (job.jobType ? [job.jobType] : []);
+                                                if (types.length === 0) return <span className="text-ink-muted">—</span>;
+                                                if (types.length === 1) return <span>{types[0].name}</span>;
+                                                if (types.length === 2) return <span>{types.map((t) => t.name).join(", ")}</span>;
+                                                const shown = types.slice(0, 2).map((t) => t.name).join(", ");
+                                                const remaining = types.length - 2;
+                                                return (
+                                                    <span title={types.map((t) => t.name).join(", ")}>
+                                                        {shown} <span className="inline-block rounded bg-canvas-subtle px-1.5 py-0.5 text-label-sm font-medium text-ink-muted">+{remaining}</span>
+                                                    </span>
+                                                );
+                                            })()}
+                                        </td>
                                         <td className={tableCell}>{jobCountry(job.countryCode)}</td>
                                         <td className={tableCell}>{jobCountry(job.fromCountryCode)}</td>
-                                        <td className={tableCell}>{job.client.name}</td>
                                         <td className={tableCell}>{job.responsibleAgent.name}</td>
                                         <td className={`${tableCell} text-right tabular-nums`}>{formatNumber(job.candidateCount)}</td>
                                         <td className={`${tableCell} text-right`}>{job.vacancies === null ? "—" : <VacancyFill job={job} />}</td>
@@ -191,66 +221,146 @@ function JobsView() {
     );
 }
 
-// A reference list (job type) with an inline "add new" row, so
-// the first jobs can be created without a separate management screen.
-function ReferenceSelect({ label, value, onChange, options, disabled, adding, onAdd, extraField, canAdd = true }: {
-    label: string;
-    value: string;
-    onChange: (id: string) => void;
-    options: { id: string; label: string }[];
-    disabled: boolean;
-    adding: string;
-    // Whether the "add new" row is offered (creating a job type is ADMIN / MANAGER only).
+// Multi-select control for Job Types with chips, inline adding, and duplicate prevention.
+export function JobTypesMultiSelect({
+    label = "Job type",
+    value,
+    onChange,
+    options,
+    disabled = false,
+    adding = "Add job type",
+    canAdd = true,
+    onAdd,
+}: {
+    label?: string;
+    value: string[];
+    onChange: (ids: string[]) => void;
+    options: { id: string; name?: string; label?: string }[];
+    disabled?: boolean;
+    adding?: string;
     canAdd?: boolean;
-    onAdd: (name: string, extra: string) => Promise<void>;
-    extraField?: { label: string; placeholder: string };
+    onAdd?: (name: string) => Promise<void>;
 }) {
     const id = useId();
-    const [open, setOpen] = useState(false);
+    const [openAdd, setOpenAdd] = useState(false);
     const [name, setName] = useState("");
-    const [extra, setExtra] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const add = async () => {
+
+    const normalizedOptions = options.map((o) => ({ id: o.id, name: o.name ?? o.label ?? o.id }));
+    const available = normalizedOptions.filter((o) => !value.includes(o.id));
+    const selected = value.map((selectedId) => normalizedOptions.find((o) => o.id === selectedId) ?? { id: selectedId, name: selectedId });
+
+    const addType = async () => {
+        if (!onAdd || !name.trim()) return;
         setBusy(true);
         setError(null);
         try {
-            await onAdd(name.trim(), extra.trim());
-            setOpen(false);
+            await onAdd(name.trim());
+            setOpenAdd(false);
             setName("");
-            setExtra("");
         } catch (caught) {
             setError(message(caught));
         } finally {
             setBusy(false);
         }
     };
+
     return (
         <div>
             <div className="flex items-center justify-between">
-                <label htmlFor={id} className="text-label-md text-ink">{label}</label>
-                {canAdd && <button type="button" onClick={() => setOpen((v) => !v)} disabled={disabled} className="text-label-sm text-primary hover:underline">{open ? "Cancel" : adding}</button>}
+                <label htmlFor={id} className="text-label-md text-ink">
+                    {label} <span className="text-critical">*</span>
+                </label>
+                {canAdd && onAdd && (
+                    <button
+                        type="button"
+                        onClick={() => setOpenAdd((v) => !v)}
+                        disabled={disabled || busy}
+                        className="text-label-sm text-primary hover:underline"
+                    >
+                        {openAdd ? "Cancel" : adding}
+                    </button>
+                )}
             </div>
-            {open ? (
+
+            {openAdd ? (
                 <div className="mt-1 space-y-2 rounded border border-border bg-canvas p-2">
-                    <input aria-label={`${label} name`} value={name} maxLength={120} placeholder="Name" onChange={(event) => setName(event.target.value)} className={inputClass()} />
-                    {extraField && <input aria-label={extraField.label} value={extra} maxLength={2} placeholder={extraField.placeholder} onChange={(event) => setExtra(event.target.value.toUpperCase())} className={inputClass()} />}
-                    <button type="button" disabled={busy || !name.trim() || (Boolean(extraField) && extra.trim().length !== 2)} onClick={add} className={primaryButton}>{`Save ${label.toLowerCase()}`}</button>
+                    <input
+                        aria-label="New job type name"
+                        value={name}
+                        maxLength={120}
+                        placeholder="Name"
+                        disabled={busy}
+                        onChange={(event) => setName(event.target.value)}
+                        className={inputClass()}
+                    />
+                    <button
+                        type="button"
+                        disabled={busy || !name.trim()}
+                        onClick={addType}
+                        className={primaryButton}
+                    >
+                        {busy ? "Saving…" : "Save job type"}
+                    </button>
                     <DialogError message={error} />
                 </div>
-            ) : (
-                <select id={id} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className={`${inputClass()} mt-1`}>
-                    <option value="">Select…</option>
-                    {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-                </select>
-            )}
+            ) : null}
+
+            {/* Selected Job Types chips */}
+            <div className="mt-1.5 flex min-h-[36px] flex-wrap items-center gap-1.5 rounded border border-border bg-canvas p-1.5" data-testid="selected-job-types">
+                {selected.length === 0 ? (
+                    <span className="text-label-sm text-ink-muted">Select at least one job type</span>
+                ) : (
+                    selected.map((item) => (
+                        <span
+                            key={item.id}
+                            className="inline-flex items-center gap-1 rounded-md border border-border bg-canvas-subtle px-2 py-0.5 text-label-md font-medium text-ink"
+                        >
+                            <span>{item.name}</span>
+                            {!disabled && (
+                                <button
+                                    type="button"
+                                    onClick={() => onChange(value.filter((valId) => valId !== item.id))}
+                                    aria-label={`Remove ${item.name}`}
+                                    className="ml-0.5 rounded text-ink-muted hover:text-ink focus:outline-none"
+                                >
+                                    <Icon name="close" className="size-3.5" />
+                                </button>
+                            )}
+                        </span>
+                    ))
+                )}
+            </div>
+
+            {/* Dropdown to add more */}
+            <select
+                id={id}
+                value=""
+                aria-label={label}
+                disabled={disabled || busy || available.length === 0}
+                onChange={(event) => {
+                    const selectedVal = event.target.value;
+                    if (selectedVal && !value.includes(selectedVal)) {
+                        onChange([...value, selectedVal]);
+                    }
+                }}
+                className={`${inputClass()} mt-1.5`}
+            >
+                <option value="">{available.length === 0 ? "All available job types selected" : "Select…"}</option>
+                {available.map((option) => (
+                    <option key={option.id} value={option.id}>
+                        {option.name}
+                    </option>
+                ))}
+            </select>
         </div>
     );
 }
 
 // New job, in two steps. Step 1 is the job's details (nothing is saved; Next only checks them);
-// Step 2 picks the candidates to assign right away: candidates who passed the test and are not on
-// a PROCESSING job (any job type preference, No Preferred Type too), none, one or many, and more
+// Step 2 picks the candidates to assign right away: candidates who passed the test (they may already
+// be on other PROCESSING jobs; any job type preference, No Preferred Type too), none, one or many, and more
 // than the vacancies if needed. Create job sends the job and the selection together: the server
 // re-checks every rule and creates the job with all of them, or nothing.
 type Step = 1 | 2;
@@ -262,7 +372,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     const options = useAdminResource("job-options", (t, signal) => getJobOptions(t, signal));
     const [step, setStep] = useState<Step>(1);
     const [created, setCreated] = useState<Partial<JobOptions>>({});
-    const [jobTypeId, setJobTypeId] = useState("");
+    const [jobTypeIds, setJobTypeIds] = useState<string[]>([]);
     const [clientId, setClientId] = useState("");
     const [fromCountryCode, setFromCountryCode] = useState(DEFAULT_FROM_COUNTRY);
     const [vacancies, setVacancies] = useState("");
@@ -290,7 +400,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     const agentField = useId();
     const vacanciesNumber = vacancies.trim() === "" ? null : Number(vacancies);
     const vacanciesValid = vacanciesNumber === null || (Number.isInteger(vacanciesNumber) && vacanciesNumber >= 1 && vacanciesNumber <= 100000);
-    const ready = Boolean(jobTypeId && clientId && agent && fromCountryCode) && vacanciesValid;
+    const ready = Boolean(jobTypeIds.length > 0 && clientId && agent && fromCountryCode) && vacanciesValid;
 
     const next = (event: FormEvent) => {
         event.preventDefault();
@@ -310,8 +420,14 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
         setError(null);
         try {
             const job = await createJob(token, {
-                jobTypeId, clientId, responsibleAgentId: agent?.id, vacancies: vacanciesNumber, companyJobId: companyJobId.trim() || null,
-                fromCountryCode, candidateIds: [...selected.keys()],
+                jobTypeId: jobTypeIds[0],
+                jobTypeIds,
+                clientId,
+                responsibleAgentId: agent?.id,
+                vacancies: vacanciesNumber,
+                companyJobId: companyJobId.trim() || null,
+                fromCountryCode,
+                candidateIds: [...selected.keys()],
             });
             onCreated(job.jobId);
         } catch (caught) {
@@ -333,13 +449,18 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
             {options.status === "error" && <ErrorState message={options.error.message} onRetry={options.reload} />}
             {options.data && step === 1 && (
                 <form onSubmit={next} className="space-y-3">
-                    <ReferenceSelect
-                        label="Job type" value={jobTypeId} onChange={setJobTypeId} disabled={busy} adding="Add job type" canAdd={canAddJobType}
-                        options={merged("jobTypes").map((o) => ({ id: o.id, label: o.name }))}
+                    <JobTypesMultiSelect
+                        label="Job type"
+                        value={jobTypeIds}
+                        onChange={setJobTypeIds}
+                        disabled={busy}
+                        adding="Add job type"
+                        canAdd={canAddJobType}
+                        options={merged("jobTypes").map((o) => ({ id: o.id, name: o.name }))}
                         onAdd={async (name) => {
                             const row = await createJobType(token, name);
                             setCreated((c) => ({ ...c, jobTypes: [...(c.jobTypes ?? []), row] }));
-                            setJobTypeId(row.id);
+                            setJobTypeIds((prev) => [...prev, row.id]);
                         }}
                     />
                     <div>
@@ -411,7 +532,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     );
 }
 
-// The candidates who can be assigned now (the server's list: test PASS and not on a PROCESSING job),
+// The candidates who can be assigned now (the server's list: test PASS; candidates on other jobs included),
 // searchable and paged. The selection is kept across searches and pages.
 function CandidatePicker({ token, selected, onToggle, disabled }: { token: string; selected: Map<string, CandidateListItem>; onToggle: (candidate: CandidateListItem) => void; disabled: boolean }) {
     const [text, setText] = useState("");
@@ -422,7 +543,7 @@ function CandidatePicker({ token, selected, onToggle, disabled }: { token: strin
     useEffect(() => {
         const controller = new AbortController();
         setLoadError(null);
-        listCandidates(token, { page: query.page, pageSize: CANDIDATE_PAGE_SIZE, search: query.search || undefined, testResult: "PASS", available: true }, controller.signal)
+        listCandidates(token, { page: query.page, pageSize: CANDIDATE_PAGE_SIZE, search: query.search || undefined, testResult: "PASS" }, controller.signal)
             .then(setList)
             .catch((caught) => {
                 if (!controller.signal.aborted) setLoadError(message(caught));
@@ -441,7 +562,7 @@ function CandidatePicker({ token, selected, onToggle, disabled }: { token: strin
                 <input id="new-job-candidate-search" type="search" value={text} maxLength={100} placeholder="Name, passport ID or NIC" onChange={(event) => setText(event.target.value)} className={filterControl} />
                 <button type="submit" disabled={disabled} className={secondaryButton}>Search</button>
             </form>
-            <p className="mt-2 text-label-sm text-ink-muted">Candidates who passed the test and are not on a processing job.</p>
+            <p className="mt-2 text-label-sm text-ink-muted">Candidates who passed the test. A candidate can be on several processing jobs.</p>
             {loadError && <ErrorState message={loadError} onRetry={() => setAttempt((n) => n + 1)} />}
             {!loadError && !list && <LoadingState label="Loading candidates…" />}
             {!loadError && list && items.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">{query.search ? "No eligible candidates match your search." : "No candidates can be assigned right now."}</p>}

@@ -15,15 +15,17 @@ import { formatDateTime } from "../format";
 // Creating a new link replaces the old one; revoking locks the form again.
 //
 // ADMIN and MANAGER also get "Share link for the job group": one link for every
-// candidate on the candidate's PROCESSING job (bound to the job's immutable id;
+// candidate on one of the candidate's PROCESSING jobs (chosen when they hold several;
+// bound to the job's immutable id;
 // each candidate still verifies with their own Passport and NIC and submits once).
 // Like the personal link it is shown once, here, and is gone when the dialog closes.
-export function ShareFormButton({ passportId, currentJob = null }: { passportId: string; currentJob?: CandidateJobAssignment | null }) {
+export function ShareFormButton({ passportId, currentJob = null, activeJobs }: { passportId: string; currentJob?: CandidateJobAssignment | null; activeJobs?: CandidateJobAssignment[] }) {
     const [open, setOpen] = useState(false);
+    const jobs = (activeJobs ?? (currentJob ? [currentJob] : [])).filter((job) => job.status === "PROCESSING");
     return (
         <>
             <button type="button" className={secondaryButton} onClick={() => setOpen(true)}>Share Form</button>
-            {open && <ShareFormDialog passportId={passportId} currentJob={currentJob} onClose={() => setOpen(false)} />}
+            {open && <ShareFormDialog passportId={passportId} jobs={jobs} onClose={() => setOpen(false)} />}
         </>
     );
 }
@@ -34,7 +36,7 @@ const STATE_TEXT: Record<FormShareStatus["state"], string> = {
     SUBMITTED: "Submitted: the form is locked and can't be changed or shared again.",
 };
 
-function ShareFormDialog({ passportId, currentJob, onClose }: { passportId: string; currentJob: CandidateJobAssignment | null; onClose: () => void }) {
+function ShareFormDialog({ passportId, jobs, onClose }: { passportId: string; jobs: CandidateJobAssignment[]; onClose: () => void }) {
     const { token } = useAuth();
     const [status, setStatus] = useState<FormShareStatus | null>(null);
     const [created, setCreated] = useState<CreatedFormShareLink | null>(null);
@@ -146,7 +148,7 @@ function ShareFormDialog({ passportId, currentJob, onClose }: { passportId: stri
                     )}
                 </div>
             )}
-            <JobGroupSection currentJob={currentJob} />
+            <JobGroupSection jobs={jobs} />
             <div className="mt-3 flex justify-end">
                 <button type="button" className={secondaryButton} disabled={busy} onClick={onClose}>Close</button>
             </div>
@@ -157,8 +159,11 @@ function ShareFormDialog({ passportId, currentJob, onClose }: { passportId: stri
 const whatsappLink = (url: string) => `https://wa.me/?text=${encodeURIComponent(`Please fill in your details for Emlynk using this link. You will need your Passport Number and NIC Number.\n${url}`)}`;
 
 // "Share link for the job group". Only for roles that manage jobs; needs the
-// candidate to be on a PROCESSING job (otherwise disabled, with the reason).
-function JobGroupSection({ currentJob }: { currentJob: CandidateJobAssignment | null }) {
+// candidate to be on a PROCESSING job (otherwise disabled, with the reason). With
+// several, the job is chosen first (the newest is preselected).
+function JobGroupSection({ jobs }: { jobs: CandidateJobAssignment[] }) {
+    const [selectedId, setSelectedId] = useState<string | null>(jobs[0]?.jobId ?? null);
+    const currentJob = jobs.find((job) => job.jobId === selectedId) ?? jobs[0] ?? null;
     const { user, token } = useAuth();
     const [status, setStatus] = useState<JobGroupShareStatus | null>(null);
     const [created, setCreated] = useState<CreatedJobGroupShareLink | null>(null);
@@ -170,6 +175,9 @@ function JobGroupSection({ currentJob }: { currentJob: CandidateJobAssignment | 
     const jobId = currentJob && currentJob.status === "PROCESSING" ? currentJob.jobId : null;
 
     useEffect(() => {
+        setStatus(null);
+        setCreated(null);
+        setError(null);
         if (!token || !jobId || !manages) return undefined;
         const controller = new AbortController();
         getJobGroupShareStatus(token, jobId, controller.signal)
@@ -224,6 +232,14 @@ function JobGroupSection({ currentJob }: { currentJob: CandidateJobAssignment | 
                     <p className="mt-1 text-body-sm text-ink-muted">This candidate is not on a processing job. Add them to a job in Admin &gt; Jobs to share a job-group link.</p>
                     <button type="button" disabled className={`${secondaryButton} mt-2`}>Create job-group link</button>
                 </>
+            )}
+            {jobs.length > 1 && (
+                <div className="mt-2">
+                    <label htmlFor="group-link-job" className="mb-1 block text-label-sm text-ink-muted">Job ({jobs.length} processing jobs)</label>
+                    <select id="group-link-job" value={currentJob?.jobId ?? ""} disabled={busy} onChange={(event) => { setSelectedId(event.target.value); setConfirm(null); }} className="h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink">
+                        {jobs.map((job) => <option key={job.jobId} value={job.jobId}>{job.jobCode} · {job.jobType.name}</option>)}
+                    </select>
+                </div>
             )}
             {jobId && currentJob && (
                 <>

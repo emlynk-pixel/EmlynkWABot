@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { submitCandidateForm } from "../api/candidateDetails";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { saveDraftStep, submitCandidateForm } from "../api/candidateDetails";
 import { ApiError } from "../api/client";
 import { idOf, setAt, type StepProps } from "../form/binding";
 import { fromPayload, toPayload, type CandidateFormData } from "../form/model";
@@ -16,7 +16,7 @@ import { errorsIn, requiredPaths, validateForm, valueAt, type FieldMessage, type
 import type { MessageKey } from "../i18n/translations";
 import { useLanguage } from "../i18n/useLanguage";
 import { getSession } from "../session/tokenStore";
-import type { FormLoadResponse } from "../types/api";
+import type { DraftStep, FormLoadResponse } from "../types/api";
 
 // How often the page checks that the in-memory session is still valid.
 const SESSION_CHECK_MS = 10_000;
@@ -25,6 +25,8 @@ const SESSION_CHECK_MS = 10_000;
 const SERVER_CODE: Record<string, MessageKey> = { required: "v.required", tooLong: "v.tooLongShort", invalid: "v.invalidAnswer", unknown: "v.invalidAnswer" };
 
 type SubmitState = "idle" | "confirm" | "sending" | "invalid" | "failed";
+// Saving a step (Next): "failed" = not saved (the answers stay on the page, the step does not change).
+type SaveState = "idle" | "saving" | "failed";
 
 // A random key for this form's one submission: a retry after a lost
 // response reuses it, so the server can tell it is the same submission.
@@ -34,10 +36,12 @@ const newSubmissionKey = () => (crypto.randomUUID?.() ?? `${Date.now().toString(
 // ONE submit (the Verify stage before it is its own page, so the journey shows
 // four stages). The sections inside a step are headings, not steps.
 //
-// It starts from the server's prefill (the candidate's existing records). The
-// answers live only in this component's memory (never in browser storage)
-// until they are submitted. After a successful submit the form is locked on
-// the server and this page is replaced by a thank-you screen.
+// It starts from the server's prefill (the candidate's existing records), with the
+// steps the candidate saved earlier restored over it. The answers live in this
+// component's memory (never in browser storage); Next saves the step to the server
+// (a draft: not a submission) and only then moves on, so a reload or a lost
+// connection loses nothing that was saved with Next. After a successful submit the
+// form is locked on the server and this page is replaced by a thank-you screen.
 export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmitted, onSessionEnded }: {
     expiresAt: string;
     form: FormLoadResponse;
@@ -48,8 +52,21 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
     const { t, language } = useLanguage();
     const [data, setData] = useState<CandidateFormData>(() => fromPayload(form.answers));
     const prefilled = useMemo(() => new Set(form.prefilled), [form.prefilled]);
-    const [stepIndex, setStepIndex] = useState(0);
-    const [furthest, setFurthest] = useState(0);
+    // The steps saved with Next, as the server reports them; the candidate resumes at the first
+    // step not saved yet (the review when all are), and can go back to any saved step.
+    const [savedSteps, setSavedSteps] = useState<ReadonlySet<StepId>>(() => new Set(STEPS.filter((s) => form.savedSteps?.includes(s.id)).map((s) => s.id)));
+    const resumeAt = useMemo(() => {
+        const open = STEPS.findIndex((s) => s.id !== "review" && !savedSteps.has(s.id));
+        return open < 0 ? STEPS.findIndex((s) => s.id === "review") : open;
+        // Only the saved steps as the page opened decide where it starts.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const [stepIndex, setStepIndex] = useState(resumeAt);
+    const [furthest, setFurthest] = useState(resumeAt);
+    const [saveState, setSaveState] = useState<SaveState>("idle");
+    const saving = useRef(false);
+    const rootRef = useRef<HTMLDivElement>(null);
+    const noticeRef = useRef<HTMLDivElement>(null);
     // Steps where Next or Submit was tried: their errors are shown, and kept
     // up to date as the candidate corrects them.
     const [attempted, setAttempted] = useState<ReadonlySet<StepId>>(new Set());
@@ -74,6 +91,28 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
     );
     const required = requiredPaths(data);
     const done = required.filter((path) => valueAt(data, path).trim() !== "" && !allErrors[path]).length;
+
+    // The notice stays in view while the form scrolls: below the sticky header, and the steps
+    // list (which sticks beside the form on wide screens) sits below the notice.
+    useLayoutEffect(() => {
+        const root = rootRef.current;
+        if (!root) return undefined;
+        const header = document.querySelector<HTMLElement>(".site-header");
+        const notice = noticeRef.current;
+        const measure = () => {
+            root.style.setProperty("--site-header-h", `${header?.offsetHeight || 57}px`);
+            root.style.setProperty("--form-notice-h", `${notice?.offsetHeight || 0}px`);
+        };
+        measure();
+        if (typeof ResizeObserver === "undefined") {
+            window.addEventListener("resize", measure);
+            return () => window.removeEventListener("resize", measure);
+        }
+        const observer = new ResizeObserver(measure);
+        if (header) observer.observe(header);
+        if (notice) observer.observe(notice);
+        return () => observer.disconnect();
+    }, []);
 
     // The token is only in memory: once it is gone (expired, or the page was
     // reloaded) the candidate goes back to verification.
@@ -109,6 +148,7 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
             return rest;
         });
         if (submitState === "invalid" || submitState === "failed") setSubmitState("idle");
+        if (saveState === "failed") setSaveState("idle");
     };
     const props: StepProps = { data, set, errors: shownErrors, prefilled, jobCategories };
 
@@ -138,14 +178,59 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
         goTo(index);
     };
 
-    const next = () => {
+    // The server's field problems as the form's own messages (the same for a save and a submit).
+    const showServerProblems = (fieldErrors: { field: string; message: string }[]) => {
+        const mapped: Record<string, FieldMessage> = {};
+        for (const fieldError of fieldErrors) mapped[fieldError.field] = { key: SERVER_CODE[fieldError.message] ?? "v.invalidAnswer" };
+        setServerErrors(mapped);
+        return mapped;
+    };
+
+    // Next: check the step with the form's rules; if it is fine, save it, and move on only once
+    // the server has confirmed the save. A step that fails either way stays as it is.
+    const next = async () => {
+        if (saving.current) return;
         const problems = errorsIn(allErrors, step.groups);
         setAttempted((previous) => new Set(previous).add(step.id));
         if (Object.keys(problems).length) {
             focusFirstError(problems);
             return;
         }
-        goTo(stepIndex + 1);
+        if (step.id === "review") return;
+        const session = getSession();
+        if (!session) {
+            onSessionEnded();
+            return;
+        }
+        saving.current = true;
+        setSaveState("saving");
+        try {
+            const payload = toPayload(data);
+            const answers = Object.fromEntries(step.groups.map((group) => [group, payload[group]]));
+            await saveDraftStep(session.token, step.id as DraftStep, answers);
+            setSavedSteps((previous) => new Set(previous).add(step.id));
+            setSaveState("idle");
+            goTo(stepIndex + 1);
+        } catch (error) {
+            if (error instanceof ApiError && error.status === 409) {
+                onAlreadySubmitted();
+                return;
+            }
+            if (error instanceof ApiError && error.status === 401) {
+                onSessionEnded();
+                return;
+            }
+            if (error instanceof ApiError && error.status === 400 && error.fieldErrors.length) {
+                const mapped = showServerProblems(error.fieldErrors);
+                setSaveState("idle");
+                focusFirstError(errorsIn(mapped, step.groups));
+                return;
+            }
+            // Not saved (or the answer was lost): nothing is assumed saved, and trying again is safe.
+            setSaveState("failed");
+        } finally {
+            saving.current = false;
+        }
     };
 
     // Submit: check everything first, then ask for confirmation.
@@ -174,9 +259,7 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
                 return;
             }
             if (error instanceof ApiError && error.status === 400 && error.fieldErrors.length) {
-                const mapped: Record<string, FieldMessage> = {};
-                for (const fieldError of error.fieldErrors) mapped[fieldError.field] = { key: SERVER_CODE[fieldError.message] ?? "v.invalidAnswer" };
-                setServerErrors(mapped);
+                showServerProblems(error.fieldErrors);
                 setAttempted(new Set(STEPS.map((s) => s.id)));
                 setSubmitState("invalid");
                 return;
@@ -191,6 +274,7 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
     const currentProblems = Object.keys(errorsIn(shownErrors, step.groups)).length > 0;
     const time = new Date(expiresAt).toLocaleTimeString(language === "si" ? "si-LK" : "en-GB", { hour: "2-digit", minute: "2-digit" });
     const sending = submitState === "sending";
+    const savingStep = saveState === "saving";
 
     const sectionContent = (id: SectionId): ReactNode => {
         switch (id) {
@@ -216,16 +300,22 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
         ));
 
     return (
-        <div className="candidate-form">
+        <div className="candidate-form" ref={rootRef}>
             <div className="form-intro">
                 <p className="success" role="status"><span aria-hidden="true">✓ </span>{t("form.verifiedBanner")}</p>
                 <h1>{t("form.title")}</h1>
                 <p className="lead">{t("form.intro")}</p>
-                {/* Said once, at the top: every answer is required, "N/A" only where it is allowed. */}
-                <p className="notice" id="form-all-required">{t("form.allRequired")}</p>
-                {prefilled.size > 0 && <p className="notice subtle">{t("form.prefilledBanner")}</p>}
             </div>
 
+            {/* Said once, at the top, and kept in view while the form scrolls: every answer is required,
+                "N/A" only where it is allowed. */}
+            <div className="sticky-notice" ref={noticeRef}>
+                <p className="notice" id="form-all-required">{t("form.allRequired")}</p>
+            </div>
+            {(form.savedSteps?.length ?? 0) > 0 && <p className="notice subtle" role="status">{t("form.restoredBanner")}</p>}
+            {prefilled.size > 0 && <p className="notice subtle">{t("form.prefilledBanner")}</p>}
+
+            <div className="form-layout">
             <div className="progress-block">
                 <div className="progress-text">
                     <span className="progress-step">{t("form.stepOf", { current: stepIndex + 1 + JOURNEY_OFFSET, total: JOURNEY_TOTAL })}</span>
@@ -246,7 +336,7 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
                             const current = index === stepIndex;
                             return (
                                 <li key={s.id} className={current ? "current" : index < stepIndex ? "done" : undefined}>
-                                    <button type="button" disabled={!reachable || sending} aria-current={current ? "step" : undefined} onClick={() => goTo(index)}>
+                                    <button type="button" disabled={!reachable || sending || savingStep} aria-current={current ? "step" : undefined} onClick={() => goTo(index)}>
                                         <span className="step-number" aria-hidden="true">{index + 1 + JOURNEY_OFFSET}</span>
                                         <span className="step-name">{t(s.title)}</span>
                                     </button>
@@ -269,6 +359,9 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
 
                 {currentProblems && step.id !== "review" && (
                     <p className="form-error" role="alert"><span aria-hidden="true">! </span>{t("form.fixErrors")}</p>
+                )}
+                {saveState === "failed" && step.id !== "review" && (
+                    <p className="form-error" role="alert"><span aria-hidden="true">! </span>{t("form.saveFailed")}</p>
                 )}
 
                 {step.id === "review" && (
@@ -306,11 +399,12 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
                     <div className="step-actions">
                         {step.id === "review"
                             ? <button type="button" className="primary" onClick={askToSubmit}>{submitState === "failed" ? t("review.tryAgain") : t("review.save")}</button>
-                            : <button type="button" className="primary" onClick={next}>{t("form.next")}</button>}
-                        {stepIndex > 0 && <button type="button" className="secondary" onClick={() => goTo(stepIndex - 1)}>{t("form.previous")}</button>}
+                            : <button type="button" className="primary" disabled={savingStep} aria-busy={savingStep} onClick={() => void next()}>{savingStep ? t("form.saving") : t("form.next")}</button>}
+                        {stepIndex > 0 && <button type="button" className="secondary" disabled={savingStep} onClick={() => goTo(stepIndex - 1)}>{t("form.previous")}</button>}
                     </div>
                 )}
             </section>
+            </div>
         </div>
     );
 }

@@ -21,16 +21,18 @@
 import "dotenv/config";
 import { assertValidEnv, SHEET_SYNC_WORKER_REQUIRED_ENV_VARS } from "./config/env.js";
 import { assertValidRuntime } from "./config/runtime.js";
-import { readSheetSyncConfig, readSheetSyncTuning } from "./config/sheetSync.js";
+import { readFormSubmissionSheetConfig, readSheetSyncConfig, readSheetSyncTuning } from "./config/sheetSync.js";
 
 let config;
 let tuning;
+let formConfig;
 try {
     assertValidRuntime();
     assertValidEnv(process.env, { required: SHEET_SYNC_WORKER_REQUIRED_ENV_VARS });
     config = readSheetSyncConfig(process.env);
     tuning = readSheetSyncTuning(process.env);
-    const problems = [...config.problems, ...tuning.problems];
+    formConfig = readFormSubmissionSheetConfig(process.env);
+    const problems = [...config.problems, ...tuning.problems, ...formConfig.problems];
     if (problems.length) throw new Error(`Invalid Google Sheet sync configuration:\n- ${problems.join("\n- ")}`);
 } catch (error) {
     // Variable names only, never values.
@@ -45,6 +47,9 @@ const { createGoogleSheetsAdapter, createLiveSheetsClient, SHEETS_SCOPE, SHEETS_
 const { createSheetSyncEngine } = await import("./services/sheetSyncEngine.js");
 const { createSheetSyncStore, RUN_KIND, RUN_TRIGGER } = await import("./services/sheetSyncStore.js");
 const { createSheetSyncWorker } = await import("./services/sheetSyncWorker.js");
+const { createFormSubmissionSheetsAdapter } = await import("./services/formSubmissionSheetAdapter.js");
+const { createFormSubmissionSyncStore } = await import("./services/formSubmissionSyncStore.js");
+const { createFormSubmissionSync } = await import("./services/formSubmissionSync.js");
 const { runSheetHealthCheck } = await import("./services/sheetHealthCheck.js");
 const { createOidcVerifier, createSheetSyncHttpServer, startSheetSyncWorkerProcess } = await import("./sheetSyncWorkerProcess.js");
 
@@ -69,7 +74,25 @@ try {
         return runners.get(destination.key);
     };
     const store = createSheetSyncStore({ db: prisma });
-    const worker = createSheetSyncWorker({ store, forDestination, destinations: config.destinations, config, tuning });
+    // The Candidate Form submissions: their own outbox and their own tab ("Candidate Form
+    // Submissions") of the active destination's spreadsheet; the mirror's tab is never written.
+    const formAdapters = new Map();
+    const formSubmissions = createFormSubmissionSync({
+        db: prisma,
+        store: createFormSubmissionSyncStore({ db: prisma }),
+        tabName: formConfig.tabName,
+        adapterFor: (destination, tabName) => {
+            const key = `${destination.key}|${tabName}`;
+            if (!formAdapters.has(key)) {
+                formAdapters.set(key, createFormSubmissionSheetsAdapter({
+                    config: { enabled: config.enabled, spreadsheetId: destination.spreadsheetId, tabName },
+                    sheetsClient: () => createLiveSheetsClient({ scopes }),
+                }));
+            }
+            return formAdapters.get(key);
+        },
+    });
+    const worker = createSheetSyncWorker({ store, forDestination, destinations: config.destinations, config, tuning, formSubmissions });
 
     let verifyScheduler = null;
     if (process.env.SHEET_SYNC_SCHEDULER_AUDIENCE && process.env.SHEET_SYNC_SCHEDULER_INVOKER) {
@@ -88,7 +111,7 @@ try {
         },
     });
 
-    console.log(JSON.stringify({ event: "sheet_sync.worker_config", writeGate: config.gate, gateReason: config.gateReason, schedulerTrigger: Boolean(verifyScheduler), batchSize: tuning.batchSize, pollIntervalMs: tuning.pollIntervalMs, pilotCandidates: tuning.pilotCandidateIds?.length ?? 0, destinations: config.destinations.map((d) => d.key) }));
+    console.log(JSON.stringify({ event: "sheet_sync.worker_config", writeGate: config.gate, gateReason: config.gateReason, schedulerTrigger: Boolean(verifyScheduler), batchSize: tuning.batchSize, pollIntervalMs: tuning.pollIntervalMs, pilotCandidates: tuning.pilotCandidateIds?.length ?? 0, destinations: config.destinations.map((d) => d.key), formSubmissionsTab: formConfig.tabName }));
     await startSheetSyncWorkerProcess({ worker, server, createShutdown, db: prisma });
 } catch (error) {
     console.error(JSON.stringify({ event: "sheet_sync.worker_start_failed", errorType: error?.name ?? "Error", code: typeof error?.code === "string" ? error.code : null }));
