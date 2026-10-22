@@ -6,13 +6,18 @@ import { apiRequest } from "./client";
 // enforces both.
 
 export type JobStatus = "PROCESSING" | "COMPLETED" | "CANCELLED";
-export type JobView = "processing" | "completed" | "cancelled";
+// all: every status. The server counts each status; All is their sum.
+export type JobStatusView = "processing" | "completed" | "cancelled";
+export type JobView = JobStatusView | "all";
 
-export const JOB_VIEWS: { view: JobView; label: string; status: JobStatus }[] = [
+export const JOB_VIEWS: { view: JobView; label: string; status: JobStatus | null }[] = [
     { view: "processing", label: "Processing", status: "PROCESSING" },
     { view: "completed", label: "Completed", status: "COMPLETED" },
     { view: "cancelled", label: "Cancelled", status: "CANCELLED" },
+    { view: "all", label: "All", status: null },
 ];
+export const jobViewCount = (counts: Record<JobStatusView, number>, view: JobView) =>
+    view === "all" ? counts.processing + counts.completed + counts.cancelled : counts[view];
 
 export type JobSummary = {
     jobId: string;
@@ -41,7 +46,7 @@ export type JobListItem = JobSummary & { candidateCount: number; filled: boolean
 export type JobList = {
     items: JobListItem[];
     pagination: { page: number; pageSize: number; total: number; totalPages: number; totalItems?: number; hasNextPage?: boolean; hasPreviousPage?: boolean };
-    counts: Record<JobView, number>;
+    counts: Record<JobStatusView, number>;
     filters: { view: JobView; search: string | null };
 };
 

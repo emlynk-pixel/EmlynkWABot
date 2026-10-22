@@ -37,7 +37,8 @@ export const JOB_AUDIT_ACTION = Object.freeze({
     DEACTIVATE_JOB_TYPE: "DEACTIVATE_JOB_TYPE",
 });
 
-export const JOB_VIEWS = Object.freeze({ processing: JOB_STATUS.PROCESSING, completed: JOB_STATUS.COMPLETED, cancelled: JOB_STATUS.CANCELLED });
+// all: every status (no status filter).
+export const JOB_VIEWS = Object.freeze({ processing: JOB_STATUS.PROCESSING, completed: JOB_STATUS.COMPLETED, cancelled: JOB_STATUS.CANCELLED, all: null });
 export const JOB_LIST_PAGE_SIZE = 50;
 const MAX_VACANCIES = 100_000;
 const MAX_NAME_LENGTH = 120;
@@ -115,7 +116,7 @@ function parseCandidateIds(value, errors) {
     });
 }
 
-// GET /api/admin/jobs?view=processing|completed|cancelled&search=&page=
+// GET /api/admin/jobs?view=processing|completed|cancelled|all&search=&page=
 export function parseJobListQuery(query = {}) {
     const errors = [];
     const params = { view: "processing", page: 1, pageSize: JOB_LIST_PAGE_SIZE };
@@ -414,7 +415,7 @@ function searchWhere(search) {
 
 // GET /api/admin/jobs
 export async function listJobs({ db, params, user }) {
-    const parts = [{ status: JOB_VIEWS[params.view] }];
+    const parts = JOB_VIEWS[params.view] ? [{ status: JOB_VIEWS[params.view] }] : [];
     if (isCandidateScoped(user)) parts.push({ candidates: { some: memberWhere(user) } });
     if (params.search) parts.push(searchWhere(params.search));
     const where = { AND: parts };

@@ -355,6 +355,12 @@ describe("lists, details and the candidate page (JOB-017)", () => {
         assert.equal((await view("processing", `&search=${a.jobCode.toLowerCase()}`)).items.length, 1);
         assert.equal((await view("processing", "&search=nobody")).items.length, 0);
         assert.equal((await api(USERS.MANAGER, "GET", "/jobs?view=other")).status, 400);
+        // JOB-FILTER: All lists every status (newest first), with the same counts, search and pages.
+        assert.deepEqual((await view("all")).items.map((j) => j.jobCode), [c.jobCode, b.jobCode, a.jobCode]);
+        assert.deepEqual((await view("all")).counts, { processing: 1, completed: 1, cancelled: 1 });
+        assert.deepEqual((await view("all")).filters, { view: "all", search: null });
+        assert.deepEqual((await view("all", `&search=${b.jobCode.toLowerCase()}`)).items.map((j) => j.jobCode), [b.jobCode]);
+        assert.equal((await view("all", "&page=2")).items.length, 0);
         const detail = (await api(USERS.MANAGER, "GET", `/jobs/${a.jobId}`)).body;
         assert.deepEqual([detail.jobCode, detail.jobType.name, detail.client.name, detail.countryCode, detail.responsibleAgent.name, detail.vacancies, detail.createdBy], [a.jobCode, "Welder", "Acme Construction", "RO", "Ion Popescu", 5, USERS.MANAGER.name]);
         assert.deepEqual(detail.candidates.map((x) => [x.passportId, x.name]), [[pid(1), "Name1 Sur1"]]);

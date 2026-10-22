@@ -8,6 +8,7 @@ import {
     DEFAULT_FROM_COUNTRY,
     getJobOptions,
     JOB_VIEWS,
+    jobViewCount,
     listJobs,
     type JobOptions,
     type JobView,
@@ -24,10 +25,13 @@ import { CountrySelect } from "../components/master/MasterParts";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl, inputClass, tableCell, tableHead, tableRow } from "../components/ui";
 
-// Admin > Jobs: Processing / Completed / Cancelled views of the jobs, newest
+// Admin > Jobs: Processing / Completed / Cancelled / All views of the jobs, newest
 // first, paged on the server. ADMIN and MANAGER create and manage jobs; an
 // ANALYST sees only jobs holding their own candidates (the server scopes the
 // list and the candidate counts). The view, search and page live in the URL.
+// With no view chosen it opens Processing, or All when there is no Processing
+// job (but other jobs exist) rather than an empty list; a view picked from the
+// tabs (Processing too) is kept as chosen.
 
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
 
@@ -62,6 +66,14 @@ function JobsView() {
     const [creating, setCreating] = useState(false);
 
     const list = useAdminResource(`jobs?${searchParams.toString()}`, (t, signal) => listJobs(t, { view, search, page }, signal));
+    const counts = list.data?.counts;
+    const fallBackToAll = requested === null && list.status !== "error" && !!counts && counts.processing === 0 && jobViewCount(counts, "all") > 0;
+    useEffect(() => {
+        if (!fallBackToAll) return;
+        const next = new URLSearchParams(searchParams);
+        next.set("view", "all");
+        setSearchParams(next, { replace: true });
+    }, [fallBackToAll, searchParams, setSearchParams]);
 
     const go = (changes: Record<string, string | null>) => {
         const next = new URLSearchParams(searchParams);
@@ -77,8 +89,9 @@ function JobsView() {
         go({ search: searchText.trim() || null });
     };
 
-    const items = list.status === "error" ? [] : list.data?.items ?? [];
-    const counts = list.data?.counts;
+    // Right after the fall back, the Processing list (empty) is still held until All arrives.
+    const switching = fallBackToAll || (list.status === "loading" && list.data?.filters?.view !== view);
+    const items = list.status === "error" || fallBackToAll ? [] : list.data?.items ?? [];
 
     return (
         <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
@@ -98,17 +111,17 @@ function JobsView() {
 
             <Card>
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-                    <div role="tablist" aria-label="Job status" className="flex gap-1">
+                    <div role="tablist" aria-label="Job status" className="flex flex-wrap gap-1">
                         {JOB_VIEWS.map((v) => (
                             <button
                                 key={v.view}
                                 type="button"
                                 role="tab"
                                 aria-selected={v.view === view}
-                                onClick={() => go({ view: v.view === "processing" ? null : v.view })}
+                                onClick={() => go({ view: v.view })}
                                 className={`h-8 rounded px-3 text-label-md ${v.view === view ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
                             >
-                                {v.label}{counts ? ` (${formatNumber(counts[v.view])})` : ""}
+                                {v.label}{counts ? ` (${formatNumber(jobViewCount(counts, v.view))})` : ""}
                             </button>
                         ))}
                     </div>
@@ -127,12 +140,12 @@ function JobsView() {
                     </form>
                 </div>
 
-                {list.status === "loading" && !list.data && <LoadingState label="Loading jobs…" />}
+                {((list.status === "loading" && !list.data) || (switching && items.length === 0)) && <LoadingState label="Loading jobs…" />}
                 {list.status === "error" && <ErrorState message={list.error.message} onRetry={list.reload} />}
-                {list.status !== "error" && list.data && items.length === 0 && (
+                {list.status !== "error" && list.data && !switching && items.length === 0 && (
                     <EmptyState
-                        title={search ? "No jobs match your search" : `No ${view} jobs`}
-                        description={canManage && view === "processing" && !search ? "Create a job to start assigning candidates." : undefined}
+                        title={search ? "No jobs match your search" : view === "all" ? "No jobs" : `No ${view} jobs`}
+                        description={canManage && (view === "processing" || view === "all") && !search ? "Create a job to start assigning candidates." : undefined}
                     />
                 )}
                 {items.length > 0 && (
