@@ -201,16 +201,19 @@ describe("dashboard shell", () => {
 
     test("ADMIN: every section, then Audit Logs and Settings (Invite User and Change Roles are Settings tabs)", async () => {
         await signedIn();
-        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Work Allocation", "Missing Documents", "Police Workflow", "Daily Report", "Audit Logs", "Settings"]);
+        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Agents", "Client Management", "Work Allocation", "Missing Documents", "Police Workflow", "Daily Report", "Audit Logs", "Settings"]);
         await userEvent.setup().click(screen.getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });
 
-    test("MANAGER and ANALYST: the dashboard sections, no user management or Settings; Work Allocation for MANAGER only", async () => {
+    test("MANAGER and ANALYST: the dashboard sections, no user management or Settings; Jobs for both; Agents, Client Management and Work Allocation for MANAGER only", async () => {
         for (const role of ["MANAGER", "ANALYST"]) {
             await signedIn("/", userWithRole(role));
+            const masterData = role === "MANAGER" ? ["Agents", "Client Management"] : [];
             const allocation = role === "MANAGER" ? ["Work Allocation"] : [];
-            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", ...allocation, "Missing Documents", "Police Workflow", "Daily Report"]);
+            // A MANAGER invites Job Handlers (its own Invite User page; no Settings).
+            const invite = role === "MANAGER" ? ["Invite User"] : [];
+            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", ...masterData, ...allocation, "Missing Documents", "Police Workflow", "Daily Report", ...invite]);
             document.body.innerHTML = "";
         }
     });

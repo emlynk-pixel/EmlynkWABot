@@ -135,7 +135,8 @@ describe("paging", () => {
             },
         });
         await listCandidates({ db: counting, params: { page: 2, pageSize: 100 } });
-        assert.deepEqual(calls.map((c) => c.call).sort(), ["candidate.count", "candidate.findMany"]);
+        // (Prisma internals reached through the proxy start with "_"; the raw reads are counted in STATUS-019.)
+        assert.deepEqual(calls.map((c) => c.call).filter((call) => !call.startsWith("_")).sort(), ["candidate.count", "candidate.findMany"]);
         const list = calls.find((c) => c.call === "candidate.findMany");
         assert.equal(list.args.take, 100);
         assert.equal(list.args.skip, 100);
@@ -146,13 +147,35 @@ describe("paging", () => {
         assert.ok(list.args.select.stages && list.args.select.documents, "stages and required documents are loaded with the page");
     });
 
+    test("STATUS-019: the Status signals add no per-candidate query: one findMany with the relations, at most two raw reads, for 100 rows", async () => {
+        const calls = [];
+        let raw = 0;
+        const counting = new Proxy(prisma, {
+            get(target, name) {
+                if (name === "$queryRaw") return (...args) => { raw += 1; return target.$queryRaw(...args); };
+                const delegate = target[name];
+                if (!delegate || typeof delegate !== "object") return delegate;
+                return new Proxy(delegate, { get(d, method) { const fn = d[method]; return typeof fn === "function" ? (...args) => { calls.push(`${String(name)}.${String(method)}`); return fn.apply(d, args); } : fn; } });
+            },
+        });
+        const result = await listCandidates({ db: counting, params: { page: 1, pageSize: 100 } });
+        assert.equal(result.items.length, 100);
+        assert.ok(result.items.every((item) => item.workflowStatus?.code && item.workflowStatus?.label));
+        assert.deepEqual(calls.filter((c) => !c.startsWith("_")).sort(), ["candidate.count", "candidate.findMany"], "no model is queried per candidate");
+        assert.ok(raw <= 2, `raw reads: ${raw}`);
+        const find = (await listCandidates({ db: { ...prisma, candidate: { count: () => 0, findMany: async (args) => { calls.length = 0; calls.push(args); return []; } }, $queryRaw: prisma.$queryRaw.bind(prisma) }, params: { page: 1, pageSize: 100 } }));
+        assert.equal(find.items.length, 0);
+        const args = calls[0];
+        assert.ok(args.select.jobAssignments && args.select.verification && args.select.stages, "job assignment, verification state and stages are relations of the one query");
+    });
+
     test("rows keep their shape: name, NIC, job types and every stage", async () => {
         const { body } = await get();
         const row = body.items.find((item) => item.passportId === "P0000247");
-        assert.deepEqual(Object.keys(row).sort(), ["jobTypes", "name", "nic", "passportId", "stages", "uniqueId"]);
+        assert.deepEqual(Object.keys(row).sort(), ["formConflicts", "jobTypes", "name", "nic", "passportId", "stages", "uniqueId", "workflowStatus"]);
         assert.equal(row.name, "Given247 Surname");
         assert.deepEqual(row.jobTypes, ["Driver"]);
-        assert.equal(row.stages.length, 7);
+        assert.equal(row.stages.length, 8);
         assert.deepEqual(body.filters, { search: null });
     });
 

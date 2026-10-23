@@ -12,6 +12,7 @@ import { AUDIT_ACTIONS as REVIEW_ACTIONS } from "../components/reviewLabels";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { ToneBadge, type Tone } from "../components/StatusBadge";
 import { fieldLabel, filterControl, tableCell, tableCellWrap, tableHead } from "../components/ui";
+import { DatePicker } from "../components/DatePicker";
 
 // Audit Logs (ADMIN only): who changed what, newest first. View only: there
 // is no edit, delete, clear or rollback here or in the API. Filters and the
@@ -23,6 +24,9 @@ const DEFAULT_PAGE_SIZE = 25;
 
 const CATEGORY_LABELS: Record<AuditCategory, string> = {
     CANDIDATE: "Candidate",
+    JOB: "Job",
+    AGENT: "Agent",
+    CLIENT: "Client Management",
     STAGE: "Stage",
     DOCUMENT: "Document",
     REVIEW: "Review",
@@ -32,17 +36,47 @@ const CATEGORY_LABELS: Record<AuditCategory, string> = {
 const CATEGORIES = Object.keys(CATEGORY_LABELS) as AuditCategory[];
 
 const ACTION_LABELS: Record<string, string> = {
+    CREATE_JOB: "Job created",
+    UPDATE_JOB: "Job updated",
+    COMPLETE_JOB: "Job completed",
+    CANCEL_JOB: "Job cancelled",
+    ADD_CANDIDATE_TO_JOB: "Candidate added to a job",
+    REMOVE_CANDIDATE_FROM_JOB: "Candidate removed from a job",
+    CREATE_JOB_TYPE: "Job type created",
+    UPDATE_JOB_TYPE: "Job type renamed",
+    ACTIVATE_JOB_TYPE: "Job type activated",
+    DEACTIVATE_JOB_TYPE: "Job type deactivated",
+    AGENT_CREATED: "Agent created",
+    AGENT_UPDATED: "Agent updated",
+    AGENT_STATUS_CHANGED: "Agent status changed",
+    AGENT_CLIENTS_CHANGED: "Agent's clients changed",
+    CLIENT_CREATED: "Client created",
+    CLIENT_UPDATED: "Client updated",
+    CLIENT_AGENT_CHANGED: "Client's agents changed",
+    CLIENT_STATUS_CHANGED: "Client status changed",
     CREATE_CANDIDATE: "Candidate registered",
     UPDATE_CANDIDATE: "Candidate details updated",
+    CANDIDATE_FORM_FIELD_CONFIRMED: "Candidate Form change confirmed",
+    CANDIDATE_FORM_FIELD_REJECTED: "Candidate Form change rejected",
     UPDATE_STAGE: "Stage updated",
     CREATE_ADDITIONAL_DETAILS: "Additional details added",
     UPDATE_ADDITIONAL_DETAILS: "Additional details updated",
     FLAG_FOLLOW_UP: "Call marked for follow-up",
     COMPLETE_FOLLOW_UP: "Follow-up completed",
     DELETE_FOLLOW_UP: "Follow-up deleted",
+    CREATE_FORM_LINK: "Candidate Form link created",
+    REVOKE_FORM_LINK: "Candidate Form link revoked",
     ASSIGN_CANDIDATE: "Candidate assigned to an Analyst",
     REASSIGN_CANDIDATE: "Candidate reassigned",
     UNASSIGN_CANDIDATE: "Candidate unassigned",
+    CREATE_JOB_FORM_LINK: "Job-group Candidate Form link created",
+    REVOKE_JOB_FORM_LINK: "Job-group Candidate Form link revoked",
+    VERIFY_DETAILS: "Candidate details verified",
+    UNVERIFY_DETAILS: "Details verification removed",
+    VERIFY_DOCUMENTS: "Documents verified",
+    UNVERIFY_DOCUMENTS: "Documents verification removed",
+    DETAILS_VERIFICATION_RESET: "Details verification reset (details changed)",
+    DOCUMENTS_VERIFICATION_RESET: "Documents verification reset (documents changed)",
     SET_SHEET_DESTINATION: "Sheet sync destination changed",
     UPLOAD_DOCUMENT: "Document uploaded",
     REMOVE_DOCUMENT: "Document removed",
@@ -58,6 +92,9 @@ export const actionLabel = (action: string) => ACTION_LABELS[action] ?? humanize
 
 const CATEGORY_TONES: Record<AuditCategory, Tone> = {
     CANDIDATE: "verified",
+    JOB: "verified",
+    AGENT: "duplicate",
+    CLIENT: "duplicate",
     STAGE: "pending",
     DOCUMENT: "review",
     REVIEW: "review",
@@ -83,7 +120,7 @@ const FIELD_LABELS: Record<string, string> = {
     sex: "Sex",
     completed: "Completed",
     notes: "Notes",
-    jobId: "Job ID",
+    jobId: "Legacy job ID",
     testResult: "Test result",
     testDate: "Test date",
     // Additional details
@@ -240,10 +277,10 @@ function AuditLogsView() {
                         </select>
                     </FilterField>
                     <FilterField label="From" htmlFor="audit-start">
-                        <input id="audit-start" type="date" value={params.startDate ?? ""} max={params.endDate} onChange={(e) => update({ startDate: e.target.value || undefined })} className={filterControl} />
+                        <DatePicker id="audit-start" value={params.startDate ?? ""} max={params.endDate} onChange={(date) => update({ startDate: date || undefined })} className={filterControl} />
                     </FilterField>
                     <FilterField label="To" htmlFor="audit-end">
-                        <input id="audit-end" type="date" value={params.endDate ?? ""} min={params.startDate} onChange={(e) => update({ endDate: e.target.value || undefined })} className={filterControl} />
+                        <DatePicker id="audit-end" value={params.endDate ?? ""} min={params.startDate} onChange={(date) => update({ endDate: date || undefined })} className={filterControl} />
                     </FilterField>
                     <FilterField label="Search" htmlFor="audit-search">
                         <input

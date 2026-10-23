@@ -96,6 +96,23 @@ function readDestinations(env) {
     return { destinations, fromList: true, problems: [] };
 }
 
+// ---------------------------------------------------------------- Candidate Form Submissions tab
+//
+// The Candidate Form submissions go to their own tab of the SAME spreadsheet (the active Sync
+// Destination's), never to the operational mirror's tab. SHEET_FORM_SUBMISSIONS_TAB_NAME overrides
+// the tab's name (matched exactly, like SHEET_TAB_NAME). Writing is behind the same gate
+// (SHEET_SYNC_ENABLED) as the mirror.
+export const DEFAULT_FORM_SUBMISSIONS_TAB = "Candidate Form Submissions";
+export function readFormSubmissionSheetConfig(env = process.env) {
+    const problems = [];
+    let tabName = DEFAULT_FORM_SUBMISSIONS_TAB;
+    if (isSet(env.SHEET_FORM_SUBMISSIONS_TAB_NAME)) {
+        if (env.SHEET_FORM_SUBMISSIONS_TAB_NAME.length > 100) problems.push("SHEET_FORM_SUBMISSIONS_TAB_NAME must be 1-100 characters");
+        else tabName = env.SHEET_FORM_SUBMISSIONS_TAB_NAME;
+    }
+    return Object.freeze({ tabName, problems: Object.freeze(problems) });
+}
+
 // What the Admin page may know about a destination: never the full ID.
 export function publicDestination(destination) {
     return { key: destination.key, name: destination.name, hint: `…${destination.spreadsheetId.slice(-6)}`, tabName: destination.tabName };

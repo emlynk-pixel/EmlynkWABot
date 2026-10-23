@@ -230,7 +230,11 @@ describe("Daily Report: date", () => {
         const user = userEvent.setup();
         await screen.findByText("Candidates completed", {}, RENDER_STEP);
         expect(screen.getByRole("button", { name: "Next day" })).toBeDisabled();
-        expect(screen.getByLabelText("Business date")).toHaveAttribute("max", todayInSriLanka());
+        // The date cannot go past today: the calendar disables tomorrow.
+        await user.click(screen.getByRole("button", { name: "Open calendar" }));
+        const tomorrow = new Date(Date.parse(`${todayInSriLanka()}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+        expect(await screen.findByRole("button", { name: tomorrow })).toBeDisabled();
+        await user.keyboard("{Escape}");
         await user.click(screen.getByRole("button", { name: "Previous day" }));
         const yesterday = new Date(Date.parse(`${todayInSriLanka()}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
         expect(requests(calls, "/api/admin/reports/daily/summary").at(-1)).toBe(`/api/admin/reports/daily/summary?date=${yesterday}`);

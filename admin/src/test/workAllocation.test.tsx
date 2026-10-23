@@ -320,7 +320,7 @@ describe("Work Allocation: empty states", () => {
 describe("Candidates for an ANALYST", () => {
     test("the list is exactly what the server returns (scoped there); no Add candidate", async () => {
         const list: CandidateList = {
-            items: [1, 2].map((n) => ({ passportId: `P000000${n}`, uniqueId: `000${n}`, name: `MINE ${n}`, nic: null, jobTypes: [], stages: CANDIDATE_STAGES.map((stage) => ({ stage, completed: false })) })),
+            items: [1, 2].map((n) => ({ passportId: `P000000${n}`, uniqueId: `000${n}`, name: `MINE ${n}`, nic: null, jobTypes: [], workflowStatus: { code: "REGISTERED", label: "Registered" }, stages: CANDIDATE_STAGES.map((stage) => ({ stage, completed: false })) })),
             pagination: { page: 1, pageSize: 100, total: 2, totalItems: 2, totalPages: 1 },
             filters: { search: null },
         };

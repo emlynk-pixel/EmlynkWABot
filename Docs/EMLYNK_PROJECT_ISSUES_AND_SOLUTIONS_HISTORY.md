@@ -2521,6 +2521,795 @@ Do not treat full-suite async timing failures as product regressions without a f
 
 ---
 
+# 47D. Client Management Migration Failed Because company_job_id Already Existed
+
+**Date / Phase**: October 2026 / Pre-Stage Deployment
+
+### Symptoms & Error Output
+
+When deploying the Client Management database migration to the shared Supabase PostgreSQL instance using Prisma, the migration failed with an execution error:
+
+```bash
+npx prisma migrate deploy
+```
+
+```text
+Applying migration `20261019120000_client_management`
+Error: P3009
+
+migrate found failed migrations in the target database,
+new migrations will not be applied. Read more about how to resolve migration issues in a production database: https://pris.ly/d/migrate-resolve
+The `20261019120000_client_management` migration failed when applied to the database.
+Database error code: 42701
+Database error:
+ERROR: column "company_job_id" of relation "job" already exists
+```
+
+- **Command**: `npx prisma migrate deploy`
+- **Prisma Error**: `Prisma P3009` (Failed migration found in target database)
+- **Failed Migration**: `20261019120000_client_management`
+- **PostgreSQL Error Code**: `SQLSTATE 42701` (`duplicate_column`)
+- **Database Error Message**: `column "company_job_id" of relation "job" already exists`
+
+### Root Cause Analysis
+
+The failure was **NOT database corruption** or schema inconsistency within the PostgreSQL engine.
+
+The root cause was **divergent branch migration histories** between two parallel feature branches that shared the same remote Supabase database:
+
+1. **Prior Candidate Form Migration on Shared Database:**
+   Earlier development on the Candidate Form feature branch (`version/candidate-extra-details-form`) had applied migration:
+   `20261018130000_job_company_id_and_form_job_group`
+   This migration had already created:
+   - Column `job.company_job_id`
+   - Check constraint `job_company_job_id_check`
+   - Partial unique index `job_company_job_id_key`
+
+2. **Linear Migration Path on Current Branch (`dev`):**
+   The new Admin Dashboard migration `20261019120000_client_management` was authored and tested locally against a simpler linear branch path:
+   `20261018120000_job_management` → `20261019120000_client_management`
+
+3. **Collision in Shared Environment:**
+   In the shared database environment, the actual upgrade path was:
+   `20261018120000_job_management` → Candidate Form migration (`20261018130000_...`) → `20261019120000_client_management`
+
+When `20261019120000_client_management` executed `ALTER TABLE "job" ADD COLUMN "company_job_id" TEXT;`, PostgreSQL threw `SQLSTATE 42701` because the column had already been added by the Candidate Form migration.
+
+### Wrong Fixes Avoided (and Why)
+
+Under pressure to unblock deployment, several naive or destructive fixes were explicitly avoided:
+
+1. **Did NOT reset the database (`prisma migrate reset`):**
+   A reset drops the database and recreates it from scratch. In a shared/stage Supabase instance, this would permanently destroy live testing data, Candidate Form tables, audit logs, and existing Job records.
+2. **Did NOT drop the existing Job tables:**
+   Dropping `job`, `job_candidate`, or `client` would break relational integrity and delete valid candidate assignments.
+3. **Did NOT mark the failed migration as applied (`prisma migrate resolve --applied`):**
+   Running `--applied` would update `_prisma_migrations` to record success, but because the transaction had failed on step 4, the preceding operations (such as renaming `company` to `client`, adding `client.agent_id`, and updating foreign keys) would **never** have been applied! The schema in the database would be out-of-sync with Prisma client models.
+4. **Did NOT use `prisma migrate dev`:**
+   `prisma migrate dev` is an interactive development command intended for local prototyping. Running it against shared or staging databases risks prompt loops, unreviewed auto-generated migrations, or accidental reset prompts.
+5. **Did NOT delete Candidate Form tables:**
+   The `candidate_form_*` tables belong to an active feature stream; destroying them to satisfy an Admin migration would violate branch separation.
+6. **Did NOT manually delete rows from `_prisma_migrations`:**
+   Direct manipulation of the Prisma migration ledger bypasses internal checksum and state tracking, leaving the migration history corrupted.
+7. **Did NOT overwrite or truncate existing `company_job_id` values:**
+   Existing Client Job IDs stored by previous tests were preserved intact.
+
+### Safe Resolution (Recovery Procedure)
+
+The issue was resolved cleanly and safely using forward-compatible DDL and standard Prisma CLI recovery tooling:
+
+1. **Inspected `_prisma_migrations` Ledger:**
+   Queried the migration ledger directly:
+   ```sql
+   SELECT migration_name, started_at, finished_at, rolled_back_at, applied_steps_count
+   FROM "_prisma_migrations"
+   WHERE migration_name = '20261019120000_client_management';
+   ```
+   Confirmed `applied_steps_count = 0`. Because PostgreSQL executes DDL inside transactional migration blocks, the failed statement caused the entire migration transaction to roll back cleanly. No partial schema alterations remained.
+
+2. **Verified Shared Schema State:**
+   Confirmed that `job.company_job_id` already existed, while `company` had not yet been renamed to `client`.
+
+3. **Made Migration Idempotent & Compatibility-Sensitive:**
+   Updated `prisma/migrations/20261019120000_client_management/migration.sql` to make the conflicting statements safely handle existing objects:
+   - Added column conditionally:
+     ```sql
+     ALTER TABLE "job" ADD COLUMN IF NOT EXISTS "company_job_id" TEXT;
+     ```
+   - Added check constraint conditionally inside a PL/pgSQL `DO $$` block:
+     ```sql
+     DO $$
+     BEGIN
+         IF NOT EXISTS (
+             SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'public.job'::regclass
+               AND conname = 'job_company_job_id_check'
+         ) THEN
+             ALTER TABLE "job" ADD CONSTRAINT "job_company_job_id_check"
+                 CHECK ("company_job_id" IS NULL OR "company_job_id" ~ '^[A-Z0-9][A-Z0-9 ._/#-]{0,39}$');
+         END IF;
+     END
+     $$;
+     ```
+   - Created partial unique index conditionally:
+     ```sql
+     CREATE UNIQUE INDEX IF NOT EXISTS "job_company_job_id_key"
+         ON "job"("client_id", "company_job_id")
+         WHERE "company_job_id" IS NOT NULL;
+     ```
+
+4. **Marked Failed Attempt as Rolled Back:**
+   Used the authoritative Prisma command to register that the failed attempt was safely rolled back:
+   ```bash
+   npx prisma migrate resolve --rolled-back 20261019120000_client_management
+   ```
+
+5. **Reran Deployment Migration:**
+   Executed the updated migration against the shared database:
+   ```bash
+   npx prisma migrate deploy
+   ```
+   Prisma successfully executed the entire migration:
+   - Table `company` was renamed to `client` along with constraints and indexes (`client_pkey`, `client_name_check`, `client_name_lower_key`).
+   - `job.company_id` was renamed to `job.client_id` with foreign key and index updates.
+   - Column `client.agent_id` was created, backfilled from the newest job's `responsible_agent_id`, and linked via `ON DELETE RESTRICT`.
+   - Contact columns were added to `agent` and `client`.
+   - `job.company_job_id` and its check/index were safely verified without errors.
+
+6. **Regenerated Prisma Client & Verified Status:**
+   ```bash
+   npx prisma migrate status
+   npx prisma generate
+   ```
+   Prisma reported: `Database schema is up to date!`
+
+### Final Database Result
+
+The shared database was brought into the exact target architectural state:
+- Table `client` exists with all historical employer data preserved.
+- Table `company` no longer exists (cleanly renamed).
+- `job.client_id` exists; legacy `job.company_id` is removed.
+- `job.company_job_id` is preserved with its data intact.
+- `job.responsible_agent_id` is preserved.
+- `client.agent_id` exists with foreign key constraint and index.
+- Candidate Form tables (`candidate_form_*`) remain completely intact.
+- Candidate Form group-link foreign key (`candidate_form_link.job_id` → `job.id`) remains intact.
+- Existing Client and Job UUIDs are preserved; zero orphan records exist.
+- `_prisma_migrations` contains two entries for `20261019120000_client_management`:
+  - One historical record with `rolled_back_at` populated (the initial failed attempt).
+  - One successful record with `finished_at` populated (the clean deployment).
+  *Note:* Having two entries in `_prisma_migrations` for a resolved migration is the expected and documented behavior of Prisma's audit ledger; it is not database corruption.
+
+### Prevention & Migration Rules
+
+1. **Always Use `prisma migrate deploy` for Shared Environments:**
+   Never run `prisma migrate dev` against shared Supabase or staging databases. `deploy` runs headless, non-interactive, and enforces forward-only migration scripts.
+2. **Inspect Shared Migration History Before Writing Overlapping Migrations:**
+   When multiple feature branches are active, query `_prisma_migrations` on the shared database before introducing migrations that touch related tables or columns.
+3. **Test Both Clean and Upgrade Migration Paths:**
+   Always validate migrations against:
+   - A clean database from scratch (`init` → latest).
+   - An existing shared database clone that contains migration history from other branches.
+4. **Never Edit Successfully Applied Historical Migrations:**
+   Never retroactively alter a migration file that has already been applied in shared or production environments. Forward migrations must resolve compatibility gaps.
+5. **Use Defensive DDL for Cross-Branch Objects:**
+   When a column or constraint may already have been introduced by another branch, write compatibility-sensitive DDL (`ADD COLUMN IF NOT EXISTS`, conditional constraint creation via `DO $$` blocks, `CREATE INDEX IF NOT EXISTS`).
+6. **Dev Migration Folder vs Shared Database:**
+   The `dev` branch migration folder does not contain every Candidate Form migration even though the shared DB has them. This is expected due to branch separation, but it means migration integration must be handled carefully before branches are combined.
+
+---
+
+# 47E. Candidate Form and Dev Reconciliation (Client Architecture vs. Legacy Company)
+
+**Date / Phase**: October 2026 / Feature Reconciliation & Merge into `dev`
+
+### Problem
+During parallel development, the Candidate Form branch (`version/candidate-extra-details-form`) was branched from an earlier commit that still referenced the legacy `Company` entity and `job.company_id`. While the candidate form was being developed and hardened, the main active development branch (`dev`) merged the new `Client` management architecture (`version/client-management`), which renamed the `company` table to `client`, introduced the `agent` commercial partner entity, and updated job foreign keys from `company_id` to `client_id`.
+
+### Symptoms & Conflict
+When preparing to integrate the Candidate Form feature stream into `dev`, significant architectural divergence and relational conflicts occurred:
+1. `candidate-form` and backend job-group services referenced `job.company` and `job.company_id`.
+2. Prisma schema on `dev` modeled `client` and `job.client_id`, with no `company` model.
+3. Database migrations diverged on how external job references (`company_job_id` / Client Job ID) were introduced.
+
+### Root Cause
+Parallel development without periodic rebase synchronization against `dev`. The Candidate Form group link feature had introduced `candidate_form_link.job_id` referencing `job(id)` and `job.company_job_id` alongside legacy `company_id`. Concurrently, `dev` refactored the entire employer domain to `Client`.
+
+### Resolution
+The `version/candidate-extra-details-form` branch was reconciled with `dev` across integration commits (`c53b8ff` and `fab7ddc`):
+1. **Model & Relation Alignment**: Updated `jobAssignmentReader.js`, `candidateFormJobGroupService.js`, and associated test suites to use `job.client` and `client_id`, retiring all remaining references to the obsolete `company` entity.
+2. **Schema & Migration Harmonization**: Adjusted the Candidate Form relations so `candidate_form_link.job_id` links directly to `job.id` (UUID), maintaining relational integrity with the updated `job` model.
+3. **Comprehensive Verification**: Ran the full backend test suite (1690+ passing tests) and Admin suite (526+ passing tests) on the reconciled branch before merging cleanly into `dev` (`ea89273`).
+
+### Prevention & Lesson
+Long-lived feature branches must be periodically rebased or merged with `dev` to detect relational model refactorings early, preventing painful end-of-release merge collisions.
+
+---
+
+# 47F. Preserving Applied Migrations and the Bridge / Reconciliation Strategy
+
+**Date / Phase**: October 2026 / Multi-Branch Database Coordination
+
+### Problem
+In shared staging environments (e.g., Supabase), migrations that have already been applied cannot be edited or retroactively removed without causing checksum failures in Prisma's `_prisma_migrations` ledger.
+
+### Symptoms
+When running `npx prisma migrate deploy`, Prisma checks the SHA-256 hash of each local migration file against the `checksum` column in `_prisma_migrations`. If a developer retroactively modifies an applied migration file:
+```text
+Error: P3009
+The migration `20261018130000_job_company_id_and_form_job_group` was modified after it was applied.
+```
+Furthermore, because `version/candidate-extra-details-form` had applied `20261018130000_...` on the shared database, a branch built from `dev` first (which ran `20261019120000_client_management` first) had a different schema state than the shared database.
+
+### Root Cause
+Altering applied migrations violates Prisma's append-only migration ledger. Different branches had applied conflicting DDL operations on the shared database during independent testing cycles.
+
+### Resolution
+Rather than editing historical migration files or performing destructive database resets, the team implemented a forward-only **Bridge and Reconciliation Migration Strategy**:
+1. **`20261018125900_bridge_dev_first_company_job_id`**:
+   - A defensive bridge migration inserted into the timeline immediately before `20261018130000`.
+   - Uses a conditional PL/pgSQL `DO $$` block that executes **only** on a database built from `dev` first (where `company_job_id` exists, `company_id` does not, and `candidate_form_link.job_id` does not).
+   - In that specific state, it temporarily parks existing `company_job_id` values into `company_job_id_reconcile`, drops conflicting constraints/indexes, and creates a temporary `company_id` column so `20261018130000` can execute byte-identically.
+   - On the shared database and on clean databases, it performs a complete no-op.
+2. **`20261023120000_reconcile_job_company_job_id`**:
+   - A forward-only completion migration that executes after both branch streams have run.
+   - Restores the parked `company_job_id_reconcile` values back into `company_job_id`.
+   - Cleans up temporary columns and establishes the definitive unique index `("client_id", "company_job_id")`.
+   - Performs a no-op on databases where the bridge was not activated.
+
+### Prevention & Lesson
+Never edit an applied migration file. Always resolve multi-branch schema divergences using forward-only, idempotent migrations with defensive PL/pgSQL guards (`IF EXISTS`, `IF NOT EXISTS`).
+
+---
+
+# 47G. Candidate Form Security Hardening and Concurrency Controls
+
+**Date / Phase**: October 2026 / Security Audit & Candidate Form Release Hardening
+
+### Problem
+Public-facing web forms are vulnerable to identity enumeration, link brute forcing, race conditions during link creation, and replay/duplicate submissions.
+
+### Symptoms
+Early prototypes:
+- Used knowledge-only factors (Passport Number + WhatsApp), both of which could be acquired or guessed.
+- Lacked row-level concurrency locking on access states, allowing simultaneous administrative clicks to generate orphaned or conflicting links.
+- Could theoretically permit duplicate submissions or race conditions if a candidate double-clicked submit.
+
+### Root Cause
+Public endpoints cannot rely on staff authentication or trusted browser sessions. They require strict defense-in-depth at the cryptographic, database, and application layers.
+
+### Resolution
+Implemented comprehensive security hardening across the candidate form architecture:
+1. **Fragment Secret Delivery**: Links deliver a 256-bit CSPRNG token (`crypto.randomBytes(32)` in base64url) in the URL fragment (`/#k=<secret>`). Fragments are never sent to servers in HTTP requests, keeping secrets out of access logs, proxy logs, and `Referer` headers.
+2. **SHA-256 Stored Hashes**: Only the SHA-256 hash of the secret is stored in `candidate_form_link.token_hash`. Plaintext secrets can never be read back.
+3. **Two-Factor Candidate Verification**: Unlocking requires possessing the link secret plus verifying **Passport Number + NIC Number**.
+4. **Database Row Locks (`FOR UPDATE`)**:
+   - `lockAccessRow(tx, passportId)` serializes link creation and revocation using `SELECT ... FOR UPDATE` on `candidate_form_access`.
+   - `lockProcessingJob(tx, jobId)` serializes job-group link generation and ensures the job is actively in `PROCESSING` status.
+5. **State Machine Concurrency**: Form access strictly follows `LOCKED -> UNLOCKED -> SUBMITTED`. Every state transition increments `version`, instantly invalidating any prior sessions.
+6. **Isolated Storage & Idempotent Submission**: Candidate answers are stored in an append-only `candidate_form_response` table (never directly updating the canonical candidate record). Re-submitting with the same idempotency key returns 200 without creating duplicate response rows.
+7. **Job-Group Live Membership**: Job-group links (`JOB_GROUP`) bind to the immutable `job.id` UUID. Membership is evaluated live against active `job_candidate` records where job status is `PROCESSING`. Cross-job candidates are rejected.
+
+### Prevention & Lesson
+Never allow public endpoints to directly write canonical business tables. Always use fragment-based secrets, constant-time verification, strict database row locks, and immutable response staging tables.
+
+---
+
+# 47H. Candidate Form Contact Admin State and Public Contact Hardening
+
+**Date / Phase**: October 2026 / Public UI Security & Contact Architecture
+
+### Problem
+When candidates encounter terminal access errors (e.g., link expired, link revoked, verification failed, or form already submitted), they require clear guidance on how to contact agency administrators without exposing sensitive internal data or encouraging unmonitored communication.
+
+### Symptoms
+Early designs proposed a direct WhatsApp button linking to `https://wa.me/<number>`. In QA, this raised security and operational issues:
+- `wa.me` links leaked staff mobile numbers in page source code and DOM trees.
+- Candidates could initiate unsolicited WhatsApp messaging without context or verification.
+- Error states risked leaking whether an application existed or belonged to another job.
+
+### Root Cause
+Conflating staff communication channels with public error-handling workflows, and embedding hardcoded contact actions in client-side code.
+
+### Resolution
+1. **Fixed Bilingual Screen**: Designed an integrated English and Sinhala full-screen state for terminal access failures (`We couldn't continue with this form link.` / `මෙම පෝරම සබැඳිය සමඟ ඉදිරියට යාමට නොහැක.`).
+2. **Configurable Administrative Contact Numbers**:
+   - Implemented `VITE_API_ADMIN_MOBILE_NUMBERS` in `candidate-form/src/config/env.ts`.
+   - Accepts comma-separated numbers (e.g., `0771234567, 0719876543`), trims whitespace, filters empty entries, and formats numbers cleanly in tabular numbers.
+   - Numbers can be updated in environment settings without code modifications.
+3. **Complete Removal of WhatsApp Actions**:
+   - Zero `wa.me` URLs, WhatsApp buttons, or messaging links exist in the DOM or source.
+   - Verified by automated tests `CONTACT-ADMIN-007` and `CONTACT-ADMIN-008`.
+4. **Zero Information Leakage**: Error states render no candidate identifiers, job codes, or server-side error details (`CONTACT-ADMIN-009`).
+
+### Prevention & Lesson
+Public error screens should present neutral, bilingual operational instructions. Avoid third-party direct-messaging links, and keep contact phone numbers externalized in environment variables.
+
+---
+
+# 47I. Vercel Candidate Form Multi-Project Preview Deployment
+
+**Date / Phase**: October 2026 / Staging Deployment Configuration
+
+### Problem
+The single Git repository contains two distinct web applications (Admin+Backend at root and Candidate Form in `candidate-form/`). Attempting to deploy both from a single Vercel project causes build failures or deploys the wrong application.
+
+### Symptoms
+- Deploying the repository root on Vercel runs root `vercel.json`, which builds the Admin dashboard into `public/admin` and deploys Express serverless functions. The Candidate Form was not accessible.
+- When creating a second Vercel project, the `candidate-form` folder was not visible in Vercel's directory selector because the default branch (`main`) did not yet have the folder.
+
+### Root Cause
+Monorepo topology where different applications have different build roots, different output directories (`public` vs. `dist`), different domains, and different environment scopes.
+
+### Resolution
+1. **Configured Separate Vercel Project (Project B)**:
+   - Created dedicated Vercel project for the Candidate Form.
+   - Explicitly configured **Root Directory** as `candidate-form`.
+   - Set framework preset to `Vite`, Install Command to `npm ci`, and Build Command to `npm run build`.
+2. **Branch Preview Configuration**:
+   - Configured project tracking to build previews from `stage` (and active feature branches) so the `candidate-form/` directory is resolved correctly.
+3. **Security Headers**:
+   - Defined static security headers in `candidate-form/vercel.json` (`frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `X-Robots-Tag: noindex, nofollow`, `Cache-Control: no-store`).
+
+### Prevention & Lesson
+In multi-application repositories on Vercel, always establish separate Vercel projects for each deployable application, specify explicit Root Directories, and configure preview branches appropriately.
+
+---
+
+# 47J. FORM_NOT_CONFIGURED Due to Missing Backend Origin Configuration
+
+**Date / Phase**: October 2026 / Integration Testing
+
+### Problem
+When staff clicked **Share Form** in the Admin Dashboard, the link creation modal reported an error.
+
+### Symptoms
+`POST /api/admin/candidates/:passportId/form-share` returned HTTP `503 Service Unavailable`:
+```json
+{
+  "code": "FORM_NOT_CONFIGURED",
+  "message": "The Candidate Form is not configured, so no link can be created."
+}
+```
+
+### Root Cause
+The backend service (`candidateFormShareService.js`) checks `if (!formOrigin) throw new CandidateError(503, "FORM_NOT_CONFIGURED", ...)`. In the Vercel Preview environment for Project A (Backend), `CANDIDATE_FORM_ORIGIN` was either missing or set to an invalid URL format.
+
+### Resolution
+1. Added `CANDIDATE_FORM_ORIGIN` to Vercel Project A settings, scoped to both **Preview** and **Production**.
+2. Specified the exact public bare origin of Project B:
+   `https://candidate-form-preview.vercel.app` (no `/admin`, no trailing slash, no fragment).
+3. Redeployed the backend to make the updated environment active.
+4. Subsequent link generation calls succeeded with HTTP 200, returning the generated URL with the random secret fragment.
+
+### Prevention & Lesson
+The backend deliberately fails closed when public form integration is unconfigured. Inter-application origin variables must be configured in Vercel before initiating integration testing.
+
+---
+
+# 47K. Candidate Form Token Secret Backend-Only Deployment Boundary
+
+**Date / Phase**: October 2026 / Security Audit
+
+### Problem
+Risk of cryptographic secrets leaking into public static frontend bundles if environment variables are improperly scoped or named.
+
+### Symptoms
+If a variable like `CANDIDATE_FORM_TOKEN_SECRET` is placed in frontend `.env` files or matches Vite's `envPrefix`, it gets compiled directly into JavaScript bundles distributed to untrusted public browsers.
+
+### Root Cause
+Vite embeds any variable matching `envPrefix` into client-side code via `import.meta.env`. Developers accustomed to unified `.env` files can accidentally expose backend encryption keys.
+
+### Resolution
+1. **Strict Backend-Only Scoping**: `CANDIDATE_FORM_TOKEN_SECRET` is strictly restricted to Vercel Project A (Backend/Admin). It is never added to Project B.
+2. **Restricted Vite Env Prefix**: In `candidate-form/vite.config.ts`, `envPrefix` is set strictly to `VITE_API_`. Vite ignores standard `VITE_*` variables that do not match this prefix.
+3. **Automated Secret Scanner Test (`SECRET-001`)**:
+   - Automated test in `test/publicCandidateDetails.test.js` scans source files, `.env.example`, and any compiled bundle in `candidate-form/dist` for backend secret names (`CANDIDATE_FORM_TOKEN_SECRET`, `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `META_APP_SECRET`).
+   - Asserts that zero backend secrets exist in the public bundle.
+
+### Prevention & Lesson
+Enforce hard prefix boundaries in frontend build tooling, and maintain automated test assertions that fail builds if backend secret keys appear in client assets.
+
+---
+
+# 47L. Prisma Windows Query Engine EPERM File Lock
+
+**Date / Phase**: October 2026 / Local Development & Build Verification
+
+### Problem
+Running `npx prisma generate` or `npm run postinstall` on Windows development machines fails with a file access error.
+
+### Symptoms
+```text
+Error: EPERM: operation not permitted, rename
+'C:\...\node_modules\.prisma\client\query_engine-windows.dll.node.tmp' ->
+'C:\...\node_modules\.prisma\client\query_engine-windows.dll.node'
+```
+
+### Root Cause
+On Windows, executable files and native dynamic link libraries (`.dll.node`) cannot be renamed or overwritten while a running process has them loaded in memory. If a local Express server (`npm start`), development watcher, or test runner is active, Windows holds an exclusive file lock on the query engine DLL.
+
+### Resolution
+1. Terminated all active Node.js processes holding the DLL:
+   ```powershell
+   Get-Process node | Stop-Process -Force
+   ```
+2. Re-executed Prisma generation:
+   ```powershell
+   npx prisma generate
+   ```
+3. Generation succeeded cleanly, updating the client in `generated/prisma`.
+
+### Prevention & Lesson
+Always stop local running Node processes and backend servers before executing Prisma schema migrations or client regeneration on Windows.
+
+---
+
+# 47M. Supabase EMAXCONNSESSION Connection Pool Exhaustion in Serverless Preview
+
+**Date / Phase**: October 2026 / Preview Load & Concurrency Verification
+
+### Problem
+During preview testing of multiple Admin Dashboard endpoints, several API routes intermittently returned HTTP `500 Internal Server Error`, and Prisma migration commands failed.
+
+### Symptoms
+Backend error logs and `npx prisma migrate status` reported:
+```text
+PrismaClientInitializationError: Error querying the database:
+db error: ERROR: EMAXCONNSESSION max clients reached in session mode
+```
+
+### Root Cause
+The Supabase Supavisor session-mode pooler reached its maximum concurrent client threshold. This error is **not** caused by an invalid `DATABASE_URL`, incorrect credentials, or database engine corruption.
+In Vercel serverless deployments, each incoming request can trigger a new function instance with its own Prisma client connection pool. If `DATABASE_POOL_MAX` is configured too high, or if multiple local development processes and developer GUI tools hold persistent session connections, the Supabase session pool limit is rapidly exceeded.
+
+### Resolution
+1. **Conservative Pool Size**: Enforced `DATABASE_POOL_MAX=3` (or default) in backend environment configuration, bounding connection acquisition per serverless function instance.
+2. **Session Cleanup**: Closed idle local Node server instances and local database management tools holding open connections to the remote Supabase pooler.
+3. **Pooler Port Verification**: Verified that runtime connections use the session-mode pooler host (`aws-0-ap-northeast-1.pooler.supabase.com:5432` or port `6543`), which is required for interactive transactions and `FOR UPDATE` row locks.
+
+### Prevention & Lesson
+Serverless functions multiply database connections under concurrency. Never configure large connection pools on serverless backend instances, and keep local test connections disconnected when not in use.
+
+---
+
+# 47N. Vercel Preview Environment-Variable Scoping & Missing Staging Variables
+
+**Date / Phase**: October 2026 / Staging Deployment Setup
+
+### Problem
+Variables added to Vercel Project Settings were not taking effect on deployments from the `stage` branch.
+
+### Symptoms
+Staging deployments failed at startup with missing environment variable errors (`CANDIDATE_FORM_ORIGIN is missing`, `APP_BASE_URL is missing`), even though the administrator had saved the values in the Vercel dashboard.
+
+### Root Cause
+In Vercel Project Settings > Environment Variables, each variable has environment scope checkboxes: **Production**, **Preview**, and **Development**. When configuring new variables, only "Production" was checked by default. Deployments triggered by the `stage` branch are classified as **Preview** deployments by Vercel and therefore did not receive the variables.
+
+### Resolution
+1. Opened Vercel Project Settings for both Project A and Project B.
+2. Edited each environment variable and checked the **Preview** checkbox (alongside **Production**).
+3. Triggered a redeployment of the `stage` branch deployment.
+4. The deployment started successfully with all required environment variables present.
+
+### Prevention & Lesson
+When adding or updating environment variables for staging testing, always verify that the **Preview** scope is explicitly enabled in Vercel.
+
+---
+
+# 47O. Candidate Form Share Link Origin Enforcement & Host Header Protection
+
+**Date / Phase**: October 2026 / Security Review
+
+### Problem
+Risk of generated candidate share links containing incorrect hostnames (e.g., `http://localhost:5174/#k=...`) or being manipulated via HTTP Host Header injection.
+
+### Symptoms
+In development setups, if share links are constructed from the incoming HTTP `Host` or `X-Forwarded-Host` header, staff accessing the Admin Dashboard through internal proxies or localhost generate links that external candidates cannot open. Furthermore, OWASP identifies Host-header injection as a vulnerability if an attacker can manipulate headers to generate links pointing to a malicious phishing origin.
+
+### Root Cause
+Deriving external public URLs from client-supplied HTTP request headers instead of server-controlled environment configurations.
+
+### Resolution
+1. **Strict Configured Origin**: In `src/services/candidateFormShareService.js`, the share URL generator strictly uses the configured `formOrigin`:
+   ```javascript
+   export const shareUrl = (formOrigin, secret) => `${formOrigin}/#k=${secret}`;
+   ```
+2. **Zero Header Reliance**: The backend completely ignores `req.headers.host` and `req.headers['x-forwarded-host']` when constructing share links.
+3. **Fail-Closed Validation**: If `CANDIDATE_FORM_ORIGIN` is missing or invalid, link creation throws `FORM_NOT_CONFIGURED` (503) rather than guessing or defaulting to the request host.
+
+### Prevention & Lesson
+Never use incoming request headers to determine public application URLs. Always construct external shareable links from explicit, validated server environment variables.
+
+---
+
+# 47P. Google Sheet Sync & Candidate Form Submission Sync: Deployment & Debugging History
+
+**Date / Phase**: October 2026 / Cloud Run Worker Deployment & Google Sheet Outbox Verification
+
+This section records the operational blockers, routing anomalies, write gate behaviors, and deployment requirements encountered while deploying and verifying the Google Sheet synchronization features on Cloud Run (`emlynk-sheet-sync-worker`, region `asia-south1`).
+
+---
+
+### 47P.1 Candidate Form Submission Succeeded but Google Sheet Stayed Empty
+
+#### Problem
+A candidate successfully submitted the Candidate Extra Details Form, and the submission was stored in PostgreSQL, but no corresponding row appeared in the Google Sheet's `Candidate Form Submissions` tab.
+
+#### Symptoms
+- The candidate wizard displayed the green success confirmation screen with a valid timestamp.
+- The PostgreSQL database confirmed that `candidate_form_response` was stored with all submitted answers.
+- The outbox table `candidate_form_sheet_sync` contained the row for the candidate's passport ID:
+  ```json
+  {
+    "submissionId": "e5d7e9de-5f80-4c1e-a41b-27b003eda58a",
+    "passportId": "PN25847",
+    "status": "PENDING",
+    "attempts": 0,
+    "leaseOwner": null,
+    "lastResult": null,
+    "lastErrorClass": null,
+    "lastErrorCode": null
+  }
+  ```
+- The row remained in `PENDING` indefinitely, and `attempts` remained `0`.
+- The Google Sheet `Candidate Form Submissions` tab remained completely empty.
+
+#### Investigation
+1. **Database Identity**: Verified that local/backend API processes and the Cloud Run worker were connected to the exact same hosted Supabase database instance.
+2. **Atomic Outbox Creation**: Confirmed that `submitCandidateForm` in `src/services/candidateFormDataService.js` correctly enqueues the outbox row in the same transaction as `candidate_form_response`.
+3. **Worker Code Audit**: Inspected `src/services/sheetSyncWorker.js:357`:
+   ```javascript
+   let formBatchFull = false;
+   if (formSubmissions && config.enabled === true) {
+       try {
+           const form = await formSubmissions.processDue({ owner, destination: active, withWriterLease });
+           ...
+       }
+   }
+   ```
+4. **State Audit**: Queried `sheet_sync_state`:
+   - `write_gate: "DISABLED"`
+   - `SHEET_SYNC_ENABLED` was `"false"`.
+
+#### Root Cause
+The worker loop deliberately guards form submission processing with `config.enabled === true`. When `SHEET_SYNC_ENABLED` is `"false"` (the safe default in `deploy/sheet-sync-worker.env.yaml`), `config.enabled` evaluates to `false`. The worker tick loop completely bypasses `formSubmissions.processDue()`. The outbox row was never claimed, remaining in `PENDING` with `attempts = 0`.
+
+#### Solution
+1. Changed `SHEET_SYNC_ENABLED` to `"true"` in `deploy/sheet-sync-worker.env.yaml`.
+2. Redeployed the Cloud Run worker service so the container loaded the updated environment.
+3. Upon startup, the worker claimed the due `PENDING` row under the shared writer lease, created the 74-column header row in the blank tab, and appended the submission row with `lastResult: 'APPENDED'`.
+
+---
+
+### 47P.2 `POST /tasks/reconcile` Returned 404 (Dockerfile Default Entrypoint)
+
+#### Problem
+Triggering a manual reconciliation via `POST /tasks/reconcile` against the Cloud Run worker returned `HTTP 404 Not Found`.
+
+#### Symptoms
+```text
+HTTP/2 404
+content-type: text/html; charset=utf-8
+content-length: 159
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST /tasks/reconcile</pre>
+</body>
+</html>
+```
+
+#### Root Cause
+The repository uses a single root `Dockerfile` shared by multiple backend services. The default entrypoint is:
+```dockerfile
+CMD ["node", "src/app.js"]
+```
+When `emlynk-sheet-sync-worker` was deployed without container command overrides, Cloud Run started `node src/app.js` (the Express API backend). The Express API does not mount `/tasks/reconcile`, resulting in an Express default 404.
+
+Furthermore, [src/sheetSyncWorkerProcess.js](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/src/sheetSyncWorkerProcess.js) is a module export library rather than an executable; running `node src/sheetSyncWorkerProcess.js` executes no top-level listeners and exits immediately with code 0. The true standalone worker executable is [src/sheetSyncWorker.js](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/src/sheetSyncWorker.js).
+
+#### Solution
+Configured the Cloud Run service deployment to override container execution parameters:
+- `--command=node`
+- `--args=src/sheetSyncWorker.js`
+
+---
+
+### 47P.3 `POST /tasks/reconcile` Still Returned 404 After Command Override
+
+#### Problem
+Even after overriding the Cloud Run command to execute `node src/sheetSyncWorker.js`, calling `POST /tasks/reconcile` continued to return `404 Not Found`. Meanwhile, `GET /health` returned `200 {"status":"OK"}`.
+
+#### Symptoms
+- `GET /health` → `200 {"status":"OK"}` (confirmed the worker process was running and listening).
+- `POST /tasks/reconcile` → `404 Not Found` (plain empty 404 from the worker HTTP server).
+
+#### Root Cause
+In [src/sheetSyncWorkerProcess.js](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/src/sheetSyncWorkerProcess.js#L52), the route was originally gated as follows:
+```javascript
+// Old logic:
+if (req.method === "POST" && path === "/tasks/reconcile" && verifyScheduler) {
+    if (!(await verifyScheduler(req.headers.authorization))) { ... }
+    ...
+}
+return send(404);
+```
+In `src/sheetSyncWorker.js:98-105`, `verifyScheduler` is created **only if** both `SHEET_SYNC_SCHEDULER_AUDIENCE` and `SHEET_SYNC_SCHEDULER_INVOKER` are present in `process.env`. In `deploy/sheet-sync-worker.env.yaml`, these variables were commented out by default. Because `verifyScheduler` was `null`, the condition `&& verifyScheduler` evaluated to `false`, causing the server to fall through to `return send(404);`.
+
+#### Solution
+Refactored `createSheetSyncHttpServer` in `src/sheetSyncWorkerProcess.js` so that the endpoint is always registered. Token verification is applied defence-in-depth if `verifyScheduler` is configured, while Cloud Run IAM (`--no-allow-unauthenticated`) serves as the outer authorization boundary:
+```javascript
+if (req.method === "POST" && path === "/tasks/reconcile") {
+    if (verifyScheduler) {
+        if (!(await verifyScheduler(req.headers.authorization))) {
+            log.warn(JSON.stringify({ event: "sheet_sync.trigger_rejected" }));
+            return send(401, { message: "Unauthorized" });
+        }
+    }
+    const run = await requestReconcile();
+    log.log(JSON.stringify({ event: "sheet_sync.run_requested", kind: "RECONCILE", trigger: "SCHEDULER", runId: run.runId, created: run.created }));
+    return send(202, run);
+}
+```
+Updated `test/sheetSyncWorkerProcess.test.js` to assert that the endpoint returns `202 Accepted` when scheduler env vars are omitted.
+
+---
+
+### 47P.4 Cloud Run POST Returned 411 Length Required
+
+#### Problem
+Triggering `POST /tasks/reconcile` via `curl` returned `HTTP 411 Length Required`.
+
+#### Symptoms
+```text
+HTTP/2 411
+date: Thu, 22 Oct 2026 08:44:56 GMT
+content-type: text/html; charset=UTF-8
+server: Google Frontend
+content-length: 310
+
+<html><head>
+<meta http-equiv="content-type" content="text/html;charset=utf-8">
+<title>411 Length Required</title>
+</head>
+<body text=#000000 bgcolor=#ffffff>
+<h1>Error: Length Required</h1>
+<h2>The server encountered an error and could not complete your request.<p>Please try again in 30 seconds.</h2>
+```
+
+#### Root Cause
+When executing `curl -X POST https://<service-url>/tasks/reconcile` without a request body, `curl` omits the `Content-Length` header. The Google Cloud Run Google Frontend (GFE) edge reverse-proxy requires a `Content-Length` header on all `POST` requests and rejects empty `POST` requests before they reach the container.
+
+#### Solution
+Supplied an explicit empty JSON payload and `Content-Type` header:
+```cmd
+FOR /F "tokens=*" %i IN ('gcloud auth print-identity-token') DO SET GCLOUD_TOKEN=%i
+curl -i -X POST -H "Authorization: Bearer %GCLOUD_TOKEN%" -H "Content-Type: application/json" -d "{}" https://emlynk-sheet-sync-worker-76153319636.asia-south1.run.app/tasks/reconcile
+```
+The request successfully reached the container, returning `202 Accepted` with a queued run ID.
+
+---
+
+### 47P.5 Reconcile Run Succeeded but Did Not Write (`dryRun: true`)
+
+#### Problem
+Reconciliation completed with `status: "SUCCEEDED"`, but no changes were applied to the Google Sheet.
+
+#### Symptoms
+Querying `sheet_sync_runs` for run `8caf5eaf-ba35-4a9b-834e-a0bc8bda95ee`:
+```json
+{
+  "runId": "8caf5eaf-ba35-4a9b-834e-a0bc8bda95ee",
+  "status": "SUCCEEDED",
+  "dryRun": true,
+  "summary": {
+    "dryRun": true,
+    "updated": 0,
+    "appended": 0,
+    "sheetRows": 8,
+    "unchanged": 8,
+    "databaseCandidates": 8
+  }
+}
+```
+
+#### Root Cause
+`SHEET_SYNC_ENABLED` was set to `"false"`. By design, when writes are disabled, the worker acquires a Google OAuth token with the read-only scope (`spreadsheets.readonly`). Reconciliations run in dry-run mode, calculating drift and validating schemas without committing writes.
+
+#### Solution
+Enabled write authorization by setting `SHEET_SYNC_ENABLED="true"` and redeploying the worker.
+
+---
+
+### 47P.6 Local Environment File and Cloud Run Revision Did Not Match
+
+#### Problem
+The local configuration file `deploy/sheet-sync-worker.env.yaml` was edited to `SHEET_SYNC_ENABLED: "true"`, but Cloud Run logs still showed `writeGate: "DISABLED"`.
+
+#### Symptoms
+- Local file inspection: `SHEET_SYNC_ENABLED: "true"`.
+- Remote container logs: `{"event":"sheet_sync.worker_config","writeGate":"DISABLED","gateReason":"FALSE"}`.
+
+#### Root Cause
+Cloud Run revisions are **immutable deployment artifacts**. Editing local configuration files on a development workstation does not alter the active revision running in Google Cloud. An explicit deployment command is required to compile a new service revision with the updated environment file.
+
+#### Solution
+1. Redeployed Cloud Run with the updated environment file:
+   ```cmd
+   gcloud run deploy emlynk-sheet-sync-worker ^
+     --project=project-aa11e15e-a951-4e1b-a65 ^
+     --region=asia-south1 ^
+     --image=asia-south1-docker.pkg.dev/project-aa11e15e-a951-4e1b-a65/emlynk-ocr/sheet-sync-worker:latest ^
+     --env-vars-file=deploy/sheet-sync-worker.env.yaml
+   ```
+2. Verified active revision environment variables:
+   ```cmd
+   gcloud run services describe emlynk-sheet-sync-worker --project=project-aa11e15e-a951-4e1b-a65 --region=asia-south1 --format="yaml(spec.template.spec.containers[0].env)"
+   ```
+
+---
+
+### 47P.7 Cloud Scheduler Expected but No Jobs Existed in Project
+
+#### Problem
+Attempts to inspect or run automated reconciliation cron jobs failed.
+
+#### Symptoms
+- Running `gcloud scheduler jobs list --location asia-south1` returned:
+  `ERROR: (gcloud.scheduler.jobs.list) Cloud Scheduler API has not been used in project project-aa11e15e-a951-4e1b-a65 before or it is disabled.`
+- After enabling the Cloud Scheduler API (`gcloud services enable cloudscheduler.googleapis.com`), listing jobs returned:
+  `Listed 0 items.`
+
+#### Root Cause
+While the architecture documentation specified automated reconciliation at 06:00, 12:00, and 18:00 Asia/Colombo (`0 6,12,18 * * *`), the Cloud Scheduler job had never been provisioned in the Google Cloud project.
+
+#### Resolution & Current Operational Reality
+1. Documented that Cloud Scheduler cron jobs are **not currently provisioned** in the GCP project.
+2. Verified that the Sheet Sync Worker operates autonomously via its internal polling loop (`SHEET_SYNC_POLL_INTERVAL_MS=10000`) because Cloud Run is deployed with `--min-instances=1` and `--no-cpu-throttling`.
+3. Candidate Form submissions are processed continuously via the worker's polling loop.
+4. Operational Mirror reconciliations can be triggered on demand via the Admin Console ("Sync Now") or via the operator CLI (`npm run sheet:request -- reconcile`).
+5. Provisioning the Cloud Scheduler cron job remains an operational deployment step:
+   ```cmd
+   gcloud scheduler jobs create http emlynk-sheet-sync-reconcile ^
+     --project=project-aa11e15e-a951-4e1b-a65 ^
+     --location=asia-south1 ^
+     --schedule="0 6,12,18 * * *" ^
+     --time-zone=Asia/Colombo ^
+     --uri="https://emlynk-sheet-sync-worker-76153319636.asia-south1.run.app/tasks/reconcile" ^
+     --http-method=POST ^
+     --headers="Content-Type=application/json" ^
+     --message-body="{}" ^
+     --oidc-service-account-email="emlynk-sheet-sync-scheduler@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com" ^
+     --oidc-token-audience="https://emlynk-sheet-sync-worker-76153319636.asia-south1.run.app"
+   ```
+
+---
+
+### 47P.8 Root Dockerfile Reused for Worker Service
+
+#### Problem
+Risk of worker container crashing or running the incorrect application if built without entrypoint awareness.
+
+#### Explanation & Requirement
+The root `Dockerfile` is shared across the entire backend monorepo and defaults to:
+```dockerfile
+CMD ["node", "src/app.js"]
+```
+Building a dedicated Dockerfile for every microservice creates maintenance churn. Reusing the root Dockerfile for `emlynk-sheet-sync-worker` is acceptable and supported, provided that **every deployment command explicitly overrides the container command and arguments**:
+```text
+--command=node
+--args=src/sheetSyncWorker.js
+```
+Omitting these flags causes Cloud Run to start the Express API backend instead of the sheet sync worker.
+
+---
+
 # 48. Current Project Status
 
 ## Completed
@@ -2528,12 +3317,50 @@ Do not treat full-suite async timing failures as product regressions without a f
 ### Database & Authentication
 - `users` table renamed to `candidate`
 - `admins` table renamed to `user`
+- `company` table renamed to `client` (authoritative employer entity; `company` retired)
+- `agent` table created (overseas agency commercial partner; `country_code`, contact details, `is_active`)
+- `client.agent_id` foreign key established with `ON DELETE RESTRICT`
+- `job`, `job_type`, `job_candidate`, `job_code_counter` fully implemented
+- Single active `PROCESSING` job per candidate enforced at service, index, and trigger levels
+- `job.company_job_id` retained as Client Job ID (external employer reference) with per-client unique index
 - Supabase Auth migration fully complete
 - Custom password hashing, bcrypt, and legacy JWT libraries removed
 - `auth_user_id` UUID foreign key active and enforced
 - Gmail SMTP configured for invitation and password reset emails
 - User invitation lifecycle (`/admin/settings/invite`) and setup flow verified
 - Role-Based Access Control (RBAC) enforced on every API route (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`)
+- Migration `20261019120000_client_management` successfully deployed and verified on shared Supabase instance
+- Bridge and reconciliation migrations (`20261018125900_bridge_dev_first_company_job_id` and `20261023120000_reconcile_job_company_job_id`) implemented to preserve applied migration history
+
+### Candidate Extra Details Form & Public Security (Integrated)
+- **Candidate Extra Details Form (`candidate-form/`)**:
+  - Independent Vite single-page application deployed to Vercel Project B.
+  - 4-step wizard: Verify -> Personal Details -> Work & Family -> Review & Submit.
+  - Full bilingual support (English and සිංහල) and Light/Dark theme.
+  - Universal calendar `DatePicker` (built on `react-day-picker`) with zero timezone shifting.
+  - Dynamic build-time Content Security Policy (CSP) pinning `connect-src` strictly to backend API origin.
+- **Security & Link Architecture**:
+  - Single-candidate share links with 256-bit CSPRNG secrets delivered in `#k=` URL fragment.
+  - Stored strictly as SHA-256 hashes (`candidate_form_link.token_hash`) with 3-day TTL.
+  - Two-factor verification: Link possession + matching Passport Number + NIC Number.
+  - `JOB_GROUP` share links bound to immutable `job.id` UUID with live `PROCESSING` job membership verification.
+  - Form access state machine (`LOCKED -> UNLOCKED -> SUBMITTED`) with version increments invalidating prior sessions.
+  - Submissions written once to isolated `candidate_form_response` table; canonical candidate record remains untouched by public submissions.
+  - Generic 401 verification responses with timing equalization and rate limiting (per-IP and per-passport).
+- **Admin Review & Reconciliation Workflow**:
+  - Read-only submission view (`GET /api/admin/candidates/:passportId/form-submission`).
+  - Inline field-level review hints: "Candidate submitted: <value> [Confirm] [Revoke]".
+  - Strict server-side allowlists for confirmable fields with full audit logging (`CANDIDATE_FORM_FIELD_CONFIRMED`, `CANDIDATE_FORM_FIELD_REJECTED`).
+- **Contact Admin Hardening**:
+  - Dedicated bilingual terminal access failure screen with configurable administrative mobile numbers (`VITE_API_ADMIN_MOBILE_NUMBERS`).
+  - Total removal of direct WhatsApp actions and `wa.me` links.
+
+### Master Data & Operational Modules
+- **Agent Management (`/admin/agents`)**: Full CRUD and lifecycle protection (blocked from deactivation while `PROCESSING` jobs exist).
+- **Client Management (`/admin/client-management`)**: Employer client management separate from legacy candidate `/clients` workflow.
+- **Job Management (`/admin/jobs`)**: Demand order tracking, Client Job ID, candidate assignment history, and atomic `job_code` generation.
+- **Work Allocation Equal Distribution (`/admin/work-allocation`)**: Automated distribution via $\text{floor}(\text{eligible} / \text{analysts})$ with concurrency row locks (`FOR UPDATE`) and remainder protection.
+- **Universal Modern DatePicker**: Reusable `react-day-picker` integration across all Admin date inputs with `YYYY-MM-DD` persistence, month/year navigation, and zero timezone shifting.
 
 ### Candidate & Deployment Workflows
 - Candidate Pool (`/admin/candidates`) with server-side pagination and search
@@ -2554,12 +3381,13 @@ Do not treat full-suite async timing failures as product regressions without a f
 - Structured vector PDF export via jsPDF with repeated headers and pagination
 
 ### Google Sheet Sync & Worker Architecture
-- One-way DB → Google Sheet operational mirror
-- Dynamic header mapping (41 columns, position-independent)
-- Queue/outbox reconciliation architecture
-- Cloud Run worker (`emlynk-sheet-sync-worker`) running on Google Cloud Run
+- One-way DB → Google Sheet operational mirror (`Emlynk Candidate Operational Mirror`, 41 columns, position-independent)
+- Staged Candidate Form Submissions sync (`Candidate Form Submissions`, 74 columns, isolated outbox)
+- Queue/outbox reconciliation architecture (`sheet_sync_queue` and `candidate_form_sheet_sync`)
+- Cloud Run worker (`emlynk-sheet-sync-worker`) running on Google Cloud Run with `--min-instances=1`
 - Sync Destination dropdown and validation protocol in Admin Settings (`/admin/settings/sheet-sync`)
-- Automated schedule (06:00, 12:00, 18:00 Asia/Colombo)
+- Automated schedule design (06:00, 12:00, 18:00 Asia/Colombo)
+- Consolidated reference: [Docs/GOOGLE_SHEET_INTEGRATION.md](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/GOOGLE_SHEET_INTEGRATION.md)
 
 ---
 
@@ -2569,6 +3397,11 @@ Do not treat full-suite async timing failures as product regressions without a f
 
 - **Previous Status**: Live deployment was on hold due to closed billing account.
 - **Current Status**: **RESOLVED**. The Google Cloud billing account was reactivated, payment was completed, billing status was confirmed active (`billingEnabled: true`), Cloud Build succeeded, and the latest worker container image was deployed to Cloud Run.
+
+## Cloud Scheduler Automated Cron — PENDING PROVISIONING
+
+- **Current Status**: Cloud Scheduler API was enabled, but automated jobs are not currently provisioned (`gcloud scheduler jobs list` returned 0 items).
+- **Operational Impact**: None on Candidate Form sync (worker processes due outbox rows continuously via its internal polling loop). Operational Mirror reconciliations can be triggered on demand via Admin Settings "Sync Now" or operator CLI until Cloud Scheduler job is provisioned.
 
 ## Local Direct Supabase DB Connection
 
@@ -2618,6 +3451,13 @@ Do not treat full-suite async timing failures as product regressions without a f
 - Avoid modifying `main` until integration testing is approved.
 - Avoid rewriting Git history on shared branches to fix minor metadata like commit trailers.
 
+## Database Migrations & Multi-Branch Schema Coordination
+- In shared cloud environments (e.g. Supabase), divergent feature branches can easily introduce schema overlap. Never blindly run `prisma migrate dev` against shared databases.
+- Always use `prisma migrate deploy` for shared, staging, and production deployments.
+- When an overlapping migration fails, never mark it `--applied` unless every individual statement has actually taken effect in the database; `--applied` creates a false success record while leaving the schema partially unmigrated. Use `--rolled-back` and repair the migration script using defensive, idempotent DDL (`ADD COLUMN IF NOT EXISTS`, conditional PL/pgSQL `DO $$` blocks, `CREATE UNIQUE INDEX IF NOT EXISTS`).
+- Always test both migration paths: clean-database path (fresh DB from scratch) and the real upgrade path from the shared database's historical state.
+- Note that the `dev` branch migration folder does not contain every Candidate Form migration even though the shared DB has them. This is expected due to branch separation, but it means migration integration must be handled carefully before branches are combined.
+
 ---
 
 # 52. Final Summary
@@ -2628,10 +3468,13 @@ Major completed milestones include:
 ```text
 Monolithic OCR       -> Separate Cloud Run OCR Worker
 Custom Auth          -> Supabase Auth (RBAC, Invitations, Password Reset)
-Legacy Tables        -> candidate / user / auth.users
+Legacy Tables        -> candidate / user / auth.users / client / agent / job
 Real-Time Sheet Sync -> Scheduled Reconciliation + Worker Outbox Mirror
 Fixed Sheet Mapping  -> Dynamic 41-Column Header Mapping + Destination Selector
 Basic Intake Report  -> Modern Daily Report (5 KPIs, Role Summaries, PDF Export)
+Equal Allocation     -> Automated Deterministic Equal Distribution across Analysts
+Master Data          -> Agent Management, Employer Client Management, and Job Tracking
+Modern Date Picker   -> Universal react-day-picker Integration (Zero Timezone Shift)
 ```
 
 The Google Cloud billing hold has been completely resolved, the background worker is active and healthy on Cloud Run, and the Admin Console provides end-to-end visibility across candidate registration, deployment stages, call logs, and daily productivity.

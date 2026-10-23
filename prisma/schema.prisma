@@ -18,23 +18,36 @@ datasource db {
 // auth_user_id = auth.users.id (a foreign key to auth.users where that schema
 // exists, i.e. on Supabase; see migration 20261009120000_supabase_auth_cutover).
 // status: INVITED | ACTIVE | INACTIVE (middleware/requireActiveUser.js).
-// role:   ADMIN | MANAGER | ANALYST | REGISTRATION_DESK (middleware/requireRole.js).
+// role:   ADMIN | MANAGER | ANALYST | REGISTRATION_DESK | JOB_HANDLER (middleware/requireRole.js;
+//         plain TEXT validated by the application, no database CHECK).
 model User {
-  adminId     String             @id @map("admin_id")
-  authUserId  String             @unique @map("auth_user_id") @db.Uuid
-  name        String
-  email       String             @unique
-  role        String
-  status      String             @default("ACTIVE")
-  createdDate DateTime           @default(now()) @map("created_date")
-  updatedDate DateTime           @updatedAt @map("updated_date")
-  auditLogs   AuditLog[]
-  callLogs    CandidateCallLog[]
+  adminId               String                     @id @map("admin_id")
+  authUserId            String                     @unique @map("auth_user_id") @db.Uuid
+  name                  String
+  email                 String                     @unique
+  role                  String
+  status                String                     @default("ACTIVE")
+  createdDate           DateTime                   @default(now()) @map("created_date")
+  updatedDate           DateTime                   @updatedAt @map("updated_date")
+  auditLogs             AuditLog[]
+  callLogs              CandidateCallLog[]
   // Priority Follow-Ups this user flagged / completed.
-  flaggedFollowUps   CallLogFollowUp[] @relation("FollowUpFlaggedBy")
-  completedFollowUps CallLogFollowUp[] @relation("FollowUpCompletedBy")
+  flaggedFollowUps      CallLogFollowUp[]          @relation("FollowUpFlaggedBy")
+  completedFollowUps    CallLogFollowUp[]          @relation("FollowUpCompletedBy")
   // Work Allocation: the candidates assigned to this user (an Analyst).
-  allocatedCandidates CandidateAllocation[]
+  allocatedCandidates   CandidateAllocation[]
+  // Candidate Form share links this user created / revoked, and forms unlocked.
+  createdFormLinks      CandidateFormLink[]        @relation("FormLinkCreatedBy")
+  revokedFormLinks      CandidateFormLink[]        @relation("FormLinkRevokedBy")
+  unlockedFormAccess    CandidateFormAccess[]      @relation("FormAccessUnlockedBy")
+  // Manual verification of a candidate's details / documents (candidate_verification).
+  verifiedDetails       CandidateVerification[]    @relation("DetailsVerifiedBy")
+  verifiedDocuments     CandidateVerification[]    @relation("DocumentsVerifiedBy")
+  // Job Management.
+  createdJobs           Job[]                      @relation("JobCreatedBy")
+  assignedJobCandidates JobCandidate[]             @relation("JobCandidateAssignedBy")
+  // Candidate Form values this user confirmed or rejected, field by field.
+  formFieldReviews      CandidateFormFieldReview[] @relation("FormFieldReviewedBy")
 
   @@map("user")
 }
@@ -107,13 +120,13 @@ model Candidate {
 
   // Candidate deployment (candidateService.js). NIC is unique, so the same
   // person can't be registered twice under two passport records.
-  nic               String?            @unique
-  jobExperience     String?            @map("job_experience")
+  nic               String?                       @unique
+  jobExperience     String?                       @map("job_experience")
   // Optional passport details with no earlier column (the passport OCR reads
   // date of birth, place of birth and expiry only). sex: M, F or X.
   nationality       String?
   sex               String?
-  passportIssueDate DateTime?          @map("passport_issue_date")
+  passportIssueDate DateTime?                     @map("passport_issue_date")
   stages            CandidateStage[]
   callLogs          CandidateCallLog[]
   // Optional extra details (Admin > Candidates > Additional Details). A
@@ -122,8 +135,275 @@ model Candidate {
   // Work Allocation: the Analyst the candidate is assigned to (no row:
   // unallocated). A relation only, like additionalDetails.
   allocation        CandidateAllocation?
+  // Candidate Form (public): share links, the lock, the submitted answers and
+  // the prefill snapshot. Relations only: no candidate column changes.
+  formLinks         CandidateFormLink[]
+  formAccess        CandidateFormAccess?
+  formResponse      CandidateFormResponse?
+  formSnapshot      CandidateFormPrefillSnapshot?
+  formDraft         CandidateFormDraft?
+  formSheetSync     CandidateFormSheetSync?
+  // Job Management: every job the candidate was assigned to (history). The
+  // row with is_active = true is the current PROCESSING job. Relation only.
+  jobAssignments    JobCandidate[]
+  // Staff decisions on candidate-submitted form values (CONFIRMED / REJECTED); no row = pending.
+  formFieldReviews  CandidateFormFieldReview[]
+  // Explicit details / documents verification (a relation only).
+  verification      CandidateVerification?
 
   @@map("candidate")
+}
+
+// Candidate Form share link (candidateFormShareService.js). Only a SHA-256 of
+// the link secret is stored. kind SINGLE = one candidate; a job-group kind can
+// be added later (passport_id is nullable for that reason).
+// Migration 20261017120000_candidate_form_share_and_response.
+model CandidateFormLink {
+  linkId         String    @id @map("link_id")
+  kind           String    @default("SINGLE")
+  passportId     String?   @map("passport_id")
+  // JOB_GROUP: the immutable job.id the link is bound to (passport_id NULL).
+  jobId          String?   @map("job_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash") @db.Char(64)
+  createdById    String    @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  expiresAt      DateTime  @map("expires_at")
+  revokedAt      DateTime? @map("revoked_at")
+  revokedById    String?   @map("revoked_by")
+  failedAttempts Int       @default(0) @map("failed_attempts")
+  lockedUntil    DateTime? @map("locked_until")
+  lastVerifiedAt DateTime? @map("last_verified_at")
+
+  candidate       Candidate?                     @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  job             Job?                           @relation(fields: [jobId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy       User                           @relation("FormLinkCreatedBy", fields: [createdById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  revokedBy       User?                          @relation("FormLinkRevokedBy", fields: [revokedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  unlockedAccess  CandidateFormAccess[]          @relation("AccessUnlockedViaLink")
+  submittedAccess CandidateFormAccess[]          @relation("AccessSubmittedViaLink")
+  responses       CandidateFormResponse[]
+  snapshots       CandidateFormPrefillSnapshot[]
+
+  @@index([passportId])
+  @@index([jobId])
+  @@index([createdById])
+  @@map("candidate_form_link")
+}
+
+// The lock: LOCKED (no row) -> UNLOCKED (a link was created) -> SUBMITTED
+// (terminal; a trigger refuses any later change).
+model CandidateFormAccess {
+  passportId         String    @id @map("passport_id")
+  status             String    @default("LOCKED")
+  version            Int       @default(0)
+  unlockedAt         DateTime? @map("unlocked_at")
+  unlockedById       String?   @map("unlocked_by")
+  unlockedViaLinkId  String?   @map("unlocked_via_link_id")
+  submittedAt        DateTime? @map("submitted_at")
+  submittedViaLinkId String?   @map("submitted_via_link_id")
+  submitKey          String?   @map("submit_key")
+  updatedAt          DateTime  @default(now()) @map("updated_at")
+
+  candidate        Candidate          @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  unlockedBy       User?              @relation("FormAccessUnlockedBy", fields: [unlockedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  unlockedViaLink  CandidateFormLink? @relation("AccessUnlockedViaLink", fields: [unlockedViaLinkId], references: [linkId], onDelete: SetNull, onUpdate: Cascade)
+  submittedViaLink CandidateFormLink? @relation("AccessSubmittedViaLink", fields: [submittedViaLinkId], references: [linkId], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([unlockedViaLinkId])
+  @@index([submittedViaLinkId])
+  @@map("candidate_form_access")
+}
+
+// The answers the candidate submitted (every field nullable). Written once;
+// a trigger refuses any later change. The main candidate tables are never
+// written by the public form.
+model CandidateFormResponse {
+  passportId           String    @id @map("passport_id")
+  fullName             String?   @map("full_name")
+  surname              String?   @map("surname")
+  otherNames           String?   @map("other_names")
+  nic                  String?   @map("nic")
+  sex                  String?   @map("sex")
+  civilStatus          String?   @map("civil_status")
+  birthDate            DateTime? @map("birth_date") @db.Date
+  birthPlace           String?   @map("birth_place")
+  address              String?   @map("address")
+  city                 String?   @map("city")
+  district             String?   @map("district")
+  dsDivision           String?   @map("ds_division")
+  gnDivision           String?   @map("gn_division")
+  alternativePhone     String?   @map("alternative_phone")
+  email                String?   @map("email")
+  passportIssueDate    DateTime? @map("passport_issue_date") @db.Date
+  passportExpiryDate   DateTime? @map("passport_expiry_date") @db.Date
+  jobCategory          String?   @map("job_category")
+  jobCategoryOther     String?   @map("job_category_other")
+  experience           String?   @map("experience")
+  otherSkills1         String?   @map("other_skills_1")
+  otherSkills2         String?   @map("other_skills_2")
+  englishKnowledge     String?   @map("english_knowledge")
+  shirtSize            String?   @map("shirt_size")
+  waistSize            String?   @map("waist_size")
+  shoeSize             String?   @map("shoe_size")
+  fatherName           String?   @map("father_name")
+  fatherSurname        String?   @map("father_surname")
+  fatherPassportNumber String?   @map("father_passport_number")
+  fatherBirthDate      DateTime? @map("father_birth_date") @db.Date
+  motherName           String?   @map("mother_name")
+  motherSurname        String?   @map("mother_surname")
+  motherPassportNumber String?   @map("mother_passport_number")
+  motherBirthDate      DateTime? @map("mother_birth_date") @db.Date
+  spouseName           String?   @map("spouse_name")
+  spouseSurname        String?   @map("spouse_surname")
+  spousePassportNumber String?   @map("spouse_passport_number")
+  spouseBirthDate      DateTime? @map("spouse_birth_date") @db.Date
+  child1Name           String?   @map("child_1_name")
+  child2Name           String?   @map("child_2_name")
+  child3Name           String?   @map("child_3_name")
+  guardianName         String?   @map("guardian_name")
+  guardianRelationship String?   @map("guardian_relationship")
+  guardianNic          String?   @map("guardian_nic")
+  guardianBirthDate    DateTime? @map("guardian_birth_date") @db.Date
+  guardianPhone        String?   @map("guardian_phone")
+  guardianAddress      String?   @map("guardian_address")
+  submittedAt          DateTime  @default(now()) @map("submitted_at")
+  submittedViaLinkId   String?   @map("submitted_via_link_id")
+
+  candidate        Candidate          @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  submittedViaLink CandidateFormLink? @relation(fields: [submittedViaLinkId], references: [linkId], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([submittedViaLinkId])
+  @@map("candidate_form_response")
+}
+
+// Per-field staff decision on a candidate-submitted value (candidateFormFieldConfirmService.js).
+// PENDING is the absence of a row; a decision is final (trigger). The submitted answers stay
+// untouched in candidate_form_response. Migration 20261018140000_candidate_form_field_review.
+model CandidateFormFieldReview {
+  passportId     String   @map("passport_id")
+  fieldKey       String   @map("field_key")
+  // CONFIRMED | REJECTED
+  status         String
+  submittedValue String?  @map("submitted_value")
+  currentValue   String?  @map("current_value")
+  reviewedById   String   @map("reviewed_by")
+  reviewedAt     DateTime @default(now()) @map("reviewed_at")
+
+  candidate  Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  reviewedBy User      @relation("FormFieldReviewedBy", fields: [reviewedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([passportId, fieldKey])
+  @@index([reviewedById])
+  @@map("candidate_form_field_review")
+}
+
+// The candidate's saved progress through the Candidate Form (candidateFormDataService.js
+// saveCandidateFormDraft): the answers of every step they passed with Next, one row per
+// candidate. `answers` holds the form's groups ("basic", "contact", ...) exactly as they
+// were validated; a step is saved when all of its groups are present. It is a draft, never
+// a submission: candidate_form_response and candidate_form_access are untouched until the
+// final submit, which also deletes this row. Migration 20261027120000_candidate_form_draft.
+model CandidateFormDraft {
+  passportId String   @id @map("passport_id")
+  answers    Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @default(now()) @map("updated_at")
+
+  candidate Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("candidate_form_draft")
+}
+
+// The outbox of the Candidate Form -> Google Sheet submission sync (formSubmissionSync.js,
+// tab "Candidate Form Submissions"; separate from the operational mirror's sheet_sync_queue).
+// One row per submission, written by submitCandidateForm in the SAME transaction as
+// candidate_form_response; a candidate submits once, so passport_id is UNIQUE and a repeated
+// or retried submit can never enqueue a second row. submission_id is the stable ID of the
+// submission (the Sheet's _SUBMISSION_ID), never the passport number or NIC. A row means
+// "this submission needs to be in the Sheet", never a data snapshot (no PII): the worker
+// re-reads the response when it processes the row. Rows are kept after COMPLETED.
+// status: PENDING | PROCESSING | COMPLETED | FAILED (dead letter, permanent errors only).
+// Migration 20261028120000_candidate_form_sheet_sync.
+model CandidateFormSheetSync {
+  submissionId   String    @id @default(dbgenerated("(gen_random_uuid())::text")) @map("submission_id")
+  passportId     String    @unique @map("passport_id")
+  status         String    @default("PENDING")
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime  @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  leaseOwner     String?   @map("lease_owner")
+  leaseExpiresAt DateTime? @map("lease_expires_at") @db.Timestamptz(3)
+  // APPENDED | UPDATED | NOT_IN_DATABASE (codes only, never values).
+  lastResult     String?   @map("last_result")
+  lastErrorClass String?   @map("last_error_class")
+  lastErrorCode  String?   @map("last_error_code")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz(3)
+
+  candidate Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@map("candidate_form_sheet_sync")
+}
+
+// What the form was prefilled with from the existing records, taken once at
+// the first verified visit (the original values, for comparison). Never changed.
+model CandidateFormPrefillSnapshot {
+  passportId           String    @id @map("passport_id")
+  fullName             String?   @map("full_name")
+  surname              String?   @map("surname")
+  otherNames           String?   @map("other_names")
+  nic                  String?   @map("nic")
+  sex                  String?   @map("sex")
+  civilStatus          String?   @map("civil_status")
+  birthDate            DateTime? @map("birth_date") @db.Date
+  birthPlace           String?   @map("birth_place")
+  address              String?   @map("address")
+  city                 String?   @map("city")
+  district             String?   @map("district")
+  dsDivision           String?   @map("ds_division")
+  gnDivision           String?   @map("gn_division")
+  alternativePhone     String?   @map("alternative_phone")
+  email                String?   @map("email")
+  passportIssueDate    DateTime? @map("passport_issue_date") @db.Date
+  passportExpiryDate   DateTime? @map("passport_expiry_date") @db.Date
+  jobCategory          String?   @map("job_category")
+  jobCategoryOther     String?   @map("job_category_other")
+  experience           String?   @map("experience")
+  otherSkills1         String?   @map("other_skills_1")
+  otherSkills2         String?   @map("other_skills_2")
+  englishKnowledge     String?   @map("english_knowledge")
+  shirtSize            String?   @map("shirt_size")
+  waistSize            String?   @map("waist_size")
+  shoeSize             String?   @map("shoe_size")
+  fatherName           String?   @map("father_name")
+  fatherSurname        String?   @map("father_surname")
+  fatherPassportNumber String?   @map("father_passport_number")
+  fatherBirthDate      DateTime? @map("father_birth_date") @db.Date
+  motherName           String?   @map("mother_name")
+  motherSurname        String?   @map("mother_surname")
+  motherPassportNumber String?   @map("mother_passport_number")
+  motherBirthDate      DateTime? @map("mother_birth_date") @db.Date
+  spouseName           String?   @map("spouse_name")
+  spouseSurname        String?   @map("spouse_surname")
+  spousePassportNumber String?   @map("spouse_passport_number")
+  spouseBirthDate      DateTime? @map("spouse_birth_date") @db.Date
+  child1Name           String?   @map("child_1_name")
+  child2Name           String?   @map("child_2_name")
+  child3Name           String?   @map("child_3_name")
+  guardianName         String?   @map("guardian_name")
+  guardianRelationship String?   @map("guardian_relationship")
+  guardianNic          String?   @map("guardian_nic")
+  guardianBirthDate    DateTime? @map("guardian_birth_date") @db.Date
+  guardianPhone        String?   @map("guardian_phone")
+  guardianAddress      String?   @map("guardian_address")
+  capturedAt           DateTime  @default(now()) @map("captured_at")
+  capturedViaLinkId    String?   @map("captured_via_link_id")
+
+  candidate       Candidate          @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  capturedViaLink CandidateFormLink? @relation(fields: [capturedViaLinkId], references: [linkId], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([capturedViaLinkId])
+  @@map("candidate_form_prefill_snapshot")
 }
 
 // Work Allocation (workAllocationService.js): one row per allocated
@@ -140,6 +420,204 @@ model CandidateAllocation {
 
   @@index([analystId])
   @@map("candidate_allocation")
+}
+
+// ---------------------------------------------------------------- Job Management
+// jobService.js. Migration 20261018120000_job_management. Docs/JOB_MANAGEMENT_IMPLEMENTATION.md.
+// CHECK constraints, partial unique indexes and triggers are in that
+// migration's SQL (not expressible here): maintain them through a SQL migration.
+
+// Controlled list of job types (no free text on a Job).
+model JobType {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // DEPRECATED: the single Job Type before job_job_type. Kept in sync with the primary
+  // job type until a later migration drops job.job_type_id.
+  legacyJobs Job[]        @relation("JobLegacyJobType")
+  jobLinks   JobJobType[]
+
+  @@map("job_type")
+}
+
+// The employer / customer organisation a job belongs to (formerly "company";
+// migration 20261019120000_client_management). A Client works with MANY Agents
+// and an Agent with many Clients (agent_client, migration
+// 20261026120000_agent_client_many_to_many); a Client has many Jobs. Never
+// hard-deleted: is_active = INACTIVE. A Client has no country of its own: a Job's
+// To Country is its responsible Agent's country (job.country_code).
+model Client {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  // DEPRECATED: the single Agent before agent_client. Not read or written by the
+  // application (agentLinks is the source); kept until a later migration drops it.
+  legacyAgentId  String?  @map("agent_id") @db.Uuid
+  contactPerson  String?  @map("contact_person")
+  contactNumber  String?  @map("contact_number")
+  whatsappNumber String?  @map("whatsapp_number")
+  email          String?
+  address        String?
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  legacyAgent Agent?        @relation("ClientLegacyAgent", fields: [legacyAgentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  agentLinks  AgentClient[]
+  jobs        Job[]
+
+  @@index([legacyAgentId], map: "client_agent_id_idx")
+  @@map("client")
+}
+
+// Agent <-> Client association (many-to-many). One row per pair (the primary key);
+// removing a link deletes only this row (RESTRICT protects the Agent and the Client).
+model AgentClient {
+  agentId   String   @map("agent_id") @db.Uuid
+  clientId  String   @map("client_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  agent  Agent  @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([agentId, clientId])
+  @@index([clientId])
+  @@map("agent_client")
+}
+
+// The agent responsible for a job; country_code (ISO 3166-1 alpha-2) is the
+// agent's country and is copied onto each new job.
+model Agent {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  countryCode    String   @map("country_code") @db.Char(2)
+  isActive       Boolean  @default(true) @map("is_active")
+  contactNumber  String?  @map("contact_number")
+  whatsappNumber String?  @map("whatsapp_number")
+  email          String?
+  address        String?
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  clientLinks   AgentClient[]
+  legacyClients Client[]      @relation("ClientLegacyAgent")
+  jobs          Job[]
+
+  @@map("agent")
+}
+
+// Yearly Job Code counter: next_number is the number the NEXT job of that
+// year gets. Incremented atomically (INSERT ... ON CONFLICT DO UPDATE).
+model JobCodeCounter {
+  year       Int @id
+  nextNumber Int @map("next_number")
+
+  @@map("job_code_counter")
+}
+
+// status: PROCESSING | COMPLETED | CANCELLED. Never hard-deleted. A COMPLETED
+// or CANCELLED job cannot go back to PROCESSING (trigger; reopen is an open
+// decision).
+model Job {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jobCode            String    @unique @map("job_code")
+  // The employer's own Job ID (Y26S01): an editable attribute, never a key.
+  // Unique per client when set (partial index in the SQL migration).
+  companyJobId       String?   @map("company_job_id")
+  // DEPRECATED: the single Job Type before job_job_type. Maintained as the primary
+  // (first) job type for backwards compatibility until a later migration drops it.
+  jobTypeId          String?   @map("job_type_id") @db.Uuid
+  clientId           String    @map("client_id") @db.Uuid
+  responsibleAgentId String    @map("responsible_agent_id") @db.Uuid
+  // "To Country": the Client's (= its Agent's) country, copied when the job is created.
+  countryCode        String    @map("country_code") @db.Char(2)
+  // "From Country" (migration 20261025120000_job_from_country): RO by default for a
+  // new job, editable; NULL for a job created before it was recorded.
+  fromCountryCode    String?   @map("from_country_code") @db.Char(2)
+  vacancies          Int?
+  status             String    @default("PROCESSING")
+  createdById        String    @map("created_by")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  completedAt        DateTime? @map("completed_at")
+  cancelledAt        DateTime? @map("cancelled_at")
+  cancelReason       String?   @map("cancel_reason")
+
+  jobType          JobType?            @relation("JobLegacyJobType", fields: [jobTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  jobTypes         JobJobType[]
+  client           Client              @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  responsibleAgent Agent               @relation(fields: [responsibleAgentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy        User                @relation("JobCreatedBy", fields: [createdById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  candidates       JobCandidate[]
+  // Candidate Form job-group links bound to this job's immutable id.
+  formLinks        CandidateFormLink[]
+
+  @@index([status, createdAt])
+  @@index([clientId])
+  @@index([responsibleAgentId])
+  @@index([jobTypeId])
+  @@map("job")
+}
+
+// Job <-> Job Type association (many-to-many). One row per pair (the primary key);
+// removing a link deletes only this row (RESTRICT protects the Job Type; CASCADE protects the Job).
+model JobJobType {
+  jobId     String   @map("job_id") @db.Uuid
+  jobTypeId String   @map("job_type_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  job     Job     @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  jobType JobType @relation(fields: [jobTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([jobId, jobTypeId])
+  @@index([jobTypeId])
+  @@map("job_job_type")
+}
+
+// Candidate <-> Job membership and history. is_active = "this candidate is
+// currently on this PROCESSING job": a partial unique index (passport_id WHERE
+// is_active) allows at most ONE per candidate, and a trigger on job clears it
+// when the job leaves PROCESSING. released_at = removed from the job by staff.
+model JobCandidate {
+  jobId      String    @map("job_id") @db.Uuid
+  passportId String    @map("passport_id")
+  assignedAt DateTime  @default(now()) @map("assigned_at")
+  assignedBy String    @map("assigned_by")
+  isActive   Boolean   @default(true) @map("is_active")
+  releasedAt DateTime? @map("released_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  job             Job       @relation(fields: [jobId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  candidate       Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  assignedByStaff User      @relation("JobCandidateAssignedBy", fields: [assignedBy], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([jobId, passportId])
+  @@index([passportId])
+  @@map("job_candidate")
+}
+
+// Manual verification of a candidate's details and documents (candidateVerificationService.js).
+// One row per candidate, created by the first verification. A *_at / *_by pair is set or cleared
+// together (CHECKs in the migration). The Candidate list Status reads these; nothing derives them.
+// Migration 20261021120000_candidate_verification.
+model CandidateVerification {
+  passportId            String    @id @map("passport_id")
+  detailsVerifiedAt     DateTime? @map("details_verified_at")
+  detailsVerifiedById   String?   @map("details_verified_by")
+  documentsVerifiedAt   DateTime? @map("documents_verified_at")
+  documentsVerifiedById String?   @map("documents_verified_by")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  candidate           Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  detailsVerifiedBy   User?     @relation("DetailsVerifiedBy", fields: [detailsVerifiedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  documentsVerifiedBy User?     @relation("DocumentsVerifiedBy", fields: [documentsVerifiedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@map("candidate_verification")
 }
 
 //added document table
@@ -286,20 +764,29 @@ model CandidateAdditionalDetails {
 }
 
 model CandidateStage {
-  passportId  String    @map("passport_id")
-  // TEST_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION | IVS_INTERVIEW
-  // | VISA_APPROVAL | FINALIZING_JOB
-  stage       String
-  completed   Boolean   @default(false)
-  completedAt DateTime? @map("completed_at")
-  notes       String?
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-  // TEST_DETAILS only (null on the other stages): the job ID the admin
-  // enters, the test's result (PASS or FAIL) and the date the candidate
-  // actually sat it. Null until recorded.
-  jobId       String?   @map("job_id")
-  testResult  String?   @map("test_result")
-  testDate    DateTime? @map("test_date") @db.Date
+  passportId     String    @map("passport_id")
+  // TEST_DETAILS | JOB_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION
+  // | IVS_INTERVIEW | VISA_SUBMISSION | VISA_APPROVAL | FINALIZING_JOB
+  stage          String
+  completed      Boolean   @default(false)
+  completedAt    DateTime? @map("completed_at")
+  notes          String?
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  // TEST_DETAILS only (null on the other stages): the agent and the Test ID
+  // the admin enters, the test's result (PASS or FAIL) and the date the
+  // candidate actually sat it. Null until recorded.
+  testAgentName  String?   @map("test_agent_name")
+  testId         String?   @map("test_id")
+  testResult     String?   @map("test_result")
+  testDate       DateTime? @map("test_date") @db.Date
+  // LEGACY free text, entered as "Job ID" on Test details before Job Management.
+  // No longer written. Read only as the Test ID of a row that has no test_id,
+  // never as a Job (the Job is the job_candidate assignment).
+  jobId          String?   @map("job_id")
+  // JOB_DETAILS only: the saved date. The stage's note and completion use the
+  // generic notes / completed columns; its Job and Client are read from
+  // job_candidate, never stored here.
+  jobDetailsDate DateTime? @map("job_details_date") @db.Date
 
   user Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade)
 

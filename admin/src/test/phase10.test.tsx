@@ -133,7 +133,11 @@ describe("Client Details: police slip date", () => {
         await user.click(await screen.findByRole("button", { name: "Set date" }));
         const dialog = screen.getByRole("dialog", { name: "Set the police slip date" });
         const input = within(dialog).getByLabelText(/Submitted date/);
-        expect(input).toHaveAttribute("max", todayInSriLanka());
+        // Not in the future: the calendar disables tomorrow (Escape closes only the calendar, not this dialog).
+        await user.click(within(dialog).getByRole("button", { name: "Open calendar" }));
+        expect(await screen.findByRole("button", { name: new Date(Date.parse(`${todayInSriLanka()}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10) })).toBeDisabled();
+        await user.keyboard("{Escape}");
+        expect(screen.getByRole("dialog", { name: "Set the police slip date" })).toBeInTheDocument();
         await user.click(within(dialog).getByRole("button", { name: "Save date" }));
         expect(within(dialog).getByText(/Enter the submitted date/)).toBeInTheDocument();
         await user.type(input, "2026-09-10");
@@ -175,7 +179,7 @@ describe("Client Details: police slip date", () => {
         signedInBackend({ "GET /api/admin/clients/N1234567": { status: 200, body: CLIENT_DETAILS } });
         renderApp("/clients/N1234567");
         expect(await screen.findByText("Incomplete")).toBeInTheDocument();
-        const breadcrumb = screen.getAllByRole("navigation", { name: "Breadcrumb" }).find((nav) => nav.tagName === "NAV" && within(nav).queryByRole("link"))!;
+        const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
         expect(within(breadcrumb).getByRole("link", { name: "Clients" })).toHaveAttribute("href", "/clients");
     });
 });

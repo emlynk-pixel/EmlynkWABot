@@ -6,6 +6,7 @@ import { DocumentsTable } from "../components/DocumentsTable";
 import { formatNumber } from "../components/format";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl } from "../components/ui";
+import { DatePicker } from "../components/DatePicker";
 
 const PAGE_SIZE = 25;
 const FILTER_KEYS = ["search", "documentType", "verificationStatus", "receivedFrom", "receivedTo", "sort", "order", "page"] as const;
@@ -103,10 +104,10 @@ export function DocumentsPage() {
                     </label>
                     <label className="flex items-center gap-1 md:col-span-3">
                         <span className="sr-only">Received from</span>
-                        <input aria-label="Received from" type="date" value={params.receivedFrom ?? ""} max={params.receivedTo} onChange={(event) => update({ receivedFrom: event.target.value || undefined })} className={`${control} w-full`} />
+                        <DatePicker id="received-from" ariaLabel="Received from" value={params.receivedFrom ?? ""} max={params.receivedTo} onChange={(date) => update({ receivedFrom: date || undefined })} className={`${control} w-full`} />
                         <span aria-hidden="true" className="text-ink-subtle">–</span>
                         <span className="sr-only">Received to</span>
-                        <input aria-label="Received to" type="date" value={params.receivedTo ?? ""} min={params.receivedFrom} onChange={(event) => update({ receivedTo: event.target.value || undefined })} className={`${control} w-full`} />
+                        <DatePicker id="received-to" ariaLabel="Received to" value={params.receivedTo ?? ""} min={params.receivedFrom} onChange={(date) => update({ receivedTo: date || undefined })} className={`${control} w-full`} />
                     </label>
                     <label className="md:col-span-2">
                         <span className="sr-only">Sort</span>

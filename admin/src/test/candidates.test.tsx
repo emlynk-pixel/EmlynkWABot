@@ -11,24 +11,31 @@ const stages = (done: boolean[]) => CANDIDATE_STAGES.map((stage, i) => ({ stage,
 
 const LIST: CandidateList = {
     items: [
-        { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", jobTypes: ["Driver", "Welder"], stages: stages([true, true, false, false, false, false, false]) },
-        { passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], stages: stages([false, false, false, true, true, true, true]) },
+        { passportId: "N0000001", uniqueId: "0001", name: "KAMAL PERERA", nic: "199012345678", jobTypes: ["Driver", "Welder"], workflowStatus: { code: "JOB_ASSIGNED", label: "Job Assigned" }, stages: stages([true, true, true, false, false, false, false, false]) },
+        { passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: null, jobTypes: [], workflowStatus: { code: "STOPPED_WITH_TEST", label: "Stopped with Test" }, stages: stages([false, false, false, false, true, true, true, true]) },
     ],
     pagination: { page: 1, pageSize: 100, total: 2, totalPages: 1 },
     filters: { search: null },
 };
 
 const DETAILS: CandidateDetails = {
+    verification: { details: null, documents: null },
     candidate: {
         passportId: "N0000002", uniqueId: "0002", name: "SAMAN SILVA", nic: "901234567V", jobTypes: ["Driver"], surname: "SILVA", otherNames: "SAMAN",
         dateOfBirth: "1990-03-12", placeOfBirth: "COLOMBO", passportExpiryDate: "2030-05-11", passportIssueDate: "2020-05-12", nationality: null, sex: null,
         address: "1 Main Street", jobExperience: "5 years", whatsappNumber: "94770000002", contactNumber: null,
     },
-    stages: stages([false, false, false, true, true, true, true]).map((s) => ({
+    stages: stages([false, false, false, false, true, true, true, true]).map((s) => ({
         ...s,
         completedAt: null,
         notes: null,
-        jobId: null,
+        testAgentName: null,
+        testId: null,
+        jobDate: null,
+        jobCode: null,
+        clientName: null,
+        jobSource: null,
+        jobStatus: null,
         testResult: null,
         testDate: null,
         automatic: s.stage === "CANDIDATE_DETAILS" || s.stage === "DOCUMENT_SUBMISSION",
@@ -38,6 +45,7 @@ const DETAILS: CandidateDetails = {
     variantDocuments: {
         POLICE_REPORT: { byVariant: { SL_VERIFIED: null, ROMANIA: null, SL_NORMAL: null }, untyped: null },
     },
+    jobAssignments: { current: null, history: [] },
     requiredDocuments: (["PASSPORT", "MEDICAL", "POLICE_REPORT", "SCAN"] as const).map((documentType) => ({ documentType, included: documentType === "PASSPORT" })),
 };
 
@@ -64,27 +72,150 @@ function directUploadRoutes(passportId: string, finalized: CandidateDetails, { s
 
 describe("stepper colours", () => {
     test("stages completed after an incomplete one are 'out of order'", () => {
-        expect(stepTones(stages([false, false, false, true, true, true, true]))).toEqual(["incomplete", "incomplete", "incomplete", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order"]);
-        expect(stepTones(stages([true, true, false, true, false, false, false]))).toEqual(["complete", "complete", "incomplete", "complete-out-of-order", "incomplete", "incomplete", "incomplete"]);
-        expect(stepTones(stages([true, true, true, true, true, true, true]))).toEqual(Array(7).fill("complete"));
+        expect(stepTones(stages([false, false, false, false, true, true, true, true]))).toEqual(["incomplete", "incomplete", "incomplete", "incomplete", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order"]);
+        expect(stepTones(stages([true, true, true, false, true, false, false, false]))).toEqual(["complete", "complete", "complete", "incomplete", "complete-out-of-order", "incomplete", "incomplete", "incomplete"]);
+        expect(stepTones(stages([true, true, true, true, true, true, true, true]))).toEqual(Array(8).fill("complete"));
     });
 });
 
 describe("Candidates list", () => {
-    test("lists candidates with progress and searches through the API", async () => {
+    test("STATUS-016 / 018: lists candidates with the derived Status (not Progress) and searches through the API", async () => {
         const { calls } = signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
         renderApp("/candidates");
         const table = await screen.findByRole("table", { name: "Candidates" });
         expect(within(table).getByRole("link", { name: "KAMAL PERERA" })).toHaveAttribute("href", "/candidates/N0000001");
         expect(within(table).getByText("Driver")).toBeInTheDocument();
         expect(within(table).getByText("Welder")).toBeInTheDocument();
-        // Current stage = first not completed; the count is completed stages.
-        expect(within(table).getByLabelText("Document submission, 2 of 7 stages completed")).toHaveTextContent("Document submission2/7");
-        expect(within(table).getByLabelText("Test details, 4 of 7 stages completed")).toHaveTextContent("Test details4/7");
+        // The column is Status, not Progress, and shows exactly what the server derived (no stage arithmetic in the browser).
+        expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Candidate", "Job type", "Status"]);
+        expect(within(table).queryByText("Progress")).not.toBeInTheDocument();
+        const rows = within(table).getAllByRole("row").slice(1);
+        expect(within(rows[0]).getByText("Job Assigned")).toBeInTheDocument();
+        expect(within(rows[1]).getByText("Stopped with Test")).toBeInTheDocument();
+        expect(within(table).queryByText(/\d\/8/)).not.toBeInTheDocument();
         expect(screen.getByRole("link", { name: "Add candidate" })).toHaveAttribute("href", "/candidates/new");
 
         await userEvent.setup().type(screen.getByLabelText("Search candidates"), "901234567V{Enter}");
         expect(calls.at(-1)!.path).toBe("/api/admin/candidates?page=1&pageSize=100&search=901234567V");
+    });
+
+    describe("Candidate cell identity layout (Passport and NIC)", () => {
+        test("CANDIDATE-LIST-ID-001: NIC header is not rendered", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+            expect(headers).not.toContain("NIC");
+            expect(headers).toEqual(["Candidate", "Job type", "Status"]);
+        });
+
+        test("CANDIDATE-LIST-ID-002: Candidate name is rendered", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            expect(within(table).getByRole("link", { name: "KAMAL PERERA" })).toBeInTheDocument();
+            expect(within(table).getByRole("link", { name: "SAMAN SILVA" })).toBeInTheDocument();
+        });
+
+        test("CANDIDATE-LIST-ID-003: Passport and NIC render in the same Candidate cell", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const rows = within(table).getAllByRole("row").slice(1);
+            const candidateCell = within(rows[0]).getAllByRole("cell")[0];
+            expect(candidateCell).toHaveTextContent("N0000001");
+            expect(candidateCell).toHaveTextContent("199012345678");
+        });
+
+        test("CANDIDATE-LIST-ID-004: Passport appears before NIC", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const rows = within(table).getAllByRole("row").slice(1);
+            const candidateCell = within(rows[0]).getAllByRole("cell")[0];
+            const text = candidateCell.textContent ?? "";
+            const passportIndex = text.indexOf("N0000001");
+            const separatorIndex = text.indexOf("|");
+            const nicIndex = text.indexOf("199012345678");
+            expect(passportIndex).toBeGreaterThanOrEqual(0);
+            expect(separatorIndex).toBeGreaterThan(passportIndex);
+            expect(nicIndex).toBeGreaterThan(separatorIndex);
+        });
+
+        test("CANDIDATE-LIST-ID-005: No separate NIC table cell/column exists", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const rows = within(table).getAllByRole("row");
+            expect(within(rows[0]).getAllByRole("columnheader")).toHaveLength(3);
+            for (const row of rows.slice(1)) {
+                expect(within(row).getAllByRole("cell")).toHaveLength(3);
+            }
+        });
+
+        test("CANDIDATE-LIST-ID-006: Missing NIC does not render broken separator", async () => {
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const rows = within(table).getAllByRole("row").slice(1);
+            const cellWithoutNic = within(rows[1]).getAllByRole("cell")[0];
+            expect(cellWithoutNic).toHaveTextContent("N0000002");
+            expect(cellWithoutNic.textContent).not.toContain("|");
+            expect(cellWithoutNic.textContent).not.toContain("null");
+            expect(cellWithoutNic.textContent).not.toContain("undefined");
+        });
+
+        test("CANDIDATE-LIST-ID-007: Missing Passport does not render broken separator", async () => {
+            const listWithMissingPassport: CandidateList = {
+                ...LIST,
+                items: [
+                    { passportId: "", uniqueId: "0003", name: "NO PASSPORT", nic: "200012345678", jobTypes: [], workflowStatus: { code: "REGISTERED", label: "Registered" }, stages: [] },
+                ],
+                pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+            };
+            signedInBackend({ "GET /api/admin/candidates": { status: 200, body: listWithMissingPassport } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const rows = within(table).getAllByRole("row").slice(1);
+            const cell = within(rows[0]).getAllByRole("cell")[0];
+            expect(cell).toHaveTextContent("200012345678");
+            expect(cell.textContent).not.toContain("|");
+            expect(cell.textContent).not.toContain("null");
+            expect(cell.textContent).not.toContain("undefined");
+        });
+
+        test("CANDIDATE-LIST-ID-008: Search/pagination/row navigation still work", async () => {
+            const { calls } = signedInBackend({ "GET /api/admin/candidates": { status: 200, body: LIST } });
+            renderApp("/candidates");
+            const table = await screen.findByRole("table", { name: "Candidates" });
+            const user = userEvent.setup();
+
+            const link = within(table).getByRole("link", { name: "KAMAL PERERA" });
+            expect(link).toHaveAttribute("href", "/candidates/N0000001");
+
+            await user.type(screen.getByLabelText("Search candidates"), "test{Enter}");
+            expect(calls.at(-1)!.path).toBe("/api/admin/candidates?page=1&pageSize=100&search=test");
+        });
+    });
+
+    test("every derived status renders its server label", async () => {
+        const all = ["REGISTERED", "STOPPED_WITH_TEST", "JOB_ASSIGNED", "FORM_SUBMITTED", "DETAILS_VERIFIED", "DOCUMENTS_VERIFIED", "VISA_DOCUMENT_READY"] as const;
+        const labels = ["Registered", "Stopped with Test", "Job Assigned", "Form Submitted", "Details Verified", "Documents Verified", "Visa Document Ready"];
+        const list = { ...LIST, items: all.map((code, n) => ({ ...LIST.items[0], passportId: `N000010${n}`, name: `PERSON ${n}`, workflowStatus: { code, label: labels[n] } })) };
+        signedInBackend({ "GET /api/admin/candidates": { status: 200, body: list } });
+        renderApp("/candidates");
+        const table = await screen.findByRole("table", { name: "Candidates" });
+        for (const label of labels) expect(within(table).getByText(label)).toBeInTheDocument();
+    });
+
+    test("STATUS-017: the candidate page keeps its progress stepper exactly (stages, order, state)", async () => {
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+        renderApp("/candidates/N0000002");
+        const stepper = await screen.findByRole("navigation", { name: "Deployment stages" });
+        expect(within(stepper).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
+            "1. Test details (incomplete)", "2. Job details (incomplete)", "3. Candidate details (incomplete)", "4. Additional details (incomplete)",
+            "5. Document submission (incomplete)", "6. Visa submission (completed out of order)", "7. Visa approval (completed out of order)",
+        ]);
     });
 
     test("a failed search shows its error and Try again, not the previous results", async () => {
@@ -155,7 +286,9 @@ describe("Candidates list", () => {
             expect(header.getAllByRole("link", { name: "Register Candidate" })).toHaveLength(1);
             expect(header.getByRole("link", { name: "Register Candidate" })).toHaveAttribute("href", "/candidates/new");
             for (const name of ["Sync", "Dark mode", "Sign out"]) expect(header.getByRole("button", { name })).toBeInTheDocument();
-            expect(header.getByRole("navigation", { name: "Breadcrumb" })).toBeInTheDocument();
+            // The one breadcrumb tops the content, not the header.
+            expect(header.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
+            expect(screen.getAllByRole("navigation", { name: "Breadcrumb" })).toHaveLength(1);
             expect(screen.getAllByRole("link", { name: "Register Candidate" })).toHaveLength(1);
         });
     }
@@ -185,12 +318,12 @@ describe("Candidate deployment", () => {
         renderApp("/candidates/N0000002");
         const stepper = await screen.findByRole("navigation", { name: "Deployment stages" });
         expect(within(stepper).getByRole("button", { name: "1. Test details (incomplete)" })).toHaveAttribute("aria-current", "step");
-        expect(within(stepper).getByRole("button", { name: "5. Visa submission (completed out of order)" })).toBeInTheDocument();
-        expect(within(stepper).getByRole("button", { name: "6. Visa approval (completed out of order)" })).toBeInTheDocument();
+        expect(within(stepper).getByRole("button", { name: "6. Visa submission (completed out of order)" })).toBeInTheDocument();
+        expect(within(stepper).getByRole("button", { name: "7. Visa approval (completed out of order)" })).toBeInTheDocument();
         expect(screen.getByRole("heading", { name: "Test details" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Call log" })).toBeInTheDocument();
 
-        await userEvent.setup().click(within(stepper).getByRole("button", { name: /^4\. Document submission/ }));
+        await userEvent.setup().click(within(stepper).getByRole("button", { name: /^5. Document submission/ }));
         expect(await screen.findByRole("heading", { name: "Document submission" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Export PDF" })).toBeInTheDocument();
         // Completed by the documents themselves: no checkbox, no Save.
@@ -200,44 +333,55 @@ describe("Candidate deployment", () => {
         for (const label of ["Medical", "Police report", "Scans"]) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     });
 
-    describe("Test details: result and date", () => {
-        const withTest = (testResult: "PASS" | "FAIL" | null, testDate: string | null, extra: { notes?: string; completed?: boolean; jobId?: string } = {}): CandidateDetails => ({
+    describe("Test details: agent, test ID, result and date", () => {
+        const withTest = (testResult: "PASS" | "FAIL" | null, testDate: string | null, extra: { notes?: string; completed?: boolean; testId?: string; testAgentName?: string } = {}): CandidateDetails => ({
             ...DETAILS,
-            stages: DETAILS.stages.map((s) => (s.stage === "TEST_DETAILS" ? { ...s, testResult, testDate, jobId: extra.jobId ?? null, notes: extra.notes ?? null, completed: extra.completed ?? false } : s)),
+            stages: DETAILS.stages.map((s) => (s.stage === "TEST_DETAILS" ? { ...s, testResult, testDate, testId: extra.testId ?? null, testAgentName: extra.testAgentName ?? null, notes: extra.notes ?? null, completed: extra.completed ?? false } : s)),
         });
 
-        test("the client name comes from the record; the job ID is entered; nothing is preselected; all three are saved", async () => {
+        test("STAGE-JOB-002..005: the fields are Agent name, Test ID, Test result, Test date and Notes; no Client name and no Job ID", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+            renderApp("/candidates/N0000002?stage=TEST_DETAILS");
+            expect(await screen.findByLabelText("Agent name")).toHaveValue("");
+            expect(screen.getByLabelText("Agent name")).not.toHaveAttribute("readonly");
+            expect(screen.getByLabelText("Test ID")).toHaveValue("");
+            expect(screen.getByLabelText("Test ID")).not.toHaveAttribute("readonly");
+            expect(screen.getByLabelText("Test result")).toBeInTheDocument();
+            expect(screen.getByLabelText("Test date")).toBeInTheDocument();
+            expect(screen.getByLabelText("Notes")).toBeInTheDocument();
+            expect(screen.queryByLabelText("Client name")).not.toBeInTheDocument();
+            expect(screen.queryByLabelText("Job ID")).not.toBeInTheDocument();
+        });
+
+        test("STAGE-JOB-015: the agent and test ID are entered, nothing is preselected, and all four are saved", async () => {
             const { calls } = signedInBackend({
                 "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
-                "PUT /api/admin/candidates/N0000002/stages/TEST_DETAILS": { status: 200, body: withTest("PASS", "2026-09-28", { jobId: "JOB-2026-014" }) },
+                "PUT /api/admin/candidates/N0000002/stages/TEST_DETAILS": { status: 200, body: withTest("PASS", "2026-09-28", { testId: "T-2026-014", testAgentName: "Nimal Perera" }) },
             });
             renderApp("/candidates/N0000002?stage=TEST_DETAILS");
             const user = userEvent.setup();
 
-            expect(await screen.findByLabelText("Client name")).toHaveValue("SAMAN SILVA");
-            expect(screen.getByLabelText("Client name")).toHaveAttribute("readonly");
-            expect(screen.getByLabelText("Job ID")).toHaveValue("");
-            expect(screen.getByLabelText("Job ID")).not.toHaveAttribute("readonly");
-            expect(screen.getByLabelText("Test result")).toHaveValue("");
+            expect(await screen.findByLabelText("Test result")).toHaveValue("");
             expect(within(screen.getByLabelText("Test result")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select result…", "Pass", "Fail"]);
             expect(screen.getByLabelText("Test date")).toHaveValue("");
-            expect(screen.getByLabelText("Notes")).toBeInTheDocument();
             expect(screen.getByRole("checkbox", { name: "Stage completed" })).not.toBeChecked();
 
-            await user.type(screen.getByLabelText("Job ID"), " JOB-2026-014 ");
+            await user.type(screen.getByLabelText("Agent name"), " Nimal Perera ");
+            await user.type(screen.getByLabelText("Test ID"), " T-2026-014 ");
             await user.selectOptions(screen.getByLabelText("Test result"), "PASS");
             await user.type(screen.getByLabelText("Test date"), "2026-09-28");
             await user.click(screen.getByRole("button", { name: "Save changes" }));
 
-            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: null, completed: false, jobId: "JOB-2026-014", testResult: "PASS", testDate: "2026-09-28" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: null, completed: false, testAgentName: "Nimal Perera", testId: "T-2026-014", testResult: "PASS", testDate: "2026-09-28" }));
             await vi.waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled());
-            expect(screen.getByLabelText("Job ID")).toHaveValue("JOB-2026-014");
+            expect(screen.getByLabelText("Agent name")).toHaveValue("Nimal Perera");
+            expect(screen.getByLabelText("Test ID")).toHaveValue("T-2026-014");
             expect(screen.getByLabelText("Test result")).toHaveValue("PASS");
             expect(screen.getByLabelText("Test date")).toHaveValue("2026-09-28");
         });
 
-        test("a saved result and date are shown again; saving other changes keeps the saved date, never today's", async () => {
-            const saved = withTest("FAIL", "2026-09-20", { notes: "Retest booked", completed: true, jobId: "JOB-2026-009" });
+        test("a saved result and date are shown again; saving other changes keeps the saved date, never today's date", async () => {
+            const saved = withTest("FAIL", "2026-09-20", { notes: "Retest booked", completed: true, testId: "T-2026-009", testAgentName: "Ion Popescu" });
             const { calls } = signedInBackend({
                 "GET /api/admin/candidates/N0000002": { status: 200, body: saved },
                 "PUT /api/admin/candidates/N0000002/stages/TEST_DETAILS": { status: 200, body: saved },
@@ -246,20 +390,21 @@ describe("Candidate deployment", () => {
             const user = userEvent.setup();
 
             expect(await screen.findByLabelText("Test result")).toHaveValue("FAIL");
-            expect(screen.getByLabelText("Job ID")).toHaveValue("JOB-2026-009");
+            expect(screen.getByLabelText("Agent name")).toHaveValue("Ion Popescu");
+            expect(screen.getByLabelText("Test ID")).toHaveValue("T-2026-009");
             expect(screen.getByLabelText("Test date")).toHaveValue("2026-09-20");
             expect(screen.getByLabelText("Notes")).toHaveValue("Retest booked");
             expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeChecked();
 
             await user.selectOptions(screen.getByLabelText("Test result"), "PASS");
-            await user.type(screen.getByLabelText("Job ID"), "X");
+            await user.type(screen.getByLabelText("Test ID"), "X");
             await user.click(screen.getByRole("button", { name: "Cancel" }));
             expect(screen.getByLabelText("Test result")).toHaveValue("FAIL");
-            expect(screen.getByLabelText("Job ID")).toHaveValue("JOB-2026-009");
+            expect(screen.getByLabelText("Test ID")).toHaveValue("T-2026-009");
 
             await user.type(screen.getByLabelText("Notes"), " (done)");
             await user.click(screen.getByRole("button", { name: "Save changes" }));
-            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Retest booked (done)", completed: true, jobId: "JOB-2026-009", testResult: "FAIL", testDate: "2026-09-20" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Retest booked (done)", completed: true, testAgentName: "Ion Popescu", testId: "T-2026-009", testResult: "FAIL", testDate: "2026-09-20" }));
         });
 
         test("the other admin-completed stages stay notes and completion only", async () => {
@@ -267,19 +412,202 @@ describe("Candidate deployment", () => {
             renderApp("/candidates/N0000002?stage=IVS_INTERVIEW");
             expect(await screen.findByRole("heading", { name: "IVS interview" })).toBeInTheDocument();
             expect(screen.getByLabelText("Notes")).toBeInTheDocument();
-            expect(screen.queryByLabelText("Test result")).not.toBeInTheDocument();
-            expect(screen.queryByLabelText("Test date")).not.toBeInTheDocument();
-            expect(screen.queryByLabelText("Client name")).not.toBeInTheDocument();
-            expect(screen.queryByLabelText("Job ID")).not.toBeInTheDocument();
+            for (const label of ["Test result", "Test date", "Agent name", "Test ID", "Client name", "Job ID"]) expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
         });
 
-        test("a viewer sees the test details but can't change them", async () => {
+        test("a viewer sees the test details but cannot change them", async () => {
             signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withTest("PASS", "2026-09-28") } });
             renderApp("/candidates/N0000002?stage=TEST_DETAILS");
             expect(await screen.findByLabelText("Test result")).toBeDisabled();
             expect(screen.getByLabelText("Test result")).toHaveValue("PASS");
             expect(screen.getByLabelText("Test date")).toBeDisabled();
-            expect(screen.getByLabelText("Job ID")).toBeDisabled();
+            expect(screen.getByLabelText("Agent name")).toBeDisabled();
+            expect(screen.getByLabelText("Test ID")).toBeDisabled();
+            expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+        });
+    });
+
+    describe("Verify details / Verify documents (STATUS-FIX)", () => {
+        const withStage = (stage: "CANDIDATE_DETAILS" | "DOCUMENT_SUBMISSION", completed: boolean, verification: CandidateDetails["verification"] = { details: null, documents: null }): CandidateDetails => ({
+            ...DETAILS,
+            verification,
+            stages: DETAILS.stages.map((s) => (s.stage === stage ? { ...s, completed, missing: completed ? [] : s.missing } : s)),
+            requiredDocuments: DETAILS.requiredDocuments.map((r, i) => ({ ...r, included: completed && i === 0 })),
+        });
+
+        test("a manager can explicitly verify complete details; the request carries only the kind; the state then shows who and when", async () => {
+            const verified = withStage("CANDIDATE_DETAILS", true, { details: { at: "2026-10-20T10:00:00.000Z", by: "Test Admin" }, documents: null });
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withStage("CANDIDATE_DETAILS", true) },
+                "POST /api/admin/candidates/N0000002/verification": { status: 200, body: verified },
+            });
+            renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+            const user = userEvent.setup();
+            expect(await screen.findByText("Not verified yet")).toBeInTheDocument();
+            await user.click(screen.getByRole("button", { name: "Verify details" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ kind: "DETAILS", verified: true }));
+            expect(await screen.findByText("Verified by Test Admin on 2026-10-20")).toBeInTheDocument();
+            expect(screen.getByRole("button", { name: "Remove details verification" })).toBeInTheDocument();
+        });
+
+        test("Verify details is disabled until the details are complete (saving or completing never verifies)", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: withStage("CANDIDATE_DETAILS", false) } });
+            renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+            expect(await screen.findByRole("button", { name: "Verify details" })).toBeDisabled();
+        });
+
+        test("Verify documents sits on Document submission and is enabled once a required document is on record", async () => {
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withStage("DOCUMENT_SUBMISSION", true) },
+                "POST /api/admin/candidates/N0000002/verification": { status: 200, body: withStage("DOCUMENT_SUBMISSION", true, { details: null, documents: { at: "2026-10-20T10:00:00.000Z", by: "Test Admin" } }) },
+            });
+            renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
+            const user = userEvent.setup();
+            await user.click(await screen.findByRole("button", { name: "Verify documents" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ kind: "DOCUMENTS", verified: true }));
+            expect(await screen.findByText("Verified by Test Admin on 2026-10-20")).toBeInTheDocument();
+        });
+
+        test("an Analyst or the Registration Desk cannot verify: no button, and no 'not verified' prompt", async () => {
+            for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+                signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withStage("CANDIDATE_DETAILS", true) } });
+                const view = renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+                expect(await screen.findByRole("heading", { name: "Candidate details" })).toBeInTheDocument();
+                expect(screen.queryByRole("button", { name: /^Verify details/ })).not.toBeInTheDocument();
+                expect(screen.queryByText("Not verified yet")).not.toBeInTheDocument();
+                view.unmount();
+            }
+        });
+
+        test("an already verified state is shown read-only to a role that cannot change it", async () => {
+            signedInBackend({
+                "GET /auth/me": { status: 200, body: { user: userWithRole("ANALYST") } },
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withStage("CANDIDATE_DETAILS", true, { details: { at: "2026-10-20T10:00:00.000Z", by: "Test Admin" }, documents: null }) },
+            });
+            renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+            expect(await screen.findByText("Verified by Test Admin on 2026-10-20")).toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: /verification|^Verify/ })).not.toBeInTheDocument();
+        });
+    });
+
+    describe("Job details: the current Job and its Client from the Job assignment (STAGE-JOB-001, 006 to 014, 022, 024)", () => {
+        const withJob = (extra: { jobCode?: string | null; clientName?: string | null; jobDate?: string | null; notes?: string | null; completed?: boolean } = {}): CandidateDetails => ({
+            ...DETAILS,
+            stages: DETAILS.stages.map((s) => (s.stage === "JOB_DETAILS"
+                ? { ...s, jobCode: extra.jobCode ?? null, clientName: extra.clientName ?? null, jobDate: extra.jobDate ?? null, notes: extra.notes ?? null, completed: extra.completed ?? false }
+                : s)),
+        });
+        const OPEN = "/candidates/N0000002?stage=JOB_DETAILS";
+        const PUT = "PUT /api/admin/candidates/N0000002/stages/JOB_DETAILS";
+
+        test("STAGE-JOB-001: the stepper order is exactly Test, Job, Candidate, Additional, Document, Visa submission, Visa approval", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+            renderApp("/candidates/N0000002");
+            const stepper = await screen.findByRole("navigation", { name: "Deployment stages" });
+            const labels = within(stepper).getAllByRole("button").map((b) => (b.getAttribute("aria-label") ?? "").replace(/ \(.*\)$/, ""));
+            expect(labels).toEqual(["1. Test details", "2. Job details", "3. Candidate details", "4. Additional details", "5. Document submission", "6. Visa submission", "7. Visa approval"]);
+        });
+
+        test("STAGE-JOB-006: the panel has exactly Job ID, Client name, Date and Note (plus the completion checkbox)", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders" }) } });
+            renderApp(OPEN);
+            expect(await screen.findByRole("heading", { name: "Job details" })).toBeInTheDocument();
+            expect(screen.getByLabelText("Job ID")).toBeInTheDocument();
+            expect(screen.getByLabelText("Client name")).toBeInTheDocument();
+            expect(screen.getByLabelText("Date")).toBeInTheDocument();
+            expect(screen.getByLabelText("Note")).toBeInTheDocument();
+            // Job ID and Client name (read-only), the DatePicker text field, and the Note text area: nothing else.
+            expect(screen.getAllByRole("textbox")).toHaveLength(4);
+            for (const label of ["Agent name", "Test ID", "Test result", "Test date", "Notes"]) expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+        });
+
+        test("STAGE-JOB-007, 008, 010, 011: the assigned Job code and Client name are shown, read-only", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders" }) } });
+            renderApp(OPEN);
+            expect(await screen.findByLabelText("Job ID")).toHaveValue("JOB-2026-000007");
+            expect(screen.getByLabelText("Client name")).toHaveValue("Acme Builders");
+            expect(screen.getByLabelText("Job ID")).toHaveAttribute("readonly");
+            expect(screen.getByLabelText("Client name")).toHaveAttribute("readonly");
+            const user = userEvent.setup();
+            await user.type(screen.getByLabelText("Job ID"), "FAKE-1");
+            await user.type(screen.getByLabelText("Client name"), "Fake Co");
+            expect(screen.getByLabelText("Job ID")).toHaveValue("JOB-2026-000007");
+            expect(screen.getByLabelText("Client name")).toHaveValue("Acme Builders");
+            expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+        });
+
+        test("STAGE-JOB-009: a candidate with no Job shows Not assigned, never stale values", async () => {
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: withJob() } });
+            renderApp(OPEN);
+            expect(await screen.findByLabelText("Job ID")).toHaveValue("Not assigned");
+            expect(screen.getByLabelText("Client name")).toHaveValue("Not assigned");
+            expect(screen.getByLabelText("Date")).toHaveValue("");
+            expect(screen.getByLabelText("Note")).toHaveValue("");
+            expect(screen.getByRole("checkbox", { name: "Stage completed" })).not.toBeChecked();
+        });
+
+        test("JOB-HISTORY: with no current Job, the latest earlier Job is shown read-only with a small status note; a current Job has no note", async () => {
+            const historical = (jobStatus: "COMPLETED" | "CANCELLED" | "REMOVED"): CandidateDetails => {
+                const base = withJob({ jobCode: "JOB-2026-000003", clientName: "Acme Builders", jobDate: "2026-10-05", notes: "kept", completed: true });
+                return { ...base, stages: base.stages.map((s) => (s.stage === "JOB_DETAILS" ? { ...s, jobSource: "HISTORICAL" as const, jobStatus } : s)) };
+            };
+            const notes = { COMPLETED: "Completed job (not current)", CANCELLED: "Cancelled job (not current)", REMOVED: "Candidate was removed from this job (not current)" } as const;
+            for (const status of ["COMPLETED", "CANCELLED", "REMOVED"] as const) {
+                signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: historical(status) } });
+                const view = renderApp(OPEN);
+                expect(await screen.findByLabelText("Job ID")).toHaveValue("JOB-2026-000003");
+                expect(screen.getByLabelText("Client name")).toHaveValue("Acme Builders");
+                expect(screen.getByLabelText("Job ID")).toHaveAttribute("readonly");
+                expect(screen.getByText(notes[status])).toBeInTheDocument();
+                expect(screen.getByLabelText("Date")).toHaveValue("2026-10-05");
+                expect(screen.getByLabelText("Note")).toHaveValue("kept");
+                view.unmount();
+            }
+            const current = withJob({ jobCode: "JOB-2026-000007", clientName: "Beta Foods" });
+            signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: { ...current, stages: current.stages.map((s) => (s.stage === "JOB_DETAILS" ? { ...s, jobSource: "CURRENT" as const, jobStatus: "PROCESSING" as const } : s)) } } });
+            renderApp(OPEN);
+            expect(await screen.findByLabelText("Job ID")).toHaveValue("JOB-2026-000007");
+            expect(screen.queryByText(/not current/)).not.toBeInTheDocument();
+        });
+
+        test("STAGE-JOB-012, 013, 014: Date, Note and completion are saved by the existing stage save, and only those are sent", async () => {
+            const saved = withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders", jobDate: "2026-10-05", notes: "Visa interview booked", completed: true });
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders" }) },
+                [PUT]: { status: 200, body: saved },
+            });
+            renderApp(OPEN);
+            const user = userEvent.setup();
+            await screen.findByLabelText("Job ID");
+            await user.type(screen.getByLabelText("Date"), "2026-10-05");
+            await user.type(screen.getByLabelText("Note"), "Visa interview booked");
+            await user.click(screen.getByRole("checkbox", { name: "Stage completed" }));
+            await user.click(screen.getByRole("button", { name: "Save changes" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Visa interview booked", completed: true, jobDate: "2026-10-05" }));
+            await vi.waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled());
+            expect(screen.getByLabelText("Date")).toHaveValue("2026-10-05");
+            expect(screen.getByLabelText("Note")).toHaveValue("Visa interview booked");
+            expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeChecked();
+        });
+
+        test("STAGE-JOB-022: a reload after the candidate moved to another Job shows the new Job and Client", async () => {
+            let current = withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders" });
+            signedInBackend({ "GET /api/admin/candidates/N0000002": () => ({ status: 200, body: current }) });
+            const view = renderApp(OPEN);
+            expect(await screen.findByLabelText("Job ID")).toHaveValue("JOB-2026-000007");
+            view.unmount();
+            current = withJob({ jobCode: "JOB-2026-000009", clientName: "Beta Foods" });
+            renderApp(OPEN);
+            expect(await screen.findByLabelText("Job ID")).toHaveValue("JOB-2026-000009");
+            expect(screen.getByLabelText("Client name")).toHaveValue("Beta Foods");
+        });
+
+        test("STAGE-JOB-024: a viewer sees Job details but cannot change Date, Note or completion", async () => {
+            signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders", jobDate: "2026-10-05" }) } });
+            renderApp(OPEN);
+            expect(await screen.findByLabelText("Date")).toBeDisabled();
+            expect(screen.getByLabelText("Note")).toBeDisabled();
+            expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeDisabled();
             expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
         });
     });
@@ -539,7 +867,7 @@ describe("Candidate deployment", () => {
         signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: done } });
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
         expect(await screen.findByText("Stage completed")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "2. Candidate details (completed out of order)" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "3. Candidate details (completed out of order)" })).toBeInTheDocument();
     });
 });
 
@@ -1217,6 +1545,31 @@ describe("Candidate History: calls and candidate activity", () => {
         expect(screen.queryByText("Showing the latest candidate activity only.")).toBeNull();
     });
 
+    test("FORM-LOG-002 / 003: a Candidate Form submission shows in the history with its date and time, next to the calls (which are unchanged)", async () => {
+        signedInBackend({
+            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
+            "GET /api/admin/candidates/N0000002/call-logs": {
+                status: 200,
+                body: {
+                    ...CALLS,
+                    activity: [
+                        { activityId: "form:submitted", kind: "CANDIDATE_FORM_SUBMITTED", occurredAt: "2026-10-12T03:15:00.000Z", actorName: null, source: null, documentType: null, variant: null, stage: null, fields: [], formLink: "JOB_GROUP", jobCode: "JOB-2026-000007" },
+                        ...CALLS.activity,
+                    ],
+                },
+            },
+        });
+        renderApp("/candidates/N0000002");
+        const items = await historyItems(await openCallLog());
+        expect(items[0].textContent).toBe("12 Oct 2026 · 08:45Candidate activityby the candidateCandidate Form submittedThrough the job form link (JOB-2026-000007)");
+        expect(items[0].getAttribute("data-kind")).toBe("candidate-activity");
+        // Both calls are still there, as before.
+        expect(items.filter((item) => item.getAttribute("data-kind") === "call-log").map((item) => item.textContent)).toEqual([
+            "11 Oct 2026 · 11:29Call logShamal SathsaraPassport is not uploaded. Need upload before 15 October.",
+            "07 Oct 2026 · 11:46Call logShamal SathsaraCalled candidate regarding missing documents.",
+        ]);
+    });
+
     test("an activity with no actor or source on record says neither", async () => {
         signedInBackend({
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
@@ -1285,7 +1638,7 @@ describe("Call log: No Answer", () => {
         const button = within(form).getByRole("button", { name: "No Answer" });
         expect(button).toBeEnabled();
         expect(button.textContent).toBe("No Answer");
-        expect(within(form).getAllByRole("button").map((b) => b.textContent)).toEqual(["", "Close", "No Answer", "Need Attention", "Add call"]);
+        expect(within(form).getAllByRole("button").map((b) => b.textContent)).toEqual(["", "", "Close", "No Answer", "Need Attention", "Add call"]); // the second "" is the date field's calendar button
         // Secondary, not the primary action.
         expect(button.className).not.toContain("bg-primary");
         expect(within(form).getByRole("button", { name: "Add call" }).className).toContain("bg-primary");
@@ -1641,17 +1994,24 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
         expect(calls.some((c) => c.method === "POST")).toBe(false);
     });
 
-    // The fields registration requires, nothing else.
-    async function fillRegistrationMinimum(user: ReturnType<typeof userEvent.setup>) {
+    // The six fields registration requires (REGISTRATION-REQ), nothing else.
+    async function fillRegistrationSix(user: ReturnType<typeof userEvent.setup>) {
         await user.type(await screen.findByLabelText("Surname *"), "SILVA");
         await user.type(screen.getByLabelText("Other names *"), "SAMAN");
         await user.type(screen.getByLabelText("NIC *"), "901234567V");
         await user.type(screen.getByLabelText("Passport ID *"), "n0000002");
-        await user.type(screen.getByLabelText("Job type *"), "Driver{Enter}");
-        await user.type(screen.getByLabelText("Job experience *"), "5 years");
+        // Job type: chosen from Settings > Job Types (loaded from the server), not typed.
+        await screen.findByRole("option", { name: "Driver" });
+        await user.selectOptions(screen.getByLabelText("Job type *"), "Driver");
         await user.type(screen.getByLabelText("WhatsApp number *"), "94771234567");
-        await user.type(screen.getByLabelText("Passport issue date *"), "2020-01-15");
-        await user.type(screen.getByLabelText("Passport expiry date *"), "2030-01-14");
+    }
+
+    // The six, plus job experience and the passport dates (optional to register, given here).
+    async function fillRegistrationMinimum(user: ReturnType<typeof userEvent.setup>) {
+        await fillRegistrationSix(user);
+        await user.type(screen.getByLabelText("Job experience"), "5 years");
+        await user.type(screen.getByLabelText("Passport issue date"), "2020-01-15");
+        await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-14");
     }
 
     async function fillRequired(user: ReturnType<typeof userEvent.setup>) {
@@ -1755,10 +2115,10 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
         renderApp("/candidates/new");
         const user = userEvent.setup();
         await fillRequired(user);
-        await user.clear(screen.getByLabelText("Passport issue date *"));
-        await user.type(screen.getByLabelText("Passport issue date *"), "2031-01-01");
-        await user.clear(screen.getByLabelText("Passport expiry date *"));
-        await user.type(screen.getByLabelText("Passport expiry date *"), "2030-01-01");
+        await user.clear(screen.getByLabelText("Passport issue date"));
+        await user.type(screen.getByLabelText("Passport issue date"), "2031-01-01");
+        await user.clear(screen.getByLabelText("Passport expiry date"));
+        await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-01");
         await user.clear(screen.getByLabelText("WhatsApp number *"));
         await user.type(screen.getByLabelText("WhatsApp number *"), "12");
         await user.type(screen.getByLabelText("Contact number"), "12");
@@ -1769,16 +2129,128 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
         expect(calls.some((c) => c.method === "POST")).toBe(false);
     });
 
-    test("the passport issue and expiry dates are required to register", async () => {
+    test("REGISTRATION-REQ-001 / 008 / 009 / 010 registers with ONLY the six required fields: no address, birth date, passport dates, job experience or passport file", async () => {
+        let created = false;
+        const { calls } = signedInBackend({
+            "POST /api/admin/candidates": () => { created = true; return { status: 201, body: { passportId: "N0000002", uniqueId: "0002" } }; },
+            "GET /api/admin/candidates/N0000002": () => (created ? { status: 200, body: DETAILS } : { status: 404, body: { message: "Candidate not found" } }),
+        });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await fillRegistrationSix(user);
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+        expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
+        expect(calls.find((c) => c.method === "POST" && c.path === "/api/admin/candidates")!.body).toMatchObject({
+            passportId: "N0000002", surname: "SILVA", otherNames: "SAMAN", nic: "901234567V", jobTypes: ["Driver"], whatsappNumber: "94771234567",
+            address: "", dateOfBirth: "", passportIssueDate: "", passportExpiryDate: "", jobExperience: "",
+        });
+        expect(calls.some((c) => c.path.endsWith("/documents/upload-target"))).toBe(false);
+    });
+
+    test("REGISTRATION-REQ-002..007 each of the six is required to register (marked with *), and nothing is sent without it", async () => {
+        const six: [string, string][] = [
+            ["Surname *", "Enter the surname."], ["Other names *", "Enter the other names."], ["NIC *", "Enter the NIC."],
+            ["Passport ID *", "Passport number must start with P or N followed by 7 digits. Example: P1234567"], ["Job type *", "Add at least one job type."], ["WhatsApp number *", "Enter the WhatsApp number."],
+        ];
+        for (const [label, message] of six) {
+            const { calls } = signedInBackend();
+            const view = renderApp("/candidates/new");
+            const user = userEvent.setup();
+            await fillRegistrationSix(user);
+            if (label === "Job type *") await user.click(screen.getByRole("button", { name: "Remove Driver" }));
+            else await user.clear(screen.getByLabelText(label));
+            await user.click(screen.getByRole("button", { name: "Register candidate" }));
+            expect(await screen.findByText(message), label).toBeInTheDocument();
+            expect(calls.some((c) => c.method === "POST"), label).toBe(false);
+            view.unmount();
+        }
+    });
+
+    test("REGISTRATION-REQ-011 / 014 every registration field is still there; only the six carry the required mark", async () => {
+        signedInBackend();
+        renderApp("/candidates/new");
+        await screen.findByLabelText("Surname *");
+        for (const label of ["Surname *", "Other names *", "NIC *", "Passport ID *", "Job type *", "WhatsApp number *"]) expect(screen.getByLabelText(label)).toBeInTheDocument();
+        for (const label of ["Job experience", "Passport issue date", "Passport expiry date", "Address", "Date of birth", "Place of birth", "Nationality", "Sex", "Contact number", "Passport", "NIC document", "Skill video", "Comment"]) {
+            expect(screen.getByLabelText(label), label).toBeInTheDocument();
+        }
+        expect(document.querySelectorAll("label .text-critical")).toHaveLength(6);
+    });
+
+    // The candidate-details fields in page order (label text without the " *" mark).
+    const FIELD_ORDER = [
+        "Surname", "Other names", "NIC", "WhatsApp number", "Passport ID", "Job type",
+        "Nationality", "Sex", "Date of birth", "Place of birth", "Passport issue date", "Passport expiry date", "Contact number", "Job experience", "Address",
+    ];
+    const REQUIRED_SIX = FIELD_ORDER.slice(0, 6);
+    const fieldLabelsInOrder = () => [...document.querySelectorAll("label")]
+        .map((label) => label.textContent?.replace(/\s*\*$/, "").trim() ?? "")
+        .filter((text) => FIELD_ORDER.includes(text));
+
+    test("REGISTRATION-ORDER-001..005 / 008 new registration: the six required fields come first (Surname | Other names, NIC | WhatsApp, Passport ID | Job type), then the optional ones", async () => {
+        signedInBackend();
+        renderApp("/candidates/new");
+        await screen.findByLabelText("Surname *");
+        expect(fieldLabelsInOrder()).toEqual(FIELD_ORDER);
+        // WhatsApp sits right after NIC, in the required area, not among the optional details.
+        const order = fieldLabelsInOrder();
+        expect(order.indexOf("WhatsApp number")).toBe(order.indexOf("NIC") + 1);
+        for (const label of REQUIRED_SIX) expect(order.indexOf(label), label).toBeLessThan(order.indexOf("Nationality"));
+        // Exactly six required marks, on exactly those six.
+        const marked = [...document.querySelectorAll("label")].filter((label) => label.querySelector(".text-critical")).map((label) => label.textContent?.replace(/\s*\*$/, ""));
+        expect(marked).toEqual(REQUIRED_SIX);
+        // Documents and the comment keep their place after the details.
+        // (Each file input also has its own visually-hidden "Choose file" label.)
+        const all = [...document.querySelectorAll("label")].map((label) => label.textContent?.replace(/\s*\*$/, "").trim()).filter((text) => text !== "Choose file");
+        expect(all.slice(all.indexOf("Address") + 1)).toEqual(["Passport", "NIC document", "Skill video", "Comment"]);
+    });
+
+    test("REGISTRATION-ORDER-006 / 007 every existing field still renders (nothing removed), in the new order", async () => {
+        signedInBackend();
+        renderApp("/candidates/new");
+        await screen.findByLabelText("Surname *");
+        for (const label of FIELD_ORDER) expect(screen.getByLabelText(new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( \\*)?$`)), label).toBeInTheDocument();
+        expect(fieldLabelsInOrder()).toHaveLength(15);
+    });
+
+    test("REGISTRATION-ORDER-009 validation is unchanged: the same six messages, each under its own field, and nothing is sent", async () => {
         const { calls } = signedInBackend();
         renderApp("/candidates/new");
         const user = userEvent.setup();
-        await fillRequired(user);
-        await user.clear(screen.getByLabelText("Passport issue date *"));
-        await user.clear(screen.getByLabelText("Passport expiry date *"));
+        await screen.findByLabelText("Surname *");
         await user.click(screen.getByRole("button", { name: "Register candidate" }));
-        expect(screen.getByText("Enter the passport issue date.")).toBeInTheDocument();
-        expect(screen.getByText("Enter the passport expiry date.")).toBeInTheDocument();
+        const messageUnder = (label: string) => screen.getByLabelText(label).closest("div:has(> label), div:has(label)")?.textContent ?? "";
+        expect(messageUnder("Surname *")).toContain("Enter the surname.");
+        expect(messageUnder("NIC *")).toContain("Enter the NIC.");
+        expect(screen.getByText("Enter the WhatsApp number.")).toBeInTheDocument();
+        expect(screen.getByText("Add at least one job type.")).toBeInTheDocument();
+        expect(screen.queryByText("Enter the job experience.")).toBeNull();
+        expect(screen.queryByText("Enter the passport issue date.")).toBeNull();
+        expect(calls.some((c) => c.method === "POST")).toBe(false);
+    });
+
+    test("REGISTRATION-ORDER-010 an existing candidate (Candidate Details) uses the same order, and every value is still in its own field", async () => {
+        signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+        renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
+        expect(await screen.findByLabelText("WhatsApp number *")).toHaveValue("94770000002");
+        expect(fieldLabelsInOrder()).toEqual(FIELD_ORDER);
+        expect(screen.getByLabelText("Passport ID *")).toHaveValue("N0000002");
+        expect(screen.getByLabelText("NIC *")).toHaveValue(DETAILS.candidate.nic);
+        expect(screen.getByLabelText("Surname *")).toHaveValue(DETAILS.candidate.surname);
+        expect(screen.getByLabelText("Passport issue date *")).toHaveValue("2020-05-12");
+    });
+
+    test("REGISTRATION-REQ-012 an optional value that is given is still checked (issue date after expiry, a bad contact number)", async () => {
+        const { calls } = signedInBackend();
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await fillRegistrationSix(user);
+        await user.type(screen.getByLabelText("Passport issue date"), "2031-01-01");
+        await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-01");
+        await user.type(screen.getByLabelText("Contact number"), "12");
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+        expect(screen.getByText("Must be before the expiry date.")).toBeInTheDocument();
+        expect(screen.getByText("Enter a phone number, e.g. 0771234567.")).toBeInTheDocument();
         expect(calls.some((c) => c.method === "POST")).toBe(false);
     });
 
@@ -2017,7 +2489,7 @@ describe("REGISTRATION_DESK: the whole Candidates area", () => {
         for (const upload of screen.getAllByRole("button", { name: /Upload|Replace/ })) expect(upload).toBeEnabled();
 
         const user = userEvent.setup();
-        await user.click(within(screen.getByRole("navigation", { name: "Deployment stages" })).getByRole("button", { name: /^6\. Visa approval/ }));
+        await user.click(within(screen.getByRole("navigation", { name: "Deployment stages" })).getByRole("button", { name: /^7. Visa approval/ }));
         expect(await screen.findByRole("checkbox", { name: "Stage completed" })).toBeEnabled();
         expect(screen.getByLabelText("Notes")).toBeEnabled();
     });
@@ -2162,10 +2634,11 @@ describe("WhatsApp number: fixed + prefix", () => {
         await user.type(screen.getByLabelText("Other names *"), "SAMAN");
         await user.type(screen.getByLabelText("NIC *"), "901234567V");
         await user.type(screen.getByLabelText("Passport ID *"), "N0000002");
-        await user.type(screen.getByLabelText("Job type *"), "Driver{Enter}");
-        await user.type(screen.getByLabelText("Job experience *"), "5 years");
-        await user.type(screen.getByLabelText("Passport issue date *"), "2020-01-15");
-        await user.type(screen.getByLabelText("Passport expiry date *"), "2030-01-14");
+        await screen.findByRole("option", { name: "Driver" });
+        await user.selectOptions(screen.getByLabelText("Job type *"), "Driver");
+        await user.type(screen.getByLabelText("Job experience"), "5 years");
+        await user.type(screen.getByLabelText("Passport issue date"), "2020-01-15");
+        await user.type(screen.getByLabelText("Passport expiry date"), "2030-01-14");
         await user.click(screen.getByRole("button", { name: "Register candidate" }));
         await screen.findByRole("navigation", { name: "Deployment stages" });
         expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ whatsappNumber: "447700900123" });
@@ -2229,8 +2702,8 @@ describe("field hints", () => {
         expect(screen.queryByRole("tooltip")).toBeNull();
     });
 
-    test("the hints state the rules actually applied (passport 6-9 letters and digits, no fixed prefix; mobile with country code; dates required)", () => {
-        expect(FIELD_HINTS.passportId).toMatch(/6 to 9 letters and digits/);
+    test("the hints state the rules actually applied (passport P or N + 7 digits, never PN; mobile with country code; dates required)", () => {
+        expect(FIELD_HINTS.passportId).toBe("Passport number must start with P or N followed by 7 digits. Example: P1234567");
         expect(FIELD_HINTS.passportId).not.toMatch(/\bPN\b/);
         expect(FIELD_HINTS.whatsappNumber).toMatch(/\+/);
         expect(FIELD_HINTS.passportIssueDate).toMatch(/Required/);

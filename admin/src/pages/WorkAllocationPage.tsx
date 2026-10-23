@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { ApiError } from "../api/client";
-import { STAGE_LABELS } from "../api/candidates";
+import { CANDIDATE_STAGES, STAGE_LABELS, type CandidateStageKey, type WorkflowStatus } from "../api/candidates";
+import { getJobTypeChoices } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
 import {
     assignCandidates,
+    autoAllocateCandidates,
     listAllocationAnalysts,
     listAllocationCandidates,
     unassignCandidates,
     type AllocationCandidate,
+    type AllocationFilters,
     type AllocationStatus,
 } from "../api/workAllocation";
 import { canManageAllocations, useAuth } from "../auth/AuthProvider";
@@ -17,17 +20,35 @@ import { ActionDialog, DialogError, dangerSolidButton, primaryButton, secondaryB
 import { formatDate, formatNumber } from "../components/format";
 import { Icon } from "../components/Icon";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
+import { DatePicker } from "../components/DatePicker";
+import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 
 // Admin > Work Allocation (ADMIN and MANAGER): assign candidates to
 // Analysts. The list is paged on the server (100 a page, newest registered
 // first), like Candidates. Selection is per page: Select all ticks the rows
-// on this page only, and changing page, view or search clears it, so a
+// on this page only, and changing page, view, search or a filter clears it, so a
 // selection can never silently grow beyond what is on screen. One request
 // assigns the whole selection (all or nothing on the server).
+// Filters (registration date range, job type, Status, current stage) are URL parameters sent to
+// the server, which applies them BEFORE paging: the count and every page are those of the whole
+// filtered list, never a filter over the rows already loaded.
 
 const th = "h-[34px] whitespace-nowrap border-b border-border bg-canvas px-3 text-left text-label-caps uppercase text-ink-subtle";
 const td = "h-11 border-b border-canvas-muted px-3 py-2 text-body-sm align-middle";
 const countInput = "h-8 w-16 rounded border border-border-strong bg-surface px-2 text-right text-body-sm tabular-nums text-ink focus:border-primary focus:shadow-focus focus:outline-none";
+
+// The filters (all applied on the server, before paging): URL parameter -> API filter.
+const FILTER_PARAMS = { from: "registeredFrom", to: "registeredTo", jobType: "jobType", wstatus: "workflowStatus", stage: "stage" } as const;
+const STATUS_OPTIONS: { code: WorkflowStatus["code"]; label: string }[] = [
+    { code: "REGISTERED", label: "Registered" },
+    { code: "STOPPED_WITH_TEST", label: "Stopped with Test" },
+    { code: "JOB_ASSIGNED", label: "Job Assigned" },
+    { code: "FORM_SUBMITTED", label: "Form Submitted" },
+    { code: "DETAILS_VERIFIED", label: "Details Verified" },
+    { code: "DOCUMENTS_VERIFIED", label: "Documents Verified" },
+    { code: "VISA_DOCUMENT_READY", label: "Visa Document Ready" },
+];
+const filterSelect = "h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
 
 const VIEWS: { status: AllocationStatus; label: string }[] = [
     { status: "UNALLOCATED", label: "Unallocated" },
@@ -59,18 +80,22 @@ function WorkAllocationView() {
     const pageNumber = Number(searchParams.get("page"));
     const page = Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber : 1;
 
-    const list = useAdminResource(`work-allocation?${searchParams.toString()}`, (t, signal) => listAllocationCandidates(t, { status, analystId: analystFilter, search, page }, signal));
+    const filters: AllocationFilters = Object.fromEntries(Object.entries(FILTER_PARAMS).map(([param, key]) => [key, searchParams.get(param) || null]));
+    const filtered = Object.values(filters).some(Boolean);
+    const list = useAdminResource(`work-allocation?${searchParams.toString()}`, (t, signal) => listAllocationCandidates(t, { status, analystId: analystFilter, search, page, filters }, signal));
+    const jobTypeChoices = useAdminResource("job-type-choices", (t, signal) => getJobTypeChoices(t, signal));
     const analysts = useAdminResource("work-allocation-analysts", (t, signal) => listAllocationAnalysts(t, signal));
 
     const [searchText, setSearchText] = useState(search ?? "");
     useEffect(() => setSearchText(search ?? ""), [search]);
     // Selected rows of the current page, in table order.
     const [selected, setSelected] = useState<Map<string, AllocationCandidate>>(new Map());
+    const [selectedAnalysts, setSelectedAnalysts] = useState<Set<string>>(new Set());
     const [counts, setCounts] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState(false);
     const [notice, setNotice] = useState<string | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
-    const [confirm, setConfirm] = useState<"reassign" | "unassign" | null>(null);
+    const [confirm, setConfirm] = useState<"reassign" | "unassign" | "allocate" | null>(null);
 
     // A new page, view or search starts with nothing selected.
     const listKey = searchParams.toString();
@@ -94,6 +119,7 @@ function WorkAllocationView() {
         event.preventDefault();
         go({ search: searchText.trim() || null });
     };
+    const clearFilters = () => go(Object.fromEntries(Object.keys(FILTER_PARAMS).map((param) => [param, null])));
 
     const items = list.status === "error" ? [] : list.data?.items ?? [];
     const allOnPage = items.length > 0 && items.every((item) => selected.has(item.passportId));
@@ -118,6 +144,22 @@ function WorkAllocationView() {
         const value = raw === "" ? 0 : Number(raw);
         return { analyst, raw, value, valid: raw === "" || (/^\d+$/.test(raw) && Number.isInteger(value)) };
     });
+    const toggleAnalyst = (id: string) => setSelectedAnalysts((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+    });
+    const allAnalystsSelected = activeAnalysts.length > 0 && activeAnalysts.every((a) => selectedAnalysts.has(a.analystId));
+    const toggleAllAnalysts = () => setSelectedAnalysts(allAnalystsSelected ? new Set() : new Set(activeAnalysts.map((a) => a.analystId)));
+    const selectedAnalystCount = selectedAnalysts.size;
+
+    const eligibleSelection = selection.filter((item) => !item.analyst);
+    const eligibleCount = eligibleSelection.length;
+    const equalAllocationCount = selectedAnalystCount > 0 ? Math.floor(eligibleCount / selectedAnalystCount) : 0;
+    const autoAllocatedTotal = equalAllocationCount * selectedAnalystCount;
+    const autoRemainder = eligibleCount - autoAllocatedTotal;
+
     const total = parsedCounts.reduce((sum, entry) => sum + (entry.valid ? entry.value : 0), 0);
     const invalidCount = parsedCounts.some((entry) => !entry.valid);
     const validation = useMemo(() => {
@@ -144,6 +186,33 @@ function WorkAllocationView() {
             setConfirm(null);
             clearSelection();
             reloadAll();
+        }
+    };
+
+    const runAutoAllocate = async () => {
+        if (!token || !selectedCount || !selectedAnalystCount || busy) return;
+        setBusy(true);
+        setActionError(null);
+        setNotice(null);
+        try {
+            const result = await autoAllocateCandidates(token, {
+                candidateIds: selection.map((item) => item.passportId),
+                analystIds: [...selectedAnalysts],
+            });
+            const remainderText = result.remainderCount > 0
+                ? ` ${formatNumber(result.remainderCount)} ${result.remainderCount === 1 ? "candidate remains" : "candidates remain"} unallocated.`
+                : "";
+            const skippedText = result.skippedCount > 0
+                ? ` (${formatNumber(result.skippedCount)} already allocated ${result.skippedCount === 1 ? "candidate was" : "candidates were"} skipped)`
+                : "";
+            setNotice(`${formatNumber(result.allocatedCount)} candidates allocated successfully. ${formatNumber(result.analystCount)} analysts received ${formatNumber(result.equalAllocationCount)} candidates each.${remainderText}${skippedText}`);
+            setConfirm(null);
+            clearSelection();
+            reloadAll();
+        } catch (error) {
+            failed(error);
+        } finally {
+            setBusy(false);
         }
     };
 
@@ -206,7 +275,9 @@ function WorkAllocationView() {
         setSearchParams(next, { replace: true });
         // searchParams is read once per recovery; the list key changes with it.
     }, [pastLastPage, lastPage]);
-    const emptyTitle = search
+    const emptyTitle = filtered
+        ? "No candidates match these filters."
+        : search
         ? "No candidates match this search."
         : page > 1
             ? "There are no candidates on this page."
@@ -254,6 +325,52 @@ function WorkAllocationView() {
                 </form>
             </div>
 
+            <section aria-label="Filters" className="rounded-lg border border-border bg-surface p-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto] lg:items-end">
+                    <label className="block text-label-sm text-ink-muted" htmlFor="allocation-from">
+                        Registered from
+                        <DatePicker id="allocation-from" value={searchParams.get("from") ?? ""} max={searchParams.get("to") ?? undefined} clearable onChange={(date) => go({ from: date || null })} className={`${filterSelect} mt-1`} />
+                    </label>
+                    <label className="block text-label-sm text-ink-muted" htmlFor="allocation-to">
+                        Registered to
+                        <DatePicker id="allocation-to" value={searchParams.get("to") ?? ""} min={searchParams.get("from") ?? undefined} clearable onChange={(date) => go({ to: date || null })} className={`${filterSelect} mt-1`} />
+                    </label>
+                    <label className="block text-label-sm text-ink-muted">
+                        Job type
+                        <select aria-label="Job type" value={searchParams.get("jobType") ?? ""} onChange={(event) => go({ jobType: event.target.value || null })} className={`${filterSelect} mt-1`}>
+                            <option value="">All job types</option>
+                            {(() => {
+                                const names = [...(jobTypeChoices.data?.jobTypes ?? []), ...(jobTypeChoices.data ? [jobTypeChoices.data.noPreference.code] : [])];
+                                const chosen = searchParams.get("jobType");
+                                if (chosen && !names.includes(chosen)) names.push(chosen);
+                                return names.map((name) => <option key={name} value={name}>{name === jobTypeChoices.data?.noPreference.code ? jobTypeChoices.data.noPreference.label : name}</option>);
+                            })()}
+                        </select>
+                    </label>
+                    <label className="block text-label-sm text-ink-muted">
+                        Status
+                        <select aria-label="Status" value={searchParams.get("wstatus") ?? ""} onChange={(event) => go({ wstatus: event.target.value || null })} className={`${filterSelect} mt-1`}>
+                            <option value="">All statuses</option>
+                            {STATUS_OPTIONS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+                        </select>
+                    </label>
+                    <label className="block text-label-sm text-ink-muted">
+                        Current stage
+                        <select aria-label="Current stage" value={searchParams.get("stage") ?? ""} onChange={(event) => go({ stage: event.target.value || null })} className={`${filterSelect} mt-1`}>
+                            <option value="">All stages</option>
+                            {CANDIDATE_STAGES.map((stage: CandidateStageKey) => <option key={stage} value={stage}>{STAGE_LABELS[stage]}</option>)}
+                            <option value="COMPLETE">All stages completed</option>
+                        </select>
+                    </label>
+                    <button type="button" onClick={clearFilters} disabled={!filtered} className={`${secondaryButton} w-full lg:w-auto`}>Clear filters</button>
+                </div>
+                {filtered && data && (
+                    <p className="mt-2 text-label-sm text-ink-muted" aria-live="polite">
+                        {formatNumber(data.pagination.total)} {data.pagination.total === 1 ? "candidate matches" : "candidates match"} the filters (all pages).
+                    </p>
+                )}
+            </section>
+
             {notice && <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
             {actionError && !confirm && <p role="alert" className="rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">{actionError}</p>}
 
@@ -282,7 +399,9 @@ function WorkAllocationView() {
                     {data && data.items.length === 0 && !pastLastPage && (
                         <EmptyState
                             title={emptyTitle}
-                            action={search
+                            action={filtered
+                                ? <button type="button" onClick={clearFilters} className="text-label-md text-primary hover:underline">Clear filters</button>
+                                : search
                                 ? <button type="button" onClick={() => go({ search: null })} className="text-label-md text-primary hover:underline">Clear search</button>
                                 : page > 1
                                     ? <button type="button" onClick={() => go({ page: null })} className="text-label-md text-primary hover:underline">Go to the first page</button>
@@ -329,6 +448,7 @@ function WorkAllocationView() {
                                                     <td className={`${td} text-ink-muted`}>
                                                         <span className="block">{item.currentStage ? STAGE_LABELS[item.currentStage] : "All stages completed"}</span>
                                                         <span className="block text-label-sm tabular-nums text-ink-subtle">{item.stagesCompleted}/{item.stagesTotal}</span>
+                                                        {item.workflowStatus && <span className="mt-1 block"><WorkflowStatusBadge status={item.workflowStatus} /></span>}
                                                     </td>
                                                     <td className={`${td} text-ink-muted`}>
                                                         {item.analyst ? (
@@ -367,14 +487,31 @@ function WorkAllocationView() {
                     )}
                     {activeAnalysts.length > 0 && (
                         <>
-                            <ul aria-label="Analysts" className="mt-3 divide-y divide-border">
+                            <div className="mt-3 flex items-center justify-between border-b border-border pb-1.5 text-label-sm">
+                                <span className="text-ink-soft">{formatNumber(selectedAnalystCount)} of {formatNumber(activeAnalysts.length)} Analysts selected</span>
+                                <button type="button" onClick={toggleAllAnalysts} disabled={busy} className="text-primary hover:underline">
+                                    {allAnalystsSelected ? "Deselect all" : "Select all"}
+                                </button>
+                            </div>
+                            <ul aria-label="Analysts" className="divide-y divide-border">
                                 {parsedCounts.map(({ analyst, raw, value, valid }) => (
                                     <li key={analyst.analystId} className="flex items-center gap-2 py-2">
+                                        <input
+                                            type="checkbox"
+                                            aria-label={`Select ${analyst.name}`}
+                                            checked={selectedAnalysts.has(analyst.analystId)}
+                                            onChange={() => toggleAnalyst(analyst.analystId)}
+                                            disabled={busy}
+                                            className="size-4 accent-primary"
+                                        />
                                         <div className="min-w-0 flex-1">
                                             <p className="truncate text-body-sm text-ink">{analyst.name}</p>
                                             <p className="text-label-sm text-ink-subtle tabular-nums">
                                                 {formatNumber(analyst.assignedCount)} {analyst.assignedCount === 1 ? "candidate" : "candidates"}
                                                 {valid && value > 0 && <span className="text-primary"> → {formatNumber(analyst.assignedCount + value)}</span>}
+                                                {selectedAnalysts.has(analyst.analystId) && equalAllocationCount > 0 && !value && (
+                                                    <span className="font-medium text-primary"> (+{formatNumber(equalAllocationCount)})</span>
+                                                )}
                                             </p>
                                         </div>
                                         <button type="button" onClick={() => giveAllTo(analyst.analystId)} disabled={!selectedCount || busy} className="text-label-sm text-primary hover:underline disabled:text-ink-subtle disabled:no-underline">All</button>
@@ -392,14 +529,55 @@ function WorkAllocationView() {
                                     </li>
                                 ))}
                             </ul>
-                            <p className="mt-2 flex justify-between border-t border-border pt-2 text-label-md tabular-nums">
-                                <span className="text-ink-soft">Total</span>
-                                <span className={selectedCount && total === selectedCount ? "text-verified" : "text-ink"}>{formatNumber(total)} / {formatNumber(selectedCount)}</span>
-                            </p>
-                            {validation && selectedCount > 0 && <p className="mt-1 text-label-sm text-ink-muted">{validation}</p>}
-                            <button type="button" onClick={onAssign} disabled={Boolean(validation) || busy} className={`${primaryButton} mt-3 w-full`}>
-                                {busy && !confirm ? "Saving…" : alreadyAllocated.length ? `Reassign ${formatNumber(selectedCount)} candidates` : `Assign ${formatNumber(selectedCount)} candidates`}
+
+                            <div className="mt-3 space-y-1.5 rounded border border-border bg-canvas p-3 text-body-sm">
+                                <div className="flex justify-between text-ink">
+                                    <span className="text-ink-muted">Selected candidates:</span>
+                                    <span className="font-medium tabular-nums">{formatNumber(selectedCount)}</span>
+                                </div>
+                                <div className="flex justify-between text-ink">
+                                    <span className="text-ink-muted">Selected analysts:</span>
+                                    <span className="font-medium tabular-nums">{formatNumber(selectedAnalystCount)}</span>
+                                </div>
+                                <div className="flex justify-between text-ink">
+                                    <span className="text-ink-muted">Each analyst will receive:</span>
+                                    <span className="font-medium tabular-nums text-primary">{formatNumber(equalAllocationCount)}</span>
+                                </div>
+                                <div className="flex justify-between text-ink">
+                                    <span className="text-ink-muted">Remaining unallocated:</span>
+                                    <span className={`font-medium tabular-nums ${autoRemainder > 0 ? "font-semibold text-pending" : "text-ink"}`}>{formatNumber(autoRemainder)}</span>
+                                </div>
+                                {alreadyAllocated.length > 0 && (
+                                    <p className="border-t border-border pt-1 text-label-sm text-review">
+                                        {formatNumber(alreadyAllocated.length)} already allocated will be skipped
+                                    </p>
+                                )}
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => setConfirm("allocate")}
+                                disabled={!selectedCount || !selectedAnalystCount || busy}
+                                className={`${primaryButton} mt-3 w-full`}
+                            >
+                                {busy && confirm === "allocate" ? "Allocating…" : "Allocate"}
                             </button>
+
+                            <div className="mt-3 border-t border-border pt-2">
+                                <p className="flex justify-between text-label-sm tabular-nums text-ink-muted">
+                                    <span>Manual total</span>
+                                    <span className={selectedCount && total === selectedCount ? "font-medium text-verified" : "text-ink"}>{formatNumber(total)} / {formatNumber(selectedCount)}</span>
+                                </p>
+                                {validation && selectedCount > 0 && total > 0 && <p className="mt-1 text-label-sm text-ink-muted">{validation}</p>}
+                                <button
+                                    type="button"
+                                    onClick={onAssign}
+                                    disabled={Boolean(validation) || busy}
+                                    className={`${secondaryButton} mt-2 w-full`}
+                                >
+                                    {busy && !confirm ? "Saving…" : alreadyAllocated.length ? `Reassign ${formatNumber(selectedCount)} candidates` : `Assign ${formatNumber(selectedCount)} candidates`}
+                                </button>
+                            </div>
                         </>
                     )}
                     {alreadyAllocated.length > 0 && (
@@ -409,6 +587,54 @@ function WorkAllocationView() {
                     )}
                 </Card>
             </div>
+
+            {confirm === "allocate" && (
+                <ActionDialog title="Confirm Allocation" busy={busy} onClose={() => setConfirm(null)}>
+                    <div className="space-y-3 text-body-sm text-ink-soft">
+                        <p>
+                            {formatNumber(autoAllocatedTotal)} {autoAllocatedTotal === 1 ? "candidate" : "candidates"} will be allocated equally across {formatNumber(selectedAnalystCount)} {selectedAnalystCount === 1 ? "analyst" : "analysts"}.
+                        </p>
+                        <p>
+                            {formatNumber(equalAllocationCount)} {equalAllocationCount === 1 ? "candidate" : "candidates"} will be assigned to each analyst.
+                        </p>
+                        {autoRemainder > 0 && (
+                            <p className="font-medium text-pending">
+                                {formatNumber(autoRemainder)} selected {autoRemainder === 1 ? "candidate" : "candidates"} will remain unallocated.
+                            </p>
+                        )}
+                        {alreadyAllocated.length > 0 && (
+                            <p className="text-label-sm text-review">
+                                {formatNumber(alreadyAllocated.length)} already allocated {alreadyAllocated.length === 1 ? "candidate" : "candidates"} will be skipped and remain with their current analysts.
+                            </p>
+                        )}
+                        <div className="space-y-1 rounded border border-border bg-canvas p-3 text-label-sm">
+                            <div className="flex justify-between">
+                                <span className="text-ink-muted">Selected candidates:</span>
+                                <span className="tabular-nums font-medium">{formatNumber(selectedCount)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-ink-muted">Selected analysts:</span>
+                                <span className="tabular-nums font-medium">{formatNumber(selectedAnalystCount)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-ink-muted">Each analyst will receive:</span>
+                                <span className="tabular-nums font-medium text-primary">{formatNumber(equalAllocationCount)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-ink-muted">Remaining unallocated:</span>
+                                <span className={`tabular-nums font-medium ${autoRemainder > 0 ? "font-semibold text-pending" : ""}`}>{formatNumber(autoRemainder)}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <DialogError message={actionError} />
+                    <div className="mt-4 flex justify-end gap-2">
+                        <button type="button" onClick={() => setConfirm(null)} disabled={busy} className={secondaryButton}>Cancel</button>
+                        <button type="button" onClick={runAutoAllocate} disabled={busy} className={primaryButton}>
+                            {busy ? "Allocating…" : "Allocate"}
+                        </button>
+                    </div>
+                </ActionDialog>
+            )}
 
             {confirm === "reassign" && (
                 <ActionDialog title="Reassign candidates?" busy={busy} onClose={() => setConfirm(null)}>

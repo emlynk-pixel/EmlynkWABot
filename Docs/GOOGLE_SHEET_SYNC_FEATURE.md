@@ -772,3 +772,29 @@ Use this checklist to track the final completion status for production release:
 - [ ] **Production Cloud Scheduler job configured, tested, and verified**
 - [ ] **Stage preview deployment verified**
 - [ ] **Pull Request prepared and approved by senior developers**
+
+---
+
+## Candidate Form submissions tab (`Candidate Form Submissions`)
+
+A second, independent sync in the same worker process and spreadsheet. The operational mirror above
+(41 columns, scheduled reconciliations, `sheet_sync_queue`) is untouched.
+
+- **Flow:** a successful Candidate Form submit writes `candidate_form_response` and one
+  `candidate_form_sheet_sync` row in the same transaction. The sheet-sync worker takes due rows every
+  tick (only while `SHEET_SYNC_ENABLED=true`, under the same writer lease) and writes each submission to
+  the `Candidate Form Submissions` tab of the active destination's spreadsheet. The public submit never
+  calls or waits for Google.
+- **Tab:** `SHEET_FORM_SUBMISSIONS_TAB_NAME` (default `Candidate Form Submissions`); it must not be the
+  mirror's tab (refused). Row 1 is created only when the tab is completely empty; otherwise every column
+  of `src/services/formSubmissionSheetSchema.js` must be present exactly once (any order, operator columns
+  allowed); anything else stops the sync (`SCHEMA_INVALID`) and nothing is repaired or written.
+- **Keys:** `_SYSTEM_CANDIDATE_ID` (candidate unique ID) and `_SUBMISSION_ID` (the outbox row's stable ID).
+  The `_SUBMISSION_ID` column is read before every write: a submission already in the tab is rewritten in
+  place, never appended again.
+- **Failures:** retryable errors back off (15 s, x4, capped at 15 min) without limit; configuration
+  problems are re-checked every 15 min without using up attempts; any other error is dead-lettered after
+  5 attempts (`status = 'FAILED'`; `requeueFailed` or an `UPDATE ... SET status = 'PENDING'` puts it back).
+- **Existing submissions** (submitted before this feature) are not sent automatically. To send them, insert
+  one outbox row each: `INSERT INTO candidate_form_sheet_sync (passport_id) SELECT passport_id FROM candidate_form_response ON CONFLICT DO NOTHING;`
+

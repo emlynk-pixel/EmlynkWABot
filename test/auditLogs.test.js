@@ -55,6 +55,8 @@ beforeEach(async () => {
     await pg.exec(`
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
         DELETE FROM "documents"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
+        -- The active job types this suite's candidates use (Settings > Job Types).
+        INSERT INTO "job_type" ("code", "name") VALUES ('CAREGIVER_SEED', 'Caregiver') ON CONFLICT DO NOTHING;
         DELETE FROM "sheet_sync_queue";
     `);
 });
@@ -160,12 +162,12 @@ describe("candidate activity is audited", () => {
     test("test details record only what changed; a no-op stage save is not audited", async () => {
         await register();
         const save = (body) => updateStage({ db: prisma, passportId: "N1023757", stage: "TEST_DETAILS", values: stage("TEST_DETAILS", body), actor: profile("ADMIN") });
-        await save({ jobId: "J-1", testResult: "PASS", testDate: "2026-09-28" });
-        await save({ jobId: "J-1", testResult: "PASS", testDate: "2026-09-28" });
+        await save({ testId: "T-1", testResult: "PASS", testDate: "2026-09-28" });
+        await save({ testId: "T-1", testResult: "PASS", testDate: "2026-09-28" });
         await save({ completed: false });
         const stages = (await auditRows()).filter((r) => r.action === "UPDATE_STAGE");
         assert.equal(stages.length, 1, "neither the repeat nor 'not completed' on a stage that isn't is a change");
-        assert.deepEqual(JSON.parse(stages[0].newValue), { stage: "TEST_DETAILS", jobId: "J-1", testResult: "PASS", testDate: "2026-09-28" });
+        assert.deepEqual(JSON.parse(stages[0].newValue), { stage: "TEST_DETAILS", testId: "T-1", testResult: "PASS", testDate: "2026-09-28" });
         assert.equal(stages[0].previousStatus, stages[0].newStatus);
         assert.equal(stages[0].reason, null);
 
@@ -280,7 +282,7 @@ describe("GET /api/admin/audit-logs", () => {
 
             assert.deepEqual(body.filters.users.map((u) => u.name), ["Ada Admin", "Ali Analyst", "Dee Desk", "Mia Manager"]);
             assert.ok(body.filters.actions.includes("UPDATE_STAGE"));
-            assert.deepEqual(body.filters.categories.map((c) => c.category), ["CANDIDATE", "STAGE", "DOCUMENT", "REVIEW", "USER", "OTHER"]);
+            assert.deepEqual(body.filters.categories.map((c) => c.category), ["CANDIDATE", "JOB", "AGENT", "CLIENT", "STAGE", "DOCUMENT", "REVIEW", "USER", "OTHER"]);
         });
     });
 

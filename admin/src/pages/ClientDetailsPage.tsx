@@ -4,6 +4,7 @@ import { getClientDetails, setPoliceDate, type ClientDetails } from "../api/admi
 import { ApiError } from "../api/client";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth, canCorrectPoliceDates } from "../auth/AuthProvider";
+import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../components/Dialog";
 import { DocumentsTable } from "../components/DocumentsTable";
 import { documentTypeLabel, formatDate, formatDateTime, formatDay, todayInSriLanka } from "../components/format";
@@ -11,6 +12,7 @@ import { Icon } from "../components/Icon";
 import { daysLeftLabel, policeStatusLabel } from "../components/policeLabels";
 import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
 import { StatusBadge, ToneBadge, statusTone } from "../components/StatusBadge";
+import { DatePicker } from "../components/DatePicker";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
     return (
@@ -108,15 +110,14 @@ function PoliceDateDialog({ slip, onClose, onSaved }: { slip: NonNullable<Client
                 <label htmlFor="slip-date" className="mt-3 block text-label-md text-ink">
                     Submitted date on the police slip <span aria-hidden="true" className="text-critical">*</span>
                 </label>
-                <input
+                <DatePicker
                     id="slip-date"
-                    type="date"
                     min="2000-01-01"
                     max={today}
                     value={date}
                     disabled={busy}
-                    onChange={(event) => {
-                        setDate(event.target.value);
+                    onChange={(next) => {
+                        setDate(next);
                         setFieldError(null);
                     }}
                     className="mt-1 h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
@@ -152,6 +153,7 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
     const missing = data.missingDocumentTypes;
     const [dateDialog, setDateDialog] = useState(false);
     const [notice, setNotice] = useState<string | null>(null);
+    useBreadcrumbLabel(`${client.name ?? client.passportId} (${client.passportId})`);
     const slip = data.police.latestSlip;
     const { user } = useAuth();
     const canSetPoliceDate = canCorrectPoliceDates(user);
@@ -159,11 +161,6 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
     return (
         <div className="space-y-6">
             <div className="space-y-1">
-                <nav aria-label="Breadcrumb" className="text-label-sm text-ink-muted">
-                    <Link to="/clients" className="hover:text-primary">Clients</Link>
-                    <span aria-hidden="true" className="px-1.5">/</span>
-                    <span className="text-ink">{client.name ?? client.passportId} ({client.passportId})</span>
-                </nav>
                 <div className="flex flex-wrap items-center gap-3">
                     <h1 id="page-title" className="text-headline-xl text-ink">{client.name ?? client.passportId}</h1>
                     <span className="rounded bg-canvas-muted px-2 py-0.5 text-label-caps uppercase text-ink-muted">Unique ID {client.uniqueId}</span>

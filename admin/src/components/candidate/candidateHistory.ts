@@ -83,6 +83,12 @@ export function describeActivity(activity: CandidateActivity): { title: string; 
             return { title: `${stageLabel(activity)} marked incomplete`, detail: null, byline: by };
         case "STAGE_UPDATED":
             return { title: `${stageLabel(activity)} updated`, detail: null, byline: by };
+        case "CANDIDATE_FORM_SUBMITTED":
+            return {
+                title: "Candidate Form submitted",
+                detail: activity.formLink === "JOB_GROUP" ? `Through the job form link${activity.jobCode ? ` (${activity.jobCode})` : ""}` : activity.formLink === "SINGLE" ? "Through the candidate's own form link" : null,
+                byline: "by the candidate",
+            };
         default:
             return { title: "Candidate updated", detail: null, byline: by };
     }

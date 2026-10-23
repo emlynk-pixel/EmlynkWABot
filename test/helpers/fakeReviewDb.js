@@ -175,6 +175,8 @@ export function createFakeReviewDb({ admins = [], users = [], temporaryData = []
         if (/FROM "candidate"/.test(sql)) return tables.candidate.filter((u) => u.passportId === value).map((u) => ({ passport_id: u.passportId }));
         if (/FROM "temporary_data"/.test(sql)) return tables.temporaryData.filter((t) => t.temporaryId === value).map((t) => ({ temporary_id: t.temporaryId }));
         if (/FROM "documents"/.test(sql)) return tables.document.filter((d) => d.documentId === value).map((d) => ({ document_id: d.documentId }));
+        // The signed-in user named for the transaction (auditActor.js): nothing to store in a fake.
+        if (/set_config/.test(sql)) return [];
         throw new Error(`fakeReviewDb: unexpected raw query ${sql}`);
     }
 

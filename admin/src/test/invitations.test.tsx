@@ -1,6 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { ADMIN, SESSION_TOKEN, renderApp, signedInBackend, userWithRole } from "./helpers";
 
 const USERS = [
@@ -11,20 +11,20 @@ const USERS = [
 const list = { status: 200, body: { users: USERS } };
 
 describe("Invite User page", () => {
-    test("ADMIN: invite form with all four roles, and the user list with statuses", async () => {
+    test("ADMIN: invite form with all five roles, and the user list with statuses", async () => {
         signedInBackend({ "GET /api/admin/users": list });
         renderApp("/invitations");
         expect(await screen.findByRole("heading", { name: "Invite User" })).toBeInTheDocument();
         const roleOptions = within(screen.getByRole("combobox", { name: /^Role/ })).getAllByRole("option").map((o) => o.getAttribute("value"));
-        expect(roleOptions).toEqual(["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]);
+        expect(roleOptions).toEqual(["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         expect(await screen.findByText("Pending Person")).toBeInTheDocument();
         expect(screen.getByText("Invitation sent")).toBeInTheDocument();
         expect(screen.getByText("Inactive")).toBeInTheDocument();
         expect(screen.queryByText(/VIEWER/i)).not.toBeInTheDocument();
     });
 
-    test("non-ADMIN roles see Access Restricted and request nothing", async () => {
-        for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+    test("ANALYST, REGISTRATION_DESK and JOB_HANDLER see Access Restricted and request nothing", async () => {
+        for (const role of ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } } });
             const { unmount } = renderApp("/invitations");
             expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
@@ -76,7 +76,6 @@ describe("Invite User page", () => {
     });
 
     test("pending invitations can be resent or revoked; the signed-in admin can't deactivate themself", async () => {
-        vi.spyOn(window, "confirm").mockReturnValue(true);
         const { calls } = signedInBackend({
             "GET /api/admin/users": list,
             "POST /api/admin/users/u-2/deactivate": { status: 200, body: { user: { ...USERS[1], status: "INACTIVE" } } },
@@ -85,6 +84,8 @@ describe("Invite User page", () => {
         const row = (await screen.findByText("Pending Person")).closest("tr") as HTMLElement;
         expect(within(row).getByRole("button", { name: "Resend invitation" })).toBeInTheDocument();
         await userEvent.setup().click(within(row).getByRole("button", { name: "Revoke invitation" }));
+        const dialog = await screen.findByRole("dialog", { name: "Revoke Invitation" });
+        await userEvent.setup().click(within(dialog).getByRole("button", { name: "Revoke invitation" }));
         expect(calls.some((c) => c.method === "POST" && c.path === "/api/admin/users/u-2/deactivate")).toBe(true);
 
         const selfRow = screen.getByText(ADMIN.email).closest("tr") as HTMLElement;

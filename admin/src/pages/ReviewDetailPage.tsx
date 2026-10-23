@@ -28,6 +28,7 @@ import { useAdminResource } from "../api/useAdminResource";
 import { useAuth, canReview, canCorrectPoliceDates } from "../auth/AuthProvider";
 import { Confidence } from "../components/Confidence";
 import { documentTypeLabel, formatDateTime, formatDay, formatFileSize, humanize, shortId, todayInSriLanka } from "../components/format";
+import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { ActionDialog, DialogError, dangerButton, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
 import { Icon } from "../components/Icon";
 import { AUDIT_ACTIONS, FAILURE_REASONS, IDENTITY_NOTES, REVIEW_REASONS, failureLabel, reviewReasonLabel, reviewReasonTone } from "../components/reviewLabels";
@@ -35,6 +36,7 @@ import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../c
 import { StatusBadge, ToneBadge } from "../components/StatusBadge";
 import { HelpTip } from "../components/Form";
 import { inputClass, textareaClass } from "../components/ui";
+import { DatePicker } from "../components/DatePicker";
 
 // The file is fetched through the backend with the admin's token and shown
 // from a local blob: URL (released when the page closes).
@@ -245,6 +247,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     const identity = item.processing?.identity;
     const idLabel = shortId((item.document.documentId ?? item.document.temporaryId ?? item.reviewId.replace(/^(pending|document|failed)-/, "")));
     const isFailed = item.kind === "FAILED";
+    useBreadcrumbLabel(idLabel);
     const failure = isFailed ? FAILURE_REASONS[item.failure?.code ?? ""] : undefined;
 
     const [dialog, setDialog] = useState<"approve" | "keep" | "remove" | "deleteTemporary" | "type" | "client" | "retry" | "replace" | "version" | null>(null);
@@ -557,10 +560,6 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
         return (
             <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2 text-label-md">
-                    <Link to="/review" className="inline-flex items-center gap-1 text-primary hover:underline">
-                        <Icon name="chevron_left" className="size-4" />Review Queue
-                    </Link>
-                    <span aria-hidden="true" className="text-ink-subtle">/</span>
                     <h1 id="page-title" className="font-semibold text-ink">{idLabel}</h1>
                 </div>
                 <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">
@@ -579,10 +578,6 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
     return (
         <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2 text-label-md">
-                <Link to="/review" className="inline-flex items-center gap-1 text-primary hover:underline">
-                    <Icon name="chevron_left" className="size-4" />Review Queue
-                </Link>
-                <span aria-hidden="true" className="text-ink-subtle">/</span>
                 <h1 id="page-title" className="font-semibold text-ink">{idLabel}</h1>
                 <span className="text-label-sm text-ink-muted">{item.kind === "PENDING" ? "Waiting file" : isFailed ? "Failed submission" : "Stored document"}</span>
             </div>
@@ -806,18 +801,17 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             <label htmlFor="police-date" className="block text-label-md text-ink">
                                 Submitted date on the police slip <span aria-hidden="true" className="text-critical">*</span>
                             </label>
-                            <input
+                            <DatePicker
                                 id="police-date"
-                                type="date"
                                 required
                                 min="2000-01-01"
                                 max={todayInSriLanka()}
                                 value={policeDate}
                                 disabled={busy}
-                                aria-invalid={policeDateError ? "true" : undefined}
-                                aria-describedby={policeDateError ? "police-date-error" : "police-date-hint"}
-                                onChange={(event) => {
-                                    setPoliceDate(event.target.value);
+                                invalid={Boolean(policeDateError)}
+                                describedBy={policeDateError ? "police-date-error" : "police-date-hint"}
+                                onChange={(next) => {
+                                    setPoliceDate(next);
                                     setPoliceDateError(null);
                                     setError(null);
                                 }}
@@ -1059,18 +1053,17 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                                     <span aria-hidden="true" className="text-label-md text-critical">*</span>
                                     <HelpTip label="Submitted date on the police slip" text="The date printed on the police slip. The 21-day wait for the final police report is counted from it." />
                                 </div>
-                                <input
+                                <DatePicker
                                     id="replace-police-date"
-                                    type="date"
                                     required
-                                    aria-invalid={replacePoliceDateError ? "true" : undefined}
-                                    aria-describedby={replacePoliceDateError ? "replace-police-date-error" : undefined}
+                                    invalid={Boolean(replacePoliceDateError)}
+                                    describedBy={replacePoliceDateError ? "replace-police-date-error" : undefined}
                                     min="2000-01-01"
                                     max={todayInSriLanka()}
                                     value={replacePoliceDate}
                                     disabled={busy}
-                                    onChange={(event) => {
-                                        setReplacePoliceDate(event.target.value);
+                                    onChange={(next) => {
+                                        setReplacePoliceDate(next);
                                         setReplacePoliceDateError(null);
                                     }}
                                     className={inputClass(Boolean(replacePoliceDateError), { extra: "mt-1" })}

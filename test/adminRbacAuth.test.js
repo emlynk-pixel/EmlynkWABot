@@ -22,34 +22,37 @@ const user = (role, status = "ACTIVE") => ({ adminId: `user-${role}-${status}`, 
 const USERS = [...ALL_ROLES.map((role) => user(role)), user("VIEWER"), user("ADMIN", "INACTIVE"), user("ANALYST", "INVITED")];
 const DOCUMENT_ID = "00000000-0000-4000-8000-000000000001";
 const CANDIDATE_STAFF = ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"];
+// JOB_HANDLER reads candidates (never writes them).
+const CANDIDATE_READERS = [...CANDIDATE_STAFF, "JOB_HANDLER"];
 
 // [method, path, body, roles allowed]
 const MATRIX = [
     ["GET", "/overview", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
     ["GET", "/documents", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
     ["GET", "/reports/daily", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
-    ["GET", "/candidates", undefined, CANDIDATE_STAFF],
+    ["GET", "/candidates", undefined, CANDIDATE_READERS],
     // Registering is not an Analyst action: a new candidate is unallocated (Work Allocation).
     ["POST", "/candidates", {}, ["ADMIN", "MANAGER", "REGISTRATION_DESK"]],
     // Work Allocation: ADMIN and MANAGER only (an invalid request, so the allowed roles get 400).
     ["GET", "/work-allocation/candidates?status=NOPE", undefined, ["ADMIN", "MANAGER"]],
     ["POST", "/work-allocation/assign", {}, ["ADMIN", "MANAGER"]],
     ["POST", "/work-allocation/unassign", {}, ["ADMIN", "MANAGER"]],
-    ["GET", "/candidates/N1023757", undefined, CANDIDATE_STAFF],
+    ["GET", "/candidates/N1023757", undefined, CANDIDATE_READERS],
     ["PUT", "/candidates/N1023757", {}, CANDIDATE_STAFF],
     ["PUT", "/candidates/N1023757/stages/IVS_INTERVIEW", {}, CANDIDATE_STAFF],
     ["POST", "/candidates/N1023757/documents/upload-target", {}, CANDIDATE_STAFF],
     ["POST", "/candidates/N1023757/documents/finalize", {}, CANDIDATE_STAFF],
     ["POST", `/candidates/N1023757/documents/${DOCUMENT_ID}/remove`, {}, CANDIDATE_STAFF],
-    ["GET", "/candidates/N1023757/call-logs", undefined, CANDIDATE_STAFF],
+    ["GET", "/candidates/N1023757/call-logs", undefined, CANDIDATE_READERS],
     ["POST", "/candidates/N1023757/call-logs", {}, CANDIDATE_STAFF],
-    ["GET", "/candidates/N1023757/additional-details", undefined, CANDIDATE_STAFF],
+    ["GET", "/candidates/N1023757/additional-details", undefined, CANDIDATE_READERS],
     ["PUT", "/candidates/N1023757/additional-details", {}, CANDIDATE_STAFF],
     ["GET", "/review", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
     ["POST", "/review/pending-11111111-1111-4111-8111-111111111111/keep-pending", {}, ["ADMIN", "MANAGER", "ANALYST"]],
     ["POST", `/documents/${DOCUMENT_ID}/police-date`, {}, ["ADMIN", "MANAGER"]],
     ["GET", "/users", undefined, ["ADMIN"]],
-    ["POST", "/users/invite", {}, ["ADMIN"]],
+    // MANAGER may invite (a Job Handler only: an empty body is a 400 for both).
+    ["POST", "/users/invite", {}, ["ADMIN", "MANAGER"]],
     ["PUT", "/users/someone/role", { role: "ANALYST" }, ["ADMIN"]],
     ["POST", "/users/someone/deactivate", {}, ["ADMIN"]],
     ["GET", "/audit-logs", undefined, ["ADMIN"]],
@@ -82,8 +85,8 @@ async function call(method, path, adminId, body) {
 }
 
 describe("role constants", () => {
-    test("exactly the four application roles; legacy VIEWER/REVIEWER are not roles", () => {
-        assert.deepEqual(ALL_ROLES, ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]);
+    test("exactly the five application roles; legacy VIEWER/REVIEWER are not roles", () => {
+        assert.deepEqual(ALL_ROLES, ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         assert.deepEqual(Object.values(ROLES), ALL_ROLES);
         for (const legacy of ["VIEWER", "REVIEWER", "admin", "", null]) assert.equal(isValidRole(legacy), false);
     });

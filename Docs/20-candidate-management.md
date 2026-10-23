@@ -129,41 +129,82 @@ On save, the form calls `PUT /api/admin/candidates/:passportId` and, if the comm
 
 ---
 
-## 4. Seven-Stage Deployment Process
+## 4. Eight-Stage Deployment Process
 
-Each candidate has exactly **seven stages**, always in this order:
+Each candidate has exactly **eight stages**, always in this order (six of them, plus Additional details, have a circle on the progress stepper; see below):
 
 ```mermaid
 flowchart LR
-    S1[1. Test Details\n(Admin)] --> S2[2. Candidate Details\n(Automatic)]
-    S2 --> S3[3. Document Submission\n(Automatic)]
-    S3 --> S4[4. IVS Interview\n(Admin)]
-    S4 --> S5[5. Visa Submission\n(Admin)]
-    S5 --> S6[6. Visa Approval\n(Admin)]
-    S6 --> S7[7. Finalizing Job\n(Admin)]
+    S1[1. Test Details\n(Admin)] --> SJ[2. Job Details\n(Admin)]
+    SJ --> S2[3. Candidate Details\n(Automatic)]
+    S2 --> S3[4. Document Submission\n(Automatic)]
+    S3 --> S4[5. IVS Interview\n(Admin)]
+    S4 --> S5[6. Visa Submission\n(Admin)]
+    S5 --> S6[7. Visa Approval\n(Admin)]
+    S6 --> S7[8. Finalizing Job\n(Admin)]
     
     classDef auto fill:#e1bee7,stroke:#8e24aa,stroke-width:2px,color:#000;
     classDef manual fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000;
     
-    class S1,S4,S5,S6,S7 manual;
+    class S1,SJ,S4,S5,S6,S7 manual;
     class S2,S3 auto;
 ```
 
 | # | Stage key | Label | Completed by |
 |---|---|---|---|
 | 1 | `TEST_DETAILS` | Test details | Admin (checkbox) |
-| 2 | `CANDIDATE_DETAILS` | Candidate details | Automatically — when required fields and passport are present |
-| 3 | `DOCUMENT_SUBMISSION` | Document submission | Automatically — when all 5 required documents are present |
-| 4 | `IVS_INTERVIEW` | IVS interview | Admin (checkbox) |
-| 5 | `VISA_SUBMISSION` | Visa submission | Admin (checkbox) |
-| 6 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
-| 7 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
+| 2 | `JOB_DETAILS` | Job details | Admin (checkbox); never automatic, even when a Job is assigned |
+| 3 | `CANDIDATE_DETAILS` | Candidate details | Automatically — when required fields and passport are present |
+| 4 | `DOCUMENT_SUBMISSION` | Document submission | Automatically — when all 5 required documents are present |
+| 5 | `IVS_INTERVIEW` | IVS interview | Admin (checkbox) |
+| 6 | `VISA_SUBMISSION` | Visa submission | Admin (checkbox) |
+| 7 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
+| 8 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
 
-The progress stepper on the candidate page shows Test details, Candidate details, Additional details, Document submission, Visa submission and Visa approval. IVS interview and Finalizing the job have no circle (their data and `?stage=` links are unchanged). The candidate list's progress counts all seven stages (`x/7`).
+**Jobs.** The candidate page has a **Job assignment** section (above the stepper) read from the Job relation: the current PROCESSING job (code, Client Job ID, type, client, responsible agent) and the history (completed, cancelled, removed). `GET /candidates/:passportId` returns it as `jobAssignments: { current, history }`. ADMIN and MANAGER can *Assign to Job* there (the same endpoint as Admin > Jobs > *Add to job*); the button is disabled until the Test result is PASS, and the server refuses others with `CANDIDATE_TEST_NOT_PASSED`. See `JOB_MANAGEMENT_IMPLEMENTATION.md`.
+
+**Test details** records: *Agent name* (free text: the agent associated with the test, `test_agent_name`), *Test ID* (the test's own reference, `test_id`), *Test result* (Pass / Fail), *Test date* and *Notes*. It used to hold "Client name" (the candidate's own name, read-only) and a free-text "Job ID"; the Job is no longer entered here.
+
+**Job details** records a *Date* (`job_details_date`), a *Note* (the stage's `notes`) and the completion checkbox, and **shows** two read-only values taken live from the candidate's Job assignments (`job_candidate` → `job` → `client`): *Job ID* (the human-readable Job code, e.g. `JOB-2026-000007`, never the UUID) and *Client name*. They are not stored on the stage, so a Client rename or a reassignment to another Job shows immediately; the API refuses to write them (`jobCode`, `clientName`, `jobId`). Which Job is shown follows a fixed priority: **(A)** the current PROCESSING assignment; else **(B)** the latest historical assignment (completed, cancelled, or one the candidate was removed from), with a small note under Job ID ("Completed job (not current)", "Cancelled job (not current)" or "Candidate was removed from this job (not current)"); else **(C)** "Not assigned" (the candidate never had a Job). "Latest" is the newest `job_candidate.assigned_at` (ties: the row's `created_at`, then the job id), so a candidate whose Job B completed after Job A keeps showing Job B. Removing a candidate from a job never deletes the `job_candidate` row (it sets `released_at`), so this history is complete. The fallback is display-only: it never re-activates an assignment, changes a Job, or writes anything to the stage. The old free-text `candidate_stages.job_id` is never read as a Job: it only appears as the Test ID of a Test details row that has no `test_id` yet.
+
+The progress stepper on the candidate page shows Test details, Job details, Candidate details, Additional details, Document submission, Visa submission and Visa approval. IVS interview and Finalizing the job have no circle (their data and `?stage=` links are unchanged). The candidate list's progress counts all seven stages (`x/7`).
 
 Stages are independent: any stage can be opened and edited in any order. The URL uses `?stage=<key>` to select which panel is shown; the default is the first incomplete stage.
 
-### 4.1 Automatic stages (2 and 3)
+### 4.0 Candidate list Status (derived workflow status)
+
+The Candidates list has a **Status** column (it replaced the old *Progress* column; the stepper on the candidate page and every stage are unchanged). The Status is **derived** on the server on every list read from existing data (`src/services/candidateWorkflowStatus.js`, signals gathered in `candidateService.listCandidates`). It is never stored and never edited, so it follows the data automatically.
+
+| Code | Label | Signal (source of truth) |
+|---|---|---|
+| `REGISTERED` | Registered | default: the candidate exists and nothing below applies |
+| `STOPPED_WITH_TEST` | Stopped with Test | `candidate_stages.test_result = 'FAIL'` on `TEST_DETAILS` (the saved result, not stage completion) |
+| `JOB_ASSIGNED` | Job Assigned | an **active** `job_candidate` on a PROCESSING job (never `candidate_stages.job_id` or `candidate.job` text) |
+| `FORM_SUBMITTED` | Form Submitted | `candidate_form_access.status = 'SUBMITTED'` (Candidate Form, read-only, one query per page; see below) |
+| `DETAILS_VERIFIED` | Details Verified | an explicit manual **Verify details** by an ADMIN or MANAGER (`candidate_verification.details_verified_at/by`); possible only while the Candidate details stage is complete. Completing or saving details, or Additional details, never verifies them |
+| `DOCUMENTS_VERIFIED` | Documents Verified | an explicit manual **Verify documents** by an ADMIN or MANAGER (`candidate_verification.documents_verified_at/by`); possible once at least one required document is on record. An upload or an OCR-accepted document (`documents.verification_status = VERIFIED`, which the pipeline also sets automatically) is **not** a verification |
+| `VISA_DOCUMENT_READY` | Visa Document Ready | the **Document submission** stage is completed (every required document on record). The Visa submission stage is not needed and does not count |
+
+**Precedence.** Test FAIL first (Stopped with Test); then, the first that holds: `VISA_DOCUMENT_READY` (Document submission complete) > `DOCUMENTS_VERIFIED` > `DETAILS_VERIFIED` > `FORM_SUBMITTED` > `JOB_ASSIGNED` > `REGISTERED`. The signals are independent. **Test FAIL is an override**, not a step: while the saved result is FAIL the status is *Stopped with Test* whatever else is true (verifications stay on record); when it is no longer FAIL the status is read again from the current data. A FAIL does not remove an existing Job assignment, and a FAIL candidate still cannot be newly assigned a Job (that needs PASS). Because Document submission outranks Documents Verified, *Documents Verified* shows while Document submission is still incomplete, and *Visa Document Ready* takes over once it completes.
+
+**Form Submitted source.** The Candidate Form is a separate application; its table `candidate_form_access` exists only where its migrations ran (the shared database), not in this branch's migrations. The list reads it with one guarded raw query (`to_regclass` check first), modelling nothing of the form: where the table is missing, or cannot be read, nobody shows Form Submitted.
+
+**Manual verification.** `POST /api/admin/candidates/:passportId/verification { kind: "DETAILS" | "DOCUMENTS", verified: boolean }` (ADMIN and MANAGER; 409 `DETAILS_INCOMPLETE` / `DOCUMENTS_MISSING` when there is nothing to verify) writes `candidate_verification` (migration `20261021120000_candidate_verification`) and an audit entry (`VERIFY_DETAILS`, `UNVERIFY_DETAILS`, `VERIFY_DOCUMENTS`, `UNVERIFY_DOCUMENTS`). The candidate page shows a *Verify details* button on Candidate details and *Verify documents* on Document submission (and who verified, when). Repeating the current state does nothing. No Status field is stored or editable.
+
+**Documents Verified** is the manager's sign-off on the required documents *currently on record* (it needs at least one; the whole set is not required). It is separate from the document-processing status: an OCR-accepted `VERIFIED` document is not a manual verification.
+
+**Automatic reset.** A verification is cleared automatically, in the **same transaction** as the change that made it stale (database triggers, migration `20261022120000_candidate_verification_reset`), so there is never changed data with a stale verification and a rolled-back change leaves the verification alone. The edit itself always succeeds; the admin does not remove anything first.
+
+| Verification | Cleared when | Not cleared by |
+|---|---|---|
+| Details Verified | a Candidate details value changes: first name, surname, address, NIC, job types, job experience, WhatsApp number, contact number, place of birth, date of birth, passport issue / expiry date, nationality, sex; or any Additional details value is saved for the first time or changes (all its fields) | saving the same values, the stage comment / completion, Test result, Job assignment or change, call logs, other stages, document uploads or review, Visa stages |
+| Documents Verified | a required document (passport, medical, police report, scan) is added, removed, replaced (the previous one superseded), or changes status (for example a review approval), file or variant | Candidate details edits, Job or test changes, notes and other stages, other document types (NIC, skill video, police slip, visa document) |
+
+Each reset is audited as `DETAILS_VERIFICATION_RESET` / `DOCUMENTS_VERIFICATION_RESET` (actor = the signed-in user whose edit, upload, approval or removal caused it; the reason names the kind of change and, for documents, the type; never field values or file contents). Only a verification that was actually set is cleared and audited, so an edit of unverified data writes nothing. **Limit:** a change made by an automated process with no signed-in user (WhatsApp document processing, OCR passport reconciliation) still resets the verification, but writes no audit entry, because an audit entry needs a user. Admin-driven transactions name the user to the database through `app.actor_id` (`src/services/auditActor.js`).
+
+**Performance.** One COUNT and one bounded page query; job assignment, additional details, stages and required documents are relations of that single query, plus at most two raw reads for the form table. Nothing is queried per candidate.
+
+### 4.1 Automatic stages (3 and 4)
 
 **Stage 2 — Candidate details** is marked complete when the following required fields are filled **and** a `PASSPORT` document is uploaded:
 
@@ -272,6 +313,20 @@ Every role that manages candidates can edit the form, REGISTRATION_DESK included
 - Hidden details are cleared on save: the wife's details when not married, and the child names when Single.
 - **Two people editing**: the form sends the `updatedDate` it loaded, and a save on a different version is refused with `409 DETAILS_CHANGED` ("changed by someone else… use Sync"). The typed values stay in the form. The page loads the details once and shares them with the stepper and the form.
 - Every change appears in Audit Logs (`CREATE_ADDITIONAL_DETAILS` / `UPDATE_ADDITIONAL_DETAILS`) with only the changed fields. Saving without changes writes nothing.
+
+### 4.6 Share Form (the candidate fills in the Candidate Form)
+
+Staff send a candidate a personal link to the public Candidate Form (`candidate-form/`). Design: [CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md).
+
+- **Where:** the candidate page, Additional details, **Share Form** (shown to staff who can edit the candidate).
+- **Who:** ADMIN, MANAGER and REGISTRATION_DESK for any candidate; ANALYST only for candidates allocated to them (others are 404, as everywhere). VIEWER: no.
+- **Create share link:** makes a link valid for **3 days** and shows it **once**, with **Copy link** and **Share on WhatsApp**. It is never shown again; if it is lost, create a new one. A new link replaces the previous one at once (the old link and any open form session stop working).
+- **Revoke link:** stops the link at once (confirmation first).
+- **State:** *No active link*, *Link active until …*, *Locked after failed attempts* (10 wrong attempts lock the link for 1 hour), *Submitted on …*.
+- **The candidate** opens the link, enters their Passport Number and NIC Number, checks the prefilled answers and submits **once**. After that the form cannot be opened or changed, and no new link can be created (409 `FORM_SUBMITTED`).
+- **Where the answers go:** `candidate_form_response`, a separate table. The candidate's record, additional details and stages are **never** changed by the form. They are not shown in Admin yet.
+- **Audit:** `CREATE_FORM_LINK` and `REVOKE_FORM_LINK` (link ID and expiry; never the link itself). The submission time is on the share state.
+- **Configuration:** the backend needs `CANDIDATE_FORM_ORIGIN` (the form's exact origin); without it, creating a link answers 503 `FORM_NOT_CONFIGURED`.
 
 ---
 
@@ -467,7 +522,7 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `POST` | `/candidates` | Register a new candidate |
 | `GET` | `/candidates/:passportId` | Get a single candidate (also used for the registration lookup) |
 | `PUT` | `/candidates/:passportId` | Update candidate details |
-| `PUT` | `/candidates/:passportId/stages/:stage` | Update a stage (notes, completed) |
+| `PUT` | `/candidates/:passportId/stages/:stage` | Update a stage (notes, completed; Test details also `testResult`, `testDate`). `jobId` is no longer accepted (400): the job is the Job assignment |
 | `POST` | `/candidates/:passportId/documents/upload-target` | Check a file's description; returns a signed upload URL (JSON only) |
 | `POST` | `/candidates/:passportId/documents/finalize` | Check the uploaded file and record it (JSON only) |
 | `POST` | `/candidates/:passportId/documents/:documentId/remove` | Delete the current document and its file; `{ reason }` required |
@@ -479,6 +534,12 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `DELETE` | `/follow-ups/:followUpId` | Delete a follow-up (ADMIN, MANAGER) |
 | `GET` | `/candidates/:passportId/additional-details` | Additional details, or suggestions from the candidate record when none are saved |
 | `PUT` | `/candidates/:passportId/additional-details` | Save additional details (full replacement; audited; never creates a candidate) |
+| `GET` | `/candidates/:passportId/form-submission` | What the candidate submitted through the Candidate Form (read only, from `candidate_form_response`): form status, submitted time, values by the form's paths, the original prefill and the changed answers. Shown on the Additional details tab as "Candidate Form submission"; never merged into the candidate record |
+| `POST` | `/candidates/:passportId/form-submission/confirm-field` | ADMIN and MANAGER. Confirm ONE candidate-submitted field into the record: `{ field, expectedCurrentValue, expectedSubmittedValue }` (an allowlisted field key plus the values the Admin saw, only to detect a stale screen). The new value is read from `candidate_form_response`; `409 FORM_FIELD_STALE` when the record changed meanwhile, `409 FORM_FIELD_NOT_PENDING` when nothing differs, `400 FIELD_NOT_CONFIRMABLE` for anything not on the allowlist. Audited as `CANDIDATE_FORM_FIELD_CONFIRMED`; the submission is never changed |
+| `POST` | `/candidates/:passportId/form-submission/reject-field` | ADMIN and MANAGER. Revoke (reject) ONE pending candidate-submitted field: same body and checks as confirm-field, but the record is not changed; the proposal is marked rejected for good in `candidate_form_field_review`. `409 FORM_FIELD_REVIEW_STALE` if the field was already decided. Audited as `CANDIDATE_FORM_FIELD_REJECTED` |
+| `GET` | `/candidates/:passportId/form-share` | Share Form state (§4.6) |
+| `POST` | `/candidates/:passportId/form-share` | Create a share link (201; replaces the active one; audited) |
+| `POST` | `/candidates/:passportId/form-share/revoke` | Revoke the active link (audited) |
 
 ### Error codes
 
@@ -497,6 +558,9 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `UPLOAD_NOT_FOUND` | 404 | Finalize found no uploaded file for that upload ID, candidate and type |
 | `DOCUMENT_NOT_FOUND` | 404 | Remove: not the candidate's current document (already removed or replaced) |
 | `TRY_AGAIN` | 503 | Registration could not get a free unique ID; retry |
+| `FORM_SUBMITTED` | 409 | Share Form: the candidate has already submitted; no new link |
+| `NO_ACTIVE_LINK` | 404 | Share Form revoke: there is no active link |
+| `FORM_NOT_CONFIGURED` | 503 | Share Form: `CANDIDATE_FORM_ORIGIN` is not set |
 
 An unknown stage key returns 404 `Stage not found`; malformed input returns 400 with `errors`.
 

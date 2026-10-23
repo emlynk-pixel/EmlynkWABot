@@ -1,28 +1,20 @@
-import { Link, useLocation } from "react-router";
+import { Link } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
 import { ROLE_LABELS, canRegisterCandidates, canViewDashboard, type Role } from "../auth/roles";
 import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
 import { useTheme } from "../theme/theme";
-import { NAV_ITEMS } from "./navigation";
 import { NotificationBell } from "../components/NotificationBell";
 
 const timeFormat = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Colombo", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
-function currentSectionLabel(pathname: string): string {
-    const match = [...NAV_ITEMS]
-        .sort((a, b) => b.to.length - a.to.length)
-        .find((item) => (item.end ? pathname === item.to : pathname.startsWith(item.to)));
-    return match?.label ?? "Admin";
-}
-
-// Top utility bar (Stitch: fixed 56px): breadcrumb, Sync (reload the data
-// on screen), light/dark mode, the signed-in admin and Sign out. Candidate
+// Top utility bar (Stitch: fixed 56px): Sync (reload the data
+// on screen), light/dark mode, the signed-in admin and Sign out (the
+// breadcrumb tops the content, AdminLayout). Candidate
 // registration starts from the Candidates page ("Add candidate"), or from
 // the Register Candidate quick access shown here on every page.
 export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuOpen: boolean }) {
     const { user, signOut } = useAuth();
-    const { pathname } = useLocation();
     const { syncing, result, sync } = useSync();
     const { theme, toggle } = useTheme();
     // Quick access to the registration form (the existing /candidates/new
@@ -43,15 +35,7 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
                 <span className="sr-only">Open navigation</span>
             </button>
 
-            <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
-                <ol className="flex items-center gap-2 text-body-sm text-ink-subtle">
-                    <li className="hidden sm:block">Admin</li>
-                    <li aria-hidden="true" className="hidden sm:block">/</li>
-                    <li className="truncate font-medium text-ink" aria-current="page">
-                        {currentSectionLabel(pathname)}
-                    </li>
-                </ol>
-            </nav>
+            <div className="min-w-0 flex-1" />
 
             <div className="flex items-center gap-2">
                 <span aria-live="polite" data-testid="sync-status" className="hidden text-label-sm lg:block">
