@@ -12,6 +12,7 @@ node_modules
 storage/temp
 Docs/DB.txt
 Docs/DB
+supabase-loadtest-backup/
 
 
 /generated/prisma

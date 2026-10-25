@@ -148,9 +148,10 @@ model Candidate {
   jobAssignments    JobCandidate[]
   // Staff decisions on candidate-submitted form values (CONFIRMED / REJECTED); no row = pending.
   formFieldReviews  CandidateFormFieldReview[]
-  // Explicit details / documents verification (a relation only).
   verification      CandidateVerification?
 
+  // Index supporting default Candidate list ordering (createdDate DESC, passportId ASC)
+  @@index([createdDate(sort: Desc), passportId(sort: Asc)], map: "candidate_created_date_passport_id_idx")
   @@map("candidate")
 }
 

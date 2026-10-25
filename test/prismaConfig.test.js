@@ -1,8 +1,9 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-// Placeholder so dotenv/config and the generated client don't need a real
-// database; nothing in this file issues a query (pg.Pool connects lazily).
+// Prevent dotenv/config from loading DATABASE_POOL_MAX from local .env
+process.env.DOTENV_CONFIG_PATH = "nonexistent";
+delete process.env.DATABASE_POOL_MAX;
 process.env.DATABASE_URL = "postgresql://test:test@127.0.0.1:1/test";
 
 describe("src/config/prisma.js pool size (serverless connection-exhaustion guard)", () => {

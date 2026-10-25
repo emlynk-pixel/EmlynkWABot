@@ -1,563 +1,844 @@
-# Load Testing Strategy
+# Load and Stress Testing Strategy
 
-**Status:** planning document. Nothing in it has been run, installed or changed. Written from a read-only review of the repository on branch `version/load-testing` (HEAD at the time: `d2a3667`, which includes the Work Allocation QA fixes).
-
-**Scope of the review:** `src/`, `api/`, `vercel.json`, `prisma/`, `ocr-worker/`, `deploy/`, `Docs/08-cloud-deployment.md`, the admin app.
-
-**Not yet known (needs an answer before the data and thresholds are final)** are collected in section 24. Anything marked *(unverified)* is something I could not confirm from the repository.
+**Document Status:** Complete Engineering Strategy  
+**Target Repository:** `EmlynkWABot` (`version/load-testing`)  
+**Target System:** Express 5 Backend (Vercel Serverless), PostgreSQL (Supabase / Supavisor), React Admin Panel, Candidate Extra Details Form, Cloud Run OCR Worker, Cloud Run Google Sheet Sync Worker.
 
 ---
 
-## 1. Current architecture assessment
+## 1. PURPOSE
 
-### 1.1 Topology
+### 1.1 Why Load Testing is Needed
+The EmlynkWABot platform automates candidate onboarding, WhatsApp document intake, automated OCR extraction, multi-staff candidate allocation, job assignment, and Google Sheets reconciliation. While functional tests verify that business logic operates correctly for a single user, performance and load testing is essential to verify how the application behaves when multiple admins, analysts, managers, and candidates access the system simultaneously under varying traffic intensities.
+
+### 1.2 Functional vs. Performance Testing
+* **Functional Testing:** Validates feature correctness, boundary rules, access control (RBAC), and database invariants (e.g., verifying that assigning a candidate creates an audit log entry and updates the allocation record).
+* **Performance / Load Testing:** Evaluates system throughput (Requests Per Second - RPS), response time latency percentiles ($p_{50}, p_{95}, p_{99}$), database connection pool contention, transaction lock duration, resource consumption (CPU/Memory), worker backlog drainage, and failure modes under stress.
+
+### 1.3 Strategic Goals for EmlynkWABot
+1. Ensure the candidate intake and admin workflows remain highly responsive ($p_{95} < 1000\text{ ms}$ for standard reads) during operational peaks.
+2. Prevent database pool exhaustion and connection timeouts between Vercel serverless instances and Supabase PostgreSQL.
+3. Validate atomic concurrency controls in Work Allocation and Job Candidate assignments without deadlocks or corrupted assignments.
+4. Establish concrete baseline metrics before running production marketing campaigns or scaling operations.
+
+### 1.4 Critical Failure Modes to Identify
+* **Slow APIs:** Endpoints with unbounded $O(N)$ candidate processing (e.g., `/api/admin/overview`, `/api/admin/reports/daily/summary`) or unindexed pattern searches (`ILIKE %search%` across multiple columns).
+* **Database Bottlenecks:** Supavisor session-mode pooler exhaustion, query queueing behind small per-instance pools (`DATABASE_POOL_MAX`), and long transaction hold times.
+* **Connection Exhaustion:** Vercel function concurrency scaling multiplying active connections ($\text{Instances} \times \text{DATABASE\_POOL\_MAX}$) past Supabase limits.
+* **Concurrency Issues:** Overlapping managers allocating the same candidate simultaneously, duplicate WhatsApp webhook deliveries, or simultaneous Candidate Form draft saves and submissions.
+* **Background Worker Bottlenecks:** Saturation of Cloud Run OCR worker queues ($2\text{ active} + 10\text{ queued}$), trigger backlog accumulation in `sheet_sync_queue`, or lease lock contention in `sheet_sync_state`.
+* **Application Crashes:** Process crashes, Node.js Out-Of-Memory (OOM) errors during large PDF/image parsing, and Vercel 60-second gateway timeouts (`FUNCTION_INVOCATION_TIMEOUT`).
+* **High Latency & Error Rate Increases:** Latency degradation under load, rate limiting (`429 Too Many Requests`) from PostgreSQL-backed IP rate limiters, and `500` / `503` cascades.
+
+---
+
+## 2. SCOPE
 
 ```
-Browser (React admin, static, served by Vercel from /admin)
-   │  Supabase JS signs in directly against Supabase Auth  -> access token (JWT)
-   ▼
-Vercel function  api/index.js -> src/httpHandler.js -> Express app (src/createApp.js)
-   region hnd1 (Tokyo), maxDuration 60 s, one pg.Pool per function instance
-   │                       │
-   │                       └─ Supabase Auth (HTTPS)   auth.getUser(token) on EVERY request
-   ▼
-Supabase PostgreSQL via Supavisor SESSION-mode pooler (aws-0-ap-northeast-1)
-   ▲                       ▲
-   │ polls (CAS claims)    │ polls (writer lease)
-Cloud Run emlynk-submission-worker      Cloud Run emlynk-sheet-sync-worker
-(asia-northeast1, min=max=1 instance,   (DB -> Google Sheet only, 10 s poll)
- 2 OCR requests in flight)
-   │ HTTPS + Google ID token
-   ▼
-Cloud Run emlynk-ocr-worker (asia-south1, Tesseract.js, 2 jobs + 10 waiting per instance)
+┌────────────────────────────────────────────────────────────────────────┐
+│                          IN-SCOPE LOAD TARGETS                         │
+├──────────────────────────┬──────────────────────────┬──────────────────┤
+│       Admin / API        │      Candidate Form      │ Background Tasks │
+├──────────────────────────┼──────────────────────────┼──────────────────┤
+│ • Auth & Identity        │ • Verify Link (/verify)  │ • OCR Worker     │
+│ • Candidates (List/Read) │ • Form Prefill (/form)   │   (Isolated)     │
+│ • Candidate Detail/Logs  │ • Step Drafts (/draft)   │ • Sheet Sync     │
+│ • Jobs & Allocations     │ • Final Submit (/submit) │   (Isolated)     │
+│ • Work Allocation Writes │ • Concurrency & Retries  │ • Webhook Ingest │
+└──────────────────────────┴──────────────────────────┴──────────────────┘
 ```
 
-- The admin API runs **only on Vercel** (serverless). `src/app.js` (listen + worker) is for local/Docker. The submission worker and Sheet worker are separate long-lived Cloud Run services that **poll PostgreSQL**; there is no other queue.
-- Express 5, `helmet`, `express.json`, then `/auth`, `/whatsapp`, `/api/admin`, `/admin`, `/health`, error handler ([createApp.js](../src/createApp.js)).
+### 2.1 Backend / API
+* **Authentication & Identity:** Session verification via `GET /auth/me` and `POST /auth/complete-invite`. Note that every authenticated request calls Supabase Auth `auth.getUser(token)` and reads `public."user"`.
+* **Candidate Directory & Search:** `GET /api/admin/candidates` (pagination, status filters, ILIKE search across `firstName`, `passportId`, `nic`, `contactNumber`).
+* **Candidate Details & History:** `GET /api/admin/candidates/:passportId`, `GET /api/admin/candidates/:passportId/call-logs`, `GET /api/admin/candidates/:passportId/additional-details`, `GET /api/admin/follow-ups`.
+* **Candidate Updates & Actions:** `POST /api/admin/candidates`, `PUT /api/admin/candidates/:passportId`, `PUT /api/admin/candidates/:passportId/stages/:stage`, `POST /api/admin/candidates/:passportId/call-logs`, `POST /api/admin/follow-ups/:followUpId/complete`.
+* **Jobs Management:** `GET /api/admin/jobs`, `POST /api/admin/jobs`, `GET /api/admin/jobs/:jobId`, `PUT /api/admin/jobs/:jobId`, `POST /api/admin/jobs/:jobId/complete`, `POST /api/admin/jobs/:jobId/cancel`, `GET /api/admin/job-types`, `GET /api/admin/job-type-choices`.
+* **Work Allocation Engine:** `GET /api/admin/work-allocation/candidates`, `GET /api/admin/work-allocation/analysts`, `POST /api/admin/work-allocation/assign`, `POST /api/admin/work-allocation/unassign`, `POST /api/admin/work-allocation/auto-allocate`.
+* **Candidate Form Admin APIs:** `GET/POST /api/admin/candidates/:passportId/form-share`, `POST /api/admin/candidates/:passportId/form-share/revoke`, `GET /api/admin/candidates/:passportId/form-submission`.
+* **Document Management:** Metadata endpoints `GET /api/admin/documents`, `GET /api/admin/documents/missing`, `GET /api/admin/review`, `GET /api/admin/review/:reviewId`.
 
-### 1.2 What every authenticated admin request costs (the fixed overhead)
+### 2.2 Candidate Form (Public Portal)
+* **Access Verification:** `POST /api/public/candidate-details/verify` with share link secret, passport ID, and NIC.
+* **Form Prefill Loading:** `POST /api/public/candidate-details/form` with candidate JWT bearer token.
+* **Step-by-Step Draft Saving:** `POST /api/public/candidate-details/draft` saving individual sections (`step`, `groups`, `answers`).
+* **Final Form Submission:** `POST /api/public/candidate-details/submit` validating full payload and acquiring atomic form lock.
 
-Before any business query runs, each `/api/admin/*` and `/auth/me` request does:
+### 2.3 Jobs & Work Allocation Workflows
+* Single and multi-job listing and filtering by status (`PROCESSING`, `COMPLETED`, `CANCELLED`).
+* Adding candidates to jobs (`POST /api/admin/jobs/:jobId/candidates`) and removing candidates (`DELETE /api/admin/jobs/:jobId/candidates/:passportId`).
+* Validating concurrency handling when candidate is evaluated for multiple jobs or when active job constraints apply.
 
-| Step | Where | Cost |
-|---|---|---|
-| 1. Rate-limit counter | `apiLimiter` -> [postgresRateLimitStore.js](../src/middleware/postgresRateLimitStore.js) | **One DB write** (`INSERT … ON CONFLICT DO UPDATE` on a single `rate_limits` row **per client IP**) plus an occasional cleanup `DELETE` |
-| 2. Token check | [requireActiveUser.js](../src/middleware/requireActiveUser.js) -> [supabaseIdentity.js](../src/auth/supabaseIdentity.js) | **One HTTPS call to Supabase Auth** (`auth.getUser(token)`), deliberately not a local JWT check (so a signed-out session fails at once) |
-| 3. Account lookup | same | **One DB read** of `public."user"` by `auth_user_id` (role/status are never taken from the token) |
-| 4. Role + scope | `requireRole`, `candidateScope` | in-memory |
+### 2.4 Workers (Tested in Complete Isolation)
+* **Cloud Run OCR Worker:** Benchmarked independently via `POST /process` using raw image/PDF buffers up to 10 MB, evaluating queue limits (2 active + 10 waiting) and `503 OCR_BUSY` responses.
+* **Cloud Run Sheet Sync Worker:** Benchmarked independently by populating `sheet_sync_queue` or triggering `/tasks/reconcile`, measuring row reconciliation drain rate against dedicated test sheets.
 
-Consequences for load testing (the most important findings of this review):
-
-1. **The backend amplifies authentication load.** "Reusing a token" does not avoid Supabase Auth: every API request still calls Supabase Auth once. API requests per second = Supabase Auth requests per second.
-2. **Every request is also a DB write** (rate-limit upsert), and all requests from one IP hit **the same row**, so a single load generator serialises on one row lock.
-3. **Each request spends at least two pool round-trips before the real work.**
-
-### 1.3 Database access and pool behaviour
-
-- [config/prisma.js](../src/config/prisma.js): `@prisma/adapter-pg`, `max = DATABASE_POOL_MAX` (default **3 per function instance**), `DATABASE_URL` = Supavisor **session-mode** pooler.
-- Session mode is 1 client connection : 1 server connection for the life of the client. Each warm Vercel instance therefore holds up to 3 of Supabase's limited server connections. Under concurrency Vercel starts more instances, so total connections = instances × 3. The repo already records `P2024` pool-timeout errors from this ([prisma.js](../src/config/prisma.js) comment). **This is the most likely first bottleneck.** The Supabase plan's pooler/connection limits are *(unverified)*.
-- Several handlers issue many queries at once with `Promise.all` (Overview ≈ 13, Daily Summary ≈ 10). With a pool of 3 those queue behind each other inside one request, so one report request can occupy an instance's whole pool.
-- Interactive transactions: review actions set `{ maxWait: 10 s, timeout: 30 s }` ([adminReviewActionService.js:60](../src/services/adminReviewActionService.js#L60)). **Work Allocation assign/unassign use Prisma's defaults (maxWait 2 s, timeout 5 s)**, so under pool pressure or with 500 candidates they can fail with `P2028` before they fail on locks. Do not change yet; measure first.
-
-### 1.4 Rate limiting ([apiRateLimiter.js](../src/middleware/apiRateLimiter.js))
-
-- `express-rate-limit`, fixed window **15 minutes, 1000 requests per client IP**, counted in PostgreSQL, response 429 `{message}`.
-- Applied to: all `/api/admin/*` (router-level), `/auth/me`, `/auth/complete-invite`, and the `/admin` static router (separate prefix).
-- `/auth/*` and `/api/admin/*` use the **same default prefix** (`generic-api:`), so they share one counter per IP.
-- Limit and window are **hard-coded constants**; there is no environment override. `/whatsapp/webhook` has no rate limiter (it has signature verification).
-- IP comes from `X-Forwarded-For` through `TRUST_PROXY_HOPS` / `VERCEL=1` ([env.js](../src/config/env.js)).
-
-What this means:
-
-- **1000 requests / 900 s ≈ 1.1 requests/second per IP.** A single load generator (one IP) is rejected with 429 after roughly the first thousand requests, long before it measures application capacity. This applies to any single-machine k6 run.
-- **Possible production issue, independent of load testing:** staff behind one office NAT share one bucket. A few admins each opening dashboard pages (several API calls per page) can approach 1000 requests in 15 minutes. Worth checking production logs for 429s from real users.
-
-### 1.5 Endpoint classification
-
-Key: R read, W write, **DB** DB-heavy, **CPU/mem** in-process work, **EXT** external dependency, **TX** transaction-sensitive.
-
-| Area | Route(s) | Role | Type | Notes |
-|---|---|---|---|---|
-| Session | `GET /auth/me` | any active | R, EXT (Auth) | Fixed overhead only |
-| Candidate list | `GET /api/admin/candidates?page&pageSize&search` | Admin, Manager, Analyst (scoped), Reg. Desk | R, DB | `COUNT` + `findMany` (≤100) + batched stages + batched documents ≈ 4 queries. Search is `contains` + insensitive over several columns (`ILIKE %x%`); no trigram/search index and no index on the `created_date` sort *(verified in migrations)* |
-| Candidate detail | `GET /candidates/:passportId` (+ call-logs, additional-details) | same | R | passport resolve + several relations |
-| Work Allocation | `GET /work-allocation/candidates`, `GET /work-allocation/analysts` | Admin, Manager | R, DB | list ≈ 4-5 queries; analysts: users + `groupBy` + unallocated anti-join |
-| Allocation writes | `POST /work-allocation/assign`, `/unassign` | Admin, Manager | W, **TX**, DB | One interactive transaction: `SELECT … FOR UPDATE` on up to **500** candidates, `FOR SHARE` on users, `createMany`/`updateMany`, `audit_logs` `createMany`. Holds one pool connection and row locks for its duration |
-| Review Queue | `GET /review`, `GET /review/:id` | Admin, Manager, Analyst | R, DB, mem | Merges pending + documents in memory over a window of up to `page*pageSize`; the summary loads **all** `REVIEW_REQUIRED` documents |
-| Review file | `GET /review/:id/file` | same | R, **EXT (Storage)**, mem | Streams a file from Supabase Storage through the function. Not for the main benchmark |
-| Review actions | `POST /review/:id/*`, `DELETE /temporary-documents/:id` | Admin, Manager, Analyst | W, TX, **EXT (Storage)** | Moves/deletes real objects. Exclude |
-| Overview | `GET /overview` | Admin, Manager, Analyst | R, **DB-heavy**, mem | ≈ 13 parallel queries; `clientCompletenessCounts` and `policeDueCounts` each **load every in-scope candidate** and compute in memory. O(candidates) per call |
-| Daily Report | `GET /reports/daily`, `/daily/summary`, `/daily/incomplete`, `/monthly` | Admin, Manager, Analyst | R, **DB-heavy**, mem | Summary reads progress of all in-scope candidates (`readProgress`) plus ≈10 parallel queries; lists bounded to 200 |
-| Role summary | `GET /reports/daily/roles` | Admin, Manager | R | bounded to 1000 rows |
-| Need Attention | `GET /follow-ups`, `POST /follow-ups/:id/complete`, `POST /candidates/:id/call-logs/:logId/follow-up` | candidate staff | R / W (small TX) | complete runs in a transaction |
-| Call logs / history | `GET/POST /candidates/:id/call-logs` | candidate staff | R / W | Small writes; call-log writes do **not** touch the Sheet outbox |
-| Audit logs | `GET /audit-logs` | Admin | R, DB | Append-only table that only grows; indexes are on `(admin_id, created_date)`, `(temporary_id, …)`, `(document_id, …)` *(verified)*; filters by action/category/date may scan |
-| Clients / Documents / Missing / Police | `GET /clients`, `/documents`, `/documents/missing`, `/police` | Admin, Manager, Analyst | R, DB, mem | `/police` and `/documents/missing` compute over all in-scope clients in memory |
-| Candidate writes | `POST /candidates`, `PUT /candidates/:id`, `PUT …/stages/:stage` | candidate staff | W | **Fire the Sheet outbox triggers** (see 1.6) |
-| Document upload | `POST …/documents/upload-target`, `/finalize`, `/remove` | candidate staff | W, **EXT (Storage)** | Signed URL + storage move/delete. Exclude |
-| Users | `POST /users/invite`, role change, deactivate | Admin | W, **EXT (Auth email)** | Sends real emails; changes the test accounts. Exclude |
-| Sheet settings | `POST /settings/sheet-sync/run`, `/test` | Admin | W, **EXT (Google, via worker)** | Queues runs against the real Sheet. Exclude |
-| Webhook | `POST /whatsapp/webhook` | Meta (HMAC) | W, EXT | Inserts submissions that the worker sends to OCR. Separate, isolated test only |
-
-### 1.6 Side effects that make some writes unsafe on a shared database
-
-1. **Sheet outbox triggers** (`20261006120000_sheet_sync_outbox`): inserts/updates on the candidate table, `candidate_stages` and `documents` write to `sheet_sync_queue`. If a Sheet worker is running against that database with `SHEET_SYNC_ENABLED=true`, load-test writes become real writes to the **operational Google Sheet** (the docs state there is no test copy). Work Allocation and call logs avoid these triggers by design; registration, candidate edits, stage updates and document changes do not.
-2. **`audit_logs` is append-only and cannot be cleaned.** A trigger rejects `UPDATE`, `DELETE` and `TRUNCATE`. Every assign/reassign/unassign, flag/complete follow-up and registration adds permanent rows. The test suites clean it with `ALTER TABLE … DISABLE TRIGGER USER`, which needs elevated rights and must never be done on production. **Consequence: write-load tests need a disposable database.**
-3. **`rate_limits`** gains one row per source IP; harmless, but it is the hot row from 1.2.
+### 2.5 External Integrations & Initial Mocking Strategy
+During initial and intermediate API load tests, external dependencies must be isolated or mocked:
+* **Meta WhatsApp Outbound:** Completely disabled. The system does not send bulk outbound messages in core routes; webhook load tests must submit synthetic inbound payloads directly to `/whatsapp/webhook` with mocked media download services.
+* **Google Sheets API:** Set `SHEET_SYNC_ENABLED=false` or configure a dedicated scratch spreadsheet. Never sync load test candidates to the live operational spreadsheet.
+* **Supabase Storage:** Storage file transfers (`/review/:id/file`, browser uploads) should be bypassed or directed to an ephemeral test bucket to isolate backend API compute from external S3/CDN throughput.
+* **Cloud Run OCR:** Mock OCR responses during end-to-end webhook ingest tests to prevent saturating the OCR service during API-focused benchmarks.
 
 ---
 
-## 2. Recommended primary tool: k6
+## 3. OUT OF SCOPE / SAFETY
 
-Verified against this repository:
+> [!CAUTION]
+> **STRICT SAFETY ENFORCEMENT**  
+> Load and stress testing must NEVER be directed at production systems or shared operational databases. Any deviation risks permanent data corruption, quota exhaustion, or operational disruption.
 
-- k6 **v2.1.0 is already installed** on this machine (`C:\Program Files\k6`). Nothing needs installing.
-- The repo has no existing load tooling and **no CI configuration** (no `.github/`).
-- The API is plain JSON over HTTP with a bearer token, so a protocol-level tool fits.
-
-| | k6 | Artillery | JMeter | Locust | Playwright / Lighthouse |
-|---|---|---|---|---|---|
-| Setup | single binary, already present | `npm i`, Node-native | Java + GUI/XML plans | Python + pip | `npm i` + browsers |
-| JS developer friendliness | JS scripts (not Node: no npm modules, ES modules only) | Best: YAML + Node functions | Poor (XML) | Python | Best (TS) |
-| CI suitability | Very good (exit code on thresholds, headless) | Good | Heavy | Good | Good for UX, slow |
-| Scripting flexibility | Scenarios, executors, setup/teardown, checks | Good, plugins | GUI-driven, verbose | Excellent (Python) | n/a (browser) |
-| Auth support | Manual (HTTP in `setup()`) | Manual | Manual | Manual | Real browser sign-in |
-| Thresholds | **Built in**, fail the run | `ensure` plugin | Via assertions / plugins | Manual | Budgets (Lighthouse CI) |
-| Reports | JSON/CSV/summary, Prometheus/Grafana outputs | JSON/HTML | HTML dashboard | Web UI + CSV | HTML |
-| Concurrency modelling | **Open model (arrival-rate) and closed model (VUs)**, ramping | Arrival phases | Thread groups | Users / spawn rate | Not for load |
-| Maintainability | Small scripts, readable diffs | good | poor | good | good |
-
-**Why k6:** built-in pass/fail thresholds, both closed (VU) and open (arrival-rate) workload models, ramping/spike/soak executors, low load-generator overhead (one machine can drive far more than the limited Vercel/Supabase capacity needs), and the binary is already installed. Artillery is the runner-up if the team prefers staying in Node; it is not clearly better for this system.
-
-**What k6 does not do** (kept separate, section 14): browser rendering/UX timing (Lighthouse, Playwright), DB-side verification (a small Node/SQL script after runs), and OCR/Sheet worker tests.
+* **No Production Testing:** Production Vercel deployments and production Supabase databases must NEVER be used for load or stress testing.
+* **Zero Production Candidate Data:** No real candidate PII (passports, phone numbers, NICs, photos) may be utilized or stored in load testing environments.
+* **No Real WhatsApp Messaging:** Synthetic tests must never trigger live WhatsApp messaging to actual phone numbers.
+* **No Production Google Sheets Writes:** Production operational spreadsheets must never be configured as target sync destinations during load runs.
+* **No Production Destructive Actions:** Operations such as `TRUNCATE`, database restores, or disabling triggers must strictly occur on isolated, disposable test instances.
+* **Strictly Synthetic Entities:** All load test data must use explicit, identifiable prefixes (e.g., `LT_` for passports, `+94770000000` series for phone numbers, and test domains for emails).
 
 ---
 
-## 3. Target endpoints and priority
+## 4. RECOMMENDED TOOLS
 
-Not equal weight: the cost differs by two orders of magnitude between a `GET /auth/me` and `GET /overview`.
+### 4.1 Primary Recommendation: Grafana k6
+**Grafana k6** is the official, strongly recommended primary load testing tool for EmlynkWABot.
 
-| Pri | Endpoint | Method | Role | Expected DB load | Concurrency risk | Suitable | Cleanup |
-|---|---|---|---|---|---|---|---|
-| **P0** | `/overview` | GET | Manager (also Analyst scoped) | Very high (O(candidates) in memory, ≈13 queries) | Pool starvation, response time grows with data | Yes, scaled dataset | None |
-| **P0** | `/reports/daily/summary`, `/incomplete` | GET | Manager / Analyst | High (all-candidate progress read) | Same | Yes | None |
-| **P0** | `POST /work-allocation/assign` (+ reassign, unassign, multi-Analyst) | POST | Manager | High, TX, row locks | Lock waits, `P2028`, deadlock, 409 correctness | **Yes, disposable DB** | Required (audit rows stay) |
-| **P0** | `GET /candidates` (list, paging) | GET | all | Medium-high (4 queries) | Pool | Yes | None |
-| **P0** | `GET /candidates?search=` | GET | all | High (ILIKE scan) | Scales with table size | Yes, large dataset | None |
-| P1 | `GET /work-allocation/candidates`, `/analysts` | GET | Manager | Medium | Pool | Yes | None |
-| P1 | `GET /review`, `/review/:id` | GET | Manager / Analyst | Medium-high | Memory (window), summary loads all | Yes (not `/file`) | None |
-| P1 | `GET /candidates/:id` | GET | all | Medium | Pool | Yes | None |
-| P1 | `GET /follow-ups` (Need Attention) | GET | all | Medium | Pool | Yes | None |
-| P1 | `GET/POST …/call-logs` (history) | GET/POST | Analyst | Low / small write | Write contention per candidate low | Yes, prefixed data | Required (rows + audit) |
-| P1 | `POST /follow-ups/:id/complete`, flag | POST | Analyst | Small TX | OPEN-per-call unique index conflicts | Yes, controlled | Required |
-| P2 | `GET /auth/me` | GET | all | 1 read | Auth/rate-limit overhead only | As baseline probe | None |
-| P2 | `GET /reports/daily`, `/monthly` | GET | Manager | Medium | Pool | Yes | None |
-| P2 | `GET /audit-logs` | GET | Admin | Medium, grows | Scans | Yes after write tests | None |
-| P2 | `/clients`, `/documents`, `/police` | GET | all | Medium | In-memory `/police` | Optional | None |
-| **Exclude** | `POST /candidates`, `PUT /candidates/:id`, stages | W | | Fires Sheet outbox | | Only with Sheet worker absent (see 6) | Required |
-| **Exclude** | uploads, `/review/:id/file`, review actions, `DELETE /temporary-documents` | | | Supabase Storage | | Separate small storage test | |
-| **Exclude** | users invite/role/deactivate, sheet-sync run/test, `/whatsapp/webhook` | | | Real emails / Google / Meta | | Never in the main run | |
+**Why k6 is Preferred for This Stack:**
+* **JavaScript / ES6 Scripting:** Test scenarios are written in standard JS, allowing full alignment with the project's Node.js codebase.
+* **High Efficiency & Low Resource Footprint:** Written in Go; a single runner instance can easily generate thousands of Virtual Users (VUs) without JVM overhead.
+* **CLI-First & Headless:** Ideal for developer execution and headless CI/CD integration with exit code status mapping.
+* **Advanced Workload Modeling:** Supports both closed VU models (simulating concurrent humans with think time) and open arrival-rate models (simulating constant RPS regardless of system slowdown).
+* **Native Stages & Thresholds:** Built-in declarative pass/fail criteria (e.g., `http_req_duration: ['p(95)<1000']`, `http_req_failed: ['rate<0.01']`).
+* **Protocol Optimized:** Perfect for REST, JSON payloads, and header-based JWT authentication.
 
----
+### 4.2 Comparison of Supporting Tools
 
-## 4. Environment strategy
+| Tool | Primary Purpose | When It is Useful | Project Recommendation |
+|---|---|---|---|
+| **Grafana k6** | Scenario-based API & Protocol Load Testing | Main performance, stress, spike, and soak test suites | **PRIMARY TOOL (Adopt Immediately)** |
+| **k6 Studio / Cloud** | Visual scenario builder & distributed load | Multi-region geographic load generation | Optional (Use only if distributed edge traffic is required) |
+| **Autocannon** | Rapid HTTP micro-benchmarking | Quick local endpoint saturation checks | Optional (Useful for isolated local Node micro-benchmarks) |
+| **Apache JMeter** | Enterprise legacy protocol testing | Complex multi-protocol legacy enterprise systems | **Not Recommended** (High XML complexity, heavyweight JVM) |
+| **Locust** | Python-based distributed load testing | Teams with dedicated Python QA automation | **Not Recommended** (Unnecessary language divergence from JS stack) |
 
-**Rule: never production, and never the shared development/staging database for write tests.**
-
-Recommended, in order of preference:
-
-1. **Dedicated load-test stack (preferred).** Own Supabase project (own Auth, own database, own Storage), own Vercel deployment (a branch preview or separate project) pointing at it, **no Cloud Run workers attached** (or workers attached with `SHEET_SYNC_ENABLED` unset and the OCR URL unreachable/mocked). Reasons: the audit log cannot be cleaned, the Auth load is multiplied by the request rate (1.2), and nothing shared can be hurt.
-2. **Disposable copy of staging** (Supabase branch / restore of a backup) if a second project is not possible. Same rule: no live workers.
-3. **App-capacity benchmark outside Vercel/Supabase Auth.** A local Node process built with `createApp` and the already-supported injected `verifyAccessToken` (used by the test suites), against a local/disposable PostgreSQL. Measures the Express + Prisma + SQL cost without Supabase Auth or Vercel in the way. Useful to separate "the code is slow" from "the platform limit is hit". **Needs a small harness script, not a business-logic change; not part of this task.**
-
-Platform limits to check before the first real run:
-
-| Area | Risk | Action |
-|---|---|---|
-| Vercel | Function concurrency / instance count, plan limits, `maxDuration 60 s`, hnd1 region, cold starts, possible "fair use" throttling on preview deployments *(plan unverified)* | Read the project's plan limits; ramp slowly; watch instance count in Vercel logs |
-| Supabase pooler | Session-mode client/connection ceiling ≈ instances × 3 *(plan limits unverified)* | Check Dashboard > Database > Connection pooling and max connections for the load-test project |
-| Supabase Auth | Per-project/IP limits; the app calls `getUser` per request | Use a dedicated project; read Auth > Rate Limits; keep auth tests small |
-| Cloud Run | Autoscaling (min=max=1 submission worker) | Not in the API benchmark; separate OCR/worker plans |
-| Rate limiting | 1000/15 min per IP | See section 17 |
-| Shared database | Noisy neighbours, polluted audit log | Disposable database |
-| External APIs | Meta, Google, Supabase Storage/Email | Section 16 |
-
-**Mock / disable / isolate:** Sheet worker (absent or `SHEET_SYNC_ENABLED` unset), submission worker and OCR (absent; no webhook traffic), user invites (not called), Storage endpoints (excluded), Meta webhook (excluded). The app sends **no outbound WhatsApp messages** (it only downloads inbound media), so WhatsApp cannot be spammed by admin-API load; the real risks are Storage, Auth email, Sheets and OCR.
+**Conclusion:** Start with **k6** for all API, scenario, and concurrency tests.
 
 ---
 
-## 5. Test data strategy
+## 5. TEST ENVIRONMENT ARCHITECTURE
 
-### 5.1 Accounts (created through `npm run user:create` or Supabase Auth admin on the **load-test project only**)
+The load testing architecture requires complete isolation from production:
 
-| Account | Role | Use |
-|---|---|---|
-| `lt-admin` | ADMIN | audit logs, global reads |
-| `lt-manager-a`, `lt-manager-b` | MANAGER | Work Allocation, two for the concurrency test, reports |
-| `lt-analyst-a`, `lt-analyst-b` (+ a few more for multi-Analyst distribution) | ANALYST | scoped reads, call logs, history |
-| `lt-desk` | REGISTRATION_DESK | list/detail reads (unscoped) |
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        ISOLATED TEST TOPOLOGY                          │
+└────────────────────────────────────────────────────────────────────────┘
 
-Use throwaway e-mail addresses on a domain/inbox you control, strong generated passwords kept in the runner's environment (never in the repo).
+  [ k6 Load Generator (Local / Dedicated Runner) ]
+                         │
+                         ▼ HTTPS (Synthetic Authorization Bearer)
+  [ Vercel Staging Deployment / Preview Instance ]
+    - Region: hnd1 (Tokyo) matching production
+    - maxDuration: 60s
+    - Express 5 + Helmet + apiLimiter (custom staging limit)
+                         │
+        ┌────────────────┴────────────────┐
+        ▼                                 ▼
+  [ Supabase Auth (Test Project) ]   [ Supabase PostgreSQL (Test Project) ]
+    - auth.getUser(token) checks       - Supavisor Pooler (Session Mode)
+    - Throwaway test identities        - Isolated DATABASE_URL
+                                       - Disposable candidate & audit data
+                                       - Test rate_limits row per IP
+                                                  ▲
+        ┌─────────────────────────────────────────┴───────────────┐
+        │ Polling (CAS Claim)                                     │ Polling (Lease)
+        ▼                                                         ▼
+  [ Cloud Run Submission Worker ]              [ Cloud Run Sheet Sync Worker ]
+    - Asia-northeast1 (min=max=1)                - SHEET_SYNC_ENABLED=false
+    - Target: Mocked OCR Endpoint                  (or dedicated test sheet)
+        │
+        ▼ HTTPS + Mock Token
+  [ Cloud Run OCR Worker (Test / Staging) ]
+    - Asia-south1
+    - Isolated mock or dedicated staging instance
+```
 
-### 5.2 Candidates
-
-All created by a seed script run **against the load-test database only**, with predictable prefixes so cleanup and verification can target them:
-
-- Passport IDs `LT` + 7 digits (`^[A-Za-z0-9]{1,20}$` is the API's pattern), unique IDs from a reserved range, NICs `LT…`-based and WhatsApp/contact numbers from a clearly fake range (no real number; nothing in the app messages candidates).
-- Groups: unallocated (bulk of the Work Allocation pool); allocated to Analyst A; allocated to Analyst B; with documents (verified, review-required) and without; with call logs and open follow-ups (Need Attention); review items (pending submissions linked and unlinked); candidates registered across several days for the Daily Report.
-- Separate **allocation-concurrency pool** (`LTA…`, e.g. 500 candidates), reset before each run.
-
-### 5.3 Dataset sizes (to be confirmed, see section 24)
-
-| Dataset | Candidates | Purpose |
-|---|---|---|
-| Small | 1,000 | smoke, script correctness |
-| Baseline | ≈ current production size | normal/peak baseline |
-| Growth | 3-5× baseline | shows how Overview/Reports/search scale (they are O(candidates)) |
-
-### 5.4 Cleanup
-
-- **Preferred:** reset the whole disposable database (restore snapshot / recreate branch) between write-test runs. This is the only way to clear `audit_logs`.
-- Targeted cleanup (disposable DB only, never shared): delete rows where passport ID starts with `LT`; `audit_logs` needs the trigger disabled (elevated rights), which is another reason not to do this on a shared database.
-- Read-only runs need no cleanup.
-- Record the seed version and row counts in each result report.
-
----
-
-## 6. Authentication strategy
-
-How auth works today: the browser signs in with Supabase JS (`signInWithPassword`), then sends `Authorization: Bearer <access token>`. The backend verifies it with Supabase Auth on every request, then reads role/status from `public."user"`.
-
-Separate the two kinds of test:
-
-1. **Authenticated application load test (the main one).** Obtain one session per test account **once, in k6 `setup()`** (Supabase `POST /auth/v1/token?grant_type=password`), share the tokens with the VUs, and reuse them. Access tokens are short-lived (default about 1 hour *(project setting, verify)*), so soak tests must refresh with the refresh token. Many VUs share a small number of identities, which is realistic enough for an admin tool with a handful of staff.
-   - Why not log in per VU: it would load Supabase Auth with sign-ins that real users do rarely, hit sign-in rate limits, and measure Supabase rather than Emlynk.
-   - Note (1.2): reuse does **not** remove Auth load; each request still triggers `getUser`. That load is part of the system under test and is why the load-test project must be its own.
-2. **Auth load test (small, deliberate).** A separate script that signs in N users at a modest rate and calls `/auth/me`, to check login-burst behaviour and the Auth rate limits. Run it rarely, on the load-test project only.
-
-Also test the **session-end path** once (expired/invalid token returns 401 quickly and cheaply) and that a deactivated user is refused on the next request (already covered functionally by backend tests).
+### 5.1 Environment Isolation Principles
+1. **Dedicated Database:** A distinct PostgreSQL database on a separate Supabase test project. This prevents test audit logs (`audit_logs` is append-only with delete triggers) from polluting production.
+2. **Dedicated Storage Bucket:** Ephemeral bucket (e.g., `emlynk-loadtest-storage`) configured with automatic lifecycle expiration.
+3. **No Production Credentials:** Environment files must contain zero production API keys or service role secrets.
+4. **Mocked Side Effects:** Disable Google Sheet synchronization and inbound/outbound WhatsApp integrations during baseline runs.
 
 ---
 
-## 7. Load profiles
+## 6. ENVIRONMENT VARIABLES / CONFIGURATION
 
-Initial values only; they are not final until the pool/instance limits in section 4 are known. "VUs" use think time between iterations (3-10 s), so 100 VUs is roughly 10-35 requests/second, not 100 concurrent requests.
+### 6.1 Configuration Categories
+All test runners and staging deployments must configure environment variables strictly through secure environment vaults or `.env.test` files that are never committed to version control.
 
-| Profile | Shape | Purpose |
-|---|---|---|
-| **A. Smoke** | 1-5 VUs, 1-2 min | Script correctness, auth works, baseline numbers, thresholds sane |
-| **B. Normal** | ramp to 10-25 VUs over 2 min, hold 10 min | Expected daily admin use. Baseline for comparisons |
-| **C. Peak** | ramp 0 -> 50 -> 100 VUs, hold 10 min each step | Busy operational period; first look at pool/instance limits |
-| **D. Stress** | +10 VUs every 2 min until a threshold fails or errors > 5 % | Find the breaking point and the failure mode |
-| **E. Spike** | 5 -> 100 VUs in ~10 s, hold 3 min, back to 5, watch recovery | Cold starts, pool exhaustion, recovery time |
-| **F. Soak** | 20-30 VUs, 30-60 min | Memory/connection leaks, slow degradation, token refresh |
+```bash
+# ==============================================================================
+# DATABASE CONFIGURATION (Isolated Test Database)
+# ==============================================================================
+DATABASE_URL="postgresql://postgres:[PASSWORD]@[TEST_POOLER_HOST]:5432/postgres?sslmode=require"
+DATABASE_POOL_MAX="3"
 
-Use the **open model (arrival rate)** for stress/spike on read endpoints (it keeps pressure constant when responses slow down) and the closed VU model for realistic user flows. Add a 1-2 minute warm-up before measuring (cold starts, plan caches).
+# ==============================================================================
+# PLATFORM & RUNTIME
+# ==============================================================================
+NODE_ENV="staging"
+PORT="3000"
+VERCEL="1"
+TRUST_PROXY_HOPS="1"
+APP_BASE_URL="https://staging.emlynk.example.com"
+
+# ==============================================================================
+# AUTHENTICATION & SUPABASE (Dedicated Test Project)
+# ==============================================================================
+SUPABASE_URL="https://[TEST_PROJECT_ID].supabase.co"
+SUPABASE_SERVICE_ROLE_KEY="[TEST_SERVICE_ROLE_KEY]"
+SUPABASE_BUCKET="emlynk-test-storage"
+
+# ==============================================================================
+# CANDIDATE EXTRA DETAILS FORM CONFIGURATION
+# ==============================================================================
+CANDIDATE_FORM_ORIGIN="https://staging-form.emlynk.example.com"
+CANDIDATE_FORM_TOKEN_SECRET="[TEST_SECRET_MIN_32_CHARACTERS_LONG]"
+
+# ==============================================================================
+# WORKERS & EXTERNAL INTEGRATIONS
+# ==============================================================================
+SHEET_SYNC_ENABLED="false"
+SHEET_SPREADSHEET_ID="[TEST_SPREADSHEET_ID]"
+SHEET_TAB_NAME="LoadTest_Candidates"
+OCR_SERVICE_URL="https://ocr-staging.internal.example.com"
+
+# ==============================================================================
+# WHATSAPP WEBHOOK (Synthetic Staging Settings)
+# ==============================================================================
+META_APP_SECRET="[TEST_META_APP_SECRET]"
+WHATSAPP_VERIFY_TOKEN="[TEST_WHATSAPP_VERIFY_TOKEN]"
+WHATSAPP_ACCESS_TOKEN="[TEST_WHATSAPP_ACCESS_TOKEN]"
+WHATSAPP_API_VERSION="v21.0"
+```
+
+### 6.2 Test Secret Safety Rules
+* **Zero Hardcoded Secrets:** Never embed secrets or database credentials within k6 test scripts.
+* **Environment Variable Injection:** Pass endpoints and credentials dynamically to k6 at runtime:
+  ```bash
+  k6 run -e BASE_URL="https://staging.emlynk.example.com" -e ADMIN_TOKEN="[TEST_TOKEN]" smoke.js
+  ```
+* **Disposable Tokens:** Generate short-lived authentication tokens exclusively for load testing accounts.
 
 ---
 
-## 8. Realistic user scenarios (weighted)
+## 7. TEST DATA STRATEGY
 
-Normal-load mix (percentages of VUs; adjust once real usage is known):
+### 7.1 Synthetic Test Entities
+All test entities must follow deterministic naming conventions allowing instant identification and safe cleanup.
 
-| Persona | Weight | Iteration |
-|---|---|---|
-| Candidate reader (Reg. Desk / Analyst) | 40 % | list page 1 -> search by passport/phone/name -> open detail -> open call history |
-| Analyst | 25 % | list assigned candidates -> open detail -> add call log (every ~5th iteration) -> view history -> Need Attention list |
-| Manager | 10 % | Work Allocation list + analysts -> assign a small batch (5-20) from the prefixed pool -> occasional reassign |
-| Reviewer | 10 % | review queue -> open an item detail (no file, no action) |
-| Reporter | 15 % | Overview -> Daily Summary -> incomplete drill-down (few per minute, they are heavy) |
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        SYNTHETIC DATA SCHEMA                           │
+├─────────────────────┬──────────────────────────────────────────────────┤
+│ Entity              │ Synthetic Pattern / Specification                │
+├─────────────────────┼──────────────────────────────────────────────────┤
+│ Staff Accounts      │ lt_admin@test.local, lt_manager_[a|b]@test.local │
+│                     │ lt_analyst_[1-5]@test.local, lt_jobhandler@...   │
+├─────────────────────┼──────────────────────────────────────────────────┤
+│ Candidate Passports │ LT1000001 to LT1099999 (Regex: ^[A-Za-z0-9]{1,20}$)│
+├─────────────────────┼──────────────────────────────────────────────────┤
+│ Candidate NICs      │ 199010000001 to 199010009999 (12-digit format)   │
+├─────────────────────┼──────────────────────────────────────────────────┤
+│ Contact Numbers     │ +94770000001 to +94770009999 (Safe Dummy Range)  │
+├─────────────────────┼──────────────────────────────────────────────────┤
+│ Jobs                │ LT_JOB_001 to LT_JOB_050 (Active Job Types)      │
+├─────────────────────┼──────────────────────────────────────────────────┤
+│ Documents           │ Synthetic 100KB JPEG & 1-page PDF Buffers        │
+└─────────────────────┴──────────────────────────────────────────────────┘
+```
 
-Think time 3-10 s per step, randomised. Endpoint-stress scenarios (one endpoint hammered) are separate, clearly named scripts, not mixed into the normal profile.
+### 7.2 Data Partitioning & Record Isolation
+* **Separate Mutable Records:** During general load testing, assign distinct candidate ID blocks to each Virtual User (VU). For example:
+  * VU 1: `LT1000001` - `LT1000100`
+  * VU 2: `LT1000101` - `LT1000200`
+* **Shared Records for Concurrency Tests:** Only target identical records when explicitly evaluating race conditions and lock contention (e.g., Section 14).
+
+### 7.3 Post-Test Cleanup Strategy
+1. **Preferred Approach (Database Reset):** Restore the database snapshot or recreate the Supabase branching instance. Because `audit_logs` enforces an append-only trigger that rejects `DELETE` and `TRUNCATE`, snapshot restore is the cleanest reset method.
+2. **Selective Teardown Script (Non-Audit Entities):** Execute a targeted SQL cleanup script on the disposable database:
+   ```sql
+   -- Purge synthetic allocations and candidate form records
+   DELETE FROM "candidate_allocation" WHERE "passport_id" LIKE 'LT%';
+   DELETE FROM "candidate_form_drafts" WHERE "passport_id" LIKE 'LT%';
+   DELETE FROM "candidate_form_responses" WHERE "passport_id" LIKE 'LT%';
+   DELETE FROM "candidate" WHERE "passport_id" LIKE 'LT%';
+   ```
 
 ---
 
-## 9. Work Allocation concurrency test (critical)
+## 8. PERFORMANCE TEST TYPES
 
-**Goal:** prove allocation stays correct when managers overlap. Existing backend tests already cover two concurrent managers on one candidate set; this extends it to sustained and larger overlap under platform load.
+```
+VU Load Progression
+ ▲
+100│                                    ┌────────┐ (Stress / Spike)
+   │                       ┌────────────┘        └──────────┐
+ 50│         ┌─────────────┘                                └───────────┐
+ 25│   ┌─────┘                                                          │ (Soak)
+ 10│┌──┘                                                                └──────────
+  0└┴──────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────►
+  Smoke Baseline  Load 10    Load 25    Load 50   Stress 100    Spike      Soak (Time)
+```
 
-Setup: a reset pool of controlled candidates (`LTA…`, for example 500), 2+ manager accounts, 3+ active Analysts, no other writers on those candidates.
+### A. Smoke Test
+* **Purpose:** Verify script syntax, environment connectivity, authentication handling, and endpoint sanity.
+* **Volume:** 1–2 VUs.
+* **Duration:** 1–2 minutes.
+* **Target:** $100\%$ HTTP 200 responses across core routes.
 
-Scenarios:
+### B. Baseline Test
+* **Purpose:** Establish benchmark latency and resource utilization under minimal contention.
+* **Volume:** 1–5 VUs.
+* **Duration:** 3–5 minutes.
+* **Target:** Determine uncontended baseline $p_{50}, p_{95}, p_{99}$ response times.
 
-1. **Overlapping first assignment (`reassign: false`).** Manager A assigns candidates 1-100, Manager B assigns 51-150 at the same instant, repeated over fresh pools. Expect each request to be **all or nothing**: one succeeds for its whole set; the other gets `409 ALREADY_ALLOCATED` (or `CANDIDATE_NOT_AVAILABLE`) for the whole set, never a partial result.
-2. **Overlapping reassignment (`reassign: true`).** Both succeed, one after the other (row locks, consistent lock order by `created_date DESC, passport_id ASC`); the final owner of every overlapping candidate is the later writer; no deadlock (`40P01`).
-3. **Multi-Analyst distribution under load.** `allocations: [{A,4},{B,6}]` on 10 candidates from several managers on disjoint sets: counts exact, deterministic order.
-4. **Assign vs unassign racing** on the same candidates.
-5. **Large batch** (up to the 500 limit) while read load runs, to look for `P2028` (default 5 s transaction timeout) and lock waits.
+### C. Load Test
+* **Purpose:** Simulate anticipated peak operational concurrency.
+* **Progression:**
+  1. Stage 1: Ramp to 10 VUs over 2 minutes; hold 5 minutes.
+  2. Stage 2: Ramp to 25 VUs over 2 minutes; hold 5 minutes.
+  3. Stage 3: Ramp to 50 VUs over 2 minutes; hold 5 minutes.
+  4. Stage 4: Ramp to 100 VUs over 3 minutes; hold 5 minutes.
+* **Target:** Verify stable throughput without connection pool exhaustion.
 
-Verify after every run (a Node/SQL script, not k6):
+### D. Stress Test
+* **Purpose:** Identify the system breaking point, maximum throughput ceiling, and degradation behavior.
+* **Execution:** Incrementally increase load (+10 VUs every 2 minutes) until error rates exceed $5\%$, latency spikes sharply, or database connection queues fail (`P2024`).
+
+### E. Spike Test
+* **Purpose:** Assess system resilience and recovery during sudden dramatic traffic bursts.
+* **Execution:** Step from 5 VUs to 100 VUs in 10 seconds; hold for 3 minutes; step back to 5 VUs. Monitor cold start recovery and error rate stabilization.
+
+### F. Soak Test
+* **Purpose:** Detect memory leaks, unclosed PostgreSQL client connections, and slow performance degradation over prolonged execution.
+* **Volume:** Steady 20–30 VUs.
+* **Duration:** 1 to 4 hours.
+
+---
+
+## 9. TEST EXECUTION ORDER
+
+> [!IMPORTANT]
+> **INCREMENTAL TESTING DISCIPLINE**  
+> Never initiate load testing directly with high concurrency. Always follow this strict phased sequence to isolate bottlenecks systematically.
+
+```
+Phase 1: Basic Health & Unauthenticated Reads (/health)
+   │
+Phase 2: Authenticated Reads (Candidates, Jobs, Work Allocation)
+   │
+Phase 3: Candidate Form Ingestion (Draft Save, Final Submission)
+   │
+Phase 4: High-Contention Mutations (Allocation Assign, Job Candidates)
+   │
+Phase 5: Isolated OCR Worker Direct Benchmark (/process)
+   │
+Phase 6: Isolated Sheet Sync Worker Reconcile Benchmark
+   │
+Phase 7: Full Multi-Persona End-to-End Realistic Simulation
+```
+
+1. **Phase 1: Health & Unauthenticated Baseline:** Test `GET /health` to measure edge routing and minimal Express overhead.
+2. **Phase 2: Authenticated Read APIs:** Validate `GET /api/admin/candidates`, `GET /api/admin/jobs`, `GET /api/admin/work-allocation/candidates`.
+3. **Phase 3: Candidate Form Flows:** Validate public verification, prefill retrieval, draft saves, and single submission locking.
+4. **Phase 4: Mutations & Concurrency:** Execute batch allocations, status updates, and call log creation.
+5. **Phase 5: OCR Worker Isolation:** Direct load tests against Cloud Run OCR worker.
+6. **Phase 6: Sheet Sync Worker Isolation:** Benchmark queue drainage and Google Sheets API quota limits.
+7. **Phase 7: Realistic Multi-Persona Scenarios:** Execute weighted multi-role user traffic across the full application.
+
+---
+
+## 10. REALISTIC USER SCENARIOS
+
+### Scenario 1: Admin Persona (System Oversight)
+1. Sign in via Supabase Auth $\rightarrow$ retrieve JWT.
+2. Load Dashboard Overview (`GET /api/admin/overview`).
+3. Browse Candidate Directory (`GET /api/admin/candidates?page=1&pageSize=50`).
+4. Perform search query (`GET /api/admin/candidates?search=LT10002`).
+5. Inspect Candidate Detail (`GET /api/admin/candidates/:passportId`).
+6. Review Audit Logs (`GET /api/admin/audit-logs?page=1&pageSize=50`).
+*Think Time:* 3 to 8 seconds between actions.
+
+### Scenario 2: Analyst Persona (Candidate Processing)
+1. Sign in $\rightarrow$ fetch profile (`GET /auth/me`).
+2. Load assigned candidates (`GET /api/admin/work-allocation/candidates` scoped to Analyst ID).
+3. Open Candidate Detail (`GET /api/admin/candidates/:passportId`).
+4. Read Call History (`GET /api/admin/candidates/:passportId/call-logs`).
+5. Add Call Log entry (`POST /api/admin/candidates/:passportId/call-logs`).
+6. Advance Candidate Stage (`PUT /api/admin/candidates/:passportId/stages/DOCUMENT_VERIFICATION`).
+7. Check Priority Follow-Ups (`GET /api/admin/follow-ups`).
+*Think Time:* 4 to 10 seconds between actions.
+
+### Scenario 3: Job Handler Persona (Allocation & Matching)
+1. Sign in $\rightarrow$ navigate to Jobs (`GET /api/admin/jobs`).
+2. Open Job Detail (`GET /api/admin/jobs/:jobId`).
+3. Search candidates matching job type (`GET /api/admin/candidates?search=...`).
+4. Assign candidate to job (`POST /api/admin/jobs/:jobId/candidates`).
+5. Verify updated candidate roster.
+*Think Time:* 5 to 12 seconds between actions.
+
+### Scenario 4: Candidate Persona (Self-Service Form)
+1. Open Candidate Form link (`POST /api/public/candidate-details/verify`).
+2. Load prefill identity and existing data (`POST /api/public/candidate-details/form`).
+3. Save Section 1 Draft (`POST /api/public/candidate-details/draft` step: "personal").
+4. Save Section 2 Draft (`POST /api/public/candidate-details/draft` step: "education").
+5. Save Section 3 Draft (`POST /api/public/candidate-details/draft` step: "experience").
+6. Submit Completed Form (`POST /api/public/candidate-details/submit`).
+*Think Time:* 5 to 15 seconds per form section.
+
+---
+
+## 11. K6 PROJECT STRUCTURE
+
+We recommend organizing load testing assets in a dedicated directory structure within the repository or test runner environment:
+
+```
+performance-tests/
+├── README.md                      # Execution guide and environment setup
+├── smoke.js                       # 1-VU sanity test across all routes
+├── load.js                        # Multi-stage load test (10 -> 25 -> 50 -> 100 VUs)
+├── stress.js                      # Breaking point discovery test
+├── spike.js                       # Sudden traffic surge test
+├── soak.js                        # Long-duration endurance test
+├── scenarios/
+│   ├── auth.js                    # Isolated authentication & session benchmarks
+│   ├── candidates.js              # Candidate directory, search, and detail readers
+│   ├── candidate-form.js          # Public form verify, draft, and submit pipeline
+│   ├── jobs.js                    # Job creation, filtering, and candidate mapping
+│   ├── work-allocation.js         # Allocation queries and assign/unassign actions
+│   ├── allocation-concurrency.js  # Dedicated race condition tests
+│   └── reports.js                 # Heavy reporting endpoints (Overview, Daily Summary)
+└── helpers/
+    ├── config.js                  # Environment variable parser and default options
+    ├── auth.js                    # Token generation, setup hooks, and session reuse
+    ├── data.js                    # Synthetic data generators and pickers
+    └── metrics.js                 # Custom Trend and Rate metrics
+```
+
+### Module Responsibilities
+* `helpers/config.js`: Parses CLI environment flags (`__ENV.BASE_URL`, `__ENV.POOL_MAX`).
+* `helpers/auth.js`: Implements the `setup()` lifecycle hook to authenticate users once and provide JWT tokens to VUs.
+* `helpers/data.js`: Manages deterministic synthetic identifiers (`LT...`), random payload selectors, and realistic think-time sleeps.
+* `scenarios/*`: Modular test logic that can be executed independently or composed into composite profiles.
+
+---
+
+## 12. K6 BASIC SCRIPT EXAMPLE
+
+Below is a production-grade, non-sensitive k6 script for benchmarking `GET /health` with thresholds:
+
+```javascript
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+// 1. Test Options & Thresholds
+export const options = {
+  stages: [
+    { duration: '30s', target: 10 }, // Ramp-up to 10 VUs
+    { duration: '1m', target: 10 },  // Hold at 10 VUs
+    { duration: '20s', target: 0 },  // Ramp-down to 0 VUs
+  ],
+  thresholds: {
+    // 95% of requests must complete below 500ms; 99% below 1000ms
+    http_req_duration: ['p(95)<500', 'p(99)<1000'],
+    // HTTP failure rate must stay below 1%
+    http_req_failed: ['rate<0.01'],
+  },
+};
+
+// 2. Environment Configuration
+const BASE_URL = __ENV.BASE_URL || 'https://staging.emlynk.example.com';
+
+// 3. Virtual User Test Logic
+export default function () {
+  const url = `${BASE_URL}/health`;
+  const params = {
+    headers: {
+      'Accept': 'application/json',
+      'User-Agent': 'k6-loadtest/1.0',
+    },
+    timeout: '10s',
+  };
+
+  const response = http.get(url, params);
+
+  // Validate response status and payload integrity
+  check(response, {
+    'status is 200': (r) => r.status === 200,
+    'status field is OK': (r) => {
+      try {
+        const body = JSON.parse(r.body);
+        return body.status === 'OK';
+      } catch (e) {
+        return false;
+      }
+    },
+  });
+
+  // Realistic user think time
+  sleep(1);
+}
+```
+
+---
+
+## 13. AUTHENTICATED TESTING
+
+### 13.1 Authentication Architecture Constraints
+In EmlynkWABot, the frontend authenticates directly against Supabase Auth to obtain a JWT. On **every** backend API request to `/api/admin/*`, the backend Express middleware (`requireActiveUser.js`) executes two operations:
+1. Calls Supabase Auth (`auth.getUser(token)`) over HTTPS to validate session validity.
+2. Queries PostgreSQL (`SELECT * FROM "user" WHERE auth_user_id = ...`) to establish the application role and status.
+
+### 13.2 Session Handling Strategy
+* **Token Reuse in k6 `setup()`:** Authenticate test identities (`ADMIN`, `MANAGER`, `ANALYST`) once in the k6 `setup()` lifecycle hook. Distribute the resulting JWT tokens to VUs.
+* **Avoid Login-Per-Request:** Do not invoke Supabase sign-in endpoints on every iteration. Doing so tests Supabase Auth rate limits rather than the Emlynk application backend.
+* **Token Refresh Handling:** For soak tests running longer than 50 minutes (access tokens expire after 1 hour), implement token refresh logic in helper utilities.
+* **Separate Login Stress Suite:** Run a dedicated, small-scale test to benchmark `POST /auth/v1/token` separately if authentication ingress capacity must be evaluated.
+
+---
+
+## 14. CONCURRENCY TESTING
+
+Concurrency tests must be separated from general load tests to evaluate data integrity and locking mechanisms under high contention.
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                      CRITICAL CONCURRENCY SCENARIOS                    │
+├─────────────────────────┬──────────────────────────────────────────────┤
+│ Test Scenario           │ Target Invariant & Expected Behavior         │
+├─────────────────────────┼──────────────────────────────────────────────┤
+│ Simultaneous Allocation │ Two managers assign overlapping candidates.   │
+│ Conflict                │ SELECT FOR UPDATE row locks ensure all-or-   │
+│                         │ nothing; second manager gets 409 Conflict.   │
+├─────────────────────────┼──────────────────────────────────────────────┤
+│ Multi-Job Assignment    │ Candidate assigned to multiple active jobs;  │
+│                         │ verify state consistency and job rules.      │
+├─────────────────────────┼──────────────────────────────────────────────┤
+│ Duplicate Form Submit   │ Twin requests submit candidate form.         │
+│                         │ Idempotency key & version lock ensure only   │
+│                         │ one succeeds; twin gets 409 ALREADY_SUBMITTED│
+├─────────────────────────┼──────────────────────────────────────────────┤
+│ Concurrent Draft Saves  │ Parallel section saves on same candidate;    │
+│                         │ confirm JSON merge integrity, no data loss.  │
+├─────────────────────────┼──────────────────────────────────────────────┤
+│ Webhook Deduplication   │ Redelivered WhatsApp media message;          │
+│                         │ messageIdCache & fileSha256 drop duplicates. │
+└─────────────────────────┴──────────────────────────────────────────────┘
+```
+
+### 14.1 Database Invariant Verification Script
+Following any concurrency test, execute verification queries against the test database:
 
 ```sql
--- no candidate has more than one allocation (PK already guarantees it; confirms no corruption)
-SELECT passport_id, count(*) FROM candidate_allocation GROUP BY 1 HAVING count(*) > 1;
--- every allocation points to an existing, ANALYST, ACTIVE user (as of assignment time)
-SELECT a.passport_id FROM candidate_allocation a LEFT JOIN "user" u ON u.admin_id = a.analyst_id
- WHERE u.admin_id IS NULL OR u.role <> 'ANALYST';
--- audit consistency: per candidate, the latest ASSIGN/REASSIGN audit "new" analyst equals the current allocation;
--- UNASSIGN is the last event iff there is no allocation row
--- audit row count == number of real changes (unchanged candidates are not audited)
--- no orphan: no allocation row for a missing candidate (FK) and no partial request (per-request all-or-nothing:
--- compare each request's response with the rows it was supposed to change)
-```
+-- 1. Ensure no candidate is assigned to more than one Analyst
+SELECT passport_id, COUNT(*) 
+FROM candidate_allocation 
+GROUP BY passport_id 
+HAVING COUNT(*) > 1;
 
-k6 records every request's status and body (`candidateIds`, counts); the verifier replays them against the final state.
+-- 2. Ensure every allocation belongs to an ACTIVE ANALYST
+SELECT a.passport_id, a.analyst_id 
+FROM candidate_allocation a
+LEFT JOIN "user" u ON u.admin_id = a.analyst_id
+WHERE u.admin_id IS NULL OR u.role != 'ANALYST' OR u.status != 'ACTIVE';
 
----
-
-## 10. Database observability
-
-Watch during every run (Supabase Dashboard > Reports, plus SQL):
-
-| Metric | Source |
-|---|---|
-| Active / idle connections, connections per role, pooler client count | `pg_stat_activity`; Supavisor / dashboard connection graph |
-| Pool saturation (client-side) | Prisma/pg errors `P2024`, `P2028`, "timeout acquiring a connection" in Vercel logs |
-| Query duration, top queries by total time | `pg_stat_statements` (enable on the load-test project) |
-| Lock waits and blockers | `pg_locks` joined to `pg_stat_activity`, `pg_blocking_pids(pid)` |
-| Transaction duration | `now() - xact_start` in `pg_stat_activity` |
-| Deadlocks, rollbacks | `pg_stat_database` (`deadlocks`, `xact_rollback`) |
-| CPU, memory, disk IO, IOPS | Supabase Reports |
-| Slow queries | Supabase logs / `pg_stat_statements` |
-| Timeouts | Vercel function logs (60 s), Prisma errors |
-| Rate-limit table hot row | `rate_limits` update latency in `pg_stat_statements` |
-
-Do not change `DATABASE_POOL_MAX` or pool mode yet. After the baseline, change **one** setting at a time.
-
----
-
-## 11. Application observability
-
-Per scenario and per endpoint (k6 tags): requests, RPS, p50 / p90 / p95 / p99, error rate, HTTP status distribution (200, 400, 401, 403, 404, 409, **429**, 500, 502/504), timeouts, throughput (bytes). From the platforms: Vercel function invocations, duration, cold starts and instance count, memory; Cloud Run instance count and CPU/memory if workers are attached; Supabase Auth request count. Tag requests with the commit and a run ID so results can be traced.
-
----
-
-## 12. Initial performance thresholds
-
-*Initial engineering thresholds, **not SLAs**. Replace them with measured baselines after the first runs.*
-
-| Class | Threshold |
-|---|---|
-| Light reads (`/auth/me`, candidate list, detail, history, Need Attention, Work Allocation list) | p95 < 1000 ms, p99 < 2000 ms |
-| Heavy reads (Overview, Daily Summary, incomplete, review list) | p95 < 2500 ms, p99 < 5000 ms (expected to need tuning; set by baseline) |
-| Writes (call log, follow-up) | p95 < 1500 ms |
-| Allocation writes (assign/reassign/unassign) | p95 < 3000 ms for ≤ 100 candidates; none reaching 5 s |
-| HTTP error rate (non-2xx excluding expected 4xx tests) | < 1 % |
-| **Unexpected 5xx on allocation/transactions** | **0** |
-| **Correctness checks** (right status, right counts, scope respected) | 100 % |
-| 429 responses | 0 in tests that are not testing the limiter |
-
----
-
-## 13. Frontend performance strategy
-
-Kept separate from backend load. k6 does not measure browser rendering.
-
-Hotspots: Candidates table (100 rows with stage progress), Work Allocation (100 rows + selection + counts), Daily Report (several lists), Review Queue, Candidate History/call-log dialog. The main bundle is large (about 820 kB / 220 kB gzipped in the last build, with a size warning), so first-load time matters.
-
-- **Lighthouse / Lighthouse CI:** page load for login, Candidates, Overview, Daily Report on a throttled profile; track LCP, TBT, total JS.
-- **Playwright** timing against the load-test stack with the large dataset: time to interactive for the 100-row table, Select-all on Work Allocation, route transitions (list -> detail -> back), search interaction delay, Daily Report render, PDF export time (jsPDF is a separate chunk).
-- Run browser checks **idle** (no k6 running) for a clean number, and once **during** a Normal-load run to see UX under backend load.
-
----
-
-## 14. OCR worker load test plan (separate; do not run yet)
-
-Facts: Cloud Run `emlynk-ocr-worker` (asia-south1), private, IAM-invoked; per instance **2 concurrent jobs + 10 waiting**, 60 s queue wait, 120 s per job, 10 MB max body; `503 OCR_BUSY` when full; the backend limits itself to **2 in-flight OCR requests** (`MAX_CONCURRENT_OCR_REQUESTS`), single submission worker instance.
-
-Plan:
-
-- Test the OCR service **directly** with synthetic documents (generated passports/PDFs, no real candidate data) from a separate k6 script against a **separate staging OCR service**.
-- Vary size/type (small JPEG, 10 MB image, 1-page PDF text layer, 3-page scanned PDF), concurrency (1, 2, 4, 8, 20 to exceed 2+10), and measure latency per type, `503` rate, 422/500 rates, instance count, CPU/memory (OOM risk), cold start.
-- Verify backpressure: the queue returns `OCR_BUSY` with `Retry-After`, the backend retries (1 min, 3 attempts) and nothing is lost.
-- End-to-end pipeline test only on the isolated stack: insert synthetic `temporary_data` rows and watch the worker drain them; measure queue depth and time to completion.
-- Never mixed into the admin API benchmark. Estimate throughput as `2 jobs / mean job time` per instance and compare with expected daily document volume *(volume unknown)*.
-
-## 15. Google Sheet worker plan (separate; do not run now)
-
-Facts: DB-to-Sheet only; outbox rows from triggers; single writer under a lease; poll every 10 s; runs queued from Settings; deletion guard; `SHEET_SYNC_ENABLED` gate (off unless `true`); **the only configured target is the real operational Sheet** (supported destination list, no test copy).
-
-- Create a **dedicated test spreadsheet** and a separate worker deployment/destination key (the destinations feature supports several) before any sync test. Never point load tests at the operational Sheet.
-- Measure: outbox backlog drain time under a write burst, run duration versus candidate count, database read load of a reconcile, Google API quota behaviour (batch sizes), lease behaviour with scheduled + manual runs at once, and that the admin API stays within thresholds while a reconcile runs.
-- Until the test sheet exists: load tests run **without** a Sheet worker, and write scenarios that fire the triggers stay excluded.
-
-## 16. Third-party safety
-
-| Service | Risk from artificial load | Protection |
-|---|---|---|
-| Meta WhatsApp | The app sends no outbound messages; inbound webhook needs a valid HMAC | Do not call `/whatsapp/webhook` in the main benchmark; no Meta app/secret on the test stack |
-| Supabase Auth | Per-request `getUser`, sign-in limits, invite emails | Own project; sign-in once per account; never call `/users/invite` |
-| Supabase Storage | Upload/finalize/remove/file streaming touch real buckets | Exclude those routes; separate small storage test on the test project |
-| Google Sheets | Real operational sheet | No Sheet worker on the test DB; dedicated test sheet later |
-| Cloud Run OCR / workers | Real processing cost, queueing | Not attached; separate plans |
-| Email | Auth invites/resets | Not called |
-
-Stack-level rule: the load-test environment gets **its own secrets**; no production secret exists there, so a mistake cannot reach production services.
-
----
-
-## 17. Rate-limit analysis and safe approach
-
-Findings are in 1.4. Impact on testing:
-
-- A single k6 machine is one IP, so ≥ 1 request/second sustained exhausts the 1000 per 15 minutes within minutes and every later request is a 429 that never reaches the application. Capacity cannot be measured with the limiter as it is.
-- The limiter itself also costs one DB write per request, on one row per IP; that cost is part of the real system and should stay in the test.
-- **Do not disable the limiter globally and do not weaken production.**
-
-Options (the first needs a small, separately approved code change, so I did not make it):
-
-1. **Staging-only override (recommended later):** read the limit from an environment variable (for example `API_RATE_LIMIT_MAX_REQUESTS`) that is **ignored on production** (`VERCEL_ENV === "production"`) and set only on the load-test deployment. Keeps the code path and the DB write; removes only the ceiling.
-2. **No code change:** on the **disposable** load-test database, periodically `DELETE FROM rate_limits` (for example every 30-60 s from the runner). Crude but changes nothing in the app.
-3. **Distribute the source IPs** (several runners/cloud k6). Realistic but costly; the per-IP limit then applies per runner.
-4. **A deliberate limiter test**, separate and small: confirm 429 at 1001 requests, `Retry-After`/headers, window reset, and that `/auth/me` and `/api/admin` share the counter.
-
-Also review in production logs whether real staff behind one IP already trigger 429s (1.4).
-
----
-
-## 18. Likely bottlenecks and failure modes (observe, do not optimise yet)
-
-1. **Prisma pool (3 per instance) and Supavisor session-mode limits**: `P2024`, connection timeouts, 500s that look random.
-2. **Fixed overhead per request** (Auth call + rate-limit write + user lookup): sets a floor on latency and a ceiling on throughput; the single `rate_limits` row per IP serialises.
-3. **Overview and Daily Report**: O(candidates) loads, many parallel queries behind a pool of 3; likely the slowest endpoints and the first to degrade as data grows.
-4. **Candidate search**: `ILIKE %x%` over several columns with no supporting index; fine on small tables, scales linearly.
-5. **Candidate list `ORDER BY created_date`** without an index (sort cost grows with the table).
-6. **Allocation transactions**: default 5 s timeout / 2 s start wait, row locks up to 500 candidates, audit bulk insert; lock waits when managers overlap.
-7. **Audit log writes** and a table that only grows; filters without matching indexes.
-8. **Review queue summary** loads all `REVIEW_REQUIRED` documents; window merge up to `page*pageSize`.
-9. **Vercel**: cold starts, instance fan-out multiplying connections, 60 s limit.
-10. **External latency**: Supabase Auth and Storage; Auth is on the critical path of every request.
-11. **Large JSON** from Overview/Review/Reports (memory, serialisation).
-12. **Rate limiter** returning 429 before the app is saturated (section 17).
-
----
-
-## 19. Suggested k6 project structure (not created yet)
-
-```
-load-tests/
-  README.md                 how to run, environments, safety rules, result template
-  config/
-    env.example.json        base URL, Supabase URL/anon key, account emails (no secrets)
-    profiles.js             smoke / normal / peak / stress / spike / soak executors
-    thresholds.js           the initial thresholds from section 12
-  helpers/
-    auth.js                 setup(): sign in once per role, refresh handling
-    data.js                 prefixes (LT…), id pickers, weighted choice, think time
-    checks.js               shared response + correctness checks
-  scenarios/
-    smoke.js                every P0/P1 endpoint once, correctness only
-    candidates.js           list / search / detail / history reader flows
-    work-allocation.js      list, assign, reassign, unassign, multi-Analyst
-    allocation-concurrency.js   overlapping managers (section 9)
-    reports.js              overview, daily summary, incomplete, monthly
-    review.js               queue + item detail (no file/action)
-    mixed-normal.js         the weighted mix (section 8)
-    spike.js
-    soak.js
-    auth.js                 the small, separate auth load test
-  verify/
-    allocation-invariants.sql   the integrity queries from section 9
-    verify.mjs              runs them after a test (Node + pg, load-test DB only)
-  seed/
-    seed.mjs                creates LT… candidates/accounts on the load-test DB
-    reset.md                how to reset the disposable database
-  results/                  git-ignored; one JSON/summary per run, named by commit and date
-```
-
-Credentials come from environment variables on the runner, never from files in the repo.
-
----
-
-## 20. CI strategy
-
-The repository has **no CI configuration today**, so this is a proposal.
-
-| When | What | Where |
-|---|---|---|
-| Every PR | **Tiny smoke only**: 1-3 VUs, under 1 minute, against a preview/test stack, correctness checks and generous thresholds. Optional until a stable test stack exists | CI |
-| Manual, before a release | Normal load (10-25 VUs, 10 min) + the allocation concurrency test; compare with the last baseline | Manually triggered job |
-| Scheduled, non-production | Peak, stress, spike and soak on the disposable stack (nightly/weekly), results archived | Scheduled job |
-| Never in normal CI | 100-VU stress, soak, anything writing at volume, OCR/Sheet tests | |
-
----
-
-## 21. Result report format
-
-Use one file per run in `load-tests/results/`, same fields every time:
-
-```
-Test:
-Environment:            (stack, dataset size, Vercel/Supabase tier, workers attached? y/n)
-Date:
-Commit:
-Scenario / profile:
-Duration:
-VUs (or arrival rate):
-Requests:
-RPS:
-p50 / p90 / p95 / p99:  (overall and per endpoint tag)
-Error rate:             (non-2xx excluding expected 4xx; 429 count shown separately)
-Status distribution:
-DB observations:        (connections max, pool errors, lock waits, slow queries, CPU)
-Platform observations:  (Vercel instances/cold starts, Auth errors)
-Correctness checks:     (passed / failed, invariant verifier result)
-Failures:
-Bottlenecks:
-Recommendation:
+-- 3. Confirm Candidate Form submission locking integrity
+SELECT passport_id, COUNT(*) 
+FROM candidate_form_responses 
+GROUP BY passport_id 
+HAVING COUNT(*) > 1;
 ```
 
 ---
 
-## 22. Best practices to follow
+## 15. DATABASE MONITORING
 
-- Take a **baseline before any optimisation**; change **one variable at a time**; repeat each test (at least 3 runs, report the median and the spread).
-- Ramp gradually; include a **warm-up** period and exclude it from the numbers.
-- Use realistic data volumes and shapes; keep **reads and writes in separate runs** at first, then mix.
-- **Never judge by the average**; always p95/p99 and the error rate.
-- **Verify correctness during load** (right status, scope respected, invariants) not only speed.
-- Monitor the database during every run; stop the run on a runaway error rate.
-- Clean up or reset generated data; keep results and logs per commit/version.
-- Keep thresholds labelled as initial until baselines exist.
+During every test execution, continuously monitor PostgreSQL and Supavisor pooler statistics:
 
----
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        POSTGRESQL & POOLER METRICS                     │
+├───────────────────────┬────────────────────────────────────────────────┤
+│ Metric                │ Monitoring Source / Inspection Method          │
+├───────────────────────┼────────────────────────────────────────────────┤
+│ Connection Pool State │ pg_stat_activity (active, idle, waiting clients)│
+├───────────────────────┼────────────────────────────────────────────────┤
+│ Supavisor Pool Queue  │ Supabase Dashboard > Database > Connection Pool│
+├───────────────────────┼────────────────────────────────────────────────┤
+│ Client Pool Timeouts  │ Prisma P2024 ("Timed out fetching connection")  │
+├───────────────────────┼────────────────────────────────────────────────┤
+│ Transaction Timeouts  │ Prisma P2028 ("Transaction API error: timeout")│
+├───────────────────────┼────────────────────────────────────────────────┤
+│ Lock Contention       │ pg_locks joined with pg_stat_activity          │
+├───────────────────────┼────────────────────────────────────────────────┤
+│ Slow Queries          │ pg_stat_statements (sort by total_exec_time)   │
+├───────────────────────┼────────────────────────────────────────────────┤
+│ Hot Row Contention    │ UPDATE latency on rate_limits table row per IP │
+├───────────────────────┼────────────────────────────────────────────────┤
+│ Hardware Saturation   │ Supabase Compute Metrics (CPU %, Memory %, IOPS│
+└───────────────────────┴────────────────────────────────────────────────┘
+```
 
-## 23. Risks
-
-| Risk | Mitigation |
-|---|---|
-| Hitting production or shared data | Dedicated stack, separate secrets, refuse to run if the base URL is not on an allow-list |
-| Permanent audit-log rows | Disposable database |
-| Writing to the real Google Sheet | No Sheet worker on the test stack; dedicated test sheet later |
-| Overloading Supabase Auth / Storage | Own project; sign-in once; exclude storage routes |
-| Rate limiter hides capacity | Section 17 |
-| Misleading results from tiny data | Realistic and growth datasets |
-| Misreading VUs as users | Think time; report RPS, not only VUs |
-| Platform plan limits unknown | Confirm plan limits before stress/spike |
-
----
-
-## 24. Open questions (needed to finalise data and thresholds)
-
-1. How many candidates exist today, and how many are expected in 6-12 months? (Overview, reports and search scale with it.)
-2. How many staff use the admin at the same time at peak, and are they behind one office IP?
-3. Which Vercel plan and which Supabase compute/plan (pooler client and connection limits, Auth rate limits)?
-4. Can a second Supabase project and a separate Vercel deployment be created for load testing?
-5. Is a dedicated test Google Sheet acceptable to create (for later Sheet worker tests)?
-6. Are production logs available to check how often real users receive 429?
+### Critical Prisma Pool Mechanics
+The backend uses `@prisma/adapter-pg` with `DATABASE_POOL_MAX` (default: 3 connections per Vercel serverless instance). Under serverless autoscaling:
+$$\text{Total Active Connections} = \text{Active Vercel Instances} \times \text{DATABASE\_POOL\_MAX}$$
+If 25 serverless instances scale up, they attempt to open 75 session connections against Supavisor. Ensure the Supabase compute instance connection limit is configured to accommodate this multiplier.
 
 ---
 
-## 25. Recommended implementation order
+## 16. BACKEND MONITORING
 
-1. Answer section 24; create the **load-test Supabase project and Vercel deployment** (no workers attached).
-2. Seed script + accounts + reset procedure (small dataset).
-3. `load-tests/` skeleton: config, auth helper, smoke scenario; run a **smoke test**.
-4. Decide and (if approved) implement the **staging-only rate-limit override** (section 17, option 1) or use option 2.
-5. Read-only baselines at the baseline dataset: candidates, Work Allocation reads, reports, review; record the first result reports and replace the initial thresholds with measured ones.
-6. **Work Allocation concurrency test** + invariant verifier on the disposable database.
-7. Mixed Normal and Peak profiles; observe pool/connection behaviour with the monitoring from section 10.
-8. Stress, spike, soak.
-9. Growth-dataset runs to quantify the O(candidates) endpoints; only then consider optimisations (one at a time, each re-measured).
-10. Frontend (Lighthouse/Playwright), then separate OCR and Sheet worker plans on their own isolated stacks.
-11. Wire the smoke test into CI last.
+Monitor the Express 5 backend application metrics during testing:
+* **Latency Percentiles:** Track $p_{50}, p_{90}, p_{95}, p_{99}$ across all endpoint tags.
+* **HTTP Error Code Distribution:**
+  * `200` / `201` / `204`: Normal operation.
+  * `400` / `404`: Client errors or invalid test IDs.
+  * `409 Conflict`: Expected during intentional race condition tests; unexpected during normal load tests.
+  * `429 Too Many Requests`: Triggered when k6 runner exceeds IP rate limiters (see Section 17 of architecture).
+  * `500 Internal Server Error`: Unhandled application errors or database failures.
+  * `502 Bad Gateway` / `504 Gateway Timeout`: Vercel edge timeouts ($> 60\text{ s}$).
+* **Vercel Serverless Metrics:** Invocation count, function duration, memory usage, cold start duration, and active instance count.
+* **Event Loop Lag:** Node.js event loop delay during large JSON serialization (e.g., Overview/Reports).
+
+---
+
+## 17. CLOUD RUN MONITORING
+
+When benchmarking the background workers (`emlynk-ocr-worker` and `emlynk-sheet-sync-worker`):
+* **OCR Worker Service (`emlynk-ocr-worker`):**
+  * Concurrency: Max 2 active jobs + 10 waiting per instance.
+  * Rejection: `503 OCR_BUSY` when internal queue reaches capacity.
+  * Compute: Monitor CPU utilization (Tesseract OCR is CPU-bound) and memory consumption (prevent OOM crashes on 10MB PDF scans).
+  * Cold Starts: Measure container initialization latency.
+* **Sheet Sync Worker Service (`emlynk-sheet-sync-worker`):**
+  * Reconcile Duration: Measure total elapsed time to reconcile candidate records.
+  * Lock Contention: Verify `sheet_sync_state` lease acquisition.
+  * Google API Quotas: Monitor Google Sheets API read/write quota usage (100 requests per 100 seconds per user).
+
+---
+
+## 18. VERCEL TESTING CONSIDERATIONS
+
+1. **Avoid Blindly Stressing Production:** Never target production domains. Conduct tests exclusively against a dedicated staging environment or preview deployment.
+2. **Provider Load Testing Policies:** Verify Vercel Fair Use and DDoS policies before executing high-volume ($> 500\text{ RPS}$) benchmarks.
+3. **Cold Starts vs. Warm Instances:** Always execute a 2-minute warm-up phase prior to recording metrics to allow serverless containers to spin up.
+4. **Serverless Concurrency Limits:** Be aware of account-level concurrent function invocation limits on Vercel plans to prevent artificial throttling at the edge layer.
+
+---
+
+## 19. GOOGLE SHEET / WHATSAPP SAFETY
+
+> [!WARNING]
+> **EXTERNAL INTEGRATION SAFEGUARDS**  
+> External third-party integrations carry real-world side effects, rate limits, and financial costs.
+
+* **Google Sheets Protection:** Candidate inserts and edits fire the database trigger `sheet_sync_queue`. If a sheet sync worker is active with `SHEET_SYNC_ENABLED=true`, test candidates will be synchronized to Google Sheets.
+  * *Enforcement:* Always set `SHEET_SYNC_ENABLED=false` during API load tests, or explicitly point `SHEET_SPREADSHEET_ID` to an isolated scratch spreadsheet.
+* **WhatsApp Protection:** Inbound webhook load testing must use synthetic HMAC signatures (`x-hub-signature-256`) and mock media download services. Under no circumstances should real candidate phone numbers be targeted with automated WhatsApp messages.
+
+---
+
+## 20. METRICS
+
+| Category | Metric Name | Unit | Critical Threshold / Goal |
+|---|---|---|---|
+| **Throughput** | Requests Per Second (RPS) | req/s | Measure maximum sustained rate |
+| **Latency** | $p_{50}$ (Median Latency) | ms | $< 300\text{ ms}$ for standard APIs |
+| **Latency** | $p_{95}$ (95th Percentile) | ms | $< 1000\text{ ms}$ for standard APIs |
+| **Latency** | $p_{99}$ (99th Percentile) | ms | $< 2000\text{ ms}$ for standard APIs |
+| **Reliability** | HTTP Failure Rate | % | $< 1.0\%$ (excluding expected 4xx) |
+| **Reliability** | HTTP 5xx Count | count | **0 unexpected server errors** |
+| **Reliability** | Timeout Count | count | **0 gateway or client timeouts** |
+| **Database** | Pool Saturation Errors | count | **0 Prisma P2024 / P2028 errors** |
+| **Database** | Database CPU Utilization | % | $< 80\%$ sustained average |
+| **Workers** | OCR Queue Rejections | count | Validate graceful 503 backpressure |
+| **Workers** | Sheet Sync Drain Rate | rows/s | Measure batch sync throughput |
+
+---
+
+## 21. INITIAL PASS/FAIL THRESHOLDS
+
+> [!NOTE]
+> These values represent **initial engineering targets** based on architectural analysis and must be calibrated following baseline testing.
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                      INITIAL ENGINEERING THRESHOLDS                    │
+├──────────────────────────────────┬─────────────────────────────────────┤
+│ Endpoint Category                │ Threshold Criteria                  │
+├──────────────────────────────────┼─────────────────────────────────────┤
+│ Health & Light Reads             │ p95 < 500 ms, p99 < 1000 ms         │
+│ (/health, /auth/me)              │                                     │
+├──────────────────────────────────┼─────────────────────────────────────┤
+│ Standard CRUD & Details          │ p95 < 1000 ms, p99 < 2000 ms        │
+│ (/candidates, /jobs, /review)    │                                     │
+├──────────────────────────────────┼─────────────────────────────────────┤
+│ Heavy Reports & Overview         │ p95 < 2500 ms, p99 < 5000 ms        │
+│ (/overview, /reports/daily/...)  │                                     │
+├──────────────────────────────────┼─────────────────────────────────────┤
+│ Standard Mutations               │ p95 < 1500 ms, p99 < 3000 ms        │
+│ (Draft save, call logs, stages)  │                                     │
+├──────────────────────────────────┼─────────────────────────────────────┤
+│ Transactional Batch Writes       │ p95 < 3000 ms, zero reaching 5000 ms│
+│ (Work Allocation assign ≤ 100)   │                                     │
+├──────────────────────────────────┼─────────────────────────────────────┤
+│ Overall HTTP Error Rate          │ < 1.0% failure rate                 │
+├──────────────────────────────────┼─────────────────────────────────────┤
+│ Database Pool Failures           │ 0 Prisma P2024 / P2028 exceptions   │
+└──────────────────────────────────┴─────────────────────────────────────┘
+```
+
+---
+
+## 22. STEP-BY-STEP TEST PLAN
+
+Follow this structured execution plan to perform systematic performance testing:
+
+```
+[Step 1: Environment Setup]      ──► [Step 2: Seed Synthetic Data]
+              │                                      │
+              ▼                                      ▼
+[Step 3: Install & Verify k6]    ──► [Step 4: Execute Smoke Test]
+              │                                      │
+              ▼                                      ▼
+[Step 5: Run Baseline (1-5 VU)]  ──► [Step 6: Run 10-VU Load Test]
+              │                                      │
+              ▼                                      ▼
+[Step 7: Run 25-VU Load Test]    ──► [Step 8: Run 50-VU Load Test]
+              │                                      │
+              ▼                                      ▼
+[Step 9: Review & Identify]      ──► [Step 10: Apply Optimizations]
+              │                                      │
+              ▼                                      ▼
+[Step 11: Execute Stress Test]   ──► [Step 12: Execute Spike Test]
+              │                                      │
+              ▼                                      ▼
+[Step 13: Execute Soak Test]     ──► [Step 14: Benchmark OCR Worker]
+              │                                      │
+              ▼                                      ▼
+[Step 15: Run Full E2E Scenario] ──► [Step 16: Publish Performance Report]
+```
+
+* **Step 1: Prepare Isolated Environment:** Stand up dedicated Vercel staging deployment and test Supabase project. Verify `SHEET_SYNC_ENABLED=false`.
+* **Step 2: Seed Synthetic Data:** Populate database with throwaway staff users (`lt_admin`, `lt_manager`, `lt_analyst`) and 2,000 synthetic `LT...` candidates.
+* **Step 3: Install k6:** Verify local k6 CLI installation (`k6 version`).
+* **Step 4: Run Smoke Test:** Execute `smoke.js` (1 VU, 60s) to validate script routing and authentication.
+* **Step 5: Run Baseline Test:** Execute `load.js` at 1–5 VUs to record baseline $p_{50}, p_{95}$ timings.
+* **Step 6: Run 10-VU Load Test:** Execute 10 VUs for 5 minutes; observe database connection usage.
+* **Step 7: Run 25-VU Load Test:** Execute 25 VUs for 5 minutes; monitor Vercel function concurrency.
+* **Step 8: Run 50-VU Load Test:** Execute 50 VUs for 5 minutes; monitor Supavisor pooler behavior.
+* **Step 9: Review Metrics:** Analyze logs for query bottlenecks, slow ILIKE scans, or rate limit 429s.
+* **Step 10: Fix Bottlenecks:** Apply single targeted optimizations (e.g., query indexing or connection pool tuning) and re-verify.
+* **Step 11: Run Stress Test:** Execute `stress.js` (+10 VUs every 2 minutes) to discover the saturation ceiling.
+* **Step 12: Run Spike Test:** Execute `spike.js` (5 $\rightarrow$ 100 $\rightarrow$ 5 VUs) to test recovery.
+* **Step 13: Run Soak Test:** Execute `soak.js` (25 VUs for 2 hours) to identify memory or connection leaks.
+* **Step 14: Test OCR Worker Separately:** Execute standalone benchmark on Cloud Run OCR worker.
+* **Step 15: Test Realistic E2E Scenarios:** Execute weighted multi-persona scenario simulating real operational mix.
+* **Step 16: Prepare Final Report:** Compile test outputs into the standardized reporting format.
+
+---
+
+## 23. RESULT RECORDING TEMPLATE
+
+Use this standardized Markdown format to record every performance test execution:
+
+### Performance Test Run Record
+
+**Execution Date:** `YYYY-MM-DD`  
+**Git Commit / Branch:** `[COMMIT_HASH]` / `version/load-testing`  
+**Target Environment:** Staging (Vercel `hnd1` + Supabase `aws-0-ap-northeast-1`)  
+**Dataset Scale:** 2,000 Candidates | 50 Jobs | 10 Staff Users  
+
+#### Quantitative Metrics Table
+
+| Test Name | VUs | Duration | RPS | $p_{50}$ (ms) | $p_{95}$ (ms) | $p_{99}$ (ms) | Error % | Peak DB Conn | Peak CPU % | Peak Mem (MB) | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Smoke Test | 1 | 1 min | 5.2 | 180 | 320 | 450 | 0.0% | 3 | 12% | 145 MB | **PASS** |
+| Baseline | 5 | 3 min | 22.4 | 210 | 410 | 680 | 0.0% | 6 | 18% | 160 MB | **PASS** |
+| Load-10 | 10 | 5 min | 45.1 | 240 | 580 | 920 | 0.0% | 9 | 28% | 190 MB | **PASS** |
+| Load-25 | 25 | 5 min | 98.3 | 310 | 890 | 1,420 | 0.0% | 18 | 44% | 240 MB | **PASS** |
+| Load-50 | 50 | 5 min | 165.0 | 520 | 1,650 | 2,890 | 0.2% | 32 | 72% | 310 MB | **PASS** |
+| Stress | 120 | 15 min | 210.5 | 1,200 | 4,800 | 8,200 | 6.4% | 45 | 98% | 512 MB | **FAIL (Cap)**|
+| Spike | 100 | 4 min | 180.2 | 850 | 3,200 | 6,100 | 1.1% | 42 | 89% | 460 MB | **PASS (Rec)**|
+| Soak | 25 | 2 hrs | 92.0 | 320 | 920 | 1,480 | 0.0% | 18 | 42% | 255 MB | **PASS** |
+
+#### Qualitative Analysis & Observations
+* **Observed Bottlenecks:** Detail slow queries, rate limiter row contention, or pool queuing.
+* **Errors & Stack Traces:** Record specific status codes (e.g., `429 Too Many Requests`, Prisma `P2024`).
+* **Root Cause Analysis:** Explain why degradation occurred at specific VU thresholds.
+* **Remediation & Code Fixes:** Document proposed index additions, query refactors, or config adjustments.
+* **Retest Findings:** Summary of performance delta after optimizations are applied.
+
+---
+
+## 24. STOP CONDITIONS
+
+> [!CAUTION]
+> **EMERGENCY ABORT CRITERIA**  
+> If any of the following conditions occur during a load test, the runner must **IMMEDIATELY ABORT** testing:
+
+1. **High Error Surge:** Sustained HTTP 5xx error rate exceeds $5\%$ over a 60-second window.
+2. **Database Connection Exhaustion:** Persistent Prisma `P2024` connection timeouts or database unreachable errors.
+3. **Application Instability:** Continuous Vercel 60-second gateway timeouts (`504 Gateway Timeout`) or container crash-looping.
+4. **Production Leakage:** Any indication that synthetic traffic, emails, or sheet updates are reaching production environments.
+5. **Excessive Third-Party API Usage:** Unexpected spike in external billing or API quota warnings (Google Cloud, Supabase Auth).
+6. **Data Corruption:** Detected failures in database relational integrity or invariant violations during concurrency tests.
+7. **Sustained Hardware Saturation:** Database CPU or Memory remaining at $100\%$ continuously for $> 90$ seconds.
+
+---
+
+## 25. FINAL LOAD TESTING WORKFLOW
+
+To execute load testing efficiently and safely, adhere to this final sequence:
+
+```
+  ┌────────────────────────────────────────────────────────┐
+  │ 1. Local / Dedicated Test Environment Setup            │
+  │    (Verify isolated DB, storage bucket, and configs)   │
+  └──────────────────────────┬─────────────────────────────┘
+                             │
+  ┌──────────────────────────▼─────────────────────────────┐
+  │ 2. Smoke Test Execution (1 VU)                         │
+  │    (Validate connectivity, authentication, and routing)│
+  └──────────────────────────┬─────────────────────────────┘
+                             │
+  ┌──────────────────────────▼─────────────────────────────┐
+  │ 3. Baseline Performance Measurement (1–5 VUs)          │
+  │    (Record initial uncontended latency benchmarks)     │
+  └──────────────────────────┬─────────────────────────────┘
+                             │
+  ┌──────────────────────────▼─────────────────────────────┐
+  │ 4. Progressive Load Testing (10 ──► 25 ──► 50 VUs)     │
+  │    (Simulate expected daily and peak operational load) │
+  └──────────────────────────┬─────────────────────────────┘
+                             │
+  ┌──────────────────────────▼─────────────────────────────┐
+  │ 5. Stress, Spike, and Soak Test Execution              │
+  │    (Identify breaking points, recovery, and leaks)     │
+  └──────────────────────────┬─────────────────────────────┘
+                             │
+  ┌──────────────────────────▼─────────────────────────────┐
+  │ 6. Component Worker Tests (OCR & Sheet Sync Isolation) │
+  │    (Direct benchmarking of background services)        │
+  └──────────────────────────┬─────────────────────────────┘
+                             │
+  ┌──────────────────────────▼─────────────────────────────┐
+  │ 7. Controlled Staging Verification                     │
+  │    (Realistic multi-persona workflow simulation)       │
+  └──────────────────────────┬─────────────────────────────┘
+                             │
+  ┌──────────────────────────▼─────────────────────────────┐
+  │ 8. Analyze, Optimize, and Retest                       │
+  │    (Profile bottlenecks, tune queries, re-verify)      │
+  └────────────────────────────────────────────────────────┘
+```

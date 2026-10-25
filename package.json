@@ -55,7 +55,8 @@
     "@electric-sql/pglite": "^0.5.8",
     "@electric-sql/pglite-socket": "^0.2.11",
     "jpeg-js": "0.4.4",
-    "pngjs": "7.0.0"
+    "pngjs": "7.0.0",
+    "supabase": "^2.122.0"
   },
   "overrides": {
     "deepmerge-ts": "^8.0.2"
