@@ -94,7 +94,7 @@ import {
 } from "../services/jobService.js";
 import { getFormSubmission, pendingConflictsByCandidate } from "../services/candidateFormSubmissionService.js";
 import { activeJobTypeNames, NO_PREFERRED_JOB_TYPE, resolveCandidateJobTypes } from "../services/jobTypeCatalog.js";
-import { confirmFormField, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
+import { CONFIRM_SELECT, confirmFormField, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
 import { parseCandidateFormOrigin } from "../config/candidateForm.js";
@@ -212,9 +212,17 @@ export function createAdminRouter({
     const router = express.Router();
     const formOrigin = parseCandidateFormOrigin(candidateFormOrigin);
 
-    router.use(apiLimiter);
+    // Local load-testing bypass: only the admin API rate limiter is skipped.
+    // Auth, RBAC, and production/staging defaults remain strictly intact.
+    if (process.env.LOAD_TEST_MODE !== "true") {
+        router.use(apiLimiter);
+    }
 
     router.use((req, res, next) => {
+        // TEMPORARY PERFORMANCE INSTRUMENTATION - REMOVE AFTER TESTING
+        if (req.method === "GET" && req.path === "/candidates") {
+            req._perfCandidateStart = performance.now();
+        }
         res.set("Cache-Control", "no-store");
         next();
     });
@@ -535,17 +543,85 @@ export function createAdminRouter({
         return passportId;
     };
 
+    // TEMPORARY PERFORMANCE INSTRUMENTATION - REMOVE AFTER TESTING
     router.get("/candidates", requireRole(CANDIDATE_READERS), async (req, res) => {
+        const tRouteStart = performance.now();
+        const authPreRouteDuration = req._perfCandidateStart ? (tRouteStart - req._perfCandidateStart) : 0;
+
         const parsed = parseCandidateListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
+        const tResolveDbStart = performance.now();
         const client = await resolveDb(db);
-        const list = await listCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) });
-        // formConflicts: the Candidate Form fields still waiting for review ([] = none), for the list's
-        // "!" indicator. Same rule as the candidate page's pending changes; derived, never stored.
-        const conflicts = await pendingConflictsByCandidate(client, list.items.map((item) => item.passportId));
-        return res.json({ ...list, items: list.items.map((item) => ({ ...item, formConflicts: conflicts.get(item.passportId) ?? [] })) });
+        const resolveDbDuration = performance.now() - tResolveDbStart;
+
+        // The list query also loads the columns the conflict check compares (CONFIRM_SELECT.candidate), so the
+        // candidates are read once. formConflicts: the Candidate Form fields still waiting for review
+        // ([] = none), for the list's "!" indicator (same rule as the candidate page's pending changes;
+        // derived, never stored). It runs concurrently with the Form Submitted status lookup, from the same
+        // loaded rows; `concurrent` is used here only and never sent.
+        let serviceTimings = null;
+        const { concurrent: conflicts, ...list } = await listCandidates({
+            db: client,
+            params: parsed.params,
+            scope: candidateScope(req.user),
+            extraSelect: CONFIRM_SELECT.candidate,
+            concurrently: (rows) => pendingConflictsByCandidate(client, rows.map((row) => row.passportId), { candidates: rows }),
+            onTiming: (t) => { serviceTimings = t; },
+        });
+
+        const tConflictMergeStart = performance.now();
+        const items = list.items.map((item) => ({ ...item, formConflicts: conflicts.get(item.passportId) ?? [] }));
+        const conflictMergeDuration = performance.now() - tConflictMergeStart;
+
+        const totalRouteDuration = performance.now() - tRouteStart;
+        const totalOverallDuration = req._perfCandidateStart ? (performance.now() - req._perfCandidateStart) : totalRouteDuration;
+
+        const countMs = serviceTimings?.countDuration ?? 0;
+        const listQueryMs = serviceTimings?.listQueryDuration ?? 0;
+        const baseCandidateMs = serviceTimings?.baseCandidateDuration ?? 0;
+        const consolidatedRelationsMs = serviceTimings?.consolidatedRelationsDuration ?? 0;
+        const totalListFetchMs = serviceTimings?.totalListFetchDuration ?? listQueryMs;
+        const enrichMs = (serviceTimings?.enrichDuration ?? 0) + conflictMergeDuration;
+        const submittedMs = serviceTimings?.submittedDuration ?? 0;
+        const conflictMs = serviceTimings?.conflictDuration ?? 0;
+
+        let poolInfo = null;
+        try {
+            const prismaModule = await import("../config/prisma.js");
+            if (prismaModule.pool) {
+                poolInfo = {
+                    total: prismaModule.pool.totalCount,
+                    idle: prismaModule.pool.idleCount,
+                    waiting: prismaModule.pool.waitingCount,
+                    peakWaiting: prismaModule.poolMetrics?.peakWaitingCount ?? 0,
+                    maxAcquireWaitMs: prismaModule.poolMetrics?.maxAcquireWaitMs ?? 0,
+                };
+            }
+        } catch {
+            // Ignored if test db is used
+        }
+
+        console.log(
+            `[PERF][GET /api/admin/candidates] ` +
+            `total=${totalOverallDuration.toFixed(2)}ms ` +
+            `route=${totalRouteDuration.toFixed(2)}ms | ` +
+            `1_count=${countMs.toFixed(2)}ms | ` +
+            `2_main_list_query=${listQueryMs.toFixed(2)}ms (` +
+            `2a_base_candidate=${baseCandidateMs.toFixed(2)}ms, ` +
+            `2b_consolidated_relations=${consolidatedRelationsMs.toFixed(2)}ms, ` +
+            `2c_total_list_fetch=${totalListFetchMs.toFixed(2)}ms) | ` +
+            `3_relation_enrichment=${enrichMs.toFixed(2)}ms | ` +
+            `4_form_submitted_status=${submittedMs.toFixed(2)}ms | ` +
+            `5_form_conflict_lookup=${conflictMs.toFixed(2)}ms | ` +
+            `6_auth_pre_route=${authPreRouteDuration.toFixed(2)}ms (resolveDb=${resolveDbDuration.toFixed(2)}ms) | ` +
+            `7_total=${totalOverallDuration.toFixed(2)}ms | ` +
+            (poolInfo ? `pool={total:${poolInfo.total},idle:${poolInfo.idle},waiting:${poolInfo.waiting},peakWaiting:${poolInfo.peakWaiting},maxAcquireWait=${poolInfo.maxAcquireWaitMs.toFixed(2)}ms} ` : "") +
+            `[p=${parsed.params.page}, size=${parsed.params.pageSize}, items=${items.length}, total=${list.pagination.totalItems}, search=${parsed.params.search ? `"${parsed.params.search}"` : "none"}]`
+        );
+
+        return res.json({ ...list, items });
     });
 
     // The job type preferences must come from the active list (Settings > Job Types) or be

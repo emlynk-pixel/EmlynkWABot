@@ -73,14 +73,17 @@ export async function getFormSubmission({ db, passportId }) {
 // value after the field's own normalisation (case and surrounding spaces; phone numbers by
 // digits), and has no CONFIRMED / REJECTED decision yet. Derived on every read: nothing about it
 // is stored, so it disappears by itself once the last field is confirmed or rejected.
-export async function pendingConflictsByCandidate(db, passportIds) {
+// candidates: the candidates' rows when the caller already loaded them (with passportId and every
+// CONFIRM_SELECT.candidate column; GET /candidates does, in its list query), so the candidate table is
+// not read again. Without it they are read here.
+export async function pendingConflictsByCandidate(db, passportIds, { candidates: loaded = null } = {}) {
     const ids = [...new Set(passportIds)];
     if (!ids.length) return new Map();
     const responses = await db.candidateFormResponse.findMany({ where: { passportId: { in: ids } } });
     if (!responses.length) return new Map();
     const submittedIds = responses.map((row) => row.passportId);
     const [candidates, details, reviews] = await Promise.all([
-        db.candidate.findMany({ where: { passportId: { in: submittedIds } }, select: { passportId: true, ...CONFIRM_SELECT.candidate } }),
+        loaded ?? db.candidate.findMany({ where: { passportId: { in: submittedIds } }, select: { passportId: true, ...CONFIRM_SELECT.candidate } }),
         db.candidateAdditionalDetails.findMany({ where: { passportId: { in: submittedIds } }, select: { passportId: true, ...CONFIRM_SELECT.details } }),
         db.candidateFormFieldReview.findMany({ where: { passportId: { in: submittedIds } }, select: { passportId: true, fieldKey: true } }),
     ]);

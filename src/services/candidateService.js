@@ -630,14 +630,14 @@ const listSelect = {
 
 // ---------------------------------------------------------------- workflow status
 
-// Which of these candidates submitted the Candidate Form, in ONE query. The Candidate Form is a separate
-// application whose table (candidate_form_access) exists only where its migrations ran; where it does
-// not (or cannot be read) nobody has submitted. Read-only: nothing of the form is modelled here.
+// Which of these candidates submitted the Candidate Form, in ONE query. candidate_form_access is created by
+// the repository's migrations (20261017120000_candidate_form_share_and_response; Prisma model
+// CandidateFormAccess) in every supported environment, so it is queried directly, with no per-request
+// existence probe. If the read fails anyway, nobody is shown as Form Submitted (the list still works).
+// Read-only.
 async function submittedFormPassportIds(db, passportIds) {
     if (!passportIds.length || typeof db.$queryRaw !== "function") return new Set();
     try {
-        const [table] = await db.$queryRaw`SELECT to_regclass('public.candidate_form_access') IS NOT NULL AS "present"`;
-        if (!table?.present) return new Set();
         const rows = await db.$queryRaw`SELECT "passport_id" AS "passportId" FROM "candidate_form_access" WHERE "status" = 'SUBMITTED' AND "passport_id" = ANY(${passportIds})`;
         return new Set(rows.map((row) => row.passportId));
     } catch (error) {
@@ -646,43 +646,254 @@ async function submittedFormPassportIds(db, passportIds) {
     }
 }
 
+// Consolidated relation loading for candidate list: executes one parameterized query
+// aggregating stages, documents, active job assignments, and verification.
+export async function fetchConsolidatedCandidateRelations(db, passportIds) {
+    if (!passportIds || passportIds.length === 0) return [];
+    return db.$queryRaw`
+        SELECT
+            p.passport_id AS "passportId",
+            COALESCE((
+                SELECT json_agg(json_build_object('stage', s.stage, 'completed', s.completed, 'testResult', s.test_result))
+                FROM candidate_stages s WHERE s.passport_id = p.passport_id
+            ), '[]'::json) AS "stages",
+            COALESCE((
+                SELECT json_agg(json_build_object('documentType', d.document_type, 'documentVariant', d.document_variant, 'verificationStatus', d.verification_status))
+                FROM documents d WHERE d.passport_id = p.passport_id AND d.document_type = ANY(${REQUIRED_SUBMISSION_DOCUMENTS}::text[])
+            ), '[]'::json) AS "documents",
+            COALESCE((
+                SELECT json_agg(json_build_object('jobId', j.job_id) ORDER BY j.job_id ASC)
+                FROM (SELECT jc.job_id FROM job_candidate jc WHERE jc.passport_id = p.passport_id AND jc.is_active = true ORDER BY jc.job_id ASC, jc.passport_id ASC LIMIT 1) j
+            ), '[]'::json) AS "jobAssignments",
+            (
+                SELECT json_build_object(
+                    'detailsVerifiedAt', (v.details_verified_at AT TIME ZONE 'UTC'),
+                    'documentsVerifiedAt', (v.documents_verified_at AT TIME ZONE 'UTC')
+                )
+                FROM candidate_verification v WHERE v.passport_id = p.passport_id
+            ) AS "verification"
+        FROM UNNEST(${passportIds}::text[]) AS p(passport_id)
+    `;
+}
+
+function parseDbDate(val) {
+    if (!val) return null;
+    if (val instanceof Date) return val;
+    const str = String(val);
+    return new Date(str.endsWith("Z") || str.includes("+") ? str : str + "Z");
+}
+
+// Fallback relation loading used in test environments where db.$queryRaw is not available (e.g. lightweight mocks)
+export async function fetchFallbackCandidateRelations(db, passportIds, { stagesByPassport, docsByPassport, jobsByPassport, verifByPassport }) {
+    if (!passportIds || passportIds.length === 0) return;
+    const [stagesRows, docsRows, jobRows, verifRows] = await Promise.all([
+        db.candidateStage?.findMany
+            ? db.candidateStage.findMany({
+                where: { passportId: { in: passportIds } },
+                select: { passportId: true, stage: true, completed: true, testResult: true },
+            })
+            : Promise.resolve([]),
+        db.document?.findMany
+            ? db.document.findMany({
+                where: { passportId: { in: passportIds }, documentType: { in: REQUIRED_SUBMISSION_DOCUMENTS } },
+                select: { passportId: true, documentType: true, documentVariant: true, verificationStatus: true },
+            })
+            : Promise.resolve([]),
+        db.jobCandidate?.findMany
+            ? db.jobCandidate.findMany({
+                where: { passportId: { in: passportIds }, isActive: true },
+                select: { passportId: true, jobId: true },
+                take: 1,
+            })
+            : Promise.resolve([]),
+        db.candidateVerification?.findMany
+            ? db.candidateVerification.findMany({
+                where: { passportId: { in: passportIds } },
+                select: { passportId: true, detailsVerifiedAt: true, documentsVerifiedAt: true },
+            })
+            : Promise.resolve([]),
+    ]);
+
+    for (const s of stagesRows) {
+        if (!stagesByPassport.has(s.passportId)) stagesByPassport.set(s.passportId, []);
+        stagesByPassport.get(s.passportId).push({ stage: s.stage, completed: s.completed, testResult: s.testResult });
+    }
+    for (const d of docsRows) {
+        if (!docsByPassport.has(d.passportId)) docsByPassport.set(d.passportId, []);
+        docsByPassport.get(d.passportId).push({ documentType: d.documentType, documentVariant: d.documentVariant, verificationStatus: d.verificationStatus });
+    }
+    for (const j of jobRows) {
+        if (!jobsByPassport.has(j.passportId)) jobsByPassport.set(j.passportId, []);
+        if (jobsByPassport.get(j.passportId).length === 0) {
+            jobsByPassport.get(j.passportId).push({ jobId: j.jobId });
+        }
+    }
+    for (const v of verifRows) {
+        verifByPassport.set(v.passportId, {
+            detailsVerifiedAt: v.detailsVerifiedAt,
+            documentsVerifiedAt: v.documentsVerifiedAt,
+        });
+    }
+}
+
 // GET /api/admin/candidates. Server-side paging: one COUNT and one bounded
-// query (LIMIT pageSize OFFSET (page - 1) * pageSize, at most 100 rows) whose
-// stages and required documents Prisma loads in one batched query each, never
-// per candidate. Newest first; passport ID breaks ties, so the order is the
+// query (LIMIT pageSize OFFSET (page - 1) * pageSize, at most 100 rows).
+// Candidate relations (stages, documents, active jobs, verification) are loaded in ONE consolidated
+// parameterized SQL round-trip. Newest first; passport ID breaks ties, so the order is the
 // same on every page (no candidate on two pages, none skipped). A page past
 // the last one is empty, with the real totals, so the page can go back.
 // scope: the signed-in user's candidates (candidateAccess.js candidateScope),
 // applied in the database before paging, so search and totals only ever
 // cover the candidates the user may see.
-export async function listCandidates({ db, params, scope = {} }) {
+// extraSelect: more candidate columns to load in the SAME query (not part of the items); withRows: also
+// return those loaded rows as `rows` (the route reuses them for the Candidate Form conflicts, so the
+// candidates are not read a second time). concurrently(rows): another read-only lookup over the loaded
+// rows, run AT THE SAME TIME as the Candidate Form status lookup (not after it); its result is returned
+// as `concurrent`. Callers that pass none of these get exactly the result as before.
+export async function listCandidates({ db, params, scope = {}, extraSelect = null, withRows = false, concurrently = null, onTiming = null }) {
     const search = params.search ? candidateSearchWhere(params.search) : {};
     // Filtered on the database, from the saved Test details row (never from stage completion).
     const passed = params.testResult === TEST_RESULT_PASS ? { stages: { some: { stage: "TEST_DETAILS", testResult: TEST_RESULT_PASS } } } : {};
     const available = params.available ? { jobAssignments: { none: { isActive: true } } } : {};
     const parts = [search, scope, passed, available].filter((part) => Object.keys(part).length);
     const where = parts.length > 1 ? { AND: parts } : parts[0] ?? {};
-    const [total, users] = await Promise.all([
-        db.candidate.count({ where }),
-        db.candidate.findMany({
+
+    // 1. Candidate count & 2. Main candidate list query (executed concurrently via Promise.all)
+    const tCountStart = performance.now();
+    const countPromise = Promise.resolve(db.candidate.count({ where })).then((count) => ({
+        count,
+        duration: performance.now() - tCountStart,
+    }));
+
+    const tListQueryStart = performance.now();
+    const listQueryPromise = (async () => {
+        // Base candidate query (scalar fields only)
+        const tBaseStart = performance.now();
+        const baseCandidates = await db.candidate.findMany({
             where,
-            select: WORKFLOW_STATUS_SELECT,
+            select: extraSelect ? { ...extraSelect, ...listSelect } : listSelect,
             orderBy: [{ createdDate: "desc" }, { passportId: "asc" }],
             skip: (params.page - 1) * params.pageSize,
             take: params.pageSize,
-        }),
-    ]);
-    const submitted = await submittedFormPassportIds(db, users.map((user) => user.passportId));
-    return {
-        items: users.map((user) => {
-            const missing = automaticStageMissing(user, user.documents);
-            const stages = stageList(user.stages, missing);
-            const workflowStatus = workflowStatusOf(user, submitted.has(user.passportId), missing);
-            return { ...candidateSummary(user), workflowStatus, stages: stages.map(({ stage, completed }) => ({ stage, completed })) };
-        }),
+        });
+        const baseDuration = performance.now() - tBaseStart;
+
+        const passportIds = baseCandidates.map((c) => c.passportId);
+
+        let consolidatedRelationsDuration = 0;
+        const stagesByPassport = new Map();
+        const docsByPassport = new Map();
+        const jobsByPassport = new Map();
+        const verifByPassport = new Map();
+
+        if (passportIds.length > 0) {
+            const tRelationsStart = performance.now();
+            if (typeof db.$queryRaw === "function") {
+                try {
+                    const relationRows = await fetchConsolidatedCandidateRelations(db, passportIds);
+                    for (const row of relationRows) {
+                        if (row.stages && Array.isArray(row.stages)) {
+                            stagesByPassport.set(row.passportId, row.stages);
+                        }
+                        if (row.documents && Array.isArray(row.documents)) {
+                            docsByPassport.set(row.passportId, row.documents);
+                        }
+                        if (row.jobAssignments && Array.isArray(row.jobAssignments)) {
+                            jobsByPassport.set(row.passportId, row.jobAssignments.slice(0, 1));
+                        }
+                        if (row.verification) {
+                            verifByPassport.set(row.passportId, {
+                                detailsVerifiedAt: parseDbDate(row.verification.detailsVerifiedAt),
+                                documentsVerifiedAt: parseDbDate(row.verification.documentsVerifiedAt),
+                            });
+                        }
+                    }
+                } catch (err) {
+                    if (typeof db.candidateStage?.findMany === "function") {
+                        await fetchFallbackCandidateRelations(db, passportIds, { stagesByPassport, docsByPassport, jobsByPassport, verifByPassport });
+                    } else {
+                        throw err;
+                    }
+                }
+            } else if (typeof db.candidateStage?.findMany === "function") {
+                await fetchFallbackCandidateRelations(db, passportIds, { stagesByPassport, docsByPassport, jobsByPassport, verifByPassport });
+            }
+            consolidatedRelationsDuration = performance.now() - tRelationsStart;
+        }
+
+        const rows = baseCandidates.map((c) => ({
+            ...c,
+            stages: stagesByPassport.get(c.passportId) ?? [],
+            documents: docsByPassport.get(c.passportId) ?? [],
+            jobAssignments: jobsByPassport.get(c.passportId) ?? [],
+            verification: verifByPassport.get(c.passportId) ?? null,
+        }));
+
+        const totalDuration = performance.now() - tListQueryStart;
+
+        return {
+            rows,
+            duration: totalDuration,
+            baseDuration,
+            consolidatedRelationsDuration,
+            totalDuration,
+        };
+    })();
+
+    const [countResult, listQueryResult] = await Promise.all([countPromise, listQueryPromise]);
+    const total = countResult.count;
+    const users = listQueryResult.rows;
+
+    // 4. Candidate Form submitted-status lookup & 5. Candidate Form conflict lookup (executed concurrently via Promise.all)
+    const tSubmittedStart = performance.now();
+    const submittedPromise = Promise.resolve(submittedFormPassportIds(db, users.map((user) => user.passportId))).then((res) => ({
+        res,
+        duration: performance.now() - tSubmittedStart,
+    }));
+
+    const tConflictStart = performance.now();
+    const concurrentPromise = concurrently
+        ? Promise.resolve(concurrently(users)).then((res) => ({
+            res,
+            duration: performance.now() - tConflictStart,
+        }))
+        : Promise.resolve({ res: undefined, duration: 0 });
+
+    const [submittedResult, concurrentResult] = await Promise.all([submittedPromise, concurrentPromise]);
+    const submitted = submittedResult.res;
+    const concurrent = concurrentResult.res;
+
+    // 3. Candidate relation loading / enrichment (in-memory workflow status and stage computation)
+    const tEnrichStart = performance.now();
+    const items = users.map((user) => {
+        const missing = automaticStageMissing(user, user.documents);
+        const stages = stageList(user.stages, missing);
+        const workflowStatus = workflowStatusOf(user, submitted.has(user.passportId), missing);
+        return { ...candidateSummary(user), workflowStatus, stages: stages.map(({ stage, completed }) => ({ stage, completed })) };
+    });
+    const enrichDuration = performance.now() - tEnrichStart;
+
+    if (typeof onTiming === "function") {
+        onTiming({
+            countDuration: countResult.duration,
+            listQueryDuration: listQueryResult.duration,
+            baseCandidateDuration: listQueryResult.baseDuration,
+            consolidatedRelationsDuration: listQueryResult.consolidatedRelationsDuration,
+            totalListFetchDuration: listQueryResult.totalDuration,
+            submittedDuration: submittedResult.duration,
+            conflictDuration: concurrentResult.duration,
+            enrichDuration,
+            usersCount: users.length,
+            totalCount: total,
+        });
+    }
+
+    const result = {
+        items,
         pagination: listPagination(params, total),
         filters: { search: params.search ?? null, ...(params.testResult ? { testResult: params.testResult } : {}), ...(params.available ? { available: true } : {}) },
     };
+    return { ...result, ...(withRows ? { rows: users } : {}), ...(concurrently ? { concurrent } : {}) };
 }
 
 // What the workflow Status of a candidate row needs (the list row's summary fields too). The signals are
