@@ -30,3 +30,4 @@ admin/dist/
 /UI/
 .vercel
 .env*
+.claude/settings.local.json
