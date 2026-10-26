@@ -19,14 +19,16 @@ import {
 // A whole valid form, as the server would hold it.
 function fullPayload(overrides: (data: CandidateFormData) => void = () => {}): CandidateFormPayload {
     const data = emptyForm();
-    data.basic = { fullName: "SHAMAL", surname: "SATHSARA", otherNames: "N/A", sex: "MALE", civilStatus: "SINGLE", birthDate: "1990-05-01", birthPlace: "COLOMBO" };
-    data.contact = { address: "12 MAIN STREET", city: "COLOMBO", district: "COLOMBO", dsDivision: "KOLONNAWA", gnDivision: "KOLONNAWA NORTH", alternativePhone: "N/A", email: "shamal@example.com" };
+    data.basic = { fullName: "SHAMAL", surname: "SATHSARA", otherNames: "N/A", sex: "MALE", civilStatus: "SINGLE", birthDate: "1990-05-01", birthPlace: "COLOMBO", bloodGroup: "O+", height: "175 cm", weight: "70", drivingLicence: "YES", canReadDrawings: "NO", teamLeadingSkills: "YES", otherLanguages: "N/A" };
+    data.contact = { address: "12 MAIN STREET", city: "COLOMBO", district: "COLOMBO", dsDivision: "KOLONNAWA", gnDivision: "KOLONNAWA NORTH", alternativePhone: "N/A", email: "shamal@example.com", cityInRomania: "Cluj-Napoca" };
     data.passport = { issueDate: "2020-01-15", expiryDate: "2030-01-14" };
     data.qualifications = { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "5 YEARS", otherSkills1: "N/A", otherSkills2: "N/A", englishKnowledge: "GOOD" };
     data.measurements = { shirtSize: "M", waistSize: "32", shoeSize: "9" };
     data.family.father.name = "N/A";
     data.family.mother = { name: "KUMARI", surname: "PERERA", passportNumber: "N/A", birthDate: "1965-02-03" };
     data.family.child1 = "N/A";
+    data.family.fatherAlive = "NO";
+    data.family.motherAlive = "YES";
     data.guardian = { name: "KAMAL PERERA", relationship: "UNCLE", nic: "901234567V", birthDate: "1960-01-01", phone: "0771234567", address: "45 LAKE ROAD" };
     overrides(data);
     return toPayload(data);

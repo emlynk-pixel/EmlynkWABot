@@ -2,6 +2,8 @@ import { businessDateOf } from "../utils/businessDay.js";
 import { CandidateError } from "./candidateService.js";
 import { FORM_ACCESS_STATUS } from "./candidateFormShareService.js";
 import { activeJobTypeNames, isNoPreference, NO_PREFERRED_JOB_TYPE } from "./jobTypeCatalog.js";
+import { parseHeight, parseWeight } from "../utils/bodyMeasurements.js";
+import { findRomanianCity, ROMANIA_CITIES } from "../utils/romaniaCities.js";
 
 // The Candidate Form's data on the server: the field list, the prefill from
 // the existing records, the immutable prefill snapshot, and the one-time
@@ -23,8 +25,12 @@ export const JOB_CATEGORIES = Object.freeze([
     "MOTOR GRADER OPERATOR", "BOBCAT OPERATOR", "WHEEL LOADER OPERATOR", OTHER_JOB_CATEGORY,
 ]);
 export const SHIRT_SIZES = Object.freeze(["XS", "S", "M", "L", "XL", "XXL"]);
+export const BLOOD_GROUPS = Object.freeze(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]);
+// A Yes / No answer is sent as one of these codes and stored as a boolean (true / false), like
+// candidate_additional_details.father_alive.
+export const YES_NO_CODES = Object.freeze(["YES", "NO"]);
 
-const MAX = { text: 150, address: 500, long: 1000, email: 254, phone: 20, size: 10, passport: 30 };
+const MAX = { text: 150, address: 500, long: 1000, email: 254, phone: 20, size: 10, passport: 30, city: 100 };
 const EARLIEST_DATE = "1900-01-01";
 const LATEST_EXPIRY_DATE = "2100-12-31";
 
@@ -39,7 +45,11 @@ export const isNotApplicable = (value) => typeof value === "string" && /^n\/a$/i
 const isNotApplicableLoose = (value) => typeof value === "string" && /^n\/?a$/i.test(value.trim());
 export const NOT_APPLICABLE_FIELDS = Object.freeze(new Set([
     "basic.otherNames",
+    // No other language than the ones already asked about.
+    "basic.otherLanguages",
     "contact.city",
+    // Not living or staying in Romania.
+    "contact.cityInRomania",
     "contact.alternativePhone",
     "qualifications.experience",
     "qualifications.otherSkills1",
@@ -67,6 +77,11 @@ export const isNotApplicableFor = (path, value) => (NOT_APPLICABLE_FIELDS.has(pa
 //   size   a short size ("34", "EU 43")
 //   passport  letters and digits
 //   nic    a Sri Lankan NIC
+//   yesNo  YES or NO, stored as true / false
+//   height a height in cm, m or feet and inches (bodyMeasurements.js); also stores heightCm
+//   weight a weight in kg or g, stored in kg (bodyMeasurements.js)
+//   romanianCity  a city in Romania: a listed one is stored in its official spelling and gives
+//          distanceToBucharestKm (romaniaCities.js); any other is kept as typed, with no distance
 // The verified Passport Number and NIC are NOT answers: they come from the
 // candidate's record and cannot be changed through the form.
 //
@@ -89,6 +104,13 @@ export const ANSWER_FIELDS = Object.freeze([
     ["basic", "civilStatus", "civilStatus", "code", { required: true, codes: CIVIL_STATUS_CODES }],
     ["basic", "birthDate", "birthDate", "date", { required: true, notFuture: true }],
     ["basic", "birthPlace", "birthPlace", "text", { required: true, max: MAX.text }],
+    ["basic", "bloodGroup", "bloodGroup", "code", { required: true, codes: BLOOD_GROUPS }],
+    ["basic", "height", "height", "height", { required: true }],
+    ["basic", "weight", "weightKg", "weight", { required: true }],
+    ["basic", "drivingLicence", "drivingLicence", "yesNo", { required: true }],
+    ["basic", "canReadDrawings", "canReadDrawings", "yesNo", { required: true }],
+    ["basic", "teamLeadingSkills", "teamLeadingSkills", "yesNo", { required: true }],
+    ["basic", "otherLanguages", "otherLanguages", "text", { required: true, max: MAX.text }],
     ["contact", "address", "address", "text", { required: true, max: MAX.address }],
     ["contact", "city", "city", "text", { required: true, max: MAX.text }],
     ["contact", "district", "district", "text", { required: true, max: MAX.text }],
@@ -96,6 +118,7 @@ export const ANSWER_FIELDS = Object.freeze([
     ["contact", "gnDivision", "gnDivision", "text", { required: true, max: MAX.text }],
     ["contact", "alternativePhone", "alternativePhone", "phone", { required: true }],
     ["contact", "email", "email", "email", { required: true }],
+    ["contact", "cityInRomania", "cityInRomania", "romanianCity", { required: true }],
     ["passport", "issueDate", "passportIssueDate", "date", { required: true, notFuture: true }],
     ["passport", "expiryDate", "passportExpiryDate", "date", { required: true }],
     // The choices are the ACTIVE job types (Settings > Job Types), "No Preferred Type"
@@ -112,6 +135,9 @@ export const ANSWER_FIELDS = Object.freeze([
     ...person("father"),
     ...person("mother"),
     ...person("spouse"),
+    // Whether each parent is alive (asked as well as their names, not instead of them).
+    ["family", "fatherAlive", "fatherAlive", "yesNo", { required: true }],
+    ["family", "motherAlive", "motherAlive", "yesNo", { required: true }],
     ["family", "child1", "child1Name", "text", { required: true, max: MAX.text }],
     ["family", "child2", "child2Name", "text", { max: MAX.text }],
     ["family", "child3", "child3Name", "text", { max: MAX.text }],
@@ -122,7 +148,7 @@ export const ANSWER_FIELDS = Object.freeze([
     ["guardian", "phone", "guardianPhone", "phone", { required: true }],
     ["guardian", "address", "guardianAddress", "text", { required: true, max: MAX.address }],
 ]);
-const DATE_COLUMNS = new Set(ANSWER_FIELDS.filter((f) => f[3] === "date").map((f) => f[2]));
+const KIND_OF_COLUMN = Object.freeze(Object.fromEntries(ANSWER_FIELDS.map((f) => [f[2], f[3]])));
 // The shape of `answers`: group -> allowed keys (family has three nested people).
 const SHAPE = (() => {
     const shape = {};
@@ -139,6 +165,18 @@ const SHAPE = (() => {
 export const toUpperEnglish = (value) => value.replace(/[a-z]+/g, (letters) => letters.toUpperCase());
 
 const isoDay = (date) => (date ? date.toISOString().slice(0, 10) : null);
+
+// A stored answer (a snapshot / response / parsed value) as the form holds it: dates as
+// YYYY-MM-DD, Yes / No as YES / NO, a weight as its number of kg ("70.5"), else as stored.
+export function answerValue(column, raw) {
+    if (raw === null || raw === undefined) return null;
+    switch (KIND_OF_COLUMN[column]) {
+        case "date": return raw instanceof Date ? isoDay(raw) : raw;
+        case "yesNo": return typeof raw === "boolean" ? (raw ? "YES" : "NO") : raw;
+        case "weight": return String(Number(raw));
+        default: return raw;
+    }
+}
 const textOrNull = (value) => (typeof value === "string" && value.trim() !== "" ? value.trim() : null);
 
 // ---------------------------------------------------------------- prefill
@@ -183,6 +221,8 @@ export function prefillFromRecords(candidate, details, jobCategories = JOB_CATEG
         child1Name: textOrNull(details?.child1Name),
         child2Name: textOrNull(details?.child2Name),
         child3Name: textOrNull(details?.child3Name),
+        fatherAlive: typeof details?.fatherAlive === "boolean" ? details.fatherAlive : null,
+        motherAlive: typeof details?.motherAlive === "boolean" ? details.motherAlive : null,
     };
 }
 
@@ -194,8 +234,7 @@ function groupedFrom(row) {
     const answers = {};
     const prefilled = [];
     for (const [group, key, column] of ANSWER_FIELDS) {
-        const raw = row?.[column] ?? null;
-        const value = DATE_COLUMNS.has(column) ? isoDay(raw) : raw;
+        const value = answerValue(column, row?.[column] ?? null);
         let target = answers;
         for (const part of group.split(".")) target = target[part] ??= {};
         target[key] = value;
@@ -239,6 +278,9 @@ export async function loadCandidateForm({ db, passportId, linkId, now = new Date
             prefilled: prefilled.filter((path) => !savedGroups.has(path.split(".")[0])),
             // The job type choices: names only (never ids, status or anything staff-only).
             jobCategories,
+            // The listed Romanian cities (names, other spellings and the approximate straight-line
+            // distance to Bucharest): the City in Romania suggestions. Public reference data only.
+            romanianCities: ROMANIA_CITIES.map(({ name, aliases, distanceKm }) => ({ name, aliases, distanceKm })),
             // Saved progress: the steps saved with Next ([] when none) and when the last one was.
             savedSteps,
             draftSavedAt: savedSteps.length && draft ? draft.updatedAt.toISOString() : null,
@@ -337,6 +379,9 @@ const PHONE_PATTERN = /^\+?\d{9,15}$/;
 const PASSPORT_PATTERN = /^[A-Z0-9]{1,20}$/;
 const SIZE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ./-]{0,9}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+// A place name: letters of any alphabet (Romanian ă â î ș ț included), spaces, dots, hyphens, apostrophes
+// and parentheses (a listed name that shares its spelling carries its county: "Ștefănești (Argeș)").
+const CITY_PATTERN = /^\p{L}[\p{L}\p{M} .'’()-]*$/u;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 
 // Unknown keys anywhere in `answers` (or values of the wrong kind of shape).
@@ -390,6 +435,9 @@ function parseAnswerValues(answers, { now, jobCategories, groups = null, civilSt
         errors.push({ field: path, code, message });
         return null;
     };
+    // Derived from the answers, never read from the request (null unless a valid answer gives one).
+    if (has("basic")) values.heightCm = null;
+    if (has("contact")) values.distanceToBucharestKm = null;
     for (const [group, key, column, kind, options] of ANSWER_FIELDS) {
         if (!has(group.split(".")[0])) continue;
         const path = `${group}.${key}`;
@@ -421,6 +469,31 @@ function parseAnswerValues(answers, { now, jobCategories, groups = null, civilSt
             case "code":
                 values[column] = options.codes.includes(value) ? value : fail(path, "invalid", "is not one of the choices");
                 break;
+            case "yesNo":
+                values[column] = value === "YES" ? true : value === "NO" ? false : fail(path, "invalid", "must be YES or NO");
+                break;
+            case "height": {
+                const height = parseHeight(value);
+                values[column] = height ? height.text : fail(path, "invalid", "must be a height in cm, m or feet and inches");
+                if (height) values.heightCm = height.cm;
+                break;
+            }
+            case "weight":
+                values[column] = parseWeight(value) ?? fail(path, "invalid", "must be a weight in kg or g");
+                break;
+            case "romanianCity": {
+                const typed = value.replace(/\s+/g, " ");
+                if (typed.length > MAX.city) {
+                    values[column] = fail(path, "tooLong", `must be at most ${MAX.city} characters`);
+                } else if (!CITY_PATTERN.test(typed)) {
+                    values[column] = fail(path, "invalid", "must be a place name");
+                } else {
+                    const city = findRomanianCity(typed);
+                    values[column] = city ? city.name : typed;
+                    values.distanceToBucharestKm = city ? city.distanceKm : null;
+                }
+                break;
+            }
             case "jobCategory":
                 values[column] = jobCategoryOf(value, [...jobCategories, OTHER_JOB_CATEGORY]) ?? fail(path, "invalid", "is not one of the choices");
                 break;

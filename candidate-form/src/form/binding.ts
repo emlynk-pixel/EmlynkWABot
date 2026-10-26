@@ -1,4 +1,5 @@
 import type { Message } from "../i18n/useLanguage";
+import type { RomanianCity } from "../types/api";
 import type { CandidateFormData } from "./model";
 import type { FormErrors } from "./validation";
 import { requiredPaths, valueAt } from "./validation";
@@ -13,6 +14,8 @@ export type StepProps = {
     prefilled: ReadonlySet<string>;
     // The job category choices (jobCategoryChoices: active job types + No Preferred Type + OTHER).
     jobCategories: readonly string[];
+    // The listed Romanian cities and their approximate distance to Bucharest (from the server).
+    romanianCities?: readonly RomanianCity[];
 };
 
 // The DOM id of a field: "basic.fullName" -> "basic-fullName".

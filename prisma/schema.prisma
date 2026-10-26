@@ -217,56 +217,74 @@ model CandidateFormAccess {
 // a trigger refuses any later change. The main candidate tables are never
 // written by the public form.
 model CandidateFormResponse {
-  passportId           String    @id @map("passport_id")
-  fullName             String?   @map("full_name")
-  surname              String?   @map("surname")
-  otherNames           String?   @map("other_names")
-  nic                  String?   @map("nic")
-  sex                  String?   @map("sex")
-  civilStatus          String?   @map("civil_status")
-  birthDate            DateTime? @map("birth_date") @db.Date
-  birthPlace           String?   @map("birth_place")
-  address              String?   @map("address")
-  city                 String?   @map("city")
-  district             String?   @map("district")
-  dsDivision           String?   @map("ds_division")
-  gnDivision           String?   @map("gn_division")
-  alternativePhone     String?   @map("alternative_phone")
-  email                String?   @map("email")
-  passportIssueDate    DateTime? @map("passport_issue_date") @db.Date
-  passportExpiryDate   DateTime? @map("passport_expiry_date") @db.Date
-  jobCategory          String?   @map("job_category")
-  jobCategoryOther     String?   @map("job_category_other")
-  experience           String?   @map("experience")
-  otherSkills1         String?   @map("other_skills_1")
-  otherSkills2         String?   @map("other_skills_2")
-  englishKnowledge     String?   @map("english_knowledge")
-  shirtSize            String?   @map("shirt_size")
-  waistSize            String?   @map("waist_size")
-  shoeSize             String?   @map("shoe_size")
-  fatherName           String?   @map("father_name")
-  fatherSurname        String?   @map("father_surname")
-  fatherPassportNumber String?   @map("father_passport_number")
-  fatherBirthDate      DateTime? @map("father_birth_date") @db.Date
-  motherName           String?   @map("mother_name")
-  motherSurname        String?   @map("mother_surname")
-  motherPassportNumber String?   @map("mother_passport_number")
-  motherBirthDate      DateTime? @map("mother_birth_date") @db.Date
-  spouseName           String?   @map("spouse_name")
-  spouseSurname        String?   @map("spouse_surname")
-  spousePassportNumber String?   @map("spouse_passport_number")
-  spouseBirthDate      DateTime? @map("spouse_birth_date") @db.Date
-  child1Name           String?   @map("child_1_name")
-  child2Name           String?   @map("child_2_name")
-  child3Name           String?   @map("child_3_name")
-  guardianName         String?   @map("guardian_name")
-  guardianRelationship String?   @map("guardian_relationship")
-  guardianNic          String?   @map("guardian_nic")
-  guardianBirthDate    DateTime? @map("guardian_birth_date") @db.Date
-  guardianPhone        String?   @map("guardian_phone")
-  guardianAddress      String?   @map("guardian_address")
-  submittedAt          DateTime  @default(now()) @map("submitted_at")
-  submittedViaLinkId   String?   @map("submitted_via_link_id")
+  passportId            String    @id @map("passport_id")
+  fullName              String?   @map("full_name")
+  surname               String?   @map("surname")
+  otherNames            String?   @map("other_names")
+  nic                   String?   @map("nic")
+  sex                   String?   @map("sex")
+  civilStatus           String?   @map("civil_status")
+  birthDate             DateTime? @map("birth_date") @db.Date
+  birthPlace            String?   @map("birth_place")
+  address               String?   @map("address")
+  city                  String?   @map("city")
+  district              String?   @map("district")
+  dsDivision            String?   @map("ds_division")
+  gnDivision            String?   @map("gn_division")
+  alternativePhone      String?   @map("alternative_phone")
+  email                 String?   @map("email")
+  passportIssueDate     DateTime? @map("passport_issue_date") @db.Date
+  passportExpiryDate    DateTime? @map("passport_expiry_date") @db.Date
+  jobCategory           String?   @map("job_category")
+  jobCategoryOther      String?   @map("job_category_other")
+  experience            String?   @map("experience")
+  otherSkills1          String?   @map("other_skills_1")
+  otherSkills2          String?   @map("other_skills_2")
+  englishKnowledge      String?   @map("english_knowledge")
+  shirtSize             String?   @map("shirt_size")
+  waistSize             String?   @map("waist_size")
+  shoeSize              String?   @map("shoe_size")
+  fatherName            String?   @map("father_name")
+  fatherSurname         String?   @map("father_surname")
+  fatherPassportNumber  String?   @map("father_passport_number")
+  fatherBirthDate       DateTime? @map("father_birth_date") @db.Date
+  motherName            String?   @map("mother_name")
+  motherSurname         String?   @map("mother_surname")
+  motherPassportNumber  String?   @map("mother_passport_number")
+  motherBirthDate       DateTime? @map("mother_birth_date") @db.Date
+  spouseName            String?   @map("spouse_name")
+  spouseSurname         String?   @map("spouse_surname")
+  spousePassportNumber  String?   @map("spouse_passport_number")
+  spouseBirthDate       DateTime? @map("spouse_birth_date") @db.Date
+  child1Name            String?   @map("child_1_name")
+  child2Name            String?   @map("child_2_name")
+  child3Name            String?   @map("child_3_name")
+  guardianName          String?   @map("guardian_name")
+  guardianRelationship  String?   @map("guardian_relationship")
+  guardianNic           String?   @map("guardian_nic")
+  guardianBirthDate     DateTime? @map("guardian_birth_date") @db.Date
+  guardianPhone         String?   @map("guardian_phone")
+  guardianAddress       String?   @map("guardian_address")
+  // Added by 20261101120000_candidate_form_personal_details (null on older submissions).
+  // City in Romania: a listed city in its official spelling, the candidate's own text, or "N/A".
+  cityInRomania         String?   @map("city_in_romania")
+  // A+ | A- | B+ | B- | AB+ | AB- | O+ | O-
+  bloodGroup            String?   @map("blood_group")
+  otherLanguages        String?   @map("other_languages")
+  drivingLicence        Boolean?  @map("driving_licence")
+  canReadDrawings       Boolean?  @map("can_read_drawings")
+  teamLeadingSkills     Boolean?  @map("team_leading_skills")
+  // The height in the candidate's own unit, tidied ("175 cm", "1.75 m", "5'9\"").
+  height                String?   @map("height")
+  weightKg              Decimal?  @map("weight_kg") @db.Decimal(5, 2)
+  fatherAlive           Boolean?  @map("father_alive")
+  motherAlive           Boolean?  @map("mother_alive")
+  // Derived by the server, never sent by the candidate: the height in centimetres, and the
+  // approximate STRAIGHT-LINE distance to Bucharest of a listed city (null otherwise).
+  heightCm              Decimal?  @map("height_cm") @db.Decimal(5, 1)
+  distanceToBucharestKm Int?      @map("distance_to_bucharest_km")
+  submittedAt           DateTime  @default(now()) @map("submitted_at")
+  submittedViaLinkId    String?   @map("submitted_via_link_id")
 
   candidate        Candidate          @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
   submittedViaLink CandidateFormLink? @relation(fields: [submittedViaLinkId], references: [linkId], onDelete: SetNull, onUpdate: Cascade)
@@ -396,6 +414,18 @@ model CandidateFormPrefillSnapshot {
   guardianBirthDate    DateTime? @map("guardian_birth_date") @db.Date
   guardianPhone        String?   @map("guardian_phone")
   guardianAddress      String?   @map("guardian_address")
+  // Added by 20261101120000_candidate_form_personal_details (null on older snapshots).
+  // Only the parents' alive answers are ever prefilled (from candidate_additional_details).
+  cityInRomania        String?   @map("city_in_romania")
+  bloodGroup           String?   @map("blood_group")
+  otherLanguages       String?   @map("other_languages")
+  drivingLicence       Boolean?  @map("driving_licence")
+  canReadDrawings      Boolean?  @map("can_read_drawings")
+  teamLeadingSkills    Boolean?  @map("team_leading_skills")
+  height               String?   @map("height")
+  weightKg             Decimal?  @map("weight_kg") @db.Decimal(5, 2)
+  fatherAlive          Boolean?  @map("father_alive")
+  motherAlive          Boolean?  @map("mother_alive")
   capturedAt           DateTime  @default(now()) @map("captured_at")
   capturedViaLinkId    String?   @map("captured_via_link_id")
 

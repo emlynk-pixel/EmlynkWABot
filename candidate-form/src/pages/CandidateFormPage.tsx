@@ -150,7 +150,7 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
         if (submitState === "invalid" || submitState === "failed") setSubmitState("idle");
         if (saveState === "failed") setSaveState("idle");
     };
-    const props: StepProps = { data, set, errors: shownErrors, prefilled, jobCategories };
+    const props: StepProps = { data, set, errors: shownErrors, prefilled, jobCategories, romanianCities: form.romanianCities ?? [] };
 
     const goTo = (index: number) => {
         setStepIndex(index);
@@ -288,7 +288,7 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
     };
     // All the sections of the step stay mounted together under their own headings.
     const content: ReactNode = step.id === "review"
-        ? <ReviewStep data={data} identity={form.identity} onEdit={editSection} />
+        ? <ReviewStep data={data} identity={form.identity} onEdit={editSection} romanianCities={form.romanianCities ?? []} />
         : step.sections.map((section) => (
             <section key={section.id} className="step-section" aria-labelledby={`section-${section.id}`}>
                 <h3 id={`section-${section.id}`} tabIndex={-1}>

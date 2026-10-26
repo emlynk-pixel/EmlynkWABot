@@ -1,7 +1,9 @@
 import { TRANSLATIONS, type Language, type MessageKey } from "../../i18n/translations";
 import { useLanguage } from "../../i18n/useLanguage";
-import type { FormLoadResponse } from "../../types/api";
-import { showsOtherJobCategory, showsSpouse, type CandidateFormData } from "../model";
+import type { FormLoadResponse, RomanianCity } from "../../types/api";
+import { formatCm, formatKg, parseHeight, parseWeight } from "../measurements";
+import { isNotApplicableFor, showsOtherJobCategory, showsSpouse, type CandidateFormData } from "../model";
+import { findCity } from "../romania";
 import { jobCategoryLabel } from "../options";
 import { SECTIONS, type SectionId } from "../steps";
 import { valueAt } from "../validation";
@@ -10,8 +12,9 @@ import { valueAt } from "../validation";
 // candidate's own answers and their verified identity (from the record) are
 // shown: never the token or anything staff-only.
 
-// kind "jobCategory": a job type name or code, shown with jobCategoryLabel.
-type Row = { label: MessageKey; path: string; kind?: "date" | "code" | "jobCategory"; codePrefix?: string };
+// kind "jobCategory": a job type name or code, shown with jobCategoryLabel. "height" / "weight":
+// as read (5'9" ≈ 175.3 cm, 70 kg). "distance": the approximate distance of City in Romania.
+type Row = { label: MessageKey; path: string; kind?: "date" | "code" | "jobCategory" | "height" | "weight" | "distance"; codePrefix?: string };
 
 function rowsFor(section: SectionId, data: CandidateFormData): Row[] {
     switch (section) {
@@ -24,6 +27,13 @@ function rowsFor(section: SectionId, data: CandidateFormData): Row[] {
                 { label: "f.civilStatus", path: "basic.civilStatus", kind: "code", codePrefix: "civil." },
                 { label: "f.birthDate", path: "basic.birthDate", kind: "date" },
                 { label: "f.birthPlace", path: "basic.birthPlace" },
+                { label: "f.bloodGroup", path: "basic.bloodGroup" },
+                { label: "f.height", path: "basic.height", kind: "height" },
+                { label: "f.weight", path: "basic.weight", kind: "weight" },
+                { label: "f.drivingLicence", path: "basic.drivingLicence", kind: "code", codePrefix: "yesNo." },
+                { label: "f.canReadDrawings", path: "basic.canReadDrawings", kind: "code", codePrefix: "yesNo." },
+                { label: "f.teamLeadingSkills", path: "basic.teamLeadingSkills", kind: "code", codePrefix: "yesNo." },
+                { label: "f.otherLanguages", path: "basic.otherLanguages" },
             ];
         case "contact":
             return [
@@ -34,6 +44,8 @@ function rowsFor(section: SectionId, data: CandidateFormData): Row[] {
                 { label: "f.gnDivision", path: "contact.gnDivision" },
                 { label: "f.alternativePhone", path: "contact.alternativePhone" },
                 { label: "f.email", path: "contact.email" },
+                { label: "f.cityInRomania", path: "contact.cityInRomania" },
+                { label: "f.distanceToBucharest", path: "contact.cityInRomania", kind: "distance" },
             ];
         case "passport":
             return [
@@ -58,6 +70,7 @@ function rowsFor(section: SectionId, data: CandidateFormData): Row[] {
                 { label: `f.${who}Surname`, path: `family.${who}.surname` },
                 { label: `f.${who}Passport`, path: `family.${who}.passportNumber` },
                 { label: `f.${who}BirthDate`, path: `family.${who}.birthDate`, kind: "date" },
+                ...(who === "spouse" ? [] : [{ label: `f.${who}Alive` as MessageKey, path: `family.${who}Alive`, kind: "code" as const, codePrefix: "yesNo." }]),
             ];
             return [
                 ...person("father"),
@@ -91,12 +104,25 @@ export function formatDate(value: string, language: Language): string {
     return date.toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric" });
 }
 
-export function ReviewStep({ data, identity, onEdit }: { data: CandidateFormData; identity: FormLoadResponse["identity"]; onEdit: (section: SectionId) => void }) {
+export function ReviewStep({ data, identity, onEdit, romanianCities = [] }: { data: CandidateFormData; identity: FormLoadResponse["identity"]; onEdit: (section: SectionId) => void; romanianCities?: readonly RomanianCity[] }) {
     const { t, language } = useLanguage();
     const display = (row: Row) => {
         const value = valueAt(data, row.path).trim();
         if (!value) return <span className="review-empty">{t("review.empty")}</span>;
         if (row.kind === "date") return formatDate(value, language);
+        if (row.kind === "height") {
+            const height = parseHeight(value);
+            return height && height.unit !== "cm" ? `${height.text} (${t("note.heightCm", { cm: formatCm(height.cm) })})` : height?.text ?? value;
+        }
+        if (row.kind === "weight") {
+            const kg = parseWeight(value);
+            return kg === null ? value : formatKg(kg);
+        }
+        if (row.kind === "distance") {
+            if (isNotApplicableFor(row.path, value)) return t("distance.notApplicable");
+            const city = findCity(romanianCities, value);
+            return city ? t("distance.approx", { km: String(city.distanceKm) }) : t("distance.notListed");
+        }
         if (row.kind === "code") return t(`${row.codePrefix}${value}` as MessageKey);
         if (row.kind === "jobCategory") return jobCategoryLabel(value, TRANSLATIONS[language]);
         return value;
@@ -121,7 +147,7 @@ export function ReviewStep({ data, identity, onEdit }: { data: CandidateFormData
                     </div>
                     <dl>
                         {rowsFor(step.id, data).map((row) => (
-                            <div key={row.path}>
+                            <div key={row.kind === "distance" ? `${row.path}.distance` : row.path}>
                                 <dt>{t(row.label)}</dt>
                                 <dd>{display(row)}</dd>
                             </div>

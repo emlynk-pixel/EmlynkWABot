@@ -195,8 +195,8 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
             <DatePicker id={`ad-${key}`} min="1900-01-01" max={today} value={form[key]} onChange={set(key)} disabled={disabled} invalid={Boolean(errors[key])} className={`${fieldControl} ${errors[key] ? "border-critical" : ""}`} />
         </Field>
     );
-    const yesNo = (key: Key, label: string) => (
-        <Field label={label} htmlFor={`ad-${key}`}>
+    const yesNo = (key: Key, label: string, submitted?: string) => (
+        <Field label={label} htmlFor={`ad-${key}`} submitted={submitted}>
             <select id={`ad-${key}`} value={form[key]} onChange={(e) => set(key)(e.target.value)} disabled={disabled} className={fieldControl}>
                 <option value="">Not recorded</option>
                 <option value="yes">Yes</option>
@@ -248,13 +248,13 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
             </Section>
 
             <Section title="Father details">
-                {yesNo("fatherAlive", "Is father alive?")}
+                {yesNo("fatherAlive", "Is father alive?", "family.fatherAlive")}
                 {text("fatherFullName", "Father full name", { required: form.fatherAlive === "yes" })}
                 {dateField("fatherBirthday", "Father birthday", "family.father.birthDate")}
             </Section>
 
             <Section title="Mother details">
-                {yesNo("motherAlive", "Is mother alive?")}
+                {yesNo("motherAlive", "Is mother alive?", "family.motherAlive")}
                 {text("motherFullName", "Mother full name", { required: form.motherAlive === "yes" })}
                 {dateField("motherBirthday", "Mother birthday", "family.mother.birthDate")}
             </Section>

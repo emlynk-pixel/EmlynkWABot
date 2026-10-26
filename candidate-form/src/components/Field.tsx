@@ -13,17 +13,19 @@ export type FieldProps = {
     error?: Message;
     // Filled in from the candidate's existing record (a small note says so).
     prefilled?: boolean;
+    // A short line under the control, e.g. how a typed value is read ("= 70 kg").
+    note?: string;
 };
 
 // The ids a control should list in aria-describedby.
-export function describedBy(id: string, { hint, error, prefilled }: Pick<FieldProps, "hint" | "error" | "prefilled">, helpOpen: boolean): string | undefined {
-    return [hint ? `${id}-hint` : null, prefilled ? `${id}-prefilled` : null, helpOpen ? `${id}-help` : null, error ? `${id}-error` : null].filter(Boolean).join(" ") || undefined;
+export function describedBy(id: string, { hint, error, prefilled, note }: Pick<FieldProps, "hint" | "error" | "prefilled" | "note">, helpOpen: boolean): string | undefined {
+    return [hint ? `${id}-hint` : null, prefilled ? `${id}-prefilled` : null, helpOpen ? `${id}-help` : null, note ? `${id}-derived` : null, error ? `${id}-error` : null].filter(Boolean).join(" ") || undefined;
 }
 
 // Label (with the required marker and the optional help button), hint, the
 // control itself, and the error. The error is text with a mark, never colour
 // alone, and is announced when it appears.
-export function Field({ id, label, required, help, hint, error, prefilled, children }: FieldProps & { children: (helpOpen: boolean) => ReactNode }) {
+export function Field({ id, label, required, help, hint, error, prefilled, note, children }: FieldProps & { children: (helpOpen: boolean) => ReactNode }) {
     const { t } = useLanguage();
     const [helpOpen, setHelpOpen] = useState(false);
     return (
@@ -43,6 +45,7 @@ export function Field({ id, label, required, help, hint, error, prefilled, child
             {hint && <p id={`${id}-hint`} className="hint">{hint}</p>}
             {prefilled && <p id={`${id}-prefilled`} className="prefilled-note">{t("form.prefilledNote")}</p>}
             {children(helpOpen)}
+            {note && <p id={`${id}-derived`} className="field-note">{note}</p>}
             {error && (
                 <p id={`${id}-error`} className="error" role="alert">
                     <span aria-hidden="true">! </span>

@@ -1,4 +1,4 @@
-import { ANSWER_FIELDS } from "./candidateFormDataService.js";
+import { ANSWER_FIELDS, answerValue } from "./candidateFormDataService.js";
 import { FORM_ACCESS_STATUS } from "./candidateFormShareService.js";
 import { CONFIRMABLE_FIELDS, CONFIRM_SELECT, pendingChanges, submittedValueOf } from "./candidateFormFieldConfirmService.js";
 
@@ -14,16 +14,21 @@ import { CONFIRMABLE_FIELDS, CONFIRM_SELECT, pendingChanges, submittedValueOf } 
 //
 // Values are keyed by the form's own paths ("basic.fullName", "family.father.name",
 // "guardian.nic", ...), exactly the fields in ANSWER_FIELDS, so a field added to
-// the form shows up here with it. Dates are YYYY-MM-DD; an empty answer is null.
+// the form shows up here with it. Dates are YYYY-MM-DD, Yes / No answers YES / NO, the weight
+// its number of kg ("70.5"); an empty answer is null.
 
-const isoDay = (date) => date.toISOString().slice(0, 10);
-const cell = (value) => (value instanceof Date ? isoDay(value) : value ?? null);
+// Values the server derived from the answers (submission only, never on the snapshot), keyed
+// next to the answer they come from: the height in cm and the approximate straight-line distance
+// to Bucharest in km (null for an unlisted city, "N/A", or a submission from before they existed).
+const DERIVED = Object.freeze({ "basic.heightCm": "heightCm", "contact.distanceToBucharestKm": "distanceToBucharestKm" });
+const NOT_COMPARED = new Set(["nic", ...Object.keys(DERIVED)]);
 
-function valuesOf(row) {
+function valuesOf(row, { derived = false } = {}) {
     if (!row) return null;
-    const values = Object.fromEntries(ANSWER_FIELDS.map(([group, key, column]) => [`${group}.${key}`, cell(row[column])]));
+    const values = Object.fromEntries(ANSWER_FIELDS.map(([group, key, column]) => [`${group}.${key}`, answerValue(column, row[column] ?? null)]));
     // The verified NIC stored with the submission (from the record, not typed).
     values.nic = row.nic ?? null;
+    if (derived) for (const [path, column] of Object.entries(DERIVED)) values[path] = row[column] === null || row[column] === undefined ? null : String(Number(row[column]));
     return values;
 }
 
@@ -40,10 +45,10 @@ export async function getFormSubmission({ db, passportId }) {
         db.candidateAdditionalDetails.findUnique({ where: { passportId }, select: CONFIRM_SELECT.details }),
         db.candidateFormFieldReview.findMany({ where: { passportId }, select: { fieldKey: true, status: true } }),
     ]);
-    const submitted = valuesOf(response);
+    const submitted = valuesOf(response, { derived: true });
     const original = valuesOf(snapshot);
     const changed = submitted && original
-        ? Object.keys(submitted).filter((path) => path !== "nic" && normal(submitted[path]) !== normal(original[path]))
+        ? Object.keys(submitted).filter((path) => !NOT_COMPARED.has(path) && normal(submitted[path]) !== normal(original[path]))
         : [];
     return {
         passportId,

@@ -63,8 +63,8 @@ const admin = (who, path) => call(app(who), "GET", `/api/admin${path}`);
 const pub = (path, options) => call(app(USERS.ADMIN), "POST", `${PUBLIC_CANDIDATE_DETAILS_PATH}${path}`, options);
 
 const answers = (overrides = {}) => ({
-    basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "MARRIED", birthDate: "1990-05-01", birthPlace: "negombo" },
-    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "n 12", alternativePhone: "0771234567", email: "a@example.com" },
+    basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "MARRIED", birthDate: "1990-05-01", birthPlace: "negombo", bloodGroup: "O+", height: "175 cm", weight: "70", drivingLicence: "YES", canReadDrawings: "NO", teamLeadingSkills: "YES", otherLanguages: "english, romanian" },
+    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "n 12", alternativePhone: "0771234567", email: "a@example.com", cityInRomania: "cluj napoca" },
     passport: { issueDate: "2020-01-15", expiryDate: "2030-01-14" },
     qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "5 years", otherSkills1: "forklift", otherSkills2: "N/A", englishKnowledge: "GOOD" },
     measurements: { shirtSize: "M", waistSize: "32", shoeSize: "eu 42" },
@@ -72,7 +72,7 @@ const answers = (overrides = {}) => ({
         father: { name: "sunil", surname: "de soysa", passportNumber: "n7654321", birthDate: "1960-03-02" },
         mother: { name: "kamala", surname: "de soysa", passportNumber: "N/A", birthDate: "1962-04-03" },
         spouse: { name: "ruwan", surname: "perera", passportNumber: "n1111111", birthDate: "1988-07-12" },
-        child1: "nimal", child2: "n/a", child3: "",
+        child1: "nimal", child2: "n/a", child3: "", fatherAlive: "YES", motherAlive: "YES",
     },
     guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "1965-02-20", phone: "+94 77 123 4567", address: "45 lake road" },
     ...overrides,
@@ -106,10 +106,11 @@ describe("Admin: Candidate Form submission", () => {
         assert.equal(r.body.submitted["guardian.name"], "KAMAL PERERA");
         assert.equal(r.body.submitted["guardian.nic"], "901234567V");
         assert.equal(r.body.submitted["guardian.address"], "45 LAKE ROAD");
-        // ADMIN-FORM-012: every field of the form is present (46 answers + the verified NIC), none dropped.
-        assert.equal(ANSWER_FIELDS.length, 46);
+        // ADMIN-FORM-012: every field of the form is present (56 answers + the verified NIC + the two
+        // values the server derived: height in cm, distance to Bucharest), none dropped.
+        assert.equal(ANSWER_FIELDS.length, 56);
         const keys = Object.keys(r.body.submitted).sort();
-        assert.deepEqual(keys, [...ANSWER_FIELDS.map(([group, key]) => `${group}.${key}`), "nic"].sort());
+        assert.deepEqual(keys, [...ANSWER_FIELDS.map(([group, key]) => `${group}.${key}`), "nic", "basic.heightCm", "contact.distanceToBucharestKm"].sort());
         assert.equal(r.body.submitted.nic, A.nic);
         assert.equal(r.body.submitted["family.spouse.name"], "RUWAN");
         assert.equal(r.body.submitted["family.child1"], "NIMAL");
@@ -162,7 +163,7 @@ describe("Admin: Candidate Form submission", () => {
         const link = (await call(app(USERS.ADMIN), "POST", `/api/admin/candidates/${B.passportId}/form-share`)).body.url.split("#k=")[1];
         const token = (await pub("/verify", { body: { linkSecret: link, passportNumber: B.passportId, nic: B.nic } })).body.token;
         const form = await pub("/form", { token, body: {} });
-        assert.deepEqual(Object.keys(form.body).sort(), ["answers", "draftSavedAt", "expiresAt", "identity", "jobCategories", "prefilled", "savedSteps"]);
+        assert.deepEqual(Object.keys(form.body).sort(), ["answers", "draftSavedAt", "expiresAt", "identity", "jobCategories", "prefilled", "romanianCities", "savedSteps"]);
         const text = JSON.stringify(form.body);
         assert.ok(!text.includes("KAMAL PERERA") && !text.includes("901234567V") && !text.includes(A.passportId));
     });

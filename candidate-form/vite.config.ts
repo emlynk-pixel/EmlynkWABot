@@ -50,6 +50,9 @@ export default defineConfig(({ mode }) => {
             // The stylesheet is read as text by the layout test (FORM-004).
             css: true,
             restoreMocks: true,
+            // The whole-journey tests fill every answer of the form (about 60 controls) through
+            // user events; on a slow machine that can take longer than vitest's 5 s default.
+            testTimeout: 20000,
         },
     };
 });

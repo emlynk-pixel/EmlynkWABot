@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 import { CandidateError } from "./candidateService.js";
-import { ANSWER_FIELDS, isNotApplicable } from "./candidateFormDataService.js";
+import { ANSWER_FIELDS, answerValue, isNotApplicable } from "./candidateFormDataService.js";
 import { normalizePhoneNumber } from "../utils/phoneNumber.js";
 
 // Per-field "Confirm candidate change" (Admin > Candidate Details).
@@ -23,13 +23,15 @@ import { normalizePhoneNumber } from "../utils/phoneNumber.js";
 //                              (contact_number), passport issue / expiry date, job experience
 //   candidate_additional_details  full name (name_as_in_passport: the form asks for the
 //                              name "as written on your passport"), shirt / waist / shoe
-//                              size, father's and mother's birth date
+//                              size, father's and mother's birth date, father / mother alive
 // NOT confirmable (shown read-only, no canonical target or an ambiguous one):
 //   email, city, district, DS / GN division, job category (the core field is a LIST of
 //   job types; the form has one), English knowledge, other job category, other skills,
 //   civil status / spouse / children (they depend on each other's rules), parents' names and
 //   passport numbers (the form splits name and surname, the record holds one full name),
-//   and every Guardian field (no Guardian storage exists).
+//   and every Guardian field (no Guardian storage exists); City in Romania, Blood Group, Other
+//   Languages, Driving Licence, Can Read Drawings, Team Leading Skills, Height and Weight (the
+//   record has no column for them: they are kept, and shown, as submitted).
 
 export const CONFIRM_AUDIT_ACTION = "CANDIDATE_FORM_FIELD_CONFIRMED";
 export const REJECT_AUDIT_ACTION = "CANDIDATE_FORM_FIELD_REJECTED";
@@ -82,6 +84,11 @@ const size = {
     toDb: (value) => (SIZE_PATTERN.test(String(value).trim()) ? { value: String(value).trim() } : { error: "must be up to 10 letters, digits, spaces, dots, slashes or dashes" }),
     fromDb: (stored) => (typeof stored === "string" && stored.trim() ? stored : null),
 };
+// The form's YES / NO and the record's boolean (candidate_additional_details.father_alive).
+const yesNo = {
+    toDb: (value) => (value === "YES" ? { value: true } : value === "NO" ? { value: false } : { error: "must be YES or NO" }),
+    fromDb: (stored) => (typeof stored === "boolean" ? (stored ? "YES" : "NO") : null),
+};
 
 // field key -> where it lives. `table` is "candidate" or "details" (candidate_additional_details);
 // `column` is the Prisma field name. This object is the ONLY source of targets.
@@ -102,6 +109,8 @@ export const CONFIRMABLE_FIELDS = Object.freeze({
     "measurements.shoeSize": { table: "details", column: "shoeSize", ...size },
     "family.father.birthDate": { table: "details", column: "fatherBirthday", ...date({ notFuture: true }) },
     "family.mother.birthDate": { table: "details", column: "motherBirthday", ...date({ notFuture: true }) },
+    "family.fatherAlive": { table: "details", column: "fatherAlive", ...yesNo },
+    "family.motherAlive": { table: "details", column: "motherAlive", ...yesNo },
 });
 
 export const isConfirmableField = (field) => typeof field === "string" && Object.hasOwn(CONFIRMABLE_FIELDS, field);
@@ -139,7 +148,7 @@ export function pendingChanges(context, reviewed = new Set()) {
 
 export const CONFIRM_SELECT = Object.freeze({
     candidate: { otherName: true, firstName: true, sex: true, dateOfBirth: true, placeOfBirth: true, address: true, contactNumber: true, passportIssueDate: true, passportExpiryDate: true, jobExperience: true },
-    details: { nameAsInPassport: true, tshirtSize: true, pantSize: true, shoeSize: true, fatherBirthday: true, motherBirthday: true },
+    details: { nameAsInPassport: true, tshirtSize: true, pantSize: true, shoeSize: true, fatherBirthday: true, motherBirthday: true, fatherAlive: true, motherAlive: true },
 });
 
 // Both decisions share one flow and one review table (candidate_form_field_review):
@@ -214,5 +223,5 @@ export const rejectFormField = (args) => reviewFormField({ ...args, expectedCurr
 const FIELD_COLUMN = Object.freeze(Object.fromEntries(ANSWER_FIELDS.map(([group, key, column]) => [`${group}.${key}`, column])));
 export function submittedValueOf(response, field) {
     const column = FIELD_COLUMN[field];
-    return column ? isoDay(response?.[column]) : null;
+    return column ? answerValue(column, response?.[column] ?? null) : null;
 }

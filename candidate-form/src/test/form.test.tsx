@@ -46,10 +46,11 @@ describe("prefill and identity", () => {
 
 describe("sections and fields", () => {
     const PERSONAL_FIELDS = ["f.fullName", "f.surname", "f.otherNames", "f.nic", "f.sex", "f.civilStatus", "f.birthDate", "f.birthPlace",
-        "f.address", "f.city", "f.district", "f.dsDivision", "f.gnDivision", "f.whatsapp", "f.alternativePhone", "f.email"] as const;
+        "f.bloodGroup", "f.height", "f.weight", "f.drivingLicence", "f.canReadDrawings", "f.teamLeadingSkills", "f.otherLanguages",
+        "f.address", "f.city", "f.district", "f.dsDivision", "f.gnDivision", "f.whatsapp", "f.alternativePhone", "f.email", "f.cityInRomania", "f.distanceToBucharest"] as const;
     const WORK_FIELDS = ["f.passportNumber", "f.passportIssueDate", "f.passportExpiryDate", "f.jobCategory", "f.experience", "f.otherSkills1", "f.otherSkills2",
         "f.shirtSize", "f.waistSize", "f.shoeSize",
-        "f.fatherName", "f.fatherSurname", "f.fatherPassport", "f.fatherBirthDate", "f.motherName", "f.motherSurname", "f.motherPassport", "f.motherBirthDate",
+        "f.fatherName", "f.fatherSurname", "f.fatherPassport", "f.fatherBirthDate", "f.fatherAlive", "f.motherName", "f.motherSurname", "f.motherPassport", "f.motherBirthDate", "f.motherAlive",
         "f.spouseName", "f.spouseSurname", "f.spousePassport", "f.spouseBirthDate", "f.child1", "f.child2", "f.child3",
         "f.guardianName", "f.guardianRelationship", "f.guardianNic", "f.guardianBirthDate", "f.guardianPhone", "f.guardianAddress"] as const;
 
@@ -82,8 +83,9 @@ describe("sections and fields", () => {
         present(WORK_FIELDS);
         expect(screen.getByRole("group", { name: startsWith(en("f.englishKnowledge")) })).toBeInTheDocument();
         expect(queryField("f.fullName")).toBeNull();
-        // 8 + 8 and 7 + 3 + 15 + 6 = the 47 fields of the former seven steps.
-        expect(PERSONAL_FIELDS.length + WORK_FIELDS.length).toBe(47);
+        // 8 + 8 and 7 + 3 + 15 + 6 = the 47 fields of the former seven steps, plus the Personal Details
+        // answers (7 physical details & skills, City in Romania and its distance) and Father / Mother Alive.
+        expect(PERSONAL_FIELDS.length + WORK_FIELDS.length).toBe(58);
         // Only Personal Details, Work & Family Details and the review are steps: the sections are headings, not list items.
         expect(within(screen.getByRole("navigation", { name: en("form.sections") })).getAllByRole("listitem")).toHaveLength(4);
     });
@@ -231,15 +233,15 @@ describe("validation", () => {
         await next(user);
         expect(stepHeading("step.personal")).toBeInTheDocument();
         expect(screen.getByText(en("form.fixErrors"))).toBeInTheDocument();
-        // Every answer is required: full name, civil status, birth date, birth place, and all seven
-        // contact answers (address, city, district, DS and GN division, alternative number, email).
-        // The prefill has the surname, other names and sex.
-        expect(screen.getAllByText(en("v.required"))).toHaveLength(11);
+        // Every answer is required: full name, civil status, birth date, birth place, the seven physical
+        // details & skills, and all eight contact answers (address, city, district, DS and GN division,
+        // alternative number, email, city in Romania). The prefill has the surname, other names and sex.
+        expect(screen.getAllByText(en("v.required"))).toHaveLength(19);
         expect(field("f.fullName")).toHaveAttribute("aria-invalid", "true");
         expect(field("f.email")).toHaveAttribute("aria-invalid", "true");
         await waitFor(() => expect(field("f.fullName")).toHaveFocus());
         fillBasic();
-        expect(screen.getAllByText(en("v.required"))).toHaveLength(7); // the contact ones remain
+        expect(screen.getAllByText(en("v.required"))).toHaveLength(8); // the contact ones remain (City in Romania included)
         fillContact();
         expect(screen.queryByText(en("v.required"))).toBeNull();
         await next(user);
@@ -532,7 +534,7 @@ describe("accessibility and layout", () => {
                 await next(user);
             }
         }
-        expect(screen.getByRole("progressbar")).toHaveAccessibleName(/^\d+ of 39 required answers completed$/);
+        expect(screen.getByRole("progressbar")).toHaveAccessibleName(/^\d+ of 49 required answers completed$/);
         expect(screen.getByRole("navigation", { name: en("form.sections") })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: en("step.work") })).toHaveAttribute("aria-current", "step");
     });

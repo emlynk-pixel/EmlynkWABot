@@ -13,6 +13,7 @@ import { CONFIRMABLE_LABELS } from "./submittedChanges";
 // Candidate details stage.
 const ADDITIONAL_DETAILS_FIELDS = new Set([
     "basic.fullName", "measurements.shirtSize", "measurements.waistSize", "measurements.shoeSize", "family.father.birthDate", "family.mother.birthDate",
+    "family.fatherAlive", "family.motherAlive",
 ]);
 
 export const CONFLICT_FIELD_PARAM = "field";

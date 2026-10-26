@@ -28,34 +28,56 @@ function readValue(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>, u
     return next;
 }
 
-export function TextInput({ id, value, onChange, disabled, maxLength, type = "text", inputMode, placeholder, uppercase = false, autoComplete = "off", ...field }: Common & {
+// `suffix`: a unit shown at the end of the box ("kg"); `suggestions`: choices offered as the
+// candidate types (a datalist: any other text can still be typed).
+export function TextInput({ id, value, onChange, disabled, maxLength, type = "text", inputMode, placeholder, uppercase = false, autoComplete = "off", suffix, suggestions, ...field }: Common & {
     maxLength?: number;
     type?: "text" | "email" | "tel";
-    inputMode?: "text" | "tel" | "email";
+    inputMode?: "text" | "tel" | "email" | "decimal";
     placeholder?: string;
     uppercase?: boolean;
     autoComplete?: string;
+    suffix?: string;
+    suggestions?: readonly string[];
 }) {
+    const input = (helpOpen: boolean) => (
+        <input
+            id={id}
+            name={id}
+            type={type}
+            value={value}
+            onChange={(event) => onChange(readValue(event, uppercase))}
+            disabled={disabled}
+            inputMode={inputMode}
+            placeholder={placeholder}
+            maxLength={maxLength}
+            autoComplete={autoComplete}
+            autoCapitalize={uppercase ? "characters" : "off"}
+            spellCheck={false}
+            list={suggestions ? `${id}-suggestions` : undefined}
+            required={field.required}
+            aria-invalid={invalid(field.error)}
+            aria-describedby={describedBy(id, field, helpOpen)}
+        />
+    );
     return (
         <Field id={id} {...field}>
             {(helpOpen) => (
-                <input
-                    id={id}
-                    name={id}
-                    type={type}
-                    value={value}
-                    onChange={(event) => onChange(readValue(event, uppercase))}
-                    disabled={disabled}
-                    inputMode={inputMode}
-                    placeholder={placeholder}
-                    maxLength={maxLength}
-                    autoComplete={autoComplete}
-                    autoCapitalize={uppercase ? "characters" : "off"}
-                    spellCheck={false}
-                    required={field.required}
-                    aria-invalid={invalid(field.error)}
-                    aria-describedby={describedBy(id, field, helpOpen)}
-                />
+                <>
+                    {/* With `suffix` given (even ""), the box keeps the same wrapper, so showing or
+                        hiding the unit while typing never re-creates the input (focus stays). */}
+                    {suffix !== undefined ? (
+                        <div className="input-suffix">
+                            {input(helpOpen)}
+                            {suffix && <span className="input-suffix-unit" aria-hidden="true">{suffix}</span>}
+                        </div>
+                    ) : input(helpOpen)}
+                    {suggestions && (
+                        <datalist id={`${id}-suggestions`}>
+                            {suggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
+                        </datalist>
+                    )}
+                </>
             )}
         </Field>
     );
@@ -137,9 +159,9 @@ export function DateInput({ id, value, onChange, disabled, min, max, ...field }:
 
 export type Option = { value: string; label: string };
 
-// A list with an empty first choice ("Select…"), so nothing is picked for
+// A list with an empty first choice ("Select…", or `placeholder`), so nothing is picked for
 // the candidate.
-export function SelectInput({ id, value, onChange, disabled, options, ...field }: Common & { options: Option[] }) {
+export function SelectInput({ id, value, onChange, disabled, options, placeholder, ...field }: Common & { options: Option[]; placeholder?: string }) {
     const { t } = useLanguage();
     return (
         <Field id={id} {...field}>
@@ -154,7 +176,7 @@ export function SelectInput({ id, value, onChange, disabled, options, ...field }
                     aria-invalid={invalid(field.error)}
                     aria-describedby={describedBy(id, field, helpOpen)}
                 >
-                    <option value="">{t("option.select")}</option>
+                    <option value="">{placeholder ?? t("option.select")}</option>
                     {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
             )}

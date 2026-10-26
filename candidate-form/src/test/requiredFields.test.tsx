@@ -20,14 +20,16 @@ const TODAY = "2026-10-20";
 // A complete, valid form (every answer, N/A where allowed).
 function validData(): CandidateFormData {
     const data = emptyForm();
-    data.basic = { fullName: "SHAMAL SATHSARA", surname: "SATHSARA", otherNames: "N/A", sex: "MALE", civilStatus: "SINGLE", birthDate: "1990-05-01", birthPlace: "COLOMBO" };
-    data.contact = { address: "12 MAIN STREET", city: "COLOMBO", district: "COLOMBO", dsDivision: "KOLONNAWA", gnDivision: "KOLONNAWA NORTH", alternativePhone: "n/a", email: "a@example.com" };
+    data.basic = { fullName: "SHAMAL SATHSARA", surname: "SATHSARA", otherNames: "N/A", sex: "MALE", civilStatus: "SINGLE", birthDate: "1990-05-01", birthPlace: "COLOMBO", bloodGroup: "O+", height: "175 cm", weight: "70", drivingLicence: "YES", canReadDrawings: "NO", teamLeadingSkills: "YES", otherLanguages: "N/A" };
+    data.contact = { address: "12 MAIN STREET", city: "COLOMBO", district: "COLOMBO", dsDivision: "KOLONNAWA", gnDivision: "KOLONNAWA NORTH", alternativePhone: "n/a", email: "a@example.com", cityInRomania: "N/A" };
     data.passport = { issueDate: "2020-01-15", expiryDate: "2030-01-14" };
     data.qualifications = { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "N/A", otherSkills1: "N/A", otherSkills2: "N/A", englishKnowledge: "GOOD" };
     data.measurements = { shirtSize: "M", waistSize: "32", shoeSize: "9" };
     data.family.father = { name: "N/A", surname: "", passportNumber: "", birthDate: "" };
     data.family.mother = { name: "KUMARI", surname: "PERERA", passportNumber: "N/A", birthDate: "1965-02-03" };
     data.family.child1 = "N/A";
+    data.family.fatherAlive = "NO";
+    data.family.motherAlive = "YES";
     data.guardian = { name: "KAMAL PERERA", relationship: "UNCLE", nic: "901234567V", birthDate: "1960-01-01", phone: "0771234567", address: "45 LAKE ROAD" };
     return data;
 }
@@ -56,7 +58,8 @@ describe("all answers are required", () => {
         await next(user);
         expect(stepHeading("step.personal")).toBeInTheDocument();
         const personal = editableControls();
-        expect(personal.length).toBe(14);
+        // 14 + the eight Personal Details answers (the distance is worked out, not typed).
+        expect(personal.length).toBe(22);
         for (const control of personal) expect(control, control.id).toHaveAttribute("aria-invalid", "true");
 
         fillBasic();
@@ -82,7 +85,7 @@ describe("all answers are required", () => {
         // Required mark is text (* and a hidden "required"), not colour alone.
         expect(screen.getByLabelText(new RegExp(`^${en("f.city")} \\* \\(required\\)`))).toBeInTheDocument();
         await switchLanguage(user, "සිංහල");
-        expect(screen.getAllByText(si("v.required")).length).toBe(14);
+        expect(screen.getAllByText(si("v.required")).length).toBe(22);
         expect(screen.getByText(si("form.allRequired"))).toBeInTheDocument();
     });
 

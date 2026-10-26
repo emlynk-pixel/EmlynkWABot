@@ -32,12 +32,15 @@ type Nullable<T> = { [K in keyof T]: string | null };
 type Person = Nullable<{ name: string; surname: string; passportNumber: string; birthDate: string }>;
 
 export type CandidateFormPayload = {
-    basic: Nullable<{ fullName: string; surname: string; otherNames: string; sex: string; civilStatus: string; birthDate: string; birthPlace: string }>;
-    contact: Nullable<{ address: string; city: string; district: string; dsDivision: string; gnDivision: string; alternativePhone: string; email: string }>;
+    basic: Nullable<{
+        fullName: string; surname: string; otherNames: string; sex: string; civilStatus: string; birthDate: string; birthPlace: string;
+        bloodGroup: string; height: string; weight: string; drivingLicence: string; canReadDrawings: string; teamLeadingSkills: string; otherLanguages: string;
+    }>;
+    contact: Nullable<{ address: string; city: string; district: string; dsDivision: string; gnDivision: string; alternativePhone: string; email: string; cityInRomania: string }>;
     passport: Nullable<{ issueDate: string; expiryDate: string }>;
     qualifications: Nullable<{ jobCategory: string; jobCategoryOther: string; experience: string; otherSkills1: string; otherSkills2: string; englishKnowledge: string }>;
     measurements: Nullable<{ shirtSize: string; waistSize: string; shoeSize: string }>;
-    family: { father: Person; mother: Person; spouse: Person; child1: string | null; child2: string | null; child3: string | null };
+    family: { father: Person; mother: Person; spouse: Person; child1: string | null; child2: string | null; child3: string | null; fatherAlive: string | null; motherAlive: string | null };
     guardian: Nullable<{ name: string; relationship: string; nic: string; birthDate: string; phone: string; address: string }>;
 };
 
@@ -49,12 +52,17 @@ export type FormLoadResponse = {
     prefilled: string[];
     // The ACTIVE job types (Settings > Job Types), names only: the job category choices.
     jobCategories: string[];
+    // The listed Romanian cities with their APPROXIMATE straight-line distance to Bucharest
+    // (City in Romania suggestions). Absent from an older server.
+    romanianCities?: RomanianCity[];
     expiresAt: string;
     // Saved progress: the steps the candidate saved with Next (their answers are already in
     // `answers`) and when the last one was saved. Absent from an older server.
     savedSteps?: string[];
     draftSavedAt?: string | null;
 };
+
+export type RomanianCity = { name: string; aliases?: string[]; distanceKm: number };
 
 // The steps whose answers are saved with Next.
 export type DraftStep = "personal" | "work";

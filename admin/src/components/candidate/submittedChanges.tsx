@@ -30,6 +30,8 @@ export const CONFIRMABLE_LABELS: Record<string, { label: string; kind: Kind }> =
     "measurements.shoeSize": { label: "Shoe size", kind: "text" },
     "family.father.birthDate": { label: "Father birthday", kind: "date" },
     "family.mother.birthDate": { label: "Mother birthday", kind: "date" },
+    "family.fatherAlive": { label: "Father alive", kind: "code" },
+    "family.motherAlive": { label: "Mother alive", kind: "code" },
 };
 
 // The key of the form field that holds each confirmable value (Candidate details / Additional details forms).
@@ -39,6 +41,7 @@ const RECORD_KEY: Record<string, string> = {
     "qualifications.experience": "jobExperience",
     "basic.fullName": "nameAsInPassport", "measurements.shirtSize": "tshirtSize", "measurements.waistSize": "pantSize", "measurements.shoeSize": "shoeSize",
     "family.father.birthDate": "fatherBirthday", "family.mother.birthDate": "motherBirthday",
+    "family.fatherAlive": "fatherAlive", "family.motherAlive": "motherAlive",
 };
 
 // Folds a refreshed record into a form that may hold unsaved typing. A field the record changed takes the new
