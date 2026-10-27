@@ -13,6 +13,7 @@
     "sheet:demo": "node scripts/sheetSyncLocalDemo.mjs",
     "loadtest:backend": "node scripts/loadtest/startBackend.mjs",
     "loadtest:reg": "node scripts/loadtest/runRegistration.mjs",
+    "loadtest:cf": "node scripts/loadtest/runCandidateForm.mjs",
     "loadtest:db": "node scripts/loadtest/dbState.mjs",
     "loadtest:migrate": "node scripts/loadtest/migrateDeploy.mjs",
     "postinstall": "prisma generate",

@@ -6,10 +6,17 @@
 // Runs only against the project in `.env.loadtest` (loadTestEnv.mjs guard). The snapshot is written
 // OUTSIDE the repository (default ~/EmlynkWABot-loadtest-artifacts/snapshots).
 //
-// Restore is exact for registration, which only ADDS rows to these tables: rows that are not in the
+// Restore is exact for registration and the Candidate Form test, which only ADD rows to these tables
+// (the form test also revokes nothing and touches no existing candidate): rows that are not in the
 // baseline are removed, then every table's checksum must equal the baseline's. audit_logs is
 // append-only (a trigger refuses DELETE), so its own trigger is disabled for that one delete, inside
 // the same transaction, and enabled again before it commits.
+//
+// The Candidate Form tables are deleted child-first, explicitly, BEFORE their candidates: a submitted
+// candidate_form_access row refuses any UPDATE (trigger), so it must be gone before its link, whose
+// delete would SET NULL its submitted_via_link_id. No trigger is touched for them. A baseline taken
+// before these tables were added restores them by candidate (rows of removed candidates go) and is
+// reported as incomplete: take a new snapshot after that restore.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -25,7 +32,19 @@ export const TABLES = Object.freeze({
     audit_logs: `audit_id::text`,
     sheet_sync_queue: `queue_id::text`,
     rate_limits: `key`,
+    candidate_form_link: `link_id`,
+    candidate_form_access: `passport_id`,
+    candidate_form_response: `passport_id`,
+    candidate_form_prefill_snapshot: `passport_id`,
+    candidate_form_draft: `passport_id`,
+    candidate_form_sheet_sync: `submission_id`,
 });
+
+// The Candidate Form tables, children first (the order restore deletes them in).
+export const FORM_TABLES = Object.freeze([
+    "candidate_form_sheet_sync", "candidate_form_draft", "candidate_form_response",
+    "candidate_form_prefill_snapshot", "candidate_form_access", "candidate_form_link",
+]);
 
 export const defaultSnapshotDir = () => process.env.LOADTEST_ARTIFACTS_DIR || path.join(os.homedir(), "EmlynkWABot-loadtest-artifacts", "snapshots");
 
@@ -75,14 +94,21 @@ function readSnapshot(file) {
     return snapshot;
 }
 
+// The tables a snapshot does not cover (taken before they were added to TABLES).
+export const missingTables = (snapshot) => Object.keys(TABLES).filter((table) => !snapshot.tables[table]);
+
 export async function compareWithSnapshot(client, file) {
     const snapshot = readSnapshot(file);
     const now = await tableState(client);
     const report = {};
     for (const table of Object.keys(TABLES)) {
-        report[table] = { baseline: snapshot.tables[table].count, now: now[table].count, identical: snapshot.tables[table].checksum === now[table].checksum };
+        const base = snapshot.tables[table];
+        report[table] = base
+            ? { baseline: base.count, now: now[table].count, identical: base.checksum === now[table].checksum }
+            : { baseline: null, now: now[table].count, identical: null, note: "not in this baseline" };
     }
-    return { identical: Object.values(report).every((r) => r.identical), report };
+    const missing = missingTables(snapshot);
+    return { file, complete: missing.length === 0, missing, identical: Object.values(report).every((r) => r.identical !== false), report };
 }
 
 export async function restoreSnapshot(client, file) {
@@ -90,11 +116,18 @@ export async function restoreSnapshot(client, file) {
     const keep = (table) => snapshot.tables[table].keys;
     await client.query("BEGIN");
     try {
-        // Order matters: audit rows first (no FK action can then touch them), the candidates (cascades
-        // their stages; their delete trigger queues "deleted" sync rows), then the queue itself.
+        // Order matters: audit rows first (no FK action can then touch them), the Candidate Form rows
+        // child-first (see the header), the candidates (cascades their stages; their delete trigger
+        // queues "deleted" sync rows), then the queue itself.
         await client.query(`ALTER TABLE audit_logs DISABLE TRIGGER audit_logs_no_update_delete`);
         await client.query(`DELETE FROM audit_logs WHERE NOT (${TABLES.audit_logs} = ANY($1::text[]))`, [keep("audit_logs")]);
         await client.query(`ALTER TABLE audit_logs ENABLE TRIGGER audit_logs_no_update_delete`);
+        for (const table of FORM_TABLES) {
+            // Rows of candidates that are not in the baseline, then (when the baseline has the table) any
+            // other row it does not have. A group link has no passport_id and is kept by the first rule.
+            await client.query(`DELETE FROM "${table}" WHERE passport_id IS NOT NULL AND NOT (passport_id = ANY($1::text[]))`, [keep("candidate")]);
+            if (snapshot.tables[table]) await client.query(`DELETE FROM "${table}" WHERE NOT (${TABLES[table]} = ANY($1::text[]))`, [keep(table)]);
+        }
         await client.query(`DELETE FROM candidate WHERE NOT (${TABLES.candidate} = ANY($1::text[]))`, [keep("candidate")]);
         await client.query(`DELETE FROM candidate_stages WHERE NOT (${TABLES.candidate_stages} = ANY($1::text[]))`, [keep("candidate_stages")]);
         await client.query(`DELETE FROM sheet_sync_queue WHERE NOT (${TABLES.sheet_sync_queue} = ANY($1::text[]))`, [keep("sheet_sync_queue")]);

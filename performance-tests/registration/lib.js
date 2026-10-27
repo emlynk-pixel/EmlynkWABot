@@ -31,9 +31,15 @@ const pad = (value, width) => String(value).padStart(width, '0');
 //   nic         990000 + 6 digits              (12-digit NIC)
 //   whatsapp    +9499 + 7 digits               (8-15 digits, unique among candidates)
 //   names       LOADTEST / REG + the 6 digits
-// seq = RUN_ID * 10000 + (VU - 1) * 1000 + iteration, so up to 10 VUs x 1000 iterations per run.
+// seq = RUN_ID * 10000 + (VU - 1) * 100 + iteration, so up to 100 VUs x 100 iterations per run, all
+// inside the run's own block of 10000 (the runner checks that block is empty before a run).
+export const MAX_VUS = 100;
+export const MAX_ITERATIONS = 100;
 export function identityFor(runId, vu, iteration) {
-  const seq = Number(runId) * 10000 + (vu - 1) * 1000 + iteration;
+  if (vu < 1 || vu > MAX_VUS || iteration < 0 || iteration >= MAX_ITERATIONS) {
+    throw new Error(`identity out of range: VU ${vu}, iteration ${iteration} (max ${MAX_VUS} VUs x ${MAX_ITERATIONS} iterations)`);
+  }
+  const seq = Number(runId) * 10000 + (vu - 1) * 100 + iteration;
   const digits = pad(seq, 6);
   return {
     passportId: `P9${digits}`,

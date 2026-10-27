@@ -21,11 +21,13 @@ const SCENARIOS = {
     "REG-00": { script: "reg-00-smoke.js", runId: 1 },
     "REG-01": { script: "reg-01-baseline.js", runId: 2 },
     "REG-02": { script: "reg-02-5vus.js", runId: 3 },
+    "REG-03": { script: "reg-03-10vus.js", runId: 4 },
+    "REG-04": { script: "reg-04-20vus.js", runId: 5 },
 };
 const scenarioName = (process.argv[2] ?? "").toUpperCase();
 const scenario = SCENARIOS[scenarioName];
 if (!scenario) {
-    console.error(`usage: runRegistration.mjs ${Object.keys(SCENARIOS).join(" | ")}   (10 / 20 VU scenarios are intentionally not available yet)`);
+    console.error(`usage: runRegistration.mjs ${Object.keys(SCENARIOS).join(" | ")}`);
     process.exit(1);
 }
 

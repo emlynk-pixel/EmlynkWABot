@@ -24,7 +24,7 @@ export const REQUIRED_VARS = Object.freeze([
 ]);
 
 // The registration-test profile: forced, whatever the file says (non-secret settings).
-export const PROFILE = Object.freeze({ DATABASE_POOL_MAX: "15", LOAD_TEST_MODE: "true", SHEET_SYNC_ENABLED: "false" });
+export const PROFILE = Object.freeze({ DATABASE_POOL_MAX: "13", LOAD_TEST_MODE: "true", SHEET_SYNC_ENABLED: "false" });
 
 // Local env files whose database / Supabase project the load test must NOT share.
 const OTHER_ENV_FILES = Object.freeze([".env", ".env.local", ".env.preview", ".env.production"]);
