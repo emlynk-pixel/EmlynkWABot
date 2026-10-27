@@ -31,3 +31,6 @@ admin/dist/
 /UI/
 .vercel
 .env*
+
+# Load-test run output (k6 summaries, logs, results)
+performance-tests/results/
