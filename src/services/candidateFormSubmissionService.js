@@ -47,6 +47,8 @@ export async function getFormSubmission({ db, passportId }) {
     ]);
     const submitted = valuesOf(response, { derived: true });
     const original = valuesOf(snapshot);
+    // The confirmable values (some combine two answers: a parent's name + surname).
+    const confirmable = response ? Object.fromEntries(Object.keys(CONFIRMABLE_FIELDS).map((field) => [field, submittedValueOf(response, field)])) : null;
     const changed = submitted && original
         ? Object.keys(submitted).filter((path) => !NOT_COMPARED.has(path) && normal(submitted[path]) !== normal(original[path]))
         : [];
@@ -61,7 +63,7 @@ export async function getFormSubmission({ db, passportId }) {
         // Answers that differ from the record AND have a real home in it: each can be
         // confirmed on its own (candidateFormFieldConfirmService.js). Others are read only.
         // (a field with a decision, CONFIRMED or REJECTED, is no longer pending).
-        pending: submitted ? pendingChanges({ candidate, details, submitted }, new Set(reviews.map((review) => review.fieldKey))) : [],
+        pending: confirmable ? pendingChanges({ candidate, details, submitted: confirmable }, new Set(reviews.map((review) => review.fieldKey))) : [],
         // Staff decisions already taken on this submission: { field, status: CONFIRMED | REJECTED }.
         reviews: reviews.map((review) => ({ field: review.fieldKey, status: review.status })),
     };

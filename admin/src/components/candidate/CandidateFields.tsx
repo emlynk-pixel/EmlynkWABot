@@ -311,7 +311,7 @@ export function CandidateFields({ value, onChange, errors = {}, disabled, passpo
                 />
                 {passportId.hint && <div className="mt-1 text-label-sm" aria-live="polite">{passportId.hint}</div>}
             </Field>
-            <Field label="Job type" required htmlFor={`${id}-jobTypes`} error={errors.jobTypes}>
+            <Field label="Job type" required htmlFor={`${id}-jobTypes`} error={errors.jobTypes} submitted="qualifications.jobCategory">
                 <JobTypesInput id={`${id}-jobTypes`} value={value.jobTypes} onChange={(next) => onChange({ ...value, jobTypes: next })} disabled={disabled} invalid={Boolean(errors.jobTypes)} />
             </Field>
             <Field label="Nationality" htmlFor={`${id}-nationality`} error={errors.nationality}>{input("nationality", { maxLength: 60 })}</Field>

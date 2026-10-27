@@ -157,7 +157,7 @@ describe("scheduled and manual reconciliation", () => {
         const [item] = await queueRows();
         assert.deepEqual([item.status, item.lastResult], ["COMPLETED", "RECONCILED"]);
         const appendCall = sheet.writes().find((c) => c.method === "append");
-        assert.deepEqual([appendCall.range, appendCall.insertDataOption, appendCall.valueInputOption], [`'${TAB}'!A:AO`, "INSERT_ROWS", "RAW"]);
+        assert.deepEqual([appendCall.range, appendCall.insertDataOption, appendCall.valueInputOption], [`'${TAB}'!A:CF`, "INSERT_ROWS", "RAW"]);
         assert.ok((await state()).lastSyncSuccessAt);
     });
 
@@ -394,7 +394,7 @@ describe("reconciliation and durable runs", () => {
             { updated: 1, unchanged: 1, appended: 0, markedInactive: 0 },
         );
         assert.equal(sheet.row(aRow)[C], "Anusha");
-        assert.deepEqual(sheet.writes().slice(writesBefore).map((c) => c.ranges ?? c.method), [[`'${TAB}'!A${aRow}:AO${aRow}`]], "only the drifted row is written");
+        assert.deepEqual(sheet.writes().slice(writesBefore).map((c) => c.ranges ?? c.method), [[`'${TAB}'!A${aRow}:CF${aRow}`]], "only the drifted row is written");
         assert.doesNotMatch(JSON.stringify(run), /Anusha|N1023757|Kamal/);
         assert.equal(rowFor(sheet, b.uniqueId).length, 1);
     });

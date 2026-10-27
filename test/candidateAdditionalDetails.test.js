@@ -104,7 +104,8 @@ describe("migration", () => {
             SELECT con.contype, pg_get_constraintdef(con.oid) AS def FROM pg_constraint con
             JOIN pg_class rel ON rel.oid = con.conrelid WHERE rel.relname = 'candidate_additional_details' AND con.contype IN ('p', 'f', 'u', 'c') ORDER BY con.contype
         `)).rows;
-        assert.deepEqual(constraints.map((c) => c.contype).sort(), ["f", "p"]);
+        // (The three CHECKs are a later migration's: 20261102120000_candidate_form_finalized_details.)
+        assert.deepEqual(constraints.map((c) => c.contype).sort(), ["c", "c", "c", "f", "p"]);
         assert.match(constraints.find((c) => c.contype === "p").def, /PRIMARY KEY \(passport_id\)/);
         assert.match(constraints.find((c) => c.contype === "f").def, /FOREIGN KEY \(passport_id\) REFERENCES candidate\(passport_id\) ON UPDATE CASCADE ON DELETE CASCADE/);
         const rls = (await pg.query(`SELECT relrowsecurity FROM pg_class WHERE relname = 'candidate_additional_details'`)).rows[0];

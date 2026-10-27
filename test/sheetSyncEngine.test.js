@@ -11,10 +11,10 @@ import { BACKOFF, backoffDelayMs } from "../src/services/sheetSyncStore.js";
 import { classifySyncError } from "../src/services/sheetSyncWorker.js";
 import { SheetDuplicateCandidateIdError } from "../src/services/sheetSyncPlanner.js";
 import { readSheetSyncConfig, readSheetSyncTuning, sheetTargetHint, SHEET_SYNC_TUNING_DEFAULTS } from "../src/config/sheetSync.js";
-import { SHEET_HEADERS } from "../src/services/sheetSchema.js";
+import { SHEET_COLUMN_COUNT, SHEET_HEADERS } from "../src/services/sheetSchema.js";
 
 const TAB = "Bob's Candidate Mirror";
-const row = (id) => Array.from({ length: 41 }, (_, i) => (i === 40 ? id : `v${i}`));
+const row = (id) => Array.from({ length: SHEET_COLUMN_COUNT }, (_, i) => (i === 40 ? id : `v${i}`));
 const adapterFor = (sheet, enabled = true) => createGoogleSheetsAdapter({ config: { enabled, spreadsheetId: "fake-id", tabName: TAB }, sheetsClient: sheet.client });
 
 describe("adapter: batch reads and writes", () => {
@@ -30,12 +30,12 @@ describe("adapter: batch reads and writes", () => {
         assert.deepEqual(result, { updated: 2, appended: 1 });
         assert.deepEqual(sheet.calls.map((c) => c.method), ["get", "batchUpdate", "append"]);
         assert.equal(sheet.calls[0].range, "'Bob''s Candidate Mirror'!1:1");
-        assert.deepEqual(sheet.calls[1].ranges, ["'Bob''s Candidate Mirror'!A2:AO2", "'Bob''s Candidate Mirror'!A3:AO3"]);
+        assert.deepEqual(sheet.calls[1].ranges, ["'Bob''s Candidate Mirror'!A2:CF2", "'Bob''s Candidate Mirror'!A3:CF3"]);
         assert.equal(sheet.calls[1].valueInputOption, "RAW");
-        assert.deepEqual([sheet.calls[2].range, sheet.calls[2].insertDataOption], ["'Bob''s Candidate Mirror'!A:AO", "INSERT_ROWS"]);
+        assert.deepEqual([sheet.calls[2].range, sheet.calls[2].insertDataOption], ["'Bob''s Candidate Mirror'!A:CF", "INSERT_ROWS"]);
     });
 
-    test("writeRows writes nothing when the header does not match, and rejects rows that are not 41 cells", async () => {
+    test("writeRows writes nothing when the header does not match, and rejects rows that are not SHEET_COLUMN_COUNT cells", async () => {
         const header = [...SHEET_HEADERS];
         header[40] = "ID";
         const bad = createFakeGoogleSheet({ tabName: TAB, header });
@@ -47,13 +47,13 @@ describe("adapter: batch reads and writes", () => {
         assert.deepEqual(good.calls, []);
     });
 
-    test("readRowsByNumber reads several rows in one batchGet per 100 rows, padded to 41 cells", async () => {
+    test("readRowsByNumber reads several rows in one batchGet per 100 rows, padded to SHEET_COLUMN_COUNT cells", async () => {
         const rows = Array.from({ length: 150 }, (_, i) => row(String(i + 1).padStart(4, "0")));
         const sheet = createFakeGoogleSheet({ tabName: TAB, rows });
         const cells = await readOnlySheetsView(adapterFor(sheet, false)).readRowsByNumber(Array.from({ length: 150 }, (_, i) => i + 2));
         assert.equal(sheet.calls.filter((c) => c.method === "batchGet").length, 2);
         assert.equal(cells.get(151)[40], "0150");
-        assert.equal(cells.get(2).length, 41);
+        assert.equal(cells.get(2).length, SHEET_COLUMN_COUNT);
     });
 
     test("a Google failure surfaces as a classified SheetsAdapterError without Google's message", async () => {

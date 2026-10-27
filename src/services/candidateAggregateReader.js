@@ -1,6 +1,7 @@
 // Google Sheet operational mirror: reads the authoritative candidate
-// aggregate (users row + candidate_stages + candidate documents) that
-// candidateSheetMapper.js turns into a Sheet row.
+// aggregate (users row + candidate_stages + candidate documents +
+// candidate_additional_details) that candidateSheetMapper.js turns into a
+// Sheet row. Canonical tables only: never candidate_form_response.
 //
 // Read-only: only findUnique/findMany. One query per candidate or per batch
 // (the stages and documents come in the same Prisma query, never one query
@@ -35,10 +36,11 @@ export class IncompleteSnapshotError extends Error {
 export const SNAPSHOT_TRANSACTION_TIMEOUT_MS = 120_000;
 
 // A Prisma users row selected with CANDIDATE_AGGREGATE_SELECT ->
-// { user, stages, documents } (the mapper's input).
+// { user, stages, documents, details } (the mapper's input; details is null
+// when the candidate has no additional details row).
 export function toCandidateAggregate(row) {
-    const { stages = [], documents = [], ...user } = row;
-    return { user, stages, documents };
+    const { stages = [], documents = [], additionalDetails = null, ...user } = row;
+    return { user, stages, documents, details: additionalDetails };
 }
 
 export function createCandidateAggregateReader({ db } = {}) {

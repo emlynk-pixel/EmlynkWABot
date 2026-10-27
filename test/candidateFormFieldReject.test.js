@@ -202,7 +202,7 @@ describe("roles, allowlist and the public API (REJECT-011, 012, 014, 015)", () =
 
     test("unknown and unmapped fields are rejected, and the browser cannot supply a table, a column or a value", async () => {
         await submitForm();
-        for (const field of ["guardian.name", "contact.email", "candidate.passportId", "passportId", "__proto__", "constructor", "basic.birthDate ", ""]) {
+        for (const field of ["family.father.name", "family.mother.surname", "candidate.passportId", "passportId", "__proto__", "constructor", "basic.birthDate ", ""]) {
             assert.deepEqual([(await reject(USERS.ADMIN, { field, expectedCurrentValue: null, expectedSubmittedValue: null })).body.code], ["FIELD_NOT_CONFIRMABLE"], JSON.stringify(field));
         }
         const seen = await body("contact.address");

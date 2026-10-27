@@ -249,18 +249,18 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
 
             <Section title="Father details">
                 {yesNo("fatherAlive", "Is father alive?", "family.fatherAlive")}
-                {text("fatherFullName", "Father full name", { required: form.fatherAlive === "yes" })}
+                {text("fatherFullName", "Father full name", { required: form.fatherAlive === "yes", submitted: "family.father.fullName" })}
                 {dateField("fatherBirthday", "Father birthday", "family.father.birthDate")}
             </Section>
 
             <Section title="Mother details">
                 {yesNo("motherAlive", "Is mother alive?", "family.motherAlive")}
-                {text("motherFullName", "Mother full name", { required: form.motherAlive === "yes" })}
+                {text("motherFullName", "Mother full name", { required: form.motherAlive === "yes", submitted: "family.mother.fullName" })}
                 {dateField("motherBirthday", "Mother birthday", "family.mother.birthDate")}
             </Section>
 
             <Section title="Marital & family details">
-                <Field label="Marital status" htmlFor="ad-maritalStatus" error={errors.maritalStatus}>
+                <Field label="Marital status" htmlFor="ad-maritalStatus" error={errors.maritalStatus} submitted="basic.civilStatus">
                     <select id="ad-maritalStatus" value={form.maritalStatus} onChange={(e) => set("maritalStatus")(e.target.value)} disabled={disabled} className={fieldControl}>
                         <option value="">Not recorded</option>
                         {MARITAL_STATUS_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
@@ -268,8 +268,8 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
                 </Field>
                 {form.maritalStatus === "MARRIED" && (
                     <>
-                        {text("wifeFullName", "Wife full name", { required: true })}
-                        {dateField("wifeBirthday", "Wife birthday")}
+                        {text("wifeFullName", "Wife full name", { required: true, submitted: "family.spouse.fullName" })}
+                        {dateField("wifeBirthday", "Wife birthday", "family.spouse.birthDate")}
                     </>
                 )}
                 {form.maritalStatus === "SINGLE" ? (
@@ -280,16 +280,16 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
                     )
                 ) : (
                     <>
-                        {text("child1Name", "1st child name")}
-                        {text("child2Name", "2nd child name")}
-                        {text("child3Name", "3rd child name")}
+                        {text("child1Name", "1st child name", { submitted: "family.child1" })}
+                        {text("child2Name", "2nd child name", { submitted: "family.child2" })}
+                        {text("child3Name", "3rd child name", { submitted: "family.child3" })}
                     </>
                 )}
             </Section>
 
             <Section title="Employment / skills">
                 <div className="sm:col-span-2">
-                    <Field label="Other job skills" htmlFor="ad-otherJobSkills" error={errors.otherJobSkills}>
+                    <Field label="Other job skills" htmlFor="ad-otherJobSkills" error={errors.otherJobSkills} submitted="qualifications.otherSkills1">
                         <textarea id="ad-otherJobSkills" rows={3} maxLength={1000} value={form.otherJobSkills} onChange={(e) => set("otherJobSkills")(e.target.value)} disabled={disabled} placeholder="For example: forklift licence, basic welding" className={textAreaControl} />
                     </Field>
                 </div>

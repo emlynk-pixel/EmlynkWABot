@@ -1,13 +1,20 @@
 // Candidate -> Google Sheet row (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md,
 // Sections 6.1-6.3). Pure: no database, no Google API, no clock, no logging.
-// The same input always gives the same 41 field-ordered strings (canonical
-// order, sheetSchema.js; the adapter places them by header name), so
+// The same input always gives the same SHEET_COLUMN_COUNT field-ordered strings
+// (canonical order, sheetSchema.js; the adapter places them by header name), so
 // incremental sync and reconciliation compare like with like.
 //
 // Input, the candidate aggregate (CANDIDATE_AGGREGATE_SELECT below):
 //   user      - the users row
 //   stages    - its candidate_stages rows
 //   documents - its documents rows
+//   details   - its candidate_additional_details row, or null
+// The Candidate Form columns come from `details` ONLY: the canonical record,
+// which holds a submitted answer only once an Admin / Manager confirmed it
+// (candidateFormFieldConfirmService.js). candidate_form_response (the raw
+// submission) is never read here. No details, or a value never confirmed: "".
+// DISTANCE TO BUCHAREST (KM) is derived from the confirmed City in Romania
+// (the same dataset as the form, romaniaCities.js), never stored.
 // Stage completion and the "current" document of each type come from the
 // same functions the Admin candidate page uses (candidateService.js), never
 // from a second copy of those rules.
@@ -30,6 +37,7 @@
 import { SHEET_COLUMNS, SYSTEM_CANDIDATE_ID_FIELD, assertSheetRow } from "./sheetSchema.js";
 import { CANDIDATE_DOCUMENT_TYPES, automaticStageMissing, currentOf, stageList } from "./candidateService.js";
 import { businessDateOf } from "../utils/businessDay.js";
+import { findRomanianCity } from "../utils/romaniaCities.js";
 import { jobTypesLabel } from "./jobTypeCatalog.js";
 
 export const DOCUMENT_NOT_SUBMITTED = "Not Submitted";
@@ -55,6 +63,18 @@ export const CANDIDATE_AGGREGATE_SELECT = Object.freeze({
         select: {
             documentId: true, documentType: true, documentVariant: true, verificationStatus: true,
             receivedDate: true, createdDate: true, policeSubmittedDate: true,
+        },
+    },
+    additionalDetails: {
+        select: {
+            nameAsInPassport: true, maritalStatus: true, bloodGroup: true, height: true, weightKg: true, drivingLicence: true,
+            canReadDrawings: true, teamLeadingSkills: true, otherLanguages: true, email: true, city: true, district: true,
+            dsDivision: true, gnDivision: true, cityInRomania: true, otherJobCategory: true, otherJobSkills: true, otherJobSkills2: true,
+            englishKnowledge: true, tshirtSize: true, pantSize: true, shoeSize: true, fatherFullName: true, fatherPassportNumber: true,
+            fatherBirthday: true, fatherAlive: true, motherFullName: true, motherPassportNumber: true, motherBirthday: true,
+            motherAlive: true, wifeFullName: true, spousePassportNumber: true, wifeBirthday: true, child1Name: true, child2Name: true,
+            child3Name: true, guardianName: true, guardianRelationship: true, guardianNic: true, guardianBirthday: true,
+            guardianPhone: true, guardianAddress: true,
         },
     },
 });
@@ -84,6 +104,12 @@ const utcTimestamp = (value) => toDate(value)?.toISOString().replace(/\.\d{3}Z$/
 
 const stageStatus = (stage) => (stage?.completed ? STAGE_STATUS.COMPLETED : STAGE_STATUS.INCOMPLETE);
 
+// A stored Yes / No: "YES", "NO", or "" when not recorded.
+const yesNo = (value) => (value === true ? "YES" : value === false ? "NO" : "");
+
+// A DECIMAL as a plain number ("70.5"; Prisma reads it as a Decimal object).
+const decimal = (value) => (value === null || value === undefined || value === "" ? "" : String(Number(value)));
+
 // ---------------------------------------------------------------- mapping
 
 // The candidate's current document row of a type (and variant, for police
@@ -106,7 +132,7 @@ function documentCell(documents, documentType, variant) {
     return businessDateOf(submittedAt);
 }
 
-// The 41 field-ordered cells for one candidate (canonical order).
+// The field-ordered cells for one candidate (canonical order).
 // options.mirroredAt (required): the LAST MIRRORED AT time, passed in so
 //   the result is deterministic.
 // options.recordStatus: ACTIVE unless the caller marks the row otherwise.
@@ -134,6 +160,8 @@ export function mapCandidateToSheetRow(aggregate, { mirroredAt, recordStatus = R
 
     const stages = new Map(stageList(stageRows, automaticStageMissing(user, documents)).map((s) => [s.stage, s]));
     const policeSlip = currentDocument(documents, "POLICE_SLIP");
+    const details = aggregate.details && typeof aggregate.details === "object" ? aggregate.details : {};
+    const romanianCity = findRomanianCity(details.cityInRomania);
 
     const values = {
         testNumber: "",
@@ -178,6 +206,49 @@ export function mapCandidateToSheetRow(aggregate, { mirroredAt, recordStatus = R
         registeredAt: utcTimestamp(user.createdDate),
         lastMirroredAt: utcTimestamp(mirrored),
         [SYSTEM_CANDIDATE_ID_FIELD]: user.uniqueId,
+        nameAsInPassport: text(details.nameAsInPassport),
+        civilStatus: text(details.maritalStatus),
+        bloodGroup: text(details.bloodGroup),
+        height: text(details.height),
+        weightKg: decimal(details.weightKg),
+        hasDrivingLicence: yesNo(details.drivingLicence),
+        canReadDrawings: yesNo(details.canReadDrawings),
+        teamLeadingSkills: yesNo(details.teamLeadingSkills),
+        otherLanguages: text(details.otherLanguages),
+        email: text(details.email),
+        city: text(details.city),
+        district: text(details.district),
+        dsDivision: text(details.dsDivision),
+        gnDivision: text(details.gnDivision),
+        cityInRomania: text(details.cityInRomania),
+        distanceToBucharestKm: romanianCity ? String(romanianCity.distanceKm) : "",
+        otherJobCategory: text(details.otherJobCategory),
+        otherSkills1: text(details.otherJobSkills),
+        otherSkills2: text(details.otherJobSkills2),
+        englishKnowledge: text(details.englishKnowledge),
+        shirtSize: text(details.tshirtSize),
+        waistSize: text(details.pantSize),
+        shoeSize: text(details.shoeSize),
+        fatherName: text(details.fatherFullName),
+        fatherPassportNumber: text(details.fatherPassportNumber),
+        fatherBirthday: dateOnly(details.fatherBirthday),
+        fatherAlive: yesNo(details.fatherAlive),
+        motherName: text(details.motherFullName),
+        motherPassportNumber: text(details.motherPassportNumber),
+        motherBirthday: dateOnly(details.motherBirthday),
+        motherAlive: yesNo(details.motherAlive),
+        spouseName: text(details.wifeFullName),
+        spousePassportNumber: text(details.spousePassportNumber),
+        spouseBirthday: dateOnly(details.wifeBirthday),
+        child1Name: text(details.child1Name),
+        child2Name: text(details.child2Name),
+        child3Name: text(details.child3Name),
+        guardianName: text(details.guardianName),
+        guardianRelationship: text(details.guardianRelationship),
+        guardianNic: text(details.guardianNic),
+        guardianBirthday: dateOnly(details.guardianBirthday),
+        guardianPhone: text(details.guardianPhone),
+        guardianAddress: text(details.guardianAddress),
     };
 
     // Emitted by schema position, so a missing value can never shift a column.

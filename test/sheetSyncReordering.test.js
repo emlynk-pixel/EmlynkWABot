@@ -105,8 +105,8 @@ function makeAdapter(sheet, enabled = true) {
 }
 
 describe("Dynamic Column Mapping & Reordering Regression Suite", () => {
-    // 1. Canonical 41-column order still works
-    test("1. canonical 41-column order works exactly as expected", async () => {
+    // 1. Canonical column order still works
+    test("1. canonical column order works exactly as expected", async () => {
         const c1 = mockCandidate(1);
         const sheet = createFakeGoogleSheet({ tabName: TAB, header: [...SHEET_HEADERS] });
         const adapter = makeAdapter(sheet);
@@ -138,8 +138,8 @@ describe("Dynamic Column Mapping & Reordering Regression Suite", () => {
         assert.equal(readRows[0].cells[SYSTEM_CANDIDATE_ID_INDEX], "0001");
         assert.equal(readRows[0].cells[fieldIndex("passportNumber")], "N1000001");
 
-        // Physical sheet verification: reversed means _SYSTEM_CANDIDATE_ID is at physical index 0 (Column A)
-        assert.equal(sheet.dataRows()[0][0], "0001");
+        // Physical sheet verification: reversed means _SYSTEM_CANDIDATE_ID is at its mirrored physical index
+        assert.equal(sheet.dataRows()[0][reversedHeaders.indexOf("_SYSTEM_CANDIDATE_ID")], "0001");
     });
 
     // 3. _SYSTEM_CANDIDATE_ID in column A works
@@ -196,7 +196,7 @@ describe("Dynamic Column Mapping & Reordering Regression Suite", () => {
         const engine = createSheetSyncEngine({ reader: makeReader([c1]), sheets: adapter, clock: () => NOW });
 
         await engine.syncCandidates([{ uniqueId: "0001", candidateDeleted: false }]);
-        assert.equal(sheet.dataRows()[0][40], "0001");
+        assert.equal(sheet.dataRows()[0][headersLast.length - 1], "0001");
     });
 
     // 6. VISA SUBMISSION STATUS moved elsewhere works
@@ -549,10 +549,12 @@ describe("Dynamic Column Mapping & Reordering Regression Suite", () => {
             "VISA SUBMISSION STATUS",     // Col C (2)
             "PASSPORT NUMBER",            // Col D (3)
             "Internal Audit",             // Col E (4) - Custom
-            ...otherHeaders,              // Cols 5..41
-            "VISA APPROVAL STATUS",       // Col 42
-            "Supervisor Signoff",         // Col 43 - Custom
+            ...otherHeaders,              // Cols 5..
+            "VISA APPROVAL STATUS",       // next to last
+            "Supervisor Signoff",         // last - Custom
         ];
+        const APPROVAL = unusualHeader.indexOf("VISA APPROVAL STATUS");
+        const SIGNOFF = unusualHeader.indexOf("Supervisor Signoff");
 
         const c1 = mockCandidate(1, {
             stages: [
@@ -576,13 +578,13 @@ describe("Dynamic Column Mapping & Reordering Regression Suite", () => {
         assert.equal(rowAfterAppend[2], "COMPLETED", "VISA SUBMISSION STATUS in Col C");
         assert.equal(rowAfterAppend[3], "N1000001", "PASSPORT NUMBER in Col D");
         assert.equal(rowAfterAppend[4], "", "Internal Audit initially blank");
-        assert.equal(rowAfterAppend[42], "INCOMPLETE", "VISA APPROVAL STATUS near end");
-        assert.equal(rowAfterAppend[43], "", "Supervisor Signoff initially blank");
+        assert.equal(rowAfterAppend[APPROVAL], "INCOMPLETE", "VISA APPROVAL STATUS near end");
+        assert.equal(rowAfterAppend[SIGNOFF], "", "Supervisor Signoff initially blank");
 
         // 2. Operator populates all custom columns
         sheet.setCell(2, 1, "OPERATOR_NOTE_PRESERVED");
         sheet.setCell(2, 4, "AUDIT_PASSED_2026");
-        sheet.setCell(2, 43, "SIGNOFF_BY_MANAGER_BOB");
+        sheet.setCell(2, SIGNOFF, "SIGNOFF_BY_MANAGER_BOB");
 
         // 3. Database updates candidate details and Visa Approval status
         c1.job = "Updated Job Title";
@@ -601,11 +603,11 @@ describe("Dynamic Column Mapping & Reordering Regression Suite", () => {
         assert.equal(rowAfterUpdate[0], "0001", "Identity intact in Col A");
         assert.equal(rowAfterUpdate[2], "COMPLETED", "VISA SUBMISSION STATUS intact in Col C");
         assert.equal(rowAfterUpdate[3], "N1000001", "PASSPORT NUMBER intact in Col D");
-        assert.equal(rowAfterUpdate[42], "COMPLETED", "VISA APPROVAL STATUS updated to COMPLETED");
+        assert.equal(rowAfterUpdate[APPROVAL], "COMPLETED", "VISA APPROVAL STATUS updated to COMPLETED");
 
         // Verify ALL custom fields are completely untouched!
         assert.equal(rowAfterUpdate[1], "OPERATOR_NOTE_PRESERVED", "Col B custom field untouched");
         assert.equal(rowAfterUpdate[4], "AUDIT_PASSED_2026", "Col E custom field untouched");
-        assert.equal(rowAfterUpdate[43], "SIGNOFF_BY_MANAGER_BOB", "Trailing custom field untouched");
+        assert.equal(rowAfterUpdate[SIGNOFF], "SIGNOFF_BY_MANAGER_BOB", "Trailing custom field untouched");
     });
 });

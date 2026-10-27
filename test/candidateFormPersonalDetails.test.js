@@ -351,10 +351,11 @@ describe("routes: the new answers are stored, read back and reviewed", () => {
         assert.equal(confirmed.status, 200, JSON.stringify(confirmed.body));
         const details = await prisma.candidateAdditionalDetails.findUnique({ where: { passportId: A.passportId } });
         assert.deepEqual([details.fatherAlive, details.motherAlive], [false, true], "only the confirmed column changed");
-        // The other new answers have no home in the record: never confirmable.
+        // The other new answers are confirmable into Additional Details too (20261102120000_candidate_form_finalized_details),
+        // always against the stored submission: a value the screen did not see is stale.
         for (const field of ["basic.bloodGroup", "basic.height", "contact.cityInRomania"]) {
             const r = await call("POST", `/api/admin/candidates/${A.passportId}/form-submission/confirm-field`, { body: { field, expectedCurrentValue: null, expectedSubmittedValue: "x" } });
-            assert.equal(r.status, 400, field);
+            assert.deepEqual([r.status, r.body.code], [409, "FORM_FIELD_STALE"], field);
         }
     });
 });
@@ -362,8 +363,8 @@ describe("routes: the new answers are stored, read back and reviewed", () => {
 // ---------------------------------------------------------------- migration rehearsal
 
 describe("migration 20261101120000_candidate_form_personal_details on existing data", () => {
-    test("MIGRATION-001 it is the newest migration, additive only (no DROP, RENAME, ALTER TYPE, UPDATE or DELETE)", () => {
-        assert.equal(migrationNames().at(-1), MIGRATION);
+    test("MIGRATION-001 it is applied, additive only (no DROP, RENAME, ALTER TYPE, UPDATE or DELETE)", () => {
+        assert.ok(migrationNames().includes(MIGRATION));
         const sql = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "prisma", "migrations", MIGRATION, "migration.sql"), "utf8")
             .split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");
         assert.doesNotMatch(sql, /\b(DROP|RENAME|TYPE|UPDATE|DELETE|TRUNCATE|SET NOT NULL)\b/i);
@@ -371,7 +372,8 @@ describe("migration 20261101120000_candidate_form_personal_details on existing d
     });
 
     test("MIGRATION-002 historical candidates, submissions and snapshots survive unchanged and stay readable; a new submission persists", async () => {
-        const previous = migrationNames().at(-2);
+        const names = migrationNames();
+        const previous = names[names.indexOf(MIGRATION) - 1];
         const database = await createTestDatabase({ upTo: previous });
         try {
             const { pg } = database;

@@ -2,10 +2,11 @@
 // (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 6).
 //
 // Columns are found by their HEADER TEXT, not by their position. The live
-// Sheet may hold the 41 system columns in any order, interleaved with any
+// Sheet may hold the system columns in any order, interleaved with any
 // number of operator columns; readSheetLayout() reads row 1 and maps every
 // system column to where it is now. Header text stays strict (exact text, no
-// trimming, no case folding).
+// trimming, no case folding). The system columns are the original 41 (A to AO)
+// and the confirmed Candidate Form columns appended after them (AP to CF).
 //
 // Two orders exist, and only one is positional:
 //   - the CANONICAL order below (SHEET_COLUMNS): the order a new Sheet is set
@@ -69,6 +70,53 @@ const COLUMNS = [
     ["AM", "REGISTERED AT", "registeredAt"],
     ["AN", "LAST MIRRORED AT", "lastMirroredAt"],
     ["AO", "_SYSTEM_CANDIDATE_ID", "systemCandidateId"],
+    // Candidate Form answers, only once an Admin / Manager confirmed them into the record
+    // (candidate_additional_details; candidateFormFieldConfirmService.js). Appended after the
+    // original 41 columns, which are unchanged. DRIVING LICENCE (Yes / No) is not DRIVING LICIAN
+    // (a document column).
+    ["AP", "NAME AS IN PASSPORT", "nameAsInPassport"],
+    ["AQ", "CIVIL STATUS", "civilStatus"],
+    ["AR", "BLOOD GROUP", "bloodGroup"],
+    ["AS", "HEIGHT", "height"],
+    ["AT", "WEIGHT (KG)", "weightKg"],
+    ["AU", "DRIVING LICENCE", "hasDrivingLicence"],
+    ["AV", "CAN READ DRAWINGS", "canReadDrawings"],
+    ["AW", "TEAM LEADING SKILLS", "teamLeadingSkills"],
+    ["AX", "OTHER LANGUAGES", "otherLanguages"],
+    ["AY", "EMAIL", "email"],
+    ["AZ", "CITY", "city"],
+    ["BA", "DISTRICT", "district"],
+    ["BB", "DS DIVISION", "dsDivision"],
+    ["BC", "GN DIVISION", "gnDivision"],
+    ["BD", "CITY IN ROMANIA", "cityInRomania"],
+    ["BE", "DISTANCE TO BUCHAREST (KM)", "distanceToBucharestKm"],
+    ["BF", "OTHER JOB CATEGORY", "otherJobCategory"],
+    ["BG", "OTHER SKILLS 1", "otherSkills1"],
+    ["BH", "OTHER SKILLS 2", "otherSkills2"],
+    ["BI", "ENGLISH KNOWLEDGE", "englishKnowledge"],
+    ["BJ", "SHIRT SIZE", "shirtSize"],
+    ["BK", "WAIST SIZE", "waistSize"],
+    ["BL", "SHOE SIZE", "shoeSize"],
+    ["BM", "FATHER NAME", "fatherName"],
+    ["BN", "FATHER PASSPORT NUMBER", "fatherPassportNumber"],
+    ["BO", "FATHER BIRTHDAY", "fatherBirthday"],
+    ["BP", "FATHER ALIVE", "fatherAlive"],
+    ["BQ", "MOTHER NAME", "motherName"],
+    ["BR", "MOTHER PASSPORT NUMBER", "motherPassportNumber"],
+    ["BS", "MOTHER BIRTHDAY", "motherBirthday"],
+    ["BT", "MOTHER ALIVE", "motherAlive"],
+    ["BU", "SPOUSE NAME", "spouseName"],
+    ["BV", "SPOUSE PASSPORT NUMBER", "spousePassportNumber"],
+    ["BW", "SPOUSE BIRTHDAY", "spouseBirthday"],
+    ["BX", "CHILD 1 NAME", "child1Name"],
+    ["BY", "CHILD 2 NAME", "child2Name"],
+    ["BZ", "CHILD 3 NAME", "child3Name"],
+    ["CA", "GUARDIAN NAME", "guardianName"],
+    ["CB", "GUARDIAN RELATIONSHIP", "guardianRelationship"],
+    ["CC", "GUARDIAN NIC", "guardianNic"],
+    ["CD", "GUARDIAN BIRTHDAY", "guardianBirthday"],
+    ["CE", "GUARDIAN PHONE", "guardianPhone"],
+    ["CF", "GUARDIAN ADDRESS", "guardianAddress"],
 ];
 
 // 0 -> "A", 25 -> "Z", 26 -> "AA", 52 -> "BA", 701 -> "ZZ", 702 -> "AAA".
@@ -86,10 +134,10 @@ export function columnLetter(index) {
 
 export const SHEET_COLUMNS = Object.freeze(COLUMNS.map(([column, header, field], index) => Object.freeze({ index, column, header, field })));
 
-// The system columns: 40 business columns and the technical identity. The
+// The system columns: 83 business columns and the technical identity. The
 // live Sheet may have more columns (operator columns), never fewer.
-export const SHEET_COLUMN_COUNT = 41;
-export const SHEET_BUSINESS_COLUMN_COUNT = 40;
+export const SHEET_COLUMN_COUNT = 84;
+export const SHEET_BUSINESS_COLUMN_COUNT = 83;
 export const SHEET_HEADER_ROW = 1;
 export const SHEET_FIRST_DATA_ROW = 2;
 

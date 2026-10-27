@@ -69,6 +69,21 @@ describe("Admin: submitted Personal Details", () => {
         expect(within(hint).getByRole("button", { name: "Confirm Father alive" })).toBeInTheDocument();
     });
 
+    test("a field with no home of its own in Admin is confirmed from the card; the others there offer no button", async () => {
+        const BLOOD: PendingChange = { field: "basic.bloodGroup", current: null, submitted: "O+" };
+        const GUARDIAN: PendingChange = { field: "guardian.name", current: null, submitted: "KAMAL PERERA" };
+        backend(submission({ ...NEW_ANSWERS, "guardian.name": "KAMAL PERERA", "contact.email": "a@example.com" }, [BLOOD, GUARDIAN]));
+        renderApp("/candidates/N0000002?tab=additional");
+        const card = await screen.findByTestId("submitted-personal-details", undefined, RENDER_STEP);
+        expect(value(card, "Guardian Name")).toBe("KAMAL PERERA");
+        expect(value(card, "Email")).toBe("a@example.com");
+        expect(within(card).getByTestId("submitted-hint-basic.bloodGroup")).toHaveTextContent("Candidate submitted: O+");
+        expect(within(card).getByRole("button", { name: "Confirm Blood Group" })).toBeInTheDocument();
+        expect(within(card).getByRole("button", { name: "Revoke Guardian Name" })).toBeInTheDocument();
+        // Only the two pending fields have buttons (Distance is derived; Father / Mother Alive are confirmed above).
+        expect(within(card).getAllByRole("button")).toHaveLength(4);
+    });
+
     test("an unlisted city has no distance, N/A says not applicable, and an older submission shows no card", async () => {
         backend(submission({ ...NEW_ANSWERS, "contact.cityInRomania": "Satu Nou", "contact.distanceToBucharestKm": null, "basic.otherLanguages": "N/A" }));
         const first = renderApp("/candidates/N0000002?tab=additional");
