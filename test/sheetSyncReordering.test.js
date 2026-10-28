@@ -117,8 +117,8 @@ describe("Dynamic Column Mapping & Reordering Regression Suite", () => {
 
         const rows = sheet.dataRows();
         assert.equal(rows.length, 1);
-        assert.equal(rows[0][40], "0001", "ID is in canonical column AO (index 40)");
-        assert.equal(rows[0][1], "N1000001", "Passport is in canonical column B");
+        assert.equal(rows[0][1], "0001", "ID is in canonical column B (index 1)");
+        assert.equal(rows[0][2], "N1000001", "Passport is in canonical column C");
     });
 
     // 2. Fully reversed known-column order works
@@ -308,11 +308,11 @@ describe("Dynamic Column Mapping & Reordering Regression Suite", () => {
 
     // 12. Missing required header => SCHEMA_INVALID
     test("12. missing required header => SCHEMA_INVALID", () => {
-        const missing = SHEET_HEADERS.filter((h) => h !== "BIRTHDAY");
+        const missing = SHEET_HEADERS.filter((h) => h !== "BIRTH DATE");
         const { valid, problems } = readSheetLayout(missing);
         assert.equal(valid, false);
         assert.equal(problems[0].problem, "MISSING");
-        assert.equal(problems[0].header, "BIRTHDAY");
+        assert.equal(problems[0].header, "BIRTH DATE");
     });
 
     // 13. Duplicate required header => SCHEMA_INVALID
@@ -327,7 +327,7 @@ describe("Dynamic Column Mapping & Reordering Regression Suite", () => {
     // 14. Renamed required header => SCHEMA_INVALID
     test("14. renamed required header => SCHEMA_INVALID", () => {
         const renamed = [...SHEET_HEADERS];
-        renamed[1] = "PASSPORT NO"; // Should be PASSPORT NUMBER
+        renamed[renamed.indexOf("PASSPORT NUMBER")] = "PASSPORT NO"; // Should be PASSPORT NUMBER
         const { valid, problems } = readSheetLayout(renamed);
         assert.equal(valid, false);
         assert.equal(problems[0].problem, "MISSING");
@@ -447,14 +447,14 @@ describe("Dynamic Column Mapping & Reordering Regression Suite", () => {
         const engine = createSheetSyncEngine({ reader: makeReader([c1]), sheets: adapter, clock: () => NOW });
 
         await engine.syncCandidates([{ uniqueId: "0001", candidateDeleted: false }]);
-        assert.equal(sheet.dataRows()[0][40], "0001", "Col AO initially");
+        assert.equal(sheet.dataRows()[0][1], "0001", "Col B initially");
 
         // Operator moves _SYSTEM_CANDIDATE_ID to Column A and shifts others
         const newHeader = ["_SYSTEM_CANDIDATE_ID", ...SHEET_HEADERS.filter((h) => h !== "_SYSTEM_CANDIDATE_ID")];
         sheet.setHeader(newHeader);
         // Also move row 2's cells to match the operator's reordering
         const oldRow = sheet.dataRows()[0];
-        const newRow = [oldRow[40], ...oldRow.slice(0, 40)];
+        const newRow = [oldRow[1], oldRow[0], ...oldRow.slice(2)];
         newRow.forEach((val, i) => sheet.setCell(2, i, val));
 
         // Run 2: modifying candidate triggers another sync

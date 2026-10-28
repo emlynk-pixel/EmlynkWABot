@@ -109,7 +109,7 @@ const api = app.listen(API_PORT, "127.0.0.1");
 
 // ---- a tiny inspector for the fake Sheet: http://localhost:3101
 const col = (field) => SHEET_COLUMNS.findIndex((c) => c.field === field);
-const SHOW = ["systemCandidateId", "passportNumber", "firstName", "otherName", "job", "ivsInterviewStatus", "passportCopy", "recordStatus", "lastMirroredAt"];
+const SHOW = ["systemCandidateId", "passportNumber", "surname", "otherNames", "job", "ivsInterviewStatus", "passportCopy", "recordStatus", "lastMirroredAt"];
 const page = (body) => `<!doctype html><meta charset="utf-8"><title>Fake Sheet (local demo)</title>
 <style>body{font:14px system-ui;margin:24px;max-width:1100px}table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:4px 8px}th{background:#eee}
 code{background:#eee;padding:1px 4px}.warn{background:#fff3cd;padding:8px 12px;border:1px solid #e0c36c}</style>${body}`;
@@ -124,7 +124,7 @@ const sheetServer = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/tamper") { // edit a cell by hand, as staff might
         const row = Number(url.searchParams.get("row") || 2);
-        sheet.setCell(row, col("firstName"), "EDITED BY HAND");
+        sheet.setCell(row, col("otherNames"), "EDITED BY HAND");
         return back();
     }
     if (url.pathname === "/header") { // ?broken=1 renames a header; 0 restores it

@@ -110,12 +110,12 @@ describe("write safety gate", () => {
 
     test("a header mismatch (a renamed system header) is rejected safely: nothing is written", async () => {
         const header = [...SHEET_HEADERS];
-        header[13] = "POLICE REP SRI LANKA (VERIFIED)";
+        header[header.indexOf("POLICE REP SRI LANKA")] = "POLICE REP SRI LANKA (VERIFIED)";
         const client = fakeSheets({ header });
         const adapter = createGoogleSheetsAdapter({ config: enabledConfig(), sheetsClient: client });
         const error = await adapter.appendRow(sheetRow()).catch((e) => e);
         assert.ok(error instanceof SheetSchemaMismatchError);
-        assert.deepEqual(error.mismatches, [{ problem: "MISSING", header: "POLICE REP SRI LANKA", expected: 2, found: 1, columns: ["V"] }]);
+        assert.deepEqual(error.mismatches, [{ problem: "MISSING", header: "POLICE REP SRI LANKA", expected: 2, found: 1, columns: ["W"] }]);
         assert.doesNotMatch(error.message, /\(VERIFIED\)/, "the Sheet's own header text is not echoed");
         await assert.rejects(adapter.updateRow(3, sheetRow()), SheetSchemaMismatchError);
         assert.equal(writes(client).length, 0);
@@ -215,7 +215,7 @@ describe("reads", () => {
         const client = fakeSheets({ rows: [sheetRow("0001"), sheetRow("0002")] });
         const adapter = createGoogleSheetsAdapter({ config: disabledConfig(), sheetsClient: client });
         assert.deepEqual(await adapter.readCandidateIds(), [{ rowNumber: 2, candidateId: "0001" }, { rowNumber: 3, candidateId: "0002" }]);
-        assert.deepEqual(client.calls.map((c) => c.range), [`'${TAB}'!1:1`, `'${TAB}'!AO2:AO`]);
+        assert.deepEqual(client.calls.map((c) => c.range), [`'${TAB}'!1:1`, `'${TAB}'!B2:B`]);
 
         // Moved to column A: read from A.
         const idFirst = ["_SYSTEM_CANDIDATE_ID", ...SHEET_HEADERS.filter((h) => h !== "_SYSTEM_CANDIDATE_ID")];
@@ -365,7 +365,7 @@ describe("A1 ranges for real-world tab names (regression: Cloud Run HTTP 400)", 
             await adapter.readRow(7, layout);
             await adapter.readRowsByNumber([7, 8], layout);
             assert.deepEqual(client.calls.filter((c) => c.method === "get").map((c) => c.range), [
-                `${quoted}!1:1`, `${quoted}!1:1`, `${quoted}!1:1`, `${quoted}!AO2:AO`, `${quoted}!A2:CF`, `${quoted}!A7:CF7`,
+                `${quoted}!1:1`, `${quoted}!1:1`, `${quoted}!1:1`, `${quoted}!B2:B`, `${quoted}!A2:CF`, `${quoted}!A7:CF7`,
             ]);
             assert.deepEqual(client.calls.filter((c) => c.method === "batchGet").map((c) => c.ranges), [
                 [`${quoted}!A7:CF7`, `${quoted}!A8:CF8`],

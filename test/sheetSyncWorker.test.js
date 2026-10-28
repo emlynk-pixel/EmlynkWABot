@@ -25,7 +25,7 @@ const col = (field) => SHEET_COLUMNS.findIndex((c) => c.field === field);
 const AL = col("recordStatus");
 const AN = col("lastMirroredAt");
 const B = col("passportNumber");
-const C = col("firstName");
+const C = col("otherNames");
 
 const BODY = {
     passportId: "N1023757", surname: "De Soysa", otherNames: "Anusha", nic: "965404378V",
@@ -282,11 +282,11 @@ describe("failures: the database stays authoritative and unaffected", () => {
 
     test("permanent schema error: CONFIG_ERROR, no writes; the next run after the fix resumes", async () => {
         const header = [...SHEET_HEADERS];
-        header[5] = "RENAMED";
+        header[header.indexOf("BIRTH DATE")] = "RENAMED";
         const { sheet, store, worker } = setup({ header });
         const { uniqueId } = await register();
         const failed = await sync(store, worker);
-        assert.deepEqual([failed.status, failed.errorClass, failed.errorCode], ["FAILED", "SCHEMA_INVALID", "MISSING:BIRTHDAY"]);
+        assert.deepEqual([failed.status, failed.errorClass, failed.errorCode], ["FAILED", "SCHEMA_INVALID", "MISSING:BIRTH DATE"]);
         assert.deepEqual(sheet.writes(), []);
         assert.equal((await state()).integrationState, "CONFIG_ERROR");
 
@@ -537,7 +537,7 @@ describe("document columns: submission date or \"Not Submitted\"", () => {
         for (const field of ["policeReportRomania", "medical", "nationalId", "policeReportApplied", "policeReportSriLankaNormal", "videos"]) {
             assert.equal(row[col(field)], "Not Submitted", field);
         }
-        assert.equal(row[col("drivingLicence")], "Not Submitted", "no document type exists for DRIVING LICIAN");
+        assert.equal(row[col("drivingLicence")], "Not Submitted", "no document type exists for DRIVING LICENSE");
         assert.equal(row[col("policeReportFm")], "Not Submitted", "no document type exists for POLICE REP FM");
     });
 
@@ -583,7 +583,7 @@ describe("document columns: submission date or \"Not Submitted\"", () => {
         assert.deepEqual(await prisma.document.findMany({ where: { passportId }, orderBy: { documentId: "asc" } }), documentsBefore, "\"Not Submitted\" in the Sheet deleted nothing");
     });
 
-    test("DRIVING LICIAN (R) and POLICE REP FM (W): Sheet output \"Not Submitted\" only; no database write, no new document type", async () => {
+    test("DRIVING LICENSE (S) and POLICE REP FM (X): Sheet output \"Not Submitted\" only; no database write, no new document type", async () => {
         const { sheet, store, worker } = setup();
         const { passportId, uniqueId } = await register();
         await addDocument(passportId, "PASSPORT", { receivedDate: new Date("2026-10-09T03:00:00.000Z") });

@@ -68,11 +68,11 @@ describe("candidate -> Sheet row", () => {
         assert.ok(minimal.every((c) => typeof c === "string"));
     });
 
-    test("_SYSTEM_CANDIDATE_ID (AO) is users.unique_id, kept as text with leading zeros", () => {
+    test("_SYSTEM_CANDIDATE_ID (B) is users.unique_id, kept as text with leading zeros", () => {
         const row = map({ user: user({ uniqueId: "0042" }) });
-        assert.equal(row[40], "0042");
+        assert.equal(row[1], "0042");
         assert.equal(cell(row, "systemCandidateId"), "0042");
-        assert.notEqual(row[40], "SYN000001");
+        assert.notEqual(row[1], "SYN000001");
     });
 
     test("a candidate without a unique ID is refused, never keyed on passport or NIC", () => {
@@ -82,7 +82,7 @@ describe("candidate -> Sheet row", () => {
         assert.throws(() => map({}), SheetMappingError);
     });
 
-    test("TEST NUMBER is always blank; DRIVING LICIAN and POLICE REP FM (no document type) are always \"Not Submitted\"", () => {
+    test("TEST NUMBER is always blank; DRIVING LICENSE and POLICE REP FM (no document type) are always \"Not Submitted\"", () => {
         const stages = [{ stage: "TEST_DETAILS", completed: true, jobId: "JOB-0001", testResult: "PASS", testDate: new Date("2026-10-03T00:00:00.000Z") }];
         const documents = [doc("POLICE_REPORT", "VERIFIED", { documentVariant: "SL_VERIFIED" }), doc("POLICE_REPORT", "VERIFIED", { documentVariant: "SL_NORMAL" })];
         const row = map({ user: user(), stages, documents });
@@ -90,50 +90,50 @@ describe("candidate -> Sheet row", () => {
         assert.equal(cell(row, "testNumber"), "");
         assert.notEqual(row[0], "JOB-0001", "job_id is never mapped to TEST NUMBER");
         assert.equal(cell(row, "drivingLicence"), "Not Submitted");
-        assert.equal(atColumn(row, "R"), "Not Submitted", "DRIVING LICIAN (R)");
+        assert.equal(atColumn(row, "S"), "Not Submitted", "DRIVING LICENSE (S)");
         assert.equal(cell(row, "policeReportFm"), "Not Submitted");
-        assert.equal(atColumn(row, "W"), "Not Submitted", "POLICE REP FM (W)");
-        // Whatever documents exist (including police report variants), R and W never change.
+        assert.equal(atColumn(row, "X"), "Not Submitted", "POLICE REP FM (X)");
+        // Whatever documents exist (including police report variants), S and X never change.
         const empty = map({ user: user() });
-        assert.deepEqual([atColumn(empty, "R"), atColumn(empty, "W")], ["Not Submitted", "Not Submitted"]);
+        assert.deepEqual([atColumn(empty, "S"), atColumn(empty, "X")], ["Not Submitted", "Not Submitted"]);
         const everything = map({ user: user(), documents: ["PASSPORT", "NIC", "MEDICAL", "SCAN", "SKILL_VIDEO", "POLICE_SLIP", "VISA_SUBMISSION"].map((t) => doc(t)).concat(["SL_VERIFIED", "ROMANIA", "SL_NORMAL"].map((v) => doc("POLICE_REPORT", "VERIFIED", { documentVariant: v })), [doc("DRIVING_LICENCE"), doc("POLICE_REPORT", "VERIFIED", { documentVariant: "FM" })]) });
-        assert.deepEqual([atColumn(everything, "R"), atColumn(everything, "W")], ["Not Submitted", "Not Submitted"], "no untracked type or variant is read");
-        assert.equal(atColumn(everything, "U"), "", "SUBMIT DATE (U) unchanged: the slip has no submitted date");
+        assert.deepEqual([atColumn(everything, "S"), atColumn(everything, "X")], ["Not Submitted", "Not Submitted"], "no untracked type or variant is read");
+        assert.equal(atColumn(everything, "V"), "", "SUBMIT DATE (V) unchanged: the slip has no submitted date");
     });
 
-    test("police reports: N = SL_VERIFIED, V = SL_NORMAL, O = ROMANIA, each with its own submission date", () => {
+    test("police reports: O = SL_VERIFIED, W = SL_NORMAL, P = ROMANIA, each with its own submission date", () => {
         const documents = [
             doc("POLICE_REPORT", "VERIFIED", { documentVariant: "SL_VERIFIED", receivedDate: new Date("2026-10-07T04:00:00.000Z") }),
             doc("POLICE_REPORT", "REVIEW_REQUIRED", { documentVariant: "SL_NORMAL", receivedDate: new Date("2026-10-05T04:00:00.000Z") }),
         ];
         const row = map({ user: user(), documents });
-        assert.equal(row[13], "2026-10-07", "first POLICE REP SRI LANKA (N) is SL_VERIFIED");
-        assert.equal(row[21], "2026-10-05", "second POLICE REP SRI LANKA (V) is SL_NORMAL");
-        assert.equal(row[14], DOCUMENT_NOT_SUBMITTED, "POLICE REP ROMANIA (O): none yet");
+        assert.equal(row[14], "2026-10-07", "first POLICE REP SRI LANKA (O) is SL_VERIFIED");
+        assert.equal(row[22], "2026-10-05", "second POLICE REP SRI LANKA (W) is SL_NORMAL");
+        assert.equal(row[15], DOCUMENT_NOT_SUBMITTED, "POLICE REP ROMANIA (P): none yet");
 
         const withRomania = map({ user: user(), documents: [doc("POLICE_REPORT", "VERIFIED", { documentVariant: "ROMANIA", receivedDate: new Date("2026-10-01T04:00:00.000Z") })] });
-        assert.equal(withRomania[14], "2026-10-01");
-        assert.equal(withRomania[13], DOCUMENT_NOT_SUBMITTED);
-        assert.equal(withRomania[21], DOCUMENT_NOT_SUBMITTED);
+        assert.equal(withRomania[15], "2026-10-01");
+        assert.equal(withRomania[14], DOCUMENT_NOT_SUBMITTED);
+        assert.equal(withRomania[22], DOCUMENT_NOT_SUBMITTED);
     });
 
     test("a police report without a variant fills none of the variant columns", () => {
         const row = map({ user: user(), documents: [doc("POLICE_REPORT", "VERIFIED")] });
-        assert.deepEqual([row[13], row[14], row[21]], [DOCUMENT_NOT_SUBMITTED, DOCUMENT_NOT_SUBMITTED, DOCUMENT_NOT_SUBMITTED]);
+        assert.deepEqual([row[14], row[15], row[22]], [DOCUMENT_NOT_SUBMITTED, DOCUMENT_NOT_SUBMITTED, DOCUMENT_NOT_SUBMITTED]);
     });
 
     test("every document column: the current document's submission date, otherwise exactly \"Not Submitted\"", () => {
         assert.equal(DOCUMENT_NOT_SUBMITTED, "Not Submitted");
         const columns = [
-            ["passportCopy", "M", { documentType: "PASSPORT" }],
-            ["policeReportSriLankaVerified", "N", { documentType: "POLICE_REPORT", documentVariant: "SL_VERIFIED" }],
-            ["policeReportRomania", "O", { documentType: "POLICE_REPORT", documentVariant: "ROMANIA" }],
-            ["medical", "P", { documentType: "MEDICAL" }],
-            ["scan", "Q", { documentType: "SCAN" }],
-            ["nationalId", "S", { documentType: "NIC" }],
-            ["policeReportApplied", "T", { documentType: "POLICE_SLIP" }],
-            ["policeReportSriLankaNormal", "V", { documentType: "POLICE_REPORT", documentVariant: "SL_NORMAL" }],
-            ["videos", "X", { documentType: "SKILL_VIDEO" }],
+            ["passportCopy", "N", { documentType: "PASSPORT" }],
+            ["policeReportSriLankaVerified", "O", { documentType: "POLICE_REPORT", documentVariant: "SL_VERIFIED" }],
+            ["policeReportRomania", "P", { documentType: "POLICE_REPORT", documentVariant: "ROMANIA" }],
+            ["medical", "Q", { documentType: "MEDICAL" }],
+            ["scan", "R", { documentType: "SCAN" }],
+            ["nationalId", "T", { documentType: "NIC" }],
+            ["policeReportApplied", "U", { documentType: "POLICE_SLIP" }],
+            ["policeReportSriLankaNormal", "W", { documentType: "POLICE_REPORT", documentVariant: "SL_NORMAL" }],
+            ["videos", "Y", { documentType: "SKILL_VIDEO" }],
         ];
         const empty = map({ user: user() });
         for (const [field, column] of columns) {
@@ -180,23 +180,23 @@ describe("candidate -> Sheet row", () => {
         assert.equal(cell(onlyPending, "videos"), "2026-10-04");
     });
 
-    test("SUBMIT DATE (U) is unchanged: the police slip's submitted date, not its upload date", () => {
+    test("SUBMIT DATE (V) is unchanged: the police slip's submitted date, not its upload date", () => {
         const row = map({ user: user(), documents: [doc("POLICE_SLIP", "VERIFIED", { receivedDate: new Date("2026-09-20T05:00:00.000Z"), policeSubmittedDate: new Date("2026-09-15T00:00:00.000Z") })] });
-        assert.equal(cell(row, "policeReportApplied"), "2026-09-20", "POLICE REPORT APPLIED (T): the slip's submission date");
-        assert.equal(cell(row, "submitDate"), "2026-09-15", "SUBMIT DATE (U)");
+        assert.equal(cell(row, "policeReportApplied"), "2026-09-20", "POLICE REPORT APPLIED (U): the slip's submission date");
+        assert.equal(cell(row, "submitDate"), "2026-09-15", "SUBMIT DATE (V)");
     });
 
     test("a current document without a submission date is never shown with an invented date", () => {
         assert.throws(() => map({ user: user(), documents: [doc("MEDICAL", "VERIFIED", { receivedDate: null })] }), SheetMappingError);
     });
 
-    test("one SCAN: a SCAN document fills Q, and only Q", () => {
+    test("one SCAN: a SCAN document fills R, and only R", () => {
         const without = map({ user: user() });
         const withScan = map({ user: user(), documents: [doc("SCAN", "VERIFIED", { receivedDate: new Date("2026-10-08T05:00:00.000Z") })] });
-        assert.equal(withScan[16], "2026-10-08");
-        assert.equal(without[16], "Not Submitted");
+        assert.equal(withScan[17], "2026-10-08");
+        assert.equal(without[17], "Not Submitted");
         const changed = withScan.map((value, i) => (value === without[i] ? null : SHEET_COLUMNS[i].column)).filter(Boolean);
-        assert.deepEqual(changed, ["Q"], "the scan changes the SCAN column only (not the Document Submission stage, which needs more)");
+        assert.deepEqual(changed, ["R"], "the scan changes the SCAN column only (not the Document Submission stage, which needs more)");
         assert.equal(SHEET_COLUMNS.filter((c) => /SCAN/i.test(c.header)).length, 1, "exactly one SCAN column");
     });
 
@@ -214,14 +214,23 @@ describe("candidate -> Sheet row", () => {
         const stages = [{ stage: "CANDIDATE_DETAILS", completed: false, notes: "Example note" }, { stage: "TEST_DETAILS", completed: false, testDate: new Date("2026-10-03T00:00:00.000Z") }];
         const row = map({ user: user(), stages });
         const expected = {
-            B: "SYN000001", C: "TEST GIVEN", D: "TESTSURNAME", E: "2026-10-03", F: "1990-01-01", G: "2030-01-01",
-            H: "Job One, Job Two", I: "000000000V", J: "1 Example Road, Example Town", K: "94700000001", L: "94700000002",
-            Y: "EXAMPLE TOWN", Z: "M", AA: "EXAMPLE", AB: "2020-01-01", AC: "5 years, example", AD: "Example note",
-            AL: "ACTIVE", AM: "2026-10-01T10:30:00Z", AN: "2026-10-07T09:15:30Z", AO: "0042",
+            C: "SYN000001", D: "TESTSURNAME", E: "TEST GIVEN", F: "2026-10-03", G: "1990-01-01", H: "2030-01-01",
+            I: "Job One, Job Two", J: "000000000V", K: "1 Example Road, Example Town", L: "94700000001", M: "94700000002",
+            Z: "EXAMPLE TOWN", AA: "M", AB: "EXAMPLE", AC: "2020-01-01", AD: "5 years, example", AE: "Example note",
+            AM: "ACTIVE", AN: "2026-10-01T10:30:00Z", AO: "2026-10-07T09:15:30Z", B: "0042",
         };
         for (const [column, value] of Object.entries(expected)) {
             assert.equal(row[SHEET_COLUMNS.find((c) => c.column === column).index], value, column);
         }
+    });
+
+    test("SURNAME is the stored surname (other_name), OTHER NAME the other names (first_name), FULL NAME the name as in passport", () => {
+        const row = map({ user: user({ otherName: "SYNTHSURNAME", firstName: "SYNTH GIVEN NAMES" }), details: { nameAsInPassport: "SYNTH GIVEN NAMES SYNTHSURNAME" } });
+        const at = (header) => row[SHEET_COLUMNS.find((c) => c.header === header).index];
+        assert.equal(at("SURNAME"), "SYNTHSURNAME");
+        assert.equal(at("OTHER NAME"), "SYNTH GIVEN NAMES");
+        assert.equal(at("FULL NAME"), "SYNTH GIVEN NAMES SYNTHSURNAME");
+        assert.equal(map({ user: user() }).at(SHEET_COLUMNS.find((c) => c.header === "FULL NAME").index), "", "no details: blank, never derived from the two names");
     });
 
     test("stage statuses: stored stages as saved, automatic stages from the record", () => {
@@ -243,24 +252,24 @@ describe("candidate -> Sheet row", () => {
         assert.equal(cell(noIssueDate, "candidateDetailsStatus"), "INCOMPLETE");
     });
 
-    test("VISA SUBMISSION STATUS (AI) follows the Visa submission stage only", () => {
+    test("VISA SUBMISSION STATUS (AJ) follows the Visa submission stage only", () => {
         const before = map({ user: user(), stages: [{ stage: "VISA_APPROVAL", completed: true }] });
         const after = map({ user: user(), stages: [{ stage: "VISA_APPROVAL", completed: true }, { stage: "VISA_SUBMISSION", completed: true }] });
         assert.equal(cell(before, "visaSubmissionStatus"), "INCOMPLETE");
-        assert.equal(atColumn(after, "AI"), "COMPLETED");
+        assert.equal(atColumn(after, "AJ"), "COMPLETED");
         const changed = after.map((value, i) => (value === before[i] ? null : SHEET_COLUMNS[i].column)).filter(Boolean);
-        assert.deepEqual(changed, ["AI"]);
+        assert.deepEqual(changed, ["AJ"]);
     });
 
     test("missing optional values are blank and never shift a column", () => {
         const sparse = map({ user: user({ otherName: null, address: null, contactNumber: null, dateOfBirth: null, sex: null, nationality: null, passportIssueDate: null }) });
         const full = map({ user: user() });
         assert.equal(sparse.length, SHEET_COLUMN_COUNT);
-        for (const field of ["otherName", "address", "contactNumber", "birthday", "sex", "nationality", "passportIssueDate"]) {
+        for (const field of ["surname", "address", "contactNumber", "birthday", "sex", "nationality", "passportIssueDate"]) {
             assert.equal(cell(sparse, field), "", field);
         }
         // Everything else is in the same place as for the full candidate.
-        for (const field of ["passportNumber", "firstName", "idNumber", "whatsappNumber", "job", "registeredAt", "lastMirroredAt", "systemCandidateId"]) {
+        for (const field of ["passportNumber", "otherNames", "idNumber", "whatsappNumber", "job", "registeredAt", "lastMirroredAt", "systemCandidateId"]) {
             assert.equal(cell(sparse, field), cell(full, field), field);
         }
         assert.ok(sparse.every((value) => value !== "null" && value !== "undefined"));

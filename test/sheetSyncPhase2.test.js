@@ -77,7 +77,7 @@ function fakeSheets({ header = [...SHEET_HEADERS], rows = [], fail = null } = {}
                         const colIdx = letterIndex(colMatch[1]);
                         return respond("get", params, { values: rows.map((r) => [r[colIdx] ?? ""]) });
                     }
-                    if (range.endsWith("!AO2:AO")) return respond("get", params, { values: rows.map((r) => [r[40] ?? ""]) });
+                    if (range.endsWith("!B2:B")) return respond("get", params, { values: rows.map((r) => [r[1] ?? ""]) });
                     if (range.endsWith("!A2:AO") || /!A2:[A-Z]+$/.test(range)) return respond("get", params, { values: rows });
                     const n = rowFor(range);
                     if (!Number.isNaN(n) && n >= 2) return respond("get", params, { values: rows[n - 2] ? [rows[n - 2]] : [] });
@@ -158,12 +158,12 @@ describe("candidate aggregate reader", () => {
         assert.ok(db.queries.every((q) => q.method === "findUnique" || q.method === "findMany"));
     });
 
-    test("reader output maps to exactly SHEET_COLUMN_COUNT cells with AO = unique_id", async () => {
+    test("reader output maps to exactly SHEET_COLUMN_COUNT cells with B = unique_id", async () => {
         const reader = createCandidateAggregateReader({ db: fakeDb([candidateRow(1)]) });
         const row = mapCandidateToSheetRow(await reader.findByUniqueId("0001"), { mirroredAt: NOW });
         assert.equal(row.length, SHEET_COLUMN_COUNT);
-        assert.equal(row[40], "0001");
-        assert.equal(row[1], "SYNPASS01");
+        assert.equal(row[1], "0001");
+        assert.equal(row[2], "SYNPASS01");
     });
 });
 
@@ -246,20 +246,20 @@ describe("sync planner (read-only)", () => {
     test("passport number and NIC are never a fallback identity", async () => {
         // The Sheet has this candidate's passport number and NIC, but no AO ID.
         const unkeyed = expectedRow(1);
-        unkeyed[40] = "";
+        unkeyed[1] = "";
         const { planner: p } = planner([candidateRow(1)], [unkeyed]);
         const plan = await p.planCandidate("0001");
         assert.equal(plan.action, SYNC_ACTION.APPEND, "the unkeyed row is not adopted");
         assert.equal(plan.rowNumber, null);
         // Same when the passport number is in AO: it is not this candidate's unique ID.
         const passportKeyed = expectedRow(1);
-        passportKeyed[40] = "SYNPASS01";
+        passportKeyed[1] = "SYNPASS01";
         assert.equal((await planner([candidateRow(1)], [passportKeyed]).planner.planCandidate("0001")).action, SYNC_ACTION.APPEND);
     });
 
     test("an invalid Sheet header stops planning before reading candidates", async () => {
         const header = [...SHEET_HEADERS];
-        header[21] = "POLICE REP SL NORMAL";
+        header[22] = "POLICE REP SL NORMAL";
         const client = fakeSheets({ header, rows: [] });
         const db = fakeDb([candidateRow(1)]);
         const p = createSheetSyncPlanner({ reader: createCandidateAggregateReader({ db }), sheets: sheetAdapter(client, true), clock: () => NOW });
@@ -316,7 +316,7 @@ describe("read-only connection/schema check", () => {
     test("wrong header: CONNECTED but SCHEMA_INVALID, with missing headers", async () => {
         const header = [...SHEET_HEADERS];
         header[0] = "TEST NO";
-        header[40] = "";
+        header[1] = "";
         const result = await runSheetHealthCheck({ env, sheetsClient: fakeSheets({ header }), clock: () => NOW });
         assert.equal(result.ok, false);
         assert.equal(result.schema, SCHEMA_STATUS.INVALID);
@@ -410,8 +410,8 @@ describe("write gate stays off by default", () => {
         assert.deepEqual(client.calls, []);
     });
 
-    test("the schema keeps AO as the system candidate ID (the Candidate Form columns come after it)", () => {
+    test("the schema keeps B as the system candidate ID (the approved mirror template)", () => {
         assert.equal(SHEET_COLUMNS.length, SHEET_COLUMN_COUNT);
-        assert.equal(SHEET_COLUMNS[40].header, "_SYSTEM_CANDIDATE_ID");
+        assert.equal(SHEET_COLUMNS[1].header, "_SYSTEM_CANDIDATE_ID");
     });
 });

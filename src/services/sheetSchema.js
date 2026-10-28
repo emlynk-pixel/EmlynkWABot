@@ -5,8 +5,8 @@
 // Sheet may hold the system columns in any order, interleaved with any
 // number of operator columns; readSheetLayout() reads row 1 and maps every
 // system column to where it is now. Header text stays strict (exact text, no
-// trimming, no case folding). The system columns are the original 41 (A to AO)
-// and the confirmed Candidate Form columns appended after them (AP to CF).
+// trimming, no case folding). The headers and the canonical order are those of
+// the latest approved "Emlynk Candidate Operational Mirror" (84 columns, A to CF).
 //
 // Two orders exist, and only one is positional:
 //   - the CANONICAL order below (SHEET_COLUMNS): the order a new Sheet is set
@@ -20,103 +20,123 @@
 // Normal). Two columns with the same text can't be told apart by name, so
 // those two keep their order RELATIVE TO EACH OTHER (the left one is SL
 // Verified); each may still move anywhere else. Every other header must be
-// unique. The legacy spelling "DRIVING LICIAN" is kept as it is in the Sheet.
+// unique. "DRIVING LICENSE" (the document column, always "Not Submitted": the
+// application has no such document type) and "DRIVING LICENCE" (the candidate's
+// Yes / No answer) differ by ONE letter: both are required, exact spellings.
+//
+// Name columns (the candidate table's column names are historical and
+// misleading; the stored MEANING is what counts, see candidateService.js
+// parseCandidateBody, clientName.js, fieldReconciliationService.js):
+//   SURNAME     <- candidate.other_name (Prisma otherName): the surname / family name
+//   OTHER NAME  <- candidate.first_name (Prisma firstName): the other / given names
+//   FULL NAME   <- candidate_additional_details.name_as_in_passport
 //
 // Nothing else may hard-code column letters, header text or ranges: use the
 // constants and helpers below.
 
-// Canonical order. `column` is the letter in a Sheet set up in this order
-// (the template); `field` is this code's name for the column (unique, unlike
-// the headers); `header` is the exact text in row 1.
+// What a column holds (where its value comes from). Nothing uploaded or read
+// from a Sheet ever sets a SYSTEM_GENERATED, STAGE_STATUS or DOCUMENT_STATUS
+// column: those come from Emlynk only.
+export const MIRROR_FIELD_KIND = Object.freeze({
+    DATABASE_FIELD: "DATABASE_FIELD",       // a stored candidate value, shown as stored (dates as YYYY-MM-DD)
+    DERIVED_FIELD: "DERIVED_FIELD",         // computed from stored values (a label, a distance, a slip date)
+    DOCUMENT_STATUS: "DOCUMENT_STATUS",     // the current document's submission date, or "Not Submitted"
+    STAGE_STATUS: "STAGE_STATUS",           // COMPLETED / INCOMPLETE of a deployment stage
+    SYSTEM_GENERATED: "SYSTEM_GENERATED",   // identity, record status and sync metadata
+});
+const { DATABASE_FIELD: DB, DERIVED_FIELD: DERIVED, DOCUMENT_STATUS: DOC, STAGE_STATUS: STAGE, SYSTEM_GENERATED: SYSTEM } = MIRROR_FIELD_KIND;
+
+// Canonical order (the approved mirror, left to right). `column` is the letter
+// in a Sheet set up in this order (the template); `field` is this code's name
+// for the column (unique, unlike the headers); `header` is the exact text in
+// row 1; `kind` is a MIRROR_FIELD_KIND.
 const COLUMNS = [
-    ["A", "TEST NUMBER", "testNumber"],
-    ["B", "PASSPORT NUMBER", "passportNumber"],
-    ["C", "FIRST NAME", "firstName"],
-    ["D", "OTHER NAME", "otherName"],
-    ["E", "TEST DATE", "testDate"],
-    ["F", "BIRTHDAY", "birthday"],
-    ["G", "PP EX DATE", "passportExpiryDate"],
-    ["H", "JOB", "job"],
-    ["I", "ID NUMBER", "idNumber"],
-    ["J", "ADDRESS", "address"],
-    ["K", "WHATSAPP NUM", "whatsappNumber"],
-    ["L", "CONTACT NUM", "contactNumber"],
-    ["M", "PASSPORT COPY", "passportCopy"],
-    ["N", "POLICE REP SRI LANKA", "policeReportSriLankaVerified"],
-    ["O", "POLICE REP ROMANIA", "policeReportRomania"],
-    ["P", "MEDICAL", "medical"],
-    ["Q", "SCAN", "scan"],
-    ["R", "DRIVING LICIAN", "drivingLicence"],
-    ["S", "NATIONAL ID", "nationalId"],
-    ["T", "POLICE REPORT APPLIED", "policeReportApplied"],
-    ["U", "SUBMIT DATE", "submitDate"],
-    ["V", "POLICE REP SRI LANKA", "policeReportSriLankaNormal"],
-    ["W", "POLICE REP FM", "policeReportFm"],
-    ["X", "VIDEOS", "videos"],
-    ["Y", "PLACE OF BIRTH", "placeOfBirth"],
-    ["Z", "SEX", "sex"],
-    ["AA", "NATIONALITY", "nationality"],
-    ["AB", "PASSPORT ISSUE DATE", "passportIssueDate"],
-    ["AC", "JOB EXPERIENCE", "jobExperience"],
-    ["AD", "CANDIDATE DETAILS NOTE", "candidateDetailsNote"],
-    ["AE", "TEST DETAILS STATUS", "testDetailsStatus"],
-    ["AF", "CANDIDATE DETAILS STATUS", "candidateDetailsStatus"],
-    ["AG", "DOCUMENT SUBMISSION STATUS", "documentSubmissionStatus"],
-    ["AH", "IVS INTERVIEW STATUS", "ivsInterviewStatus"],
-    ["AI", "VISA SUBMISSION STATUS", "visaSubmissionStatus"],
-    ["AJ", "VISA APPROVAL STATUS", "visaApprovalStatus"],
-    ["AK", "FINALIZING JOB STATUS", "finalizingJobStatus"],
-    ["AL", "RECORD STATUS", "recordStatus"],
-    ["AM", "REGISTERED AT", "registeredAt"],
-    ["AN", "LAST MIRRORED AT", "lastMirroredAt"],
-    ["AO", "_SYSTEM_CANDIDATE_ID", "systemCandidateId"],
+    ["A", "TEST NUMBER", "testNumber", SYSTEM],
+    ["B", "_SYSTEM_CANDIDATE_ID", "systemCandidateId", SYSTEM],
+    ["C", "PASSPORT NUMBER", "passportNumber", DB],
+    ["D", "SURNAME", "surname", DB],
+    ["E", "OTHER NAME", "otherNames", DB],
+    ["F", "TEST DATE", "testDate", DB],
+    ["G", "BIRTH DATE", "birthday", DB],
+    ["H", "PASSPORT EXPIRE DATE", "passportExpiryDate", DB],
+    ["I", "JOB ROLE", "job", DERIVED],
+    ["J", "NIC NUMBER", "idNumber", DB],
+    ["K", "ADDRESS", "address", DB],
+    ["L", "WHATSAPP NUMBER", "whatsappNumber", DB],
+    ["M", "CONTACT NUMBER", "contactNumber", DB],
+    ["N", "PASSPORT", "passportCopy", DOC],
+    ["O", "POLICE REP SRI LANKA", "policeReportSriLankaVerified", DOC],
+    ["P", "POLICE REP ROMANIA", "policeReportRomania", DOC],
+    ["Q", "MEDICAL", "medical", DOC],
+    ["R", "SCAN", "scan", DOC],
+    ["S", "DRIVING LICENSE", "drivingLicence", DOC],
+    ["T", "NIC COPY", "nationalId", DOC],
+    ["U", "POLICE REPORT APPLIED", "policeReportApplied", DOC],
+    ["V", "SUBMIT DATE", "submitDate", DERIVED],
+    ["W", "POLICE REP SRI LANKA", "policeReportSriLankaNormal", DOC],
+    ["X", "POLICE REP FM", "policeReportFm", DOC],
+    ["Y", "VIDEO", "videos", DOC],
+    ["Z", "BIRTH PLACE", "placeOfBirth", DB],
+    ["AA", "SEX", "sex", DB],
+    ["AB", "NATIONALITY", "nationality", DB],
+    ["AC", "PASSPORT ISSUE DATE", "passportIssueDate", DB],
+    ["AD", "JOB EXPERIENCE", "jobExperience", DB],
+    ["AE", "REMARK", "candidateDetailsNote", DB],
+    ["AF", "TEST DETAILS STATUS", "testDetailsStatus", STAGE],
+    ["AG", "CANDIDATE DETAILS STATUS", "candidateDetailsStatus", STAGE],
+    ["AH", "DOCUMENT SUBMISSION STATUS", "documentSubmissionStatus", STAGE],
+    ["AI", "IVS INTERVIEW STATUS", "ivsInterviewStatus", STAGE],
+    ["AJ", "VISA SUBMISSION STATUS", "visaSubmissionStatus", STAGE],
+    ["AK", "VISA APPROVAL STATUS", "visaApprovalStatus", STAGE],
+    ["AL", "FINALIZING JOB STATUS", "finalizingJobStatus", STAGE],
+    ["AM", "ACTIVE STATUS", "recordStatus", SYSTEM],
+    ["AN", "REGISTER DATE", "registeredAt", SYSTEM],
+    ["AO", "LAST MIRRORED AT", "lastMirroredAt", SYSTEM],
     // Candidate Form answers, only once an Admin / Manager confirmed them into the record
-    // (candidate_additional_details; candidateFormFieldConfirmService.js). Appended after the
-    // original 41 columns, which are unchanged. DRIVING LICENCE (Yes / No) is not DRIVING LICIAN
-    // (a document column).
-    ["AP", "NAME AS IN PASSPORT", "nameAsInPassport"],
-    ["AQ", "CIVIL STATUS", "civilStatus"],
-    ["AR", "BLOOD GROUP", "bloodGroup"],
-    ["AS", "HEIGHT", "height"],
-    ["AT", "WEIGHT (KG)", "weightKg"],
-    ["AU", "DRIVING LICENCE", "hasDrivingLicence"],
-    ["AV", "CAN READ DRAWINGS", "canReadDrawings"],
-    ["AW", "TEAM LEADING SKILLS", "teamLeadingSkills"],
-    ["AX", "OTHER LANGUAGES", "otherLanguages"],
-    ["AY", "EMAIL", "email"],
-    ["AZ", "CITY", "city"],
-    ["BA", "DISTRICT", "district"],
-    ["BB", "DS DIVISION", "dsDivision"],
-    ["BC", "GN DIVISION", "gnDivision"],
-    ["BD", "CITY IN ROMANIA", "cityInRomania"],
-    ["BE", "DISTANCE TO BUCHAREST (KM)", "distanceToBucharestKm"],
-    ["BF", "OTHER JOB CATEGORY", "otherJobCategory"],
-    ["BG", "OTHER SKILLS 1", "otherSkills1"],
-    ["BH", "OTHER SKILLS 2", "otherSkills2"],
-    ["BI", "ENGLISH KNOWLEDGE", "englishKnowledge"],
-    ["BJ", "SHIRT SIZE", "shirtSize"],
-    ["BK", "WAIST SIZE", "waistSize"],
-    ["BL", "SHOE SIZE", "shoeSize"],
-    ["BM", "FATHER NAME", "fatherName"],
-    ["BN", "FATHER PASSPORT NUMBER", "fatherPassportNumber"],
-    ["BO", "FATHER BIRTHDAY", "fatherBirthday"],
-    ["BP", "FATHER ALIVE", "fatherAlive"],
-    ["BQ", "MOTHER NAME", "motherName"],
-    ["BR", "MOTHER PASSPORT NUMBER", "motherPassportNumber"],
-    ["BS", "MOTHER BIRTHDAY", "motherBirthday"],
-    ["BT", "MOTHER ALIVE", "motherAlive"],
-    ["BU", "SPOUSE NAME", "spouseName"],
-    ["BV", "SPOUSE PASSPORT NUMBER", "spousePassportNumber"],
-    ["BW", "SPOUSE BIRTHDAY", "spouseBirthday"],
-    ["BX", "CHILD 1 NAME", "child1Name"],
-    ["BY", "CHILD 2 NAME", "child2Name"],
-    ["BZ", "CHILD 3 NAME", "child3Name"],
-    ["CA", "GUARDIAN NAME", "guardianName"],
-    ["CB", "GUARDIAN RELATIONSHIP", "guardianRelationship"],
-    ["CC", "GUARDIAN NIC", "guardianNic"],
-    ["CD", "GUARDIAN BIRTHDAY", "guardianBirthday"],
-    ["CE", "GUARDIAN PHONE", "guardianPhone"],
-    ["CF", "GUARDIAN ADDRESS", "guardianAddress"],
+    // (candidate_additional_details; candidateFormFieldConfirmService.js).
+    ["AP", "FULL NAME", "nameAsInPassport", DB],
+    ["AQ", "CIVIL STATUS / MARITAL STATUS", "civilStatus", DB],
+    ["AR", "BLOOD GROUP", "bloodGroup", DB],
+    ["AS", "HEIGHT", "height", DB],
+    ["AT", "WEIGHT (KG)", "weightKg", DB],
+    ["AU", "DRIVING LICENCE", "hasDrivingLicence", DB],
+    ["AV", "CAN READ DRAWINGS", "canReadDrawings", DB],
+    ["AW", "TEAM LEADING SKILLS", "teamLeadingSkills", DB],
+    ["AX", "OTHER LANGUAGES", "otherLanguages", DB],
+    ["AY", "EMAIL", "email", DB],
+    ["AZ", "CITY", "city", DB],
+    ["BA", "DISTRICT", "district", DB],
+    ["BB", "DS DIVISION", "dsDivision", DB],
+    ["BC", "GN DIVISION", "gnDivision", DB],
+    ["BD", "CITY IN ROMANIA", "cityInRomania", DB],
+    ["BE", "DISTANCE TO BUCHAREST (KM)", "distanceToBucharestKm", DERIVED],
+    ["BF", "OTHER JOB CATEGORY", "otherJobCategory", DB],
+    ["BG", "OTHER SKILLS 1", "otherSkills1", DB],
+    ["BH", "OTHER SKILLS 2", "otherSkills2", DB],
+    ["BI", "ENGLISH KNOWLEDGE", "englishKnowledge", DB],
+    ["BJ", "SHIRT SIZE", "shirtSize", DB],
+    ["BK", "WAIST SIZE", "waistSize", DB],
+    ["BL", "SHOE SIZE", "shoeSize", DB],
+    ["BM", "FATHER NAME", "fatherName", DB],
+    ["BN", "FATHER PASSPORT NUMBER", "fatherPassportNumber", DB],
+    ["BO", "FATHER BIRTHDAY", "fatherBirthday", DB],
+    ["BP", "FATHER ALIVE", "fatherAlive", DB],
+    ["BQ", "MOTHER NAME", "motherName", DB],
+    ["BR", "MOTHER PASSPORT NUMBER", "motherPassportNumber", DB],
+    ["BS", "MOTHER BIRTHDAY", "motherBirthday", DB],
+    ["BT", "MOTHER ALIVE", "motherAlive", DB],
+    ["BU", "SPOUSE NAME", "spouseName", DB],
+    ["BV", "SPOUSE PASSPORT NUMBER", "spousePassportNumber", DB],
+    ["BW", "SPOUSE BIRTHDAY", "spouseBirthday", DB],
+    ["BX", "CHILD 1 NAME", "child1Name", DB],
+    ["BY", "CHILD 2 NAME", "child2Name", DB],
+    ["BZ", "CHILD 3 NAME", "child3Name", DB],
+    ["CA", "GUARDIAN NAME", "guardianName", DB],
+    ["CB", "GUARDIAN RELATIONSHIP", "guardianRelationship", DB],
+    ["CC", "GUARDIAN NIC", "guardianNic", DB],
+    ["CD", "GUARDIAN BIRTHDAY", "guardianBirthday", DB],
+    ["CE", "GUARDIAN PHONE", "guardianPhone", DB],
+    ["CF", "GUARDIAN ADDRESS", "guardianAddress", DB],
 ];
 
 // 0 -> "A", 25 -> "Z", 26 -> "AA", 52 -> "BA", 701 -> "ZZ", 702 -> "AAA".
@@ -132,7 +152,7 @@ export function columnLetter(index) {
     return letters;
 }
 
-export const SHEET_COLUMNS = Object.freeze(COLUMNS.map(([column, header, field], index) => Object.freeze({ index, column, header, field })));
+export const SHEET_COLUMNS = Object.freeze(COLUMNS.map(([column, header, field, kind], index) => Object.freeze({ index, column, header, field, kind })));
 
 // The system columns: 83 business columns and the technical identity. The
 // live Sheet may have more columns (operator columns), never fewer.
@@ -173,6 +193,10 @@ for (const c of SHEET_COLUMNS) CANONICAL_BY_HEADER.set(c.header, [...(CANONICAL_
     });
     if (new Set(SHEET_COLUMNS.map((c) => c.field)).size !== SHEET_COLUMNS.length) problems.push("field names must be unique");
     if (SYSTEM_CANDIDATE_ID_INDEX === -1) problems.push("the system candidate ID column is missing");
+    if (!SHEET_COLUMNS.every((c) => Object.values(MIRROR_FIELD_KIND).includes(c.kind))) problems.push("every column needs a known kind");
+    // Only POLICE REP SRI LANKA may repeat (two columns, told apart by their relative order).
+    const repeated = [...CANONICAL_BY_HEADER].filter(([, indexes]) => indexes.length > 1).map(([header]) => header);
+    if (repeated.join() !== "POLICE REP SRI LANKA") problems.push(`unexpected repeated headers: ${repeated.join(", ")}`);
     if (problems.length) throw new Error(`Invalid Google Sheet schema: ${problems.join("; ")}`);
 })();
 

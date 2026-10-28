@@ -19,14 +19,14 @@
 // same functions the Admin candidate page uses (candidateService.js), never
 // from a second copy of those rules.
 //
-// TEST NUMBER has no confirmed system data and is always "". DRIVING LICIAN
+// TEST NUMBER has no confirmed system data and is always "". DRIVING LICENSE
 // and POLICE REP FM are document columns with no document type in the
 // application, so no candidate can have one: they are always "Not Submitted"
 // (Sheet output only; nothing is stored). There is one SCAN column only.
 //
-// Document columns (PASSPORT COPY, POLICE REP SRI LANKA (verified), POLICE
-// REP ROMANIA, MEDICAL, SCAN, NATIONAL ID, POLICE REPORT APPLIED, POLICE REP
-// SRI LANKA (normal), VIDEOS) show the submission date of the candidate's
+// Document columns (PASSPORT, POLICE REP SRI LANKA (verified), POLICE REP
+// ROMANIA, MEDICAL, SCAN, NIC COPY, POLICE REPORT APPLIED, POLICE REP SRI
+// LANKA (normal), VIDEO) show the submission date of the candidate's
 // current document of that type (and variant): its received_date, as the
 // Sri Lanka calendar date YYYY-MM-DD. A replacement or re-upload is a new
 // document row (the old one is kept as SUPERSEDED), so the current
@@ -166,8 +166,10 @@ export function mapCandidateToSheetRow(aggregate, { mirroredAt, recordStatus = R
     const values = {
         testNumber: "",
         passportNumber: text(user.passportId),
-        firstName: text(user.firstName),
-        otherName: text(user.otherName),
+        // The stored meaning, not the column names: other_name holds the surname, first_name
+        // the other (given) names (candidateService.js parseCandidateBody).
+        surname: text(user.otherName),
+        otherNames: text(user.firstName),
         testDate: text(stages.get("TEST_DETAILS")?.testDate),
         birthday: dateOnly(user.dateOfBirth),
         passportExpiryDate: dateOnly(user.passportExpiryDate),
