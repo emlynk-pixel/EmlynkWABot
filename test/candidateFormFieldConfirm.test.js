@@ -174,13 +174,13 @@ describe("confirming one field (CONFIRM-003, 004, 005, 010, 011, 016)", () => {
         assert.deepEqual(Object.entries(created).filter(([k, v]) => v !== null && !["passportId", "createdDate", "updatedDate", "nameAsInPassport"].includes(k)), []);
     });
 
-    test("sex is translated to the record's code; the phone keeps its submitted form", async () => {
+    test("sex is translated to the record's code; the phone is stored in the canonical +<country code> form", async () => {
         await submitForm(answers({ basic: { ...answers().basic, sex: "MALE" }, contact: { ...answers().contact, alternativePhone: "0712345678" } }));
         assert.equal((await pendingFor("basic.sex")).current, "FEMALE");
         assert.equal((await confirm(USERS.ADMIN, await body("basic.sex"))).status, 200);
         assert.equal((await candidateRow()).sex, "M");
         assert.equal((await confirm(USERS.ADMIN, await body("contact.alternativePhone"))).status, 200);
-        assert.equal((await candidateRow()).contactNumber, "0712345678");
+        assert.equal((await candidateRow()).contactNumber, "+94712345678");
     });
 });
 

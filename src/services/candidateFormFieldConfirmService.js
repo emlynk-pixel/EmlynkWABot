@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { CandidateError } from "./candidateService.js";
 import { ANSWER_FIELDS, BLOOD_GROUPS, CIVIL_STATUS_CODES, ENGLISH_LEVELS, OTHER_JOB_CATEGORY, answerValue, isNotApplicable } from "./candidateFormDataService.js";
 import { NO_PREFERRED_JOB_TYPE, isNoPreference } from "./jobTypeCatalog.js";
-import { normalizePhoneNumber } from "../utils/phoneNumber.js";
+import { canonicalPhoneNumber, phoneKey } from "../utils/phoneNumber.js";
 
 // Per-field "Confirm candidate change" (Admin > Candidate Details).
 //
@@ -71,14 +71,15 @@ const date = ({ notFuture = false, min = "1900-01-01" } = {}) => ({
     },
     fromDb: (stored) => isoDay(stored),
 });
+// Stored in the canonical candidate form "+<country code><number>" (utils/phoneNumber.js).
 const phone = {
     toDb: (value) => {
-        const digits = normalizePhoneNumber(value);
-        return digits ? { value: String(value).trim().slice(0, 30) } : { error: "must be a phone number" };
+        const canonical = canonicalPhoneNumber(value);
+        return canonical ? { value: canonical } : { error: "must be a phone number" };
     },
     fromDb: (stored) => (typeof stored === "string" && stored.trim() ? stored : null),
     // 0771234567, +94771234567 and 94771234567 are the same number.
-    same: (a, b) => normalizePhoneNumber(a) !== null && normalizePhoneNumber(a) === normalizePhoneNumber(b),
+    same: (a, b) => phoneKey(a) !== null && phoneKey(a) === phoneKey(b),
 };
 const sex = {
     toDb: (value) => (SEX_TO_DB[value] ? { value: SEX_TO_DB[value] } : { error: "must be MALE, FEMALE or OTHER" }),

@@ -374,7 +374,7 @@ describe("optional passport and contact details", () => {
         assert.deepEqual(fields({ whatsappNumber: "12" }), ["whatsappNumber"]);
     });
 
-    test("values are normalized: sex upper case, phone numbers in the WhatsApp sender format", () => {
+    test("values are normalized: sex upper case, phone numbers in the canonical +<country code> storage form", () => {
         const { values } = parseCandidateBody({
             ...REQUIRED_ONLY, nationality: " Sri Lankan ", sex: "f", passportIssueDate: "2021-05-12", passportExpiryDate: "2031-05-11",
             whatsappNumber: "077 123 4567", contactNumber: "+94 11 234 5678",
@@ -382,8 +382,8 @@ describe("optional passport and contact details", () => {
         assert.equal(values.nationality, "Sri Lankan");
         assert.equal(values.sex, "F");
         assert.equal(values.passportIssueDate.toISOString().slice(0, 10), "2021-05-12");
-        assert.equal(values.whatsappNumber, "94771234567");
-        assert.equal(values.contactNumber, "94112345678");
+        assert.equal(values.whatsappNumber, "+94771234567");
+        assert.equal(values.contactNumber, "+94112345678");
     });
 
     test("an optional value that is given must be valid", () => {
@@ -411,7 +411,7 @@ describe("optional passport and contact details", () => {
 
         await assert.rejects(update("P4444444", { nic: "200012345679", whatsappNumber: "0770000001" }), (error) => error.code === "WHATSAPP_EXISTS", "another record's number");
         const added = await update("P4444444", { nic: "200012345679", whatsappNumber: "0779999999", sex: "M", nationality: "Sri Lankan" });
-        assert.equal(added.candidate.whatsappNumber, "94779999999");
+        assert.equal(added.candidate.whatsappNumber, "+94779999999");
         assert.equal(added.candidate.sex, "M");
     });
 
@@ -1666,7 +1666,7 @@ describe("registration lookup of an existing passport ID", () => {
 
         const loaded = await getCandidate({ db, passportId: await resolveCandidatePassportId({ db, passportId: "N1023757" }) });
         assert.equal(loaded.candidate.nationality, "Sri Lankan");
-        assert.equal(loaded.candidate.whatsappNumber, "94771234567");
+        assert.equal(loaded.candidate.whatsappNumber, "+94771234567");
         assert.equal(loaded.documents.PASSPORT.originalFilename, "passport.pdf", "existing document returned");
         assert.equal(loaded.documents.NIC, null, "missing document stays uploadable");
         assert.equal(loaded.documents.SKILL_VIDEO, null);

@@ -29,3 +29,24 @@ export function normalizePhoneNumber(value) {
     // E.164 numbers are at most 15 digits.
     return digits.length >= 8 && digits.length <= 15 ? digits : null;
 }
+
+// A candidate phone number has THREE forms; keep them apart:
+//   storage     canonicalPhoneNumber -> "+94771234567"  (every new candidate write)
+//   comparison  phoneKey             -> "94771234567"   (duplicates, lookups; any stored form)
+//   display     the stored value as it is
+// phoneKey is normalizePhoneNumber plus one rule: a Sri Lankan national number of 10 digits
+// (0XXXXXXXXX, mobile or landline) is +94. The database's candidate_phone_key() function
+// (migration 20261104120000) computes the SAME key for its normalized unique index.
+export function phoneKey(value) {
+    const digits = normalizePhoneNumber(value);
+    if (digits && /^0\d{9}$/.test(digits)) return DEFAULT_COUNTRY_CODE + digits.slice(1);
+    return digits;
+}
+
+// "+" and the key, or null when the number has no country code we can be sure of (a number
+// still starting with 0 is a national number other than the Sri Lankan 10-digit form).
+// A number that already carries a country code keeps it: Sri Lankan +94 is never forced on it.
+export function canonicalPhoneNumber(value) {
+    const key = phoneKey(value);
+    return key && !key.startsWith("0") ? `+${key}` : null;
+}

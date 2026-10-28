@@ -277,7 +277,7 @@ describe("submitted -> confirmed -> canonical -> mirror", () => {
             motherName: "KUMARI DE SOYSA", motherPassportNumber: "N7654321", motherBirthday: "1965-02-03", motherAlive: "YES",
             spouseName: "NIMAL PERERA", spousePassportNumber: "N5555555", spouseBirthday: "1988-04-04",
             child1Name: "KASUN", child2Name: "", child3Name: "",
-            guardianName: "KAMAL PERERA", guardianRelationship: "UNCLE", guardianNic: "901234567V", guardianBirthday: "1960-01-01", guardianPhone: "+94 77 123 4567", guardianAddress: "45 LAKE ROAD",
+            guardianName: "KAMAL PERERA", guardianRelationship: "UNCLE", guardianNic: "901234567V", guardianBirthday: "1960-01-01", guardianPhone: "+94771234567", guardianAddress: "45 LAKE ROAD",
         };
         assert.deepEqual(formCells(await mirrorRow()), expected, "mapper output");
         await reconcile(mirror);
