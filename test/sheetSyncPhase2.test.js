@@ -259,7 +259,7 @@ describe("sync planner (read-only)", () => {
 
     test("an invalid Sheet header stops planning before reading candidates", async () => {
         const header = [...SHEET_HEADERS];
-        header[22] = "POLICE REP SL NORMAL";
+        header[header.indexOf("POLICE REP SRI LANKA")] = "POLICE REP SL VERIFIED";
         const client = fakeSheets({ header, rows: [] });
         const db = fakeDb([candidateRow(1)]);
         const p = createSheetSyncPlanner({ reader: createCandidateAggregateReader({ db }), sheets: sheetAdapter(client, true), clock: () => NOW });
@@ -281,7 +281,7 @@ describe("sync planner (read-only)", () => {
         ]);
         assert.equal(nextCursor, null);
         assert.equal(blankSheetRows, 1);
-        assert.deepEqual(client.calls.map((c) => c.range.split("!")[1]), ["1:1", "A2:CF"]);
+        assert.deepEqual(client.calls.map((c) => c.range.split("!")[1]), ["1:1", "A2:CE"]);
     });
 
     test("the planner cannot write, even when handed a write-enabled adapter", async () => {

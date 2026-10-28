@@ -193,7 +193,7 @@ model CandidateFormSheetSync {
 
 ## 5. Google Sheet Schemas
 
-> **Superseded column table (2026-10-28).** The live mirror now uses the latest approved *Emlynk Candidate Operational Mirror* headers and order (84 columns, `_SYSTEM_CANDIDATE_ID` in B, `SURNAME`/`OTHER NAME` by stored meaning). The authoritative table, the deployment header renames and each column's kind are in [CANDIDATE_BULK_IMPORT.md](CANDIDATE_BULK_IMPORT.md) §3–§4 and in `src/services/sheetSchema.js`. The table below is kept as history.
+> **Superseded column table (2026-10-28).** The live mirror now uses the latest approved *Emlynk Candidate Operational Mirror* headers and order (83 columns, `_SYSTEM_CANDIDATE_ID` in B, `SURNAME`/`OTHER NAME` by stored meaning, ONE `POLICE REP SRI LANKA` column: the duplicate SL Normal column was removed). The authoritative table, the deployment header renames and each column's kind are in [CANDIDATE_BULK_IMPORT.md](CANDIDATE_BULK_IMPORT.md) §3–§4 and in `src/services/sheetSchema.js`. The table below is kept as history.
 
 ### Tab 1: `Emlynk Candidate Operational Mirror` (41 Columns)
 - **Header Row:** Row 1 (exact matching, position-independent).

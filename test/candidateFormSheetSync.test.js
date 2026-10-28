@@ -558,9 +558,9 @@ describe("the gate, the destination and the mirror", () => {
         assert.ok(events.some((line) => line.includes("sheet_sync.form_submissions_tick_failed")));
     });
 
-    test("the operational mirror keeps its own schema: the approved 84 columns (row key B), none of them the form tab's", () => {
-        assert.equal(SHEET_COLUMN_COUNT, 84);
-        assert.equal(SHEET_HEADERS.length, 84);
+    test("the operational mirror keeps its own schema: the approved 83 columns (row key B), none of them the form tab's", () => {
+        assert.equal(SHEET_COLUMN_COUNT, 83);
+        assert.equal(SHEET_HEADERS.length, 83);
         assert.equal(SHEET_HEADERS[1], "_SYSTEM_CANDIDATE_ID");
         assert.ok(!SHEET_HEADERS.includes("_SUBMISSION_ID"));
         assert.deepEqual(FORM_SUBMISSION_HEADERS.filter((h) => SHEET_HEADERS.includes(h)), ["_SYSTEM_CANDIDATE_ID"], "only the shared technical ID header, in a different tab");

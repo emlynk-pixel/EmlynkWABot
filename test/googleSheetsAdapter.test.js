@@ -48,7 +48,7 @@ function fakeSheets({ header = [...SHEET_HEADERS], rows = [], fail = null } = {}
                     return respond("get", params, { values: rows });
                 },
                 batchGet: (params) => respond("batchGet", params, { valueRanges: (params.ranges || []).map((range) => ({ range, values: rows })) }),
-                append: (params) => respond("append", params, { updates: { updatedRange: `'${TAB}'!A9:CF9` } }),
+                append: (params) => respond("append", params, { updates: { updatedRange: `'${TAB}'!A9:CE9` } }),
                 update: (params) => respond("update", params, {}),
                 batchUpdate: (params) => respond("batchUpdate", params, {}),
             },
@@ -83,25 +83,25 @@ describe("write safety gate", () => {
         assert.equal(writes(client).length, 0);
     });
 
-    test("enabled: append writes one RAW row as wide as the header (canonical Sheet: A:CF) after reading row 1", async () => {
+    test("enabled: append writes one RAW row as wide as the header (canonical Sheet: A:CE) after reading row 1", async () => {
         const client = fakeSheets();
         const adapter = createGoogleSheetsAdapter({ config: enabledConfig(), sheetsClient: client });
         const result = await adapter.appendRow(sheetRow());
         assert.deepEqual(client.calls.map((c) => c.method), ["get", "append"]);
         const append = client.calls[1];
-        assert.equal(append.range, `'${TAB}'!A:CF`);
+        assert.equal(append.range, `'${TAB}'!A:CE`);
         assert.equal(append.valueInputOption, "RAW");
         assert.equal(append.insertDataOption, "INSERT_ROWS");
         assert.deepEqual(append.requestBody.values, [sheetRow()]);
-        assert.equal(result.updatedRange, `'${TAB}'!A9:CF9`);
+        assert.equal(result.updatedRange, `'${TAB}'!A9:CE9`);
     });
 
-    test("enabled: update writes exactly one data row (canonical Sheet: one range A{n}:CF{n}); the header row can't be targeted", async () => {
+    test("enabled: update writes exactly one data row (canonical Sheet: one range A{n}:CE{n}); the header row can't be targeted", async () => {
         const client = fakeSheets();
         const adapter = createGoogleSheetsAdapter({ config: enabledConfig(), sheetsClient: client });
         await adapter.updateRow(7, sheetRow("0007"));
         const update = client.calls.find((c) => c.method === "batchUpdate");
-        assert.deepEqual(update.requestBody.data.map((d) => d.range), [`'${TAB}'!A7:CF7`]);
+        assert.deepEqual(update.requestBody.data.map((d) => d.range), [`'${TAB}'!A7:CE7`]);
         assert.deepEqual(update.requestBody.data[0].values, [sheetRow("0007")]);
         assert.equal(update.requestBody.valueInputOption, "RAW");
         await assert.rejects(adapter.updateRow(1, sheetRow()), /data row number/);
@@ -115,7 +115,7 @@ describe("write safety gate", () => {
         const adapter = createGoogleSheetsAdapter({ config: enabledConfig(), sheetsClient: client });
         const error = await adapter.appendRow(sheetRow()).catch((e) => e);
         assert.ok(error instanceof SheetSchemaMismatchError);
-        assert.deepEqual(error.mismatches, [{ problem: "MISSING", header: "POLICE REP SRI LANKA", expected: 2, found: 1, columns: ["W"] }]);
+        assert.deepEqual(error.mismatches, [{ problem: "MISSING", header: "POLICE REP SRI LANKA", expected: 1, found: 0, columns: [] }]);
         assert.doesNotMatch(error.message, /\(VERIFIED\)/, "the Sheet's own header text is not echoed");
         await assert.rejects(adapter.updateRow(3, sheetRow()), SheetSchemaMismatchError);
         assert.equal(writes(client).length, 0);
@@ -124,7 +124,7 @@ describe("write safety gate", () => {
     test("a malformed row is refused before any request", async () => {
         const client = fakeSheets();
         const adapter = createGoogleSheetsAdapter({ config: enabledConfig(), sheetsClient: client });
-        await assert.rejects(adapter.appendRow(sheetRow().slice(0, 41)), /exactly 84/);
+        await assert.rejects(adapter.appendRow(sheetRow().slice(0, 40)), /exactly 83/);
         await assert.rejects(adapter.appendRow(sheetRow("")), /system candidate ID/);
         assert.deepEqual(client.calls, []);
     });
@@ -152,10 +152,10 @@ describe("writes by header name: operator columns are never written", () => {
         const layout = await adapter.readLayout();
         await adapter.writeRows({ updates: [{ rowNumber: 5, cells: cells() }] }, layout);
         const [batch] = writes(client);
-        assert.deepEqual(batch.requestBody.data.map((d) => d.range), [`'${TAB}'!A5:A5`, `'${TAB}'!C5:D5`, `'${TAB}'!F5:CH5`]);
+        assert.deepEqual(batch.requestBody.data.map((d) => d.range), [`'${TAB}'!A5:A5`, `'${TAB}'!C5:D5`, `'${TAB}'!F5:CG5`]);
         assert.deepEqual(batch.requestBody.data[0].values, [["0042"]]);
         assert.deepEqual(batch.requestBody.data[1].values, [["COMPLETED", "N1234567"]]);
-        assert.equal(batch.requestBody.data[2].values[0].length, 81);
+        assert.equal(batch.requestBody.data[2].values[0].length, 80);
     });
 
     test("an append is as wide as the header, each value under its own header, \"\" in operator columns", async () => {
@@ -164,9 +164,9 @@ describe("writes by header name: operator columns are never written", () => {
         const layout = await adapter.readLayout();
         await adapter.writeRows({ appends: [cells()] }, layout);
         const append = writes(client)[0];
-        assert.equal(append.range, `'${TAB}'!A:CH`);
+        assert.equal(append.range, `'${TAB}'!A:CG`);
         const [row] = append.requestBody.values;
-        assert.equal(row.length, 86);
+        assert.equal(row.length, 85);
         assert.deepEqual(row.slice(0, 5), ["0042", "", "COMPLETED", "N1234567", ""]);
         assert.equal(row[UNUSUAL.indexOf("VISA APPROVAL STATUS")], "INCOMPLETE");
     });
@@ -182,7 +182,7 @@ describe("writes by header name: operator columns are never written", () => {
         // A new layout (the next run) writes where the columns are now.
         const fresh = await adapter.readLayout();
         await adapter.writeRows({ updates: [{ rowNumber: 2, cells: cells() }] }, fresh);
-        assert.equal(writes(client)[0].requestBody.data[0].range, `'${TAB}'!A2:CF2`);
+        assert.equal(writes(client)[0].requestBody.data[0].range, `'${TAB}'!A2:CE2`);
         assert.deepEqual(writes(client)[0].requestBody.data[0].values[0].slice(0, 2), ["0042", ""]);
     });
 
@@ -232,7 +232,7 @@ describe("reads", () => {
         assert.equal(row.rowNumber, 2);
         assert.equal(row.cells.length, SHEET_COLUMN_COUNT);
         assert.equal(row.cells[0], "A-value");
-        assert.equal(client.calls[1].range, `'${TAB}'!A2:CF`);
+        assert.equal(client.calls[1].range, `'${TAB}'!A2:CE`);
 
         // ID first and an operator column second: the live row is remapped by header.
         const header = ["_SYSTEM_CANDIDATE_ID", "Operator Note", ...SHEET_HEADERS.filter((h) => h !== "_SYSTEM_CANDIDATE_ID")];
@@ -243,7 +243,7 @@ describe("reads", () => {
         assert.equal(live.cells[fieldIndex("testNumber")], "T-1");
         assert.equal(live.cells[fieldIndex("passportNumber")], "N1234567");
         assert.ok(!live.cells.includes("private note"), "operator columns are not read into the cells");
-        assert.equal(moved.calls[1].range, `'${TAB}'!A2:CG`, "as wide as the header");
+        assert.equal(moved.calls[1].range, `'${TAB}'!A2:CF`, "as wide as the header");
     });
 
     test("no target configured: nothing is requested", async () => {
@@ -365,10 +365,10 @@ describe("A1 ranges for real-world tab names (regression: Cloud Run HTTP 400)", 
             await adapter.readRow(7, layout);
             await adapter.readRowsByNumber([7, 8], layout);
             assert.deepEqual(client.calls.filter((c) => c.method === "get").map((c) => c.range), [
-                `${quoted}!1:1`, `${quoted}!1:1`, `${quoted}!1:1`, `${quoted}!B2:B`, `${quoted}!A2:CF`, `${quoted}!A7:CF7`,
+                `${quoted}!1:1`, `${quoted}!1:1`, `${quoted}!1:1`, `${quoted}!B2:B`, `${quoted}!A2:CE`, `${quoted}!A7:CE7`,
             ]);
             assert.deepEqual(client.calls.filter((c) => c.method === "batchGet").map((c) => c.ranges), [
-                [`${quoted}!A7:CF7`, `${quoted}!A8:CF8`],
+                [`${quoted}!A7:CE7`, `${quoted}!A8:CE8`],
             ]);
             assert.ok(client.calls.every((c) => ["get", "batchGet"].includes(c.method) && c.spreadsheetId === SPREADSHEET));
             assert.deepEqual(writes(client), []);
@@ -379,7 +379,7 @@ describe("A1 ranges for real-world tab names (regression: Cloud Run HTTP 400)", 
             const adapter = createGoogleSheetsAdapter({ config: { enabled: true, spreadsheetId: SPREADSHEET, tabName: tab }, sheetsClient: client });
             await adapter.appendRow(sheetRow("0043"));
             await adapter.updateRow(7, sheetRow("0043"));
-            assert.deepEqual(writeRanges(client), [`${quoted}!A:CF`, `${quoted}!A7:CF7`]);
+            assert.deepEqual(writeRanges(client), [`${quoted}!A:CE`, `${quoted}!A7:CE7`]);
         });
     }
 

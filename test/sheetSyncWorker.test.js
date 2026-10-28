@@ -157,7 +157,7 @@ describe("scheduled and manual reconciliation", () => {
         const [item] = await queueRows();
         assert.deepEqual([item.status, item.lastResult], ["COMPLETED", "RECONCILED"]);
         const appendCall = sheet.writes().find((c) => c.method === "append");
-        assert.deepEqual([appendCall.range, appendCall.insertDataOption, appendCall.valueInputOption], [`'${TAB}'!A:CF`, "INSERT_ROWS", "RAW"]);
+        assert.deepEqual([appendCall.range, appendCall.insertDataOption, appendCall.valueInputOption], [`'${TAB}'!A:CE`, "INSERT_ROWS", "RAW"]);
         assert.ok((await state()).lastSyncSuccessAt);
     });
 
@@ -394,7 +394,7 @@ describe("reconciliation and durable runs", () => {
             { updated: 1, unchanged: 1, appended: 0, markedInactive: 0 },
         );
         assert.equal(sheet.row(aRow)[C], "Anusha");
-        assert.deepEqual(sheet.writes().slice(writesBefore).map((c) => c.ranges ?? c.method), [[`'${TAB}'!A${aRow}:CF${aRow}`]], "only the drifted row is written");
+        assert.deepEqual(sheet.writes().slice(writesBefore).map((c) => c.ranges ?? c.method), [[`'${TAB}'!A${aRow}:CE${aRow}`]], "only the drifted row is written");
         assert.doesNotMatch(JSON.stringify(run), /Anusha|N1023757|Kamal/);
         assert.equal(rowFor(sheet, b.uniqueId).length, 1);
     });
@@ -521,7 +521,7 @@ describe("reconciliation and durable runs", () => {
 });
 
 describe("document columns: submission date or \"Not Submitted\"", () => {
-    const DOCUMENT_FIELDS = ["passportCopy", "policeReportSriLankaVerified", "policeReportRomania", "medical", "scan", "drivingLicence", "nationalId", "policeReportApplied", "policeReportSriLankaNormal", "policeReportFm", "videos"];
+    const DOCUMENT_FIELDS = ["passportCopy", "policeReportSriLankaVerified", "policeReportRomania", "medical", "scan", "drivingLicence", "nationalId", "policeReportApplied", "policeReportFm", "videos"];
 
     test("a scheduled run writes each document's submission date, and exactly \"Not Submitted\" where there is none", async () => {
         const { sheet, store, worker } = setup();
@@ -534,7 +534,7 @@ describe("document columns: submission date or \"Not Submitted\"", () => {
         assert.equal(row[col("passportCopy")], "2026-10-09");
         assert.equal(row[col("policeReportSriLankaVerified")], "2026-10-07");
         assert.equal(row[col("scan")], "2026-10-08");
-        for (const field of ["policeReportRomania", "medical", "nationalId", "policeReportApplied", "policeReportSriLankaNormal", "videos"]) {
+        for (const field of ["policeReportRomania", "medical", "nationalId", "policeReportApplied", "videos"]) {
             assert.equal(row[col(field)], "Not Submitted", field);
         }
         assert.equal(row[col("drivingLicence")], "Not Submitted", "no document type exists for DRIVING LICENSE");

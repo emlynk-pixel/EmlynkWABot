@@ -33,18 +33,18 @@ import {
 
 const TAB = "Emlynk Candidate Operational Mirror";
 
-// The latest approved "Emlynk Candidate Operational Mirror": its first 41 columns (A to AO),
-// exactly as approved (header text and order).
+// The latest approved "Emlynk Candidate Operational Mirror": its first 40 columns (A to AN),
+// exactly as approved (header text and order; ONE POLICE REP SRI LANKA column).
 const ORIGINAL_HEADERS = [
     "TEST NUMBER", "_SYSTEM_CANDIDATE_ID", "PASSPORT NUMBER", "SURNAME", "OTHER NAME", "TEST DATE", "BIRTH DATE", "PASSPORT EXPIRE DATE",
     "JOB ROLE", "NIC NUMBER", "ADDRESS", "WHATSAPP NUMBER", "CONTACT NUMBER", "PASSPORT", "POLICE REP SRI LANKA", "POLICE REP ROMANIA",
-    "MEDICAL", "SCAN", "DRIVING LICENSE", "NIC COPY", "POLICE REPORT APPLIED", "SUBMIT DATE", "POLICE REP SRI LANKA",
+    "MEDICAL", "SCAN", "DRIVING LICENSE", "NIC COPY", "POLICE REPORT APPLIED", "SUBMIT DATE",
     "POLICE REP FM", "VIDEO", "BIRTH PLACE", "SEX", "NATIONALITY", "PASSPORT ISSUE DATE", "JOB EXPERIENCE",
     "REMARK", "TEST DETAILS STATUS", "CANDIDATE DETAILS STATUS", "DOCUMENT SUBMISSION STATUS",
     "IVS INTERVIEW STATUS", "VISA SUBMISSION STATUS", "VISA APPROVAL STATUS", "FINALIZING JOB STATUS", "ACTIVE STATUS", "REGISTER DATE",
     "LAST MIRRORED AT",
 ];
-// The confirmed Candidate Form columns (AP to CF), in this order.
+// The confirmed Candidate Form columns (AO to CE), in this order.
 const CANDIDATE_FORM_HEADERS = [
     "FULL NAME", "CIVIL STATUS / MARITAL STATUS", "BLOOD GROUP", "HEIGHT", "WEIGHT (KG)", "DRIVING LICENCE", "CAN READ DRAWINGS",
     "TEAM LEADING SKILLS", "OTHER LANGUAGES", "EMAIL", "CITY", "DISTRICT", "DS DIVISION", "GN DIVISION", "CITY IN ROMANIA",
@@ -58,7 +58,8 @@ const CANDIDATE_FORM_HEADERS = [
 const FINAL_HEADERS = [...ORIGINAL_HEADERS, ...CANDIDATE_FORM_HEADERS];
 const PREVIOUS_HEADERS = FINAL_HEADERS.filter((header) => header !== "VISA SUBMISSION STATUS");
 // The header row the live Sheet had BEFORE the approved mirror (the previous application
-// schema): a Sheet still carrying it must stop the sync, never be written.
+// schema, with a second, duplicate POLICE REP SRI LANKA column): a Sheet still carrying it must
+// stop the sync, never be written.
 const SUPERSEDED_HEADERS = [
     "TEST NUMBER", "PASSPORT NUMBER", "FIRST NAME", "OTHER NAME", "TEST DATE", "BIRTHDAY", "PP EX DATE", "JOB",
     "ID NUMBER", "ADDRESS", "WHATSAPP NUM", "CONTACT NUM", "PASSPORT COPY", "POLICE REP SRI LANKA", "POLICE REP ROMANIA",
@@ -80,7 +81,7 @@ const ID_COLUMN = "B";
 
 const without = (headers, header) => headers.filter((h) => h !== header);
 // A live row from a header and field values: system values at their header's
-// position, "" elsewhere. (The two POLICE REP SRI LANKA columns: left = SL Verified.)
+// position, "" elsewhere.
 const field = (name) => SHEET_COLUMNS[fieldIndex(name)];
 const layoutOf = (headers) => {
     const result = readSheetLayout(headers);
@@ -91,34 +92,34 @@ const layoutOf = (headers) => {
 const NAMED_CELLS = SHEET_COLUMNS.map((c) => c.field);
 
 describe("Google Sheet schema (canonical template)", () => {
-    test("has exactly 84 system columns: 83 business columns and the technical ID", () => {
-        assert.equal(SHEET_COLUMN_COUNT, 84);
-        assert.equal(SHEET_COLUMNS.length, 84);
-        assert.equal(SHEET_BUSINESS_COLUMN_COUNT, 83);
+    test("has exactly 83 system columns: 82 business columns and the technical ID", () => {
+        assert.equal(SHEET_COLUMN_COUNT, 83);
+        assert.equal(SHEET_COLUMNS.length, 83);
+        assert.equal(SHEET_BUSINESS_COLUMN_COUNT, 82);
     });
 
-    test("the canonical (template / field) order is the real Sheet's order, A to CF", () => {
+    test("the canonical (template / field) order is the real Sheet's order, A to CE", () => {
         assert.deepEqual([...SHEET_HEADERS], FINAL_HEADERS);
-        assert.deepEqual(SHEET_COLUMNS.map((c) => c.column), Array.from({ length: 84 }, (_, i) => columnLetter(i)));
-        assert.equal(SHEET_COLUMNS.find((c) => c.field === "visaSubmissionStatus").column, "AJ", "in the template; the live Sheet may put it anywhere");
+        assert.deepEqual(SHEET_COLUMNS.map((c) => c.column), Array.from({ length: 83 }, (_, i) => columnLetter(i)));
+        assert.equal(SHEET_COLUMNS.find((c) => c.field === "visaSubmissionStatus").column, "AI", "in the template; the live Sheet may put it anywhere");
     });
 
     test("SHEET-FINAL-010 the approved mirror's headers, letters and row key (B)", () => {
-        assert.deepEqual(SHEET_HEADERS.slice(0, 41), ORIGINAL_HEADERS);
-        assert.deepEqual(SHEET_COLUMNS.slice(0, 41).map((c) => c.column), Array.from({ length: 41 }, (_, i) => columnLetter(i)));
+        assert.deepEqual(SHEET_HEADERS.slice(0, 40), ORIGINAL_HEADERS);
+        assert.deepEqual(SHEET_COLUMNS.slice(0, 40).map((c) => c.column), Array.from({ length: 40 }, (_, i) => columnLetter(i)));
         assert.equal(SHEET_COLUMNS[SYSTEM_CANDIDATE_ID_INDEX].column, ID_COLUMN);
         assert.equal(SYSTEM_CANDIDATE_ID_INDEX, 1, "the row key is B in the template");
-        assert.deepEqual(SHEET_HEADERS.slice(41), CANDIDATE_FORM_HEADERS);
-        assert.deepEqual([SHEET_COLUMNS[41].column, SHEET_COLUMNS.at(-1).column], ["AP", "CF"]);
+        assert.deepEqual(SHEET_HEADERS.slice(40), CANDIDATE_FORM_HEADERS);
+        assert.deepEqual([SHEET_COLUMNS[40].column, SHEET_COLUMNS.at(-1).column], ["AO", "CE"]);
         assert.equal(CANDIDATE_FORM_HEADERS.filter((h) => ORIGINAL_HEADERS.includes(h)).length, 0);
     });
 
-    test("the two POLICE REP SRI LANKA headers are two fields (SL Verified first, then SL Normal)", () => {
-        const both = SHEET_COLUMNS.filter((c) => c.header === "POLICE REP SRI LANKA");
-        assert.deepEqual(both.map((c) => c.field), ["policeReportSriLankaVerified", "policeReportSriLankaNormal"]);
-        assert.deepEqual(both.map((c) => c.column), ["O", "W"]);
-        assert.equal(new Set(SHEET_COLUMNS.map((c) => c.field)).size, 84);
-        assert.equal(new Set(SHEET_HEADERS).size, 83, "only POLICE REP SRI LANKA repeats");
+    test("ONE POLICE REP SRI LANKA column (the SL Verified police report, O); every header and field is unique", () => {
+        const police = SHEET_COLUMNS.filter((c) => c.header === "POLICE REP SRI LANKA");
+        assert.deepEqual(police.map((c) => [c.column, c.field]), [["O", "policeReportSriLankaVerified"]]);
+        assert.equal(new Set(SHEET_COLUMNS.map((c) => c.field)).size, 83);
+        assert.equal(new Set(SHEET_HEADERS).size, 83, "no header repeats");
+        assert.ok(!SHEET_COLUMNS.some((c) => c.field === "policeReportSriLankaNormal"));
     });
 
     test("DRIVING LICENSE (document status) and DRIVING LICENCE (Yes / No) are two distinct exact headers", () => {
@@ -148,17 +149,20 @@ describe("Google Sheet schema (canonical template)", () => {
         assert.deepEqual(byKind(MIRROR_FIELD_KIND.SYSTEM_GENERATED), ["TEST NUMBER", "_SYSTEM_CANDIDATE_ID", "ACTIVE STATUS", "REGISTER DATE", "LAST MIRRORED AT"]);
         assert.equal(byKind(MIRROR_FIELD_KIND.STAGE_STATUS).length, 7);
         assert.ok(byKind(MIRROR_FIELD_KIND.STAGE_STATUS).every((h) => h.endsWith(" STATUS")));
-        assert.deepEqual(byKind(MIRROR_FIELD_KIND.DOCUMENT_STATUS), ["PASSPORT", "POLICE REP SRI LANKA", "POLICE REP ROMANIA", "MEDICAL", "SCAN", "DRIVING LICENSE", "NIC COPY", "POLICE REPORT APPLIED", "POLICE REP SRI LANKA", "POLICE REP FM", "VIDEO"]);
+        assert.deepEqual(byKind(MIRROR_FIELD_KIND.DOCUMENT_STATUS), ["PASSPORT", "POLICE REP SRI LANKA", "POLICE REP ROMANIA", "MEDICAL", "SCAN", "DRIVING LICENSE", "NIC COPY", "POLICE REPORT APPLIED", "POLICE REP FM", "VIDEO"]);
         assert.deepEqual(byKind(MIRROR_FIELD_KIND.DERIVED_FIELD), ["JOB ROLE", "SUBMIT DATE", "DISTANCE TO BUCHAREST (KM)"]);
     });
 
-    test("a live Sheet still carrying the previous headers is SCHEMA_INVALID, naming every approved header it lacks", () => {
+    test("a live Sheet still carrying the previous headers is SCHEMA_INVALID, naming every approved header it lacks and the duplicate", () => {
         const result = readSheetLayout(SUPERSEDED_HEADERS);
         assert.equal(result.valid, false);
         assert.equal(result.layout, null, "nothing is mapped, so nothing can be written");
-        assert.deepEqual(result.problems.map((p) => p.header).sort(), [...new Set(Object.values(RENAMED_HEADERS))].sort());
-        // Renaming exactly those cells of row 1 gives a valid header (column order is irrelevant).
-        assert.equal(readSheetLayout(SUPERSEDED_HEADERS.map((h) => RENAMED_HEADERS[h] === "SURNAME" ? "OTHER NAME" : h === "OTHER NAME" ? "SURNAME" : RENAMED_HEADERS[h] ?? h)).valid, true);
+        assert.deepEqual(result.problems.filter((p) => p.problem === "MISSING").map((p) => p.header).sort(), [...new Set(Object.values(RENAMED_HEADERS))].sort());
+        assert.deepEqual(result.problems.filter((p) => p.problem === "DUPLICATE").map((p) => [p.header, p.found]), [["POLICE REP SRI LANKA", 2]]);
+        // Renaming exactly those cells of row 1 and deleting the second POLICE REP SRI LANKA column gives a valid header.
+        const renamed = SUPERSEDED_HEADERS.map((h) => RENAMED_HEADERS[h] === "SURNAME" ? "OTHER NAME" : h === "OTHER NAME" ? "SURNAME" : RENAMED_HEADERS[h] ?? h);
+        const secondPolice = renamed.lastIndexOf("POLICE REP SRI LANKA");
+        assert.equal(readSheetLayout(renamed.filter((_, i) => i !== secondPolice)).valid, true);
     });
 
     test("the technical candidate ID is a field found by its header, not a position", () => {
@@ -183,7 +187,7 @@ describe("Google Sheet schema (canonical template)", () => {
 describe("header validation by name (order is irrelevant)", () => {
     test("1. the current canonical header is valid and maps every column where it is", () => {
         const layout = layoutOf(FINAL_HEADERS);
-        assert.equal(layout.width, 84);
+        assert.equal(layout.width, 83);
         assert.equal(layout.extraColumns, 0);
         SHEET_COLUMNS.forEach((c) => assert.equal(layout.positions[c.index], c.index, c.header));
         assert.deepEqual(validateHeaderRow([...FINAL_HEADERS]), { valid: true, mismatches: [] });
@@ -192,10 +196,7 @@ describe("header validation by name (order is irrelevant)", () => {
     test("2/8. a fully reversed header is valid; every field is found at its new position", () => {
         const reversed = [...FINAL_HEADERS].reverse();
         const layout = layoutOf(reversed);
-        for (const c of SHEET_COLUMNS) {
-            if (c.header === "POLICE REP SRI LANKA") continue;
-            assert.equal(reversed[layout.positions[c.index]], c.header, c.header);
-        }
+        for (const c of SHEET_COLUMNS) assert.equal(reversed[layout.positions[c.index]], c.header, c.header);
     });
 
     test("3/4/5. _SYSTEM_CANDIDATE_ID first, in the middle or last", () => {
@@ -206,7 +207,7 @@ describe("header validation by name (order is irrelevant)", () => {
         assert.equal(columnOf(layoutOf(first), "systemCandidateId"), "A");
         assert.equal(columnOf(layoutOf(middle), "systemCandidateId"), "U");
         assert.equal(columnOf(layoutOf(FINAL_HEADERS), "systemCandidateId"), ID_COLUMN);
-        assert.equal(columnOf(layoutOf(last), "systemCandidateId"), "CF");
+        assert.equal(columnOf(layoutOf(last), "systemCandidateId"), "CE");
         assert.equal(candidateIdRange(TAB, layoutOf(first)), `'${TAB}'!A2:A`);
         assert.equal(candidateIdRange(TAB, layoutOf(middle)), `'${TAB}'!U2:U`);
     });
@@ -215,7 +216,7 @@ describe("header validation by name (order is irrelevant)", () => {
         const moved = ["VISA APPROVAL STATUS", ...without(without(FINAL_HEADERS, "VISA SUBMISSION STATUS"), "VISA APPROVAL STATUS"), "VISA SUBMISSION STATUS"];
         const layout = layoutOf(moved);
         assert.equal(columnOf(layout, "visaApprovalStatus"), "A");
-        assert.equal(columnOf(layout, "visaSubmissionStatus"), "CF");
+        assert.equal(columnOf(layout, "visaSubmissionStatus"), "CE");
     });
 
     test("9/10. extra operator columns (one or several, anywhere, with or without a header) are allowed and ignored", () => {
@@ -223,7 +224,7 @@ describe("header validation by name (order is irrelevant)", () => {
         assert.equal(layoutOf(one).extraColumns, 1);
         const several = ["Internal Note", ...FINAL_HEADERS.slice(0, 10), "Follow-up", "", ...FINAL_HEADERS.slice(10), "Agent", "Phone call 2"];
         const layout = layoutOf(several);
-        assert.equal(layout.width, 89);
+        assert.equal(layout.width, 88);
         assert.equal(layout.extraColumns, 5);
         assert.equal(columnOf(layout, "testNumber"), "B");
     });
@@ -261,9 +262,7 @@ describe("header validation by name (order is irrelevant)", () => {
     test("13. a duplicated system header -> SCHEMA_INVALID (ambiguous), naming the header and where it was found", () => {
         const result = readSheetLayout([...FINAL_HEADERS, "_SYSTEM_CANDIDATE_ID"]);
         assert.equal(result.valid, false);
-        assert.deepEqual(result.problems, [{ problem: "DUPLICATE", header: "_SYSTEM_CANDIDATE_ID", expected: 1, found: 2, columns: [ID_COLUMN, "CG"] }]);
-        const thirdPolice = readSheetLayout([...FINAL_HEADERS, "POLICE REP SRI LANKA"]);
-        assert.deepEqual(thirdPolice.problems.map((p) => [p.problem, p.header, p.found]), [["DUPLICATE", "POLICE REP SRI LANKA", 3]]);
+        assert.deepEqual(result.problems, [{ problem: "DUPLICATE", header: "_SYSTEM_CANDIDATE_ID", expected: 1, found: 2, columns: [ID_COLUMN, "CF"] }]);
     });
 
     test("14. a renamed system header -> SCHEMA_INVALID: text must match exactly (no trimming, no case folding)", () => {
@@ -278,17 +277,18 @@ describe("header validation by name (order is irrelevant)", () => {
         }
     });
 
-    test("the two POLICE REP SRI LANKA columns keep their order relative to each other; each may move anywhere else", () => {
-        const others = FINAL_HEADERS.filter((h) => h !== "POLICE REP SRI LANKA");
-        const layout = layoutOf(["POLICE REP SRI LANKA", ...others.slice(0, 30), "POLICE REP SRI LANKA", ...others.slice(30)]);
-        assert.equal(columnOf(layout, "policeReportSriLankaVerified"), "A", "the left one is SL Verified");
-        assert.equal(columnOf(layout, "policeReportSriLankaNormal"), "AF");
-        assert.deepEqual(readSheetLayout(without(FINAL_HEADERS, "POLICE REP SRI LANKA")).problems.map((p) => [p.problem, p.found]), [["MISSING", 0]]);
+    test("POLICE REP SRI LANKA: one column, anywhere; a second copy (the removed duplicate) stops the sync; none is MISSING", () => {
+        const others = without(FINAL_HEADERS, "POLICE REP SRI LANKA");
+        assert.equal(columnOf(layoutOf(["POLICE REP SRI LANKA", ...others]), "policeReportSriLankaVerified"), "A");
+        const twice = readSheetLayout([...others.slice(0, 30), "POLICE REP SRI LANKA", ...others.slice(30), "POLICE REP SRI LANKA"]);
+        assert.equal(twice.valid, false);
+        assert.deepEqual(twice.problems.map((p) => [p.problem, p.header, p.found, p.columns]), [["DUPLICATE", "POLICE REP SRI LANKA", 2, ["AE", "CF"]]]);
+        assert.deepEqual(readSheetLayout(others).problems.map((p) => [p.problem, p.found]), [["MISSING", 0]]);
     });
 
     test("an empty or missing header row is invalid: every system header is missing", () => {
         assert.equal(validateHeaderRow([]).valid, false);
-        assert.equal(validateHeaderRow(undefined).mismatches.length, 83, "one problem per distinct header (POLICE REP SRI LANKA counted once)");
+        assert.equal(validateHeaderRow(undefined).mismatches.length, 83, "one problem per header");
     });
 });
 
@@ -296,22 +296,22 @@ describe("layout ranges and writes", () => {
     test("row 1 is read whole; data ranges are as wide as the live header", () => {
         assert.equal(headerRange(TAB), `'${TAB}'!1:1`);
         const canonical = layoutOf(FINAL_HEADERS);
-        assert.equal(dataRange(TAB, canonical), `'${TAB}'!A2:CF`);
-        assert.equal(operationalRange(TAB, canonical), `'${TAB}'!A:CF`);
-        assert.equal(rowRange(TAB, 7, canonical), `'${TAB}'!A7:CF7`);
+        assert.equal(dataRange(TAB, canonical), `'${TAB}'!A2:CE`);
+        assert.equal(operationalRange(TAB, canonical), `'${TAB}'!A:CE`);
+        assert.equal(rowRange(TAB, 7, canonical), `'${TAB}'!A7:CE7`);
         const wide = layoutOf([...FINAL_HEADERS, "Note 1", "Note 2"]);
-        assert.equal(dataRange(TAB, wide), `'${TAB}'!A2:CH`);
+        assert.equal(dataRange(TAB, wide), `'${TAB}'!A2:CG`);
     });
 
     test("an existing row is written one range per run of system columns, never into an operator column", () => {
         // Canonical: one range, exactly as before this change.
         const canonical = layoutOf(FINAL_HEADERS);
-        assert.deepEqual(writeRangesFor(TAB, 7, canonical, NAMED_CELLS), [{ range: `'${TAB}'!A7:CF7`, values: [NAMED_CELLS] }]);
+        assert.deepEqual(writeRangesFor(TAB, 7, canonical, NAMED_CELLS), [{ range: `'${TAB}'!A7:CE7`, values: [NAMED_CELLS] }]);
 
         const layout = layoutOf(["_SYSTEM_CANDIDATE_ID", "Operator Note", "VISA SUBMISSION STATUS", "PASSPORT NUMBER", "Another Note",
             ...FINAL_HEADERS.filter((h) => !["_SYSTEM_CANDIDATE_ID", "VISA SUBMISSION STATUS", "PASSPORT NUMBER"].includes(h))]);
         const writes = writeRangesFor(TAB, 9, layout, NAMED_CELLS);
-        assert.deepEqual(writes.map((w) => w.range), [`'${TAB}'!A9:A9`, `'${TAB}'!C9:D9`, `'${TAB}'!F9:CH9`]);
+        assert.deepEqual(writes.map((w) => w.range), [`'${TAB}'!A9:A9`, `'${TAB}'!C9:D9`, `'${TAB}'!F9:CG9`]);
         assert.deepEqual(writes[0].values, [["systemCandidateId"]]);
         assert.deepEqual(writes[1].values, [["visaSubmissionStatus", "passportNumber"]]);
         assert.equal(writes[2].values[0][0], "testNumber");
@@ -354,8 +354,8 @@ describe("row shape (field-ordered cells)", () => {
     });
 
     test("a wrong length, a non-string cell or a blank candidate ID is refused", () => {
-        assert.throws(() => assertSheetRow(row().slice(0, 41)), /exactly 84/, "a row of the original 41 columns only");
-        assert.throws(() => assertSheetRow([...row(), ""]), /exactly 84/);
+        assert.throws(() => assertSheetRow(row().slice(0, 40)), /exactly 83/, "a row of the first 40 columns only");
+        assert.throws(() => assertSheetRow([...row(), ""]), /exactly 83/);
         const withNumber = row();
         withNumber[0] = 5;
         assert.throws(() => assertSheetRow(withNumber), /string/);

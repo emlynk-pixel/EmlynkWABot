@@ -30,9 +30,9 @@ describe("adapter: batch reads and writes", () => {
         assert.deepEqual(result, { updated: 2, appended: 1 });
         assert.deepEqual(sheet.calls.map((c) => c.method), ["get", "batchUpdate", "append"]);
         assert.equal(sheet.calls[0].range, "'Bob''s Candidate Mirror'!1:1");
-        assert.deepEqual(sheet.calls[1].ranges, ["'Bob''s Candidate Mirror'!A2:CF2", "'Bob''s Candidate Mirror'!A3:CF3"]);
+        assert.deepEqual(sheet.calls[1].ranges, ["'Bob''s Candidate Mirror'!A2:CE2", "'Bob''s Candidate Mirror'!A3:CE3"]);
         assert.equal(sheet.calls[1].valueInputOption, "RAW");
-        assert.deepEqual([sheet.calls[2].range, sheet.calls[2].insertDataOption], ["'Bob''s Candidate Mirror'!A:CF", "INSERT_ROWS"]);
+        assert.deepEqual([sheet.calls[2].range, sheet.calls[2].insertDataOption], ["'Bob''s Candidate Mirror'!A:CE", "INSERT_ROWS"]);
     });
 
     test("writeRows writes nothing when the header does not match, and rejects rows that are not SHEET_COLUMN_COUNT cells", async () => {

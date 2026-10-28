@@ -24,9 +24,9 @@
 // application, so no candidate can have one: they are always "Not Submitted"
 // (Sheet output only; nothing is stored). There is one SCAN column only.
 //
-// Document columns (PASSPORT, POLICE REP SRI LANKA (verified), POLICE REP
-// ROMANIA, MEDICAL, SCAN, NIC COPY, POLICE REPORT APPLIED, POLICE REP SRI
-// LANKA (normal), VIDEO) show the submission date of the candidate's
+// Document columns (PASSPORT, POLICE REP SRI LANKA (the SL_VERIFIED police
+// report; SL_NORMAL reports have no mirror column), POLICE REP ROMANIA,
+// MEDICAL, SCAN, NIC COPY, POLICE REPORT APPLIED, VIDEO) show the submission date of the candidate's
 // current document of that type (and variant): its received_date, as the
 // Sri Lanka calendar date YYYY-MM-DD. A replacement or re-upload is a new
 // document row (the old one is kept as SUPERSEDED), so the current
@@ -188,7 +188,6 @@ export function mapCandidateToSheetRow(aggregate, { mirroredAt, recordStatus = R
         nationalId: documentCell(documents, "NIC"),
         policeReportApplied: documentCell(documents, "POLICE_SLIP"),
         submitDate: dateOnly(policeSlip?.policeSubmittedDate),
-        policeReportSriLankaNormal: documentCell(documents, "POLICE_REPORT", "SL_NORMAL"),
         policeReportFm: DOCUMENT_NOT_SUBMITTED,
         videos: documentCell(documents, "SKILL_VIDEO"),
         placeOfBirth: text(user.placeOfBirth),

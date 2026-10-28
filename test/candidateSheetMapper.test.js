@@ -92,34 +92,36 @@ describe("candidate -> Sheet row", () => {
         assert.equal(cell(row, "drivingLicence"), "Not Submitted");
         assert.equal(atColumn(row, "S"), "Not Submitted", "DRIVING LICENSE (S)");
         assert.equal(cell(row, "policeReportFm"), "Not Submitted");
-        assert.equal(atColumn(row, "X"), "Not Submitted", "POLICE REP FM (X)");
-        // Whatever documents exist (including police report variants), S and X never change.
+        assert.equal(atColumn(row, "W"), "Not Submitted", "POLICE REP FM (W)");
+        // Whatever documents exist (including police report variants), S and W never change.
         const empty = map({ user: user() });
-        assert.deepEqual([atColumn(empty, "S"), atColumn(empty, "X")], ["Not Submitted", "Not Submitted"]);
+        assert.deepEqual([atColumn(empty, "S"), atColumn(empty, "W")], ["Not Submitted", "Not Submitted"]);
         const everything = map({ user: user(), documents: ["PASSPORT", "NIC", "MEDICAL", "SCAN", "SKILL_VIDEO", "POLICE_SLIP", "VISA_SUBMISSION"].map((t) => doc(t)).concat(["SL_VERIFIED", "ROMANIA", "SL_NORMAL"].map((v) => doc("POLICE_REPORT", "VERIFIED", { documentVariant: v })), [doc("DRIVING_LICENCE"), doc("POLICE_REPORT", "VERIFIED", { documentVariant: "FM" })]) });
-        assert.deepEqual([atColumn(everything, "S"), atColumn(everything, "X")], ["Not Submitted", "Not Submitted"], "no untracked type or variant is read");
+        assert.deepEqual([atColumn(everything, "S"), atColumn(everything, "W")], ["Not Submitted", "Not Submitted"], "no untracked type or variant is read");
         assert.equal(atColumn(everything, "V"), "", "SUBMIT DATE (V) unchanged: the slip has no submitted date");
     });
 
-    test("police reports: O = SL_VERIFIED, W = SL_NORMAL, P = ROMANIA, each with its own submission date", () => {
+    test("police reports: POLICE REP SRI LANKA (O) = SL_VERIFIED, P = ROMANIA; an SL_NORMAL report has no mirror column", () => {
         const documents = [
             doc("POLICE_REPORT", "VERIFIED", { documentVariant: "SL_VERIFIED", receivedDate: new Date("2026-10-07T04:00:00.000Z") }),
             doc("POLICE_REPORT", "REVIEW_REQUIRED", { documentVariant: "SL_NORMAL", receivedDate: new Date("2026-10-05T04:00:00.000Z") }),
         ];
         const row = map({ user: user(), documents });
-        assert.equal(row[14], "2026-10-07", "first POLICE REP SRI LANKA (O) is SL_VERIFIED");
-        assert.equal(row[22], "2026-10-05", "second POLICE REP SRI LANKA (W) is SL_NORMAL");
+        assert.equal(row[14], "2026-10-07", "POLICE REP SRI LANKA (O) is SL_VERIFIED");
         assert.equal(row[15], DOCUMENT_NOT_SUBMITTED, "POLICE REP ROMANIA (P): none yet");
+        assert.ok(!row.includes("2026-10-05"), "the SL_NORMAL report's date appears nowhere");
+        // An SL_NORMAL report alone leaves POLICE REP SRI LANKA "Not Submitted" (never shown as SL Verified).
+        const normalOnly = map({ user: user(), documents: [doc("POLICE_REPORT", "VERIFIED", { documentVariant: "SL_NORMAL", receivedDate: new Date("2026-10-05T04:00:00.000Z") })] });
+        assert.deepEqual(normalOnly, map({ user: user() }));
 
         const withRomania = map({ user: user(), documents: [doc("POLICE_REPORT", "VERIFIED", { documentVariant: "ROMANIA", receivedDate: new Date("2026-10-01T04:00:00.000Z") })] });
         assert.equal(withRomania[15], "2026-10-01");
         assert.equal(withRomania[14], DOCUMENT_NOT_SUBMITTED);
-        assert.equal(withRomania[22], DOCUMENT_NOT_SUBMITTED);
     });
 
     test("a police report without a variant fills none of the variant columns", () => {
         const row = map({ user: user(), documents: [doc("POLICE_REPORT", "VERIFIED")] });
-        assert.deepEqual([row[14], row[15], row[22]], [DOCUMENT_NOT_SUBMITTED, DOCUMENT_NOT_SUBMITTED, DOCUMENT_NOT_SUBMITTED]);
+        assert.deepEqual([row[14], row[15]], [DOCUMENT_NOT_SUBMITTED, DOCUMENT_NOT_SUBMITTED]);
     });
 
     test("every document column: the current document's submission date, otherwise exactly \"Not Submitted\"", () => {
@@ -132,8 +134,7 @@ describe("candidate -> Sheet row", () => {
             ["scan", "R", { documentType: "SCAN" }],
             ["nationalId", "T", { documentType: "NIC" }],
             ["policeReportApplied", "U", { documentType: "POLICE_SLIP" }],
-            ["policeReportSriLankaNormal", "W", { documentType: "POLICE_REPORT", documentVariant: "SL_NORMAL" }],
-            ["videos", "Y", { documentType: "SKILL_VIDEO" }],
+            ["videos", "X", { documentType: "SKILL_VIDEO" }],
         ];
         const empty = map({ user: user() });
         for (const [field, column] of columns) {
@@ -216,8 +217,8 @@ describe("candidate -> Sheet row", () => {
         const expected = {
             C: "SYN000001", D: "TESTSURNAME", E: "TEST GIVEN", F: "2026-10-03", G: "1990-01-01", H: "2030-01-01",
             I: "Job One, Job Two", J: "000000000V", K: "1 Example Road, Example Town", L: "94700000001", M: "94700000002",
-            Z: "EXAMPLE TOWN", AA: "M", AB: "EXAMPLE", AC: "2020-01-01", AD: "5 years, example", AE: "Example note",
-            AM: "ACTIVE", AN: "2026-10-01T10:30:00Z", AO: "2026-10-07T09:15:30Z", B: "0042",
+            Y: "EXAMPLE TOWN", Z: "M", AA: "EXAMPLE", AB: "2020-01-01", AC: "5 years, example", AD: "Example note",
+            AL: "ACTIVE", AM: "2026-10-01T10:30:00Z", AN: "2026-10-07T09:15:30Z", B: "0042",
         };
         for (const [column, value] of Object.entries(expected)) {
             assert.equal(row[SHEET_COLUMNS.find((c) => c.column === column).index], value, column);
@@ -252,13 +253,13 @@ describe("candidate -> Sheet row", () => {
         assert.equal(cell(noIssueDate, "candidateDetailsStatus"), "INCOMPLETE");
     });
 
-    test("VISA SUBMISSION STATUS (AJ) follows the Visa submission stage only", () => {
+    test("VISA SUBMISSION STATUS (AI) follows the Visa submission stage only", () => {
         const before = map({ user: user(), stages: [{ stage: "VISA_APPROVAL", completed: true }] });
         const after = map({ user: user(), stages: [{ stage: "VISA_APPROVAL", completed: true }, { stage: "VISA_SUBMISSION", completed: true }] });
         assert.equal(cell(before, "visaSubmissionStatus"), "INCOMPLETE");
-        assert.equal(atColumn(after, "AJ"), "COMPLETED");
+        assert.equal(atColumn(after, "AI"), "COMPLETED");
         const changed = after.map((value, i) => (value === before[i] ? null : SHEET_COLUMNS[i].column)).filter(Boolean);
-        assert.deepEqual(changed, ["AJ"]);
+        assert.deepEqual(changed, ["AI"]);
     });
 
     test("missing optional values are blank and never shift a column", () => {

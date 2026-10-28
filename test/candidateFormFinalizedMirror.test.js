@@ -43,8 +43,8 @@ const A = {
     whatsappNumber: "+94781000001", contactNumber: "0771234567", dateOfBirth: new Date("2003-06-05"), jobExperience: "3 years", job: "PLUMBER",
     passportIssueDate: new Date("2020-01-15"), passportExpiryDate: new Date("2030-01-14"),
 };
-// The Candidate Form columns of the mirror (everything after the original 41).
-const FORM_FIELDS = SHEET_COLUMNS.slice(41).map((c) => c.field);
+// The Candidate Form columns of the mirror (everything after the first 40: FULL NAME onwards).
+const FORM_FIELDS = SHEET_COLUMNS.slice(SHEET_COLUMNS.findIndex((c) => c.header === "FULL NAME")).map((c) => c.field);
 
 // A married candidate with every answer filled (synthetic).
 const ANSWERS = () => ({
@@ -303,7 +303,7 @@ describe("submitted -> confirmed -> canonical -> mirror", () => {
     });
 
     test("SHEET-FINAL-011 a live Sheet without the new headers stops the reconcile with the existing SCHEMA_INVALID, writing nothing", async () => {
-        const mirror = mirrorSetup({ header: SHEET_HEADERS.slice(0, 41) });
+        const mirror = mirrorSetup({ header: SHEET_HEADERS.slice(0, SHEET_HEADERS.indexOf("FULL NAME")) });
         await submitForm();
         await confirmField("basic.bloodGroup");
         const run = await reconcile(mirror);

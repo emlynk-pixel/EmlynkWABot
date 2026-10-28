@@ -6,7 +6,7 @@
 // number of operator columns; readSheetLayout() reads row 1 and maps every
 // system column to where it is now. Header text stays strict (exact text, no
 // trimming, no case folding). The headers and the canonical order are those of
-// the latest approved "Emlynk Candidate Operational Mirror" (84 columns, A to CF).
+// the latest approved "Emlynk Candidate Operational Mirror" (83 columns, A to CE).
 //
 // Two orders exist, and only one is positional:
 //   - the CANONICAL order below (SHEET_COLUMNS): the order a new Sheet is set
@@ -16,11 +16,9 @@
 // The adapter (googleSheetsAdapter.js) translates between the two at its
 // boundary; nothing else touches live positions.
 //
-// "POLICE REP SRI LANKA" is a required header TWICE (SL Verified, then SL
-// Normal). Two columns with the same text can't be told apart by name, so
-// those two keep their order RELATIVE TO EACH OTHER (the left one is SL
-// Verified); each may still move anywhere else. Every other header must be
-// unique. "DRIVING LICENSE" (the document column, always "Not Submitted": the
+// Every header is unique (a second copy of one makes its column ambiguous and
+// stops the sync). "POLICE REP SRI LANKA" is ONE column: the SL Verified police
+// report. "DRIVING LICENSE" (the document column, always "Not Submitted": the
 // application has no such document type) and "DRIVING LICENCE" (the candidate's
 // Yes / No answer) differ by ONE letter: both are required, exact spellings.
 //
@@ -73,70 +71,69 @@ const COLUMNS = [
     ["T", "NIC COPY", "nationalId", DOC],
     ["U", "POLICE REPORT APPLIED", "policeReportApplied", DOC],
     ["V", "SUBMIT DATE", "submitDate", DERIVED],
-    ["W", "POLICE REP SRI LANKA", "policeReportSriLankaNormal", DOC],
-    ["X", "POLICE REP FM", "policeReportFm", DOC],
-    ["Y", "VIDEO", "videos", DOC],
-    ["Z", "BIRTH PLACE", "placeOfBirth", DB],
-    ["AA", "SEX", "sex", DB],
-    ["AB", "NATIONALITY", "nationality", DB],
-    ["AC", "PASSPORT ISSUE DATE", "passportIssueDate", DB],
-    ["AD", "JOB EXPERIENCE", "jobExperience", DB],
-    ["AE", "REMARK", "candidateDetailsNote", DB],
-    ["AF", "TEST DETAILS STATUS", "testDetailsStatus", STAGE],
-    ["AG", "CANDIDATE DETAILS STATUS", "candidateDetailsStatus", STAGE],
-    ["AH", "DOCUMENT SUBMISSION STATUS", "documentSubmissionStatus", STAGE],
-    ["AI", "IVS INTERVIEW STATUS", "ivsInterviewStatus", STAGE],
-    ["AJ", "VISA SUBMISSION STATUS", "visaSubmissionStatus", STAGE],
-    ["AK", "VISA APPROVAL STATUS", "visaApprovalStatus", STAGE],
-    ["AL", "FINALIZING JOB STATUS", "finalizingJobStatus", STAGE],
-    ["AM", "ACTIVE STATUS", "recordStatus", SYSTEM],
-    ["AN", "REGISTER DATE", "registeredAt", SYSTEM],
-    ["AO", "LAST MIRRORED AT", "lastMirroredAt", SYSTEM],
+    ["W", "POLICE REP FM", "policeReportFm", DOC],
+    ["X", "VIDEO", "videos", DOC],
+    ["Y", "BIRTH PLACE", "placeOfBirth", DB],
+    ["Z", "SEX", "sex", DB],
+    ["AA", "NATIONALITY", "nationality", DB],
+    ["AB", "PASSPORT ISSUE DATE", "passportIssueDate", DB],
+    ["AC", "JOB EXPERIENCE", "jobExperience", DB],
+    ["AD", "REMARK", "candidateDetailsNote", DB],
+    ["AE", "TEST DETAILS STATUS", "testDetailsStatus", STAGE],
+    ["AF", "CANDIDATE DETAILS STATUS", "candidateDetailsStatus", STAGE],
+    ["AG", "DOCUMENT SUBMISSION STATUS", "documentSubmissionStatus", STAGE],
+    ["AH", "IVS INTERVIEW STATUS", "ivsInterviewStatus", STAGE],
+    ["AI", "VISA SUBMISSION STATUS", "visaSubmissionStatus", STAGE],
+    ["AJ", "VISA APPROVAL STATUS", "visaApprovalStatus", STAGE],
+    ["AK", "FINALIZING JOB STATUS", "finalizingJobStatus", STAGE],
+    ["AL", "ACTIVE STATUS", "recordStatus", SYSTEM],
+    ["AM", "REGISTER DATE", "registeredAt", SYSTEM],
+    ["AN", "LAST MIRRORED AT", "lastMirroredAt", SYSTEM],
     // Candidate Form answers, only once an Admin / Manager confirmed them into the record
     // (candidate_additional_details; candidateFormFieldConfirmService.js).
-    ["AP", "FULL NAME", "nameAsInPassport", DB],
-    ["AQ", "CIVIL STATUS / MARITAL STATUS", "civilStatus", DB],
-    ["AR", "BLOOD GROUP", "bloodGroup", DB],
-    ["AS", "HEIGHT", "height", DB],
-    ["AT", "WEIGHT (KG)", "weightKg", DB],
-    ["AU", "DRIVING LICENCE", "hasDrivingLicence", DB],
-    ["AV", "CAN READ DRAWINGS", "canReadDrawings", DB],
-    ["AW", "TEAM LEADING SKILLS", "teamLeadingSkills", DB],
-    ["AX", "OTHER LANGUAGES", "otherLanguages", DB],
-    ["AY", "EMAIL", "email", DB],
-    ["AZ", "CITY", "city", DB],
-    ["BA", "DISTRICT", "district", DB],
-    ["BB", "DS DIVISION", "dsDivision", DB],
-    ["BC", "GN DIVISION", "gnDivision", DB],
-    ["BD", "CITY IN ROMANIA", "cityInRomania", DB],
-    ["BE", "DISTANCE TO BUCHAREST (KM)", "distanceToBucharestKm", DERIVED],
-    ["BF", "OTHER JOB CATEGORY", "otherJobCategory", DB],
-    ["BG", "OTHER SKILLS 1", "otherSkills1", DB],
-    ["BH", "OTHER SKILLS 2", "otherSkills2", DB],
-    ["BI", "ENGLISH KNOWLEDGE", "englishKnowledge", DB],
-    ["BJ", "SHIRT SIZE", "shirtSize", DB],
-    ["BK", "WAIST SIZE", "waistSize", DB],
-    ["BL", "SHOE SIZE", "shoeSize", DB],
-    ["BM", "FATHER NAME", "fatherName", DB],
-    ["BN", "FATHER PASSPORT NUMBER", "fatherPassportNumber", DB],
-    ["BO", "FATHER BIRTHDAY", "fatherBirthday", DB],
-    ["BP", "FATHER ALIVE", "fatherAlive", DB],
-    ["BQ", "MOTHER NAME", "motherName", DB],
-    ["BR", "MOTHER PASSPORT NUMBER", "motherPassportNumber", DB],
-    ["BS", "MOTHER BIRTHDAY", "motherBirthday", DB],
-    ["BT", "MOTHER ALIVE", "motherAlive", DB],
-    ["BU", "SPOUSE NAME", "spouseName", DB],
-    ["BV", "SPOUSE PASSPORT NUMBER", "spousePassportNumber", DB],
-    ["BW", "SPOUSE BIRTHDAY", "spouseBirthday", DB],
-    ["BX", "CHILD 1 NAME", "child1Name", DB],
-    ["BY", "CHILD 2 NAME", "child2Name", DB],
-    ["BZ", "CHILD 3 NAME", "child3Name", DB],
-    ["CA", "GUARDIAN NAME", "guardianName", DB],
-    ["CB", "GUARDIAN RELATIONSHIP", "guardianRelationship", DB],
-    ["CC", "GUARDIAN NIC", "guardianNic", DB],
-    ["CD", "GUARDIAN BIRTHDAY", "guardianBirthday", DB],
-    ["CE", "GUARDIAN PHONE", "guardianPhone", DB],
-    ["CF", "GUARDIAN ADDRESS", "guardianAddress", DB],
+    ["AO", "FULL NAME", "nameAsInPassport", DB],
+    ["AP", "CIVIL STATUS / MARITAL STATUS", "civilStatus", DB],
+    ["AQ", "BLOOD GROUP", "bloodGroup", DB],
+    ["AR", "HEIGHT", "height", DB],
+    ["AS", "WEIGHT (KG)", "weightKg", DB],
+    ["AT", "DRIVING LICENCE", "hasDrivingLicence", DB],
+    ["AU", "CAN READ DRAWINGS", "canReadDrawings", DB],
+    ["AV", "TEAM LEADING SKILLS", "teamLeadingSkills", DB],
+    ["AW", "OTHER LANGUAGES", "otherLanguages", DB],
+    ["AX", "EMAIL", "email", DB],
+    ["AY", "CITY", "city", DB],
+    ["AZ", "DISTRICT", "district", DB],
+    ["BA", "DS DIVISION", "dsDivision", DB],
+    ["BB", "GN DIVISION", "gnDivision", DB],
+    ["BC", "CITY IN ROMANIA", "cityInRomania", DB],
+    ["BD", "DISTANCE TO BUCHAREST (KM)", "distanceToBucharestKm", DERIVED],
+    ["BE", "OTHER JOB CATEGORY", "otherJobCategory", DB],
+    ["BF", "OTHER SKILLS 1", "otherSkills1", DB],
+    ["BG", "OTHER SKILLS 2", "otherSkills2", DB],
+    ["BH", "ENGLISH KNOWLEDGE", "englishKnowledge", DB],
+    ["BI", "SHIRT SIZE", "shirtSize", DB],
+    ["BJ", "WAIST SIZE", "waistSize", DB],
+    ["BK", "SHOE SIZE", "shoeSize", DB],
+    ["BL", "FATHER NAME", "fatherName", DB],
+    ["BM", "FATHER PASSPORT NUMBER", "fatherPassportNumber", DB],
+    ["BN", "FATHER BIRTHDAY", "fatherBirthday", DB],
+    ["BO", "FATHER ALIVE", "fatherAlive", DB],
+    ["BP", "MOTHER NAME", "motherName", DB],
+    ["BQ", "MOTHER PASSPORT NUMBER", "motherPassportNumber", DB],
+    ["BR", "MOTHER BIRTHDAY", "motherBirthday", DB],
+    ["BS", "MOTHER ALIVE", "motherAlive", DB],
+    ["BT", "SPOUSE NAME", "spouseName", DB],
+    ["BU", "SPOUSE PASSPORT NUMBER", "spousePassportNumber", DB],
+    ["BV", "SPOUSE BIRTHDAY", "spouseBirthday", DB],
+    ["BW", "CHILD 1 NAME", "child1Name", DB],
+    ["BX", "CHILD 2 NAME", "child2Name", DB],
+    ["BY", "CHILD 3 NAME", "child3Name", DB],
+    ["BZ", "GUARDIAN NAME", "guardianName", DB],
+    ["CA", "GUARDIAN RELATIONSHIP", "guardianRelationship", DB],
+    ["CB", "GUARDIAN NIC", "guardianNic", DB],
+    ["CC", "GUARDIAN BIRTHDAY", "guardianBirthday", DB],
+    ["CD", "GUARDIAN PHONE", "guardianPhone", DB],
+    ["CE", "GUARDIAN ADDRESS", "guardianAddress", DB],
 ];
 
 // 0 -> "A", 25 -> "Z", 26 -> "AA", 52 -> "BA", 701 -> "ZZ", 702 -> "AAA".
@@ -154,10 +151,10 @@ export function columnLetter(index) {
 
 export const SHEET_COLUMNS = Object.freeze(COLUMNS.map(([column, header, field, kind], index) => Object.freeze({ index, column, header, field, kind })));
 
-// The system columns: 83 business columns and the technical identity. The
+// The system columns: 82 business columns and the technical identity. The
 // live Sheet may have more columns (operator columns), never fewer.
-export const SHEET_COLUMN_COUNT = 84;
-export const SHEET_BUSINESS_COLUMN_COUNT = 83;
+export const SHEET_COLUMN_COUNT = 83;
+export const SHEET_BUSINESS_COLUMN_COUNT = 82;
 export const SHEET_HEADER_ROW = 1;
 export const SHEET_FIRST_DATA_ROW = 2;
 
@@ -177,10 +174,8 @@ export function fieldIndex(field) {
     return index;
 }
 
-// header text -> the canonical indexes that carry it, in canonical order
-// (one, except POLICE REP SRI LANKA: two).
-const CANONICAL_BY_HEADER = new Map();
-for (const c of SHEET_COLUMNS) CANONICAL_BY_HEADER.set(c.header, [...(CANONICAL_BY_HEADER.get(c.header) ?? []), c.index]);
+// header text -> its canonical index (every header is unique).
+const CANONICAL_BY_HEADER = new Map(SHEET_COLUMNS.map((c) => [c.header, c.index]));
 
 // Fail at load time, not at the first write, if the table above is ever
 // edited inconsistently (wrong count, a letter out of place, a repeated field
@@ -194,9 +189,7 @@ for (const c of SHEET_COLUMNS) CANONICAL_BY_HEADER.set(c.header, [...(CANONICAL_
     if (new Set(SHEET_COLUMNS.map((c) => c.field)).size !== SHEET_COLUMNS.length) problems.push("field names must be unique");
     if (SYSTEM_CANDIDATE_ID_INDEX === -1) problems.push("the system candidate ID column is missing");
     if (!SHEET_COLUMNS.every((c) => Object.values(MIRROR_FIELD_KIND).includes(c.kind))) problems.push("every column needs a known kind");
-    // Only POLICE REP SRI LANKA may repeat (two columns, told apart by their relative order).
-    const repeated = [...CANONICAL_BY_HEADER].filter(([, indexes]) => indexes.length > 1).map(([header]) => header);
-    if (repeated.join() !== "POLICE REP SRI LANKA") problems.push(`unexpected repeated headers: ${repeated.join(", ")}`);
+    if (CANONICAL_BY_HEADER.size !== SHEET_COLUMNS.length) problems.push("header text must be unique");
     if (problems.length) throw new Error(`Invalid Google Sheet schema: ${problems.join("; ")}`);
 })();
 
@@ -209,10 +202,9 @@ const cellText = (value) => (value === undefined || value === null ? "" : String
 //
 // Returns { valid, problems, layout }:
 //   problems: [{ problem, header, expected, found, columns }]
-//     MISSING    a system header appears fewer times than required (absent,
-//                or renamed: header text must match exactly)
-//     DUPLICATE  a system header appears more times than required, so its
-//                column would be ambiguous
+//     MISSING    a system header is absent (or renamed: header text must match exactly)
+//     DUPLICATE  a system header appears more than once, so its column would
+//                be ambiguous
 //     `header` is our own expected header text, `columns` the live letters
 //     where it was found; the Sheet's other header text is never echoed.
 //   layout (only when valid): frozen
@@ -235,20 +227,13 @@ export function readSheetLayout(headerRow) {
 
     const problems = [];
     const positions = new Array(SHEET_COLUMN_COUNT);
-    for (const [header, canonical] of CANONICAL_BY_HEADER) {
+    for (const [header, canonicalIndex] of CANONICAL_BY_HEADER) {
         const live = found.get(header) ?? [];
-        if (live.length !== canonical.length) {
-            problems.push({
-                problem: live.length < canonical.length ? "MISSING" : "DUPLICATE",
-                header,
-                expected: canonical.length,
-                found: live.length,
-                columns: live.map(columnLetter),
-            });
+        if (live.length !== 1) {
+            problems.push({ problem: live.length ? "DUPLICATE" : "MISSING", header, expected: 1, found: live.length, columns: live.map(columnLetter) });
             continue;
         }
-        // Left to right: a repeated header's columns keep their relative order.
-        canonical.forEach((canonicalIndex, k) => { positions[canonicalIndex] = live[k]; });
+        positions[canonicalIndex] = live[0];
     }
     if (problems.length) return { valid: false, problems, layout: null };
 

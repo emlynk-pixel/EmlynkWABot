@@ -38,7 +38,7 @@ The candidate table's column names are historical; the **stored meaning** is wha
 
 No column was renamed in the database.
 
-## 3. Database → Operational Mirror (approved, 84 columns)
+## 3. Database → Operational Mirror (approved, 83 columns, A–CE)
 
 Kinds: **DB** = DATABASE_FIELD, **DERIVED** = DERIVED_FIELD, **DOC** = DOCUMENT_STATUS, **STAGE** = STAGE_STATUS, **SYSTEM** = SYSTEM_GENERATED. Columns are found by header text, so the live order does not matter.
 
@@ -58,7 +58,7 @@ Kinds: **DB** = DATABASE_FIELD, **DERIVED** = DERIVED_FIELD, **DOC** = DOCUMENT_
 | L | WHATSAPP NUMBER | WHATSAPP NUM | `whatsapp_number` | DB |
 | M | CONTACT NUMBER | CONTACT NUM | `contact_number` | DB |
 | N | PASSPORT | PASSPORT COPY | current PASSPORT document | DOC |
-| O | POLICE REP SRI LANKA (1st) | POLICE REP SRI LANKA (1st) | POLICE_REPORT SL_VERIFIED | DOC |
+| O | POLICE REP SRI LANKA | POLICE REP SRI LANKA (1st) | POLICE_REPORT SL_VERIFIED | DOC |
 | P | POLICE REP ROMANIA | POLICE REP ROMANIA | POLICE_REPORT ROMANIA | DOC |
 | Q | MEDICAL | MEDICAL | MEDICAL | DOC |
 | R | SCAN | SCAN | SCAN | DOC |
@@ -66,27 +66,27 @@ Kinds: **DB** = DATABASE_FIELD, **DERIVED** = DERIVED_FIELD, **DOC** = DOCUMENT_
 | T | NIC COPY | NATIONAL ID | NIC document | DOC |
 | U | POLICE REPORT APPLIED | POLICE REPORT APPLIED | POLICE_SLIP | DOC |
 | V | SUBMIT DATE | SUBMIT DATE | police slip `police_submitted_date` | DERIVED |
-| W | POLICE REP SRI LANKA (2nd) | POLICE REP SRI LANKA (2nd) | POLICE_REPORT SL_NORMAL | DOC |
-| X | POLICE REP FM | POLICE REP FM | none (always `Not Submitted`) | DOC |
-| Y | VIDEO | VIDEOS | SKILL_VIDEO | DOC |
-| Z | BIRTH PLACE | PLACE OF BIRTH | `place_of_birth` | DB |
-| AA | SEX | SEX | `sex` | DB |
-| AB | NATIONALITY | NATIONALITY | `nationality` | DB |
-| AC | PASSPORT ISSUE DATE | PASSPORT ISSUE DATE | `passport_issue_date` | DB |
-| AD | JOB EXPERIENCE | JOB EXPERIENCE | `job_experience` | DB |
-| AE | REMARK | CANDIDATE DETAILS NOTE | CANDIDATE_DETAILS `notes` | DB |
-| AF–AL | TEST DETAILS / CANDIDATE DETAILS / DOCUMENT SUBMISSION / IVS INTERVIEW / VISA SUBMISSION / VISA APPROVAL / FINALIZING JOB STATUS | same | stage completion | STAGE |
-| AM | ACTIVE STATUS | RECORD STATUS | mirror record state | SYSTEM |
-| AN | REGISTER DATE | REGISTERED AT | `created_date` | SYSTEM |
-| AO | LAST MIRRORED AT | LAST MIRRORED AT | sync time | SYSTEM |
-| AP | FULL NAME | NAME AS IN PASSPORT | `name_as_in_passport` | DB |
-| AQ | CIVIL STATUS / MARITAL STATUS | CIVIL STATUS | `marital_status` | DB |
-| AR–CF | BLOOD GROUP … GUARDIAN ADDRESS (43 columns) | unchanged | additional details | DB (DISTANCE TO BUCHAREST (KM): DERIVED) |
+| — | *(removed)* | POLICE REP SRI LANKA (2nd, SL_NORMAL) | the duplicate column was deleted; SL_NORMAL reports have no mirror column | — |
+| W | POLICE REP FM | POLICE REP FM | none (always `Not Submitted`) | DOC |
+| X | VIDEO | VIDEOS | SKILL_VIDEO | DOC |
+| Y | BIRTH PLACE | PLACE OF BIRTH | `place_of_birth` | DB |
+| Z | SEX | SEX | `sex` | DB |
+| AA | NATIONALITY | NATIONALITY | `nationality` | DB |
+| AB | PASSPORT ISSUE DATE | PASSPORT ISSUE DATE | `passport_issue_date` | DB |
+| AC | JOB EXPERIENCE | JOB EXPERIENCE | `job_experience` | DB |
+| AD | REMARK | CANDIDATE DETAILS NOTE | CANDIDATE_DETAILS `notes` | DB |
+| AE–AK | TEST DETAILS / CANDIDATE DETAILS / DOCUMENT SUBMISSION / IVS INTERVIEW / VISA SUBMISSION / VISA APPROVAL / FINALIZING JOB STATUS | same | stage completion | STAGE |
+| AL | ACTIVE STATUS | RECORD STATUS | mirror record state | SYSTEM |
+| AM | REGISTER DATE | REGISTERED AT | `created_date` | SYSTEM |
+| AN | LAST MIRRORED AT | LAST MIRRORED AT | sync time | SYSTEM |
+| AO | FULL NAME | NAME AS IN PASSPORT | `name_as_in_passport` | DB |
+| AP | CIVIL STATUS / MARITAL STATUS | CIVIL STATUS | `marital_status` | DB |
+| AQ–CE | BLOOD GROUP … GUARDIAN ADDRESS (43 columns) | unchanged | additional details | DB (DISTANCE TO BUCHAREST (KM): DERIVED) |
 
 ⚠ Previously, the column headed `OTHER NAME` showed the surname and `FIRST NAME` showed the given names. Under the approved headers, `SURNAME` shows the surname and `OTHER NAME` shows the given names.
 
-**Duplicate and near-duplicate headers.**
-- `POLICE REP SRI LANKA` appears twice. The two columns are told apart by their order relative to each other: the left one is SL Verified, the right one SL Normal. A third copy, or a missing one, stops the sync.
+**Unique and near-duplicate headers.**
+- Every header is unique. `POLICE REP SRI LANKA` is **one** column, showing the SL Verified police report. A second copy (like the removed duplicate) makes the column ambiguous and stops the sync with `SCHEMA_INVALID`; so does a missing one.
 - `DRIVING LICENSE` (document status) and `DRIVING LICENCE` (Yes / No answer) are two exact, distinct required headers. If either one is renamed, the sync stops.
 
 ## 4. Deployment: live Sheet header changes (required)
@@ -112,6 +112,8 @@ Row 1 of the live Operational Mirror must carry the approved headers **when the 
 | REGISTERED AT | REGISTER DATE |
 | NAME AS IN PASSPORT | FULL NAME |
 | CIVIL STATUS | CIVIL STATUS / MARITAL STATUS |
+
+**Delete** the second `POLICE REP SRI LANKA` column (the SL Normal one, after `SUBMIT DATE`), keeping the first one. Done on the live Sheet on 2026-10-28.
 
 `OTHER NAME` keeps its text. Column order may stay as it is: columns are found by header. The first reconcile after the change rewrites every row's name cells from the database. Then run **Test Connection** (ADMIN); it must report "schema valid".
 
