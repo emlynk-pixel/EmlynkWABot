@@ -959,12 +959,27 @@ export async function getCandidate({ db, passportId }) {
 const isUniqueViolation = (error) => error?.code === "P2002";
 const uniqueTarget = (error) => [].concat(error?.meta?.target ?? []).join(",");
 
-// Next free business reference: one more than the highest numeric unique ID,
-// four digits at least (0001, 0002, …), like the existing records.
+// Next free business reference, four digits at least (0001, 0002, …), like the
+// existing records. Drawn from candidate_unique_id_seq (migration
+// 20261105120000_candidate_unique_id_sequence): nextval() is atomic, so two
+// registrations at the same moment never get the same number, and no candidate
+// row is read. A number drawn by a registration that then fails is not reused.
+export const formatUniqueId = (value) => String(value).padStart(4, "0");
+
 async function nextUniqueId(db) {
-    const rows = await db.candidate.findMany({ select: { uniqueId: true } });
-    const highest = rows.reduce((max, { uniqueId }) => (/^\d+$/.test(uniqueId) ? Math.max(max, Number(uniqueId)) : max), 0);
-    return String(highest + 1).padStart(4, "0");
+    const [{ value }] = await db.$queryRaw`SELECT nextval('candidate_unique_id_seq')::text AS value`;
+    return formatUniqueId(value);
+}
+
+// Only when a drawn number is already taken (a numeric unique ID written
+// outside this allocator): move the sequence past the highest numeric unique ID.
+// Never moves it back (GREATEST with its own next value), so concurrent calls are safe.
+export async function catchUpUniqueIdSequence(db) {
+    await db.$queryRaw`
+        SELECT setval('candidate_unique_id_seq', GREATEST(
+            nextval('candidate_unique_id_seq'),
+            COALESCE((SELECT max("unique_id"::BIGINT) FROM "candidate" WHERE "unique_id" ~ '^[0-9]{1,18}$'), 0)
+        ))`;
 }
 
 async function assertNicFree(db, nic, exceptPassportId) {
@@ -1058,7 +1073,8 @@ export async function createCandidate({ db, values, actor = null }) {
     await assertWhatsappFree(db, values.whatsappNumber);
 
     const { comment, ...details } = values;
-    // A parallel registration can take the same unique ID: try the next one.
+    // Each attempt draws a new number from the sequence. A collision is possible
+    // only with a unique ID written outside it; then the sequence catches up first.
     for (let attempt = 0; attempt < 5; attempt++) {
         const uniqueId = await nextUniqueId(db);
         try {
@@ -1084,7 +1100,10 @@ export async function createCandidate({ db, values, actor = null }) {
         } catch (error) {
             if (!isUniqueViolation(error)) throw error;
             const target = uniqueTarget(error);
-            if (/unique_id|uniqueId/.test(target)) continue;
+            if (/unique_id|uniqueId/.test(target)) {
+                await catchUpUniqueIdSequence(db);
+                continue;
+            }
             if (/nic/.test(target)) throw new CandidateError(409, "NIC_EXISTS", "Another candidate is already registered with this NIC.");
             if (/whatsapp/.test(target)) throw new CandidateError(409, "WHATSAPP_EXISTS", "Another candidate is already registered with this WhatsApp number.");
             throw new CandidateError(409, "CANDIDATE_EXISTS", "A candidate with this passport ID is already registered.");

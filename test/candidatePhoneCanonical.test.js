@@ -69,7 +69,7 @@ describe("database", () => {
     });
     after(async () => database?.close());
     beforeEach(async () => {
-        await pg.exec(`DELETE FROM "candidate_import"; DELETE FROM "candidate_verification"; DELETE FROM "candidate_additional_details"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";`);
+        await pg.exec(`ALTER SEQUENCE "candidate_unique_id_seq" RESTART WITH 1; DELETE FROM "candidate_import"; DELETE FROM "candidate_verification"; DELETE FROM "candidate_additional_details"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";`);
     });
 
     // An older record, stored in the previous digits-only form (bypassing the application).

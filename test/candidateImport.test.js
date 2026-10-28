@@ -53,6 +53,7 @@ after(async () => {
 });
 beforeEach(async () => {
     await pg.exec(`
+        ALTER SEQUENCE "candidate_unique_id_seq" RESTART WITH 1;
         DELETE FROM "candidate_import"; DELETE FROM "candidate_verification"; DELETE FROM "candidate_additional_details";
         DELETE FROM "candidate_stages"; DELETE FROM "candidate"; DELETE FROM "sheet_sync_queue"; DELETE FROM "sheet_sync_runs";
     `);
@@ -394,12 +395,31 @@ function withFailingCreate(passport, errorShape, { times = Infinity } = {}) {
 // ---------------------------------------------------------------- unique IDs
 
 describe("bulk unique-ID allocation", () => {
-    test("42. one max() for a whole chunk: the next numbers after the highest numeric ID, zero-padded", async () => {
-        await prisma.candidate.createMany({ data: [
-            { passportId: "SYNA0001", uniqueId: "0007", firstName: "A" }, { passportId: "SYNA0002", uniqueId: "LEGACY-X", firstName: "B" },
-        ] });
+    test("42. a whole chunk's numbers in ONE query from the shared sequence, zero-padded, no candidate row read", async () => {
         const ids = await prisma.$transaction((tx) => allocateUniqueIds(tx, 3));
-        assert.deepEqual(ids, ["0008", "0009", "0010"]);
+        assert.deepEqual(ids, ["0001", "0002", "0003"]);
+        assert.deepEqual(await prisma.$transaction((tx) => allocateUniqueIds(tx, 2)), ["0004", "0005"], "never the same number twice");
+    });
+
+    test("an ID written outside the sequence: the chunk collides once, the sequence catches up, the retry succeeds", async () => {
+        await prisma.candidate.createMany({ data: [
+            { passportId: "SYNA0001", uniqueId: "0002", firstName: "A" }, { passportId: "SYNA0002", uniqueId: "LEGACY-X", firstName: "B" },
+        ] });
+        const { chunks } = await importRows(renumber([legacyRow(1), legacyRow(2)]));
+        assert.equal(chunks[0].status, "COMMITTED");
+        assert.equal(chunks[0].counts.created, 2);
+        const imported = (await prisma.candidate.findMany({ where: { passportId: { in: [passportOf(1), passportOf(2)] } }, select: { uniqueId: true } })).map((c) => c.uniqueId).sort();
+        assert.ok(imported.every((id) => Number(id) > 2), `imported after the outside ID: ${imported}`);
+        assert.equal(new Set((await prisma.candidate.findMany({ select: { uniqueId: true } })).map((c) => c.uniqueId)).size, 4, "no duplicate IDs");
+    });
+
+    test("concurrent single registrations and a bulk import never draw the same ID", async () => {
+        const regs = [21, 22, 23, 24, 25].map((n) => register(n));
+        const imported = importRows(renumber([legacyRow(31), legacyRow(32), legacyRow(33)]));
+        await Promise.all([...regs, imported]);
+        const ids = (await prisma.candidate.findMany({ select: { uniqueId: true } })).map((c) => c.uniqueId);
+        assert.equal(ids.length, 8);
+        assert.equal(new Set(ids).size, 8, "every unique ID distinct");
     });
 
     test("normal registration and bulk import share the numbering without a collision", async () => {

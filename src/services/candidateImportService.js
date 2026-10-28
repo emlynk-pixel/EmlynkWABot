@@ -24,6 +24,7 @@ import { maskIdentifier, normalizePassport } from "./candidateImportNormalizers.
 import { ROW_ACTION, findSourceFlags, loadImportSnapshot, planRows, summarizePlans } from "./candidateImportClassifier.js";
 import { activeJobTypeNames } from "./jobTypeCatalog.js";
 import { setAuditActor } from "./auditActor.js";
+import { catchUpUniqueIdSequence, formatUniqueId } from "./candidateService.js";
 import { RUN_KIND, RUN_TRIGGER } from "./sheetSyncStore.js";
 import { requestSheetSyncRun } from "./sheetSyncStatusService.js";
 
@@ -35,8 +36,6 @@ const CHUNK_TRANSACTION = Object.freeze({ timeout: 30_000, maxWait: 10_000 });
 const MAX_CELL_LENGTH = 4000;
 const MAX_HEADERS = 400;
 const MAX_ROW_KEYS = 200;
-// pg_advisory_xact_lock key: bulk unique-ID allocation, one import transaction at a time.
-const UNIQUE_ID_LOCK = 724_310_001;
 const PASSPORT_HEADER = SUPPORTED_SOURCE_COLUMNS.find((c) => c.field === "passport").header;
 
 export const IMPORT_STATUS = Object.freeze({
@@ -185,17 +184,15 @@ export async function previewImport({ db, actor, fileName, headers, rows, now = 
 
 // ---------------------------------------------------------------- unique IDs
 
-// Bulk unique IDs: one advisory lock and ONE max() query for a whole chunk, instead of reading every
-// candidate once per new candidate (candidateService.js nextUniqueId, which single registration
-// keeps using). Same numbering: the highest numeric unique_id + 1, zero-padded to 4. A concurrent
-// single registration can still take one of these numbers first: the insert then fails on the
-// unique index and the chunk is retried with fresh numbers (commitChunk).
+// Bulk unique IDs from the SAME sequence single registration uses (candidate_unique_id_seq, migration
+// 20261105120000; candidateService.js nextUniqueId): one query draws a whole chunk's numbers, with no
+// candidate row read. nextval() is atomic, so a concurrent registration or import never draws the
+// same number. Same format: zero-padded to 4. Only a number taken OUTSIDE the sequence can collide;
+// commitChunk then moves the sequence past it (catchUpUniqueIdSequence) and retries the chunk.
 export async function allocateUniqueIds(tx, count) {
     if (count <= 0) return [];
-    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${UNIQUE_ID_LOCK})`);
-    const [{ highest }] = await tx.$queryRaw`SELECT COALESCE(MAX(CAST("unique_id" AS BIGINT)), 0)::text AS "highest" FROM "candidate" WHERE "unique_id" ~ '^[0-9]{1,15}$'`;
-    const start = Number(highest) + 1;
-    return Array.from({ length: count }, (_, i) => String(start + i).padStart(4, "0"));
+    const rows = await tx.$queryRaw`SELECT nextval('candidate_unique_id_seq')::text AS "value" FROM generate_series(1, ${count}::int)`;
+    return rows.map((row) => BigInt(row.value)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).map(formatUniqueId);
 }
 
 // ---------------------------------------------------------------- writes
@@ -352,7 +349,11 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
             }, CHUNK_TRANSACTION);
             return present(chunkIndex, result, canonical, result.alreadyCommitted ? { alreadyCommitted: true } : {});
         } catch (error) {
-            if (failureCode(error) === "UNIQUE_ID_COLLISION" && attempt < maxAttempts) continue;
+            if (failureCode(error) === "UNIQUE_ID_COLLISION" && attempt < maxAttempts) {
+                // A number written outside the sequence: move the sequence past it, then retry.
+                await catchUpUniqueIdSequence(db);
+                continue;
+            }
             break;
         }
     }

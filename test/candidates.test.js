@@ -171,6 +171,20 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
                 .map((c) => ({ ...c, admin: state.admins.find((a) => a.adminId === c.adminId) ?? null })),
         },
         $transaction: async (fn) => fn(db),
+        // candidate_unique_id_seq (migration 20261105120000): it starts after the highest numeric
+        // unique ID present when it is created, like the migration's setval.
+        $queryRaw: async (strings) => {
+            const sql = strings.join("?");
+            const highest = () => state.users.reduce((max, { uniqueId }) => (/^\d+$/.test(uniqueId) ? Math.max(max, Number(uniqueId)) : max), 0);
+            state.sequence ??= highest();
+            if (/setval/.test(sql)) { state.sequence = Math.max(state.sequence + 1, highest()); return [{ setval: state.sequence }]; }
+            if (/nextval/.test(sql)) return [{ value: String(++state.sequence) }];
+            if (/set_config/.test(sql)) return []; // the audit actor: nothing to emulate here
+            // Not emulated (e.g. the list's consolidated relation query): fail, so the code takes its
+            // Prisma fallback, as it did when this fake had no $queryRaw.
+            throw new Error(`raw query not emulated: ${sql.slice(0, 40)}`);
+
+        },
     };
     return db;
 }
