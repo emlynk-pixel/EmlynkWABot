@@ -12,7 +12,9 @@ import { noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { CANDIDATE_PASSPORT_PATTERN, parseCandidatePassportNumber } from "../src/utils/passportId.js";
-import { parseCandidateBody } from "../src/services/candidateService.js";
+import { listCandidates, parseCandidateBody } from "../src/services/candidateService.js";
+import { pendingConflictsByCandidate } from "../src/services/candidateFormSubmissionService.js";
+import { CONFIRM_SELECT } from "../src/services/candidateFormFieldConfirmService.js";
 import { parseAllocationListQuery } from "../src/services/workAllocationService.js";
 
 const ROLES = ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"];
@@ -40,19 +42,19 @@ beforeEach(async () => {
     `);
 });
 
-function app() {
+function app(db = prisma) {
     const server = express();
     server.use(express.json());
     const requireAdmin = async (req, res, next) => {
         req.user = await prisma.user.findUnique({ where: { adminId: req.headers["x-test-user"] }, select: { adminId: true, authUserId: true, email: true, name: true, role: true, status: true } });
         next();
     };
-    server.use("/api/admin", createAdminRouter({ db: prisma, bucket: {}, requireAdmin, apiLimiter: noRateLimit }));
+    server.use("/api/admin", createAdminRouter({ db, bucket: {}, requireAdmin, apiLimiter: noRateLimit }));
     server.use(errorHandler);
     return server;
 }
-async function api(who, method, path, body) {
-    const listener = await new Promise((resolve) => { const s = app().listen(0, "127.0.0.1", () => resolve(s)); });
+async function api(who, method, path, body, db = prisma) {
+    const listener = await new Promise((resolve) => { const s = app(db).listen(0, "127.0.0.1", () => resolve(s)); });
     try {
         const res = await fetch(`http://127.0.0.1:${listener.address().port}/api/admin${path}`, {
             method, headers: { "x-test-user": who.adminId, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) }, body: body === undefined ? undefined : JSON.stringify(body),
@@ -141,6 +143,150 @@ describe("Candidate Form conflict indicator (GET /candidates formConflicts)", ()
         await submit("N2000002", { birthPlace: "MATARA" });
         const items = (await api(USERS.ADMIN, "GET", "/candidates")).body.items;
         assert.deepEqual(Object.fromEntries(items.map((item) => [item.passportId, item.formConflicts])), { N1000001: [], N2000002: ["basic.birthPlace"] });
+    });
+});
+
+// ---------------------------------------------------------------- one candidate read per list request
+
+// The real Prisma client, with the candidate table's findMany calls recorded.
+function countingCandidateReads() {
+    const reads = [];
+    const db = new Proxy(prisma, {
+        get(target, key) {
+            if (key === "candidate") {
+                return new Proxy(target.candidate, {
+                    get(model, method) {
+                        if (method === "findMany") return (args) => { reads.push(args); return model.findMany(args); };
+                        const value = Reflect.get(model, method);
+                        return typeof value === "function" ? value.bind(model) : value;
+                    },
+                });
+            }
+            const value = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+        },
+    });
+    return { db, reads };
+}
+
+// A page mixing every case the conflict rule distinguishes.
+async function seedConflictCases() {
+    await prisma.candidate.createMany({ data: [
+        A, // real changes to record and Additional details fields, one already reviewed
+        { passportId: "N2000002", uniqueId: "8002", firstName: "KAMAL", otherName: "PERERA", placeOfBirth: "GALLE", contactNumber: "0771111111", sex: "M" },
+        { passportId: "N3000003", uniqueId: "8003", firstName: "NIMAL", otherName: "SILVA" }, // no submission
+        { passportId: "N4000004", uniqueId: "8004", firstName: "RUWAN", otherName: "FERNANDO", address: "5 LAKE ROAD", dateOfBirth: new Date("1988-01-02") },
+    ] });
+    await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, shoeSize: "8" } });
+    await submit(A.passportId, { birthPlace: "KANDY", address: "1 NEW ROAD", shoeSize: "9", contactNumber: undefined, alternativePhone: "0779999999" });
+    await prisma.candidateFormFieldReview.create({ data: { passportId: A.passportId, fieldKey: "contact.address", status: "REJECTED", submittedValue: "1 NEW ROAD", currentValue: "12 GALLE ROAD", reviewedById: USERS.ADMIN.adminId } });
+    // Only normalised equivalents (case, spaces, phone format, N/A): no conflict.
+    await submit("N2000002", { birthPlace: " galle ", alternativePhone: "+94771111111", otherNames: "N/A", sex: "MALE" });
+    // Sex and date of birth: real changes in two fields only the conflict check (not the list) reads.
+    await submit("N4000004", { sex: "FEMALE", birthDate: new Date("1988-02-01"), address: "5 lake road" });
+}
+const EXPECTED_CONFLICTS = { N1000001: ["basic.birthPlace", "contact.alternativePhone", "measurements.shoeSize"], N2000002: [], N3000003: [], N4000004: ["basic.birthDate", "basic.sex"] };
+
+describe("GET /candidates reads the candidates once (conflicts reuse the list rows)", () => {
+    test("PERF-002: one candidate-table read per request, and the conflicts are exactly the expected ones", async () => {
+        await seedConflictCases();
+        const { db, reads } = countingCandidateReads();
+        const r = await api(USERS.ADMIN, "GET", "/candidates", undefined, db);
+        assert.equal(r.status, 200);
+        assert.equal(reads.length, 1, "only the list query reads the candidate table");
+        // That one read carries the columns the conflict check compares.
+        for (const column of Object.keys(CONFIRM_SELECT.candidate)) assert.equal(reads[0].select[column], true, column);
+        assert.deepEqual(Object.fromEntries(r.body.items.map((item) => [item.passportId, [...item.formConflicts].sort()])), EXPECTED_CONFLICTS);
+        // The response shape is unchanged: no raw rows, no extra item keys.
+        assert.deepEqual(Object.keys(r.body).sort(), ["filters", "items", "pagination"]);
+        assert.deepEqual(Object.keys(r.body.items[0]).sort(), ["formConflicts", "jobTypes", "name", "nic", "passportId", "stages", "uniqueId", "workflowStatus"]);
+        assert.ok(!JSON.stringify(r.body).includes("12 GALLE ROAD"), "no extra candidate columns leak into the response");
+    });
+
+    test("PERF-002b: identical results with the reused rows and with the candidate table read separately (the old path)", async () => {
+        await seedConflictCases();
+        const { rows, ...list } = await listCandidates({ db: prisma, params: { page: 1, pageSize: 100 }, extraSelect: CONFIRM_SELECT.candidate, withRows: true });
+        const ids = list.items.map((item) => item.passportId);
+        const { db, reads } = countingCandidateReads();
+        const reused = await pendingConflictsByCandidate(db, ids, { candidates: rows });
+        assert.equal(reads.length, 0, "no candidate read when the rows are given");
+        const separate = await pendingConflictsByCandidate(db, ids);
+        assert.equal(reads.length, 1, "the fallback still reads them itself");
+        const sorted = (map) => Object.fromEntries([...map].map(([id, fields]) => [id, [...fields].sort()]).sort());
+        assert.deepEqual(sorted(reused), sorted(separate));
+        assert.deepEqual(sorted(reused), Object.fromEntries(Object.entries(EXPECTED_CONFLICTS).filter(([, fields]) => fields.length)));
+    });
+
+    test("PERF-002c: listCandidates without the new options returns exactly what it did (no rows, same items)", async () => {
+        await seedConflictCases();
+        const plain = await listCandidates({ db: prisma, params: { page: 1, pageSize: 100 } });
+        const { rows, ...extended } = await listCandidates({ db: prisma, params: { page: 1, pageSize: 100 }, extraSelect: CONFIRM_SELECT.candidate, withRows: true });
+        assert.ok(!("rows" in plain));
+        assert.deepEqual(extended, plain);
+        assert.equal(rows.length, plain.items.length);
+    });
+});
+
+describe("GET /candidates runs the Form status and conflict lookups concurrently", () => {
+    test("PERF-003: the conflict lookup starts while the Form Submitted lookup is still waiting (no sequential tier); results unchanged", async () => {
+        await seedConflictCases();
+        await prisma.candidateFormAccess.create({ data: { passportId: "N2000002", status: "SUBMITTED", submittedAt: new Date() } });
+        const events = [];
+        let releaseStatus;
+        const statusHeld = new Promise((resolve) => { releaseStatus = resolve; });
+        // Fallback so a sequential implementation fails the assertion below instead of hanging.
+        const fallback = setTimeout(() => releaseStatus("timeout"), 3000);
+        const forward = (target, key) => {
+            const value = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+        };
+        const db = new Proxy(prisma, {
+            get(target, key) {
+                // The Form Submitted lookup (its only raw query): held until the conflict lookup has started.
+                if (key === "$queryRaw") {
+                    return async (strings, ...values) => {
+                        const sql = Array.isArray(strings) ? strings.join("") : String(strings ?? "");
+                        if (!sql.includes("candidate_form_access")) {
+                            return target.$queryRaw(strings, ...values);
+                        }
+                        events.push("status:start");
+                        const why = await statusHeld;
+                        events.push(`status:released:${why}`);
+                        return target.$queryRaw(strings, ...values);
+                    };
+                }
+                // The conflict lookup's first query.
+                if (key === "candidateFormResponse") {
+                    return new Proxy(target.candidateFormResponse, {
+                        get(model, method) {
+                            if (method === "findMany") return (args) => { events.push("conflicts:start"); releaseStatus("conflicts-started"); return model.findMany(args); };
+                            return forward(model, method);
+                        },
+                    });
+                }
+                return forward(target, key);
+            },
+        });
+        try {
+            const r = await api(USERS.ADMIN, "GET", "/candidates", undefined, db);
+            assert.equal(r.status, 200);
+            assert.deepEqual(events, ["status:start", "conflicts:start", "status:released:conflicts-started"], "both lookups were in flight at the same time");
+            // Same response as without concurrency: statuses and conflicts.
+            assert.deepEqual(Object.fromEntries(r.body.items.map((item) => [item.passportId, [...item.formConflicts].sort()])), EXPECTED_CONFLICTS);
+            assert.equal(r.body.items.find((item) => item.passportId === "N2000002").workflowStatus.code, "FORM_SUBMITTED");
+            assert.deepEqual(Object.keys(r.body).sort(), ["filters", "items", "pagination"]);
+        } finally {
+            clearTimeout(fallback);
+        }
+    });
+
+    test("PERF-003b: listCandidates without `concurrently` returns no `concurrent` key; with it, the same items plus its result", async () => {
+        await seedConflictCases();
+        const plain = await listCandidates({ db: prisma, params: { page: 1, pageSize: 100 } });
+        assert.ok(!("concurrent" in plain));
+        const { concurrent, ...withLookup } = await listCandidates({ db: prisma, params: { page: 1, pageSize: 100 }, concurrently: async (rows) => rows.map((row) => row.passportId) });
+        assert.deepEqual(withLookup, plain);
+        assert.deepEqual(concurrent, plain.items.map((item) => item.passportId));
     });
 });
 

@@ -94,7 +94,7 @@ import {
 } from "../services/jobService.js";
 import { getFormSubmission, pendingConflictsByCandidate } from "../services/candidateFormSubmissionService.js";
 import { activeJobTypeNames, NO_PREFERRED_JOB_TYPE, resolveCandidateJobTypes } from "../services/jobTypeCatalog.js";
-import { confirmFormField, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
+import { CONFIRM_SELECT, confirmFormField, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
 import { parseCandidateFormOrigin } from "../config/candidateForm.js";
@@ -541,10 +541,18 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        const list = await listCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) });
-        // formConflicts: the Candidate Form fields still waiting for review ([] = none), for the list's
-        // "!" indicator. Same rule as the candidate page's pending changes; derived, never stored.
-        const conflicts = await pendingConflictsByCandidate(client, list.items.map((item) => item.passportId));
+        // The list query also loads the columns the conflict check compares (CONFIRM_SELECT.candidate), so the
+        // candidates are read once. formConflicts: the Candidate Form fields still waiting for review
+        // ([] = none), for the list's "!" indicator (same rule as the candidate page's pending changes;
+        // derived, never stored). It runs concurrently with the Form Submitted status lookup, from the same
+        // loaded rows; `concurrent` is used here only and never sent.
+        const { concurrent: conflicts, ...list } = await listCandidates({
+            db: client,
+            params: parsed.params,
+            scope: candidateScope(req.user),
+            extraSelect: CONFIRM_SELECT.candidate,
+            concurrently: (rows) => pendingConflictsByCandidate(client, rows.map((row) => row.passportId), { candidates: rows }),
+        });
         return res.json({ ...list, items: list.items.map((item) => ({ ...item, formConflicts: conflicts.get(item.passportId) ?? [] })) });
     });
 

@@ -9,6 +9,7 @@ import { createTestDatabase } from "./helpers/pgliteDatabase.js";
 import { noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
+import { listCandidates } from "../src/services/candidateService.js";
 import { WORKFLOW_STATUS, WORKFLOW_STATUS_LABELS, deriveCandidateWorkflowStatus } from "../src/services/candidateWorkflowStatus.js";
 
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
@@ -25,14 +26,14 @@ before(async () => {
     database = await createTestDatabase();
     ({ prisma, pg } = database);
     for (const u of Object.values(USERS)) await prisma.user.create({ data: u });
-    // The Candidate Form's table exists only where its migrations ran (the shared database), not in this branch's
-    // migrations. A minimal copy of its shape lets the tests cover both cases: present, and absent.
+    // candidate_form_access is created by the migrations (createTestDatabase applies them all); each test starts
+    // with no form access rows.
 });
 after(async () => database?.close());
 beforeEach(async () => {
     await pg.exec(`
         ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;
-        DROP TABLE IF EXISTS "candidate_form_access";
+        DELETE FROM "candidate_form_access";
         DELETE FROM "rate_limits"; DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter";
         DELETE FROM "job_type"; DELETE FROM "agent_client"; DELETE FROM "client"; DELETE FROM "agent"; DELETE FROM "candidate_additional_details"; DELETE FROM "candidate_verification";
         DELETE FROM "documents"; DELETE FROM "candidate_call_logs"; DELETE FROM "candidate_allocation"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
@@ -83,7 +84,6 @@ const assignJob = async (passportId = P) => {
     return job;
 };
 const submitForm = async (passportId = P) => {
-    await pg.exec(`CREATE TABLE IF NOT EXISTS "candidate_form_access" ("passport_id" TEXT PRIMARY KEY, "status" TEXT NOT NULL DEFAULT 'LOCKED', "submitted_at" TIMESTAMP(3))`);
     await pg.exec(`INSERT INTO "candidate_form_access" ("passport_id","status","submitted_at") VALUES ('${passportId}','SUBMITTED', now()) ON CONFLICT ("passport_id") DO UPDATE SET "status"='SUBMITTED', "submitted_at"=now()`);
 };
 let documentCounter = 0;
@@ -187,7 +187,6 @@ describe("registered, stopped with test, job assigned (STATUS-001 to 005, 014, 0
 
 describe("form submitted (STATUS-006, 007)", () => {
     test("STATUS-006: a submitted Candidate Form is Form Submitted; a locked or unlocked one is not", async () => {
-        await pg.exec(`CREATE TABLE "candidate_form_access" ("passport_id" TEXT PRIMARY KEY, "status" TEXT NOT NULL DEFAULT 'LOCKED', "submitted_at" TIMESTAMP(3))`);
         await pg.exec(`INSERT INTO "candidate_form_access" ("passport_id","status") VALUES ('${P}','UNLOCKED'), ('${Q}','LOCKED')`);
         assert.deepEqual([await code(), await code(Q)], ["REGISTERED", "REGISTERED"]);
         await submitForm(P);
@@ -204,12 +203,46 @@ describe("form submitted (STATUS-006, 007)", () => {
         assert.equal(await code(), "STOPPED_WITH_TEST");
     });
 
-    test("where the Candidate Form table does not exist at all (this branch's migrations) the list works and nobody is Form Submitted", async () => {
-        assert.equal((await pg.query(`SELECT to_regclass('public.candidate_form_access') AS t`)).rows[0].t, null);
-        assert.equal(await code(), "REGISTERED");
-        const list = await api(USERS.ADMIN, "GET", "/candidates");
-        assert.equal(list.status, 200);
-        assert.equal(list.body.pagination.total, 2);
+    test("PERF-001: the list reads Form Submitted with ONE query per request, never a to_regclass table probe", async () => {
+        await submitForm(P);
+        const queries = [];
+        const counting = new Proxy(prisma, {
+            get(target, key) {
+                if (key === "$queryRaw") return (strings, ...values) => { queries.push(strings.join("?")); return target.$queryRaw(strings, ...values); };
+                const value = Reflect.get(target, key);
+                return typeof value === "function" ? value.bind(target) : value;
+            },
+        });
+        const list = await listCandidates({ db: counting, params: { page: 1, pageSize: 100 } });
+        assert.ok(!queries.some((sql) => /to_regclass/i.test(sql)), "no existence probe");
+        assert.equal(queries.filter((sql) => /candidate_form_access/.test(sql)).length, 1, "exactly one read of the form table");
+        // Same result as before: P submitted, Q not.
+        assert.deepEqual(Object.fromEntries(list.items.map((item) => [item.passportId, item.workflowStatus.code])), { [P]: "FORM_SUBMITTED", [Q]: "REGISTERED" });
+        // A second request does the same (no state carried between requests).
+        queries.length = 0;
+        await listCandidates({ db: counting, params: { page: 1, pageSize: 100 } });
+        assert.deepEqual(queries.filter((sql) => /candidate_form_access|to_regclass/i.test(sql)).length, 1);
+    });
+
+    test("if the form table cannot be read, the list still works and nobody is Form Submitted (unchanged fallback)", async () => {
+        await submitForm(P);
+        const failing = new Proxy(prisma, {
+            get(target, key) {
+                if (key === "$queryRaw") return async () => { throw Object.assign(new Error("relation does not exist"), { code: "42P01" }); };
+                const value = Reflect.get(target, key);
+                return typeof value === "function" ? value.bind(target) : value;
+            },
+        });
+        const warn = console.warn;
+        console.warn = () => {};
+        try {
+            const list = await listCandidates({ db: failing, params: { page: 1, pageSize: 100 } });
+            assert.equal(list.pagination.total, 2);
+            assert.ok(list.items.every((item) => item.workflowStatus.code !== "FORM_SUBMITTED"));
+        } finally {
+            console.warn = warn;
+        }
+        assert.equal((await api(USERS.ADMIN, "GET", "/candidates")).status, 200);
     });
 });
 

@@ -122,6 +122,7 @@ describe("paging", () => {
         const calls = [];
         const counting = new Proxy(prisma, {
             get(target, model) {
+                if (model === "$queryRaw") return (...args) => target.$queryRaw(...args);
                 const delegate = target[model];
                 if (!delegate || typeof delegate !== "object") return delegate;
                 return new Proxy(delegate, {
@@ -144,10 +145,10 @@ describe("paging", () => {
         assert.deepEqual(list.args.orderBy, [{ createdDate: "desc" }, { passportId: "asc" }]);
         // Only what a row shows: no address, dates of birth or other details.
         for (const field of ["address", "dateOfBirth", "placeOfBirth", "contactNumber", "nationality", "sex"]) assert.ok(!(field in list.args.select), field);
-        assert.ok(list.args.select.stages && list.args.select.documents, "stages and required documents are loaded with the page");
+        assert.ok(list.args.select.passportId && list.args.select.firstName, "scalar list fields are loaded with the base query");
     });
 
-    test("STATUS-019: the Status signals add no per-candidate query: one findMany with the relations, at most two raw reads, for 100 rows", async () => {
+    test("STATUS-019: the Status signals add no per-candidate query: one findMany with scalar fields, one consolidated relation read, at most two raw reads, for 100 rows", async () => {
         const calls = [];
         let raw = 0;
         const counting = new Proxy(prisma, {
@@ -166,7 +167,7 @@ describe("paging", () => {
         const find = (await listCandidates({ db: { ...prisma, candidate: { count: () => 0, findMany: async (args) => { calls.length = 0; calls.push(args); return []; } }, $queryRaw: prisma.$queryRaw.bind(prisma) }, params: { page: 1, pageSize: 100 } }));
         assert.equal(find.items.length, 0);
         const args = calls[0];
-        assert.ok(args.select.jobAssignments && args.select.verification && args.select.stages, "job assignment, verification state and stages are relations of the one query");
+        assert.ok(args.select.passportId && args.select.firstName, "scalar fields are selected in the base query, while relations are consolidated in raw query");
     });
 
     test("rows keep their shape: name, NIC, job types and every stage", async () => {
