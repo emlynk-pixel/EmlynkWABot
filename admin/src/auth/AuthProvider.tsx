@@ -4,7 +4,7 @@ import { fetchCurrentUser, type AppUser } from "../api/auth";
 import { ApiError, setApiAccessToken } from "../api/client";
 import { getAuthClient, SupabaseConfigError } from "./supabaseClient";
 
-export { canCorrectPoliceDates, canCorrectPoliceDates as isManagerOrAdmin, canConfirmSubmittedChanges, canCreateJobTypes, canInviteUsers, canManageAllocations, canManageCandidates, canManageJobs, canManageMasterData, canVerifyCandidate, canViewCandidates, canViewJobs, canRegisterCandidates, canReview, canViewDashboard, invitableRoles, isAdmin } from "./roles";
+export { canCorrectPoliceDates, canCorrectPoliceDates as isManagerOrAdmin, canConfirmSubmittedChanges, canCreateJobTypes, canInviteUsers, canManageAllocations, canManageCandidates, canManageJobs, canManageMasterData, canVerifyCandidate, canViewCandidates, canViewJobs, canRegisterCandidates, canReview, canViewDashboard, invitableRoles, isAdmin, canOpenSheetSync, canImportCandidates } from "./roles";
 
 // Supabase Auth owns the session; the backend owns the application user.
 //   checking       the stored Supabase session (if any) is being checked

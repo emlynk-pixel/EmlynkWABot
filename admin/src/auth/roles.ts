@@ -81,6 +81,12 @@ export const canManageMasterData = (user: WithRole) => hasRole(user, MASTER_DATA
 export const canRegisterCandidates = (user: WithRole) => hasRole(user, REGISTRATION_ROLES);
 // User management and Settings.
 export const isAdmin = (user: WithRole) => hasRole(user, ADMIN_ONLY);
+// Settings > Google Sheet Sync (src/routes/sheetSyncSettings.js): ADMIN, and MANAGER for the status
+// and Update Sheet (the bulk candidate import). Test Connection, Sync Now and the destination stay ADMIN.
+// A MANAGER sees no other Settings tab.
+export const SHEET_SYNC_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
+export const canOpenSheetSync = (user: WithRole) => hasRole(user, SHEET_SYNC_ROLES);
+export const canImportCandidates = (user: WithRole) => hasRole(user, SHEET_SYNC_ROLES);
 // Inviting users (src/middleware/requireRole.js INVITABLE_ROLES): ADMIN any role, MANAGER a
 // new Job Handler only. The server enforces it.
 export const INVITE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];

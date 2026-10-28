@@ -206,13 +206,14 @@ describe("dashboard shell", () => {
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });
 
-    test("MANAGER and ANALYST: the dashboard sections, no user management or Settings; Jobs for both; Agents, Client Management and Work Allocation for MANAGER only", async () => {
+    test("MANAGER and ANALYST: the dashboard sections, no user management; Settings (Google Sheet Sync) for MANAGER only; Jobs for both; Agents, Client Management and Work Allocation for MANAGER only", async () => {
         for (const role of ["MANAGER", "ANALYST"]) {
             await signedIn("/", userWithRole(role));
             const masterData = role === "MANAGER" ? ["Agents", "Client Management"] : [];
             const allocation = role === "MANAGER" ? ["Work Allocation"] : [];
             // A MANAGER invites Job Handlers (its own Invite User page; no Settings).
-            const invite = role === "MANAGER" ? ["Invite User"] : [];
+            // and opens Settings for its Google Sheet Sync tab only.
+            const invite = role === "MANAGER" ? ["Invite User", "Settings"] : [];
             expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", ...masterData, ...allocation, "Missing Documents", "Police Workflow", "Daily Report", ...invite]);
             document.body.innerHTML = "";
         }

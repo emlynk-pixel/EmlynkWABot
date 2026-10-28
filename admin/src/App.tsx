@@ -32,7 +32,8 @@ import { PriorityFollowUpsPage } from "./pages/PriorityFollowUpsPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
-import { SettingsPage, SheetSyncSettings } from "./pages/SettingsPage";
+import { SettingsIndex, SettingsPage, SettingsTab, SheetSyncSettings } from "./pages/SettingsPage";
+import { ADMIN_ONLY } from "./auth/roles";
 import { JobTypesSettings } from "./pages/JobTypesSettings";
 import { SetupPasswordPage } from "./pages/SetupPasswordPage";
 import { WorkAllocationPage } from "./pages/WorkAllocationPage";
@@ -140,13 +141,13 @@ export function AppRoutes() {
                 <Route path="roles" element={<Navigate to="/settings/roles" replace />} />
                 <Route path="audit-logs" element={<AuditLogsPage />} />
                 <Route path="settings" element={<SettingsPage />}>
-                    {/* Settings opens its first tab. Every tab is ADMIN only, like
-                        Settings itself, so the first one is always allowed. */}
-                    <Route index element={<Navigate to="/settings/roles" replace />} />
-                    <Route path="roles" element={<AdminRolesPage embedded />} />
-                    <Route path="invite" element={<InvitationsPage embedded />} />
+                    {/* Settings opens the first tab the user may open: ADMIN every tab,
+                        MANAGER Google Sheet Sync only (layout/navigation.ts SETTINGS_TABS). */}
+                    <Route index element={<SettingsIndex />} />
+                    <Route path="roles" element={<SettingsTab roles={ADMIN_ONLY}><AdminRolesPage embedded /></SettingsTab>} />
+                    <Route path="invite" element={<SettingsTab roles={ADMIN_ONLY}><InvitationsPage embedded /></SettingsTab>} />
                     <Route path="sheet-sync" element={<SheetSyncSettings />} />
-                    <Route path="job-types" element={<JobTypesSettings />} />
+                    <Route path="job-types" element={<SettingsTab roles={ADMIN_ONLY}><JobTypesSettings /></SettingsTab>} />
                 </Route>
                 <Route path="*" element={<NotFoundPage />} />
             </Route>

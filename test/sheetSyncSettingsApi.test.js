@@ -57,7 +57,7 @@ async function call(method, path, adminId) {
 describe("authorization (backend is the boundary)", () => {
     const endpoints = [["GET", "/status"], ["POST", "/test"], ["POST", "/run"], ["GET", "/runs/00000000-0000-4000-8000-000000000000"]];
 
-    for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+    for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
         test(`${role}: 403 on every Settings endpoint, and no run is recorded`, async () => {
             for (const [method, path] of endpoints) {
                 const { status, body } = await call(method, path, `admin-${role}`);
@@ -68,12 +68,26 @@ describe("authorization (backend is the boundary)", () => {
         });
     }
 
+    // MANAGER opens the Google Sheet Sync area (status, runs, Update Sheet); every action on the
+    // integration itself (Test Connection, Sync Now, destination) stays ADMIN only.
+    test("MANAGER: reads the status and runs; 403 on Test Connection, Sync Now and the destination; no run is recorded", async () => {
+        assert.equal((await call("GET", "/status", "admin-MANAGER")).status, 200);
+        assert.equal((await call("GET", "/runs/00000000-0000-4000-8000-000000000000", "admin-MANAGER")).status, 404, "allowed; the run doesn't exist");
+        for (const [method, path] of [["POST", "/test"], ["POST", "/run"], ["PUT", "/destination"]]) {
+            const { status, body } = await call(method, path, "admin-MANAGER");
+            assert.equal(status, 403, `${method} ${path}`);
+            assert.deepEqual(body, { message: "Insufficient permissions" });
+        }
+        assert.equal(await prisma.sheetSyncRun.count(), 0);
+    });
+
     test("no token: 401; inactive user: 403", async () => {
         for (const [method, path] of endpoints) assert.equal((await call(method, path, null)).status, 401);
         assert.equal((await call("GET", "/status", "admin-inactive")).status, 403);
     });
 
     test("the role is re-read from the database on every request: a change applies immediately", async () => {
+        await prisma.user.update({ where: { adminId: "admin-demoted" }, data: { role: "ANALYST" } });
         assert.equal((await call("GET", "/status", "admin-demoted")).status, 403);
         await prisma.user.update({ where: { adminId: "admin-demoted" }, data: { role: "ADMIN" } });
         assert.equal((await call("GET", "/status", "admin-demoted")).status, 200);

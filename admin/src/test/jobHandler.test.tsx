@@ -186,8 +186,8 @@ describe("Invite User", () => {
         await waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ name: "New Handler", email: "new@example.invalid", role: "JOB_HANDLER" }));
         expect(calls.some((c) => c.method === "GET" && c.path.startsWith("/api/admin/users"))).toBe(false);
         expect(screen.queryByRole("heading", { name: "Users" })).not.toBeInTheDocument();
-        // Settings stays closed to the MANAGER.
-        expect(within(screen.getByRole("navigation", { name: "Main navigation" })).queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
+        // Settings opens for the MANAGER with its Google Sheet Sync tab only (settingsTabs.test.tsx); no user management.
+        expect(within(screen.getByRole("navigation", { name: "Main navigation" })).queryByRole("link", { name: "Change Roles" })).not.toBeInTheDocument();
     });
 });
 
@@ -195,7 +195,7 @@ describe("existing roles", () => {
     test("UI-JH-015: ADMIN, MANAGER, ANALYST and REGISTRATION_DESK keep their sidebars (MANAGER plus its Invite User entry)", { timeout: 30_000 }, async () => {
         const expected: Record<string, string[]> = {
             ADMIN: ["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Agents", "Client Management", "Work Allocation", "Missing Documents", "Police Workflow", "Daily Report", "Audit Logs", "Settings"],
-            MANAGER: ["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Agents", "Client Management", "Work Allocation", "Missing Documents", "Police Workflow", "Daily Report", "Invite User"],
+            MANAGER: ["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Agents", "Client Management", "Work Allocation", "Missing Documents", "Police Workflow", "Daily Report", "Invite User", "Settings"],
             ANALYST: ["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Missing Documents", "Police Workflow", "Daily Report"],
             REGISTRATION_DESK: ["Candidates", "Need Attention"],
         };

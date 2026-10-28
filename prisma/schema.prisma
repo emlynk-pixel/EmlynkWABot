@@ -48,8 +48,37 @@ model User {
   assignedJobCandidates JobCandidate[]             @relation("JobCandidateAssignedBy")
   // Candidate Form values this user confirmed or rejected, field by field.
   formFieldReviews      CandidateFormFieldReview[] @relation("FormFieldReviewedBy")
+  // Bulk candidate imports this user previewed / committed.
+  candidateImports      CandidateImport[]
 
   @@map("user")
+}
+
+// Bulk candidate import (Settings > Google Sheet Sync > Update Sheet; src/services/candidateImport*.js).
+// Coordinates the preview with the chunked commit. NO candidate data: counts, safe reason codes,
+// source row numbers and chunk hashes only (migration 20261103120000_candidate_import).
+// status: PREVIEWED | COMMITTING | COMPLETED | COMPLETED_WITH_ERRORS | FAILED
+model CandidateImport {
+  importId      String    @id @map("import_id") @db.Uuid
+  adminId       String    @map("admin_id")
+  fileName      String    @map("file_name")
+  status        String
+  totalRows     Int       @map("total_rows")
+  chunkSize     Int       @map("chunk_size")
+  chunkHashes   Json      @map("chunk_hashes")
+  sourceFlags   Json      @default("{}") @map("source_flags")
+  previewCounts Json      @default("{}") @map("preview_counts")
+  chunkResults  Json      @default("{}") @map("chunk_results")
+  resultCounts  Json?     @map("result_counts")
+  syncRunId     String?   @map("sync_run_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @default(now()) @map("updated_at")
+  completedAt   DateTime? @map("completed_at")
+
+  admin User @relation(fields: [adminId], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([adminId, createdAt])
+  @@map("candidate_import")
 }
 
 // Review actions taken by admins (Phase 10). Append-only: rows are never

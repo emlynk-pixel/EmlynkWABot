@@ -15,6 +15,9 @@ import { createPublicCandidateDetailsRouter, PUBLIC_CANDIDATE_DETAILS_PATH } fro
 // Supabase domain would have to be added in both places).
 export const STORAGE_CONNECT_SRC = "https://*.supabase.co";
 
+// Settings -> Google Sheet Sync -> Update Sheet (routes/candidateImport.js).
+export const CANDIDATE_IMPORT_API_PATH = "/api/admin/settings/sheet-sync/import/";
+
 // Builds the Express app without starting a server, so tests can use it.
 // Environment variables must already be loaded (src/app.js does that first).
 // Options exist for tests: another admin build folder, fake-DB routers, and
@@ -54,14 +57,16 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
     // token is never a staff credential (routes/publicCandidateDetails.js).
     app.use(PUBLIC_CANDIDATE_DETAILS_PATH, publicCandidateRouter);
 
-    app.use(
-        express.json({
-            // Keep the raw bytes for WhatsApp signature verification.
-            verify: (req, res, buffer) => {
-                req.rawBody = buffer;
-            },
-        })
-    );
+    const jsonBody = express.json({
+        // Keep the raw bytes for WhatsApp signature verification.
+        verify: (req, res, buffer) => {
+            req.rawBody = buffer;
+        },
+    });
+    // The bulk candidate import parses its own, larger bodies, and only once the admin router
+    // has authenticated the request (routes/candidateImport.js); every other path keeps this
+    // parser and its default limit.
+    app.use((req, res, next) => (req.path.startsWith(CANDIDATE_IMPORT_API_PATH) ? next() : jsonBody(req, res, next)));
 
     app.use("/auth", authRouter);
     app.use("/whatsapp", whatsappRoutes);

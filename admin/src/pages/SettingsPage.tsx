@@ -1,9 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { NavLink, Outlet } from "react-router";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import { Navigate, NavLink, Outlet } from "react-router";
 import { ApiError } from "../api/client";
 import { getSheetSyncStatus, requestConnectionTest, requestSyncNow, setSyncDestination, type SheetSyncRun, type SheetSyncStatus } from "../api/sheetSync";
 import { useAdminResource } from "../api/useAdminResource";
-import { isAdmin, useAuth } from "../auth/AuthProvider";
+import { canImportCandidates, canOpenSheetSync, isAdmin, useAuth } from "../auth/AuthProvider";
+import { hasRole, type Role } from "../auth/roles";
+import { CandidateImportDialog } from "../components/CandidateImportDialog";
 import { primaryButton, secondaryButton } from "../components/Dialog";
 import { formatDateTime, formatNumber, humanize } from "../components/format";
 import { inputClass } from "../components/ui";
@@ -15,18 +17,19 @@ import { SETTINGS_TABS } from "../layout/navigation";
 // While a run is queued or running, the status is refreshed this often.
 export const ACTIVE_RUN_POLL_MS = 5_000;
 
-// Settings (/admin/settings). ADMIN only: other roles see an "Access
+// Settings (/admin/settings). ADMIN: every tab. MANAGER: the Google Sheet
+// Sync tab only (its status and Update Sheet). Other roles see an "Access
 // Restricted" card and no Settings data is requested. The backend enforces
-// the same rule on every Settings API route (requireRole); this page only
-// mirrors it.
+// the same rules on every Settings API route (requireRole); this page only
+// mirrors them.
 //
 // A row of tabs, one URL each (so reload, Back and Forward keep the tab):
-//   /settings/roles       Change Roles  (AdminRolesPage, unchanged)
-//   /settings/invite      Invite User   (InvitationsPage, unchanged)
-//   /settings/sheet-sync  Google Sheet Sync
-//   /settings/job-types   Job Types     (JobTypesSettings)
-// /settings opens the first tab (App.tsx). Every tab is ADMIN only, like the
-// pages it holds. The old /roles and /invitations URLs redirect here.
+//   /settings/roles       Change Roles  (AdminRolesPage, unchanged)        ADMIN
+//   /settings/invite      Invite User   (InvitationsPage, unchanged)      ADMIN
+//   /settings/sheet-sync  Google Sheet Sync                              ADMIN, MANAGER
+//   /settings/job-types   Job Types     (JobTypesSettings)               ADMIN
+// /settings opens the first tab the user may open (App.tsx, SettingsIndex).
+// The old /roles and /invitations URLs redirect here.
 // The tabs themselves are listed in layout/navigation.ts (the breadcrumb names them too).
 export { SETTINGS_TABS };
 
@@ -35,21 +38,24 @@ const tabClass = ({ isActive }: { isActive: boolean }) =>
         ? "border-primary font-medium text-ink"
         : "border-transparent text-ink-muted hover:border-border-strong hover:text-ink"}`;
 
+function AccessRestricted({ children }: { children: ReactNode }) {
+    return (
+        <div className="mx-auto max-w-4xl p-6">
+            <div className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+                <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
+                <h2 className="text-headline-sm font-semibold">Access Restricted</h2>
+                <p className="mt-1 text-body-sm text-ink-muted">{children}</p>
+            </div>
+        </div>
+    );
+}
+
 export function SettingsPage() {
     const { user } = useAuth();
-    if (!isAdmin(user)) {
-        return (
-            <div className="mx-auto max-w-4xl p-6">
-                <div className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
-                    <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
-                    <h2 className="text-headline-sm font-semibold">Access Restricted</h2>
-                    <p className="mt-1 text-body-sm text-ink-muted">
-                        Only administrators with the <strong>ADMIN</strong> role can open Settings.
-                    </p>
-                </div>
-            </div>
-        );
+    if (!canOpenSheetSync(user)) {
+        return <AccessRestricted>Only administrators with the <strong>ADMIN</strong> role can open Settings.</AccessRestricted>;
     }
+    const tabs = SETTINGS_TABS.filter((tab) => hasRole(user, tab.roles));
     return (
         <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-5">
             <div>
@@ -57,7 +63,7 @@ export function SettingsPage() {
                 <p className="mt-1 text-body-sm text-ink-muted">System configuration and integrations.</p>
             </div>
             <nav aria-label="Settings sections" className="flex gap-6 overflow-x-auto border-b border-border">
-                {SETTINGS_TABS.map((tab) => (
+                {tabs.map((tab) => (
                     <NavLink key={tab.to} to={tab.to} className={tabClass}>
                         {tab.label}
                     </NavLink>
@@ -68,14 +74,29 @@ export function SettingsPage() {
     );
 }
 
+// /settings: the first tab this user may open.
+export function SettingsIndex() {
+    const { user } = useAuth();
+    const first = SETTINGS_TABS.find((tab) => hasRole(user, tab.roles));
+    return <Navigate to={first?.to ?? "/settings/roles"} replace />;
+}
+
+// A tab opened by URL by a role it is not for (a MANAGER on an ADMIN-only tab): nothing of it is rendered or requested.
+export function SettingsTab({ roles, children }: { roles: readonly Role[]; children: ReactNode }) {
+    const { user } = useAuth();
+    if (!hasRole(user, roles)) return <AccessRestricted>Only administrators with the <strong>ADMIN</strong> role can open this section.</AccessRestricted>;
+    return <>{children}</>;
+}
+
 // Sync Destination: which configured Google Sheet the mirror writes to. Only
 // the Sheets configured on the sheet-sync worker are listed (never a full
 // spreadsheet ID). Choosing another asks the worker to check its access and
 // headers; it becomes the destination of every run (scheduled, Sync Now,
 // Test Connection) only if that check passes, otherwise the current one
-// stays. ADMIN only, like the rest of Settings.
+// stays. Switching is ADMIN only; a MANAGER sees the destination read-only.
 function SyncDestinationSection({ status, onChanged }: { status: SheetSyncStatus; onChanged: () => void }) {
-    const { token } = useAuth();
+    const { token, user } = useAuth();
+    const canSwitch = isAdmin(user);
     const [selected, setSelected] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
@@ -83,7 +104,19 @@ function SyncDestinationSection({ status, onChanged }: { status: SheetSyncStatus
     const available = info?.available ?? [];
 
     // An older server, or nothing published yet: the target hint as before.
-    if (!info || available.length === 0) {
+    if (!info || available.length === 0 || !canSwitch) {
+        const current = info ? available.find((d) => d.key === info.activeKey) ?? null : null;
+        if (current) {
+            return (
+                <Group title="Sync destination">
+                    <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-3">
+                        <Fact label="Currently syncing to">{current.name}</Fact>
+                        <Fact label="Spreadsheet ID"><span className="tabular-nums">{current.hint ?? "—"}</span></Fact>
+                        <Fact label="Tab">{current.tabName ?? "—"}</Fact>
+                    </dl>
+                </Group>
+            );
+        }
         return (
             <Group title="Sync destination">
                 <dl>
@@ -280,11 +313,35 @@ const INTEGRATION: Record<SheetSyncStatus["integration"]["state"], { tone: Tone;
 // server reports it; these are its values if an older server does not.
 const DEFAULT_SCHEDULE = { times: ["06:00", "12:00", "18:00"], timeZone: "Asia/Colombo" };
 
+export const UPDATE_SHEET_HINT = "Upload an existing candidate sheet to validate and import candidate records into Emlynk, then sync them to the Candidate Operational Mirror.";
+
+// "Update Sheet" with its hint on hover and keyboard focus (the hint is the button's description).
+function UpdateSheetButton({ onClick }: { onClick: () => void }) {
+    const hintId = useId();
+    const [open, setOpen] = useState(false);
+    return (
+        <span className="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+            <button type="button" className={secondaryButton} aria-describedby={hintId} onClick={onClick} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}>
+                Update Sheet
+            </button>
+            <span
+                role="tooltip"
+                id={hintId}
+                className={`${open ? "" : "sr-only"} absolute right-0 top-full z-30 mt-1.5 w-72 max-w-[calc(100vw-3rem)] rounded-md border border-border bg-surface px-3 py-2 text-body-sm font-normal text-ink shadow-popover`}
+            >
+                {UPDATE_SHEET_HINT}
+            </span>
+        </span>
+    );
+}
+
 function GoogleSheetSyncSection() {
-    const { token } = useAuth();
+    const { token, user } = useAuth();
     const status = useAdminResource<SheetSyncStatus>("sheet-sync-status", (t, signal) => getSheetSyncStatus(t, signal));
     const [pending, setPending] = useState<"test" | "run" | null>(null);
     const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+    const [importing, setImporting] = useState(false);
+    const admin = isAdmin(user);
 
     const data = status.data;
     const active = Boolean(data?.activeRuns.reconcile || data?.activeRuns.testConnection);
@@ -322,15 +379,21 @@ function GoogleSheetSyncSection() {
                 description="One-way operational mirror of candidate data from the database to the Google Sheet. The database is the source of truth; edits in the Sheet are never read back."
                 action={
                     <div className="flex shrink-0 flex-wrap gap-2">
-                        <button type="button" className={secondaryButton} disabled={pending !== null || Boolean(data?.activeRuns.testConnection)} onClick={() => act("test")}>
-                            {pending === "test" ? "Requesting…" : "Test Connection"}
-                        </button>
-                        <button type="button" className={primaryButton} disabled={pending !== null || Boolean(data?.activeRuns.reconcile)} onClick={() => act("run")}>
-                            {pending === "run" ? "Requesting…" : "Sync Now"}
-                        </button>
+                        {canImportCandidates(user) && <UpdateSheetButton onClick={() => setImporting(true)} />}
+                        {admin && (
+                            <>
+                                <button type="button" className={secondaryButton} disabled={pending !== null || Boolean(data?.activeRuns.testConnection)} onClick={() => act("test")}>
+                                    {pending === "test" ? "Requesting…" : "Test Connection"}
+                                </button>
+                                <button type="button" className={primaryButton} disabled={pending !== null || Boolean(data?.activeRuns.reconcile)} onClick={() => act("run")}>
+                                    {pending === "run" ? "Requesting…" : "Sync Now"}
+                                </button>
+                            </>
+                        )}
                     </div>
                 }
             />
+            {importing && <CandidateImportDialog onClose={() => { setImporting(false); reload(); }} />}
 
             {message && (
                 <div role={message.tone === "error" ? "alert" : "status"} className={`mt-4 rounded border px-4 py-3 text-body-sm ${message.tone === "error" ? "border-critical-border bg-critical-bg text-critical" : "border-verified-border bg-verified-bg text-verified"}`}>

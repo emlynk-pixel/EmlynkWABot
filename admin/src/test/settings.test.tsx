@@ -60,7 +60,7 @@ describe("Settings navigation", () => {
         expect(await screen.findByRole("heading", { name: "Google Sheet Sync" })).toBeInTheDocument();
     });
 
-    for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+    for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
         test(`${role}: no Settings item; a direct visit shows Access Restricted and requests no Settings data`, async () => {
             const { calls } = asRole(role);
             renderApp("/settings");

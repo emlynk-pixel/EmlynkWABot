@@ -1102,9 +1102,10 @@ export function createAdminRouter({
     // ---------------------------------------------------------------- users (ADMIN only)
     router.use("/users", createUsersRouter({ db, authAdmin }));
 
-    // ---------------------------------------------------------------- settings: Google Sheet Sync (ADMIN only)
-    // Reads PostgreSQL and records run requests; never calls Google.
-    router.use("/settings/sheet-sync", requireRole(ADMINS_ONLY), createSheetSyncSettingsRouter({ db }));
+    // ---------------------------------------------------------------- settings: Google Sheet Sync (ADMIN; MANAGER: status + Update Sheet)
+    // Reads PostgreSQL and records run requests; never calls Google. The per-action roles are in
+    // routes/sheetSyncSettings.js (Test Connection, Sync Now, destination: ADMIN only).
+    router.use("/settings/sheet-sync", requireRole(MANAGERS_UP), createSheetSyncSettingsRouter({ db }));
 
     // Anything else under /api/admin (only reached by an authenticated admin).
     router.use((req, res) => res.status(404).json({ message: "Not found" }));

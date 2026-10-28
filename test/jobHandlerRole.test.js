@@ -325,7 +325,8 @@ const ROUTES = [
     ["GET", "/client-management?status=NOPE", T.MANAGERS_UP, true], ["GET", "/client-options", T.MANAGERS_UP, true], ["POST", "/client-management", T.MANAGERS_UP, true],
     ["GET", `/client-management/${NO_ID}`, T.MANAGERS_UP, true], ["PATCH", `/client-management/${NO_ID}`, T.MANAGERS_UP, true],
     ["PATCH", `/client-management/${NO_ID}/agent`, T.MANAGERS_UP, true], ["PATCH", `/client-management/${NO_ID}/status`, T.MANAGERS_UP, true],
-    ["GET", "/audit-logs", T.ADMINS_ONLY, false], ["GET", "/settings/sheet-sync/status", T.ADMINS_ONLY, false],
+    ["GET", "/audit-logs", T.ADMINS_ONLY, false], ["GET", "/settings/sheet-sync/status", T.MANAGERS_UP, false],
+    ["POST", "/settings/sheet-sync/run", T.ADMINS_ONLY, false], ["POST", "/settings/sheet-sync/import/preview", T.MANAGERS_UP, false],
     ["GET", "/users", T.ADMINS_ONLY, false], ["PUT", "/users/nobody/role", T.ADMINS_ONLY, false], ["POST", "/users/nobody/deactivate", T.ADMINS_ONLY, false],
 ];
 

@@ -170,17 +170,37 @@ describe("Settings tabs", () => {
         expect(await screen.findByRole("heading", { name: "Invite User", level: 2 })).toBeInTheDocument();
     });
 
-    for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
+    test("MANAGER: Settings shows the Google Sheet Sync tab only and opens it; every other tab URL is Access Restricted and requests nothing", async () => {
+        const manager = { ...routes, "GET /auth/me": { status: 200, body: { user: userWithRole("MANAGER") } } };
+        const first = signedInBackend(manager);
+        const { unmount } = renderApp("/settings");
+        expect(await screen.findByRole("heading", { name: "Google Sheet Sync" })).toBeInTheDocument();
+        expect(tabLabels()).toEqual(["Google Sheet Sync"]);
+        expect(activeTab()).toBe("Google Sheet Sync");
+        expect(sidebar().getByRole("link", { name: "Settings" })).toBeInTheDocument();
+        expect(sidebar().queryByRole("link", { name: "Change Roles" })).toBeNull();
+        expect(first.calls.some((c) => c.path.startsWith("/api/admin/users"))).toBe(false);
+        unmount();
+        for (const path of ["/settings/roles", "/settings/invite", "/settings/job-types", "/roles"]) {
+            const { calls } = signedInBackend(manager);
+            const view = renderApp(path);
+            expect(await screen.findByRole("heading", { name: "Access Restricted" }), path).toBeInTheDocument();
+            expect(screen.queryByRole("combobox", { name: /Change role for/ })).toBeNull();
+            expect(screen.queryByLabelText("Email Address")).toBeNull();
+            expect(calls.some((c) => c.path.startsWith("/api/admin/users") || c.path.startsWith("/api/admin/job-types")), path).toBe(false);
+            view.unmount();
+        }
+    });
+
+    for (const role of ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
         test(`11-12. ${role}: no Settings or Change Roles in the sidebar; every Settings URL shows Access Restricted and requests nothing`, async () => {
-            // A MANAGER's /invitations is its Job Handler invitation page (invitations.test.tsx), not a Settings URL.
-            const paths = ["/settings", "/settings/roles", "/settings/invite", "/settings/sheet-sync", "/roles", ...(role === "MANAGER" ? [] : ["/invitations"])];
+            const paths = ["/settings", "/settings/roles", "/settings/invite", "/settings/sheet-sync", "/roles", "/invitations"];
             for (const path of paths) {
                 const { calls } = signedInBackend({ ...routes, "GET /auth/me": { status: 200, body: { user: userWithRole(role) } } });
                 const { unmount } = renderApp(path);
                 expect(await screen.findByRole("heading", { name: "Access Restricted" })).toBeInTheDocument();
                 for (const name of ["Settings", "Change Roles"]) expect(sidebar().queryByRole("link", { name })).toBeNull();
-                if (role === "MANAGER") expect(sidebar().getByRole("link", { name: "Invite User" })).toHaveAttribute("href", "/invitations");
-                else expect(sidebar().queryByRole("link", { name: "Invite User" })).toBeNull();
+                expect(sidebar().queryByRole("link", { name: "Invite User" })).toBeNull();
                 expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
                 expect(screen.queryByRole("combobox", { name: /Change role for/ })).toBeNull();
                 expect(screen.queryByLabelText("Email Address")).toBeNull();

@@ -1,5 +1,5 @@
 import type { IconName } from "../components/Icon";
-import { ADMIN_ONLY, ALLOCATION_ROLES, CANDIDATE_ROLES, CANDIDATE_VIEW_ROLES, DASHBOARD_ROLES, JOB_VIEW_ROLES, MASTER_DATA_ROLES, ROLES, type Role } from "../auth/roles";
+import { ADMIN_ONLY, ALLOCATION_ROLES, CANDIDATE_ROLES, CANDIDATE_VIEW_ROLES, DASHBOARD_ROLES, JOB_VIEW_ROLES, MASTER_DATA_ROLES, ROLES, SHEET_SYNC_ROLES, type Role } from "../auth/roles";
 
 // Sidebar entries, in the order of the Stitch design, plus Missing Documents
 // and Daily Report (Phase 10 scope, same design language), Audit Logs
@@ -33,13 +33,15 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/audit-logs", label: "Audit Logs", icon: "history", roles: ADMIN_ONLY },
     // A MANAGER invites Job Handlers here (ADMIN invites from Settings > Invite User).
     { to: "/invitations", label: "Invite User", icon: "person_add", roles: [ROLES.MANAGER] },
-    { to: "/settings", label: "Settings", icon: "settings", roles: ADMIN_ONLY },
+    // ADMIN: every tab. MANAGER: the Google Sheet Sync tab only (SETTINGS_TABS roles).
+    { to: "/settings", label: "Settings", icon: "settings", roles: SHEET_SYNC_ROLES },
 ];
 
 // Settings' tabs, one URL each (SettingsPage.tsx); the breadcrumb names them too.
-export const SETTINGS_TABS = [
-    { to: "/settings/roles", label: "Change Roles" },
-    { to: "/settings/invite", label: "Invite User" },
-    { to: "/settings/sheet-sync", label: "Google Sheet Sync" },
-    { to: "/settings/job-types", label: "Job Types" },
-] as const;
+// `roles`: who sees and opens the tab (the backend enforces the same per API route).
+export const SETTINGS_TABS: readonly { to: string; label: string; roles: readonly Role[] }[] = [
+    { to: "/settings/roles", label: "Change Roles", roles: ADMIN_ONLY },
+    { to: "/settings/invite", label: "Invite User", roles: ADMIN_ONLY },
+    { to: "/settings/sheet-sync", label: "Google Sheet Sync", roles: SHEET_SYNC_ROLES },
+    { to: "/settings/job-types", label: "Job Types", roles: ADMIN_ONLY },
+];

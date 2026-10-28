@@ -2526,7 +2526,8 @@ describe("other roles are unchanged", () => {
             expect(screen.getByRole("button", { name: /notification/i })).toBeInTheDocument();
             const links = within(screen.getByRole("navigation", { name: "Main navigation" })).getAllByRole("link").map((l) => l.textContent);
             expect(links).toContain("Review Queue");
-            expect(links.includes("Settings")).toBe(role === "ADMIN");
+            // Settings: ADMIN every tab; MANAGER the Google Sheet Sync tab only.
+            expect(links.includes("Settings")).toBe(role === "ADMIN" || role === "MANAGER");
         });
     }
 });

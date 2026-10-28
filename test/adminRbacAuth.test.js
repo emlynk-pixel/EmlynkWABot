@@ -56,7 +56,11 @@ const MATRIX = [
     ["PUT", "/users/someone/role", { role: "ANALYST" }, ["ADMIN"]],
     ["POST", "/users/someone/deactivate", {}, ["ADMIN"]],
     ["GET", "/audit-logs", undefined, ["ADMIN"]],
-    ["GET", "/settings/sheet-sync/status", undefined, ["ADMIN"]],
+    // Google Sheet Sync: MANAGER reads the status and uses Update Sheet; Sync Now stays ADMIN only.
+    ["GET", "/settings/sheet-sync/status", undefined, ["ADMIN", "MANAGER"]],
+    ["POST", "/settings/sheet-sync/run", {}, ["ADMIN"]],
+    ["GET", "/settings/sheet-sync/import/source-columns", undefined, ["ADMIN", "MANAGER"]],
+    ["POST", "/settings/sheet-sync/import/preview", {}, ["ADMIN", "MANAGER"]],
 ];
 
 let server;
