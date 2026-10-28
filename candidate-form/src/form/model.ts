@@ -19,6 +19,15 @@ export type BasicInfo = {
     civilStatus: string;
     birthDate: string;
     birthPlace: string;
+    // Physical details & skills. Height and weight are as typed ("175 cm", "5'9\"", "70"):
+    // the server reads the unit (measurements.ts). Yes / No answers hold "YES" | "NO".
+    bloodGroup: string;
+    height: string;
+    weight: string;
+    drivingLicence: string;
+    canReadDrawings: string;
+    teamLeadingSkills: string;
+    otherLanguages: string;
 };
 
 export type ContactInfo = {
@@ -29,6 +38,9 @@ export type ContactInfo = {
     gnDivision: string;
     alternativePhone: string;
     email: string;
+    // Where the candidate lives or stays in Romania ("N/A" when not in Romania). Its distance to
+    // Bucharest is shown from the server's city list, never typed or sent (romania.ts).
+    cityInRomania: string;
 };
 
 export type PassportInfo = {
@@ -65,6 +77,9 @@ export type Family = {
     child1: string;
     child2: string;
     child3: string;
+    // "YES" | "NO": whether each parent is alive (as well as their details, not instead of them).
+    fatherAlive: string;
+    motherAlive: string;
 };
 
 export type Guardian = {
@@ -91,12 +106,15 @@ export type FormGroup = keyof CandidateFormData;
 const emptyPerson = (): Person => ({ name: "", surname: "", passportNumber: "", birthDate: "" });
 
 export const emptyForm = (): CandidateFormData => ({
-    basic: { fullName: "", surname: "", otherNames: "", sex: "", civilStatus: "", birthDate: "", birthPlace: "" },
-    contact: { address: "", city: "", district: "", dsDivision: "", gnDivision: "", alternativePhone: "", email: "" },
+    basic: {
+        fullName: "", surname: "", otherNames: "", sex: "", civilStatus: "", birthDate: "", birthPlace: "",
+        bloodGroup: "", height: "", weight: "", drivingLicence: "", canReadDrawings: "", teamLeadingSkills: "", otherLanguages: "",
+    },
+    contact: { address: "", city: "", district: "", dsDivision: "", gnDivision: "", alternativePhone: "", email: "", cityInRomania: "" },
     passport: { issueDate: "", expiryDate: "" },
     qualifications: { jobCategory: "", jobCategoryOther: "", experience: "", otherSkills1: "", otherSkills2: "", englishKnowledge: "" },
     measurements: { shirtSize: "", waistSize: "", shoeSize: "" },
-    family: { father: emptyPerson(), mother: emptyPerson(), spouse: emptyPerson(), child1: "", child2: "", child3: "" },
+    family: { father: emptyPerson(), mother: emptyPerson(), spouse: emptyPerson(), child1: "", child2: "", child3: "", fatherAlive: "", motherAlive: "" },
     guardian: { name: "", relationship: "", nic: "", birthDate: "", phone: "", address: "" },
 });
 
@@ -108,7 +126,11 @@ export const emptyForm = (): CandidateFormData => ({
 export const NOT_APPLICABLE = "N/A";
 export const NOT_APPLICABLE_FIELDS: ReadonlySet<string> = new Set([
     "basic.otherNames",
+    // No other language.
+    "basic.otherLanguages",
     "contact.city",
+    // Not living or staying in Romania.
+    "contact.cityInRomania",
     "contact.alternativePhone",
     "qualifications.experience",
     "qualifications.otherSkills1",
@@ -161,6 +183,8 @@ export function fromPayload(payload: CandidateFormPayload): CandidateFormData {
             child1: payload.family?.child1 ?? "",
             child2: payload.family?.child2 ?? "",
             child3: payload.family?.child3 ?? "",
+            fatherAlive: payload.family?.fatherAlive ?? "",
+            motherAlive: payload.family?.motherAlive ?? "",
         },
         guardian: fill(empty.guardian, payload.guardian),
     };
@@ -188,6 +212,8 @@ export function toPayload(data: CandidateFormData): CandidateFormPayload {
             child1: answer("family.child1", data.family.child1),
             child2: answer("family.child2", data.family.child2),
             child3: answer("family.child3", data.family.child3),
+            fatherAlive: answer("family.fatherAlive", data.family.fatherAlive),
+            motherAlive: answer("family.motherAlive", data.family.motherAlive),
         },
         guardian: clean("guardian", data.guardian),
     };

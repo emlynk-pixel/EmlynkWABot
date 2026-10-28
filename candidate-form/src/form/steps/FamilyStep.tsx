@@ -1,9 +1,10 @@
-import { DateInput, TextInput } from "../../components/inputs";
+import { DateInput, SelectInput, TextInput } from "../../components/inputs";
 import { FormSection } from "../../components/FormSection";
 import type { MessageKey } from "../../i18n/translations";
 import { useLanguage } from "../../i18n/useLanguage";
 import { bind, type StepProps } from "../binding";
 import { showsSpouse } from "../model";
+import { YES_NO } from "../options";
 import { EARLIEST_DATE, MAX_LENGTH, todayInSriLanka } from "../validation";
 
 type Who = "father" | "mother" | "spouse";
@@ -12,7 +13,8 @@ type Who = "father" | "mother" | "spouse";
 // Married; entries typed before are kept while hidden, never sent), and up to
 // three children. Every shown answer is required (validation.ts requiredPaths):
 // "N/A" as a parent's name when that parent does not apply (their other
-// answers are then not needed), "N/A" as Child 1 for no children.
+// answers are then not needed), "N/A" as Child 1 for no children. Each parent
+// also has a required Yes / No "Father / Mother Alive" (never "N/A").
 export function FamilyStep(props: StepProps) {
     const { t } = useLanguage();
     const today = todayInSriLanka();
@@ -26,6 +28,9 @@ export function FamilyStep(props: StepProps) {
                     <TextInput {...bind(props, `family.${who}.surname`)} label={label("Surname")} hint={parent ? t("hint.na") : undefined} uppercase maxLength={MAX_LENGTH.text} />
                     <TextInput {...bind(props, `family.${who}.passportNumber`)} label={label("Passport")} hint={t("hint.na")} uppercase maxLength={30} />
                     <DateInput {...bind(props, `family.${who}.birthDate`)} label={label("BirthDate")} min={EARLIEST_DATE} max={today} />
+                    {parent && (
+                        <SelectInput {...bind(props, `family.${who}Alive`)} label={t(`f.${who}Alive` as MessageKey)} options={YES_NO.map((code) => ({ value: code, label: t(`yesNo.${code}`) }))} />
+                    )}
                 </div>
             </FormSection>
         );

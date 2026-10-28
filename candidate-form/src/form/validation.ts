@@ -1,6 +1,8 @@
 import type { MessageKey, MessageParams } from "../i18n/translations";
 import { NOT_APPLICABLE_FIELDS, isNotApplicable, isNotApplicableFor, showsOtherJobCategory, showsSpouse, type CandidateFormData, type FormGroup } from "./model";
-import { CIVIL_STATUS_OPTIONS, ENGLISH_LEVELS, JOB_CATEGORIES, SEX_OPTIONS, SHIRT_SIZES, jobCategoryChoices } from "./options";
+import { parseHeight, parseWeight } from "./measurements";
+import { BLOOD_GROUPS, CIVIL_STATUS_OPTIONS, ENGLISH_LEVELS, JOB_CATEGORIES, SEX_OPTIONS, SHIRT_SIZES, YES_NO, jobCategoryChoices } from "./options";
+import { CITY_PATTERN, MAX_CITY_LENGTH } from "./romania";
 
 // The form's checks, done before the candidate moves on (Next) and again for
 // the whole form before Submit. The server checks the same rules again and
@@ -95,6 +97,12 @@ export function validateForm(data: CandidateFormData, today = todayInSriLanka(),
     oneOf("basic.sex", basic.sex, SEX_OPTIONS);
     oneOf("basic.civilStatus", basic.civilStatus, CIVIL_STATUS_OPTIONS);
     date("basic.birthDate", basic.birthDate, true);
+    oneOf("basic.bloodGroup", basic.bloodGroup, BLOOD_GROUPS);
+    // (an "N/A" here is already refused above)
+    if (basic.height.trim() && !isNotApplicable(basic.height) && !parseHeight(basic.height)) add("basic.height", "v.heightInvalid");
+    if (basic.weight.trim() && !isNotApplicable(basic.weight) && !parseWeight(basic.weight)) add("basic.weight", "v.weightInvalid");
+    for (const field of ["drivingLicence", "canReadDrawings", "teamLeadingSkills"] as const) oneOf(`basic.${field}`, basic[field], YES_NO);
+    length("basic.otherLanguages", basic.otherLanguages, MAX_LENGTH.text);
 
     // Contact & location
     const { contact } = data;
@@ -102,6 +110,11 @@ export function validateForm(data: CandidateFormData, today = todayInSriLanka(),
     for (const field of ["city", "district", "dsDivision", "gnDivision"] as const) length(`contact.${field}`, contact[field], MAX_LENGTH.text);
     phone("contact.alternativePhone", contact.alternativePhone);
     if (contact.email.trim() && (!EMAIL_PATTERN.test(contact.email.trim()) || contact.email.trim().length > 254)) add("contact.email", "v.emailInvalid");
+    const cityInRomania = contact.cityInRomania.trim().replace(/\s+/g, " ");
+    if (cityInRomania && !naAllowed("contact.cityInRomania", cityInRomania)) {
+        if (cityInRomania.length > MAX_CITY_LENGTH) add("contact.cityInRomania", "v.tooLong", { max: MAX_CITY_LENGTH });
+        else if (!CITY_PATTERN.test(cityInRomania)) add("contact.cityInRomania", "v.cityInvalid");
+    }
 
     // Passport & qualifications
     const { passport, qualifications } = data;
@@ -134,6 +147,8 @@ export function validateForm(data: CandidateFormData, today = todayInSriLanka(),
         date(`family.${who}.birthDate`, person.birthDate, true);
     }
     for (const child of ["child1", "child2", "child3"] as const) length(`family.${child}`, data.family[child], MAX_LENGTH.text);
+    oneOf("family.fatherAlive", data.family.fatherAlive, YES_NO);
+    oneOf("family.motherAlive", data.family.motherAlive, YES_NO);
 
     // Guardian
     const { guardian } = data;
@@ -170,6 +185,7 @@ export function visiblePaths(data: CandidateFormData): string[] {
     }
     for (const who of showsSpouse(data) ? (["father", "mother", "spouse"] as const) : (["father", "mother"] as const)) {
         for (const field of PERSON_FIELDS) paths.push(`family.${who}.${field}`);
+        if (who !== "spouse") paths.push(`family.${who}Alive`);
     }
     for (const child of CHILDREN) paths.push(`family.${child}`);
     return paths;
@@ -178,7 +194,8 @@ export function visiblePaths(data: CandidateFormData): string[] {
 // The required answers: EVERY visible answer, except where the candidate has
 // said a person does not apply. This one list drives the "required" marks,
 // the checks before Next and Submit, and the progress line ("12 of 40 done").
-//   - a parent named "N/A": that parent's surname, passport and birth date are not needed;
+//   - a parent named "N/A": that parent's surname, passport and birth date are not needed
+//     (Father / Mother Alive is still asked: it is Yes or No, never "N/A");
 //   - children: Child 1 always ("N/A" for none); Child 2 only after a real Child 1,
 //     Child 3 only after a real Child 2;
 //   - the spouse (when Married) and "Other Job Category" (with OTHER) only while shown.

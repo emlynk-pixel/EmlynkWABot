@@ -1,9 +1,9 @@
-// Google Sheet mirror: candidate aggregate -> 41-cell row (candidateSheetMapper.js).
+// Google Sheet mirror: candidate aggregate -> SHEET_COLUMN_COUNT-cell row (candidateSheetMapper.js).
 // Pure mapping only: synthetic data, no database, no Google.
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { SHEET_COLUMNS } from "../src/services/sheetSchema.js";
+import { SHEET_COLUMNS, SHEET_COLUMN_COUNT } from "../src/services/sheetSchema.js";
 import {
     DOCUMENT_NOT_SUBMITTED,
     RECORD_STATUS,
@@ -58,13 +58,13 @@ const map = (aggregate, options = {}) => mapCandidateToSheetRow(aggregate, { mir
 const atColumn = (cells, column) => cells[SHEET_COLUMNS.find((c) => c.column === column).index];
 
 describe("candidate -> Sheet row", () => {
-    test("always exactly 41 string cells, for a full and for an empty candidate", () => {
+    test("always exactly SHEET_COLUMN_COUNT string cells, for a full and for an empty candidate", () => {
         const full = map({ user: user(), stages: [], documents: [doc("PASSPORT")] });
-        assert.equal(full.length, 41);
+        assert.equal(full.length, SHEET_COLUMN_COUNT);
         assert.ok(full.every((c) => typeof c === "string"));
 
         const minimal = map({ user: { uniqueId: "0007", passportId: "SYN000007", firstName: "ONLY" } });
-        assert.equal(minimal.length, 41);
+        assert.equal(minimal.length, SHEET_COLUMN_COUNT);
         assert.ok(minimal.every((c) => typeof c === "string"));
     });
 
@@ -201,7 +201,7 @@ describe("candidate -> Sheet row", () => {
     });
 
     test("no Agreement, Affidavit or Contract columns exist", () => {
-        assert.equal(SHEET_COLUMNS.length, 41);
+        assert.equal(SHEET_COLUMNS.length, SHEET_COLUMN_COUNT);
         assert.deepEqual(SHEET_COLUMNS.filter((c) => /AGREEMENT|AFFIDAVIT|CONTRACT/i.test(`${c.header} ${c.field}`)), []);
     });
 
@@ -255,7 +255,7 @@ describe("candidate -> Sheet row", () => {
     test("missing optional values are blank and never shift a column", () => {
         const sparse = map({ user: user({ otherName: null, address: null, contactNumber: null, dateOfBirth: null, sex: null, nationality: null, passportIssueDate: null }) });
         const full = map({ user: user() });
-        assert.equal(sparse.length, 41);
+        assert.equal(sparse.length, SHEET_COLUMN_COUNT);
         for (const field of ["otherName", "address", "contactNumber", "birthday", "sex", "nationality", "passportIssueDate"]) {
             assert.equal(cell(sparse, field), "", field);
         }

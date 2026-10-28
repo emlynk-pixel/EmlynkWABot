@@ -43,6 +43,10 @@ export const JOB_CATEGORIES = [
 export type JobCategoryCode = (typeof JOB_CATEGORIES)[number];
 
 export const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL"] as const;
+
+export const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"] as const;
+// A Yes / No answer (the server stores it as true / false).
+export const YES_NO = ["YES", "NO"] as const;
 // Waist in inches.
 export const WAIST_SIZE_PRESETS = ["28", "30", "32", "34", "36", "38", "40", "42", "44", "46"] as const;
 // UK sizes; "Other" takes any other size, e.g. "EU 43".

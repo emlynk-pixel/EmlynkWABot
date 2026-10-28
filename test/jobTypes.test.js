@@ -259,12 +259,12 @@ describe("Candidate Form job types (server side)", () => {
         return verified.body.token;
     }
     const ANSWERS = (jobCategory, jobCategoryOther = "") => ({
-        basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "n/a", sex: "FEMALE", civilStatus: "SINGLE", birthDate: "1990-05-01", birthPlace: "negombo" },
-        contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "N/A", email: "a@example.com" },
+        basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "n/a", sex: "FEMALE", civilStatus: "SINGLE", birthDate: "1990-05-01", birthPlace: "negombo", bloodGroup: "O+", height: "175 cm", weight: "70", drivingLicence: "YES", canReadDrawings: "NO", teamLeadingSkills: "YES", otherLanguages: "english, romanian" },
+        contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "N/A", email: "a@example.com", cityInRomania: "cluj napoca" },
         passport: { issueDate: "2020-01-15", expiryDate: "2030-01-14" },
         qualifications: { jobCategory, jobCategoryOther, experience: "5 years", otherSkills1: "N/A", otherSkills2: "N/A", englishKnowledge: "GOOD" },
         measurements: { shirtSize: "M", waistSize: "32", shoeSize: "9" },
-        family: { father: { name: "N/A", surname: "", passportNumber: "", birthDate: "" }, mother: { name: "kumari", surname: "de soysa", passportNumber: "N/A", birthDate: "1965-02-03" }, spouse: { name: "", surname: "", passportNumber: "", birthDate: "" }, child1: "n/a", child2: "", child3: "" },
+        family: { father: { name: "N/A", surname: "", passportNumber: "", birthDate: "" }, mother: { name: "kumari", surname: "de soysa", passportNumber: "N/A", birthDate: "1965-02-03" }, spouse: { name: "", surname: "", passportNumber: "", birthDate: "" }, child1: "n/a", child2: "", child3: "", fatherAlive: "YES", motherAlive: "YES" },
         guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "1960-01-01", phone: "+94 77 123 4567", address: "45 lake road" },
     });
 

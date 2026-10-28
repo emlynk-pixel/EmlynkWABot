@@ -27,6 +27,12 @@ export const inMinutes = (minutes: number) => new Date(Date.now() + minutes * 60
 
 // What POST /form returns: the identity and a partial prefill.
 export const IDENTITY = { passportNumber: PASSPORT, nic: NIC, whatsappNumber: WHATSAPP };
+// A few of the listed Romanian cities as the server sends them (src/utils/romaniaCities.js).
+export const ROMANIAN_CITIES = [
+    { name: "București", aliases: ["Bucharest"], distanceKm: 0 },
+    { name: "Brașov", aliases: [], distanceKm: 140 },
+    { name: "Cluj-Napoca", aliases: [], distanceKm: 323 },
+];
 export function prefill(overrides: (p: CandidateFormPayload) => void = () => {}): FormLoadResponse {
     const answers = toPayload(emptyForm());
     answers.basic.surname = "PERERA";
@@ -36,7 +42,7 @@ export function prefill(overrides: (p: CandidateFormPayload) => void = () => {})
     const prefilled = [["basic", answers.basic], ["contact", answers.contact], ["passport", answers.passport]]
         .flatMap(([group, values]) => Object.entries(values as Record<string, string | null>).filter(([, v]) => v !== null).map(([k]) => `${group}.${k}`));
     // The active job types the server sends with the form (here the seeded trades).
-    return { identity: IDENTITY, answers, prefilled, jobCategories: JOB_CATEGORIES.filter((code) => code !== "OTHER"), expiresAt: inMinutes(60) };
+    return { identity: IDENTITY, answers, prefilled, jobCategories: JOB_CATEGORIES.filter((code) => code !== "OTHER"), romanianCities: ROMANIAN_CITIES, expiresAt: inMinutes(60) };
 }
 
 export type Reply = { status: number; body?: unknown } | "network";
@@ -125,6 +131,13 @@ export function fillBasic(civilStatus = "SINGLE") {
     setField("f.civilStatus", civilStatus);
     setField("f.birthDate", "1990-05-01");
     setField("f.birthPlace", "colombo");
+    setField("f.bloodGroup", "O+");
+    setField("f.height", "175 cm");
+    setField("f.weight", "70");
+    setField("f.drivingLicence", "YES");
+    setField("f.canReadDrawings", "NO");
+    setField("f.teamLeadingSkills", "YES");
+    setField("f.otherLanguages", "english, romanian");
 }
 export function fillContact() {
     setField("f.address", "12 main street");
@@ -134,6 +147,7 @@ export function fillContact() {
     setField("f.gnDivision", "kolonnawa north");
     setField("f.alternativePhone", "n/a");
     setField("f.email", "shamal@example.com");
+    setField("f.cityInRomania", "cluj napoca");
 }
 export async function fillPassport(user: User, job = "WELDER TIG") {
     setField("f.passportIssueDate", "2020-01-15");
@@ -156,6 +170,8 @@ export function fillFamily({ spouse = false }: { spouse?: boolean } = {}) {
     setField("f.motherSurname", "perera");
     setField("f.motherPassport", "N/A");
     setField("f.motherBirthDate", "1965-02-03");
+    setField("f.fatherAlive", "NO");
+    setField("f.motherAlive", "YES");
     if (spouse) {
         setField("f.spouseName", "nadeesha");
         setField("f.spouseSurname", "silva");

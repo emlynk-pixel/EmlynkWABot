@@ -19,7 +19,7 @@ import { createFormSubmissionSheetsAdapter } from "../src/services/formSubmissio
 import { createFormSubmissionSyncStore } from "../src/services/formSubmissionSyncStore.js";
 import { createFormSubmissionSync, FORM_SYNC_TIMINGS } from "../src/services/formSubmissionSync.js";
 import {
-    FORM_SUBMISSION_COLUMNS, FORM_SUBMISSION_COLUMN_COUNT, FORM_SUBMISSION_HEADERS, SUBMISSION_ID_INDEX, SYSTEM_CANDIDATE_ID_INDEX, buildSubmissionCells, readFormSubmissionLayout,
+    ANSWER_COLUMNS_NOT_IN_SHEET, FORM_SUBMISSION_COLUMNS, FORM_SUBMISSION_COLUMN_COUNT, FORM_SUBMISSION_HEADERS, SUBMISSION_ID_INDEX, SYSTEM_CANDIDATE_ID_INDEX, buildSubmissionCells, readFormSubmissionLayout,
 } from "../src/services/formSubmissionSheetSchema.js";
 import { SHEET_COLUMN_COUNT, SHEET_HEADERS } from "../src/services/sheetSchema.js";
 import { createSheetSyncStore } from "../src/services/sheetSyncStore.js";
@@ -99,8 +99,8 @@ async function session(candidate) {
     return verified.body.token;
 }
 const ANSWERS = () => ({
-    basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "MARRIED", birthDate: "1990-05-01", birthPlace: "negombo" },
-    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "0771234567", email: "Anusha.D@example.com" },
+    basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "MARRIED", birthDate: "1990-05-01", birthPlace: "negombo", bloodGroup: "O+", height: "175 cm", weight: "70", drivingLicence: "YES", canReadDrawings: "NO", teamLeadingSkills: "YES", otherLanguages: "english, romanian" },
+    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "0771234567", email: "Anusha.D@example.com", cityInRomania: "cluj napoca" },
     passport: { issueDate: "2020-01-15", expiryDate: "2030-01-14" },
     qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "5 years", otherSkills1: "n/a", otherSkills2: "N/A", englishKnowledge: "GOOD" },
     measurements: { shirtSize: "M", waistSize: "32", shoeSize: "eu 42" },
@@ -108,7 +108,7 @@ const ANSWERS = () => ({
         father: { name: "sunil", surname: "de soysa", passportNumber: "n7654321", birthDate: "1960-03-02" },
         mother: { name: "kumari", surname: "de soysa", passportNumber: "N/A", birthDate: "1965-02-03" },
         spouse: { name: "ruwan", surname: "perera", passportNumber: "N/A", birthDate: "1988-07-12" },
-        child1: "nimal", child2: "N/A", child3: "",
+        child1: "nimal", child2: "N/A", child3: "", fatherAlive: "YES", motherAlive: "YES",
     },
     guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "1960-01-01", phone: "+94 77 123 4567", address: "45 lake road" },
 });
@@ -478,7 +478,11 @@ describe("the tab's columns", () => {
     });
 
     test("every answer of the Candidate Form has a column, and the required columns are there", () => {
-        for (const [, , column] of ANSWER_FIELDS) assert.ok(FORM_SUBMISSION_COLUMNS.some((c) => c.source === column), `no column for ${column}`);
+        for (const [, , column] of ANSWER_FIELDS) {
+            if (ANSWER_COLUMNS_NOT_IN_SHEET.has(column)) assert.ok(!FORM_SUBMISSION_COLUMNS.some((c) => c.source === column), `${column} is listed as not in the Sheet`);
+            else assert.ok(FORM_SUBMISSION_COLUMNS.some((c) => c.source === column), `no column for ${column}`);
+        }
+        for (const column of ANSWER_COLUMNS_NOT_IN_SHEET) assert.ok(ANSWER_FIELDS.some((f) => f[2] === column), `${column} is an answer`);
         for (const header of ["_SYSTEM_CANDIDATE_ID", "_SUBMISSION_ID", "Passport Number", "Candidate Name", "Submitted At", "Submission Status"]) {
             assert.ok(FORM_SUBMISSION_HEADERS.includes(header), header);
         }
@@ -486,7 +490,8 @@ describe("the tab's columns", () => {
         assert.equal(FORM_SUBMISSION_COLUMNS[SUBMISSION_ID_INDEX].header, "_SUBMISSION_ID");
         assert.equal(new Set(FORM_SUBMISSION_HEADERS).size, FORM_SUBMISSION_COLUMN_COUNT);
         // The six system columns, WhatsApp Number, the verified NIC Number and every answer of the form.
-        assert.equal(FORM_SUBMISSION_COLUMN_COUNT, ANSWER_FIELDS.length + 8);
+        // (less the answers that are not columns yet: ANSWER_COLUMNS_NOT_IN_SHEET).
+        assert.equal(FORM_SUBMISSION_COLUMN_COUNT, ANSWER_FIELDS.length - ANSWER_COLUMNS_NOT_IN_SHEET.size + 8);
     });
 
     test("nothing about the share link or the session is a column: no link ID, secret, token, hash or idempotency key", async () => {
@@ -553,10 +558,10 @@ describe("the gate, the destination and the mirror", () => {
         assert.ok(events.some((line) => line.includes("sheet_sync.form_submissions_tick_failed")));
     });
 
-    test("the operational mirror's schema is exactly what it was: 41 columns, none of them the form's", () => {
-        assert.equal(SHEET_COLUMN_COUNT, 41);
-        assert.equal(SHEET_HEADERS.length, 41);
-        assert.equal(SHEET_HEADERS.at(-1), "_SYSTEM_CANDIDATE_ID");
+    test("the operational mirror keeps its own schema: the original 41 columns first (row key AO), the confirmed Candidate Form columns after, none of them the form tab's", () => {
+        assert.equal(SHEET_COLUMN_COUNT, 84);
+        assert.equal(SHEET_HEADERS.length, 84);
+        assert.equal(SHEET_HEADERS[40], "_SYSTEM_CANDIDATE_ID");
         assert.ok(!SHEET_HEADERS.includes("_SUBMISSION_ID"));
         assert.deepEqual(FORM_SUBMISSION_HEADERS.filter((h) => SHEET_HEADERS.includes(h)), ["_SYSTEM_CANDIDATE_ID"], "only the shared technical ID header, in a different tab");
         assert.notEqual(FORM_TAB, MIRROR_TAB);

@@ -6,7 +6,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { SHEET_COLUMNS, SHEET_HEADERS } from "../src/services/sheetSchema.js";
+import { SHEET_COLUMN_COUNT, SHEET_COLUMNS, SHEET_HEADERS } from "../src/services/sheetSchema.js";
 import { CANDIDATE_AGGREGATE_SELECT, mapCandidateToSheetRow } from "../src/services/candidateSheetMapper.js";
 import { createCandidateAggregateReader, MAX_AGGREGATE_BATCH_SIZE } from "../src/services/candidateAggregateReader.js";
 import { SYNC_ACTION, SheetDuplicateCandidateIdError, buildCandidateRowIndex, createSheetSyncPlanner } from "../src/services/sheetSyncPlanner.js";
@@ -98,7 +98,7 @@ const expectedRow = (n, overrides) => {
     const { stages, documents, ...user } = candidateRow(n, overrides);
     return mapCandidateToSheetRow({ user, stages, documents }, { mirroredAt: NOW });
 };
-const blankRow = (id = "") => Array.from({ length: 41 }, (_, i) => (i === 40 ? id : ""));
+const blankRow = (id = "") => Array.from({ length: SHEET_COLUMN_COUNT }, (_, i) => (i === 40 ? id : ""));
 
 // ---------------------------------------------------------------- reader
 
@@ -158,10 +158,10 @@ describe("candidate aggregate reader", () => {
         assert.ok(db.queries.every((q) => q.method === "findUnique" || q.method === "findMany"));
     });
 
-    test("reader output maps to exactly 41 cells with AO = unique_id", async () => {
+    test("reader output maps to exactly SHEET_COLUMN_COUNT cells with AO = unique_id", async () => {
         const reader = createCandidateAggregateReader({ db: fakeDb([candidateRow(1)]) });
         const row = mapCandidateToSheetRow(await reader.findByUniqueId("0001"), { mirroredAt: NOW });
-        assert.equal(row.length, 41);
+        assert.equal(row.length, SHEET_COLUMN_COUNT);
         assert.equal(row[40], "0001");
         assert.equal(row[1], "SYNPASS01");
     });
@@ -281,7 +281,7 @@ describe("sync planner (read-only)", () => {
         ]);
         assert.equal(nextCursor, null);
         assert.equal(blankSheetRows, 1);
-        assert.deepEqual(client.calls.map((c) => c.range.split("!")[1]), ["1:1", "A2:AO"]);
+        assert.deepEqual(client.calls.map((c) => c.range.split("!")[1]), ["1:1", "A2:CF"]);
     });
 
     test("the planner cannot write, even when handed a write-enabled adapter", async () => {
@@ -410,8 +410,8 @@ describe("write gate stays off by default", () => {
         assert.deepEqual(client.calls, []);
     });
 
-    test("the schema still has exactly 41 columns with AO as the system candidate ID", () => {
-        assert.equal(SHEET_COLUMNS.length, 41);
+    test("the schema keeps AO as the system candidate ID (the Candidate Form columns come after it)", () => {
+        assert.equal(SHEET_COLUMNS.length, SHEET_COLUMN_COUNT);
         assert.equal(SHEET_COLUMNS[40].header, "_SYSTEM_CANDIDATE_ID");
     });
 });

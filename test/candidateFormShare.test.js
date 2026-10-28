@@ -101,8 +101,8 @@ async function session(candidate) {
 
 // Answers that pass every rule.
 const ANSWERS = () => ({
-    basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "SINGLE", birthDate: "1990-05-01", birthPlace: "negombo" },
-    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "0771234567", email: "Anusha.D@example.com" },
+    basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "SINGLE", birthDate: "1990-05-01", birthPlace: "negombo", bloodGroup: "O+", height: "175 cm", weight: "70", drivingLicence: "YES", canReadDrawings: "NO", teamLeadingSkills: "YES", otherLanguages: "english, romanian" },
+    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "0771234567", email: "Anusha.D@example.com", cityInRomania: "cluj napoca" },
     passport: { issueDate: "2020-01-15", expiryDate: "2030-01-14" },
     qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "5 years", otherSkills1: "n/a", otherSkills2: "N/A", englishKnowledge: "GOOD" },
     measurements: { shirtSize: "M", waistSize: "32", shoeSize: "eu 42" },
@@ -110,7 +110,7 @@ const ANSWERS = () => ({
         father: { name: "sunil", surname: "de soysa", passportNumber: "n7654321", birthDate: "1960-03-02" },
         mother: { name: "kumari", surname: "de soysa", passportNumber: "N/A", birthDate: "1965-02-03" },
         spouse: { name: "kept but hidden", surname: "", passportNumber: "", birthDate: "" },
-        child1: "N/A", child2: "", child3: "",
+        child1: "N/A", child2: "", child3: "", fatherAlive: "YES", motherAlive: "YES",
     },
     guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "1960-01-01", phone: "+94 77 123 4567", address: "45 lake road" },
 });
@@ -210,7 +210,7 @@ describe("the form: identity and prefill", () => {
         assert.equal(r.status, 200);
         assert.deepEqual(r.body.identity, { passportNumber: A.passportId, nic: A.nic, whatsappNumber: A.whatsappNumber });
         const { basic, contact, passport, qualifications, measurements, family } = r.body.answers;
-        assert.deepEqual(basic, { fullName: "ANUSHA DE SOYSA", surname: "De Soysa", otherNames: "Anusha", sex: "FEMALE", civilStatus: "MARRIED", birthDate: "1990-05-01", birthPlace: "Negombo" });
+        assert.deepEqual(basic, { fullName: "ANUSHA DE SOYSA", surname: "De Soysa", otherNames: "Anusha", sex: "FEMALE", civilStatus: "MARRIED", birthDate: "1990-05-01", birthPlace: "Negombo", bloodGroup: null, height: null, weight: null, drivingLicence: null, canReadDrawings: null, teamLeadingSkills: null, otherLanguages: null });
         assert.equal(contact.address, "12 Galle Road, Negombo", "the permanent address before the core address");
         assert.equal(contact.alternativePhone, "0112345678");
         assert.equal(contact.email, null);
@@ -222,12 +222,14 @@ describe("the form: identity and prefill", () => {
         assert.deepEqual(family.father, { name: "Sunil De Soysa", surname: null, passportNumber: null, birthDate: "1960-03-02" });
         assert.equal(family.spouse.name, "Ruwan Perera");
         assert.equal(family.child1, "Nimal");
+        assert.deepEqual([family.fatherAlive, family.motherAlive], ["YES", "YES"], "the parents' alive answers from Additional Details");
+        assert.equal(contact.cityInRomania, null, "no record holds a city in Romania");
         assert.ok(r.body.prefilled.includes("basic.fullName") && !r.body.prefilled.includes("contact.email"));
     });
 
     test("partial and empty records: what exists is filled, the rest is empty", async () => {
         const partial = await pub("/form", { token: (await session(P)).token, body: {} });
-        assert.deepEqual(partial.body.answers.basic, { fullName: null, surname: "Perera", otherNames: "Kamal", sex: "MALE", civilStatus: null, birthDate: null, birthPlace: null });
+        assert.deepEqual(partial.body.answers.basic, { fullName: null, surname: "Perera", otherNames: "Kamal", sex: "MALE", civilStatus: null, birthDate: null, birthPlace: null, bloodGroup: null, height: null, weight: null, drivingLicence: null, canReadDrawings: null, teamLeadingSkills: null, otherLanguages: null });
         assert.deepEqual(partial.body.prefilled.sort(), ["basic.otherNames", "basic.sex", "basic.surname"]);
         const empty = await pub("/form", { token: (await session(E)).token, body: {} });
         assert.deepEqual(empty.body.prefilled, ["basic.otherNames"]);
@@ -237,7 +239,9 @@ describe("the form: identity and prefill", () => {
         const r = await pub("/form", { token: (await session(A)).token, body: {} });
         // jobCategories: the active job type names (the form's choices), names only.
         // savedSteps / draftSavedAt: the candidate's own saved progress (Next), nothing else.
-        assert.deepEqual(Object.keys(r.body).sort(), ["answers", "draftSavedAt", "expiresAt", "identity", "jobCategories", "prefilled", "savedSteps"]);
+        assert.deepEqual(Object.keys(r.body).sort(), ["answers", "draftSavedAt", "expiresAt", "identity", "jobCategories", "prefilled", "romanianCities", "savedSteps"]);
+        // The city suggestions are public reference data only: a name, other spellings and a distance.
+        assert.ok(r.body.romanianCities.length > 40 && r.body.romanianCities.every((city) => Object.keys(city).sort().join() === "aliases,distanceKm,name"));
         assert.ok(r.body.jobCategories.every((name) => typeof name === "string"));
         const keys = (value, prefix = "") => Object.entries(value).flatMap(([k, v]) => (v && typeof v === "object" ? keys(v, `${prefix}${k}.`) : [`${prefix}${k}`]));
         assert.deepEqual(keys(r.body.answers).sort(), ANSWER_FIELDS.map(([group, key]) => `${group}.${key}`).sort());

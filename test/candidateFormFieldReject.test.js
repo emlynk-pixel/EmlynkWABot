@@ -71,14 +71,14 @@ const reviewOf = (field) => prisma.candidateFormFieldReview.findUnique({ where: 
 const pendingOf = (r) => Object.fromEntries(r.body.pending.map((p) => [p.field, p]));
 
 const answers = () => ({
-    basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "SINGLE", birthDate: "2003-05-06", birthPlace: "negombo" },
-    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "+94 77 123 4567", email: "new@example.com" },
+    basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "SINGLE", birthDate: "2003-05-06", birthPlace: "negombo", bloodGroup: "O+", height: "175 cm", weight: "70", drivingLicence: "YES", canReadDrawings: "NO", teamLeadingSkills: "YES", otherLanguages: "english, romanian" },
+    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "+94 77 123 4567", email: "new@example.com", cityInRomania: "cluj napoca" },
     passport: { issueDate: "2020-01-15", expiryDate: "2031-02-03" },
     qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "3 years", otherSkills1: "n/a", otherSkills2: "N/A", englishKnowledge: "GOOD" },
     measurements: { shirtSize: "M", waistSize: "32", shoeSize: "eu 42" },
     family: {
         father: { name: "sunil", surname: "de soysa", passportNumber: "N/A", birthDate: "1960-03-02" }, mother: { name: "kumari", surname: "de soysa", passportNumber: "N/A", birthDate: "1965-02-03" },
-        spouse: { name: "", surname: "", passportNumber: "", birthDate: "" }, child1: "N/A", child2: "", child3: "",
+        spouse: { name: "", surname: "", passportNumber: "", birthDate: "" }, child1: "N/A", child2: "", child3: "", fatherAlive: "YES", motherAlive: "YES",
     },
     guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "1960-01-01", phone: "+94 77 123 4567", address: "45 lake road" },
 });
@@ -202,7 +202,7 @@ describe("roles, allowlist and the public API (REJECT-011, 012, 014, 015)", () =
 
     test("unknown and unmapped fields are rejected, and the browser cannot supply a table, a column or a value", async () => {
         await submitForm();
-        for (const field of ["guardian.name", "contact.email", "candidate.passportId", "passportId", "__proto__", "constructor", "basic.birthDate ", ""]) {
+        for (const field of ["family.father.name", "family.mother.surname", "candidate.passportId", "passportId", "__proto__", "constructor", "basic.birthDate ", ""]) {
             assert.deepEqual([(await reject(USERS.ADMIN, { field, expectedCurrentValue: null, expectedSubmittedValue: null })).body.code], ["FIELD_NOT_CONFIRMABLE"], JSON.stringify(field));
         }
         const seen = await body("contact.address");

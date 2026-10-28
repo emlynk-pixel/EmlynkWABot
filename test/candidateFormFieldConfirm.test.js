@@ -71,14 +71,14 @@ const responseRow = () => prisma.candidateFormResponse.findUnique({ where: { pas
 const pendingOf = (r) => Object.fromEntries(r.body.pending.map((p) => [p.field, p]));
 
 const answers = (overrides = {}) => ({
-    basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "SINGLE", birthDate: "2003-05-06", birthPlace: "negombo" },
-    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "+94 77 123 4567", email: "new@example.com" },
+    basic: { fullName: "anusha de soysa", surname: "de soysa", otherNames: "anusha", sex: "FEMALE", civilStatus: "SINGLE", birthDate: "2003-05-06", birthPlace: "negombo", bloodGroup: "O+", height: "175 cm", weight: "70", drivingLicence: "YES", canReadDrawings: "NO", teamLeadingSkills: "YES", otherLanguages: "english, romanian" },
+    contact: { address: "12 galle road", city: "negombo", district: "gampaha", dsDivision: "negombo", gnDivision: "kurana", alternativePhone: "+94 77 123 4567", email: "new@example.com", cityInRomania: "cluj napoca" },
     passport: { issueDate: "2020-01-15", expiryDate: "2031-02-03" },
     qualifications: { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "3 years", otherSkills1: "n/a", otherSkills2: "N/A", englishKnowledge: "GOOD" },
     measurements: { shirtSize: "M", waistSize: "32", shoeSize: "eu 42" },
     family: {
         father: { name: "sunil", surname: "de soysa", passportNumber: "N/A", birthDate: "1960-03-02" }, mother: { name: "kumari", surname: "de soysa", passportNumber: "N/A", birthDate: "1965-02-03" },
-        spouse: { name: "", surname: "", passportNumber: "", birthDate: "" }, child1: "N/A", child2: "", child3: "",
+        spouse: { name: "", surname: "", passportNumber: "", birthDate: "" }, child1: "N/A", child2: "", child3: "", fatherAlive: "YES", motherAlive: "YES",
     },
     guardian: { name: "kamal perera", relationship: "uncle", nic: "901234567v", birthDate: "1960-01-01", phone: "+94 77 123 4567", address: "45 lake road" },
     ...overrides,
@@ -109,9 +109,14 @@ describe("which changes are offered (CONFIRM-001, 002, 017)", () => {
         assert.deepEqual(pending["basic.fullName"], { field: "basic.fullName", current: null, submitted: "ANUSHA DE SOYSA" });
         // Same value (CONFIRM-002): surname in capitals, birth place in capitals, sex, issue date, experience, and the same phone number written differently.
         for (const field of ["basic.surname", "basic.otherNames", "basic.birthPlace", "basic.sex", "passport.issueDate", "qualifications.experience", "contact.alternativePhone"]) assert.equal(pending[field], undefined, field);
-        // CONFIRM-017: no canonical target, so never offered (Guardian, email, district, civil status, children, ...).
+        // CONFIRM-017: only allowlisted fields are ever offered. Every answer now has a canonical target (Guardian,
+        // email, district, civil status, job category, ...); a parent's name is offered as name + surname together,
+        // never as the two halves, and an "N/A" answer (children, passports) never.
         for (const field of Object.keys(pending)) assert.ok(Object.hasOwn(CONFIRMABLE_FIELDS, field), field);
-        for (const field of ["guardian.name", "guardian.nic", "contact.email", "contact.district", "basic.civilStatus", "qualifications.jobCategory", "family.father.name"]) assert.equal(pending[field], undefined, field);
+        assert.deepEqual(pending["guardian.name"], { field: "guardian.name", current: null, submitted: "KAMAL PERERA" });
+        assert.deepEqual(pending["basic.civilStatus"], { field: "basic.civilStatus", current: null, submitted: "SINGLE" });
+        assert.deepEqual(pending["family.father.fullName"], { field: "family.father.fullName", current: null, submitted: "SUNIL DE SOYSA" });
+        for (const field of ["family.father.name", "family.father.surname", "family.child1", "family.father.passportNumber", "qualifications.otherSkills1"]) assert.equal(pending[field], undefined, field);
     });
 
     test("nothing is pending before a submission", async () => {
@@ -197,7 +202,7 @@ describe("the server decides (CONFIRM-005 to 009)", () => {
     test("CONFIRM-007 / 008 unmapped and made-up fields are rejected, including prototype and table-like names", async () => {
         await submitForm();
         const before = JSON.stringify(await candidateRow());
-        for (const field of ["guardian.name", "guardian.nic", "contact.email", "contact.district", "basic.civilStatus", "qualifications.jobCategory", "family.father.name", "family.spouse.birthDate",
+        for (const field of ["family.father.name", "family.father.surname", "family.spouse.name", "basic.nic", "contact.whatsappNumber", "contact.distanceToBucharestKm", "basic.heightCm",
             "candidate.passportId", "passportId", "nic", "user.role", "__proto__", "constructor", "toString", "basic.birthDate ", "BASIC.BIRTHDATE", "basic.birthDate; DROP TABLE candidate", ""]) {
             const r = await confirm(USERS.ADMIN, { field, expectedCurrentValue: null, expectedSubmittedValue: null });
             assert.deepEqual([r.status, r.body.code], [400, "FIELD_NOT_CONFIRMABLE"], JSON.stringify(field));
@@ -207,7 +212,10 @@ describe("the server decides (CONFIRM-005 to 009)", () => {
         }
         assert.equal(JSON.stringify(await candidateRow()), before);
         assert.equal(await prisma.user.count(), 5);
-        assert.ok(Object.keys(CONFIRMABLE_FIELDS).every((key) => !/guardian|email|district|civil/.test(key)));
+        // The name halves, the verified NIC and the derived values are never targets of their own.
+        for (const key of ["family.father.name", "family.father.surname", "family.mother.name", "family.spouse.surname", "basic.nic", "basic.heightCm", "contact.distanceToBucharestKm"]) {
+            assert.ok(!Object.hasOwn(CONFIRMABLE_FIELDS, key), key);
+        }
     });
 
     test("no submission: nothing to confirm (409)", async () => {

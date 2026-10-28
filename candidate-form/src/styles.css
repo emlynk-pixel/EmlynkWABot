@@ -441,6 +441,15 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 
 .error { color: var(--error); font-size: 0.875rem; margin: 6px 0 0; font-weight: 600; }
 
+/* A unit at the end of a box ("kg", "cm"), and how a typed value is read ("= 70 kg"). */
+.input-suffix { position: relative; }
+.field .input-suffix:has(.input-suffix-unit) input:not([type="radio"]) { padding-right: 48px; }
+.input-suffix-unit { position: absolute; top: 50%; right: 14px; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.field-note { margin: 6px 0 0; color: var(--muted); font-size: 0.8125rem; }
+
+/* A value worked out by the form, not typed (Distance to Bucharest). */
+.derived-value input { background: var(--surface-2) !important; border-style: dashed !important; color: var(--ink); font-weight: 600; }
+
 /* A verified, read-only value: plainly different from an editable box. */
 .verified-value { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .verified-value input {

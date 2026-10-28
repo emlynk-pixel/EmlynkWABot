@@ -89,7 +89,7 @@ describe("Candidate Form conflict indicator (GET /candidates formConflicts)", ()
         await prisma.candidate.create({ data: A });
         await submit(A.passportId, {
             birthPlace: "  negombo ", address: "12 galle road", contactNumber: undefined, alternativePhone: "+94771234567",
-            otherNames: "N/A", experience: null, city: "SOMEWHERE ELSE", email: "new@example.com", guardianName: "KAMAL",
+            otherNames: "N/A", experience: null, guardianName: "n/a", email: "   ", fatherSurname: "PERERA",
         });
         assert.deepEqual((await listItem(USERS.ADMIN, A.passportId)).formConflicts, []);
     });

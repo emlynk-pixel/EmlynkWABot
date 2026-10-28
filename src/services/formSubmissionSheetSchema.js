@@ -73,6 +73,16 @@ const COLUMNS = [
     ["Guardian Address", "guardianAddress", "guardianAddress"],
 ];
 
+// Answers of the Candidate Form that are NOT columns of this tab yet (the Personal Details and
+// parents' alive answers of migration 20261101120000_candidate_form_personal_details). Every
+// column above must already be in the live tab's header (readFormSubmissionLayout), so adding
+// one here before the operators add its header to the Sheet would stop every sync. They are
+// stored in candidate_form_response and shown in Admin; add them here together with the Sheet.
+export const ANSWER_COLUMNS_NOT_IN_SHEET = Object.freeze(new Set([
+    "bloodGroup", "height", "weightKg", "drivingLicence", "canReadDrawings", "teamLeadingSkills", "otherLanguages",
+    "cityInRomania", "fatherAlive", "motherAlive",
+]));
+
 export const FORM_SUBMISSION_COLUMNS = Object.freeze(COLUMNS.map(([header, field, source], index) => Object.freeze({ index, header, field, source })));
 export const FORM_SUBMISSION_COLUMN_COUNT = FORM_SUBMISSION_COLUMNS.length;
 export const FORM_SUBMISSION_HEADERS = Object.freeze(FORM_SUBMISSION_COLUMNS.map((c) => c.header));
