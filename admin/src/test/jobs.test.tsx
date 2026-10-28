@@ -544,8 +544,8 @@ describe("Multiple Job Types UI", () => {
         await vi.waitFor(() => {
             const postCall = calls.find((c) => c.method === "POST");
             expect(postCall).toBeDefined();
-            expect(postCall!.body.jobTypeIds).toEqual(["t2", "t3"]);
-            expect(postCall!.body.jobTypeId).toBe("t2");
+            // The recorded body is `unknown` (helpers.tsx): match its fields instead of reading them.
+            expect(postCall!.body).toMatchObject({ jobTypeIds: ["t2", "t3"], jobTypeId: "t2" });
         });
     });
 });
