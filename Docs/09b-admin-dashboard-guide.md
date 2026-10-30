@@ -913,28 +913,31 @@ The security model implements strict defense-in-depth across storage, authentica
 
 ### Role Permissions Matrix
 
+Role hierarchy: `OWNER > ADMIN > MANAGER > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. OWNER has every ADMIN permission; the difference is user management (below).
+
 All application endpoints enforce server-side role validation via `requireRole` middleware inspecting `public."user".role`. Frontend navigation visibility is merely an affordance; backend APIs fail closed (`403 Forbidden`).
 
-| Capability / Resource | ADMIN | MANAGER | ANALYST | REGISTRATION_DESK |
-|---|:---:|:---:|:---:|:---:|
-| **Agent Management** (`/agents`, `/api/admin/agents`) | Full | Full | None (403) | None (403) |
-| **Client Management** (`/client-management`, `/api/admin/client-management`) | Full | Full | None (403) | None (403) |
-| **Job Management** (`/jobs`, `/api/admin/jobs`) | Full | Full | Read-Only (Scoped to allocated candidates) | None (403) |
-| **Work Allocation** (`/work-allocation`, `/api/admin/work-allocation/*`) | Full | Full | None (403) | None (403) |
-| **Candidate Registration** (`/candidates/new`, `POST /candidates`) | Yes | Yes | No (Unallocated by default) | Yes |
-| **Candidate Deployment & Profile** (`/candidates/:passportId`) | Full | Full | Scoped (Allocated candidates only) | Full |
-| **Candidate Documents** (Upload & Removal) | Yes | Yes | Yes (Allocated candidates only) | Yes |
-| **Call Logs & Need Attention** (`/follow-ups`) | Full (Delete open) | Full (Delete open) | Scoped (Flag & Complete) | Full (Flag & Complete) |
-| **Review Queue** (`/review`) | Full | Full | Full | None (403) |
-| **Police Slip Date Correction** | Yes | Yes | No (403) | No (403) |
-| **Daily Report (Summary View)** | Yes | Yes | Yes | None (403) |
-| **Daily Report (Summary by Roles)** | Yes | Yes | None (403) | None (403) |
-| **Audit Logs** (`/audit-logs`) | Full (View Only) | None (403) | None (403) | None (403) |
-| **Settings (User Roles, Invites, Sheet Sync)** | Full | None (403) | None (403) | None (403) |
+| Capability / Resource | OWNER | ADMIN | MANAGER | ANALYST | REGISTRATION_DESK | JOB_HANDLER |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Agent Management** (`/agents`, `/api/admin/agents`) | Full | Full | Full | None (403) | None (403) | Full |
+| **Client Management** (`/client-management`, `/api/admin/client-management`) | Full | Full | Full | None (403) | None (403) | Full |
+| **Job Management** (`/jobs`, `/api/admin/jobs`) | Full | Full | Full | Read-Only (Scoped to allocated candidates) | None (403) | Full |
+| **Work Allocation** (`/work-allocation`, `/api/admin/work-allocation/*`) | Full | Full | Full | None (403) | None (403) | None (403) |
+| **Candidate Registration** (`/candidates/new`, `POST /candidates`) | Yes | Yes | Yes | No (Unallocated by default) | Yes | No (403) |
+| **Candidate Deployment & Profile** (`/candidates/:passportId`) | Full | Full | Full | Scoped (Allocated candidates only) | Full | Read-Only (list, details) |
+| **Candidate Documents** (Upload & Removal) | Yes | Yes | Yes | Yes (Allocated candidates only) | Yes | No (403) |
+| **Call Logs & Need Attention** (`/follow-ups`) | Full (Delete open) | Full (Delete open) | Full (Delete open) | Scoped (Flag & Complete) | Full (Flag & Complete) | None (403) |
+| **Review Queue** (`/review`) | Full | Full | Full | Full | None (403) | None (403) |
+| **Police Slip Date Correction** | Yes | Yes | Yes | No (403) | No (403) | No (403) |
+| **Daily Report (Summary View)** | Yes | Yes | Yes | Yes | None (403) | None (403) |
+| **Daily Report (Summary by Roles)** | Yes | Yes | Yes | None (403) | None (403) | None (403) |
+| **Audit Logs** (`/audit-logs`) | Full (View Only) | Full (View Only) | None (403) | None (403) | None (403) | None (403) |
+| **Settings (User Roles, Invites, Sheet Sync)** | Full (also manages Admin accounts) | Full (accounts and roles below Admin only) | Google Sheet Sync status and Update Sheet; invites a new Job Handler (no other Settings) | None (403) | None (403) | None (403) |
 
 - **Private Storage**: Documents reside in a private Supabase Storage bucket. The dashboard never receives raw storage credentials: files stream securely through the authenticated server. Direct uploads to candidate folders use time-limited, signed URLs issued by the API.
 - **Supabase Auth & Bearer Tokens**: All authenticated requests pass `Authorization: Bearer <token>`. The server verifies tokens directly with Supabase Auth. Browser applications hold only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. The `SUPABASE_SERVICE_ROLE_KEY` is server-only.
-- **Server-Side Authoritative RBAC**: Frontend sidebar navigation hiding is a user interface affordance only, **not** the security perimeter. The server-side `createRequireActiveUser` and `requireRole` middleware inspect the database `public."user"` row on every single request, validating `status === 'ACTIVE'` and the caller's role (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`). Unauthorized requests fail closed with `403 { message: "Insufficient permissions" }`.
+- **Server-Side Authoritative RBAC**: Frontend sidebar navigation hiding is a user interface affordance only, **not** the security perimeter. The server-side `createRequireActiveUser` and `requireRole` middleware inspect the database `public."user"` row on every single request, validating `status === 'ACTIVE'` and the caller's role (`OWNER`, `ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER`). Unauthorized requests fail closed with `403 { message: "Insufficient permissions" }`.
+- **User Management (Owner and Admin)**: Settings → Change Roles and Invite User. An Owner manages Admin accounts and every lower role and may give the Admin role; an Admin manages only Manager, Analyst, Registration Desk and Job Handler accounts. Nobody invites an Owner or gives the Owner role in the app, and the Owner's row has no controls: the single Owner is set in the database (`OWNER_ROLE.md`). The server enforces all of it (403); the hidden controls are only a convenience. Existing Admin accounts were not converted to Owner.
 - **User Invitations & Password Lifecycle**: Invitations are managed through the Supabase Auth Admin API and dispatched via configured SMTP to `${APP_BASE_URL}/admin/setup-password`. Password recovery operates through Supabase Auth without disclosing email existence.
 - **Immutable Audit Trail**: All administrative decisions, candidate creations, candidate updates, stage progress, document uploads/removals, role updates, and user invitations are immutably recorded in `audit_logs`, protected by database triggers.
 - **Content Security Policy**: Helmet enforces strict CSP headers, preventing unauthorized script execution, frame injection, or untrusted network connections.

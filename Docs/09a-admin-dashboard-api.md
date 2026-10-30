@@ -658,7 +658,7 @@ Full-stack confirmation (throwaway PostgreSQL, real Express server, real headles
 
 ## 4o. Candidate additional details
 
-Extra details of a candidate (Admin > Candidates > **Additional Details** tab), stored in `candidate_additional_details` (migration `20261009150000_candidate_additional_details`; see `Docs/DATABASE_IMPLEMENTATION.md` §2.12). Service: `src/services/candidateAdditionalDetailsService.js`. Roles: ADMIN, MANAGER, ANALYST, REGISTRATION_DESK.
+Extra details of a candidate (Admin > Candidates > **Additional Details** tab), stored in `candidate_additional_details` (migration `20261009150000_candidate_additional_details`; see `Docs/03-database-design.md` Part 2, §2.12). Service: `src/services/candidateAdditionalDetailsService.js`. Roles: ADMIN, MANAGER, ANALYST, REGISTRATION_DESK.
 
 ### `GET /api/admin/candidates/:passportId/additional-details`
 
@@ -913,12 +913,14 @@ Authentication is Supabase Auth; authorization is the application's. The full de
 
 ### 12.1 Roles
 
-The role is `public."user".role`, read from the database on every request (never from the token):
+The role is `public."user".role`, read from the database on every request (never from the token). Hierarchy: `OWNER > ADMIN > MANAGER > ANALYST / REGISTRATION_DESK / JOB_HANDLER`.
 
-- **`ADMIN`**: everything, including user management (`/api/admin/users`) and Settings.
+- **`OWNER`**: the single system owner. Inherits every ADMIN permission (a tier that admits ADMIN admits OWNER: `hasRole()` in `src/middleware/requireRole.js` and `admin/src/auth/roles.ts`), plus managing ADMIN accounts. Set in the database only; see section 13 and [`OWNER_ROLE.md`](OWNER_ROLE.md).
+- **`ADMIN`**: everything, including Settings and user management of the roles below ADMIN (`/api/admin/users`); never another ADMIN's or the OWNER's account.
 - **`MANAGER`**: dashboard, review, corrections and candidates, including police slip date corrections; no user management or Settings.
 - **`ANALYST`**: dashboard reads, review actions, corrections and candidate work; cannot correct police slip dates.
 - **`REGISTRATION_DESK`**: candidate list, lookup, registration and details only.
+- **`JOB_HANDLER`**: Jobs, Agents and Clients; reads Candidates (list, details) and changes no candidate record; no dashboards, reports, review, Settings, Audit Logs or user management (`JOB_MANAGEMENT_IMPLEMENTATION.md`, `AGENT_CLIENT_MANAGEMENT.md`).
 
 ### 12.2 Authorization middleware
 
@@ -936,7 +938,9 @@ Endpoint tiers (`src/routes/admin.js`):
 | Follow-up delete (Need Attention page) | ADMIN, MANAGER | `DELETE /follow-ups/:id`: removes the follow-up row only (never the call log, candidate or documents); ANALYST and REGISTRATION_DESK get 403. The role is the signed-in user's, read from the database on every request |
 | Review and corrections | ADMIN, MANAGER, ANALYST | review actions, temporary document delete |
 | Police date correction | ADMIN, MANAGER | `POST /documents/:id/police-date` |
-| Users, Audit Logs and Settings | ADMIN | `/api/admin/users/*`, `/api/admin/audit-logs`, `/api/admin/settings/sheet-sync/*` |
+| Users, Audit Logs and Settings | OWNER, ADMIN | `/api/admin/users/*` (which accounts each may change: section 13), `/api/admin/audit-logs`, `/api/admin/settings/sheet-sync/*` |
+
+The tiers in `src/routes/admin.js` name ADMIN only; OWNER passes each of them through `hasRole()`. Jobs, Agents and Clients have their own tiers (ADMIN, MANAGER, JOB_HANDLER; an ANALYST reads the jobs holding their own candidates): see `JOB_MANAGEMENT_IMPLEMENTATION.md` and `AGENT_CLIENT_MANAGEMENT.md`.
 
 `GET /auth/me` and `POST /auth/complete-invite` need a Supabase session but not a particular role.
 
@@ -947,6 +951,15 @@ Every request authenticates with `Authorization: Bearer <Supabase access token>`
 ## 13. User management and invitations (OWNER and ADMIN)
 
 Routes in `src/routes/users.js`, mounted at `/api/admin/users`; every one needs the OWNER or ADMIN role (a MANAGER may only invite a new Job Handler). Which accounts and roles each may touch is decided by `src/services/userAccountService.js` on the database rows: an OWNER manages every account but an OWNER's; an ADMIN only accounts below ADMIN and gives only roles below ADMIN. Nobody gives the OWNER role or changes an OWNER account through the API (403 `OWNER_LOCKED`): the OWNER is set in the database only. The full model, and how the first OWNER is made, is in [`OWNER_ROLE.md`](OWNER_ROLE.md).
+
+Summary of the rules (all enforced server-side on the database rows, inside the transaction and with the rows locked; hiding controls in the UI is not the security boundary):
+
+- **OWNER** is the highest role and inherits all ADMIN access. It changes the role of, deactivates and re-invites ADMIN accounts and every lower role, gives the ADMIN role, and invites ADMIN, MANAGER, ANALYST, REGISTRATION_DESK and JOB_HANDLER.
+- **Nobody invites an OWNER**, and nobody gives the OWNER role or changes, deactivates or re-invites an OWNER account through the application, the OWNER included (403 `OWNER_LOCKED`). The single OWNER is created or changed in the database only (`OWNER_ROLE.md`, *Making the first OWNER* / *Changing the OWNER*).
+- **ADMIN cannot** change another ADMIN's role, deactivate another ADMIN, modify the OWNER, give the ADMIN or OWNER role, invite an ADMIN or OWNER, or use a re-invite to reactivate or change an ADMIN or OWNER account (403 `OWNER_REQUIRED` / `OWNER_LOCKED`). A requested role is refused, never silently downgraded.
+- **Nobody changes their own account** here (400 `SELF_CHANGE`).
+- **No automatic conversion:** existing ADMIN accounts stayed ADMIN when OWNER was introduced (no migration; `role` is `TEXT`).
+- MANAGER (inviting a new Job Handler only), ANALYST, REGISTRATION_DESK and JOB_HANDLER keep their existing access.
 
 | Method | Path | Purpose |
 |---|---|---|

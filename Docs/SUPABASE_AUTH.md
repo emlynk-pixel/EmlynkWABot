@@ -16,12 +16,16 @@ foreign key to `auth.users` on Supabase, `ON DELETE RESTRICT`).
 
 ## Roles
 
+Hierarchy: `OWNER > ADMIN > MANAGER > ANALYST / REGISTRATION_DESK / JOB_HANDLER`.
+
 | Role | Access (enforced by `src/routes/admin.js`) |
 |---|---|
-| `ADMIN` | everything, including users (`/api/admin/users`) and Settings |
+| `OWNER` | everything ADMIN has, plus managing ADMIN accounts; the single OWNER is set in the database only (`OWNER_ROLE.md`) |
+| `ADMIN` | everything, including users (`/api/admin/users`: the roles below ADMIN only) and Settings |
 | `MANAGER` | everything except users and Settings |
 | `ANALYST` | dashboard reads, review actions, corrections, candidate work; not police-date corrections |
 | `REGISTRATION_DESK` | candidate list, lookup, registration and details only |
+| `JOB_HANDLER` | Jobs, Agents and Clients; reads Candidates (list, details), changes no candidate record |
 
 The role is read from `public."user"` on **every** request; nothing in the
 token is trusted for authorization. A role change or deactivation applies to
@@ -74,7 +78,7 @@ Supabase session → the invitee sets a password (`auth.updateUser`) →
 token stops being accepted by `getUser` because its session is gone). The local
 session is cleared even if Supabase can't be reached.
 
-**Bootstrap**: `npm run user:create -- --name "…" --email … [--role ADMIN]`
+**Bootstrap**: `npm run user:create -- --name "…" --email … [--role ADMIN]` (`--role OWNER` creates the environment's OWNER; see `OWNER_ROLE.md`)
 creates the Supabase identity (password at a hidden prompt, or
 `BOOTSTRAP_PASSWORD`) and its `ACTIVE` row. `--link` creates the application
 row for an existing Supabase Auth identity that does not yet have a
@@ -152,7 +156,8 @@ Two migrations make the restructure:
 
 1. `npx prisma migrate deploy` (with no staff rows the cutover's check passes).
 2. `npm run user:create -- --name "…" --email … --role ADMIN` for the first
-   ADMIN (password at the hidden prompt).
+   ADMIN (password at the hidden prompt). For the environment's OWNER use
+   `--role OWNER`, or promote an existing ADMIN by SQL (`OWNER_ROLE.md`).
 3. Everyone else is invited from the app (*Invite User*).
 
 ### B. Existing database from before the restructure

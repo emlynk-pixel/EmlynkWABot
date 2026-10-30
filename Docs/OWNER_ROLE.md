@@ -6,8 +6,10 @@ database only**: the application never gives the OWNER role, and never changes o
 OWNER account, whoever asks (the OWNER included).
 
 ```
-OWNER > ADMIN > MANAGER > ANALYST > REGISTRATION_DESK      (JOB_HANDLER: below ADMIN, managed like the others)
+OWNER > ADMIN > MANAGER > ANALYST / REGISTRATION_DESK / JOB_HANDLER
 ```
+
+(The roles below ADMIN are not ranked against each other for user management: an OWNER or ADMIN manages all of them alike.)
 
 The role is stored like every other role: `public."user".role` is plain `TEXT`, validated by the
 application (`src/middleware/requireRole.js`). There is no database CHECK on it, so **no migration**
@@ -137,3 +139,8 @@ COMMIT;
 
 To demote the OWNER without a successor, run only the first `UPDATE` (with its audit row); the system
 then has no OWNER until one is made as in *Making the first OWNER*.
+
+## Historical / Previous Implementation Notes
+
+- **First draft (not released).** The first implementation let an OWNER promote any account to OWNER in Change Roles and demote or deactivate another OWNER, and kept at least one ACTIVE OWNER with a 409 `LAST_OWNER` check (all ACTIVE OWNER rows were locked during a change, so two OWNERs removing each other at once could not both succeed). Before it was committed this was replaced by the current rule: one OWNER, set in the database only, out of the application's reach (403 `OWNER_LOCKED`). Because the application can no longer add, remove or demote an OWNER, the `LAST_OWNER` check was removed with it.
+- **Before OWNER**, any ADMIN could change or deactivate any other ADMIN and invite ADMINs.

@@ -23,6 +23,8 @@
 
 > **Update (Sync Destination and Settings).** The Sheet Sync Settings UI has three tabs (Change Roles, Invite User, Google Sheet Sync), the Google Sheet Sync tab separates **automatic (scheduled)** from **manual** sync and has a **Sync Destination** section, and the worker can write to any of several configured Sheets, one active at a time. These are described as built in **Section 12.9** (UI), **Section 13** (API) and **Section 25** (Sync Destination). Where Sections 12.1-12.4 and the 13.1 example describe the earlier "single Settings card" design, they are kept as historical design context and are superseded by 12.9 and 24.7. The automatic schedule (06:00, 12:00, 18:00 Asia/Colombo), the one-way database -> Sheet rule and every safeguard in this document are unchanged.
 
+> **Current column layout (documentation cleanup, 2026-10-30).** The live mirror uses the approved **83-column** layout (`A–CE`): `CANDIDATE_BULK_IMPORT.md` §3. The 40/41-column layouts in this specification are earlier revisions. Operations and troubleshooting: `GOOGLE_SHEET_INTEGRATION.md`.
+
 ### How to read this document
 
 | Label | Meaning |

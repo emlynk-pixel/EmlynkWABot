@@ -16,15 +16,22 @@ Authentication is Supabase Auth's; authorization is the application's. The desig
 
 ## Role-Based Access Control
 
-Four roles, stored in `public."user".role` and enforced by `requireRole` middleware on every admin route:
+Six roles, stored in `public."user".role` and enforced by `requireRole` middleware on every admin route. Hierarchy: `OWNER > ADMIN > MANAGER > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. OWNER passes every tier that admits ADMIN (`hasRole()`); the single OWNER is set in the database only (`OWNER_ROLE.md`).
 
-| Action | ADMIN | MANAGER | ANALYST | REGISTRATION_DESK |
-|---|:---:|:---:|:---:|:---:|
-| View overview, documents, clients, review queue, police workflow, reports | ✓ | ✓ | ✓ | — |
-| Candidate list, registration and details | ✓ | ✓ | ✓ | ✓ |
-| Review actions, corrections, candidate work | ✓ | ✓ | ✓ | — |
-| Correct a stored police slip's date | ✓ | ✓ | — | — |
-| Invite, list, change role, deactivate users; Settings | ✓ | — | — | — |
+| Action | OWNER | ADMIN | MANAGER | ANALYST | REGISTRATION_DESK | JOB_HANDLER |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| View overview, documents, clients, review queue, police workflow, reports | ✓ | ✓ | ✓ | ✓ | — | — |
+| Candidate list and details | ✓ | ✓ | ✓ | ✓ | ✓ | read only |
+| Candidate registration | ✓ | ✓ | ✓ | — | ✓ | — |
+| Review actions, corrections, candidate work | ✓ | ✓ | ✓ | ✓ | — | — |
+| Correct a stored police slip's date | ✓ | ✓ | ✓ | — | — | — |
+| Jobs, Agents, Clients | ✓ | ✓ | ✓ | jobs of own candidates (read) | — | ✓ |
+| List users; Settings; Audit Logs | ✓ | ✓ | Settings: Google Sheet Sync status and Update Sheet only | — | — | — |
+| Change role / deactivate / re-invite ADMIN accounts; give the ADMIN role; invite ADMIN | ✓ | — | — | — | — | — |
+| Change role / deactivate / re-invite accounts below ADMIN; invite those roles | ✓ | ✓ | new Job Handler invite only | — | — | — |
+| Give the OWNER role, change or deactivate an OWNER account, invite an OWNER | — (database only) | — | — | — | — | — |
+
+The Registration Desk restriction (Candidates area only) is unchanged by OWNER.
 
 A failed authorization check returns a generic `403`, without indicating which specific permission was missing. The route-by-route map is in `09a-admin-dashboard-api.md`.
 

@@ -77,7 +77,7 @@
 
 ## Project Overview
 
-**Emlynk** streamlines recruitment candidate onboarding, document collection and deployment tracking. Candidates submit verification documents — passports, police reports/slips, medical certificates and other required forms — directly through WhatsApp. Staff (ADMIN, MANAGER, ANALYST, REGISTRATION_DESK) manage the candidate through a single pipeline: registration, document review, interviews, visa processing and job finalization, from one admin dashboard.
+**Emlynk** streamlines recruitment candidate onboarding, document collection and deployment tracking. Candidates submit verification documents — passports, police reports/slips, medical certificates and other required forms — directly through WhatsApp. Staff (OWNER, ADMIN, MANAGER, ANALYST, REGISTRATION_DESK, JOB_HANDLER) manage the candidate through a single pipeline: registration, document review, interviews, visa processing and job finalization, from one admin dashboard.
 
 The system receives document payloads via WhatsApp webhooks, performs OCR/Document AI extraction, reconciles candidate records against existing entries, routes documents by OCR confidence, tracks the police report 21-day deadline, and mirrors operational state to a Google Sheet for staff who work outside the dashboard.
 
@@ -112,7 +112,7 @@ Manual processing of candidate verification documents via messaging channels pre
 - 📊 **Multi-Level Confidence Matrix**: 5-tier OCR confidence rules (>95%, 90–95%, 60–89%, 40–59%, <40%) drive auto-renaming vs. warning flags vs. manual review routing.
 - ⏱️ **Police Slip 21-Day Countdown**: Tracks police report slip submission dates; suppresses reminders once staff mark the final police report `COMPLETED`.
 - 📁 **Single-Scan Document Model**: One scan slot per candidate — no separate agreement/affidavit/contract slots to manage.
-- 🔐 **Supabase-Secured Admin Portal**: Supabase Auth identity plus backend role-based authorization (`ADMIN` / `MANAGER` / `ANALYST` / `REGISTRATION_DESK`) guards every protected route.
+- 🔐 **Supabase-Secured Admin Portal**: Supabase Auth identity plus backend role-based authorization (`OWNER` / `ADMIN` / `MANAGER` / `ANALYST` / `REGISTRATION_DESK` / `JOB_HANDLER`) guards every protected route.
 - 🧭 **Candidate Progress Pipeline**: Test Details → Candidate Details → Document Submission → VISA Submission → IVS Interview → Visa Approval → Finalizing the Job.
 - 📞 **Candidate History & Need Attention**: The call log drawer is a **Candidate History** timeline (calls, **No Answer** attempts and candidate activity). A call can be flagged **Need attention**; it then also appears on the Admin **Need Attention** page, grouped by candidate, without leaving the candidate's history. Every staff role can complete a follow-up; only ADMIN and MANAGER can delete one (the call log is always kept).
 - 📄 **Google Sheet Operational Mirror**: Scheduled, one-way database → Sheet sync (06:00 / 12:00 / 18:00) for staff who work from a spreadsheet.
@@ -128,7 +128,8 @@ Staff are never uniformly "admins" — every staff member is a `user` with exact
 
 | Role | Access |
 |---|---|
-| `ADMIN` | Full access, including staff/user management, Settings and Sheet configuration |
+| `OWNER` | Everything ADMIN has, plus managing ADMIN accounts. One per environment, set in the database only — see [`Docs/OWNER_ROLE.md`](Docs/OWNER_ROLE.md) |
+| `ADMIN` | Full access, including Settings, Sheet configuration and staff/user management of the roles below ADMIN (never another ADMIN or the OWNER) |
 | `MANAGER` | Full access except staff/user management |
 | `ANALYST` | Reads, plus review actions and candidate workflow updates (stages, call logs, document review) |
 | `REGISTRATION_DESK` | Full access to the **Candidate** section — registration, candidate details, progress stages, documents and call logs for the complete candidate process. No access to Admin-only functions (staff management, Settings, Sheet configuration) |
@@ -323,13 +324,13 @@ Supabase Auth is the sole identity provider: it issues and verifies JWTs, manage
 
 ### Authorization — Backend RBAC
 
-Once a request carries a verified Supabase identity, the backend resolves the matching `public.user` row and authorizes the action against `user.role` — one of `ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK` (see [User Roles](#user-roles)). Backend RBAC is the application's security boundary for every protected route; Supabase confirms identity, the backend decides access.
+Once a request carries a verified Supabase identity, the backend resolves the matching `public.user` row and authorizes the action against `user.role` — one of `OWNER`, `ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER` (see [User Roles](#user-roles)). Backend RBAC is the application's security boundary for every protected route; Supabase confirms identity, the backend decides access.
 
 ---
 
 ## User Invitation Flow
 
-Staff invitations are not limited to admins — any of the four roles can be invited. The sidebar/menu action is **"Invite User"**, not "Invite Admin".
+Staff invitations are not limited to admins. An OWNER invites ADMIN and every lower role, an ADMIN the roles below ADMIN, a MANAGER a new Job Handler; nobody invites an OWNER. The sidebar/menu action is **"Invite User"**, not "Invite Admin".
 
 ```
 Admin
@@ -338,7 +339,7 @@ Invite User
     ->
 enter email
     ->
-select role (ADMIN, MANAGER, ANALYST, or REGISTRATION_DESK)
+select role (the roles the signed-in user may give)
     ->
 backend uses trusted Supabase Auth admin functionality
     ->
@@ -552,7 +553,7 @@ This rule applies consistently across every document type mirrored to the Sheet 
 
 ## Admin Dashboard Overview
 
-The Admin Dashboard is served at `/admin`. What a person sees depends on their role (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`); the backend enforces it on every request. The full reference is [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md).
+The Admin Dashboard is served at `/admin`. What a person sees depends on their role (`OWNER`, `ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER`); the backend enforces it on every request. The full reference is [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md).
 
 | Area | What it is |
 |---|---|
@@ -564,8 +565,8 @@ The Admin Dashboard is served at `/admin`. What a person sees depends on their r
 | **Missing Documents** | Incomplete candidates and the required documents they lack |
 | **Police Workflow** | The 21-day police report countdown |
 | **Daily Report** | Summary and Summary by Roles for a chosen day, with PDF export (ADMIN, MANAGER, ANALYST; Summary by Roles ADMIN and MANAGER only; not REGISTRATION_DESK) |
-| **Audit Logs** | Append-only record of every action (ADMIN only) |
-| **Settings** | Change Roles, Invite User and Google Sheet Sync (ADMIN only) |
+| **Audit Logs** | Append-only record of every action (OWNER and ADMIN) |
+| **Settings** | Change Roles, Invite User and Google Sheet Sync (OWNER and ADMIN) |
 
 ### Candidate Search
 
@@ -653,7 +654,7 @@ Details: [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md
 
 ## Settings & Administration
 
-Administration is consolidated under one **Settings** item (ADMIN only) with three tabs, one URL each:
+Administration is consolidated under one **Settings** item (OWNER and ADMIN) with three tabs, one URL each:
 
 | Tab | Route |
 |---|---|
@@ -893,10 +894,10 @@ Every route requires an authenticated, active `user`; access to each route is ad
 | `POST` | `/api/admin/review/:reviewId/keep-pending` | Keep pending with a required reason; audit entry |
 | `POST` | `/api/admin/review/:reviewId/remove` | Remove from review (reason required); never removes a verified document; audit entry kept |
 | `GET` | `/api/admin/police` | Every candidate's 21-day police-report status |
-| `GET` | `/api/admin/users` | Staff directory (ADMIN only) |
+| `GET` | `/api/admin/users` | Staff directory (OWNER and ADMIN) |
 | `POST` | `/api/admin/users/invite` | Invite User — enter email, select role; triggers the Supabase invitation flow |
-| `PUT` | `/api/admin/users/:userId/role` | Change a staff member's role (ADMIN only) |
-| `GET`/`PUT` | `/api/admin/settings/sheet-sync` | Google Sheet configuration and sync controls (ADMIN only) |
+| `PUT` | `/api/admin/users/:userId/role` | Change a staff member's role (OWNER: ADMIN and below; ADMIN: below ADMIN; never the OWNER) |
+| `GET`/`PUT` | `/api/admin/settings/sheet-sync` | Google Sheet configuration and sync controls (OWNER and ADMIN) |
 
 ### WhatsApp Webhooks (`/whatsapp`)
 
@@ -957,9 +958,9 @@ Setup logs, implementation history and architectural proposals are maintained un
 - 📄 [`Docs/20-candidate-management.md`](Docs/20-candidate-management.md): Candidate management: stages, Candidate History, Need Attention, additional details.
 - 📄 [`Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md`](Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md): Candidates list: server-side search and paging.
 - 📄 [`Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md): Google Sheet sync architecture, including Sync Destination.
-- 📄 [`Docs/GOOGLE_SHEET_SYNC_FEATURE.md`](Docs/GOOGLE_SHEET_SYNC_FEATURE.md): Google Sheet sync feature overview.
+- 📄 [`Docs/GOOGLE_SHEET_INTEGRATION.md`](Docs/GOOGLE_SHEET_INTEGRATION.md): Google Sheet sync feature, operations and troubleshooting.
 - 📄 [`Docs/SUPABASE_AUTH.md`](Docs/SUPABASE_AUTH.md): Supabase Auth setup and flows.
-- 📄 [`Docs/DATABASE_IMPLEMENTATION.md`](Docs/DATABASE_IMPLEMENTATION.md): Database implementation notes.
+- 📄 [`Docs/03-database-design.md`](Docs/03-database-design.md): Database design and detailed schema reference.
 - 📄 [`Docs/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md`](Docs/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md): Project issues, fixes and lessons learned.
 - 📄 [`Docs/archive/`](Docs/archive/): Archived setup logs, early phase notes and the original proposal (historical).
 ---

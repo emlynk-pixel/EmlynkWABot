@@ -498,7 +498,7 @@ Only failures count against the IP and Passport limits (a successful verificatio
 ---
 ## 20. Database Tables
 
-Prisma model -> table. Column-level detail for the form tables is in section 15 and for the Job tables in section 13; the full reference is `DATABASE_IMPLEMENTATION.md`.
+Prisma model -> table. Column-level detail for the form tables is in section 15 and for the Job tables in section 13; the full reference is `03-database-design.md` (Part 2).
 
 | Table | Role in this feature | Written by |
 |---|---|---|
@@ -711,6 +711,6 @@ flowchart TB
 | [CANDIDATE_EXTRA_DETAILS_FORM_ISSUES_AND_SOLUTIONS.md](CANDIDATE_EXTRA_DETAILS_FORM_ISSUES_AND_SOLUTIONS.md) | Every issue found, its fix and status (ISS-001 onward) |
 | [CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md) | Detailed link, verification, prefill mapping and group-link design |
 | [JOB_MANAGEMENT_IMPLEMENTATION.md](JOB_MANAGEMENT_IMPLEMENTATION.md) | Job model, Job Code, assignment rules, migration from the legacy job field |
-| [DATABASE_IMPLEMENTATION.md](DATABASE_IMPLEMENTATION.md) | Table and migration reference |
+| [03-database-design.md](03-database-design.md) | Table and migration reference (Part 2: detailed schema) |
 | [20-candidate-management.md](20-candidate-management.md) | Admin candidate screens and API reference |
 | [../candidate-form/README.md](../candidate-form/README.md) | The public frontend (commands, configuration) |
