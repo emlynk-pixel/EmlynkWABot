@@ -30,7 +30,8 @@ A failed authorization check returns a generic `403`, without indicating which s
 
 ## Invitations and Password Recovery
 
-- **Invitations:** ADMIN only. The backend calls Supabase `inviteUserByEmail()` and Supabase sends the email. The redirect is built only from the required `APP_BASE_URL` (`${APP_BASE_URL}/admin/setup-password`), never from request input or headers; if `APP_BASE_URL` is missing or invalid the invitation is refused (503) before anything is sent. There is no silent fallback to Supabase's Site URL.
+- **User management:** OWNER and ADMIN. An OWNER manages every account but an OWNER's; an ADMIN only the roles below ADMIN, and never gives the ADMIN role. Nobody gives the OWNER role or changes an OWNER account through the application: the single OWNER is set in the database only. Checked server-side on the database rows inside the transaction (with the rows locked), never on the request. See `OWNER_ROLE.md`.
+- **Invitations:** OWNER (ADMIN and below) and ADMIN (below ADMIN); a MANAGER invites a new Job Handler only; nobody invites an OWNER. The backend calls Supabase `inviteUserByEmail()` and Supabase sends the email. The redirect is built only from the required `APP_BASE_URL` (`${APP_BASE_URL}/admin/setup-password`), never from request input or headers; if `APP_BASE_URL` is missing or invalid the invitation is refused (503) before anything is sent. There is no silent fallback to Supabase's Site URL.
 - **Password recovery:** Supabase's own flow (`resetPasswordForEmail`, then `updateUser` from the recovery link). The forgot-password page shows the same confirmation whether or not the email has an account. The backend stores no reset tokens.
 - **Redirect allow-list:** the setup and reset URLs of each environment must be in the Supabase allowed redirect URLs, so a link can only return to a known site.
 

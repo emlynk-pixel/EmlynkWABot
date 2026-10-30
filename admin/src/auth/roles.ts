@@ -1,7 +1,9 @@
-// The five application roles and what the admin app shows each one. These
+// The application roles and what the admin app shows each one. These
 // mirror the backend tiers (src/routes/admin.js); the backend stays the
 // authoritative check, this only hides what a role can't use.
 export const ROLES = {
+    // The system owner (one, set in the database only): every ADMIN permission, plus managing Admin accounts.
+    OWNER: "OWNER",
     ADMIN: "ADMIN",
     MANAGER: "MANAGER",
     ANALYST: "ANALYST",
@@ -12,9 +14,10 @@ export const ROLES = {
 
 export type Role = (typeof ROLES)[keyof typeof ROLES];
 
-export const ALL_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER, ROLES.ANALYST, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER];
+export const ALL_ROLES: readonly Role[] = [ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER, ROLES.ANALYST, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER];
 
 export const ROLE_LABELS: Record<Role, string> = {
+    OWNER: "Owner",
     ADMIN: "Admin",
     MANAGER: "Manager",
     ANALYST: "Analyst",
@@ -41,7 +44,10 @@ export const REGISTRATION_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER, 
 
 type WithRole = { role: string } | null | undefined;
 
-export const hasRole = (user: WithRole, roles: readonly Role[]): boolean => Boolean(user && (roles as readonly string[]).includes(user.role));
+// OWNER holds every ADMIN permission: a list that admits ADMIN admits OWNER too (the backend's
+// requireRole.js hasRole), so the lists here name ADMIN only.
+export const hasRole = (user: WithRole, roles: readonly Role[]): boolean =>
+    Boolean(user && ((roles as readonly string[]).includes(user.role) || (user.role === ROLES.OWNER && roles.includes(ROLES.ADMIN))));
 
 // Overview, documents, review queue, clients, police workflow, reports.
 export const canViewDashboard = (user: WithRole) => hasRole(user, DASHBOARD_ROLES);
@@ -79,16 +85,29 @@ export const MASTER_DATA_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER, R
 export const canManageMasterData = (user: WithRole) => hasRole(user, MASTER_DATA_ROLES);
 // Registering a new candidate.
 export const canRegisterCandidates = (user: WithRole) => hasRole(user, REGISTRATION_ROLES);
-// User management and Settings.
+// User management and Settings (an OWNER too).
 export const isAdmin = (user: WithRole) => hasRole(user, ADMIN_ONLY);
+export const isOwner = (user: WithRole) => user?.role === ROLES.OWNER;
 // Settings > Google Sheet Sync (src/routes/sheetSyncSettings.js): ADMIN, and MANAGER for the status
 // and Update Sheet (the bulk candidate import). Test Connection, Sync Now and the destination stay ADMIN.
 // A MANAGER sees no other Settings tab.
 export const SHEET_SYNC_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
 export const canOpenSheetSync = (user: WithRole) => hasRole(user, SHEET_SYNC_ROLES);
 export const canImportCandidates = (user: WithRole) => hasRole(user, SHEET_SYNC_ROLES);
-// Inviting users (src/middleware/requireRole.js INVITABLE_ROLES): ADMIN any role, MANAGER a
-// new Job Handler only. The server enforces it.
+// User management (src/middleware/requireRole.js ASSIGNABLE_ROLES / INVITABLE_ROLES): an OWNER
+// changes every account and gives every role but the Owner's; an ADMIN only the accounts and roles
+// below ADMIN (never another Admin). Nobody gives the Owner role or changes an Owner account in the
+// app: the Owner is set in the database only. A MANAGER invites a new Job Handler only. The server
+// enforces all of it.
+const BELOW_ADMIN: readonly Role[] = [ROLES.MANAGER, ROLES.ANALYST, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER];
+const BELOW_OWNER: readonly Role[] = [ROLES.ADMIN, ...BELOW_ADMIN];
 export const INVITE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
 export const canInviteUsers = (user: WithRole) => hasRole(user, INVITE_ROLES);
-export const invitableRoles = (user: WithRole): readonly Role[] => (isAdmin(user) ? ALL_ROLES : hasRole(user, [ROLES.MANAGER]) ? [ROLES.JOB_HANDLER] : []);
+export const invitableRoles = (user: WithRole): readonly Role[] =>
+    isOwner(user) ? BELOW_OWNER : isAdmin(user) ? BELOW_ADMIN : hasRole(user, [ROLES.MANAGER]) ? [ROLES.JOB_HANDLER] : [];
+// The roles the user may give in Change Roles.
+export const assignableRoles = (user: WithRole): readonly Role[] => (isOwner(user) ? BELOW_OWNER : isAdmin(user) ? BELOW_ADMIN : []);
+// Whether the user may change `target` (its role, its status, a re-invite): never their own
+// account, never an Owner's.
+export const canManageUser = (user: (WithRole & { userId?: string }) | null | undefined, target: { userId: string; role: string }) =>
+    Boolean(user && user.userId !== target.userId && target.role !== ROLES.OWNER && (isOwner(user) || (assignableRoles(user) as readonly string[]).includes(target.role)));

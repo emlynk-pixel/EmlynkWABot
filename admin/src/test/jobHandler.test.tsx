@@ -163,11 +163,11 @@ describe("Jobs, Agents and Clients: managed", () => {
 describe("Invite User", () => {
     const USERS = { users: [{ userId: "u1", name: "Someone", email: "s@example.invalid", role: "ANALYST", status: "ACTIVE", createdDate: "2026-10-01T00:00:00.000Z" }] };
 
-    test("UI-JH-013: ADMIN's role list includes Job Handler (with the user list, unchanged)", async () => {
+    test("UI-JH-013: ADMIN's role list includes Job Handler (with the user list; Admin is an Owner's to give)", async () => {
         backend(ADMIN, { "GET /api/admin/users": { status: 200, body: USERS } });
         renderApp("/settings/invite");
         const select = await screen.findByRole("combobox", { name: /^Role/ }, RENDER_STEP);
-        expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Admin", "Manager", "Analyst", "Registration Desk", "Job Handler"]);
+        expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Manager", "Analyst", "Registration Desk", "Job Handler"]);
         expect(await screen.findByText("Someone")).toBeInTheDocument();
     });
 

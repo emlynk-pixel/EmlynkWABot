@@ -23,7 +23,7 @@ import { DatePicker } from "../components/DatePicker";
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const shiftDay = (ymd: string, days: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 // The order of the role selector.
-const REPORT_ROLES: Role[] = [ROLES.ANALYST, ROLES.MANAGER, ROLES.ADMIN, ROLES.REGISTRATION_DESK];
+const REPORT_ROLES: Role[] = [ROLES.ANALYST, ROLES.MANAGER, ROLES.ADMIN, ROLES.OWNER, ROLES.REGISTRATION_DESK];
 const ROLE_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
 const PREVIEW_ROWS = 10;
 

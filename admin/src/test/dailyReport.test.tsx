@@ -280,7 +280,7 @@ describe("Daily Report: Summary by Roles", () => {
             const user = userEvent.setup();
             await user.click(await screen.findByRole("tab", { name: "Summary by Roles" }, RENDER_STEP));
             const select = await screen.findByRole("combobox", { name: "Role" });
-            expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Analyst", "Manager", "Admin", "Registration Desk"]);
+            expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Analyst", "Manager", "Admin", "Owner", "Registration Desk"]);
             expect(requests(calls, "/api/admin/reports/daily/roles").at(-1)).toBe(`/api/admin/reports/daily/roles?date=${DATE}&role=ANALYST`);
             expect(await screen.findByText("Documents uploaded", { selector: "p" })).toBeInTheDocument();
             expect(kpi("Calls taken")).toHaveTextContent("2");

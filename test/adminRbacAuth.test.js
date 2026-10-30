@@ -8,6 +8,7 @@
 //   ANALYSTS_UP     ADMIN, MANAGER, ANALYST                     review actions, corrections
 //   MANAGERS_UP     ADMIN, MANAGER                              police-date correction
 //   ADMINS_ONLY     ADMIN                                       users, Audit Logs, Settings
+// OWNER gets every route ADMIN gets (requireRole.js hasRole), and nothing more.
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -24,6 +25,9 @@ const DOCUMENT_ID = "00000000-0000-4000-8000-000000000001";
 const CANDIDATE_STAFF = ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"];
 // JOB_HANDLER reads candidates (never writes them).
 const CANDIDATE_READERS = [...CANDIDATE_STAFF, "JOB_HANDLER"];
+
+// OWNER holds every ADMIN permission, so a tier naming ADMIN admits OWNER too.
+const admits = (allowed, role) => allowed.includes(role) || (role === "OWNER" && allowed.includes("ADMIN"));
 
 // [method, path, body, roles allowed]
 const MATRIX = [
@@ -89,10 +93,10 @@ async function call(method, path, adminId, body) {
 }
 
 describe("role constants", () => {
-    test("exactly the five application roles; legacy VIEWER/REVIEWER are not roles", () => {
-        assert.deepEqual(ALL_ROLES, ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+    test("exactly the six application roles; legacy VIEWER/REVIEWER are not roles", () => {
+        assert.deepEqual(ALL_ROLES, ["OWNER", "ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         assert.deepEqual(Object.values(ROLES), ALL_ROLES);
-        for (const legacy of ["VIEWER", "REVIEWER", "admin", "", null]) assert.equal(isValidRole(legacy), false);
+        for (const legacy of ["VIEWER", "REVIEWER", "admin", "owner", "SUPERADMIN", "", null]) assert.equal(isValidRole(legacy), false);
     });
 
     test("requireRole reads req.user only: no user -> 401, other role -> 403", () => {
@@ -107,6 +111,11 @@ describe("role constants", () => {
         assert.equal(run({ admin: { role: "ADMIN" } }), 401, "the legacy req.admin is never trusted");
         assert.equal(run({ user: { role: "MANAGER" } }), 403);
         assert.equal(run({ user: { role: "ADMIN" } }), "next");
+        assert.equal(run({ user: { role: "OWNER" } }), "next", "OWNER passes an ADMIN tier");
+        const managers = requireRole([ROLES.MANAGER]);
+        let status = null;
+        managers({ user: { role: "OWNER" } }, { status: (code) => { status = code; return { json: () => {} }; } }, () => { status = "next"; });
+        assert.equal(status, 403, "OWNER only inherits ADMIN, not a tier without ADMIN");
     });
 });
 
@@ -115,7 +124,7 @@ describe("role matrix (backend is the boundary)", () => {
         test(`${role}`, async () => {
             for (const [method, path, body, allowed] of MATRIX) {
                 const { status, body: response } = await call(method, path, `user-${role}-ACTIVE`, body);
-                if (allowed.includes(role)) {
+                if (admits(allowed, role)) {
                     assert.notEqual(status, 403, `${role} ${method} ${path} should be allowed`);
                     assert.notEqual(status, 401, `${role} ${method} ${path}`);
                 } else {

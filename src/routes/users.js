@@ -1,6 +1,8 @@
-// User management, mounted at /api/admin/users (ADMIN only, except one MANAGER
-// action: inviting a Job Handler). Runs after the admin router's
+// User management, mounted at /api/admin/users (OWNER and ADMIN only, except one
+// MANAGER action: inviting a Job Handler). Runs after the admin router's
 // requireActiveUser, so req.user is the ACTIVE caller loaded from public."user".
+// Which accounts and roles each may touch (an ADMIN: the roles below ADMIN only) is
+// decided in userAccountService.js on the rows it reads, never on the request.
 //
 //   GET  /                     list application users
 //   POST /invite               invite (or re-invite / reactivate) a user; MANAGER:
@@ -10,7 +12,7 @@
 
 import express from "express";
 
-import { INVITER_ROLES, canInviteRole, isValidRole, requireRole, ROLES } from "../middleware/requireRole.js";
+import { INVITER_ROLES, USER_MANAGER_ROLES, canInviteRole, isValidRole, requireRole } from "../middleware/requireRole.js";
 import { getSupabaseAuthAdmin } from "../auth/supabaseAuthAdmin.js";
 import {
     deactivateUser,
@@ -49,12 +51,13 @@ export function createUsersRouter({ db, authAdmin, env = process.env } = {}) {
         return false;
     };
 
-    // Inviting: ADMIN (any role) and MANAGER (a Job Handler only: which role, and which
-    // existing account, is checked in inviteUser). Registered BEFORE the ADMIN-only
-    // gate below, so every other route here, and any added later, stays ADMIN only.
+    // Inviting: OWNER, ADMIN and MANAGER (which role, and which existing account, is
+    // checked in inviteUser). Registered BEFORE the user-manager gate below, so every
+    // other route here, and any added later, stays OWNER and ADMIN only.
     router.post("/invite", requireRole(INVITER_ROLES), handle(async (req, res, client) => {
         // A role this actor may not give is refused before anything else (a MANAGER
-        // asking for ADMIN gets 403, not a validation message about other fields).
+        // asking for ADMIN, or an ADMIN asking for ADMIN or OWNER, gets 403, not a
+        // validation message about other fields, and never a lesser role instead).
         const requested = typeof req.body?.role === "string" ? req.body.role.trim().toUpperCase() : "";
         if (isValidRole(requested) && !canInviteRole(req.user.role, requested)) return res.status(403).json({ message: "Insufficient permissions" });
         const parsed = parseInviteBody(req.body);
@@ -79,7 +82,7 @@ export function createUsersRouter({ db, authAdmin, env = process.env } = {}) {
         return res.status(result.outcome === "INVITED" ? 201 : 200).json(result);
     }));
 
-    router.use(requireRole([ROLES.ADMIN]));
+    router.use(requireRole(USER_MANAGER_ROLES));
 
     router.get("/", handle(async (req, res, client) => res.json({ users: await listUsers({ db: client }) })));
 

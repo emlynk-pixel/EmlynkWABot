@@ -73,11 +73,15 @@ describe("POST /api/admin/users/invite", () => {
         assert.deepEqual([entry.action, entry.adminId, entry.newStatus, entry.newValue], ["INVITE_USER", ADMIN.adminId, "INVITED", "new.person@example.invalid"]);
     });
 
-    test("every application role can be invited; anything else is refused before Supabase", async () => {
-        for (const role of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+    test("ADMIN invites every role below ADMIN; ADMIN and OWNER are refused (403); anything else is a 400; before Supabase", async () => {
+        for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             assert.equal((await invite({ email: `new-${role}@example.invalid`.toLowerCase(), name: role, role })).status, 201, role);
         }
         const calls = authAdmin.calls.length;
+        for (const role of ["ADMIN", "OWNER", "admin", " owner "]) {
+            const result = await invite({ email: "x@example.invalid", name: "X", role });
+            assert.deepEqual([result.status, result.body], [403, { message: "Insufficient permissions" }], `${role}: refused, never a lesser role`);
+        }
         for (const role of ["VIEWER", "REVIEWER", "SUPERADMIN", "", undefined]) {
             const result = await invite({ email: "x@example.invalid", name: "X", role });
             assert.equal(result.status, 400);
@@ -105,7 +109,7 @@ describe("POST /api/admin/users/invite", () => {
     });
 
     test("an ACTIVE user's email -> 409, no second account, no email sent", async () => {
-        const result = await invite({ email: MANAGER.email, name: "Again", role: "ADMIN" });
+        const result = await invite({ email: MANAGER.email, name: "Again", role: "ANALYST" });
         assert.equal(result.status, 409);
         assert.equal(result.body.code, "USER_ALREADY_ACTIVE");
         assert.equal(authAdmin.calls.length, 0);
@@ -232,7 +236,7 @@ describe("invited user setup: POST /auth/complete-invite", () => {
     });
 });
 
-describe("user management (ADMIN only)", () => {
+describe("user management (OWNER and ADMIN only)", () => {
     test("GET /users lists profiles without Supabase identities", async () => {
         const result = await request("GET", "/api/admin/users");
         assert.equal(result.status, 200);
@@ -246,11 +250,13 @@ describe("user management (ADMIN only)", () => {
         assert.equal((await request("PUT", `/api/admin/users/${ADMIN.adminId}/role`, { body: { role: "ANALYST" } })).status, 400);
         assert.equal((await request("PUT", "/api/admin/users/nobody/role", { body: { role: "ANALYST" } })).status, 404);
 
-        const result = await request("PUT", `/api/admin/users/${MANAGER.adminId}/role`, { body: { role: "ADMIN" } });
+        const managerInvites = () => request("POST", "/api/admin/users/invite", { token: tokenFor(MANAGER.adminId), body: { role: "JOB_HANDLER" } });
+        assert.equal((await managerInvites()).status, 400, "a MANAGER may invite (an empty invitation: 400)");
+        const result = await request("PUT", `/api/admin/users/${MANAGER.adminId}/role`, { body: { role: "REGISTRATION_DESK" } });
         assert.equal(result.status, 200);
-        assert.equal(result.body.user.role, "ADMIN");
+        assert.equal(result.body.user.role, "REGISTRATION_DESK");
         assert.equal(db.auditLogRows.at(-1).action, "UPDATE_USER_ROLE");
-        assert.equal((await request("GET", "/api/admin/users", { token: tokenFor(MANAGER.adminId) })).status, 200, "the new role applies at once");
+        assert.equal((await managerInvites()).status, 403, "the new role applies at once");
     });
 
     test("deactivate: the user's session stops working at once; not yourself", async () => {

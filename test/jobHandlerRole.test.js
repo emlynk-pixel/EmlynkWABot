@@ -97,11 +97,13 @@ describe("the role (ROLE-001, ROLE-002)", () => {
         forbidden(await api(USERS.MANAGER, "PUT", `/users/${target.adminId}/role`, { role: "JOB_HANDLER" }), "MANAGER role change");
     });
 
-    test("ROLE-002: the four existing roles stay valid and unchanged; unknown roles stay invalid", () => {
-        assert.deepEqual(ALL_ROLES, ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+    test("ROLE-002: the existing roles stay valid and unchanged; unknown roles stay invalid", () => {
+        assert.deepEqual(ALL_ROLES, ["OWNER", "ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         for (const role of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]) assert.ok(isValidRole(role));
         for (const role of ["VIEWER", "job_handler", "JOBHANDLER", ""]) assert.equal(isValidRole(role), false);
-        assert.deepEqual(INVITABLE_ROLES.ADMIN, ALL_ROLES);
+        // OWNER: every role but OWNER; ADMIN: the roles below ADMIN (test/ownerRole.test.js).
+        assert.deepEqual(INVITABLE_ROLES.OWNER, ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        assert.deepEqual(INVITABLE_ROLES.ADMIN, ["MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         assert.deepEqual(INVITABLE_ROLES.MANAGER, ["JOB_HANDLER"]);
     });
 });
@@ -345,9 +347,11 @@ describe("every route, every role (RBAC-REG-001 to 004, and the Job Handler colu
         test(`${id}: ${role} has exactly the access it had before`, () => sweep(role, (tier) => tier.includes(role)));
     }
     test("JOB_HANDLER: exactly Jobs, Agents, Clients and candidate reads", () => sweep("JOB_HANDLER", (tier, jobHandler) => jobHandler));
-    test("invitations: ADMIN any role, MANAGER Job Handler only (the one MANAGER change), others none", async () => {
+    test("OWNER: exactly the access ADMIN has", () => sweep("OWNER", (tier) => tier.includes("ADMIN")));
+    test("invitations: OWNER all but OWNER, ADMIN below ADMIN, MANAGER Job Handler only, others none", async () => {
         const decide = async (who, role) => (await api(who, "POST", "/users/invite", { role })).status; // no name / email: an allowed request is a 400
-        for (const role of ALL_ROLES) assert.equal(await decide(USERS.ADMIN, role), 400, `ADMIN -> ${role}`);
+        for (const role of ALL_ROLES) assert.equal(await decide(USERS.OWNER, role), role === "OWNER" ? 403 : 400, `OWNER -> ${role}`);
+        for (const role of ALL_ROLES) assert.equal(await decide(USERS.ADMIN, role), ["OWNER", "ADMIN"].includes(role) ? 403 : 400, `ADMIN -> ${role}`);
         for (const role of ALL_ROLES) assert.equal(await decide(USERS.MANAGER, role), role === "JOB_HANDLER" ? 400 : 403, `MANAGER -> ${role}`);
         for (const who of [USERS.ANALYST, USERS.REGISTRATION_DESK, JH]) assert.equal(await decide(who, "JOB_HANDLER"), 403, who.role);
         assert.equal(authAdmin.calls.length, 0);

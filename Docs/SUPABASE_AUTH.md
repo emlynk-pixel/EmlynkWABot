@@ -50,7 +50,8 @@ Code: `src/auth/supabaseIdentity.js`, `src/middleware/requireActiveUser.js`,
 
 ## Flows
 
-**Invite User** (ADMIN only): `POST /api/admin/users/invite {email, name, role}`
+**Invite User** (OWNER: ADMIN and below; ADMIN: below ADMIN; MANAGER: a new Job
+Handler; see `OWNER_ROLE.md`): `POST /api/admin/users/invite {email, name, role}`
 → role validated server-side → `auth.admin.inviteUserByEmail()` (Supabase sends
 the email; no role or metadata is sent) → `public."user"` upserted by email,
 linked by `auth_user_id`, status `INVITED`. Re-inviting: a pending invitee gets

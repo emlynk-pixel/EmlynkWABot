@@ -944,16 +944,16 @@ Endpoint tiers (`src/routes/admin.js`):
 
 Every request authenticates with `Authorization: Bearer <Supabase access token>`. No cookie authenticates a request, so CSRF protection does not apply (decision recorded in `SUPABASE_AUTH.md`).
 
-## 13. User management and invitations (ADMIN only)
+## 13. User management and invitations (OWNER and ADMIN)
 
-Routes in `src/routes/users.js`, mounted at `/api/admin/users`; every one needs the ADMIN role.
+Routes in `src/routes/users.js`, mounted at `/api/admin/users`; every one needs the OWNER or ADMIN role (a MANAGER may only invite a new Job Handler). Which accounts and roles each may touch is decided by `src/services/userAccountService.js` on the database rows: an OWNER manages every account but an OWNER's; an ADMIN only accounts below ADMIN and gives only roles below ADMIN. Nobody gives the OWNER role or changes an OWNER account through the API (403 `OWNER_LOCKED`): the OWNER is set in the database only. The full model, and how the first OWNER is made, is in [`OWNER_ROLE.md`](OWNER_ROLE.md).
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/admin/users` | List application users (profile fields only) |
-| `POST` | `/api/admin/users/invite` | Invite a user: `{ name, email, role }` (any of the four roles) |
-| `PUT` | `/api/admin/users/:userId/role` | Change a user's role (not your own) |
-| `POST` | `/api/admin/users/:userId/deactivate` | Deactivate a user (not your own account) |
+| `POST` | `/api/admin/users/invite` | Invite a user: `{ name, email, role }` (OWNER: ADMIN and below; ADMIN: below ADMIN; nobody invites an OWNER) |
+| `PUT` | `/api/admin/users/:userId/role` | Change a user's role (not your own; 403 `OWNER_LOCKED` for an OWNER account or the OWNER role; 403 `OWNER_REQUIRED` for an ADMIN touching an ADMIN or giving ADMIN) |
+| `POST` | `/api/admin/users/:userId/deactivate` | Deactivate a user (not your own account; same rules) |
 
 **Invitation flow.**
 
@@ -963,7 +963,7 @@ Routes in `src/routes/users.js`, mounted at `/api/admin/users`; every one needs 
 4. `public."user"` is created or updated by email, linked by `auth_user_id`, with status `INVITED`. An `ACTIVE` email is refused (409).
 5. The invitee opens the Supabase link, sets a password with Supabase on `/admin/setup-password`, and `POST /auth/complete-invite` turns the account `ACTIVE`.
 
-**User interface.** *Invite User* (`/admin/invitations`) and *Change Roles* (`/admin/roles`), both ADMIN only.
+**User interface.** *Invite User* (`/admin/invitations`) and *Change Roles* (`/admin/roles`), both OWNER and ADMIN. The role lists offer only the roles the signed-in user may give (never Owner), the Owner's row has no controls, and an ADMIN gets none on Admin rows either; the server enforces the same rules whatever the screen sends.
 
 ## 14. Password recovery
 
