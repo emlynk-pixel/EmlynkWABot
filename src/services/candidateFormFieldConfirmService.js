@@ -8,7 +8,7 @@ import { canonicalPhoneNumber, phoneKey } from "../utils/phoneNumber.js";
 // Per-field "Confirm candidate change" (Admin > Candidate Details).
 //
 // A Candidate Form submission is stored on its own (candidate_form_response) and
-// never changes the candidate's record. When an Admin or Manager sees that the
+// never changes the candidate's record. When an Admin sees that the
 // candidate submitted a DIFFERENT value for a field that has a real home in the
 // record, they can confirm that ONE field: only that column is updated, the
 // submission is left exactly as it was, and the change is audited.

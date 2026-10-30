@@ -3,7 +3,7 @@ import { Navigate, NavLink, Outlet } from "react-router";
 import { ApiError } from "../api/client";
 import { getSheetSyncStatus, requestConnectionTest, requestSyncNow, setSyncDestination, type SheetSyncRun, type SheetSyncStatus } from "../api/sheetSync";
 import { useAdminResource } from "../api/useAdminResource";
-import { canImportCandidates, canOpenSheetSync, isAdmin, useAuth } from "../auth/AuthProvider";
+import { canImportCandidates, isAdmin, useAuth } from "../auth/AuthProvider";
 import { hasRole, type Role } from "../auth/roles";
 import { CandidateImportDialog } from "../components/CandidateImportDialog";
 import { primaryButton, secondaryButton } from "../components/Dialog";
@@ -17,16 +17,15 @@ import { SETTINGS_TABS } from "../layout/navigation";
 // While a run is queued or running, the status is refreshed this often.
 export const ACTIVE_RUN_POLL_MS = 5_000;
 
-// Settings (/admin/settings). ADMIN: every tab. MANAGER: the Google Sheet
-// Sync tab only (its status and Upload). Other roles see an "Access
-// Restricted" card and no Settings data is requested. The backend enforces
-// the same rules on every Settings API route (requireRole); this page only
-// mirrors them.
+// Settings (/admin/settings). ADMIN (an OWNER too): every tab. Other roles
+// see an "Access Restricted" card and no Settings data is requested. The
+// backend enforces the same rules on every Settings API route (requireRole);
+// this page only mirrors them.
 //
 // A row of tabs, one URL each (so reload, Back and Forward keep the tab):
 //   /settings/roles       Change Roles  (AdminRolesPage, unchanged)        ADMIN
 //   /settings/invite      Invite User   (InvitationsPage, unchanged)      ADMIN
-//   /settings/sheet-sync  Google Sheet Sync                              ADMIN, MANAGER
+//   /settings/sheet-sync  Google Sheet Sync                              ADMIN
 //   /settings/job-types   Job Types     (JobTypesSettings)               ADMIN
 // /settings opens the first tab the user may open (App.tsx, SettingsIndex).
 // The old /roles and /invitations URLs redirect here.
@@ -52,7 +51,7 @@ function AccessRestricted({ children }: { children: ReactNode }) {
 
 export function SettingsPage() {
     const { user } = useAuth();
-    if (!canOpenSheetSync(user)) {
+    if (!isAdmin(user)) {
         return <AccessRestricted>Only administrators with the <strong>ADMIN</strong> role can open Settings.</AccessRestricted>;
     }
     const tabs = SETTINGS_TABS.filter((tab) => hasRole(user, tab.roles));
@@ -81,7 +80,7 @@ export function SettingsIndex() {
     return <Navigate to={first?.to ?? "/settings/roles"} replace />;
 }
 
-// A tab opened by URL by a role it is not for (a MANAGER on an ADMIN-only tab): nothing of it is rendered or requested.
+// A tab opened by URL by a role it is not for: nothing of it is rendered or requested.
 export function SettingsTab({ roles, children }: { roles: readonly Role[]; children: ReactNode }) {
     const { user } = useAuth();
     if (!hasRole(user, roles)) return <AccessRestricted>Only administrators with the <strong>ADMIN</strong> role can open this section.</AccessRestricted>;
@@ -93,7 +92,7 @@ export function SettingsTab({ roles, children }: { roles: readonly Role[]; child
 // spreadsheet ID). Choosing another asks the worker to check its access and
 // headers; it becomes the destination of every run (scheduled, Sync Now,
 // Test Connection) only if that check passes, otherwise the current one
-// stays. Switching is ADMIN only; a MANAGER sees the destination read-only.
+// stays. Switching is ADMIN only (like the whole page; checked again here).
 function SyncDestinationSection({ status, onChanged }: { status: SheetSyncStatus; onChanged: () => void }) {
     const { token, user } = useAuth();
     const canSwitch = isAdmin(user);

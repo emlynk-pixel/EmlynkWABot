@@ -45,7 +45,7 @@ const clientList = (items: ClientListItem[]): ClientList => ({ items, pagination
 
 function backend(routes: FetchRoutes = {}) {
     return signedInBackend({
-        "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "MANAGER" } } },
+        "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "OWNER" } } },
         "GET /api/admin/agent-options": { status: 200, body: AGENT_OPTIONS },
         "GET /api/admin/client-options": { status: 200, body: CLIENT_OPTIONS },
         ...routes,

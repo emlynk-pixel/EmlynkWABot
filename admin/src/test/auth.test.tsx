@@ -147,6 +147,25 @@ describe("session restore (page refresh)", () => {
         expect(fakeAuth.currentSession).toBeNull();
     });
 
+    test("an account still holding the retired MANAGER role (403 ROLE_NOT_SUPPORTED) can't sign in, and is told why", async () => {
+        fakeAuth.addAccount(ADMIN.email, PASSWORD, newToken());
+        stubBackend({ "GET /auth/me": { status: 403, body: { message: "Your account's role is no longer supported. Contact the Owner to update it.", code: "ROLE_NOT_SUPPORTED" } } });
+        renderApp("/login");
+        await fillAndSubmit();
+        expect(await screen.findByRole("alert")).toHaveTextContent("Your account's role is no longer supported. Contact the Owner to update it.");
+        expect(fakeAuth.currentSession).toBeNull();
+        expect(screen.queryByRole("navigation", { name: "Main navigation" })).not.toBeInTheDocument();
+    });
+
+    test("a stored session of a retired MANAGER -> login with the reason, no dashboard", async () => {
+        fakeAuth.setSession(SESSION_TOKEN);
+        stubBackend({ "GET /auth/me": { status: 403, body: { message: "Your account's role is no longer supported. Contact the Owner to update it.", code: "ROLE_NOT_SUPPORTED" } } });
+        renderApp("/");
+        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(screen.getByRole("alert")).toHaveTextContent("no longer supported");
+        expect(screen.queryByRole("navigation", { name: "Main navigation" })).not.toBeInTheDocument();
+    });
+
     test("a deactivated or missing application user (403) -> login with the reason", async () => {
         fakeAuth.setSession(SESSION_TOKEN);
         stubBackend({ "GET /auth/me": { status: 403, body: { message: "x", code: "ACCOUNT_NOT_ACTIVE" } } });
@@ -206,17 +225,9 @@ describe("dashboard shell", () => {
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });
 
-    test("MANAGER and ANALYST: the dashboard sections, no user management; Settings (Google Sheet Sync) for MANAGER only; Jobs for both; Agents, Client Management and Work Allocation for MANAGER only", async () => {
-        for (const role of ["MANAGER", "ANALYST"]) {
-            await signedIn("/", userWithRole(role));
-            const masterData = role === "MANAGER" ? ["Agents", "Client Management"] : [];
-            const allocation = role === "MANAGER" ? ["Work Allocation"] : [];
-            // A MANAGER invites Job Handlers (its own Invite User page; no Settings).
-            // and opens Settings for its Google Sheet Sync tab only.
-            const invite = role === "MANAGER" ? ["Invite User", "Settings"] : [];
-            expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", ...masterData, ...allocation, "Missing Documents", "Police Workflow", "Daily Report", ...invite]);
-            document.body.innerHTML = "";
-        }
+    test("ANALYST: the dashboard sections and Jobs; no user management, Settings, Agents, Client Management or Work Allocation", async () => {
+        await signedIn("/", userWithRole("ANALYST"));
+        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Missing Documents", "Police Workflow", "Daily Report"]);
     });
 
     test("REGISTRATION_DESK: Candidates and Need Attention only, and lands there instead of the Overview", async () => {

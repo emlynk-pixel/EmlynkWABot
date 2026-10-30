@@ -37,7 +37,7 @@ import {
 // with (job.responsible_agent_id is the job's own record), so history is never
 // rewritten when links change.
 //
-// Roles (the routes check them): ADMIN, MANAGER manage; the other roles have no
+// Roles (the routes check them): ADMIN and JOB_HANDLER manage; the other roles have no
 // access to the Clients API.
 
 export const CLIENT_AUDIT_ACTION = Object.freeze({

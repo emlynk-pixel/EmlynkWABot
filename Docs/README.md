@@ -43,6 +43,7 @@ New to the project? Read `01` → `02` → `03`, then [`11-development-guide.md`
 |---|---|
 | [09a-admin-dashboard-api.md](09a-admin-dashboard-api.md) | Developer/API reference: routes, review, police workflow, reports, async processing, RBAC tiers (§12), user management and OWNER rules (§13), password recovery |
 | [09b-admin-dashboard-guide.md](09b-admin-dashboard-guide.md) | Operator guide: every screen, the rules, settings, the role permissions matrix (§7) |
+| [ROLES_AND_PERMISSIONS.md](ROLES_AND_PERMISSIONS.md) | **What every role can and cannot do:** full comparison table of OWNER, ADMIN, ANALYST, REGISTRATION_DESK and JOB_HANDLER; the retired MANAGER role and how to convert existing MANAGER accounts |
 | [OWNER_ROLE.md](OWNER_ROLE.md) | **The OWNER role in detail:** permission model, ADMIN restrictions, making the first OWNER and changing it (SQL) |
 | [AGENT_CLIENT_MANAGEMENT.md](AGENT_CLIENT_MANAGEMENT.md) | Agents and Client Management: data model, many-to-many migration, API, lifecycle, locking, RBAC, UI, audit |
 | [JOB_MANAGEMENT_IMPLEMENTATION.md](JOB_MANAGEMENT_IMPLEMENTATION.md) | Jobs: job codes, client/agent on a job, candidate assignment (one PROCESSING job at a time), lifecycle, API |

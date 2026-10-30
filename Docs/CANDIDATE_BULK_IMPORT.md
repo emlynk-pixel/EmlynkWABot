@@ -1,11 +1,11 @@
 # Bulk Candidate Import (Update Sheet) and the Approved Operational Mirror
 
-Settings → Google Sheet Sync → **Update Sheet**: ADMIN and MANAGER users upload a legacy candidate sheet (.xlsx), check a preview, and confirm. The supported values go into the Emlynk database. The existing Google Sheet reconciliation then mirrors the database to the **Emlynk Candidate Operational Mirror**.
+Settings → Google Sheet Sync → **Upload**: ADMIN users (an OWNER too) upload a legacy candidate sheet (.xlsx), check a preview, and confirm. The supported values go into the Emlynk database. The existing Google Sheet reconciliation then mirrors the database to the **Emlynk Candidate Operational Mirror**.
 
 ```
 Legacy .xlsx ─▶ browser reads it (only allow-listed columns leave the machine)
             ─▶ server: normalize ─▶ validate ─▶ classify (new / existing / duplicate / conflict) ─▶ PREVIEW (no writes)
-            ─▶ ADMIN / MANAGER confirms ─▶ commit in 100-row chunks (one short transaction each)
+            ─▶ ADMIN confirms ─▶ commit in 100-row chunks (one short transaction each)
             ─▶ database ─▶ existing triggers ─▶ sheet_sync_queue ─▶ existing RECONCILE ─▶ mapper ─▶ mirror
 ```
 
@@ -243,13 +243,12 @@ There is no new sync path. The import's writes queue the candidates through the 
 
 ## 10. Roles
 
-| Role | Settings | Google Sheet Sync status | Update Sheet | Test Connection / Sync Now / destination |
+| Role | Settings | Google Sheet Sync status | Upload | Test Connection / Sync Now / destination |
 |---|---|---|---|---|
-| ADMIN | every tab | ✓ | ✓ | ✓ |
-| MANAGER | Google Sheet Sync tab only | ✓ (read) | ✓ | ✗ (403) |
+| OWNER, ADMIN | every tab | ✓ | ✓ | ✓ |
 | ANALYST, REGISTRATION_DESK, JOB_HANDLER | ✗ | ✗ (403) | ✗ (403) | ✗ |
 
-The backend enforces this per route; the UI only hides what a role can't use.
+The backend enforces this per route; the UI only hides what a role can't use. (Until 2026-10-30 a MANAGER also had the status and Upload; that role is retired: `ROLES_AND_PERMISSIONS.md` §6.)
 
 Tooltip on **Update Sheet**: "Upload an existing candidate sheet to validate and import candidate records into Emlynk, then sync them to the Candidate Operational Mirror."
 

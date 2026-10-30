@@ -77,7 +77,7 @@
 
 ## Project Overview
 
-**Emlynk** streamlines recruitment candidate onboarding, document collection and deployment tracking. Candidates submit verification documents — passports, police reports/slips, medical certificates and other required forms — directly through WhatsApp. Staff (OWNER, ADMIN, MANAGER, ANALYST, REGISTRATION_DESK, JOB_HANDLER) manage the candidate through a single pipeline: registration, document review, interviews, visa processing and job finalization, from one admin dashboard.
+**Emlynk** streamlines recruitment candidate onboarding, document collection and deployment tracking. Candidates submit verification documents — passports, police reports/slips, medical certificates and other required forms — directly through WhatsApp. Staff (OWNER, ADMIN, ANALYST, REGISTRATION_DESK, JOB_HANDLER) manage the candidate through a single pipeline: registration, document review, interviews, visa processing and job finalization, from one admin dashboard.
 
 The system receives document payloads via WhatsApp webhooks, performs OCR/Document AI extraction, reconciles candidate records against existing entries, routes documents by OCR confidence, tracks the police report 21-day deadline, and mirrors operational state to a Google Sheet for staff who work outside the dashboard.
 
@@ -112,9 +112,9 @@ Manual processing of candidate verification documents via messaging channels pre
 - 📊 **Multi-Level Confidence Matrix**: 5-tier OCR confidence rules (>95%, 90–95%, 60–89%, 40–59%, <40%) drive auto-renaming vs. warning flags vs. manual review routing.
 - ⏱️ **Police Slip 21-Day Countdown**: Tracks police report slip submission dates; suppresses reminders once staff mark the final police report `COMPLETED`.
 - 📁 **Single-Scan Document Model**: One scan slot per candidate — no separate agreement/affidavit/contract slots to manage.
-- 🔐 **Supabase-Secured Admin Portal**: Supabase Auth identity plus backend role-based authorization (`OWNER` / `ADMIN` / `MANAGER` / `ANALYST` / `REGISTRATION_DESK` / `JOB_HANDLER`) guards every protected route.
+- 🔐 **Supabase-Secured Admin Portal**: Supabase Auth identity plus backend role-based authorization (`OWNER` / `ADMIN` / `ANALYST` / `REGISTRATION_DESK` / `JOB_HANDLER`) guards every protected route.
 - 🧭 **Candidate Progress Pipeline**: Test Details → Candidate Details → Document Submission → VISA Submission → IVS Interview → Visa Approval → Finalizing the Job.
-- 📞 **Candidate History & Need Attention**: The call log drawer is a **Candidate History** timeline (calls, **No Answer** attempts and candidate activity). A call can be flagged **Need attention**; it then also appears on the Admin **Need Attention** page, grouped by candidate, without leaving the candidate's history. Every staff role can complete a follow-up; only ADMIN and MANAGER can delete one (the call log is always kept).
+- 📞 **Candidate History & Need Attention**: The call log drawer is a **Candidate History** timeline (calls, **No Answer** attempts and candidate activity). A call can be flagged **Need attention**; it then also appears on the Admin **Need Attention** page, grouped by candidate, without leaving the candidate's history. Every staff role can complete a follow-up; only ADMIN can delete one (the call log is always kept).
 - 📄 **Google Sheet Operational Mirror**: Scheduled, one-way database → Sheet sync (06:00 / 12:00 / 18:00) for staff who work from a spreadsheet.
 - 📈 **Daily Reports**: A Summary and a role-based Summary by Roles for any business day (Asia/Colombo), with a structured PDF export.
 - 🔎 **Server-Side Candidate Search**: Name, passport ID, unique ID, NIC, contact and WhatsApp numbers, searched in PostgreSQL before paging (100 per page), including Sri Lankan `07…` / `947…` number forms.
@@ -129,10 +129,12 @@ Staff are never uniformly "admins" — every staff member is a `user` with exact
 | Role | Access |
 |---|---|
 | `OWNER` | Everything ADMIN has, plus managing ADMIN accounts. One per environment, set in the database only — see [`Docs/OWNER_ROLE.md`](Docs/OWNER_ROLE.md) |
-| `ADMIN` | Full access, including Settings, Sheet configuration and staff/user management of the roles below ADMIN (never another ADMIN or the OWNER) |
-| `MANAGER` | Full access except staff/user management |
+| `ADMIN` | Full access, including Settings, Sheet configuration, Work Allocation, verification and staff/user management of the roles below ADMIN (never another ADMIN or the OWNER) |
 | `ANALYST` | Reads, plus review actions and candidate workflow updates (stages, call logs, document review) |
 | `REGISTRATION_DESK` | Full access to the **Candidate** section — registration, candidate details, progress stages, documents and call logs for the complete candidate process. No access to Admin-only functions (staff management, Settings, Sheet configuration) |
+| `JOB_HANDLER` | Jobs, Agents and Clients (manage); Candidates read only |
+
+The former `MANAGER` role is retired: `ADMIN` holds everything it could do. It can't be given, and an account still holding it is refused on every route until it is converted (see [`Docs/ROLES_AND_PERMISSIONS.md`](Docs/ROLES_AND_PERMISSIONS.md#the-retired-manager-role)).
 
 Use "staff", "user", or the specific role name (e.g. "an ANALYST") rather than describing every system user as "an admin".
 
@@ -142,7 +144,7 @@ Use "staff", "user", or the specific role name (e.g. "an ANALYST") rather than d
 
 ```mermaid
 flowchart TD
-    Roles["Users / Roles<br/>(ADMIN, MANAGER, ANALYST, REGISTRATION_DESK)"] --> Frontend[Admin Frontend]
+    Roles["Users / Roles<br/>(OWNER, ADMIN, ANALYST, REGISTRATION_DESK, JOB_HANDLER)"] --> Frontend[Admin Frontend]
     WA[WhatsApp Cloud API] --> Backend[Backend API]
     Frontend --> Backend
 
@@ -226,7 +228,7 @@ erDiagram
         string auth_user_id UK "FK to auth.users.id"
         string name
         string email UK
-        string role "ADMIN | MANAGER | ANALYST | REGISTRATION_DESK"
+        string role "OWNER | ADMIN | ANALYST | REGISTRATION_DESK | JOB_HANDLER"
         string status
         datetime created_date
         datetime updated_date
@@ -324,13 +326,13 @@ Supabase Auth is the sole identity provider: it issues and verifies JWTs, manage
 
 ### Authorization — Backend RBAC
 
-Once a request carries a verified Supabase identity, the backend resolves the matching `public.user` row and authorizes the action against `user.role` — one of `OWNER`, `ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER` (see [User Roles](#user-roles)). Backend RBAC is the application's security boundary for every protected route; Supabase confirms identity, the backend decides access.
+Once a request carries a verified Supabase identity, the backend resolves the matching `public.user` row and authorizes the action against `user.role` — one of `OWNER`, `ADMIN`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER` (see [User Roles](#user-roles)). Backend RBAC is the application's security boundary for every protected route; Supabase confirms identity, the backend decides access.
 
 ---
 
 ## User Invitation Flow
 
-Staff invitations are not limited to admins. An OWNER invites ADMIN and every lower role, an ADMIN the roles below ADMIN, a MANAGER a new Job Handler; nobody invites an OWNER. The sidebar/menu action is **"Invite User"**, not "Invite Admin".
+An OWNER invites ADMIN and every lower role, an ADMIN the roles below ADMIN; nobody invites an OWNER, and nobody can invite the retired MANAGER role. The sidebar/menu action is **"Invite User"**, not "Invite Admin".
 
 ```
 Admin
@@ -553,18 +555,18 @@ This rule applies consistently across every document type mirrored to the Sheet 
 
 ## Admin Dashboard Overview
 
-The Admin Dashboard is served at `/admin`. What a person sees depends on their role (`OWNER`, `ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER`); the backend enforces it on every request. The full reference is [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md).
+The Admin Dashboard is served at `/admin`. What a person sees depends on their role (`OWNER`, `ADMIN`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER`); the backend enforces it on every request. The full reference is [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md).
 
 | Area | What it is |
 |---|---|
 | **Overview** | Dashboard counts and links into the work that needs doing |
 | **Documents** | Candidate documents and their status |
-| **Review Queue** | WhatsApp submissions held for a person's decision (ADMIN, MANAGER, ANALYST) |
+| **Review Queue** | WhatsApp submissions held for a person's decision (ADMIN, ANALYST) |
 | **Candidates** | Candidate list (server-side search and paging), registration, the stage pipeline, additional details, documents, and the Call Log / **Candidate History** drawer |
 | **Need Attention** | Calls flagged for follow-up, grouped by candidate (the former *Priority Follow-Ups*) |
 | **Missing Documents** | Incomplete candidates and the required documents they lack |
 | **Police Workflow** | The 21-day police report countdown |
-| **Daily Report** | Summary and Summary by Roles for a chosen day, with PDF export (ADMIN, MANAGER, ANALYST; Summary by Roles ADMIN and MANAGER only; not REGISTRATION_DESK) |
+| **Daily Report** | Summary and Summary by Roles for a chosen day, with PDF export (ADMIN, ANALYST; Summary by Roles ADMIN only; not REGISTRATION_DESK) |
 | **Audit Logs** | Append-only record of every action (OWNER and ADMIN) |
 | **Settings** | Change Roles, Invite User and Google Sheet Sync (OWNER and ADMIN) |
 
@@ -627,8 +629,8 @@ Candidate Call Log -> staff flags a call -> call_log_follow_up (references the c
 
 - Grouped by candidate (one card each, newest follow-up first), with an **Open** (default) and a **Completed** view.
 - The state is a compact icon in each row: a filled flag while open, a muted check once completed; **Mark complete** and **Delete** remain buttons in the row's footer.
-- **Mark complete:** ADMIN, MANAGER, ANALYST, REGISTRATION_DESK. Completed follow-ups are kept as history (who and when).
-- **Delete:** ADMIN and MANAGER only (enforced by the API). It removes the follow-up row only; the call log, the candidate and the documents stay.
+- **Mark complete:** ADMIN, ANALYST, REGISTRATION_DESK. Completed follow-ups are kept as history (who and when).
+- **Delete:** ADMIN only (enforced by the API). It removes the follow-up row only; the call log, the candidate and the documents stay.
 - Audited as `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`.
 
 ---
@@ -640,7 +642,7 @@ Daily reports describe **Candidates**, not "Clients". The page (`/admin/reports/
 Two views:
 
 - **Summary**: *Candidates Registered*, *Candidates Completed*, *Visa Completed*, *Calls Taken* and *Documents Submitted*; the Registered and Completed candidate lists; documents by type and source (WhatsApp / manual); and, under a *Current state* heading, the **Incomplete Candidates** breakdown by process and the **Police status** snapshot.
-- **Summary by Roles** (ADMIN and MANAGER only): pick Analyst, Manager, Admin or Registration Desk to see the calls taken and the manually uploaded documents of staff currently holding that role, a staff breakdown and an activity list. Files received by WhatsApp have no staff member and are never attributed to a role.
+- **Summary by Roles** (ADMIN only): pick Analyst, Admin, Owner or Registration Desk to see the calls taken and the manually uploaded documents of staff currently holding that role, a staff breakdown and an activity list. Files received by WhatsApp have no staff member and are never attributed to a role.
 
 *Calls Taken* counts call rows, so a **No Answer** attempt counts as a call.
 
@@ -887,7 +889,7 @@ Every route requires an authenticated, active `user`; access to each route is ad
 | `POST` | `/api/admin/candidates/:passportId/call-logs/:callLogId/follow-up` | Mark a call as Need attention (creates a follow-up, shown on the Need Attention page) |
 | `GET` | `/api/admin/follow-ups?status` | Need Attention follow-ups grouped by candidate (`status`: `OPEN` default, or `COMPLETED`) |
 | `POST` | `/api/admin/follow-ups/:followUpId/complete` | Complete a follow-up |
-| `DELETE` | `/api/admin/follow-ups/:followUpId` | Delete a follow-up (ADMIN, MANAGER only) |
+| `DELETE` | `/api/admin/follow-ups/:followUpId` | Delete a follow-up (ADMIN only) |
 | `GET` | `/api/admin/reports/daily` | Daily report (`?date=YYYY-MM-DD`) — see [Daily Reports](#daily-reports) for the views |
 | `GET` | `/api/admin/review` | Review queue: waiting files and documents needing review |
 | `POST` | `/api/admin/review/:reviewId/approve` | Approve a reviewed item; audit entry |
@@ -916,7 +918,7 @@ Every route requires an authenticated, active `user`; access to each route is ad
 | **2** | Admin Dashboard Foundation | ✅ Completed | Overview, Documents, Review Queue, Candidate directory, Police Workflow |
 | **3** | Candidate Management Pipeline | ✅ Completed | Candidate registration, progress stages, call logs, single-scan document model |
 | **4** | Google Sheet Operational Mirror | ✅ Completed | One-way database → Sheet mirror |
-| **5** | Role-Based Staff Management | ✅ Completed | Four-role model (`ADMIN`/`MANAGER`/`ANALYST`/`REGISTRATION_DESK`), backend RBAC |
+| **5** | Role-Based Staff Management | ✅ Completed | Four-role model at the time (`ADMIN`/`MANAGER`/`ANALYST`/`REGISTRATION_DESK`), backend RBAC. *Historical: OWNER and JOB_HANDLER were added later, and MANAGER was retired on 2026-10-30.* |
 | **6** | Supabase Auth Migration | ✅ Completed | Supabase Auth for sign-in, Invite User and password recovery |
 | **7** | Candidate Progress Expansion | ⏳ Planned | Add VISA Submission stage; temporarily disable IVS Interview, Visa Approval, Finalizing the Job in the UI |
 | **8** | Scheduled Sheet Sync & Multi-Sheet Config | ✅ Completed | 06:00/12:00/18:00 scheduled runs, scheduled vs manual status, Sync Destination (ADMIN-only, validated before activation) |

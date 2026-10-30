@@ -19,7 +19,7 @@ import { normalizePhoneNumber } from "../utils/phoneNumber.js";
 // one transaction. Lock order everywhere: client rows first, then agent rows (Job
 // creation share-locks them in the same order), so no two writers deadlock.
 //
-// Roles (the routes check them): ADMIN, MANAGER manage; the other roles have no
+// Roles (the routes check them): ADMIN and JOB_HANDLER manage; the other roles have no
 // access to the Agents API.
 
 export const ENTITY_STATUS = Object.freeze({ ACTIVE: "ACTIVE", INACTIVE: "INACTIVE" });

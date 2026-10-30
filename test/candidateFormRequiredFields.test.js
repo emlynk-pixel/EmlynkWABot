@@ -143,7 +143,7 @@ describe("server: every answer is required (parseSubmission)", () => {
 const SECRET = "test-candidate-form-secret-0123456789-abcdefghijklmnop";
 const ORIGIN = "https://candidate-form.example.test";
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const MANAGER = user("u-manager", "MANAGER", 2);
+const ADMIN = user("u-admin", "ADMIN", 2);
 const C = (i) => ({ passportId: `N700000${i}`, uniqueId: `700${i}`, firstName: `First${i}`, otherName: `Last${i}`, nic: `70000000${i}V`, sex: "F", whatsappNumber: `+9477200000${i}` });
 const [A, B, D] = [C(1), C(2), C(3)];
 
@@ -155,7 +155,7 @@ let ids;
 before(async () => {
     database = await createTestDatabase();
     ({ prisma, pg } = database);
-    await prisma.user.create({ data: MANAGER });
+    await prisma.user.create({ data: ADMIN });
 });
 after(async () => database?.close());
 beforeEach(async () => {
@@ -180,7 +180,7 @@ function app() {
     server.use(PUBLIC_CANDIDATE_DETAILS_PATH, createPublicCandidateDetailsRouter({ db: prisma, tokenSecret: SECRET, allowedOrigin: ORIGIN, verifyIpLimiter: noRateLimit, verifyPassportLimiter: noRateLimit, log: { warn() {}, error() {}, info() {} } }));
     server.use(express.json());
     const requireAdmin = async (req, res, next) => {
-        req.user = await prisma.user.findUnique({ where: { adminId: MANAGER.adminId }, select: { adminId: true, authUserId: true, email: true, name: true, role: true, status: true } });
+        req.user = await prisma.user.findUnique({ where: { adminId: ADMIN.adminId }, select: { adminId: true, authUserId: true, email: true, name: true, role: true, status: true } });
         next();
     };
     server.use("/api/admin", createAdminRouter({ db: prisma, bucket: {}, requireAdmin, apiLimiter: noRateLimit, candidateFormOrigin: ORIGIN }));

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import { SESSION_TOKEN, fakeAuth, renderApp, stubBackend } from "./helpers";
 
-const INVITEE = { userId: "u-9", email: "invitee@example.invalid", name: "Invitee", role: "MANAGER", status: "ACTIVE" };
+const INVITEE = { userId: "u-9", email: "invitee@example.invalid", name: "Invitee", role: "ANALYST", status: "ACTIVE" };
 
 // The Supabase invite link signs the invitee in: a session is present when
 // the page loads (detectSessionInUrl).

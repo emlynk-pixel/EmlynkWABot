@@ -91,7 +91,7 @@ function AutomaticStatus({ stage, completedLabel = "Stage completed" }: { stage:
     );
 }
 
-// "Verify details" / "Verify documents": an explicit manual action (ADMIN and MANAGER) behind the Candidate
+// "Verify details" / "Verify documents": an explicit manual action (ADMIN only) behind the Candidate
 // list Status. Saving or completing the stage never verifies it; the server also refuses to verify an incomplete stage.
 function VerifyBar({ details, kind, onChange }: { details: CandidateDetails; kind: "DETAILS" | "DOCUMENTS"; onChange: (details: CandidateDetails) => void }) {
     const { user, token } = useAuth();

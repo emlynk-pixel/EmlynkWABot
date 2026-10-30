@@ -878,7 +878,7 @@ Inside the Settings view, the **Google Sheet Sync** card provides real-time obse
 #### Role-Based Access Control (RBAC)
 
 - **ADMIN Role Only:** The Settings page and all underlying API endpoints are strictly restricted to users with the `ADMIN` role (`requireRole([ADMIN_ROLES.ADMIN])`).
-- **Forbidden Roles:** `MANAGER`, `ANALYST`, and `REGISTRATION_DESK` roles receive `403 Forbidden` from the backend API.
+- **Forbidden Roles:** `ANALYST`, `REGISTRATION_DESK` and `JOB_HANDLER` (and an account still holding the retired `MANAGER` role) receive `403 Forbidden` from the backend API.
 - **Client Enforcement:** In the Admin UI, non-ADMIN users see an "Access Restricted" message and no settings API requests are issued.
 - **Candidate Pool Isolation:** The Candidate Pool UI (`/admin/candidates`) was **intentionally not changed** by this feature.
 

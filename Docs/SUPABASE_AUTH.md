@@ -16,13 +16,12 @@ foreign key to `auth.users` on Supabase, `ON DELETE RESTRICT`).
 
 ## Roles
 
-Hierarchy: `OWNER > ADMIN > MANAGER > ANALYST / REGISTRATION_DESK / JOB_HANDLER`.
+Hierarchy: `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. The former `MANAGER` role was retired on 2026-10-30 (ADMIN holds everything it could do); see `ROLES_AND_PERMISSIONS.md` §6.
 
 | Role | Access (enforced by `src/routes/admin.js`) |
 |---|---|
 | `OWNER` | everything ADMIN has, plus managing ADMIN accounts; the single OWNER is set in the database only (`OWNER_ROLE.md`) |
 | `ADMIN` | everything, including users (`/api/admin/users`: the roles below ADMIN only) and Settings |
-| `MANAGER` | everything except users and Settings |
 | `ANALYST` | dashboard reads, review actions, corrections, candidate work; not police-date corrections |
 | `REGISTRATION_DESK` | candidate list, lookup, registration and details only |
 | `JOB_HANDLER` | Jobs, Agents and Clients; reads Candidates (list, details), changes no candidate record |
@@ -39,13 +38,14 @@ the user's next request.
 3. The backend calls `supabase.auth.getUser(token)` (server-side, service-role
    client): this checks signature and expiry **and that the session still
    exists**, so a signed-out or revoked session is refused immediately.
-4. `public."user"` is loaded by `auth_user_id`; it must exist and be `ACTIVE`.
+4. `public."user"` is loaded by `auth_user_id`; it must exist, be `ACTIVE` and hold a supported role.
 5. `req.user` = that row; `requireRole()` checks `req.user.role`.
 
 | Situation | Response |
 |---|---|
 | no / malformed / expired / signed-out token | 401 |
 | valid session, no `public."user"` row, or not `ACTIVE` | 403 `ACCOUNT_NOT_ACTIVE` |
+| `ACTIVE`, but the role is not supported (the retired `MANAGER`) | 403 `ROLE_NOT_SUPPORTED` |
 | role not allowed for the route | 403 `Insufficient permissions` |
 | Supabase or the database unreachable | 500 (fails closed) |
 
@@ -54,8 +54,8 @@ Code: `src/auth/supabaseIdentity.js`, `src/middleware/requireActiveUser.js`,
 
 ## Flows
 
-**Invite User** (OWNER: ADMIN and below; ADMIN: below ADMIN; MANAGER: a new Job
-Handler; see `OWNER_ROLE.md`): `POST /api/admin/users/invite {email, name, role}`
+**Invite User** (OWNER: ADMIN and below; ADMIN: below ADMIN; never OWNER or the
+retired MANAGER; see `OWNER_ROLE.md`): `POST /api/admin/users/invite {email, name, role}`
 → role validated server-side → `auth.admin.inviteUserByEmail()` (Supabase sends
 the email; no role or metadata is sent) → `public."user"` upserted by email,
 linked by `auth_user_id`, status `INVITED`. Re-inviting: a pending invitee gets

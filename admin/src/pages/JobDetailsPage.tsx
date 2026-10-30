@@ -19,7 +19,7 @@ import { filterControl, inputClass, tableCell, tableHead, tableRow, textareaClas
 // Admin > Jobs > one job, in two tabs: Job Details (the default) and Assigned
 // Candidates. The tab is page state only (no route): switching keeps every open
 // dialog and loaded value, and the actions above the tabs work from either. ADMIN and
-// MANAGER add / remove candidates and complete or cancel a PROCESSING job; an
+// JOB_HANDLER add / remove candidates and complete or cancel a PROCESSING job; an
 // ANALYST sees the job with only their own candidates. A candidate may also be on
 // other PROCESSING jobs (they are never touched); one already on THIS job is refused
 // by the server (409) and the message is shown here.

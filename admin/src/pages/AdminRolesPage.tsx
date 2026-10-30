@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { isAdmin as hasAdminRole, useAuth } from "../auth/AuthProvider";
-import { ROLE_LABELS, assignableRoles, canManageUser, isOwner, type Role } from "../auth/roles";
+import { assignableRoles, canManageUser, isOwner, roleLabel, type Role } from "../auth/roles";
 import { OwnerBadge } from "../components/OwnerBadge";
 import { Icon } from "../components/Icon";
 import { listUsers, updateUserRole, type UserSummary } from "../api/admin";
@@ -152,8 +152,11 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                                 )}
                                 {!loading && !fetchError && admins.map((account) => {
                                     const manageable = canManageUser(user, account);
-                                    // An account this user can't change shows its own role only.
-                                    const options: readonly string[] = manageable ? assignable : [account.role];
+                                    // An account this user can't change shows its own role only. One holding a role
+                                    // that is not given any more (a retired Manager, changeable by the Owner) shows it
+                                    // as the current value, never as a choice.
+                                    const options: readonly string[] = manageable ? assignable : [];
+                                    const showCurrent = !options.includes(account.role);
                                     return (
                                     <tr key={account.userId} className="hover:bg-surface-hover">
                                         <td className="px-4 py-3 align-top">
@@ -181,7 +184,8 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                                                     }
                                                 }}
                                             >
-                                                {options.map((role) => <option key={role} value={role}>{ROLE_LABELS[role as Role] ?? role}</option>)}
+                                                {showCurrent && <option value={account.role} disabled={manageable}>{roleLabel(account.role)}</option>}
+                                                {options.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
                                             </select>
                                         </td>
                                     </tr>
@@ -200,8 +204,8 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                     message={
                         <span>
                             Are you sure you want to change <strong>{pendingRoleChange.user.name}</strong>’s role from{" "}
-                            <strong>{ROLE_LABELS[pendingRoleChange.user.role as Role] ?? pendingRoleChange.user.role}</strong> to{" "}
-                            <strong>{ROLE_LABELS[pendingRoleChange.newRole] ?? pendingRoleChange.newRole}</strong>?
+                            <strong>{roleLabel(pendingRoleChange.user.role)}</strong> to{" "}
+                            <strong>{roleLabel(pendingRoleChange.newRole)}</strong>?
                         </span>
                     }
                     confirmLabel="Confirm Change"

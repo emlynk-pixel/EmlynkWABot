@@ -16,20 +16,22 @@ Authentication is Supabase Auth's; authorization is the application's. The desig
 
 ## Role-Based Access Control
 
-Six roles, stored in `public."user".role` and enforced by `requireRole` middleware on every admin route. Hierarchy: `OWNER > ADMIN > MANAGER > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. OWNER passes every tier that admits ADMIN (`hasRole()`); the single OWNER is set in the database only (`OWNER_ROLE.md`).
+Five roles, stored in `public."user".role` and enforced by `requireRole` middleware on every admin route. Hierarchy: `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. OWNER passes every tier that admits ADMIN (`hasRole()`); the single OWNER is set in the database only (`OWNER_ROLE.md`). A role that isn't one of the five (the retired `MANAGER`, or anything else) is refused before any role check: `requireActiveUser` answers 403 `ROLE_NOT_SUPPORTED`, so such an account reaches no route (`ROLES_AND_PERMISSIONS.md` §6).
 
-| Action | OWNER | ADMIN | MANAGER | ANALYST | REGISTRATION_DESK | JOB_HANDLER |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| View overview, documents, clients, review queue, police workflow, reports | ✓ | ✓ | ✓ | ✓ | — | — |
-| Candidate list and details | ✓ | ✓ | ✓ | ✓ | ✓ | read only |
-| Candidate registration | ✓ | ✓ | ✓ | — | ✓ | — |
-| Review actions, corrections, candidate work | ✓ | ✓ | ✓ | ✓ | — | — |
-| Correct a stored police slip's date | ✓ | ✓ | ✓ | — | — | — |
-| Jobs, Agents, Clients | ✓ | ✓ | ✓ | jobs of own candidates (read) | — | ✓ |
-| List users; Settings; Audit Logs | ✓ | ✓ | Settings: Google Sheet Sync status and Update Sheet only | — | — | — |
-| Change role / deactivate / re-invite ADMIN accounts; give the ADMIN role; invite ADMIN | ✓ | — | — | — | — | — |
-| Change role / deactivate / re-invite accounts below ADMIN; invite those roles | ✓ | ✓ | new Job Handler invite only | — | — | — |
-| Give the OWNER role, change or deactivate an OWNER account, invite an OWNER | — (database only) | — | — | — | — | — |
+| Action | OWNER | ADMIN | ANALYST | REGISTRATION_DESK | JOB_HANDLER |
+|---|:---:|:---:|:---:|:---:|:---:|
+| View overview, documents, clients, review queue, police workflow, reports | ✓ | ✓ | ✓ | — | — |
+| Candidate list and details | ✓ | ✓ | ✓ | ✓ | read only |
+| Candidate registration | ✓ | ✓ | — | ✓ | — |
+| Review actions, corrections, candidate work | ✓ | ✓ | ✓ | — | — |
+| Verification, confirming Candidate Form values, Work Allocation, deleting follow-ups | ✓ | ✓ | — | — | — |
+| Correct a stored police slip's date | ✓ | ✓ | — | — | — |
+| Jobs, Agents, Clients | ✓ | ✓ | jobs of own candidates (read) | — | ✓ |
+| List users; Settings (Google Sheet Sync and Upload included); Audit Logs | ✓ | ✓ | — | — | — |
+| Change role / deactivate / re-invite ADMIN accounts (and accounts holding the retired MANAGER role); give the ADMIN role; invite ADMIN | ✓ | — | — | — | — |
+| Change role / deactivate / re-invite accounts below ADMIN; invite those roles | ✓ | ✓ | — | — | — |
+| Give the OWNER role, change or deactivate an OWNER account, invite an OWNER | — (database only) | — | — | — | — |
+| Give or invite the retired MANAGER role | — (400) | — (400) | — | — | — |
 
 The Registration Desk restriction (Candidates area only) is unchanged by OWNER.
 
@@ -38,7 +40,7 @@ A failed authorization check returns a generic `403`, without indicating which s
 ## Invitations and Password Recovery
 
 - **User management:** OWNER and ADMIN. An OWNER manages every account but an OWNER's; an ADMIN only the roles below ADMIN, and never gives the ADMIN role. Nobody gives the OWNER role or changes an OWNER account through the application: the single OWNER is set in the database only. Checked server-side on the database rows inside the transaction (with the rows locked), never on the request. See `OWNER_ROLE.md`.
-- **Invitations:** OWNER (ADMIN and below) and ADMIN (below ADMIN); a MANAGER invites a new Job Handler only; nobody invites an OWNER. The backend calls Supabase `inviteUserByEmail()` and Supabase sends the email. The redirect is built only from the required `APP_BASE_URL` (`${APP_BASE_URL}/admin/setup-password`), never from request input or headers; if `APP_BASE_URL` is missing or invalid the invitation is refused (503) before anything is sent. There is no silent fallback to Supabase's Site URL.
+- **Invitations:** OWNER (ADMIN and below) and ADMIN (below ADMIN); nobody invites an OWNER, and the retired MANAGER role is refused (400). The backend calls Supabase `inviteUserByEmail()` and Supabase sends the email. The redirect is built only from the required `APP_BASE_URL` (`${APP_BASE_URL}/admin/setup-password`), never from request input or headers; if `APP_BASE_URL` is missing or invalid the invitation is refused (503) before anything is sent. There is no silent fallback to Supabase's Site URL.
 - **Password recovery:** Supabase's own flow (`resetPasswordForEmail`, then `updateUser` from the recovery link). The forgot-password page shows the same confirmation whether or not the email has an account. The backend stores no reset tokens.
 - **Redirect allow-list:** the setup and reset URLs of each environment must be in the Supabase allowed redirect URLs, so a link can only return to a known site.
 

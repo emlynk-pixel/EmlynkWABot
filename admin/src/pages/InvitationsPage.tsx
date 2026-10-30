@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { canInviteUsers, invitableRoles, isAdmin, useAuth } from "../auth/AuthProvider";
-import { ROLE_LABELS, ROLES, canManageUser, type Role } from "../auth/roles";
+import { canInviteUsers, invitableRoles, useAuth } from "../auth/AuthProvider";
+import { ROLE_LABELS, ROLES, canManageUser, roleLabel, type Role } from "../auth/roles";
 import { OwnerBadge } from "../components/OwnerBadge";
 import { Icon } from "../components/Icon";
 import { deactivateUser, inviteUser, listUsers, type UserSummary } from "../api/admin";
@@ -14,8 +14,7 @@ const dateFormat = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Colombo", 
 
 const ROLE_HELP: Record<Role, string> = {
     OWNER: "Everything an Admin does, plus managing Admin accounts.",
-    ADMIN: "Everything, including Settings and managing the users below Admin.",
-    MANAGER: "Everything except user management and Settings.",
+    ADMIN: "Everything, including Settings, Work Allocation, verification and managing the users below Admin.",
     ANALYST: "Reviews documents and works on candidates; no police-date corrections.",
     REGISTRATION_DESK: "Registers and looks up candidates only.",
     JOB_HANDLER: "Manages Jobs, Agents and Clients; views candidates without changing them.",
@@ -29,15 +28,13 @@ const STATUS_BADGE: Record<string, { label: string; icon: "schedule" | "check_ci
 
 // Invite User. OWNER invites Admins and below, ADMIN the roles below Admin; both see
 // the users, and re-send / deactivate only the accounts they may manage (an ADMIN:
-// below Admin). A MANAGER invites a new Job Handler only (no user list: that stays
-// OWNER's and ADMIN's). The server enforces all of it. Supabase Auth sends the invitation email and
+// below Admin). The server enforces all of it. Supabase Auth sends the invitation email and
 // owns the password; the role chosen here is stored by the backend in the
 // application account, never in the invitation itself.
 // embedded: shown as a Settings tab (Settings owns the page title).
 export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {}) {
     const { user, token } = useAuth();
     const allowed = canInviteUsers(user);
-    const managesUsers = isAdmin(user);
     const roles = invitableRoles(user);
     const defaultRole: Role = roles.includes(ROLES.ANALYST) ? ROLES.ANALYST : roles[0] ?? ROLES.JOB_HANDLER;
 
@@ -57,7 +54,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
     const [pendingDeactivate, setPendingDeactivate] = useState<UserSummary | null>(null);
 
     const load = useCallback(async () => {
-        if (!managesUsers || !token) return;
+        if (!allowed || !token) return;
         setFetchError(null);
         try {
             setUsers((await listUsers(token)).users);
@@ -66,7 +63,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
         } finally {
             setLoading(false);
         }
-    }, [managesUsers, token]);
+    }, [allowed, token]);
 
     useEffect(() => {
         load();
@@ -75,7 +72,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
     async function sendInvite(payload: { name: string; email: string; role: string }) {
         const result = await inviteUser(token ?? "", payload);
         setFormSuccess(result.outcome === "REACTIVATED"
-            ? `${result.user.email} already had an account; it is active again as ${ROLE_LABELS[result.user.role as Role] ?? result.user.role}.`
+            ? `${result.user.email} already had an account; it is active again as ${roleLabel(result.user.role)}.`
             : `Invitation sent to ${result.user.email}. They set their password from the link in the email.`);
         await load();
     }
@@ -142,7 +139,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                 <div className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                     <h2 className="text-headline-sm font-semibold">Access Restricted</h2>
-                    <p className="mt-1 text-body-sm text-ink-muted">Only users with the <strong>Owner</strong> or <strong>Admin</strong> role (or a <strong>Manager</strong>, for Job Handlers) can invite users.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Only users with the <strong>Owner</strong> or <strong>Admin</strong> role can invite users.</p>
                 </div>
             </div>
         );
@@ -231,7 +228,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
             </div>
 
             {/* The users and their re-send / deactivate actions: ADMIN only. */}
-            {managesUsers && <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
+            {allowed && <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
                 <div className="mb-4 flex items-center justify-between border-b border-border pb-4">
                     <div>
                         <h2 className="text-headline-sm font-semibold text-ink">Users</h2>
@@ -274,7 +271,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                                                 <p className="font-medium text-ink">{entry.name}{entry.role === ROLES.OWNER && <OwnerBadge />}</p>
                                                 <p className="text-label-sm text-ink-subtle">{entry.email}</p>
                                             </td>
-                                            <td className="px-4 py-3">{ROLE_LABELS[entry.role as Role] ?? entry.role}</td>
+                                            <td className="px-4 py-3">{roleLabel(entry.role)}</td>
                                             <td className="px-4 py-3">
                                                 <span className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-label-sm font-medium ${badge.className}`}>
                                                     <Icon name={badge.icon} className="size-3.5" />

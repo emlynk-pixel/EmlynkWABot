@@ -21,7 +21,7 @@ import { issueCandidateFormToken } from "../src/services/candidateFormTokenServi
 const SECRET = "test-candidate-form-secret-0123456789-abcdefghijklmnop";
 const ORIGIN = "https://candidate-form.example.test";
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4), BEN: user("u-ben", "ANALYST", 5) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4), BEN: user("u-ben", "ANALYST", 5) };
 const C = (i) => ({ passportId: `N800000${i}`, uniqueId: `800${i}`, firstName: `First${i}`, otherName: `Last${i}`, nic: `80000000${i}V`, sex: "M", whatsappNumber: `+9476000000${i}`, address: `${i} Old Road` });
 const [A, B, X] = [C(1), C(2), C(3)];
 
@@ -78,7 +78,7 @@ async function call(server, method, path, { body, token, headers: extra = {} } =
 }
 const admin = (who, method, path, options) => call(app(who), method, `/api/admin${path}`, options);
 const pub = (path, options, who = USERS.ADMIN) => call(app(who), "POST", `${PUBLIC_CANDIDATE_DETAILS_PATH}${path}`, options);
-const personalLink = async (c, who = USERS.MANAGER) => {
+const personalLink = async (c, who = USERS.OWNER) => {
     const r = await admin(who, "POST", `/candidates/${c.passportId}/form-share`);
     assert.equal(r.status, 201, JSON.stringify(r.body));
     return r.body.url.split("#k=")[1];
@@ -110,11 +110,11 @@ const newJobWith = async (...members) => {
         prisma.jobType.create({ data: { code: "T", name: "T" } }), prisma.agent.create({ data: { name: "Ag", countryCode: "RO" } }),
     ]);
     const client = await prisma.client.create({ data: { name: "Co", agentLinks: { create: { agentId: agent.id } } } });
-    const job = (await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: jobType.id, clientId: client.id, responsibleAgentId: agent.id } })).body;
-    for (const m of members) await admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { body: { passportId: m.passportId } });
+    const job = (await admin(USERS.OWNER, "POST", "/jobs", { body: { jobTypeId: jobType.id, clientId: client.id, responsibleAgentId: agent.id } })).body;
+    for (const m of members) await admin(USERS.OWNER, "POST", `/jobs/${job.jobId}/candidates`, { body: { passportId: m.passportId } });
     return job;
 };
-const groupLink = async (job) => (await admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/form-share`)).body.url.split("#k=")[1];
+const groupLink = async (job) => (await admin(USERS.OWNER, "POST", `/jobs/${job.jobId}/form-share`)).body.url.split("#k=")[1];
 
 describe("EXPIRY: exact behaviour of link lifetime", () => {
     test("EXPIRY-001/002/003/004/005 a fresh link works for exactly 3 days; an expired one is the generic failure and cannot start a session", async () => {
@@ -153,7 +153,7 @@ describe("EXPIRY: exact behaviour of link lifetime", () => {
         const unchanged = await prisma.candidateFormLink.findFirst();
         assert.deepEqual([unchanged.expiresAt.getTime(), unchanged.revokedAt], [before.expiresAt.getTime(), null], "verify attempts did not touch the expiry");
         // Admin status says no active link; the candidate form stays locked for the expired link.
-        assert.equal((await admin(USERS.MANAGER, "GET", `/candidates/${A.passportId}/form-share`)).body.state, "LOCKED");
+        assert.equal((await admin(USERS.OWNER, "GET", `/candidates/${A.passportId}/form-share`)).body.state, "LOCKED");
         const second = await personalLink(A);
         const links = await prisma.candidateFormLink.findMany({ orderBy: { createdAt: "asc" } });
         assert.ok(links[1].expiresAt > new Date(Date.now() + FORM_LINK_TTL_MS - 60_000), "fresh 3 days");
@@ -205,7 +205,7 @@ describe("LOCK: the lock lives on the server", () => {
         assert.equal((await form(token)).status, 409, "the old token cannot read the form");
         assert.equal((await submit(token, "key-other-0000000001")).status, 409);
         // A new personal link is refused; a group link does not reopen either.
-        const again = await admin(USERS.MANAGER, "POST", `/candidates/${A.passportId}/form-share`);
+        const again = await admin(USERS.OWNER, "POST", `/candidates/${A.passportId}/form-share`);
         assert.deepEqual([again.status, again.body.code], [409, "FORM_SUBMITTED"]);
         const job = await newJobWith(A, B);
         const group = await groupLink(job);
@@ -233,7 +233,7 @@ describe("REVOKE: after submission and in the audit", () => {
         const secret = await personalLink(A);
         assert.equal((await submit(await session(secret, A))).status, 200);
         const response = await prisma.candidateFormResponse.findUnique({ where: { passportId: A.passportId } });
-        const revoked = await admin(USERS.MANAGER, "POST", `/candidates/${A.passportId}/form-share/revoke`);
+        const revoked = await admin(USERS.OWNER, "POST", `/candidates/${A.passportId}/form-share/revoke`);
         assert.equal(revoked.status, 200);
         assert.equal(revoked.body.state, "SUBMITTED", "still submitted, not locked or reopened");
         assert.equal((await access(A)).status, "SUBMITTED");
@@ -255,7 +255,7 @@ describe("GROUP: lockout and double submit", () => {
         const link = await prisma.candidateFormLink.findFirst();
         assert.ok(link.lockedUntil && link.lockedUntil > new Date());
         GENERIC(await verify(secret, A));
-        assert.equal((await admin(USERS.MANAGER, "GET", `/jobs/${job.jobId}/form-share`)).body.link.lockedUntil !== null, true);
+        assert.equal((await admin(USERS.OWNER, "GET", `/jobs/${job.jobId}/form-share`)).body.link.lockedUntil !== null, true);
         // A wrong-NIC attempt on a member below the limit is only counted.
         await pg.exec(`UPDATE "candidate_form_link" SET "locked_until" = NULL, "failed_attempts" = 0`);
         GENERIC(await verify(secret, A, { nic: B.nic }));

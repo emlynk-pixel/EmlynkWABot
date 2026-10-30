@@ -180,7 +180,7 @@ describe("paging", () => {
     });
 
     test("13. roles are unchanged: every Candidates role can list; any other role can't", async () => {
-        for (const role of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]) assert.equal((await get("?page=1", role)).status, 200, role);
+        for (const role of ["OWNER", "ADMIN", "ANALYST", "REGISTRATION_DESK"]) assert.equal((await get("?page=1", role)).status, 200, role);
         for (const role of ["VIEWER", "UNKNOWN"]) assert.equal((await get("?page=1", role)).status, 403, role);
     });
 });

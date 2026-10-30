@@ -1082,7 +1082,7 @@ describe("candidate routes: roles", () => {
         test("every candidate role can upload; a new file replaces the current one; stored under its own folder; audited", async () => {
             const { db, bucket } = await setup();
             const uploads = [];
-            for (const [index, role] of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"].entries()) {
+            for (const [index, role] of ["OWNER", "ADMIN", "ANALYST", "REGISTRATION_DESK"].entries()) {
                 const result = await directUpload(role, "N1023757", db, bucket, { type: "VISA_SUBMISSION", buffer: Buffer.concat([PDF, Buffer.from([index])]) });
                 assert.equal(result.status, 200, role);
                 uploads.push(result.body.documents.VISA_SUBMISSION);

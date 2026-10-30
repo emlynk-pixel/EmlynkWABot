@@ -18,7 +18,7 @@ import {
 import { WORKFLOW_STATUS } from "./candidateWorkflowStatus.js";
 import { businessDayRange, isValidBusinessDate } from "../utils/businessDay.js";
 
-// Work Allocation (Admin > Work Allocation; ADMIN and MANAGER only, checked
+// Work Allocation (Admin > Work Allocation; ADMIN only, checked
 // by the routes). Which Analyst each candidate is assigned to:
 // public.candidate_allocation, one row per allocated candidate (no row:
 // unallocated). Every change is in audit_logs:

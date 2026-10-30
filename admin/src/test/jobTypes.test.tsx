@@ -67,8 +67,8 @@ describe("Settings > Job Types", () => {
         expect(screen.getByRole("button", { name: "Add job type" })).toBeEnabled();
     });
 
-    test("JOB-TYPE-002 a MANAGER (or any non-admin) gets Access Restricted and no Job Types request", async () => {
-        for (const role of ["MANAGER", "ANALYST"]) {
+    test("JOB-TYPE-002 a non-admin (Analyst, Job Handler) gets Access Restricted and no Job Types request", async () => {
+        for (const role of ["ANALYST", "JOB_HANDLER"]) {
             const { calls } = signedInBackend({ ...asRole(role), "GET /api/admin/job-types": { status: 200, body: LIST } });
             const view = renderApp("/settings/job-types");
             expect(await screen.findByText("Access Restricted", undefined, RENDER_STEP)).toBeInTheDocument();
@@ -172,7 +172,7 @@ describe("New job", () => {
             items: [], pagination: { page: 1, pageSize: 50, total: 0, totalItems: 0, totalPages: 1, hasNextPage: false, hasPreviousPage: false },
             counts: { processing: 0, completed: 0, cancelled: 0 }, filters: { view: "processing", search: null },
         } as JobList;
-        signedInBackend({ ...asRole("MANAGER"), "GET /api/admin/jobs": { status: 200, body: empty }, "GET /api/admin/job-options": { status: 200, body: OPTIONS } });
+        signedInBackend({ ...asRole("ADMIN"), "GET /api/admin/jobs": { status: 200, body: empty }, "GET /api/admin/job-options": { status: 200, body: OPTIONS } });
         renderApp("/jobs");
         const user = userEvent.setup();
         await user.click(await screen.findByRole("button", { name: "New job" }, RENDER_STEP));

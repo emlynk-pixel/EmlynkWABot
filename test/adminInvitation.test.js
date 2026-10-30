@@ -16,7 +16,7 @@ import { createFakeAdminDb, noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createFakeAuthAdmin, createFakeVerifier, tokenFor, tokenForAuthId } from "./helpers/fakeSupabaseAuth.js";
 
 const ADMIN = { adminId: "admin-1", name: "Admin", email: "admin@example.invalid", role: "ADMIN", status: "ACTIVE" };
-const MANAGER = { adminId: "manager-1", name: "Manager", email: "manager@example.invalid", role: "MANAGER", status: "ACTIVE" };
+const STAFF = { adminId: "staff-1", name: "Staff", email: "staff@example.invalid", role: "ANALYST", status: "ACTIVE" };
 const REDIRECT = "https://app.example.invalid/admin/setup-password";
 
 let server;
@@ -25,7 +25,7 @@ let db;
 let authAdmin;
 let verifyAccessToken;
 
-async function start(users = [ADMIN, MANAGER], identities = {}) {
+async function start(users = [ADMIN, STAFF], identities = {}) {
     db = createFakeAdminDb(users);
     authAdmin = createFakeAuthAdmin({ identities });
     verifyAccessToken = createFakeVerifier();
@@ -73,8 +73,8 @@ describe("POST /api/admin/users/invite", () => {
         assert.deepEqual([entry.action, entry.adminId, entry.newStatus, entry.newValue], ["INVITE_USER", ADMIN.adminId, "INVITED", "new.person@example.invalid"]);
     });
 
-    test("ADMIN invites every role below ADMIN; ADMIN and OWNER are refused (403); anything else is a 400; before Supabase", async () => {
-        for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
+    test("ADMIN invites every role below ADMIN; ADMIN and OWNER are refused (403); anything else, the retired MANAGER included, is a 400; before Supabase", async () => {
+        for (const role of ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             assert.equal((await invite({ email: `new-${role}@example.invalid`.toLowerCase(), name: role, role })).status, 201, role);
         }
         const calls = authAdmin.calls.length;
@@ -82,11 +82,12 @@ describe("POST /api/admin/users/invite", () => {
             const result = await invite({ email: "x@example.invalid", name: "X", role });
             assert.deepEqual([result.status, result.body], [403, { message: "Insufficient permissions" }], `${role}: refused, never a lesser role`);
         }
-        for (const role of ["VIEWER", "REVIEWER", "SUPERADMIN", "", undefined]) {
+        for (const role of ["MANAGER", "manager", "VIEWER", "REVIEWER", "SUPERADMIN", "", undefined]) {
             const result = await invite({ email: "x@example.invalid", name: "X", role });
-            assert.equal(result.status, 400);
-            assert.ok(result.body.errors.some((e) => e.field === "role"));
+            assert.equal(result.status, 400, String(role));
+            assert.deepEqual(result.body.errors.find((e) => e.field === "role"), { field: "role", message: "must be one of: OWNER, ADMIN, ANALYST, REGISTRATION_DESK, JOB_HANDLER" }, String(role));
         }
+        assert.equal(rowOf("x@example.invalid"), undefined, "no account with a refused role");
         assert.equal(authAdmin.calls.length, calls);
     });
 
@@ -98,32 +99,32 @@ describe("POST /api/admin/users/invite", () => {
     });
 
     test("non-ADMIN or no session -> refused, Supabase never called", async () => {
-        assert.equal((await invite({ email: "x@example.invalid", name: "X", role: "ANALYST" }, { token: tokenFor(MANAGER.adminId) })).status, 403);
+        assert.equal((await invite({ email: "x@example.invalid", name: "X", role: "ANALYST" }, { token: tokenFor(STAFF.adminId) })).status, 403);
         assert.equal((await invite({ email: "x@example.invalid", name: "X", role: "ANALYST" }, { token: null })).status, 401);
         assert.equal(authAdmin.calls.length, 0);
         assert.equal(rowOf("x@example.invalid"), undefined);
     });
 
     test("the service itself refuses a non-ADMIN actor (defence in depth)", async () => {
-        await assert.rejects(inviteUser({ db, authAdmin, actor: MANAGER, values: { email: "x@example.invalid", name: "X", role: "ADMIN" } }), { code: "FORBIDDEN" });
+        await assert.rejects(inviteUser({ db, authAdmin, actor: STAFF, values: { email: "x@example.invalid", name: "X", role: "ADMIN" } }), { code: "FORBIDDEN" });
     });
 
     test("an ACTIVE user's email -> 409, no second account, no email sent", async () => {
-        const result = await invite({ email: MANAGER.email, name: "Again", role: "ANALYST" });
+        const result = await invite({ email: STAFF.email, name: "Again", role: "ANALYST" });
         assert.equal(result.status, 409);
         assert.equal(result.body.code, "USER_ALREADY_ACTIVE");
         assert.equal(authAdmin.calls.length, 0);
-        assert.equal(rowOf(MANAGER.email).role, "MANAGER");
+        assert.equal(rowOf(STAFF.email).role, "ANALYST");
     });
 
     test("re-inviting a pending invitee re-sends the invite: one row, same identity, new role", async () => {
         await invite({ email: "p@example.invalid", name: "P", role: "ANALYST" });
         const first = rowOf("p@example.invalid");
-        const again = await invite({ email: "p@example.invalid", name: "P", role: "MANAGER" });
+        const again = await invite({ email: "p@example.invalid", name: "P", role: "JOB_HANDLER" });
         assert.equal(again.status, 201);
         assert.equal(db.rows.filter((r) => r.email === "p@example.invalid").length, 1);
         assert.equal(rowOf("p@example.invalid").authUserId, first.authUserId);
-        assert.equal(rowOf("p@example.invalid").role, "MANAGER");
+        assert.equal(rowOf("p@example.invalid").role, "JOB_HANDLER");
     });
 
     test("re-inviting a deactivated user who had set up their account reactivates them (no new identity)", async () => {
@@ -206,18 +207,18 @@ describe("POST /api/admin/users/invite", () => {
 
 describe("invited user setup: POST /auth/complete-invite", () => {
     test("the invitee's own session activates their account; then /auth/me works", async () => {
-        await invite({ email: "n@example.invalid", name: "N", role: "MANAGER" });
+        await invite({ email: "n@example.invalid", name: "N", role: "JOB_HANDLER" });
         const token = sessionOf("n@example.invalid");
         assert.equal((await request("GET", "/auth/me", { token })).status, 403, "not usable before setup");
 
         const done = await request("POST", "/auth/complete-invite", { token });
         assert.equal(done.status, 200);
-        assert.deepEqual(done.body.user, { userId: rowOf("n@example.invalid").adminId, email: "n@example.invalid", name: "N", role: "MANAGER", status: "ACTIVE" });
+        assert.deepEqual(done.body.user, { userId: rowOf("n@example.invalid").adminId, email: "n@example.invalid", name: "N", role: "JOB_HANDLER", status: "ACTIVE" });
         assert.equal(db.auditLogRows.at(-1).action, "COMPLETE_INVITATION");
 
         const me = await request("GET", "/auth/me", { token });
         assert.equal(me.status, 200);
-        assert.equal(me.body.user.role, "MANAGER", "role from public.user, set by the ADMIN");
+        assert.equal(me.body.user.role, "JOB_HANDLER", "role from public.user, set by the ADMIN");
         assert.equal((await request("POST", "/auth/complete-invite", { token })).status, 200, "idempotent");
     });
 
@@ -240,32 +241,36 @@ describe("user management (OWNER and ADMIN only)", () => {
     test("GET /users lists profiles without Supabase identities", async () => {
         const result = await request("GET", "/api/admin/users");
         assert.equal(result.status, 200);
-        assert.deepEqual(result.body.users.map((u) => u.userId).sort(), ["admin-1", "manager-1"]);
+        assert.deepEqual(result.body.users.map((u) => u.userId).sort(), ["admin-1", "staff-1"]);
         assert.ok(!JSON.stringify(result.body).includes("authUserId"));
-        assert.equal((await request("GET", "/api/admin/users", { token: tokenFor(MANAGER.adminId) })).status, 403);
+        assert.equal((await request("GET", "/api/admin/users", { token: tokenFor(STAFF.adminId) })).status, 403);
     });
 
     test("role change: validated, audited, effective on the next request; never your own", async () => {
-        assert.equal((await request("PUT", `/api/admin/users/${MANAGER.adminId}/role`, { body: { role: "VIEWER" } })).status, 400);
+        for (const role of ["VIEWER", "MANAGER"]) {
+            const refused = await request("PUT", `/api/admin/users/${STAFF.adminId}/role`, { body: { role } });
+            assert.deepEqual([refused.status, refused.body.code], [400, "INVALID_ROLE"], `${role}: never given (MANAGER is retired)`);
+        }
+        assert.equal(rowOf(STAFF.email).role, "ANALYST");
         assert.equal((await request("PUT", `/api/admin/users/${ADMIN.adminId}/role`, { body: { role: "ANALYST" } })).status, 400);
         assert.equal((await request("PUT", "/api/admin/users/nobody/role", { body: { role: "ANALYST" } })).status, 404);
 
-        const managerInvites = () => request("POST", "/api/admin/users/invite", { token: tokenFor(MANAGER.adminId), body: { role: "JOB_HANDLER" } });
-        assert.equal((await managerInvites()).status, 400, "a MANAGER may invite (an empty invitation: 400)");
-        const result = await request("PUT", `/api/admin/users/${MANAGER.adminId}/role`, { body: { role: "REGISTRATION_DESK" } });
+        const staffRole = async () => (await request("GET", "/auth/me", { token: tokenFor(STAFF.adminId) })).body.user.role;
+        assert.equal(await staffRole(), "ANALYST");
+        const result = await request("PUT", `/api/admin/users/${STAFF.adminId}/role`, { body: { role: "REGISTRATION_DESK" } });
         assert.equal(result.status, 200);
         assert.equal(result.body.user.role, "REGISTRATION_DESK");
         assert.equal(db.auditLogRows.at(-1).action, "UPDATE_USER_ROLE");
-        assert.equal((await managerInvites()).status, 403, "the new role applies at once");
+        assert.equal(await staffRole(), "REGISTRATION_DESK", "the new role applies at once");
     });
 
     test("deactivate: the user's session stops working at once; not yourself", async () => {
-        assert.equal((await request("GET", "/auth/me", { token: tokenFor(MANAGER.adminId) })).status, 200);
+        assert.equal((await request("GET", "/auth/me", { token: tokenFor(STAFF.adminId) })).status, 200);
         assert.equal((await request("POST", `/api/admin/users/${ADMIN.adminId}/deactivate`)).status, 400);
-        const result = await request("POST", `/api/admin/users/${MANAGER.adminId}/deactivate`);
+        const result = await request("POST", `/api/admin/users/${STAFF.adminId}/deactivate`);
         assert.equal(result.status, 200);
         assert.equal(result.body.user.status, "INACTIVE");
-        assert.equal((await request("GET", "/auth/me", { token: tokenFor(MANAGER.adminId) })).status, 403);
+        assert.equal((await request("GET", "/auth/me", { token: tokenFor(STAFF.adminId) })).status, 403);
         assert.equal(db.auditLogRows.at(-1).action, "DEACTIVATE_USER");
     });
 

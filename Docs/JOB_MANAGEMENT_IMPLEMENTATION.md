@@ -41,7 +41,7 @@ erDiagram
 |---|---|---|---|---|
 | **Internal Job ID** | `job.id` (UUID) | the database | **never** | **yes — every relation** |
 | **Internal Job Code** | `job.job_code` `JOB-YYYY-NNNNNN` | the system (counter) | no | no; display reference |
-| **Client Job ID** | `job.company_job_id` (e.g. `Y26S01`) | ADMIN / MANAGER, any time | **yes** | **no** — a plain label |
+| **Client Job ID** | `job.company_job_id` (e.g. `Y26S01`) | ADMIN / JOB_HANDLER, any time | **yes** | **no** — a plain label |
 
 **`company_job_id` keeps its name on purpose.** It is the *employer's own external job reference* (a label the employer supplies), not the old "company" entity. Renaming the column would rename a business concept that did not change and would break anything that already reads it; the UI labels it **Client Job ID**. It is unique **per client** when present (`UNIQUE (client_id, company_job_id) WHERE company_job_id IS NOT NULL`), normalised by the service (trimmed, upper-cased, 1–40 characters from `A-Z 0-9` space `. _ / # -`), editable on a job in any status, and referenced by nothing. A duplicate within a client is `409 COMPANY_JOB_ID_EXISTS`.
 
@@ -75,7 +75,8 @@ The one-PROCESSING-job rule is enforced three times: the service under row locks
 
 | Role | Jobs |
 |---|---|
-| ADMIN, MANAGER | create / edit / complete / cancel; assign candidates; `job-options`; `POST /job-types` |
+| ADMIN | create / edit / complete / cancel; assign candidates; `job-options`; `POST /job-types` |
+| JOB_HANDLER | the same, but not `POST /job-types` or the job-group form link |
 | ANALYST | read-only, and only jobs holding a candidate allocated to them (and only those candidates); other jobs are 404 |
 | REGISTRATION_DESK | no Jobs API |
 
@@ -83,14 +84,14 @@ The one-PROCESSING-job rule is enforced three times: the service under row locks
 
 | Endpoint | Roles | Purpose |
 |---|---|---|
-| `GET /jobs?view=processing\|completed\|cancelled&search=&page=` | ADMIN, MANAGER, ANALYST (scoped) | list (50 per page) with tab counts |
+| `GET /jobs?view=processing\|completed\|cancelled&search=&page=` | ADMIN, JOB_HANDLER, ANALYST (scoped) | list (50 per page) with tab counts |
 | `GET /jobs/:jobId` | same | details and assigned candidates |
-| `POST /jobs` | ADMIN, MANAGER | create (see §4) |
-| `PUT /jobs/:jobId` `{ vacancies?, jobTypeId?, clientId?, companyJobId? }` | ADMIN, MANAGER | update a PROCESSING job; `companyJobId` alone also on a finished job |
-| `POST /jobs/:jobId/candidates`, `DELETE /jobs/:jobId/candidates/:passportId` | ADMIN, MANAGER | membership |
-| `POST /jobs/:jobId/complete`, `POST /jobs/:jobId/cancel` | ADMIN, MANAGER | lifecycle |
-| `GET /job-options` | ADMIN, MANAGER | active job types, **active clients of active agents (with their `agentId`)**, active agents |
-| `POST /job-types { name }` | ADMIN, MANAGER | add a job type |
+| `POST /jobs` | ADMIN, JOB_HANDLER | create (see §4) |
+| `PUT /jobs/:jobId` `{ vacancies?, jobTypeId?, clientId?, companyJobId? }` | ADMIN, JOB_HANDLER | update a PROCESSING job; `companyJobId` alone also on a finished job |
+| `POST /jobs/:jobId/candidates`, `DELETE /jobs/:jobId/candidates/:passportId` | ADMIN, JOB_HANDLER | membership |
+| `POST /jobs/:jobId/complete`, `POST /jobs/:jobId/cancel` | ADMIN, JOB_HANDLER | lifecycle |
+| `GET /job-options` | ADMIN, JOB_HANDLER | active job types, **active clients of active agents (with their `agentId`)**, active agents |
+| `POST /job-types { name }` | ADMIN | add a job type |
 
 Agents and Clients have their own endpoints (`AGENT_CLIENT_MANAGEMENT.md` §6); there is no `/companies` route.
 
@@ -100,8 +101,8 @@ Audit actions (category **Job**): `CREATE_JOB`, `UPDATE_JOB`, `COMPLETE_JOB`, `C
 
 ## 9. Admin UI
 
-* **Jobs** (sidebar; ADMIN / MANAGER / ANALYST): Processing / Completed / Cancelled tabs with counts, search, pagination; **New job** = job type (inline add) + **client** (the responsible agent and country are shown, taken from the client) + vacancies + optional Client Job ID.
-* **Job details**: facts, Client Job ID (editable), candidates (add by search / remove), Complete and Cancel (reason) dialogs for ADMIN / MANAGER.
+* **Jobs** (sidebar; ADMIN / JOB_HANDLER / ANALYST): Processing / Completed / Cancelled tabs with counts, search, pagination; **New job** = job type (inline add) + **client** (the responsible agent and country are shown, taken from the client) + vacancies + optional Client Job ID.
+* **Job details**: facts, Client Job ID (editable), candidates (add by search / remove), Complete and Cancel (reason) dialogs for ADMIN / JOB_HANDLER.
 
 ## 10. Tests
 
@@ -116,5 +117,5 @@ Audit actions (category **Job**): `CREATE_JOB`, `UPDATE_JOB`, `COMPLETE_JOB`, `C
 3. The candidate page's **Job details** stage shows the current Job and its Client from this assignment (read-only; see `20-candidate-management.md` §4). The legacy free-text `candidate_stages.job_id` is no longer written; it is only read as a Test ID when a Test details row has no `test_id`. Dropping the column is a later, separate decision.
 ## 12. Candidate Form job-group link
 
-A Job can have one active Candidate Form *group* link (Admin > Candidate > Share Form > "Share link for the job group", or `GET/POST /jobs/:jobId/form-share`, `POST /jobs/:jobId/form-share/revoke`, ADMIN and MANAGER, audited as `CREATE_JOB_FORM_LINK` / `REVOKE_JOB_FORM_LINK`). It is bound to the immutable `job.id` (never the job code or the Client Job ID); only a candidate with an active `job_candidate` row on that PROCESSING job can open the form with it. See `CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md` §12.
+A Job can have one active Candidate Form *group* link (Admin > Candidate > Share Form > "Share link for the job group", or `GET/POST /jobs/:jobId/form-share`, `POST /jobs/:jobId/form-share/revoke`, ADMIN only, audited as `CREATE_JOB_FORM_LINK` / `REVOKE_JOB_FORM_LINK`). It is bound to the immutable `job.id` (never the job code or the Client Job ID); only a candidate with an active `job_candidate` row on that PROCESSING job can open the form with it. See `CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md` §12.
 

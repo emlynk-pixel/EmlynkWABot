@@ -4,7 +4,7 @@ import { listAuditLogs, type AuditCategory, type AuditChange, type AuditLogItem,
 import { useAdminResource } from "../api/useAdminResource";
 import { STAGE_LABELS } from "../api/candidates";
 import { isAdmin, useAuth } from "../auth/AuthProvider";
-import { ROLE_LABELS, type Role } from "../auth/roles";
+import { roleLabel as labelOfRole } from "../auth/roles";
 import { secondaryButton } from "../components/Dialog";
 import { documentTypeLabel, formatDateTime, formatDay, formatNumber, humanize } from "../components/format";
 import { Icon } from "../components/Icon";
@@ -146,7 +146,7 @@ const FIELD_LABELS: Record<string, string> = {
 };
 const fieldLabelOf = (field: string) => FIELD_LABELS[field] ?? humanize(field);
 const stageLabel = (stage: string) => STAGE_LABELS[stage as keyof typeof STAGE_LABELS] ?? humanize(stage);
-const roleLabel = (role: string | null) => (role ? ROLE_LABELS[role as Role] ?? humanize(role) : "—");
+const roleLabel = (role: string | null) => (role ? labelOfRole(role) : "—");
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -396,11 +396,13 @@ function ChangeList({ changes }: { changes: AuditChange[] }) {
 }
 
 // Old → new: the values when both are recorded (e.g. a role), otherwise the
-// statuses, with a lone new value (e.g. the account concerned) underneath.
+// statuses, with a lone new value (e.g. the account concerned) underneath. A role change names
+// the roles by their labels (a retired one too: "Manager (retired)").
 function StatusChange({ item }: { item: AuditLogItem }) {
     const values = item.previousValue !== null && item.newValue !== null;
-    const from = values ? item.previousValue as string : humanize(item.previousStatus);
-    const to = values ? item.newValue as string : humanize(item.newStatus);
+    const value = (v: string) => (item.action === "UPDATE_USER_ROLE" ? labelOfRole(v) : v);
+    const from = values ? value(item.previousValue as string) : humanize(item.previousStatus);
+    const to = values ? value(item.newValue as string) : humanize(item.newStatus);
     const extra = !values ? item.newValue ?? item.previousValue : null;
     return (
         <>

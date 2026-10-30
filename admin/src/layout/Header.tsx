@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
-import { ROLE_LABELS, canRegisterCandidates, canViewDashboard, type Role } from "../auth/roles";
+import { canRegisterCandidates, canViewDashboard, roleLabel } from "../auth/roles";
 import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
 import { useTheme } from "../theme/theme";
@@ -75,7 +75,7 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
                 <div className="flex items-center gap-3 border-l border-border pl-3">
                     <div className="hidden text-right sm:block">
                         <p className="text-label-md text-ink" data-testid="admin-name">{user.name}</p>
-                        <p className="text-label-sm text-ink-subtle">{ROLE_LABELS[user.role as Role] ?? user.role}</p>
+                        <p className="text-label-sm text-ink-subtle">{roleLabel(user.role)}</p>
                     </div>
                     <span className="flex size-8 items-center justify-center rounded-full bg-primary-soft text-label-md text-primary" aria-hidden="true">
                         {user.name.trim().charAt(0).toUpperCase() || "A"}

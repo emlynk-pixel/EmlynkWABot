@@ -14,7 +14,7 @@ import { formatDateTime } from "../format";
 // The link is shown ONCE, right after it is created (only a hash is stored).
 // Creating a new link replaces the old one; revoking locks the form again.
 //
-// ADMIN and MANAGER also get "Share link for the job group": one link for every
+// ADMIN also gets "Share link for the job group": one link for every
 // candidate on one of the candidate's PROCESSING jobs (chosen when they hold several;
 // bound to the job's immutable id;
 // each candidate still verifies with their own Passport and NIC and submits once).

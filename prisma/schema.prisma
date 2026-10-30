@@ -18,7 +18,7 @@ datasource db {
 // auth_user_id = auth.users.id (a foreign key to auth.users where that schema
 // exists, i.e. on Supabase; see migration 20261009120000_supabase_auth_cutover).
 // status: INVITED | ACTIVE | INACTIVE (middleware/requireActiveUser.js).
-// role:   OWNER | ADMIN | MANAGER | ANALYST | REGISTRATION_DESK | JOB_HANDLER (middleware/requireRole.js;
+// role:   OWNER | ADMIN | ANALYST | REGISTRATION_DESK | JOB_HANDLER (middleware/requireRole.js;
 //         plain TEXT validated by the application, no database CHECK).
 model User {
   adminId               String                     @id @map("admin_id")
@@ -817,7 +817,7 @@ model CandidateAdditionalDetails {
   createdDate      DateTime  @default(now()) @map("created_date")
   updatedDate      DateTime  @updatedAt @map("updated_date")
 
-  // Candidate Form answers confirmed by an Admin / Manager (candidateFormFieldConfirmService.js),
+  // Candidate Form answers confirmed by an Admin (candidateFormFieldConfirmService.js),
   // migration 20261102120000_candidate_form_finalized_details. NULL until confirmed. Never
   // written by the public form, and not part of the Additional Details form (its save leaves them).
   // A+ | A- | B+ | B- | AB+ | AB- | O+ | O-
@@ -912,7 +912,7 @@ model CandidateCallLog {
 // needing attention. The call log stays the source of truth for the note,
 // the call time, the caller and the candidate; this row holds only the
 // follow-up's own state. status: OPEN | COMPLETED. Completing keeps the row
-// (completed_by / completed_date set); Delete (ADMIN and MANAGER only)
+// (completed_by / completed_date set); Delete (ADMIN only)
 // removes this row and never the call log.
 // At most one OPEN follow-up per call log: a partial unique index (not
 // expressible in Prisma's schema DSL), with CHECK constraints on status and

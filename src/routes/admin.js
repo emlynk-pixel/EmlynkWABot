@@ -58,7 +58,7 @@ import {
     listFollowUps,
     parseFollowUpListQuery,
 } from "../services/callLogFollowUpService.js";
-import { accessiblePassportIds, ALLOCATION_MANAGER_ROLES, canAccessCandidate, candidateScope, isCandidateScoped } from "../services/candidateAccess.js";
+import { accessiblePassportIds, canAccessCandidate, candidateScope, isCandidateScoped } from "../services/candidateAccess.js";
 import {
     assignCandidates,
     autoAllocateCandidates,
@@ -163,28 +163,28 @@ function contentDisposition(fileName) {
 
 // Phase 12 RBAC: role shorthand constants for this router.
 // ANALYST: reads + review actions.
-// MANAGER: full access except user management.
-// ADMIN: full access including user management.
+// ADMIN: full access, including user management, Settings, Work Allocation,
+// verification, police-date corrections and confirming Candidate Form values
+// (an OWNER holds every ADMIN permission: requireRole.js hasRole).
 // REGISTRATION_DESK: the whole Candidates area (registration, details,
 // stages, candidate documents, call logs); nothing else.
 // Work Allocation: an ANALYST only sees and changes the candidates allocated
 // to them (services/candidateAccess.js), on every candidate route and in the
-// lists that name candidates; ADMIN, MANAGER and REGISTRATION_DESK see all.
+// lists that name candidates; ADMIN and REGISTRATION_DESK see all.
 // JOB_HANDLER: Jobs, Agents and Clients (manage), Candidates (read only: the
 // list, the details and what the details page reads); nothing else. Every
 // candidate WRITE route keeps its own tier, which JOB_HANDLER is not in.
-const { ADMIN, MANAGER, ANALYST, REGISTRATION_DESK, JOB_HANDLER } = ROLES;
+const { ADMIN, ANALYST, REGISTRATION_DESK, JOB_HANDLER } = ROLES;
 // The set of roles allowed for each endpoint tier.
-const ALL_ACTIVE = [ADMIN, MANAGER, ANALYST];                   // overview, reports, etc
-const CANDIDATE_STAFF = [ADMIN, MANAGER, ANALYST, REGISTRATION_DESK]; // the Candidates area
-const ANALYSTS_UP = [ADMIN, MANAGER, ANALYST];                  // analyst or above
-const MANAGERS_UP = [ADMIN, MANAGER];                           // manager or above
+const ALL_ACTIVE = [ADMIN, ANALYST];                            // overview, reports, etc
+const CANDIDATE_STAFF = [ADMIN, ANALYST, REGISTRATION_DESK];    // the Candidates area
+const ANALYSTS_UP = [ADMIN, ANALYST];                           // analyst or above
 const ADMINS_ONLY = [ADMIN];                                    // administrators only
-const REGISTRATION_STAFF = [ADMIN, MANAGER, REGISTRATION_DESK]; // registering a new candidate
+const REGISTRATION_STAFF = [ADMIN, REGISTRATION_DESK];          // registering a new candidate
 const CANDIDATE_READERS = [...CANDIDATE_STAFF, JOB_HANDLER];    // candidate READS only (GET)
-const JOB_READERS = [ADMIN, MANAGER, ANALYST, JOB_HANDLER];     // job lists and details
-const JOB_MANAGERS = [ADMIN, MANAGER, JOB_HANDLER];             // job writes (create, edit, members, close)
-const MASTER_DATA_STAFF = [ADMIN, MANAGER, JOB_HANDLER];        // Agents and Client Management
+const JOB_READERS = [ADMIN, ANALYST, JOB_HANDLER];              // job lists and details
+const JOB_MANAGERS = [ADMIN, JOB_HANDLER];                      // job writes (create, edit, members, close)
+const MASTER_DATA_STAFF = [ADMIN, JOB_HANDLER];                 // Agents and Client Management
 // (an ANALYST works only on candidates allocated to them, and a new
 // candidate is unallocated, so registration is not an Analyst action)
 
@@ -268,7 +268,7 @@ export function createAdminRouter({
     });
 
     // Daily Report page (dailyReportService.js). Summary: the same roles as
-    // the daily report. Summary by Roles: ADMIN and MANAGER only.
+    // the daily report. Summary by Roles: ADMIN only.
     router.get("/reports/daily/summary", requireRole(ALL_ACTIVE), async (req, res) => {
         const parsed = parseDailyReportQuery(req.query);
         if (parsed.errors) {
@@ -287,7 +287,7 @@ export function createAdminRouter({
         return res.json(await getIncompleteCandidates({ db: client, ...parsed.params, scope: candidateScope(req.user) }));
     });
 
-    router.get("/reports/daily/roles", requireRole(MANAGERS_UP), async (req, res) => {
+    router.get("/reports/daily/roles", requireRole(ADMINS_ONLY), async (req, res) => {
         const date = parseDailyReportQuery(req.query);
         const role = parseRoleQuery(req.query);
         const errors = [...(date.errors ?? []), ...(role.errors ?? [])];
@@ -494,7 +494,7 @@ export function createAdminRouter({
     // This modifies a stored document (not just a pending item) so it is
     // reserved for ADMIN; a ANALYST can approve slips with a date but cannot
     // change a date after the fact.
-    router.post("/documents/:documentId/police-date", requireRole(MANAGERS_UP), async (req, res) => {
+    router.post("/documents/:documentId/police-date", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!isValidDocumentIdParam(req.params.documentId)) {
             return res.status(400).json({ message: "Invalid document ID", errors: [{ field: "documentId", message: "must be a document ID" }] });
         }
@@ -611,8 +611,8 @@ export function createAdminRouter({
     });
 
     // Manual verification of a candidate's details or documents (candidateVerificationService.js):
-    // ADMIN and MANAGER only, explicit, audited. The Candidate list Status reads it.
-    router.post("/candidates/:passportId/verification", requireRole(MANAGERS_UP), async (req, res) => {
+    // ADMIN only, explicit, audited. The Candidate list Status reads it.
+    router.post("/candidates/:passportId/verification", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseVerificationBody(req.body);
         if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
@@ -701,7 +701,7 @@ export function createAdminRouter({
 
     // Priority Follow-Ups (callLogFollowUpService.js). Flag, list and
     // complete: every Candidates-area role (the call log roles). Delete:
-    // ADMIN and MANAGER only, and it removes the follow-up row only — never
+    // ADMIN only, and it removes the follow-up row only — never
     // the call log, the candidate or a document.
     const invalidId = (res, field) => res.status(400).json({ message: `Invalid ${field}`, errors: [{ field, message: "must be an ID" }] });
 
@@ -729,7 +729,7 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await completeFollowUp({ db: client, actor: req.user, followUpId: req.params.followUpId, scope: candidateScope(req.user) })));
     });
 
-    router.delete("/follow-ups/:followUpId", requireRole(MANAGERS_UP), async (req, res) => {
+    router.delete("/follow-ups/:followUpId", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!isValidFollowUpIdParam(req.params.followUpId)) return invalidId(res, "followUpId");
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await deleteFollowUp({ db: client, actor: req.user, followUpId: req.params.followUpId })));
@@ -775,11 +775,11 @@ export function createAdminRouter({
         })));
     });
 
-    // Confirm ONE candidate-submitted field into the record (ADMIN and MANAGER). The body
+    // Confirm ONE candidate-submitted field into the record (ADMIN only). The body
     // names an allowlisted field key and the values the Admin saw (to detect a stale
     // screen); the new value is read from candidate_form_response on the server.
     for (const [action, review] of [["confirm-field", confirmFormField], ["reject-field", rejectFormField]]) {
-        router.post(`/candidates/:passportId/form-submission/${action}`, requireRole(MANAGERS_UP), async (req, res) => {
+        router.post(`/candidates/:passportId/form-submission/${action}`, requireRole(ADMINS_ONLY), async (req, res) => {
             if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
             const body = req.body;
             const allowed = new Set(["field", "expectedCurrentValue", "expectedSubmittedValue"]);
@@ -821,11 +821,11 @@ export function createAdminRouter({
         })));
     });
 
-    // ---------------------------------------------------------------- Work Allocation (ADMIN and MANAGER)
+    // ---------------------------------------------------------------- Work Allocation (ADMIN only)
     // Which Analyst each candidate is assigned to (workAllocationService.js).
     // Every change is one transaction (all or nothing) and audited.
 
-    router.get("/work-allocation/candidates", requireRole(ALLOCATION_MANAGER_ROLES), async (req, res) => {
+    router.get("/work-allocation/candidates", requireRole(ADMINS_ONLY), async (req, res) => {
         const parsed = parseAllocationListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -834,12 +834,12 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await listAllocationCandidates({ db: client, params: parsed.params })));
     });
 
-    router.get("/work-allocation/analysts", requireRole(ALLOCATION_MANAGER_ROLES), async (req, res) => {
+    router.get("/work-allocation/analysts", requireRole(ADMINS_ONLY), async (req, res) => {
         const client = await resolveDb(db);
         return res.json(await listAllocationAnalysts({ db: client }));
     });
 
-    router.post("/work-allocation/assign", requireRole(ALLOCATION_MANAGER_ROLES), async (req, res) => {
+    router.post("/work-allocation/assign", requireRole(ADMINS_ONLY), async (req, res) => {
         const parsed = parseAssignBody(req.body);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
@@ -857,10 +857,10 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await autoAllocateCandidates({ db: client, actor: req.user, ...parsed.values })));
     };
 
-    router.post("/work-allocation/auto-allocate", requireRole(ALLOCATION_MANAGER_ROLES), handleAutoAllocate);
-    router.post("/work-allocation/allocate", requireRole(ALLOCATION_MANAGER_ROLES), handleAutoAllocate);
+    router.post("/work-allocation/auto-allocate", requireRole(ADMINS_ONLY), handleAutoAllocate);
+    router.post("/work-allocation/allocate", requireRole(ADMINS_ONLY), handleAutoAllocate);
 
-    router.post("/work-allocation/unassign", requireRole(ALLOCATION_MANAGER_ROLES), async (req, res) => {
+    router.post("/work-allocation/unassign", requireRole(ADMINS_ONLY), async (req, res) => {
         const parsed = parseUnassignBody(req.body);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
@@ -870,10 +870,10 @@ export function createAdminRouter({
     });
 
     // ---------------------------------------------------------------- Jobs (jobService.js)
-    // ADMIN, MANAGER and JOB_HANDLER manage jobs; an ANALYST reads only the jobs that
+    // ADMIN and JOB_HANDLER manage jobs; an ANALYST reads only the jobs that
     // hold a candidate allocated to them (and sees only those candidates);
     // REGISTRATION_DESK has no access. Creating a job type and the job-group Candidate
-    // Form link stay ADMIN / MANAGER. Membership rules (one PROCESSING job per
+    // Form link stay ADMIN only. Membership rules (one PROCESSING job per
     // candidate) and the Client/Agent rules are enforced in the service and by the database.
     const jobParam = (req, res) => {
         if (isValidJobIdParam(req.params.jobId)) return true;
@@ -896,8 +896,8 @@ export function createAdminRouter({
         const client = await resolveDb(db);
         return res.json({ jobTypes: await activeJobTypeNames(client), noPreference: NO_PREFERRED_JOB_TYPE });
     });
-    // Settings > Job Types: ADMIN only, like every Settings tab. Creating stays open to
-    // ADMIN and MANAGER (POST below: the New Job dialog adds a type inline).
+    // Settings > Job Types: ADMIN only, like every Settings tab. Creating one is ADMIN only
+    // too (POST below: the New Job dialog adds a type inline; not JOB_HANDLER).
     router.get("/job-types", requireRole(ADMINS_ONLY), async (req, res) => {
         const client = await resolveDb(db);
         return res.json({ ...(await listJobTypes({ db: client })), noPreference: NO_PREFERRED_JOB_TYPE });
@@ -908,7 +908,7 @@ export function createAdminRouter({
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await updateJobType({ db: client, actor: req.user, id: req.params.id, values: parsed.values })));
     });
-    router.post("/job-types", requireRole(MANAGERS_UP), async (req, res) => {
+    router.post("/job-types", requireRole(ADMINS_ONLY), async (req, res) => {
         const parsed = parseReferenceBody(req.body);
         if (!jobBody(res, parsed)) return undefined;
         const client = await resolveDb(db);
@@ -958,20 +958,20 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await removeCandidateFromJob({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), passportId: req.params.passportId })));
     });
 
-    // Candidate Form job-group link (candidateFormJobGroupService.js): ADMIN and
-    // MANAGER only. Bound to the immutable job id; works only while the job is
+    // Candidate Form job-group link (candidateFormJobGroupService.js): ADMIN
+    // only. Bound to the immutable job id; works only while the job is
     // PROCESSING; one active link per job; the URL is returned once.
-    router.get("/jobs/:jobId/form-share", requireRole(MANAGERS_UP), async (req, res) => {
+    router.get("/jobs/:jobId/form-share", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await getJobGroupShareStatus({ db: client, jobId: req.params.jobId.toLowerCase() })));
     });
-    router.post("/jobs/:jobId/form-share", requireRole(MANAGERS_UP), async (req, res) => {
+    router.post("/jobs/:jobId/form-share", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.status(201).json(await createJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), formOrigin })));
     });
-    router.post("/jobs/:jobId/form-share/revoke", requireRole(MANAGERS_UP), async (req, res) => {
+    router.post("/jobs/:jobId/form-share/revoke", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await revokeJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase() })));
@@ -992,7 +992,7 @@ export function createAdminRouter({
     });
 
     // ---------------------------------------------------------------- Agents and Clients (agentService.js, clientService.js)
-    // ADMIN, MANAGER and JOB_HANDLER (every method); no delete route exists: Agents and
+    // ADMIN and JOB_HANDLER (every method); no delete route exists: Agents and
     // Clients are made ACTIVE / INACTIVE, never removed. The employer Client lives
     // under /client-management because /clients is the legacy candidate-documents area.
     const entityParam = (name, notFound) => (req, res) => {
@@ -1102,10 +1102,10 @@ export function createAdminRouter({
     // ---------------------------------------------------------------- users (ADMIN only)
     router.use("/users", createUsersRouter({ db, authAdmin }));
 
-    // ---------------------------------------------------------------- settings: Google Sheet Sync (ADMIN; MANAGER: status + Update Sheet)
-    // Reads PostgreSQL and records run requests; never calls Google. The per-action roles are in
-    // routes/sheetSyncSettings.js (Test Connection, Sync Now, destination: ADMIN only).
-    router.use("/settings/sheet-sync", requireRole(MANAGERS_UP), createSheetSyncSettingsRouter({ db }));
+    // ---------------------------------------------------------------- settings: Google Sheet Sync (ADMIN only)
+    // Reads PostgreSQL and records run requests; never calls Google. routes/sheetSyncSettings.js
+    // checks the role again (and routes/candidateImport.js for Upload).
+    router.use("/settings/sheet-sync", requireRole(ADMINS_ONLY), createSheetSyncSettingsRouter({ db }));
 
     // Anything else under /api/admin (only reached by an authenticated admin).
     router.use((req, res) => res.status(404).json({ message: "Not found" }));

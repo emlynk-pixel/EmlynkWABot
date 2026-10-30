@@ -1,7 +1,7 @@
 import { apiRequest } from "./client";
 
 // Settings -> Google Sheet Sync -> Upload: the bulk candidate import
-// (src/routes/candidateImport.js), ADMIN and MANAGER. The workbook is read in
+// (src/routes/candidateImport.js), ADMIN only. The workbook is read in
 // the browser (components/importWorkbook.ts); only the allow-listed columns are
 // sent, and the server validates everything again.
 

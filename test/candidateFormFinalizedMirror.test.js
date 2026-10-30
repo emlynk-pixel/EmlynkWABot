@@ -1,4 +1,4 @@
-// Candidate Form -> Admin / Manager Confirm -> canonical record -> Google Sheet operational mirror
+// Candidate Form -> Admin Confirm -> canonical record -> Google Sheet operational mirror
 // (SHEET-FINAL-*). Only CONFIRMED values become canonical (candidate / candidate_additional_details),
 // and the mirror reads the canonical record only, never candidate_form_response. Confirming marks
 // the candidate in the existing sheet_sync_queue (database triggers); the Sheet itself is written
@@ -37,7 +37,7 @@ const MIRRORED_AT = new Date("2026-10-27T06:00:00.000Z");
 const SECRET = "test-candidate-form-secret-0123456789-abcdefghijklmnop";
 const ORIGIN = "https://candidate-form.example.test";
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4) };
 const A = {
     passportId: "N8100001", uniqueId: "8101", firstName: "Anusha", otherName: "De Soysa", nic: "810000001V", sex: "F", address: "1 old road", placeOfBirth: "Negombo",
     whatsappNumber: "+94781000001", contactNumber: "0771234567", dateOfBirth: new Date("2003-06-05"), jobExperience: "3 years", job: "PLUMBER",
@@ -134,7 +134,7 @@ async function review(who, action, field) {
     assert.ok(p, `${field} is pending`);
     return call(who, "POST", `/api/admin/candidates/${A.passportId}/form-submission/${action}-field`, { body: { field, expectedCurrentValue: p.current, expectedSubmittedValue: p.submitted } });
 }
-const confirmField = (field, who = USERS.MANAGER) => review(who, "confirm", field);
+const confirmField = (field, who = USERS.OWNER) => review(who, "confirm", field);
 const rejectField = (field, who = USERS.ADMIN) => review(who, "reject", field);
 // Confirms every pending field, one at a time (each Confirm can resolve others: Married records the spouse name).
 async function confirmAll() {
@@ -331,7 +331,7 @@ describe("submitted -> confirmed -> canonical -> mirror", () => {
 // ---------------------------------------------------------------- confirmation rules
 
 describe("Confirm / Reject rules for the newly confirmable fields", () => {
-    test("only ADMIN and MANAGER can confirm or reject; other roles change nothing", async () => {
+    test("only ADMIN and OWNER can confirm or reject; other roles change nothing", async () => {
         await submitForm();
         for (const who of [USERS.DESK, USERS.ANN]) {
             for (const action of ["confirm", "reject"]) {

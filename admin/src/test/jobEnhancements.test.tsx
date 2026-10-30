@@ -40,7 +40,7 @@ const ELIGIBLE: CandidateList = { items: [1, 2, 3].map((n) => eligible(n)), pagi
 
 function backend(extra: FetchRoutes = {}) {
     return signedInBackend({
-        "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "MANAGER" } } },
+        "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "OWNER" } } },
         "GET /api/admin/jobs": { status: 200, body: { items: [baseJob], pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 }, counts: { processing: 1, completed: 0, cancelled: 0 }, filters: { view: "processing", search: null } } },
         [`GET /api/admin/jobs/${JOB_ID}`]: { status: 200, body: details() },
         "GET /api/admin/job-options": { status: 200, body: OPTIONS },

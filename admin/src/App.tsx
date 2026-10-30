@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Navigate, Outlet, Route, Routes } from "react-router";
-import { canViewDashboard, isAdmin, useAuth } from "./auth/AuthProvider";
+import { canViewDashboard, useAuth } from "./auth/AuthProvider";
 import { ROLES, hasRole, type Role } from "./auth/roles";
 
 const JOB_HANDLER_ONLY: readonly Role[] = [ROLES.JOB_HANDLER];
@@ -79,14 +79,6 @@ function DenyRoles({ roles }: { roles: readonly Role[] }) {
     );
 }
 
-// /invitations: an ADMIN invites from Settings > Invite User (the old URL opens that tab); a
-// MANAGER, who has no Settings, invites Job Handlers here; anyone else gets the page's own
-// "Access Restricted".
-function InvitationsRoute() {
-    const { user } = useAuth();
-    return isAdmin(user) ? <Navigate to="/settings/invite" replace /> : <InvitationsPage />;
-}
-
 // Routes are relative to the /admin base (see main.tsx). Overview,
 // Documents, Review Queue, Review Detail, Client Details and Police Workflow
 // follow their Stitch screens; Clients, Missing Documents and Daily Report
@@ -135,14 +127,12 @@ export function AppRoutes() {
                 <Route path="client-management/:clientId" element={<ClientManagementDetailsPage />} />
                 <Route path="work-allocation" element={<WorkAllocationPage />} />
                 {/* Invite User and Change Roles are Settings tabs; the old URLs
-                    (bookmarks, links) open the matching tab. /invitations is also
-                    the MANAGER's Job Handler invitation page. */}
-                <Route path="invitations" element={<InvitationsRoute />} />
+                    (bookmarks, links) open the matching tab (ADMIN only, like Settings). */}
+                <Route path="invitations" element={<Navigate to="/settings/invite" replace />} />
                 <Route path="roles" element={<Navigate to="/settings/roles" replace />} />
                 <Route path="audit-logs" element={<AuditLogsPage />} />
                 <Route path="settings" element={<SettingsPage />}>
-                    {/* Settings opens the first tab the user may open: ADMIN every tab,
-                        MANAGER Google Sheet Sync only (layout/navigation.ts SETTINGS_TABS). */}
+                    {/* Settings opens the first tab the user may open (layout/navigation.ts SETTINGS_TABS). */}
                     <Route index element={<SettingsIndex />} />
                     <Route path="roles" element={<SettingsTab roles={ADMIN_ONLY}><AdminRolesPage embedded /></SettingsTab>} />
                     <Route path="invite" element={<SettingsTab roles={ADMIN_ONLY}><InvitationsPage embedded /></SettingsTab>} />

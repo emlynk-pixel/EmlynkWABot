@@ -242,7 +242,7 @@ describe("audit", () => {
 });
 
 describe("roles", () => {
-    for (const role of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+    for (const role of ["OWNER", "ADMIN", "ANALYST", "REGISTRATION_DESK"]) {
         test(`${role} can read and save`, async () => {
             // An Analyst works on the candidates allocated to them (here the stand-in user's ID).
             if (role === "ANALYST") await prisma.candidateAllocation.create({ data: { passportId: "N1023757", analystId: USERS.ADMIN.adminId } });

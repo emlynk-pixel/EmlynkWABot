@@ -13,7 +13,7 @@ import { errorHandler } from "../src/middleware/errorHandler.js";
 import { CANDIDATE_STAGES } from "../src/services/candidateService.js";
 
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), ANALYST: user("u-ann", "ANALYST", 4), OTHER_ANALYST: user("u-ben", "ANALYST", 5), DESK: user("u-desk", "REGISTRATION_DESK", 3) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), ANALYST: user("u-ann", "ANALYST", 4), OTHER_ANALYST: user("u-ben", "ANALYST", 5), DESK: user("u-desk", "REGISTRATION_DESK", 3) };
 const P1 = "P0000001";
 const P2 = "P0000002";
 
@@ -68,11 +68,11 @@ async function api(who, method, urlPath, body) {
     }
 }
 const createJob = async (clientId) => {
-    const response = await api(USERS.MANAGER, "POST", "/jobs", { jobTypeId: ids.jobType, clientId });
+    const response = await api(USERS.OWNER, "POST", "/jobs", { jobTypeId: ids.jobType, clientId });
     assert.equal(response.status, 201, JSON.stringify(response.body));
     return response.body;
 };
-const assign = (job, passportId = P1) => api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { passportId });
+const assign = (job, passportId = P1) => api(USERS.OWNER, "POST", `/jobs/${job.jobId}/candidates`, { passportId });
 const stage = async (passportId, key, who = USERS.ADMIN) => (await api(who, "GET", `/candidates/${passportId}`)).body.stages.find((s) => s.stage === key);
 const save = (passportId, key, body, who = USERS.ADMIN) => api(who, "PUT", `/candidates/${passportId}/stages/${key}`, body);
 
@@ -121,7 +121,7 @@ describe("the Job and Client come from the Job assignment (STAGE-JOB-007, 008, 0
         await assign(first);
         await save(P1, "JOB_DETAILS", { jobDate: "2026-10-05", notes: "Interview booked" });
         assert.equal((await stage(P1, "JOB_DETAILS")).clientName, "Acme Builders");
-        assert.equal((await api(USERS.MANAGER, "DELETE", `/jobs/${first.jobId}/candidates/${P1}`)).status, 200);
+        assert.equal((await api(USERS.OWNER, "DELETE", `/jobs/${first.jobId}/candidates/${P1}`)).status, 200);
         let shown = await stage(P1, "JOB_DETAILS");
         assert.deepEqual([shown.jobCode, shown.clientName, shown.jobSource, shown.jobStatus], [first.jobCode, "Acme Builders", "HISTORICAL", "REMOVED"], "removed from the job: the latest earlier job, not current");
         assert.equal((await assign(second)).status, 201);
@@ -134,7 +134,7 @@ describe("the Job and Client come from the Job assignment (STAGE-JOB-007, 008, 0
     test("a completed Job is no longer the current Job, but is still shown as the latest historical one", async () => {
         const job = await createJob(ids.acme);
         await assign(job);
-        await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/complete`, {});
+        await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, {});
         const shown = await stage(P1, "JOB_DETAILS");
         assert.deepEqual([shown.jobCode, shown.clientName, shown.jobSource, shown.jobStatus], [job.jobCode, "Acme Builders", "HISTORICAL", "COMPLETED"]);
     });
@@ -159,8 +159,8 @@ describe("the Job and Client come from the Job assignment (STAGE-JOB-007, 008, 0
 describe("historical Job fallback on Job details (JOB-HISTORY-001 to 014)", () => {
     const shownOf = async (passportId = P1) => stage(passportId, "JOB_DETAILS");
     const quick = (s) => [s.jobCode, s.clientName, s.jobSource, s.jobStatus];
-    const complete = (job) => api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/complete`, {});
-    const cancel = (job) => api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/cancel`, { reason: "Employer withdrew" });
+    const complete = (job) => api(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, {});
+    const cancel = (job) => api(USERS.OWNER, "POST", `/jobs/${job.jobId}/cancel`, { reason: "Employer withdrew" });
     // job_candidate.assigned_at decides "latest"; space the assignments out so the order is explicit.
     const setAssignedAt = (job, iso) => pg.exec(`UPDATE job_candidate SET assigned_at = '${iso}' WHERE job_id = '${job.jobId}' AND passport_id = '${P1}'`);
 
@@ -229,7 +229,7 @@ describe("historical Job fallback on Job details (JOB-HISTORY-001 to 014)", () =
     test("removal keeps history: a candidate taken off a PROCESSING job still shows that job (REMOVED); the job_candidate row is kept", async () => {
         const a = await createJob(ids.acme);
         await assign(a);
-        assert.equal((await api(USERS.MANAGER, "DELETE", `/jobs/${a.jobId}/candidates/${P1}`)).status, 200);
+        assert.equal((await api(USERS.OWNER, "DELETE", `/jobs/${a.jobId}/candidates/${P1}`)).status, 200);
         assert.equal(await prisma.jobCandidate.count({ where: { passportId: P1 } }), 1, "removal never deletes the row");
         assert.deepEqual(quick(await shownOf()), [a.jobCode, "Acme Builders", "HISTORICAL", "REMOVED"]);
     });
@@ -363,8 +363,8 @@ describe("other stages are unchanged (STAGE-JOB-016 to 020)", () => {
 });
 
 describe("RBAC is unchanged (STAGE-JOB-024)", () => {
-    test("ADMIN, MANAGER and REGISTRATION_DESK can save a Job details stage; an ANALYST only for an allocated candidate", async () => {
-        for (const who of [USERS.ADMIN, USERS.MANAGER, USERS.DESK]) {
+    test("ADMIN, OWNER and REGISTRATION_DESK can save a Job details stage; an ANALYST only for an allocated candidate", async () => {
+        for (const who of [USERS.ADMIN, USERS.OWNER, USERS.DESK]) {
             assert.equal((await save(P1, "JOB_DETAILS", { notes: `by ${who.role}` }, who)).status, 200, who.role);
         }
         assert.equal((await save(P1, "JOB_DETAILS", { notes: "by its analyst" }, USERS.ANALYST)).status, 200);

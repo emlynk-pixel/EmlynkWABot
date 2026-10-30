@@ -12,7 +12,7 @@ import { EntityStatusBadge, MultiSelect, RestrictedPage, StatusDialog, TextField
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl, tableCell, tableHead, tableRow } from "../components/ui";
 
-// Admin > Client Management (ADMIN and MANAGER): the employer / customer
+// Admin > Client Management (ADMIN and JOB_HANDLER): the employer / customer
 // organisations. A Client works with one or more Agents (and an Agent with many
 // Clients) and has many Jobs. Clients are never deleted; INACTIVE clients keep
 // their jobs but take no new job. The list does not show the agents (Client

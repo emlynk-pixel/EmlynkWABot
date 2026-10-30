@@ -1,7 +1,7 @@
 import type { WorkflowStatus } from "./candidates";
 import { apiRequest } from "./client";
 
-// Job Management (src/services/jobService.js). ADMIN and MANAGER manage jobs;
+// Job Management (src/services/jobService.js). ADMIN and JOB_HANDLER manage jobs;
 // an ANALYST reads only the jobs holding their own candidates; the server
 // enforces both.
 
@@ -116,7 +116,7 @@ export const updateJobType = (token: string, id: string, body: { name?: string; 
 export type JobTypeChoices = { jobTypes: string[]; noPreference: { code: string; label: string } };
 export const getJobTypeChoices = (token: string, signal?: AbortSignal) => apiRequest<JobTypeChoices>("/api/admin/job-type-choices", { token, signal });
 
-// Candidate Form job-group link (src/services/candidateFormJobGroupService.js): ADMIN and MANAGER.
+// Candidate Form job-group link (src/services/candidateFormJobGroupService.js): ADMIN only.
 // Bound to the job's immutable id on the server; the URL carries only an opaque secret.
 export type JobGroupShareStatus = {
     jobId: string;

@@ -2402,7 +2402,7 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
     test("a viewer sees no registration form", async () => {
         signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates/new");
-        expect(await screen.findByText(/Candidate registration is done by the Registration Desk, a Manager or an Admin/)).toBeInTheDocument();
+        expect(await screen.findByText(/Candidate registration is done by the Registration Desk or an Admin/)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Register candidate" })).not.toBeInTheDocument();
     });
 });
@@ -2516,7 +2516,7 @@ describe("other roles are unchanged", () => {
         expect(within(screen.getByRole("banner")).queryByRole("link", { name: "Register Candidate" })).toBeNull();
     });
 
-    for (const role of ["ADMIN", "MANAGER"]) {
+    for (const role of ["ADMIN", "OWNER"]) {
         test(`${role}: Add candidate on the Candidates page, the Register Candidate quick access in the header (not the sidebar), the notification bell`, async () => {
             signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
             renderApp("/candidates");
@@ -2526,8 +2526,8 @@ describe("other roles are unchanged", () => {
             expect(screen.getByRole("button", { name: /notification/i })).toBeInTheDocument();
             const links = within(screen.getByRole("navigation", { name: "Main navigation" })).getAllByRole("link").map((l) => l.textContent);
             expect(links).toContain("Review Queue");
-            // Settings: ADMIN every tab; MANAGER the Google Sheet Sync tab only.
-            expect(links.includes("Settings")).toBe(role === "ADMIN" || role === "MANAGER");
+            // Settings: ADMIN (an OWNER too), every tab.
+            expect(links).toContain("Settings");
         });
     }
 });

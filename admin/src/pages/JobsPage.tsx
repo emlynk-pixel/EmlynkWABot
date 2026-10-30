@@ -26,7 +26,7 @@ import { Card, EmptyState, ErrorState, LoadingState } from "../components/States
 import { filterControl, inputClass, tableCell, tableHead, tableRow } from "../components/ui";
 
 // Admin > Jobs: Processing / Completed / Cancelled / All views of the jobs, newest
-// first, paged on the server. ADMIN and MANAGER create and manage jobs; an
+// first, paged on the server. ADMIN and JOB_HANDLER create and manage jobs; an
 // ANALYST sees only jobs holding their own candidates (the server scopes the
 // list and the candidate counts). The view, search and page live in the URL.
 // With no view chosen it opens Processing, or All when there is no Processing

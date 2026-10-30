@@ -67,7 +67,7 @@ export function businessMonthRange(month) {
 // definitions as the Daily Report and the Overview, so the figures agree.
 // Only counts; no candidate or document details.
 // scope: the signed-in user's candidates (candidateAccess.js candidateScope), {}
-// for ADMIN, MANAGER and REGISTRATION_DESK. For an Analyst: their candidates,
+// for ADMIN and REGISTRATION_DESK. For an Analyst: their candidates,
 // the waiting files not yet linked to anyone, and the audit entries about their
 // candidates (admin uploads, removals).
 export async function getMonthlyOverview({ db, month, now = new Date(), scope = {} }) {

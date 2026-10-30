@@ -31,7 +31,7 @@ The application's staff profile table (Prisma model `User`, table `public."user"
 - `adminId`: the primary key (kept under this name; audit entries and call logs reference it).
 - `authUserId` (`auth_user_id`): required, unique UUID that references `auth.users.id`. It links a staff profile to its Supabase Auth identity and is only ever taken from a verified Supabase session, never from a request body. The foreign key to `auth.users` (`ON DELETE RESTRICT`) is created by the migration where the `auth` schema exists (Supabase), so a profile can't outlive or be detached from its identity by accident.
 - `email` (unique), `name`.
-- `role`: `OWNER`, `ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK` or `JOB_HANDLER` (hierarchy `OWNER > ADMIN > MANAGER > ANALYST / REGISTRATION_DESK / JOB_HANDLER`; the single OWNER is set in the database only, see `OWNER_ROLE.md`). The application's authorization source of truth; never read from a token or Supabase metadata.
+- `role`: `OWNER`, `ADMIN`, `ANALYST`, `REGISTRATION_DESK` or `JOB_HANDLER` (hierarchy `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`; the retired `MANAGER` is no longer valid, see `ROLES_AND_PERMISSIONS.md` §6; the single OWNER is set in the database only, see `OWNER_ROLE.md`). The application's authorization source of truth; never read from a token or Supabase metadata.
 - `status`: `INVITED` (invitation sent, password not yet set), `ACTIVE` or `INACTIVE`. Only `ACTIVE` users can use the API, checked on every request.
 
 Relations: `auditLogs` (as the actor) and `callLogs`. There are no password hash, token, invitation or reset tables: invitations and password recovery are Supabase Auth's (`SUPABASE_AUTH.md`). Role and status rules: `10-security.md`.
@@ -170,7 +170,7 @@ All core application tables reside in the `public` schema.
   - `auth_user_id` (`UUID`, `UNIQUE`, `NOT NULL`): Foreign key referencing Supabase Auth `auth.users.id`.
   - `email` (`TEXT`, `UNIQUE`): Staff login email address.
   - `name` (`TEXT`): Display name.
-  - `role` (`TEXT`): Application RBAC role (`OWNER`, `ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER`; see `OWNER_ROLE.md`).
+  - `role` (`TEXT`): Application RBAC role (`OWNER`, `ADMIN`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER`; see `OWNER_ROLE.md`).
   - `status` (`TEXT`): Account status (`ACTIVE`, `INACTIVE`, `INVITED`).
   - `created_date` (`TIMESTAMPTZ`), `updated_date` (`TIMESTAMPTZ`).
 - **Relationships**: One-to-many with `audit_logs` (`admin_id`), one-to-many with `candidate_call_logs` (`admin_id`).
@@ -229,7 +229,7 @@ All core application tables reside in the `public` schema.
   - `flagged_by` (FK -> `"user".admin_id` `ON DELETE RESTRICT`), `flagged_date`.
   - `completed_by` (nullable FK -> `"user".admin_id` `ON DELETE RESTRICT`), `completed_date`: both null while `OPEN`, both set when `COMPLETED` (CHECK).
 - **Indexes / constraints**: `(call_log_id)`; `(status, flagged_date)`; a partial UNIQUE index `(call_log_id) WHERE status = 'OPEN'` so a call log has at most one open follow-up (completed ones are kept as history). Defined in SQL by migration `20261011120000_call_log_follow_up` (not expressible in `schema.prisma`). Row-level security on, no access for `anon` / `authenticated`.
-- **Deletion**: ADMIN / MANAGER delete a follow-up through the API; that removes this row only. Deleting a candidate cascades to their call logs and so to their follow-ups.
+- **Deletion**: an ADMIN deletes a follow-up through the API; that removes this row only. Deleting a candidate cascades to their call logs and so to their follow-ups.
 
 #### 2.5.2 `public.candidate_allocation`
 - **Purpose**: Work Allocation: the Analyst a candidate is assigned to. One row per allocated candidate; no row means unallocated. A separate table so allocating never updates the candidate row (its Google Sheet sync trigger and `updated_date`). History is in `audit_logs` (`ASSIGN_CANDIDATE`, `REASSIGN_CANDIDATE`, `UNASSIGN_CANDIDATE`).
@@ -417,10 +417,9 @@ The staff user table represents console users (administrators, managers, analyst
 - `status` (`TEXT`): Operational state (`INVITED`, `ACTIVE`, `INACTIVE`).
 
 #### 4.3 Supported Roles
-Hierarchy: `OWNER > ADMIN > MANAGER > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. `role` is plain `TEXT` (no CHECK constraint); the allowed values are validated by the application (`src/middleware/requireRole.js`).
+Hierarchy: `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. `role` is plain `TEXT` (no CHECK constraint); the allowed values are validated by the application (`src/middleware/requireRole.js`), so retiring `MANAGER` needed no schema migration, only a data conversion of existing rows (`npm run user:migrate-manager`, `ROLES_AND_PERMISSIONS.md` §6).
 - `OWNER`: the single system owner, set in the database only. Every ADMIN permission, plus managing ADMIN accounts. See `OWNER_ROLE.md`.
-- `ADMIN`: Full access to all operations, user management, invitations, role modifications, audit logs, and settings.
-- `MANAGER`: Full access to operational queues, candidate pool, documents, and reports; cannot manage users or settings.
+- `ADMIN`: Full access to all operations (Work Allocation, verification and confirming Candidate Form values included), user management, invitations, role modifications, audit logs, and settings.
 - `ANALYST`: Operational review, document classification, candidate profile updates, call logs.
 - `REGISTRATION_DESK`: Restricted to candidate registration, search, and detail viewing.
 - `JOB_HANDLER`: Jobs, Agents and Clients; reads Candidates (list, details) and changes no candidate record.
@@ -644,7 +643,7 @@ Developers and contributors must never reintroduce `users` or `admins` table nam
 
 # Historical / Previous Implementation Notes
 
-- **Role list before JOB_HANDLER and OWNER.** Earlier revisions of this document listed four roles: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK`, with ADMIN managing every user. `JOB_HANDLER` and then `OWNER` were added later (`OWNER_ROLE.md`).
+- **Role list before JOB_HANDLER and OWNER.** Earlier revisions of this document listed four roles: `ADMIN`, `MANAGER`, `ANALYST` or `REGISTRATION_DESK`, with ADMIN managing every user. `JOB_HANDLER` and then `OWNER` were added later (`OWNER_ROLE.md`), and `MANAGER` was retired on 2026-10-30 (its permissions are ADMIN's; `ROLES_AND_PERMISSIONS.md` §6).
 - **`candidate_stages` before the Job Details stage** (`20261020120000_candidate_stage_job_details`). The earlier description of the stage columns was:
   - `stage` (`TEXT`): Stage code (`TEST_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`). A plain text column with no database constraint: a new stage needs no migration.
   - `test_result` (`TEXT`, nullable), `test_date` (`DATE`, nullable) — used by `TEST_DETAILS`.

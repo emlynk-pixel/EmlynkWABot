@@ -53,7 +53,7 @@ const SEARCH_RESULT: CandidateList = {
     filters: { search: "saman" },
 };
 
-function backend(role = "MANAGER", extra: FetchRoutes = {}) {
+function backend(role = "OWNER", extra: FetchRoutes = {}) {
     return signedInBackend({
         ...asRole(role),
         "GET /api/admin/jobs": (url) => {
@@ -106,7 +106,7 @@ describe("Jobs list", () => {
     });
 
     test("search is sent to the server; an empty result says so", async () => {
-        const { calls } = backend("MANAGER", { "GET /api/admin/jobs": (url) => ({ status: 200, body: page(url.searchParams.get("search") ? [] : [job(1)]) }) });
+        const { calls } = backend("OWNER", { "GET /api/admin/jobs": (url) => ({ status: 200, body: page(url.searchParams.get("search") ? [] : [job(1)]) }) });
         renderApp("/jobs");
         const user = userEvent.setup();
         await table();
@@ -118,8 +118,8 @@ describe("Jobs list", () => {
 });
 
 describe("who sees what", () => {
-    test("ADMIN and MANAGER get New job; an ANALYST gets the list without it; the sidebar shows Jobs", async () => {
-        for (const role of ["ADMIN", "MANAGER"]) {
+    test("ADMIN and OWNER get New job; an ANALYST gets the list without it; the sidebar shows Jobs", async () => {
+        for (const role of ["ADMIN", "OWNER"]) {
             backend(role);
             const view = renderApp("/jobs");
             await table();
@@ -147,7 +147,7 @@ describe("who sees what", () => {
 describe("New job", () => {
     test("needs a type and client; the agent and the country come from the client; opens the new job", async () => {
         const created = details(job(5, "PROCESSING", { candidateCount: 0 }));
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             ...NO_ELIGIBLE,
             "POST /api/admin/jobs": { status: 201, body: created },
             [`GET /api/admin/jobs/${created.jobId}`]: { status: 200, body: created },
@@ -189,7 +189,7 @@ describe("Job details", () => {
     const getJob = (body: JobDetails) => ({ [`GET /api/admin/jobs/${base.jobId}`]: { status: 200, body } });
 
     test("shows every detail and the candidates, each linking to Candidate Details", async () => {
-        backend("MANAGER", getJob(details(base, [CAND])));
+        backend("OWNER", getJob(details(base, [CAND])));
         renderApp(path);
         const list = await screen.findByLabelText("Job details", undefined, RENDER_STEP);
         for (const text of ["JOB-2026-000002", "Welder", "Romania", "Ion Popescu", "5"]) expect(within(list).getAllByText(text).length).toBeGreaterThan(0);
@@ -206,7 +206,7 @@ describe("Job details", () => {
 
     test("a completed job shows its history and no change actions; a cancelled one shows the reason", async () => {
         const done = job(3, "COMPLETED");
-        backend("MANAGER", { [`GET /api/admin/jobs/${done.jobId}`]: { status: 200, body: details(done, [CAND]) } });
+        backend("OWNER", { [`GET /api/admin/jobs/${done.jobId}`]: { status: 200, body: details(done, [CAND]) } });
         renderApp(`/jobs/${done.jobId}`);
         await openCandidatesTab(userEvent.setup());
         expect(await screen.findByText(/the assignment history is kept/, undefined, RENDER_STEP)).toBeInTheDocument();
@@ -236,7 +236,7 @@ describe("Job details", () => {
     });
 
     test("JOB-PASS-007: the Add candidate search asks the server for candidates who passed the test only, and says so", async () => {
-        const { calls } = backend("MANAGER", { ...getJob(details(base, [CAND])), "GET /api/admin/candidates": { status: 200, body: { ...SEARCH_RESULT, items: [] } } });
+        const { calls } = backend("OWNER", { ...getJob(details(base, [CAND])), "GET /api/admin/candidates": { status: 200, body: { ...SEARCH_RESULT, items: [] } } });
         renderApp(path);
         const user = userEvent.setup();
         await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
@@ -250,7 +250,7 @@ describe("Job details", () => {
     });
 
     test("JOB-PASS-008: if the server refuses a candidate who has not passed, its message is shown and nothing is added", async () => {
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             ...getJob(details(base, [CAND])),
             "GET /api/admin/candidates": { status: 200, body: SEARCH_RESULT },
             [`POST /api/admin/jobs/${base.jobId}/candidates`]: { status: 409, body: { message: "Candidate must pass the test before being assigned to a job.", code: "CANDIDATE_TEST_NOT_PASSED" } },
@@ -270,7 +270,7 @@ describe("Job details", () => {
     test("Add to job: search, add, and the active-job conflict is shown (nothing is moved)", async () => {
         const after = details(base, [CAND, { ...CAND, passportId: "N0000002", name: "SAMAN SILVA" }]);
         let attempt = 0;
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             ...getJob(details(base, [CAND])),
             "GET /api/admin/candidates": { status: 200, body: SEARCH_RESULT },
             [`POST /api/admin/jobs/${base.jobId}/candidates`]: () => (++attempt === 1
@@ -296,7 +296,7 @@ describe("Job details", () => {
 
     test("Cancel job needs a reason; Complete asks first", async () => {
         const cancelled = details(job(2, "CANCELLED"), [CAND]);
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             ...getJob(details(base, [CAND])),
             [`POST /api/admin/jobs/${base.jobId}/cancel`]: { status: 200, body: cancelled },
         });
@@ -315,7 +315,7 @@ describe("Job details", () => {
 
     test("Complete job: confirm, then the job shows as completed with its candidates kept", async () => {
         const completed = details(job(2, "COMPLETED"), [CAND]);
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             ...getJob(details(base, [CAND])),
             [`POST /api/admin/jobs/${base.jobId}/complete`]: { status: 200, body: completed },
         });
@@ -332,7 +332,7 @@ describe("Job details", () => {
 
     test("Remove candidate asks first and updates the list", async () => {
         const removed = details(base, []);
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             ...getJob(details(base, [CAND])),
             [`DELETE /api/admin/jobs/${base.jobId}/candidates/N0000001`]: { status: 200, body: removed },
         });
@@ -352,7 +352,7 @@ describe("Client Job ID", () => {
     const path = `/jobs/${base.jobId}`;
 
     test("the list and the details show the internal code and the Client Job ID as two different things", async () => {
-        backend("MANAGER", {
+        backend("OWNER", {
             "GET /api/admin/jobs": { status: 200, body: page([base, job(1)]) },
             [`GET /api/admin/jobs/${base.jobId}`]: { status: 200, body: details(base, [CAND]) },
         });
@@ -372,9 +372,9 @@ describe("Client Job ID", () => {
         expect(within(list).getByText("Y26S01")).toBeInTheDocument();
     });
 
-    test("ADMIN and MANAGER can add or change it; the request changes only that field", async () => {
+    test("ADMIN and OWNER can add or change it; the request changes only that field", async () => {
         const changed = details({ ...base, companyJobId: "IL-2026-44" }, [CAND]);
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             [`GET /api/admin/jobs/${base.jobId}`]: { status: 200, body: details({ ...base, companyJobId: null }, [CAND]) },
             [`PUT /api/admin/jobs/${base.jobId}`]: { status: 200, body: changed },
         });
@@ -420,7 +420,7 @@ describe("Client Job ID", () => {
 
     test("New job accepts an optional Client Job ID", async () => {
         const created = details(job(5, "PROCESSING", { candidateCount: 0, companyJobId: "Y26S01" }));
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             ...NO_ELIGIBLE,
             "POST /api/admin/jobs": { status: 201, body: created },
             [`GET /api/admin/jobs/${created.jobId}`]: { status: 200, body: created },
@@ -449,7 +449,7 @@ describe("Multiple Job Types UI", () => {
     });
 
     test("Jobs list displays multiple types cleanly with +N indicator", async () => {
-        backend("MANAGER", {
+        backend("OWNER", {
             "GET /api/admin/jobs": { status: 200, body: page([multiTypeJob]) },
         });
         renderApp("/jobs");
@@ -460,8 +460,8 @@ describe("Multiple Job Types UI", () => {
         expect(within(dataRow).getByTitle("Aluminium Worker, Welder, Plumber")).toBeInTheDocument();
     });
 
-    test("Job Details displays all Job Types as chips and allows Edit for Manager", async () => {
-        const { calls } = backend("MANAGER", {
+    test("Job Details displays all Job Types as chips and allows Edit for an Owner", async () => {
+        const { calls } = backend("OWNER", {
             [`GET /api/admin/jobs/${multiTypeJob.jobId}`]: { status: 200, body: details(multiTypeJob) },
             [`PUT /api/admin/jobs/${multiTypeJob.jobId}`]: { status: 200, body: details(multiTypeJob) },
         });
@@ -509,7 +509,7 @@ describe("Multiple Job Types UI", () => {
 
     test("New Job modal allows multi-selecting job types and removing chips", async () => {
         const created = details(job(11, "PROCESSING", { candidateCount: 0 }));
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             ...NO_ELIGIBLE,
             "POST /api/admin/jobs": { status: 201, body: created },
             [`GET /api/admin/jobs/${created.jobId}`]: { status: 200, body: created },

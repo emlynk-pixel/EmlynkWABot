@@ -267,7 +267,7 @@ export function updateCandidate(token: string, passportId: string, body: Candida
     return apiRequest<CandidateDetails>(base(passportId), { method: "PUT", token, body });
 }
 
-// Explicit manual verification of a candidate's details or documents (ADMIN and MANAGER; audited).
+// Explicit manual verification of a candidate's details or documents (ADMIN only; audited).
 export function setCandidateVerification(token: string, passportId: string, kind: "DETAILS" | "DOCUMENTS", verified: boolean): Promise<CandidateDetails> {
     return apiRequest<CandidateDetails>(`${base(passportId)}/verification`, { method: "POST", token, body: { kind, verified } });
 }
@@ -426,7 +426,7 @@ export function getFormSubmission(token: string, passportId: string, signal?: Ab
     return apiRequest<FormSubmission>(`${base(passportId)}/form-submission`, { token, signal });
 }
 
-// Confirm ONE candidate-submitted field into the record (ADMIN, MANAGER). The server reads the new
+// Confirm ONE candidate-submitted field into the record (ADMIN only). The server reads the new
 // value from the stored submission; these values only detect a stale screen. Returns the refreshed state.
 export function confirmFormField(
     token: string,
@@ -437,7 +437,7 @@ export function confirmFormField(
 }
 
 // Reject ("Revoke") ONE candidate-submitted field: the record is left as it is and the proposal is marked
-// rejected for good (ADMIN, MANAGER). Same body as confirmFormField; returns the refreshed state.
+// rejected for good (ADMIN only). Same body as confirmFormField; returns the refreshed state.
 export function rejectFormField(
     token: string,
     passportId: string,

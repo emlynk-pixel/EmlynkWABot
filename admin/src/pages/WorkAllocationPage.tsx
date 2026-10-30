@@ -23,7 +23,7 @@ import { Card, EmptyState, ErrorState, LoadingState } from "../components/States
 import { DatePicker } from "../components/DatePicker";
 import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 
-// Admin > Work Allocation (ADMIN and MANAGER): assign candidates to
+// Admin > Work Allocation (ADMIN only): assign candidates to
 // Analysts. The list is paged on the server (100 a page, newest registered
 // first), like Candidates. Selection is per page: Select all ticks the rows
 // on this page only, and changing page, view, search or a filter clears it, so a
@@ -63,7 +63,7 @@ export function WorkAllocationPage() {
                 <div role="alert" className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                     <h1 className="text-headline-sm font-semibold">Access Restricted</h1>
-                    <p className="mt-1 text-body-sm text-ink-muted">Only Managers and Admins can allocate candidates.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Only Admins can allocate candidates.</p>
                 </div>
             </div>
         );
@@ -177,7 +177,7 @@ function WorkAllocationView() {
     };
     const failed = (error: unknown) => {
         setActionError(error instanceof ApiError ? error.message : "Something went wrong. Please try again.");
-        // A conflict means what is on screen is out of date (another manager
+        // A conflict means what is on screen is out of date (another Admin
         // allocated the same candidates, an Analyst was deactivated, a
         // candidate went away): show the current state, drop the selection
         // made from the old one, and keep the message (it moves from the

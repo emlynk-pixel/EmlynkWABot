@@ -546,7 +546,7 @@ npx prisma migrate status
 
 - **Browser QA**: Validate desktop Chrome, Firefox, Safari, and Edge.
 - **Mobile Responsive QA**: Inspect responsive layouts at 320px, 375px, 390px, and 412px viewports. Confirm zero horizontal scrolling (`scrollWidth === clientWidth`).
-- **Role-Based Access Control (RBAC)**: Verify endpoint authorization for all four roles (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`).
+- **Role-Based Access Control (RBAC)**: Verify endpoint authorization for all five roles (`OWNER`, `ADMIN`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER`), and that an account still holding the retired `MANAGER` role is refused (403 `ROLE_NOT_SUPPORTED`).
 - **Audit Logging**: Confirm critical actions (user invite, work allocation, link generation, link revocation, field confirm/reject) record complete audit trails without storing plain credentials or link secrets.
 - **Security Scans**: Verify no secrets exist in client bundles, CORS policies reject unauthorized origins, and CSP headers strictly limit connections.
 
@@ -621,7 +621,8 @@ Every staging release must be verified against this checklist before production 
 
 #### 11.1 Admin Dashboard Smoke Tests
 
-- [ ] **Authentication**: Sign in using valid Supabase Auth credentials across different roles (`ADMIN`, `MANAGER`, `ANALYST`, `REGISTRATION_DESK`).
+- [ ] **Retired MANAGER role**: `npm run user:migrate-manager` reports 0 accounts with role `MANAGER` (or convert them first: `ROLES_AND_PERMISSIONS.md` §6).
+- [ ] **Authentication**: Sign in using valid Supabase Auth credentials across different roles (`OWNER`, `ADMIN`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER`).
 - [ ] **Candidates Pool**: Verify candidate list renders, search by passport/name works, and server-side pagination transitions smoothly.
 - [ ] **Status & Workflow**: Confirm candidate status filters and transition controls update candidate state correctly.
 - [ ] **Candidate Stages**: Check 7-stage deployment workflow progression and stage history tracking.

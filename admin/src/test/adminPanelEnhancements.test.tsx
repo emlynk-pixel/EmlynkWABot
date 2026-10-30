@@ -80,7 +80,7 @@ const SHOE: PendingChange = { field: "measurements.shoeSize", current: null, sub
 const submission = (pending: PendingChange[]): FormSubmission => ({ passportId: "N0000002", formStatus: "SUBMITTED", submittedAt: "2026-10-17T06:30:00.000Z", submitted: {}, original: null, changed: [], pending });
 
 // A stateful stub: a confirm / revoke removes the field from the pending list, like the server.
-function candidateBackend(pending: PendingChange[], role = "MANAGER", extra: FetchRoutes = {}) {
+function candidateBackend(pending: PendingChange[], role = "OWNER", extra: FetchRoutes = {}) {
     let open = [...pending];
     const decide = async (url: URL) => { void url; return { status: 200, body: submission(open) }; };
     return {
@@ -158,7 +158,7 @@ const ROW = {
 };
 function allocationBackend() {
     return signedInBackend({
-        ...asRole("MANAGER"),
+        ...asRole("OWNER"),
         "GET /api/admin/work-allocation/candidates": (url) => ({ status: 200, body: allocationList(url.searchParams.has("jobType") ? 115 : 230, [ROW]) }),
         "GET /api/admin/work-allocation/analysts": { status: 200, body: { analysts: [], unavailableAnalysts: [], unallocatedCount: 230 } },
         "GET /api/admin/job-type-choices": { status: 200, body: { jobTypes: ["PLUMBER", "WELDER TIG"], noPreference: { code: "NO_PREFERENCE", label: "No Preferred Type" } } },

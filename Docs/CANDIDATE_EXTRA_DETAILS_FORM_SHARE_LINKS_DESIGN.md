@@ -1,5 +1,7 @@
 # Candidate Form — Share Links, Verification, Single Submission
 
+> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md).
+
 Branch: `version/candidate-extra-details-form`
 Date: 2026-10-16 (Task 3)
 Status: implemented on the branch, not committed. Migration `20261017120000_candidate_form_share_and_response` is not applied to any shared database yet.

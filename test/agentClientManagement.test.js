@@ -18,7 +18,7 @@ import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANALYST: user("u-ann", "ANALYST", 4) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANALYST: user("u-ann", "ANALYST", 4) };
 const pid = (i) => `P000000${i}`;
 const NO_SUCH_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -75,7 +75,7 @@ const mkClient = async (agentId, extra = {}, who = USERS.ADMIN) => {
     assert.equal(response.status, 201, JSON.stringify(response.body));
     return response.body;
 };
-const mkJob = async (clientId, extra = {}) => api(USERS.MANAGER, "POST", "/jobs", { jobTypeId, clientId, ...extra });
+const mkJob = async (clientId, extra = {}) => api(USERS.OWNER, "POST", "/jobs", { jobTypeId, clientId, ...extra });
 const mkJobOk = async (clientId, extra = {}) => {
     const response = await mkJob(clientId, extra);
     assert.equal(response.status, 201, JSON.stringify(response.body));
@@ -84,11 +84,11 @@ const mkJobOk = async (clientId, extra = {}) => {
 const audit = (action) => prisma.auditLog.findMany({ where: { action }, orderBy: { createdDate: "asc" } });
 
 describe("agents: create and roles (AGENT-001 to AGENT-005)", () => {
-    test("AGENT-001 / 002: ADMIN and MANAGER create an agent; the id is a system UUID and the contact is normalised", async () => {
+    test("AGENT-001 / 002: ADMIN and OWNER create an agent; the id is a system UUID and the contact is normalised", async () => {
         const a = await mkAgent({ contactNumber: "0771234567", whatsappNumber: "+94 77 765 4321", email: " Agent@Example.COM ", address: "Colombo", notes: "n" }, USERS.ADMIN);
         assert.match(a.agentId, /^[0-9a-f-]{36}$/);
         assert.deepEqual([a.name, a.countryCode, a.status, a.contactNumber, a.whatsappNumber, a.email], ["Agent A", "LK", "ACTIVE", "94771234567", "94777654321", "agent@example.com"]);
-        const b = await mkAgent({ name: "Agent B", countryCode: "ro" }, USERS.MANAGER);
+        const b = await mkAgent({ name: "Agent B", countryCode: "ro" }, USERS.OWNER);
         assert.equal(b.countryCode, "RO");
         assert.notEqual(a.agentId, b.agentId);
     });
@@ -148,15 +148,15 @@ describe("agents: clients, lists, details (AGENT-006, 010, 011, 012)", () => {
         const ro = await mkAgent({ name: "Ion Popescu", countryCode: "RO" });
         const off = await mkAgent({ name: "Old Agent" });
         await api(USERS.ADMIN, "PATCH", `/agents/${off.agentId}/status`, { status: "INACTIVE" });
-        const names = async (query) => (await api(USERS.MANAGER, "GET", `/agents${query}`)).body.items.map((i) => i.name);
+        const names = async (query) => (await api(USERS.OWNER, "GET", `/agents${query}`)).body.items.map((i) => i.name);
         assert.deepEqual(await names(""), ["Ion Popescu", "Nimal Perera", "Old Agent"]);
         assert.deepEqual(await names("?search=perera"), ["Nimal Perera"]);
         assert.deepEqual(await names("?country=ro"), ["Ion Popescu"]);
         assert.deepEqual(await names("?status=INACTIVE"), ["Old Agent"]);
         assert.deepEqual(await names("?status=ACTIVE&country=LK"), ["Nimal Perera"]);
-        assert.deepEqual((await api(USERS.MANAGER, "GET", "/agents")).body.countries, ["LK", "RO"]);
+        assert.deepEqual((await api(USERS.OWNER, "GET", "/agents")).body.countries, ["LK", "RO"]);
         for (const bad of ["?country=ZZ", "?status=GONE", "?page=0", "?search=" + "x".repeat(101)]) {
-            assert.equal((await api(USERS.MANAGER, "GET", `/agents${bad}`)).status, 400, bad);
+            assert.equal((await api(USERS.OWNER, "GET", `/agents${bad}`)).status, 400, bad);
         }
         void lk; void ro;
     });
@@ -171,10 +171,10 @@ describe("agents: clients, lists, details (AGENT-006, 010, 011, 012)", () => {
         const j2 = await mkJobOk(c1.clientId);
         const j3 = await mkJobOk(c2.clientId);
         await mkJobOk(otherClient.clientId);
-        assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${j2.jobId}/complete`, {})).status, 200);
-        assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${j3.jobId}/cancel`, { reason: "Employer withdrew" })).status, 200);
+        assert.equal((await api(USERS.OWNER, "POST", `/jobs/${j2.jobId}/complete`, {})).status, 200);
+        assert.equal((await api(USERS.OWNER, "POST", `/jobs/${j3.jobId}/cancel`, { reason: "Employer withdrew" })).status, 200);
 
-        const detail = (await api(USERS.MANAGER, "GET", `/agents/${a.agentId}`)).body;
+        const detail = (await api(USERS.OWNER, "GET", `/agents/${a.agentId}`)).body;
         assert.deepEqual(detail.clients.map((c) => [c.name, c.status, c.processingJobs]), [["Client 1", "ACTIVE", 1], ["Client 2", "ACTIVE", 0]]);
         assert.deepEqual([detail.activeClients, detail.processingJobs, detail.completedJobs, detail.cancelledJobs], [2, 1, 1, 1]);
         assert.deepEqual(detail.jobs.processing.map((j) => j.jobId), [j1.jobId]);
@@ -182,10 +182,10 @@ describe("agents: clients, lists, details (AGENT-006, 010, 011, 012)", () => {
         assert.deepEqual(detail.jobs.cancelled.map((j) => j.jobId), [j3.jobId]);
         assert.deepEqual([detail.jobs.processing[0].client.name, detail.jobs.processing[0].jobType.name, detail.jobs.processing[0].jobCode], ["Client 1", "Welder", j1.jobCode]);
 
-        const list = (await api(USERS.MANAGER, "GET", "/agents?search=Agent A")).body.items[0];
+        const list = (await api(USERS.OWNER, "GET", "/agents?search=Agent A")).body.items[0];
         assert.deepEqual([list.activeClients, list.processingJobs, list.completedJobs], [2, 1, 1]);
-        assert.equal((await api(USERS.MANAGER, "GET", `/agents/${NO_SUCH_ID}`)).status, 404);
-        assert.equal((await api(USERS.MANAGER, "GET", "/agents/not-an-id")).status, 404);
+        assert.equal((await api(USERS.OWNER, "GET", `/agents/${NO_SUCH_ID}`)).status, 404);
+        assert.equal((await api(USERS.OWNER, "GET", "/agents/not-an-id")).status, 404);
     });
 });
 
@@ -194,14 +194,14 @@ describe("agents: edit, status, no delete (AGENT-007 to AGENT-009, AGENT-013)", 
         const agent = await mkAgent({ name: "Old Name" });
         const client = await mkClient(agent.agentId);
         const job = await mkJobOk(client.clientId);
-        const edited = await api(USERS.MANAGER, "PATCH", `/agents/${agent.agentId}`, { name: "New Name", address: "Kandy", email: null });
+        const edited = await api(USERS.OWNER, "PATCH", `/agents/${agent.agentId}`, { name: "New Name", address: "Kandy", email: null });
         assert.equal(edited.status, 200);
         assert.deepEqual([edited.body.agentId, edited.body.name, edited.body.address], [agent.agentId, "New Name", "Kandy"]);
         assert.equal(await linked(agent.agentId, client.clientId), 1);
         assert.equal((await prisma.job.findUnique({ where: { id: job.jobId } })).responsibleAgentId, agent.agentId);
         assert.equal((await api(USERS.ADMIN, "GET", `/client-management/${client.clientId}`)).body.agents[0].name, "New Name", "the client shows the new name through the same id");
         const before = (await audit("AGENT_UPDATED")).length;
-        await api(USERS.MANAGER, "PATCH", `/agents/${agent.agentId}`, { name: "New Name" });
+        await api(USERS.OWNER, "PATCH", `/agents/${agent.agentId}`, { name: "New Name" });
         assert.equal((await audit("AGENT_UPDATED")).length, before, "an unchanged save writes no audit entry");
         // The id and status cannot be edited here.
         for (const body of [{ agentId: NO_SUCH_ID }, { id: NO_SUCH_ID }, { status: "INACTIVE" }, {}]) {
@@ -215,7 +215,7 @@ describe("agents: edit, status, no delete (AGENT-007 to AGENT-009, AGENT-013)", 
         const job = await mkJobOk(client.clientId);
         const blocked = await api(USERS.ADMIN, "PATCH", `/agents/${agent.agentId}`, { countryCode: "RO" });
         assert.deepEqual([blocked.status, blocked.body.code], [409, "AGENT_HAS_PROCESSING_JOBS"]);
-        await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/complete`, {});
+        await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, {});
         assert.equal((await api(USERS.ADMIN, "PATCH", `/agents/${agent.agentId}`, { countryCode: "RO" })).body.countryCode, "RO");
         assert.equal((await prisma.job.findUnique({ where: { id: job.jobId } })).countryCode, "LK", "the finished job keeps the country it had");
     });
@@ -224,24 +224,24 @@ describe("agents: edit, status, no delete (AGENT-007 to AGENT-009, AGENT-013)", 
         const agent = await mkAgent();
         const client = await mkClient(agent.agentId);
         const job = await mkJobOk(client.clientId);
-        await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/complete`, {});
-        assert.equal((await api(USERS.MANAGER, "PATCH", `/agents/${agent.agentId}/status`, { status: "INACTIVE" })).body.status, "INACTIVE");
-        const refused = await api(USERS.MANAGER, "POST", "/client-management", { name: "New", agentId: agent.agentId });
+        await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, {});
+        assert.equal((await api(USERS.OWNER, "PATCH", `/agents/${agent.agentId}/status`, { status: "INACTIVE" })).body.status, "INACTIVE");
+        const refused = await api(USERS.OWNER, "POST", "/client-management", { name: "New", agentId: agent.agentId });
         assert.deepEqual([refused.status, refused.body.code], [409, "AGENT_INACTIVE"]);
         assert.equal(await prisma.client.count(), 1);
         const other = await mkAgent({ name: "Other" });
-        const move = await api(USERS.MANAGER, "PATCH", `/client-management/${client.clientId}/agent`, { agentId: agent.agentId });
+        const move = await api(USERS.OWNER, "PATCH", `/client-management/${client.clientId}/agent`, { agentId: agent.agentId });
         assert.equal(move.status, 200, "no-op: it already is this agent's client");
-        const toInactive = await api(USERS.MANAGER, "PATCH", `/client-management/${(await mkClient(other.agentId, { name: "C2" })).clientId}/agent`, { agentId: agent.agentId });
+        const toInactive = await api(USERS.OWNER, "PATCH", `/client-management/${(await mkClient(other.agentId, { name: "C2" })).clientId}/agent`, { agentId: agent.agentId });
         assert.deepEqual([toInactive.status, toInactive.body.code], [409, "AGENT_INACTIVE"]);
         const noJob = await mkJob(client.clientId);
         assert.deepEqual([noJob.status, noJob.body.code], [409, "AGENT_INACTIVE"]);
         // REL-003: the history is all still there.
         assert.equal(await linked(agent.agentId, client.clientId), 1);
-        const detail = (await api(USERS.MANAGER, "GET", `/agents/${agent.agentId}`)).body;
+        const detail = (await api(USERS.OWNER, "GET", `/agents/${agent.agentId}`)).body;
         assert.deepEqual([detail.status, detail.clients.length, detail.jobs.completed.length], ["INACTIVE", 1, 1]);
-        assert.equal((await api(USERS.MANAGER, "GET", `/jobs/${job.jobId}`)).body.responsibleAgent.name, "Agent A");
-        assert.equal((await api(USERS.MANAGER, "PATCH", `/agents/${agent.agentId}/status`, { status: "ACTIVE" })).body.status, "ACTIVE");
+        assert.equal((await api(USERS.OWNER, "GET", `/jobs/${job.jobId}`)).body.responsibleAgent.name, "Agent A");
+        assert.equal((await api(USERS.OWNER, "PATCH", `/agents/${agent.agentId}/status`, { status: "ACTIVE" })).body.status, "ACTIVE");
     });
 
     test("an agent with PROCESSING jobs cannot be made inactive (clear business error, nothing changes)", async () => {
@@ -253,7 +253,7 @@ describe("agents: edit, status, no delete (AGENT-007 to AGENT-009, AGENT-013)", 
         assert.match(blocked.body.message, /1 PROCESSING job/);
         assert.equal((await prisma.agent.findUnique({ where: { id: agent.agentId } })).isActive, true);
         assert.equal((await audit("AGENT_STATUS_CHANGED")).length, 0);
-        await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/cancel`, { reason: "No longer needed" });
+        await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/cancel`, { reason: "No longer needed" });
         assert.equal((await api(USERS.ADMIN, "PATCH", `/agents/${agent.agentId}/status`, { status: "INACTIVE" })).status, 200);
         // Repeating the same status is harmless and writes no second entry.
         assert.equal((await api(USERS.ADMIN, "PATCH", `/agents/${agent.agentId}/status`, { status: "INACTIVE" })).status, 200);
@@ -264,7 +264,7 @@ describe("agents: edit, status, no delete (AGENT-007 to AGENT-009, AGENT-013)", 
     test("AGENT-009: an agent cannot be hard deleted (no route, and the database refuses)", async () => {
         const agent = await mkAgent();
         const client = await mkClient(agent.agentId);
-        for (const who of [USERS.ADMIN, USERS.MANAGER]) {
+        for (const who of [USERS.ADMIN, USERS.OWNER]) {
             assert.ok([404, 405].includes((await api(who, "DELETE", `/agents/${agent.agentId}`)).status));
         }
         await assert.rejects(prisma.agent.delete({ where: { id: agent.agentId } }), "a client still references it (ON DELETE RESTRICT)");
@@ -274,14 +274,14 @@ describe("agents: edit, status, no delete (AGENT-007 to AGENT-009, AGENT-013)", 
 
     test("AGENT-013: create, update and status change are audited with actor, entity id and before / after (no contact data)", async () => {
         const agent = await mkAgent({ contactNumber: "0771234567", email: "a@b.co" });
-        await api(USERS.MANAGER, "PATCH", `/agents/${agent.agentId}`, { name: "Renamed", contactNumber: "0770000000" });
-        await api(USERS.MANAGER, "PATCH", `/agents/${agent.agentId}/status`, { status: "INACTIVE" });
+        await api(USERS.OWNER, "PATCH", `/agents/${agent.agentId}`, { name: "Renamed", contactNumber: "0770000000" });
+        await api(USERS.OWNER, "PATCH", `/agents/${agent.agentId}/status`, { status: "INACTIVE" });
         const [created] = await audit("AGENT_CREATED");
         const [updated] = await audit("AGENT_UPDATED");
         const [status] = await audit("AGENT_STATUS_CHANGED");
         assert.equal(created.adminId, USERS.ADMIN.adminId);
         assert.equal(JSON.parse(created.newValue).agentId, agent.agentId);
-        assert.equal(updated.adminId, USERS.MANAGER.adminId);
+        assert.equal(updated.adminId, USERS.OWNER.adminId);
         assert.deepEqual(JSON.parse(updated.previousValue), { agentId: agent.agentId, name: "Agent A", contactNumber: "(changed)" });
         assert.deepEqual(JSON.parse(updated.newValue), { agentId: agent.agentId, name: "Renamed", contactNumber: "(changed)" });
         assert.deepEqual([status.previousStatus, status.newStatus], ["ACTIVE", "INACTIVE"]);
@@ -292,10 +292,10 @@ describe("agents: edit, status, no delete (AGENT-007 to AGENT-009, AGENT-013)", 
 });
 
 describe("clients: create, roles, validation (CLIENT-001 to CLIENT-007)", () => {
-    test("CLIENT-001 / 002 / 005 / 007: ADMIN and MANAGER create clients that reference a real agent id; one agent, many clients", async () => {
+    test("CLIENT-001 / 002 / 005 / 007: ADMIN and OWNER create clients that reference a real agent id; one agent, many clients", async () => {
         const agent = await mkAgent();
         const a = await mkClient(agent.agentId, { name: "Client 1", contactPerson: "Mr Silva", contactNumber: "0771234567", whatsappNumber: "0777654321", email: "Hr@Client.com", address: "Colombo 3" }, USERS.ADMIN);
-        const b = await mkClient(agent.agentId, { name: "Client 2" }, USERS.MANAGER);
+        const b = await mkClient(agent.agentId, { name: "Client 2" }, USERS.OWNER);
         assert.deepEqual([a.status, a.countryCodes, a.agents[0].agentId, a.agents[0].name, a.contactPerson, a.email, a.contactNumber], ["ACTIVE", ["LK"], agent.agentId, "Agent A", "Mr Silva", "hr@client.com", "94771234567"]);
         assert.equal(await linked(agent.agentId, b.clientId), 1, "stored as a foreign-key link, not as text");
         assert.equal(await prisma.agentClient.count({ where: { agentId: agent.agentId } }), 2);
@@ -343,7 +343,7 @@ describe("clients: lists, details, edit (CLIENT-011 to CLIENT-013, REL-002)", ()
         await mkClient(lk.agentId, { name: "Beta Foods" });
         const gamma = await mkClient(ro.agentId, { name: "Gamma Logistics" });
         await api(USERS.ADMIN, "PATCH", `/client-management/${gamma.clientId}/status`, { status: "INACTIVE" });
-        const names = async (query) => (await api(USERS.MANAGER, "GET", `/client-management${query}`)).body.items.map((i) => i.name);
+        const names = async (query) => (await api(USERS.OWNER, "GET", `/client-management${query}`)).body.items.map((i) => i.name);
         assert.deepEqual(await names(""), ["Alpha Builders", "Beta Foods", "Gamma Logistics"]);
         assert.deepEqual(await names("?search=builders"), ["Alpha Builders"]);
         assert.deepEqual(await names("?search=kamal"), ["Alpha Builders"], "contact person is searched too");
@@ -351,9 +351,9 @@ describe("clients: lists, details, edit (CLIENT-011 to CLIENT-013, REL-002)", ()
         assert.deepEqual(await names("?country=LK"), ["Alpha Builders", "Beta Foods"]);
         assert.deepEqual(await names("?status=INACTIVE"), ["Gamma Logistics"]);
         assert.deepEqual(await names(`?agentId=${lk.agentId}&status=ACTIVE&search=beta`), ["Beta Foods"]);
-        const page = (await api(USERS.MANAGER, "GET", "/client-management?page=2")).body;
+        const page = (await api(USERS.OWNER, "GET", "/client-management?page=2")).body;
         assert.deepEqual([page.items.length, page.pagination.page, page.pagination.total], [0, 2, 3]);
-        for (const bad of ["?agentId=nope", "?country=ZZ", "?status=GONE"]) assert.equal((await api(USERS.MANAGER, "GET", `/client-management${bad}`)).status, 400, bad);
+        for (const bad of ["?agentId=nope", "?country=ZZ", "?status=GONE"]) assert.equal((await api(USERS.OWNER, "GET", `/client-management${bad}`)).status, 400, bad);
     });
 
     test("CLIENT-012 / 013: details show the responsible agent and exactly this client's jobs by status", async () => {
@@ -366,32 +366,32 @@ describe("clients: lists, details, edit (CLIENT-011 to CLIENT-013, REL-002)", ()
         await mkJobOk(c2.clientId);
         await prisma.candidate.create({ data: { passportId: pid(1), uniqueId: "7001", firstName: "Nimal" } });
         await prisma.candidateStage.create({ data: { passportId: pid(1), stage: "TEST_DETAILS", testResult: "PASS" } });
-        assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${processing.jobId}/candidates`, { passportId: pid(1) })).status, 201);
-        await api(USERS.MANAGER, "POST", `/jobs/${done.jobId}/complete`, {});
-        await api(USERS.MANAGER, "POST", `/jobs/${cancelled.jobId}/cancel`, { reason: "Employer withdrew" });
-        const detail = (await api(USERS.MANAGER, "GET", `/client-management/${c1.clientId}`)).body;
+        assert.equal((await api(USERS.OWNER, "POST", `/jobs/${processing.jobId}/candidates`, { passportId: pid(1) })).status, 201);
+        await api(USERS.OWNER, "POST", `/jobs/${done.jobId}/complete`, {});
+        await api(USERS.OWNER, "POST", `/jobs/${cancelled.jobId}/cancel`, { reason: "Employer withdrew" });
+        const detail = (await api(USERS.OWNER, "GET", `/client-management/${c1.clientId}`)).body;
         assert.deepEqual(detail.agents.map((a) => [a.name, a.countryCode, a.status]), [["Agent A", "LK", "ACTIVE"]]);
         assert.deepEqual([detail.processingJobs, detail.completedJobs, detail.cancelledJobs], [1, 1, 1]);
         assert.deepEqual(detail.jobs.processing.map((j) => [j.jobId, j.companyJobId, j.activeCandidates, j.jobType.name, j.responsibleAgent.name]), [[processing.jobId, "Y26 S01", 1, "Welder", "Agent A"]]);
         assert.deepEqual(detail.jobs.completed.map((j) => j.jobId), [done.jobId]);
         assert.deepEqual(detail.jobs.cancelled.map((j) => j.jobId), [cancelled.jobId]);
-        const row = (await api(USERS.MANAGER, "GET", "/client-management?search=Client 1")).body.items[0];
+        const row = (await api(USERS.OWNER, "GET", "/client-management?search=Client 1")).body.items[0];
         assert.deepEqual([row.processingJobs, row.completedJobs], [1, 1]);
-        assert.equal((await api(USERS.MANAGER, "GET", `/client-management/${NO_SUCH_ID}`)).status, 404);
+        assert.equal((await api(USERS.OWNER, "GET", `/client-management/${NO_SUCH_ID}`)).status, 404);
     });
 
     test("REL-002: renaming a client keeps its id, agent and jobs; agentId and status are not editable here", async () => {
         const agent = await mkAgent();
         const client = await mkClient(agent.agentId, { name: "Old Co" });
         const job = await mkJobOk(client.clientId);
-        const edited = await api(USERS.MANAGER, "PATCH", `/client-management/${client.clientId}`, { name: "New Co", contactPerson: "Ms Fernando" });
+        const edited = await api(USERS.OWNER, "PATCH", `/client-management/${client.clientId}`, { name: "New Co", contactPerson: "Ms Fernando" });
         assert.equal(edited.status, 200);
         assert.deepEqual([edited.body.clientId, edited.body.name, edited.body.agents.map((a) => a.agentId)], [client.clientId, "New Co", [agent.agentId]]);
         const stored = await prisma.job.findUnique({ where: { id: job.jobId } });
         assert.equal(stored.clientId, client.clientId);
-        assert.equal((await api(USERS.MANAGER, "GET", `/jobs/${job.jobId}`)).body.client.name, "New Co");
+        assert.equal((await api(USERS.OWNER, "GET", `/jobs/${job.jobId}`)).body.client.name, "New Co");
         for (const body of [{ agentId: agent.agentId }, { status: "INACTIVE" }, { clientId: NO_SUCH_ID }, {}]) {
-            assert.equal((await api(USERS.MANAGER, "PATCH", `/client-management/${client.clientId}`, body)).status, 400, JSON.stringify(body));
+            assert.equal((await api(USERS.OWNER, "PATCH", `/client-management/${client.clientId}`, body)).status, 400, JSON.stringify(body));
         }
     });
 });
@@ -402,7 +402,7 @@ describe("clients: agent change, status, no delete (CLIENT-008 to CLIENT-010, CL
         const y = await mkAgent({ name: "Agent Y", countryCode: "RO" });
         const client = await mkClient(x.agentId);
         const old = await mkJobOk(client.clientId);
-        const moved = await api(USERS.MANAGER, "PATCH", `/client-management/${client.clientId}/agent`, { agentId: y.agentId });
+        const moved = await api(USERS.OWNER, "PATCH", `/client-management/${client.clientId}/agent`, { agentId: y.agentId });
         assert.equal(moved.status, 200);
         assert.deepEqual([moved.body.agents.map((a) => a.name), moved.body.countryCodes], [["Agent Y"], ["RO"]]);
         const stored = await prisma.job.findUnique({ where: { id: old.jobId } });
@@ -410,12 +410,12 @@ describe("clients: agent change, status, no delete (CLIENT-008 to CLIENT-010, CL
         const fresh = await mkJobOk(client.clientId);
         assert.deepEqual([fresh.responsibleAgent.name, fresh.countryCode], ["Agent Y", "RO"], "new jobs use the new agent");
         // The old agent still cannot be deactivated while its job is PROCESSING.
-        assert.equal((await api(USERS.MANAGER, "PATCH", `/agents/${x.agentId}/status`, { status: "INACTIVE" })).status, 409);
-        const bad = await api(USERS.MANAGER, "PATCH", `/client-management/${client.clientId}/agent`, { agentId: NO_SUCH_ID });
+        assert.equal((await api(USERS.OWNER, "PATCH", `/agents/${x.agentId}/status`, { status: "INACTIVE" })).status, 409);
+        const bad = await api(USERS.OWNER, "PATCH", `/client-management/${client.clientId}/agent`, { agentId: NO_SUCH_ID });
         assert.deepEqual([bad.status, bad.body.code], [400, "AGENT_NOT_FOUND"]);
-        assert.equal((await api(USERS.MANAGER, "PATCH", `/client-management/${client.clientId}/agent`, {})).status, 400);
+        assert.equal((await api(USERS.OWNER, "PATCH", `/client-management/${client.clientId}/agent`, {})).status, 400);
         const [entry] = await audit("CLIENT_AGENT_CHANGED");
-        assert.deepEqual([JSON.parse(entry.previousValue).agentIds, JSON.parse(entry.newValue).agentIds, entry.adminId], [[x.agentId], [y.agentId], USERS.MANAGER.adminId]);
+        assert.deepEqual([JSON.parse(entry.previousValue).agentIds, JSON.parse(entry.newValue).agentIds, entry.adminId], [[x.agentId], [y.agentId], USERS.OWNER.adminId]);
     });
 
     test("CLIENT-009 / REL-004: an inactive client cannot get a new job and cannot take an existing job; history stays", async () => {
@@ -423,18 +423,18 @@ describe("clients: agent change, status, no delete (CLIENT-008 to CLIENT-010, CL
         const client = await mkClient(agent.agentId);
         const other = await mkClient(agent.agentId, { name: "Other" });
         const finished = await mkJobOk(client.clientId);
-        await api(USERS.MANAGER, "POST", `/jobs/${finished.jobId}/complete`, {});
+        await api(USERS.OWNER, "POST", `/jobs/${finished.jobId}/complete`, {});
         const live = await mkJobOk(other.clientId);
-        assert.equal((await api(USERS.MANAGER, "PATCH", `/client-management/${client.clientId}/status`, { status: "INACTIVE" })).body.status, "INACTIVE");
+        assert.equal((await api(USERS.OWNER, "PATCH", `/client-management/${client.clientId}/status`, { status: "INACTIVE" })).body.status, "INACTIVE");
         const refused = await mkJob(client.clientId);
         assert.deepEqual([refused.status, refused.body.code], [409, "CLIENT_INACTIVE"]);
-        const moveIn = await api(USERS.MANAGER, "PUT", `/jobs/${live.jobId}`, { clientId: client.clientId });
+        const moveIn = await api(USERS.OWNER, "PUT", `/jobs/${live.jobId}`, { clientId: client.clientId });
         assert.deepEqual([moveIn.status, moveIn.body.code], [409, "CLIENT_INACTIVE"]);
-        const options = (await api(USERS.MANAGER, "GET", "/job-options")).body;
+        const options = (await api(USERS.OWNER, "GET", "/job-options")).body;
         assert.deepEqual(options.clients.map((c) => c.name), ["Other"], "an inactive client is not offered");
-        const job = (await api(USERS.MANAGER, "GET", `/jobs/${finished.jobId}`)).body;
+        const job = (await api(USERS.OWNER, "GET", `/jobs/${finished.jobId}`)).body;
         assert.deepEqual([job.status, job.client.name, job.responsibleAgent.name], ["COMPLETED", "Client 1", "Agent A"]);
-        const detail = (await api(USERS.MANAGER, "GET", `/client-management/${client.clientId}`)).body;
+        const detail = (await api(USERS.OWNER, "GET", `/client-management/${client.clientId}`)).body;
         assert.deepEqual([detail.status, detail.jobs.completed.length], ["INACTIVE", 1]);
     });
 
@@ -445,7 +445,7 @@ describe("clients: agent change, status, no delete (CLIENT-008 to CLIENT-010, CL
         const blocked = await api(USERS.ADMIN, "PATCH", `/client-management/${client.clientId}/status`, { status: "INACTIVE" });
         assert.deepEqual([blocked.status, blocked.body.code], [409, "CLIENT_HAS_PROCESSING_JOBS"]);
         assert.equal((await prisma.client.findUnique({ where: { id: client.clientId } })).isActive, true);
-        await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/complete`, {});
+        await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, {});
         assert.equal((await api(USERS.ADMIN, "PATCH", `/client-management/${client.clientId}/status`, { status: "INACTIVE" })).status, 200);
         assert.equal((await api(USERS.ADMIN, "PATCH", `/client-management/${client.clientId}/status`, { status: "INACTIVE" })).status, 200, "repeat is harmless");
         assert.equal((await audit("CLIENT_STATUS_CHANGED")).length, 1);
@@ -460,7 +460,7 @@ describe("clients: agent change, status, no delete (CLIENT-008 to CLIENT-010, CL
         const agent = await mkAgent();
         const client = await mkClient(agent.agentId);
         const job = await mkJobOk(client.clientId);
-        for (const who of [USERS.ADMIN, USERS.MANAGER]) assert.ok([404, 405].includes((await api(who, "DELETE", `/client-management/${client.clientId}`)).status));
+        for (const who of [USERS.ADMIN, USERS.OWNER]) assert.ok([404, 405].includes((await api(who, "DELETE", `/client-management/${client.clientId}`)).status));
         await assert.rejects(prisma.client.delete({ where: { id: client.clientId } }), "its job still references it (ON DELETE RESTRICT)");
         assert.equal(await prisma.client.count(), 1);
         void job;
@@ -470,9 +470,9 @@ describe("clients: agent change, status, no delete (CLIENT-008 to CLIENT-010, CL
         const x = await mkAgent({ name: "Agent X" });
         const y = await mkAgent({ name: "Agent Y" });
         const client = await mkClient(x.agentId, { contactNumber: "0771234567", email: "hr@client.com" });
-        await api(USERS.MANAGER, "PATCH", `/client-management/${client.clientId}`, { name: "Renamed", email: "new@client.com" });
-        await api(USERS.MANAGER, "PATCH", `/client-management/${client.clientId}/agent`, { agentId: y.agentId });
-        await api(USERS.MANAGER, "PATCH", `/client-management/${client.clientId}/status`, { status: "INACTIVE" });
+        await api(USERS.OWNER, "PATCH", `/client-management/${client.clientId}`, { name: "Renamed", email: "new@client.com" });
+        await api(USERS.OWNER, "PATCH", `/client-management/${client.clientId}/agent`, { agentId: y.agentId });
+        await api(USERS.OWNER, "PATCH", `/client-management/${client.clientId}/status`, { status: "INACTIVE" });
         for (const action of ["CLIENT_CREATED", "CLIENT_UPDATED", "CLIENT_AGENT_CHANGED", "CLIENT_STATUS_CHANGED"]) {
             const [entry] = await audit(action);
             assert.ok(entry, action);
@@ -501,12 +501,12 @@ describe("jobs use the relational Client + Agent (REL-005 to REL-008)", () => {
         assert.equal(explicit.responsibleAgent.agentId ?? explicit.responsibleAgent.id, x.agentId);
         // A job cannot be moved to a client of another agent either.
         const yClient = await mkClient(y.agentId, { name: "Y Client" });
-        const move = await api(USERS.MANAGER, "PUT", `/jobs/${auto.jobId}`, { clientId: yClient.clientId });
+        const move = await api(USERS.OWNER, "PUT", `/jobs/${auto.jobId}`, { clientId: yClient.clientId });
         assert.deepEqual([move.status, move.body.code], [409, "CLIENT_AGENT_MISMATCH"]);
         const sameAgent = await mkClient(x.agentId, { name: "Second X Client" });
-        assert.equal((await api(USERS.MANAGER, "PUT", `/jobs/${auto.jobId}`, { clientId: sameAgent.clientId })).body.client.name, "Second X Client");
+        assert.equal((await api(USERS.OWNER, "PUT", `/jobs/${auto.jobId}`, { clientId: sameAgent.clientId })).body.client.name, "Second X Client");
         for (const body of [{ clientId: NO_SUCH_ID }, { clientId: "Client 1" }]) assert.equal((await mkJob(body.clientId)).status, 400, JSON.stringify(body));
-        const legacyField = await api(USERS.MANAGER, "POST", "/jobs", { jobTypeId, companyId: client.clientId });
+        const legacyField = await api(USERS.OWNER, "POST", "/jobs", { jobTypeId, companyId: client.clientId });
         assert.equal(legacyField.status, 400, "the old companyId field is gone");
     });
 
@@ -515,9 +515,9 @@ describe("jobs use the relational Client + Agent (REL-005 to REL-008)", () => {
         const orphan = await prisma.client.create({ data: { name: "Legacy Co" } });
         const refused = await mkJob(orphan.id);
         assert.deepEqual([refused.status, refused.body.code], [409, "CLIENT_HAS_NO_AGENT"]);
-        assert.equal((await api(USERS.MANAGER, "PATCH", `/client-management/${orphan.id}/agent`, { agentId: agent.agentId })).status, 200);
+        assert.equal((await api(USERS.OWNER, "PATCH", `/client-management/${orphan.id}/agent`, { agentId: agent.agentId })).status, 200);
         assert.equal((await mkJob(orphan.id)).status, 201);
-        assert.deepEqual((await api(USERS.MANAGER, "GET", "/client-management?search=Legacy")).body.items[0].agents.map((a) => a.name), ["Agent A"]);
+        assert.deepEqual((await api(USERS.OWNER, "GET", "/client-management?search=Legacy")).body.items[0].agents.map((a) => a.name), ["Agent A"]);
     });
 
     test("REL-006 / 007 / 008: candidate assignments, job UUIDs and the Work Allocation API are unaffected", async () => {
@@ -527,7 +527,7 @@ describe("jobs use the relational Client + Agent (REL-005 to REL-008)", () => {
         await prisma.candidateStage.createMany({ data: [1, 2].map((i) => ({ passportId: pid(i), stage: "TEST_DETAILS", testResult: "PASS" })) });
         await prisma.candidateAllocation.create({ data: { passportId: pid(1), analystId: USERS.ANALYST.adminId } });
         const job = await mkJobOk(client.clientId, { companyJobId: "Y26S01" });
-        assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { passportId: pid(1) })).status, 201);
+        assert.equal((await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/candidates`, { passportId: pid(1) })).status, 201);
         // Renaming everything around the job leaves the job id and its membership alone.
         await api(USERS.ADMIN, "PATCH", `/agents/${agent.agentId}`, { name: "Renamed Agent" });
         await api(USERS.ADMIN, "PATCH", `/client-management/${client.clientId}`, { name: "Renamed Client" });
@@ -537,12 +537,12 @@ describe("jobs use the relational Client + Agent (REL-005 to REL-008)", () => {
         assert.deepEqual(members.map((m) => [m.passportId, m.isActive]), [[pid(1), true]]);
         // A second PROCESSING job for the same candidate is allowed; the same job twice is not.
         const second = await mkJobOk(client.clientId);
-        assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${second.jobId}/candidates`, { passportId: pid(1) })).status, 201);
-        assert.equal((await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { passportId: pid(1) })).body.code, "CANDIDATE_ALREADY_IN_JOB");
+        assert.equal((await api(USERS.OWNER, "POST", `/jobs/${second.jobId}/candidates`, { passportId: pid(1) })).status, 201);
+        assert.equal((await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/candidates`, { passportId: pid(1) })).body.code, "CANDIDATE_ALREADY_IN_JOB");
         // Work Allocation still works and is unchanged by any of this.
-        const allocation = await api(USERS.MANAGER, "GET", "/work-allocation/candidates");
+        const allocation = await api(USERS.OWNER, "GET", "/work-allocation/candidates");
         assert.equal(allocation.status, 200);
-        assert.equal((await api(USERS.MANAGER, "GET", "/work-allocation/analysts")).status, 200);
+        assert.equal((await api(USERS.OWNER, "GET", "/work-allocation/analysts")).status, 200);
         assert.equal((await prisma.candidateAllocation.count()), 1, "the allocation is untouched");
     });
 
@@ -550,11 +550,11 @@ describe("jobs use the relational Client + Agent (REL-005 to REL-008)", () => {
         const agent = await mkAgent();
         await mkClient(agent.agentId, { name: "Employer Co" });
         await prisma.candidate.create({ data: { passportId: pid(1), uniqueId: "7001", firstName: "Nimal", otherName: "Perera" } });
-        const legacy = await api(USERS.MANAGER, "GET", "/clients");
+        const legacy = await api(USERS.OWNER, "GET", "/clients");
         assert.equal(legacy.status, 200);
         assert.deepEqual(JSON.stringify(legacy.body).includes("Employer Co"), false, "employer clients never appear in the candidate list");
         assert.ok(JSON.stringify(legacy.body).includes(pid(1)));
-        assert.equal((await api(USERS.MANAGER, "GET", `/clients/${pid(1)}`)).status, 200);
+        assert.equal((await api(USERS.OWNER, "GET", `/clients/${pid(1)}`)).status, 200);
     });
 });
 
@@ -565,11 +565,11 @@ describe("job-options and concurrency", () => {
         await mkClient(live.agentId, { name: "Offered" });
         await mkClient(gone.agentId, { name: "Not offered" });
         await api(USERS.ADMIN, "PATCH", `/agents/${gone.agentId}/status`, { status: "INACTIVE" });
-        const options = (await api(USERS.MANAGER, "GET", "/job-options")).body;
+        const options = (await api(USERS.OWNER, "GET", "/job-options")).body;
         assert.deepEqual(options.clients.map((c) => [c.name, c.agentIds]), [["Offered", [live.agentId]]]);
         assert.deepEqual(options.agents.map((a) => a.name), ["Live"]);
-        assert.equal((await api(USERS.MANAGER, "POST", "/job-types", { name: "Cook" })).status, 201);
-        assert.equal((await api(USERS.MANAGER, "POST", "/companies", { name: "Co" })).status, 404, "no company route exists");
+        assert.equal((await api(USERS.OWNER, "POST", "/job-types", { name: "Cook" })).status, 201);
+        assert.equal((await api(USERS.OWNER, "POST", "/companies", { name: "Co" })).status, 404, "no company route exists");
     });
 
     test("concurrent: deactivating a client while a job is created for it never leaves a PROCESSING job on an inactive client", async () => {

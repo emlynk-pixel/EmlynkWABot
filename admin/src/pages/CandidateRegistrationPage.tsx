@@ -79,7 +79,7 @@ export function CandidateRegistrationPage() {
     const pending = useRef<{ passportId: string; promise: Promise<CandidateDetails | null> } | null>(null);
 
     if (!canRegisterCandidates(user)) {
-        return <Card><EmptyState title="Candidate registration is done by the Registration Desk, a Manager or an Admin. New candidates are then allocated to Analysts." /></Card>;
+        return <Card><EmptyState title="Candidate registration is done by the Registration Desk or an Admin. New candidates are then allocated to Analysts." /></Card>;
     }
 
     const existing = lookup.status === "found" ? lookup.details : null;

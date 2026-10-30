@@ -1,7 +1,7 @@
 // Create (or link) an application user through Supabase Auth.
 //
 //   npm run user:create -- --name "Full Name" --email user@example.com [--role ADMIN]
-//   npm run user:create -- --email user@example.com --link [--role MANAGER]
+//   npm run user:create -- --email user@example.com --link [--role ANALYST]
 //
 // Without --link: creates a Supabase Auth identity (email confirmed) with the
 // password typed at a hidden prompt (asked twice; for automation it may come

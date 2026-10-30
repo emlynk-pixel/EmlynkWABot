@@ -15,6 +15,7 @@
     "test": "node --test \"test/**/*.test.js\"",
     "diagnose:document": "node scripts/diagnoseDocument.js",
     "user:create": "node scripts/createUser.js",
+    "user:migrate-manager": "node scripts/migrateManagerRole.js",
     "db:check": "node scripts/checkDatabaseConnection.js",
     "admin:install": "npm --prefix admin install",
     "admin:dev": "npm --prefix admin run dev",

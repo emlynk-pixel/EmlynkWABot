@@ -15,7 +15,7 @@ import { filterControl } from "../ui";
 // PROCESSING job they are on now (a candidate may hold several), and the completed /
 // cancelled / removed history. Never from the old free-text candidate_stages.job_id.
 //
-// ADMIN and MANAGER get "Assign to Job" (also when the candidate already has jobs). It uses
+// ADMIN gets "Assign to Job" (also when the candidate already has jobs). It uses
 // the same endpoint as Add to job on the Job page (POST /api/admin/jobs/:jobId/candidates);
 // the server refuses the same job twice (409), and other jobs are never touched.
 // Only a candidate whose Test result is PASS can be assigned (the server also
@@ -51,7 +51,7 @@ export function JobAssignmentPanel({ assignments, candidate, testPassed = false,
     const { user, token } = useAuth();
     const [assigning, setAssigning] = useState(false);
     // A JOB_HANDLER reads this page only (it assigns from the Jobs module): the action is offered
-    // to roles that both manage jobs and change candidates (ADMIN and MANAGER, as before).
+    // to roles that both manage jobs and change candidates (ADMIN).
     const canAssign = canManageJobs(user) && canManageCandidates(user) && Boolean(candidate && onChanged && token);
     const active = activeJobsOf(assignments);
     return (

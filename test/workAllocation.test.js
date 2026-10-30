@@ -18,7 +18,7 @@ const user = (adminId, role, name, status = "ACTIVE", n = 1) => ({
 });
 const USERS = {
     ADMIN: user("u-admin", "ADMIN", "Ada Admin", "ACTIVE", 1),
-    MANAGER: user("u-manager", "MANAGER", "Max Manager", "ACTIVE", 2),
+    OWNER: user("u-owner", "OWNER", "Olive Owner", "ACTIVE", 2),
     DESK: user("u-desk", "REGISTRATION_DESK", "Dee Desk", "ACTIVE", 3),
     ANN: user("u-ann", "ANALYST", "Ann Analyst", "ACTIVE", 4),
     BEN: user("u-ben", "ANALYST", "Ben Analyst", "ACTIVE", 5),
@@ -99,8 +99,8 @@ const allocationAudit = async () => (await prisma.auditLog.findMany({ where: { a
 const assign = (who, candidateIds, allocs, extra = {}) => api(who, "POST", "/work-allocation/assign", { candidateIds, allocations: allocs, ...extra });
 
 describe("the access rule (candidateAccess.js)", () => {
-    test("ADMIN, MANAGER, REGISTRATION_DESK: every candidate; ANALYST: their allocations; anything else: none", () => {
-        for (const role of ["ADMIN", "MANAGER", "REGISTRATION_DESK"]) {
+    test("OWNER, ADMIN, REGISTRATION_DESK: every candidate; ANALYST: their allocations; anything else: none", () => {
+        for (const role of ["OWNER", "ADMIN", "REGISTRATION_DESK"]) {
             assert.equal(isCandidateScoped({ role }), false, role);
             assert.deepEqual(candidateScope({ role, adminId: "x" }), {});
         }
@@ -111,9 +111,9 @@ describe("the access rule (candidateAccess.js)", () => {
 });
 
 describe("RBAC: candidate lists", () => {
-    test("1, 4, 7, 30, 31. ADMIN, MANAGER and REGISTRATION_DESK see every candidate; totals stay global", async () => {
+    test("1, 4, 7, 30, 31. ADMIN, OWNER and REGISTRATION_DESK see every candidate; totals stay global", async () => {
         await seedAllocations();
-        for (const who of [USERS.ADMIN, USERS.MANAGER, USERS.DESK]) {
+        for (const who of [USERS.ADMIN, USERS.OWNER, USERS.DESK]) {
             const { ids, pagination } = await listIds(who);
             assert.equal(pagination.totalItems, TOTAL, who.role);
             assert.deepEqual(ids, NEWEST_FIRST);
@@ -142,9 +142,9 @@ describe("RBAC: candidate lists", () => {
 });
 
 describe("RBAC: editing", () => {
-    test("2, 5, 8. ADMIN, MANAGER and REGISTRATION_DESK can edit any candidate, allocated or not", async () => {
+    test("2, 5, 8. ADMIN, OWNER and REGISTRATION_DESK can edit any candidate, allocated or not", async () => {
         await seedAllocations();
-        for (const [who, i] of [[USERS.ADMIN, 1], [USERS.MANAGER, 4], [USERS.DESK, 20]]) {
+        for (const [who, i] of [[USERS.ADMIN, 1], [USERS.OWNER, 4], [USERS.DESK, 20]]) {
             assert.equal((await api(who, "PUT", `/candidates/${pid(i)}/stages/VISA_APPROVAL`, { completed: true })).status, 200, who.role);
             assert.equal((await api(who, "GET", `/candidates/${pid(i)}`)).status, 200, who.role);
         }
@@ -169,7 +169,7 @@ describe("RBAC: editing", () => {
         assert.equal((await api(USERS.ANN, "POST", "/candidates", body)).status, 403);
         assert.equal((await api(USERS.DESK, "POST", "/candidates", body)).status, 201);
         assert.equal(await prisma.candidateAllocation.count({ where: { passportId: "N1023757" } }), 0);
-        const { body: list } = await api(USERS.MANAGER, "GET", "/work-allocation/candidates?search=N1023757");
+        const { body: list } = await api(USERS.OWNER, "GET", "/work-allocation/candidates?search=N1023757");
         assert.deepEqual(list.items.map((item) => [item.passportId, item.analyst]), [["N1023757", null]]);
     });
 });
@@ -303,13 +303,13 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
         assert.equal((await api(USERS.ANN, "GET", `/review/document-${documentId(1)}`)).status, 200);
         assert.equal((await api(USERS.ANN, "GET", `/review/pending-${temporaryId(3)}`)).status, 200);
         assert.equal((await api(USERS.ANN, "POST", `/review/document-${documentId(1)}/keep-pending`, { reason: "later" })).status, 200);
-        // ADMIN, MANAGER and Ben (the owner) reach it.
-        for (const who of [USERS.ADMIN, USERS.MANAGER, USERS.BEN]) {
+        // ADMIN, OWNER and Ben (whose candidate it is) reach it.
+        for (const who of [USERS.ADMIN, USERS.OWNER, USERS.BEN]) {
             assert.equal((await api(who, "GET", `/review/document-${documentId(4)}`)).status, 200, who.name);
         }
     });
 
-    test("Review Queue list, Overview and Daily Report: an ANALYST only gets their own candidates (and unlinked files); ADMIN and MANAGER stay global; reassignment applies next request", async () => {
+    test("Review Queue list, Overview and Daily Report: an ANALYST only gets their own candidates (and unlinked files); ADMIN and OWNER stay global; reassignment applies next request", async () => {
         await seedAllocations();
         const DAY = "2026-01-01"; // every seeded candidate registers on this Colombo day
         const at = new Date("2026-01-01T04:00:00Z");
@@ -370,8 +370,8 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
         assert.equal(monthly.candidatesRegistered, 3);
         assert.equal(monthly.sources.whatsappSubmissions, 2);
 
-        // ADMIN and MANAGER: global, as before.
-        for (const who of [USERS.ADMIN, USERS.MANAGER]) {
+        // ADMIN and OWNER: global, as before.
+        for (const who of [USERS.ADMIN, USERS.OWNER]) {
             assert.equal((await get(who, "/review?pageSize=100")).pagination.total, 6, who.name);
             assert.equal((await get(who, "/overview")).kpis.totalClients, TOTAL, who.name);
             const all = await get(who, `/reports/daily/summary?date=${DAY}`);
@@ -383,7 +383,7 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
         for (const path of ["/review", "/overview", `/reports/daily/summary?date=${DAY}`]) assert.equal((await api(USERS.DESK, "GET", path)).status, 403, path);
 
         // Reassignment applies on the next request: P1 moves from Ann to Ben.
-        assert.equal((await assign(USERS.MANAGER, [pid(1)], [{ analystId: USERS.BEN.adminId, count: 1 }], { reassign: true })).status, 200);
+        assert.equal((await assign(USERS.OWNER, [pid(1)], [{ analystId: USERS.BEN.adminId, count: 1 }], { reassign: true })).status, 200);
         const after = await get(USERS.ANN, "/review?pageSize=100");
         assert.deepEqual(after.items.map((item) => item.reviewId), [`pending-${temporaryId(3)}`], "only the unlinked file is left");
         assert.equal((await get(USERS.ANN, "/overview")).kpis.totalClients, 2);
@@ -397,17 +397,17 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
     test("26. reassignment applies on the next request: the old Analyst loses access, the new one gains it", async () => {
         await seedAllocations();
         assert.equal((await api(USERS.ANN, "GET", `/candidates/${pid(1)}`)).status, 200);
-        assert.equal((await assign(USERS.MANAGER, [pid(1)], [{ analystId: USERS.BEN.adminId, count: 1 }], { reassign: true })).status, 200);
+        assert.equal((await assign(USERS.OWNER, [pid(1)], [{ analystId: USERS.BEN.adminId, count: 1 }], { reassign: true })).status, 200);
         assert.equal((await api(USERS.ANN, "GET", `/candidates/${pid(1)}`)).status, 404);
         assert.equal((await api(USERS.BEN, "GET", `/candidates/${pid(1)}`)).status, 200);
-        // and a role change applies too: Ben as a MANAGER sees everyone.
-        await prisma.user.update({ where: { adminId: USERS.BEN.adminId }, data: { role: "MANAGER" } });
+        // and a role change applies too: Ben as an ADMIN sees everyone.
+        await prisma.user.update({ where: { adminId: USERS.BEN.adminId }, data: { role: "ADMIN" } });
         assert.equal((await listIds(USERS.BEN)).pagination.totalItems, TOTAL);
     });
 });
 
 describe("Work Allocation API: who may use it", () => {
-    test("3, 6, 9, 15. ADMIN and MANAGER may; REGISTRATION_DESK and ANALYST get 403 on every route", async () => {
+    test("3, 6, 9, 15. ADMIN and OWNER may; REGISTRATION_DESK and ANALYST get 403 on every route", async () => {
         for (const who of [USERS.DESK, USERS.ANN]) {
             for (const [method, path, body] of [
                 ["GET", "/work-allocation/candidates"],
@@ -420,7 +420,7 @@ describe("Work Allocation API: who may use it", () => {
             }
         }
         assert.equal(await prisma.candidateAllocation.count(), 0);
-        for (const who of [USERS.ADMIN, USERS.MANAGER]) {
+        for (const who of [USERS.ADMIN, USERS.OWNER]) {
             assert.equal((await api(who, "GET", "/work-allocation/candidates")).status, 200, who.role);
             assert.equal((await api(who, "GET", "/work-allocation/analysts")).status, 200, who.role);
         }
@@ -429,14 +429,14 @@ describe("Work Allocation API: who may use it", () => {
 
 describe("Work Allocation API: assigning", () => {
     test("16. one candidate to one Analyst, audited with the candidate, both Analysts and the acting manager", async () => {
-        const { status, body } = await assign(USERS.MANAGER, [pid(7)], [{ analystId: USERS.ANN.adminId, count: 1 }]);
+        const { status, body } = await assign(USERS.OWNER, [pid(7)], [{ analystId: USERS.ANN.adminId, count: 1 }]);
         assert.equal(status, 200);
         assert.deepEqual([body.assigned, body.reassigned, body.unchanged], [1, 0, 0]);
         assert.deepEqual(await allocations(), { [pid(7)]: USERS.ANN.adminId });
         const [row] = await allocationAudit();
         assert.deepEqual(
             [row.action, row.passportId, row.adminId, row.previousStatus, row.newStatus, row.previousValue, JSON.parse(row.newValue)],
-            ["ASSIGN_CANDIDATE", pid(7), USERS.MANAGER.adminId, "UNALLOCATED", "ALLOCATED", null, { analystId: USERS.ANN.adminId, name: "Ann Analyst" }],
+            ["ASSIGN_CANDIDATE", pid(7), USERS.OWNER.adminId, "UNALLOCATED", "ALLOCATED", null, { analystId: USERS.ANN.adminId, name: "Ann Analyst" }],
         );
     });
 
@@ -449,7 +449,7 @@ describe("Work Allocation API: assigning", () => {
 
     test("18. across several Analysts: newest registered first, handed out in the order of the allocations, whatever the selection order", async () => {
         const ids = [pid(1), pid(9), pid(5), pid(3), pid(7), pid(2)]; // newest first: 9, 7, 5, 3, 2, 1
-        const { status, body } = await assign(USERS.MANAGER, ids, [
+        const { status, body } = await assign(USERS.OWNER, ids, [
             { analystId: USERS.BEN.adminId, count: 2 },
             { analystId: USERS.ANN.adminId, count: 3 },
             { analystId: USERS.CAL.adminId, count: 1 },
@@ -486,8 +486,8 @@ describe("Work Allocation API: assigning", () => {
         assert.equal(await prisma.candidateAllocation.count(), 0);
     });
 
-    test("20-21. only an ACTIVE Analyst can be a target: inactive, ADMIN, MANAGER, REGISTRATION_DESK and unknown users are refused", async () => {
-        for (const [target, code] of [[USERS.GONE, "ANALYST_INACTIVE"], [USERS.ADMIN, "NOT_AN_ANALYST"], [USERS.MANAGER, "NOT_AN_ANALYST"], [USERS.DESK, "NOT_AN_ANALYST"], [{ adminId: "u-nobody" }, "ANALYST_NOT_FOUND"]]) {
+    test("20-21. only an ACTIVE Analyst can be a target: inactive, ADMIN, OWNER, REGISTRATION_DESK and unknown users are refused", async () => {
+        for (const [target, code] of [[USERS.GONE, "ANALYST_INACTIVE"], [USERS.ADMIN, "NOT_AN_ANALYST"], [USERS.OWNER, "NOT_AN_ANALYST"], [USERS.DESK, "NOT_AN_ANALYST"], [{ adminId: "u-nobody" }, "ANALYST_NOT_FOUND"]]) {
             const response = await assign(USERS.ADMIN, [pid(1)], [{ analystId: target.adminId, count: 1 }]);
             assert.deepEqual([response.status, response.body.code], [409, code], target.adminId);
         }
@@ -505,11 +505,11 @@ describe("Work Allocation API: assigning", () => {
 
     test("22, 24. reassignment needs reassign: true (else 409, nothing changed), then moves the candidate and is audited with both Analysts", async () => {
         await seedAllocations();
-        const refused = await assign(USERS.MANAGER, [pid(1), pid(20)], [{ analystId: USERS.BEN.adminId, count: 2 }]);
+        const refused = await assign(USERS.OWNER, [pid(1), pid(20)], [{ analystId: USERS.BEN.adminId, count: 2 }]);
         assert.deepEqual([refused.status, refused.body.code], [409, "ALREADY_ALLOCATED"]);
         assert.equal((await allocations())[pid(20)], undefined, "the unallocated one was not assigned either");
 
-        const { status, body } = await assign(USERS.MANAGER, [pid(1), pid(20)], [{ analystId: USERS.BEN.adminId, count: 2 }], { reassign: true });
+        const { status, body } = await assign(USERS.OWNER, [pid(1), pid(20)], [{ analystId: USERS.BEN.adminId, count: 2 }], { reassign: true });
         assert.equal(status, 200);
         assert.deepEqual([body.assigned, body.reassigned], [1, 1]);
         assert.equal((await allocations())[pid(1)], USERS.BEN.adminId);
@@ -517,7 +517,7 @@ describe("Work Allocation API: assigning", () => {
         const moved = rows.find((r) => r.action === "REASSIGN_CANDIDATE");
         assert.deepEqual(
             [moved.passportId, JSON.parse(moved.previousValue).name, JSON.parse(moved.newValue).name, moved.adminId],
-            [pid(1), "Ann Analyst", "Ben Analyst", USERS.MANAGER.adminId],
+            [pid(1), "Ann Analyst", "Ben Analyst", USERS.OWNER.adminId],
         );
         assert.deepEqual(rows.map((r) => r.action).sort(), ["ASSIGN_CANDIDATE", "REASSIGN_CANDIDATE"]);
     });
@@ -533,7 +533,7 @@ describe("Work Allocation API: assigning", () => {
         const ids = [pid(10), pid(11), pid(12)];
         const results = await Promise.all([
             assign(USERS.ADMIN, ids, [{ analystId: USERS.ANN.adminId, count: 3 }]),
-            assign(USERS.MANAGER, ids, [{ analystId: USERS.BEN.adminId, count: 3 }]),
+            assign(USERS.OWNER, ids, [{ analystId: USERS.BEN.adminId, count: 3 }]),
         ]);
         assert.deepEqual(results.map((r) => r.status).sort(), [200, 409]);
         const owners = new Set(Object.values(await allocations()));
@@ -559,22 +559,22 @@ describe("Work Allocation API: unassigning", () => {
 describe("Work Allocation API: lists and workload", () => {
     test("Unallocated (default) and Allocated views, server-side search and paging, with the current Analyst", async () => {
         await seedAllocations();
-        const unallocated = (await api(USERS.MANAGER, "GET", "/work-allocation/candidates")).body;
+        const unallocated = (await api(USERS.OWNER, "GET", "/work-allocation/candidates")).body;
         assert.equal(unallocated.pagination.totalItems, TOTAL - 5);
         assert.ok(unallocated.items.every((item) => item.analyst === null));
         assert.deepEqual(Object.keys(unallocated.items[0]).sort(), [
             "analyst", "assignedDate", "contactNumber", "currentStage", "jobTypes", "name", "nic", "passportId", "registeredDate",
             "stagesCompleted", "stagesTotal", "uniqueId", "whatsappNumber", "workflowStatus",
         ]);
-        const allocated = (await api(USERS.MANAGER, "GET", "/work-allocation/candidates?status=ALLOCATED")).body;
+        const allocated = (await api(USERS.OWNER, "GET", "/work-allocation/candidates?status=ALLOCATED")).body;
         assert.deepEqual(allocated.items.map((item) => [item.passportId, item.analyst.name]), [
             [pid(5), "Ben Analyst"], [pid(4), "Ben Analyst"], [pid(3), "Ann Analyst"], [pid(2), "Ann Analyst"], [pid(1), "Ann Analyst"],
         ]);
-        const bens = (await api(USERS.MANAGER, "GET", `/work-allocation/candidates?status=ALLOCATED&analystId=${USERS.BEN.adminId}`)).body;
+        const bens = (await api(USERS.OWNER, "GET", `/work-allocation/candidates?status=ALLOCATED&analystId=${USERS.BEN.adminId}`)).body;
         assert.deepEqual(bens.items.map((item) => item.passportId), [pid(5), pid(4)]);
-        const search = (await api(USERS.MANAGER, "GET", "/work-allocation/candidates?search=0710000020")).body;
+        const search = (await api(USERS.OWNER, "GET", "/work-allocation/candidates?search=0710000020")).body;
         assert.deepEqual(search.items.map((item) => item.passportId), [pid(20)]);
-        assert.equal((await api(USERS.MANAGER, "GET", "/work-allocation/candidates?status=BOTH")).status, 400);
+        assert.equal((await api(USERS.OWNER, "GET", "/work-allocation/candidates?status=BOTH")).status, 400);
     });
 
     test("22. Analysts: only ACTIVE Analysts are assignable, with their current counts; inactive holders are listed apart", async () => {

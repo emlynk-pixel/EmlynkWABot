@@ -89,7 +89,7 @@ const COLUMNS = [
     ["AL", "ACTIVE STATUS", "recordStatus", SYSTEM],
     ["AM", "REGISTER DATE", "registeredAt", SYSTEM],
     ["AN", "LAST MIRRORED AT", "lastMirroredAt", SYSTEM],
-    // Candidate Form answers, only once an Admin / Manager confirmed them into the record
+    // Candidate Form answers, only once an Admin confirmed them into the record
     // (candidate_additional_details; candidateFormFieldConfirmService.js).
     ["AO", "FULL NAME", "nameAsInPassport", DB],
     ["AP", "CIVIL STATUS / MARITAL STATUS", "civilStatus", DB],

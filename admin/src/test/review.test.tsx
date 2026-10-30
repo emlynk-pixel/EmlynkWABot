@@ -226,9 +226,9 @@ describe("Review Detail", () => {
         expect(await screen.findByRole("heading", { name: "Review item not found" })).toBeInTheDocument();
     });
 
-    test("MANAGER sees the review actions (the backend allows MANAGER to review)", async () => {
+    test("an ANALYST sees the review actions (the backend allows ANALYST to review)", async () => {
         signedInBackend({
-            "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "MANAGER" } } },
+            "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "ANALYST" } } },
             [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: ITEM },
             [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse,
         });

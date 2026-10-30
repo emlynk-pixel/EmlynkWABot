@@ -23,11 +23,11 @@ import { FOLLOW_UP_STATUS, listFollowUps } from "../src/services/callLogFollowUp
 const MIGRATION = "20261011120000_call_log_follow_up";
 const USERS = {
     ADMIN: { adminId: "user-admin", authUserId: "00000000-0000-4000-8000-000000000001", name: "Ada Admin", email: "ada@example.invalid", role: "ADMIN" },
-    MANAGER: { adminId: "user-manager", authUserId: "00000000-0000-4000-8000-000000000002", name: "Max Manager", email: "max@example.invalid", role: "MANAGER" },
+    OWNER: { adminId: "user-owner", authUserId: "00000000-0000-4000-8000-000000000002", name: "Olive Owner", email: "olive@example.invalid", role: "OWNER" },
     ANALYST: { adminId: "user-analyst", authUserId: "00000000-0000-4000-8000-000000000003", name: "Ann Analyst", email: "ann@example.invalid", role: "ANALYST" },
     REGISTRATION_DESK: { adminId: "user-desk", authUserId: "00000000-0000-4000-8000-000000000004", name: "Dee Desk", email: "dee@example.invalid", role: "REGISTRATION_DESK" },
 };
-const STAFF_ROLES = ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"];
+const STAFF_ROLES = ["ADMIN", "OWNER", "ANALYST", "REGISTRATION_DESK"];
 const BASE = {
     surname: "De Soysa", otherNames: "Anusha", address: "Negombo, Sri Lanka", dateOfBirth: "1996-02-23",
     jobTypes: ["Caregiver"], jobExperience: "2 years", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14",
@@ -194,7 +194,7 @@ describe("flagging a call log", () => {
         assert.equal(again.body.code, "FOLLOW_UP_EXISTS");
 
         const other = await logCall(A, "Police report pending");
-        const both = await Promise.all([flag("ADMIN", A, other), flag("MANAGER", A, other)]);
+        const both = await Promise.all([flag("ADMIN", A, other), flag("OWNER", A, other)]);
         assert.deepEqual(both.map((r) => r.status).sort(), [201, 409]);
         assert.equal(await prisma.callLogFollowUp.count({ where: { callLogId: other, status: "OPEN" } }), 1);
         // The database enforces it too, whatever the API checks.
@@ -374,7 +374,7 @@ describe("deleting a follow-up", () => {
         };
     }
 
-    for (const role of ["ADMIN", "MANAGER"]) {
+    for (const role of ["ADMIN", "OWNER"]) {
         test(`19-20, 23-26. ${role} deletes the follow-up row only: the call log, candidate and documents stay`, async () => {
             await addDocument(A, "PASSPORT");
             const { callLogId, followUpId } = await flagged(A, "Passport not uploaded", "ANALYST");
@@ -414,10 +414,10 @@ describe("deleting a follow-up", () => {
     test("a completed follow-up can be deleted too; an unknown one is 404", async () => {
         const { followUpId } = await flagged(A, "x");
         await complete("ANALYST", followUpId);
-        assert.equal((await remove("MANAGER", followUpId)).status, 200);
+        assert.equal((await remove("OWNER", followUpId)).status, 200);
         assert.equal(await followUpRow(followUpId), null);
-        assert.equal((await remove("MANAGER", followUpId)).status, 404);
-        assert.equal((await remove("MANAGER", "nope")).status, 400);
+        assert.equal((await remove("OWNER", followUpId)).status, 404);
+        assert.equal((await remove("OWNER", "nope")).status, 400);
     });
 });
 
@@ -425,12 +425,12 @@ describe("audit", () => {
     test("flag, complete and delete are each written once, by the signed-in user, with the candidate", async () => {
         const { followUpId } = await flagged(A, "x", "REGISTRATION_DESK");
         await complete("ANALYST", followUpId);
-        await remove("MANAGER", followUpId);
+        await remove("OWNER", followUpId);
         const rows = await followUpAudit();
         assert.deepEqual(rows.map((r) => [r.action, r.adminId, r.passportId, r.previousStatus, r.newStatus]), [
             ["FLAG_FOLLOW_UP", USERS.REGISTRATION_DESK.adminId, A, "NONE", "OPEN"],
             ["COMPLETE_FOLLOW_UP", USERS.ANALYST.adminId, A, "OPEN", "COMPLETED"],
-            ["DELETE_FOLLOW_UP", USERS.MANAGER.adminId, A, "COMPLETED", "DELETED"],
+            ["DELETE_FOLLOW_UP", USERS.OWNER.adminId, A, "COMPLETED", "DELETED"],
         ]);
     });
 
@@ -564,10 +564,10 @@ describe("candidate history (activity with the call logs)", () => {
     test("14. a details update lists the changed fields' names only, never their values", async () => {
         const { values, errors } = parseCandidateBody({ ...BASE, nic: "965404378V", whatsappNumber: "+94771234567", address: "12 Temple Road, Kandy", contactNumber: "0711111111" }, { creating: false });
         assert.equal(errors, undefined, JSON.stringify(errors));
-        await updateCandidateDetails({ db: prisma, passportId: A, values, actor: USERS.MANAGER });
+        await updateCandidateDetails({ db: prisma, passportId: A, values, actor: USERS.OWNER });
         const body = await history();
         const update = body.activity.find((a) => a.kind === "DETAILS_UPDATED");
-        assert.equal(update.actorName, USERS.MANAGER.name);
+        assert.equal(update.actorName, USERS.OWNER.name);
         assert.deepEqual(update.fields.sort(), ["address", "contactNumber"]);
         assert.doesNotMatch(JSON.stringify(body.activity), /Temple Road|0711111111/);
     });
@@ -725,7 +725,7 @@ describe("No Answer calls", () => {
         const group = (await list("ANALYST")).body.groups.find((g) => g.candidate.passportId === A);
         assert.deepEqual([group.followUps[0].callLog.outcome, group.followUps[0].callLog.note], ["NO_ANSWER", ""]);
         assert.equal((await complete("ANALYST", flagged.body.followUp.followUpId)).status, 200);
-        assert.equal((await remove("MANAGER", flagged.body.followUp.followUpId)).status, 200);
+        assert.equal((await remove("OWNER", flagged.body.followUp.followUpId)).status, 200);
         assert.equal((await rows()).length, 1, "the call log is kept");
         assert.equal((await callLogRow(callLogId)).callOutcome, "NO_ANSWER");
     });

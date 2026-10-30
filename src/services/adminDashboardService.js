@@ -89,7 +89,7 @@ function toPendingItem(row) {
 // ---------------------------------------------------------------- overview
 
 // scope: the signed-in user's candidates (candidateAccess.js candidateScope),
-// empty for ADMIN, MANAGER and REGISTRATION_DESK. For an Analyst every figure
+// empty for ADMIN and REGISTRATION_DESK. For an Analyst every figure
 // and list counts their own candidates (and the waiting files not yet linked
 // to anyone), so another Analyst's candidates never show up here.
 export async function getOverview({ db, now = new Date(), scope = {} }) {

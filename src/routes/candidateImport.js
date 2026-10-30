@@ -8,7 +8,7 @@
 //   POST /:importId/finish          totals, audit, and the existing RECONCILE run
 //   GET  /:importId                 the import's state (counts only)
 //
-// ADMIN and MANAGER only (requireRole; the role is re-read from the database on every request).
+// ADMIN only (an OWNER too; requireRole, the role is re-read from the database on every request).
 // The workbook itself never reaches the server: the browser reads it and sends only the
 // allow-listed columns. This router parses its own, larger JSON bodies (a preview of up to
 // MAX_IMPORT_ROWS rows), and only after the admin router has authenticated the request; the
@@ -22,7 +22,7 @@ import {
     CandidateImportError, commitChunk, finishImport, getImport, importSourceColumns, isValidImportId, parseChunkBody, parsePreviewBody, previewImport,
 } from "../services/candidateImportService.js";
 
-export const CANDIDATE_IMPORT_ROLES = Object.freeze([ROLES.ADMIN, ROLES.MANAGER]);
+export const CANDIDATE_IMPORT_ROLES = Object.freeze([ROLES.ADMIN]);
 // A preview of MAX_IMPORT_ROWS allow-listed rows stays well under this (and under Vercel's 4.5 MB).
 export const CANDIDATE_IMPORT_BODY_LIMIT = "4mb";
 

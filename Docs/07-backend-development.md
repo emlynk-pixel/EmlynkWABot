@@ -25,7 +25,7 @@ src/
 │   └── requiredDocuments.js  # Configuration of mandatory client document types
 ├── middleware/
 │   ├── requireActiveUser.js        # Verifies the Supabase session, then loads public."user" and requires ACTIVE, on every request
-│   ├── requireRole.js              # RBAC (ADMIN, MANAGER, ANALYST, REGISTRATION_DESK) from public."user".role
+│   ├── requireRole.js              # RBAC (OWNER, ADMIN, ANALYST, REGISTRATION_DESK, JOB_HANDLER) from public."user".role
 │   ├── apiRateLimiter.js           # Generic API rate limiter
 │   ├── postgresRateLimitStore.js   # Shared PostgreSQL-backed store for the limiter (08-cloud-deployment.md)
 │   ├── verifyWhatsAppSignature.js  # Raw-body HMAC-SHA256 signature verification
@@ -84,26 +84,26 @@ Sign-in, sign-out, password recovery and the invitation email are **Supabase Aut
 
 | Method | Path | Purpose | Role |
 |---|---|---|---|
-| GET | `/api/admin/overview` | KPIs, status breakdown, review summary | ADMIN, MANAGER, ANALYST |
-| GET | `/api/admin/documents` | List stored documents, filters/sort/paging | ADMIN, MANAGER, ANALYST |
-| GET | `/api/admin/documents/missing` | Clients missing required documents | ADMIN, MANAGER, ANALYST |
-| POST | `/api/admin/documents/:documentId/police-date` | Correct a stored police slip's date | ADMIN, MANAGER |
-| GET | `/api/admin/clients` | Client directory, search, completion filters | ADMIN, MANAGER, ANALYST |
-| GET | `/api/admin/clients/:passportId` | Client detail: documents, countdown, audit history | ADMIN, MANAGER, ANALYST |
-| GET | `/api/admin/review` | Review queue listing | ADMIN, MANAGER, ANALYST |
-| GET | `/api/admin/review/:reviewId` | Review item detail | ADMIN, MANAGER, ANALYST |
-| GET | `/api/admin/review/:reviewId/file` | Sandboxed file preview stream | ADMIN, MANAGER, ANALYST |
-| POST | `/api/admin/review/:reviewId/approve` | Approve → permanent client folder | ADMIN, MANAGER, ANALYST |
-| POST | `/api/admin/review/:reviewId/keep-pending` | Leave in review with a reason | ADMIN, MANAGER, ANALYST |
-| POST | `/api/admin/review/:reviewId/remove` | Delete the waiting file and record | ADMIN, MANAGER, ANALYST |
-| POST | `/api/admin/review/:reviewId/retry` | Re-queue a failed submission | ADMIN, MANAGER, ANALYST |
-| POST | `/api/admin/review/:reviewId/replace-verified` | Replace an existing verified document | ADMIN, MANAGER, ANALYST |
-| POST | `/api/admin/review/:reviewId/keep-as-version` | Keep alongside an existing verified document | ADMIN, MANAGER, ANALYST |
-| POST | `/api/admin/review/:reviewId/document-type` | Correct a misclassified type | ADMIN, MANAGER, ANALYST |
-| POST | `/api/admin/review/:reviewId/assign-client` | Link an unidentified submission to a client | ADMIN, MANAGER, ANALYST |
-| DELETE | `/api/admin/temporary-documents/:temporaryId` | Manually delete a temporary document | ADMIN, MANAGER, ANALYST |
-| GET | `/api/admin/police` | Police workflow status table | ADMIN, MANAGER, ANALYST |
-| GET | `/api/admin/reports/daily` | Business-day figures (Asia/Colombo) | ADMIN, MANAGER, ANALYST |
+| GET | `/api/admin/overview` | KPIs, status breakdown, review summary | ADMIN, ANALYST |
+| GET | `/api/admin/documents` | List stored documents, filters/sort/paging | ADMIN, ANALYST |
+| GET | `/api/admin/documents/missing` | Clients missing required documents | ADMIN, ANALYST |
+| POST | `/api/admin/documents/:documentId/police-date` | Correct a stored police slip's date | ADMIN |
+| GET | `/api/admin/clients` | Client directory, search, completion filters | ADMIN, ANALYST |
+| GET | `/api/admin/clients/:passportId` | Client detail: documents, countdown, audit history | ADMIN, ANALYST |
+| GET | `/api/admin/review` | Review queue listing | ADMIN, ANALYST |
+| GET | `/api/admin/review/:reviewId` | Review item detail | ADMIN, ANALYST |
+| GET | `/api/admin/review/:reviewId/file` | Sandboxed file preview stream | ADMIN, ANALYST |
+| POST | `/api/admin/review/:reviewId/approve` | Approve → permanent client folder | ADMIN, ANALYST |
+| POST | `/api/admin/review/:reviewId/keep-pending` | Leave in review with a reason | ADMIN, ANALYST |
+| POST | `/api/admin/review/:reviewId/remove` | Delete the waiting file and record | ADMIN, ANALYST |
+| POST | `/api/admin/review/:reviewId/retry` | Re-queue a failed submission | ADMIN, ANALYST |
+| POST | `/api/admin/review/:reviewId/replace-verified` | Replace an existing verified document | ADMIN, ANALYST |
+| POST | `/api/admin/review/:reviewId/keep-as-version` | Keep alongside an existing verified document | ADMIN, ANALYST |
+| POST | `/api/admin/review/:reviewId/document-type` | Correct a misclassified type | ADMIN, ANALYST |
+| POST | `/api/admin/review/:reviewId/assign-client` | Link an unidentified submission to a client | ADMIN, ANALYST |
+| DELETE | `/api/admin/temporary-documents/:temporaryId` | Manually delete a temporary document | ADMIN, ANALYST |
+| GET | `/api/admin/police` | Police workflow status table | ADMIN, ANALYST |
+| GET | `/api/admin/reports/daily` | Business-day figures (Asia/Colombo) | ADMIN, ANALYST |
 
 Full detail on every review action and its audit trail: `09a-admin-dashboard-api.md`.
 

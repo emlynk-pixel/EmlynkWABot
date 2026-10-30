@@ -16,7 +16,7 @@ import { Card, EmptyState, ErrorState, LoadingState } from "../components/States
 // route, API and audit names): call logs marked as needing attention, one
 // card per candidate with their follow-ups (newest first). Open by default;
 // Completed shows the history. Every Candidates role can mark one complete;
-// ADMIN and MANAGER can delete one. Completing or deleting a follow-up never
+// ADMIN can delete one. Completing or deleting a follow-up never
 // changes the call log: it stays in the candidate's Candidate History.
 
 // Row actions, a size smaller than the dialog buttons.

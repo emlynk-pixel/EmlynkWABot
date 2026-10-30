@@ -22,7 +22,7 @@ let verifierFailure = null;
 
 before(async () => {
     db = createFakeAdminDb([
-        { adminId: "user-active", name: "Active User", email: "active@example.invalid", role: "MANAGER", status: "ACTIVE" },
+        { adminId: "user-active", name: "Active User", email: "active@example.invalid", role: "ADMIN", status: "ACTIVE" },
         { adminId: "user-inactive", name: "Inactive User", email: "inactive@example.invalid", role: "ADMIN", status: "INACTIVE" },
         { adminId: "user-invited", name: "Invited User", email: "invited@example.invalid", role: "ANALYST", status: "INVITED" },
         { adminId: "user-signout", name: "Signing Out", email: "signout@example.invalid", role: "ANALYST", status: "ACTIVE" },
@@ -64,7 +64,7 @@ describe("GET /auth/me (Supabase session -> application user)", () => {
     test("valid session of an ACTIVE user -> the minimal profile; role from the database", async () => {
         const result = await me(tokenFor("user-active"));
         assert.equal(result.status, 200);
-        assert.deepEqual(JSON.parse(result.text), { user: { userId: "user-active", email: "active@example.invalid", name: "Active User", role: "MANAGER", status: "ACTIVE" } });
+        assert.deepEqual(JSON.parse(result.text), { user: { userId: "user-active", email: "active@example.invalid", name: "Active User", role: "ADMIN", status: "ACTIVE" } });
         assert.equal(result.headers.get("cache-control"), "no-store");
         assert.doesNotMatch(result.text, /authUserId|password|token|secret/i, "no identity link, credential or token in the response");
     });
@@ -111,7 +111,21 @@ describe("GET /auth/me (Supabase session -> application user)", () => {
         assert.equal(JSON.parse((await me(tokenFor("user-active"))).text).user.role, "ANALYST");
         row.status = "INACTIVE";
         assert.equal((await me(tokenFor("user-active"))).status, 403);
-        Object.assign(row, { role: "MANAGER", status: "ACTIVE" });
+        Object.assign(row, { role: "ADMIN", status: "ACTIVE" });
+    });
+
+    test("an ACTIVE account still holding the retired MANAGER role (or any unknown role) is refused: 403 ROLE_NOT_SUPPORTED, no profile", async () => {
+        const row = db.rows.find((r) => r.adminId === "user-active");
+        try {
+            for (const role of ["MANAGER", "VIEWER"]) {
+                row.role = role;
+                const result = await me(tokenFor("user-active"));
+                assert.equal(result.status, 403, role);
+                assert.deepEqual(JSON.parse(result.text), { message: "Your account's role is no longer supported. Contact the Owner to update it.", code: "ROLE_NOT_SUPPORTED" }, role);
+            }
+        } finally {
+            row.role = "ADMIN";
+        }
     });
 
     test("the identity comes only from the verified token, never the request", async () => {

@@ -3,7 +3,7 @@ import { apiRequest } from "./client";
 
 // Client Management (src/services/clientService.js, /api/admin/client-management).
 // A Client is the employer / customer organisation. It works with MANY Agents (and
-// an Agent with many Clients: agent_client) and has many Jobs. ADMIN and MANAGER
+// an Agent with many Clients: agent_client) and has many Jobs. ADMIN and JOB_HANDLER
 // only. Never deleted: ACTIVE or INACTIVE.
 // (The legacy candidate "Clients" area is /api/admin/clients, api/admin.ts.)
 

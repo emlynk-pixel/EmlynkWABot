@@ -2,19 +2,19 @@
 // Supabase Auth owns every credential, session, invitation email and
 // password; this service owns the application profile, its role and its
 // status, and the audit trail. The caller (routes/users.js) has already
-// checked the actor's role (OWNER or ADMIN; or MANAGER for an invitation); this
-// service holds the finer rules (requireRole.js ASSIGNABLE_ROLES / INVITABLE_ROLES)
-// and decides them on the database rows, never on the request:
+// checked the actor's role (OWNER or ADMIN); this service holds the finer rules
+// (requireRole.js ASSIGNABLE_ROLES) and decides them on the database rows, never on the request:
 //   - an OWNER changes any account but their own and an OWNER's; an ADMIN only accounts
 //     below ADMIN, and gives only roles below ADMIN (403 otherwise, never a lesser role instead);
 //   - nobody gives the OWNER role or changes an OWNER account here (403 OWNER_LOCKED): the
 //     OWNER is set in the database only (Docs/OWNER_ROLE.md);
-//   - a MANAGER invites a NEW Job Handler only.
+//   - a retired role (requireRole.js RETIRED_ROLES, e.g. MANAGER) is never given (400
+//     INVALID_ROLE); an account still holding one is changed by an OWNER only.
 // Each change re-reads the actor and the target inside its transaction, with their rows
 // locked (lockUserRows), so a stale actor cannot get past these rules.
 //
 // Invite flow:
-//   OWNER (ADMIN and below), ADMIN (below ADMIN) or MANAGER (JOB_HANDLER)
+//   OWNER (ADMIN and below) or ADMIN (below ADMIN)
 //     -> POST /api/admin/users/invite { email, name, role }
 //     -> role validated here (never taken from Supabase user metadata)
 //     -> Supabase Auth Admin inviteUserByEmail (Supabase sends the email)
@@ -33,7 +33,7 @@
 
 import crypto from "node:crypto";
 
-import { ALL_ROLES, ROLES, USER_MANAGER_ROLES, canAssignRole, canInviteRole, canManageAccount, isValidRole } from "../middleware/requireRole.js";
+import { ALL_ROLES, ROLES, USER_MANAGER_ROLES, canAssignRole, canManageAccount, isValidRole } from "../middleware/requireRole.js";
 import { USER_STATUS } from "../middleware/requireActiveUser.js";
 import { AuthAdminError } from "../auth/supabaseAuthAdmin.js";
 
@@ -81,18 +81,15 @@ const assertCanChange = (actor, target, newRole = null) => {
     if (newRole !== null && !canAssignRole(actor.role, newRole)) throw ownerRequired();
 };
 
-// Inviting (requireRole.js INVITABLE_ROLES): OWNER may invite ADMIN and below, ADMIN the
-// roles below ADMIN, MANAGER only a Job Handler. Inviting an existing email updates its role
-// and may reactivate it, so it is a change of that account: an OWNER may do it to any account
-// but an OWNER's, an ADMIN to an account below ADMIN only. A MANAGER's invitation never touches an account
-// that already exists in any other way: re-sending a pending Job Handler invitation is the
-// only re-invite it may do.
+// Inviting (requireRole.js ASSIGNABLE_ROLES): OWNER may invite ADMIN and below, ADMIN the
+// roles below ADMIN. Inviting an existing email updates its role and may reactivate it, so it
+// is a change of that account: an OWNER may do it to any account but an OWNER's, an ADMIN to
+// an account below ADMIN only.
 const assertCanInvite = (actor, role, existing) => {
-    if (actor?.status !== USER_STATUS.ACTIVE || !canInviteRole(actor.role, role)) throw forbidden();
+    assertUserManager(actor);
+    if (!canAssignRole(actor.role, role)) throw forbidden();
     if (!existing || canManageAccount(actor.role, existing.role)) return;
-    if (USER_MANAGER_ROLES.includes(actor.role)) throw existing.role === ROLES.OWNER ? ownerLocked() : ownerRequired();
-    if (existing.status === USER_STATUS.INVITED && existing.role === ROLES.JOB_HANDLER) return;
-    throw new UserAccountError(403, "ADMIN_REQUIRED", "This email already belongs to an account. Only an administrator can re-invite, reactivate or change it.");
+    throw existing.role === ROLES.OWNER ? ownerLocked() : ownerRequired();
 };
 
 // Locks (SELECT ... FOR UPDATE) the actor's and the target's rows, in admin_id order (two
@@ -143,7 +140,7 @@ export async function listUsers({ db }) {
 export async function inviteUser({ db, authAdmin, actor, values, redirectTo }) {
     const { email, name, role } = values;
     // Which role this actor may give, before anything else (nothing is read or sent for a refusal).
-    if (actor?.status !== USER_STATUS.ACTIVE || !canInviteRole(actor.role, role)) throw new UserAccountError(403, "FORBIDDEN", "Insufficient permissions");
+    if (actor?.status !== USER_STATUS.ACTIVE || !canAssignRole(actor.role, role)) throw forbidden();
     // Never let Supabase fall back to its Site URL for the invitation link.
     if (typeof redirectTo !== "string" || redirectTo === "") {
         throw new UserAccountError(503, "INVITE_NOT_CONFIGURED", "Invitations are not configured: no redirect address.");

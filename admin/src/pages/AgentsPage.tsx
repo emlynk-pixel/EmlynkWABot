@@ -12,7 +12,7 @@ import { CountrySelect, EntityStatusBadge, MultiSelect, RestrictedPage, StatusDi
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl, tableCell, tableHead, tableRow, textareaClass } from "../components/ui";
 
-// Admin > Agents (ADMIN and MANAGER). An Agent is a business entity, not a
+// Admin > Agents (ADMIN and JOB_HANDLER). An Agent is a business entity, not a
 // login: a recruiting partner in one country that works with many Clients (and a
 // Client with many Agents). Agents are never deleted; INACTIVE agents keep their
 // history but take no new Client.

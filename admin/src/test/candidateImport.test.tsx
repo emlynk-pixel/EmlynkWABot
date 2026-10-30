@@ -46,14 +46,12 @@ describe("Upload button and roles", () => {
         expect(screen.getByRole("tooltip")).toBeVisible();
     });
 
-    test("2/3. MANAGER opens Google Sheet Sync and gets Upload; Test Connection, Sync Now and the destination switch stay ADMIN only", async () => {
-        asRole("MANAGER");
+    test("2/3. OWNER (an ADMIN permission) opens Google Sheet Sync and gets Upload, Test Connection and Sync Now", async () => {
+        asRole("OWNER");
         renderApp("/settings/sheet-sync");
         expect(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP)).toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: "Test Connection" })).toBeNull();
-        expect(screen.queryByRole("button", { name: "Sync Now" })).toBeNull();
-        expect(await screen.findByText("Main Mirror")).toBeInTheDocument();
-        expect(screen.queryByRole("combobox", { name: "Google Sheet" })).toBeNull();
+        expect(screen.getByRole("button", { name: "Test Connection" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Sync Now" })).toBeInTheDocument();
     });
 
     for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
@@ -117,7 +115,7 @@ describe("the import flow", () => {
     test("upload -> preview (nothing saved) -> explicit confirm -> chunks one at a time -> result and sync requested", async () => {
         readWorkbookMock.mockResolvedValue({ headers: ["PASSPORT NUMBER", "SURNAME", "OTHER NAME", "LOAN APPLY AMOUNT"], rows: ROWS, missingRequired: [] });
         const chunk = (created: number, invalid = 0) => ({ status: 200, body: { chunkIndex: 0, status: "COMMITTED", counts: { rows: created + invalid, created, invalid, warnings: created === 1 ? 1 : 0 }, failures: [] } });
-        const { calls } = asRole("MANAGER", {
+        const { calls } = asRole("ADMIN", {
             [`GET ${BASE}/import/source-columns`]: { status: 200, body: { allowed: ALLOWED, required: REQUIRED } },
             [`POST ${BASE}/import/preview`]: { status: 200, body: PREVIEW },
             [`POST ${BASE}/import/${PREVIEW.importId}/chunks/0`]: chunk(2),

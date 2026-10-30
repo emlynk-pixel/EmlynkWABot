@@ -6,15 +6,15 @@ import { ROLES, hasRole } from "../middleware/requireRole.js";
 // read from the database by requireActiveUser, and the allocation here), so
 // a reassignment or role change applies to the very next request.
 //
-//   OWNER, ADMIN, MANAGER,              every candidate
+//   OWNER, ADMIN,                       every candidate
 //   REGISTRATION_DESK
 //   JOB_HANDLER                         every candidate, to READ (routes/admin.js gives it
 //                                       no candidate write route) and to staff its jobs
 //   ANALYST                             only the candidates allocated to them
 //                                       (candidate_allocation.analyst_id)
-//   anything else                       none (fails closed)
+//   anything else                       none (fails closed; a retired MANAGER too)
 
-const UNRESTRICTED_ROLES = Object.freeze([ROLES.ADMIN, ROLES.MANAGER, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER]);
+const UNRESTRICTED_ROLES = Object.freeze([ROLES.ADMIN, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER]);
 
 // Matches no candidate: a passport ID is never empty.
 const NO_CANDIDATE = Object.freeze({ passportId: { in: [] } });
@@ -86,6 +86,3 @@ export async function canAccessCandidate(db, user, passportId) {
     const row = await db.candidate.findFirst({ where: { AND: [{ passportId }, candidateScope(user)] }, select: { passportId: true } });
     return Boolean(row);
 }
-
-// Work Allocation itself (the page and its API): ADMIN and MANAGER only.
-export const ALLOCATION_MANAGER_ROLES = Object.freeze([ROLES.ADMIN, ROLES.MANAGER]);
