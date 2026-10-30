@@ -1973,6 +1973,12 @@ Other platforms were evaluated as alternatives, but the existing hybrid architec
 | `gcloud build 403 billing disabled` | Cloud Billing account closed/not in good standing | Resolve billing account before build/deploy |
 | `--follow unrecognized` | Unsupported gcloud logs option | Use supported logging method |
 | npm PowerShell permission error | Execution policy | `Set-ExecutionPolicy ... RemoteSigned` |
+| Sign-in "Your account is not active" with `me` returning 401 | Backend rejected the token: browser and backend use different Supabase projects, or a wrong service-role key (see 53.2) | Use one project for `SUPABASE_URL`/key and `VITE_SUPABASE_*`; restart backend and Vite |
+| Sign-in "Your account is not active" with `me` returning 403 | `user` row missing, incomplete or not `ACTIVE` (see 53.1) | Add or repair the row (`PROJECT_SETUP.md` §6.6) |
+| Vite `Failed to resolve import "read-excel-file/browser"` | Dependency declared but not installed | `npm --prefix admin ci` (53.3) |
+| Sheet Sync runs stay `QUEUED`, `attempts 0` | Worker not running (`min-instances` 0 / CPU throttled) or on another database (53.4, 53.5) | `--min-instances=1 --max-instances=1 --no-cpu-throttling`; fix the `DATABASE_URL` secret and restart |
+| Sync updated the old Google Sheet | `SHEET_SPREADSHEET_ID` on Cloud Run still old; local `.env.prod` is not deployed (53.7) | Update the service env; keep `SHEET_SYNC_ENABLED=false` until verified |
+| `gcloud … unrecognized arguments: AND` in cmd | Single quotes in cmd | Use double quotes (53.8) |
 
 ---
 
@@ -3458,6 +3464,14 @@ Omitting these flags causes Cloud Run to start the Express API backend instead o
 - Always test both migration paths: clean-database path (fresh DB from scratch) and the real upgrade path from the shared database's historical state.
 - Note that the `dev` branch migration folder does not contain every Candidate Form migration even though the shared DB has them. This is expected due to branch separation, but it means migration integration must be handled carefully before branches are combined.
 
+## Environment Switches (New Supabase Project / Google Sheet)
+- Every layer keeps its own copy of the settings: Supabase, Secret Manager, Cloud Run env, Vercel and local files. Change and verify each one (`PROJECT_SETUP.md` section 11.4).
+- A new Secret Manager version does nothing until a new Cloud Run revision starts; plain variables like `SUPABASE_URL` are not affected by secrets at all.
+- Local env files (`.env.prod`, `.env.preview`) are never read by Cloud Run or Vercel.
+- A polling worker needs `min-instances=1` and CPU always on; a clean `SIGTERM` a few seconds after start is Cloud Run stopping an idle instance.
+- Keep `SHEET_SYNC_ENABLED=false` while changing the target Sheet. Confirm `target_hint` and Test Connection, then enable writing.
+- Compare project refs when two systems must share a database, and read HTTP status codes before trusting an error message (401 and 403 mean different things).
+
 ---
 
 # 52. Final Summary
@@ -3478,6 +3492,243 @@ Modern Date Picker   -> Universal react-day-picker Integration (Zero Timezone Sh
 ```
 
 The Google Cloud billing hold has been completely resolved, the background worker is active and healthy on Cloud Run, and the Admin Console provides end-to-end visibility across candidate registration, deployment stages, call logs, and daily productivity.
+
+---
+
+# 53. New Supabase Project and Google Sheet: Sign-In and Sheet Sync Troubleshooting
+
+**Date / Phase**: 2026-10-29 / Moving an environment to a new Supabase project, a new database and a new Google Sheet
+
+This section records what went wrong while an environment was pointed at a new Supabase project and a new Google Sheet. Most problems had one theme: **each layer (Supabase, Secret Manager, Cloud Run env, Vercel, local files) keeps its own copy of the settings, and none of them follows the others.** For the step-by-step procedure, see `PROJECT_SETUP.md` section 11.4.
+
+Statuses below say what was confirmed in the session. Where the final outcome was not reported back, it is marked **not confirmed**.
+
+---
+
+### 53.1 Admin Sign-In Failed With "Your account is not active" (Incomplete `user` Row)
+
+#### Problem
+A new Supabase Auth user was created and a row added to the application `user` table by hand, but sign-in showed "Your account is not active. Contact an administrator."
+
+#### Symptoms
+- The `user` row showed an **empty `admin_id`** and only a `name`.
+- Supabase accepted the password (token request returned 200).
+
+#### Root Cause
+The backend finds the application user by `auth_user_id` (the Supabase user's ID) and requires `status = 'ACTIVE'`. A row without `admin_id`, without a linked `auth_user_id`, or with a status other than `ACTIVE` fails with 403 `ACCOUNT_NOT_ACTIVE`.
+
+#### Solution
+Insert the row so that `auth_user_id` is taken from `auth.users` (it cannot be mistyped), or repair the incomplete row (both queries are in `PROJECT_SETUP.md` section 6.6):
+
+```sql
+insert into "user" (admin_id, auth_user_id, name, email, role, status)
+select gen_random_uuid()::text, id, '<Full Name>', email, 'ADMIN', 'ACTIVE'
+from auth.users where lower(email) = lower('<admin email>');
+```
+
+Alternative without SQL: `npm run user:create -- --email <admin email> --link --role ADMIN` (refuses if a row for that email already exists).
+
+#### Status
+Fix given. The same message continued afterwards, which led to 53.2.
+
+#### Lesson
+Required columns: `admin_id` (any unique text; the app uses a UUID), `auth_user_id`, `name`, `email`, `role`, `status = 'ACTIVE'`.
+
+---
+
+### 53.2 "Not Active" Message Shown for a 401 (Backend Rejected the Token)
+
+#### Problem
+After fixing the `user` row, sign-in still showed "Your account is not active".
+
+#### Symptoms
+Browser Network tab on the sign-in page:
+- `token?grant_type=password` → **200** (Supabase accepted the password)
+- `me` (`GET /auth/me`) → **401**
+- `logout?scope=local` → 204
+
+#### Root Cause
+A missing or inactive row gives **403**. A **401** means the backend refused the Supabase token: `supabase.auth.getUser(token)` failed with the backend's own `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. The most likely reason is that the browser signs in to one Supabase project (`VITE_SUPABASE_URL` in `admin/.env.local`) while the backend verifies against another, or that the service-role slot holds the wrong key. `AuthProvider.tsx` signs the user out silently on a 401, and `signIn` then shows the generic "not active" text, so the message is misleading.
+
+#### Solution (diagnosis given)
+1. Compare the project host in `SUPABASE_URL` (the `.env` the backend runs with) and `VITE_SUPABASE_URL`: they must be the same project.
+2. Check that the service-role key's decoded `ref` matches and its `role` is `service_role` (not `anon`).
+3. Restart the backend (started with the right env file) and Vite, then sign in again.
+
+#### Status
+**Not confirmed.** The later corrections in 53.5 and 53.6 (new secrets and URLs) address this class of mismatch, but the sign-in result was not reported back.
+
+#### Lesson
+Read the status code, not the message. 401 = token rejected by the backend; 403 = identity valid but no usable application account.
+
+---
+
+### 53.3 Vite: `Failed to resolve import "read-excel-file/browser"`
+
+#### Problem
+The admin dev server showed an overlay: `[plugin:vite:import-analysis] Failed to resolve import "read-excel-file/browser" from "src/components/importWorkbook.ts"`.
+
+#### Root Cause
+`read-excel-file` is declared in `admin/package.json` (9.3.12) and locked in `package-lock.json`, but `admin/node_modules/read-excel-file` did not exist. The local install predated the bulk candidate import feature that added the dependency.
+
+#### Solution
+Stop the dev server, install from the lockfile, start again:
+
+```powershell
+npm --prefix admin ci
+npm run admin:dev
+```
+
+If `npm ci` fails with `EPERM` on Windows, close running Node/Vite processes first.
+
+#### Status
+Fix given; the result was **not confirmed**.
+
+#### Lesson
+After switching branches or pulling, run `npm ci` in `admin/` (and `candidate-form/`) when `package.json` changed.
+
+---
+
+### 53.4 Google Sheet Sync Stuck: Sync and Connection Test Stayed "Queued" (Worker Not Running)
+
+#### Problem
+After linking a new Google Sheet, **Sync** and **Connection test** stayed "Queued" on **Settings → Google Sheet Sync**.
+
+#### Symptoms
+- `sheet_sync_runs` held a `RECONCILE` and a `TEST_CONNECTION` row, both `QUEUED`, `attempts 0`, `started_at` empty.
+- Worker logs showed `sheet_sync.worker_config` and `sheet_sync.worker_started`, then `Shutting down: { signal: 'SIGTERM' }` about 7 seconds later (2026-10-28 08:40, again 2026-10-29 05:19). No later entries.
+- "Pending / failed candidate syncs" showed 1 / 0.
+
+#### Root Cause
+The admin page only records a request in `sheet_sync_runs`. Only the Sheet sync worker (Cloud Run `emlynk-sheet-sync-worker`) can process it. The worker is a polling loop with no web traffic, so with `min-instances` at 0 (or CPU allocated only during requests) Cloud Run stopped the idle instance and nothing restarted it.
+
+#### Solution
+```bat
+gcloud run services update emlynk-sheet-sync-worker --region asia-south1 --min-instances=1 --max-instances=1 --no-cpu-throttling
+```
+
+#### Verification
+`describe` confirmed `minScale 1`, `maxScale 1`, `cpu-throttling 'false'` and all traffic on the latest revision. A `SIGTERM` seen shortly after one start was the previous revision being replaced by the next update, which is expected.
+
+#### Lesson
+A background worker needs an always-on instance. A clean `SIGTERM` after a few seconds is Cloud Run stopping the instance, not an application crash.
+
+---
+
+### 53.5 Worker Was Connected to the Old Database (Old `DATABASE_URL` Secret)
+
+#### Problem
+The worker started cleanly but never processed the queued runs.
+
+#### Symptoms
+- `sheet_sync_state`: `worker_heartbeat_at` NULL, `target_hint` NULL, `integration_state` UNKNOWN, in the **new** database.
+- No WARNING or ERROR entries in the worker log, and the worker heartbeats on its first tick, so the heartbeat was being written, but somewhere else.
+- Printing only the project ref of the `DATABASE_URL` secret showed the **old** project:
+  ```powershell
+  (gcloud secrets versions access latest --secret=DATABASE_URL) -replace '.*postgres\.([a-z0-9]+):.*','$1'
+  ```
+
+#### Root Cause
+The Cloud Run service read the `DATABASE_URL` secret, which still held the old database. The admin page (new database) queued requests that the worker (old database) never saw.
+
+#### Solution
+1. Add **new versions** of the secrets in Secret Manager: `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `META_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN` (`JWT_SECRET` and `SMTP_PASS` are no longer used).
+2. Restart each service on the new versions, because secrets are read when a revision starts:
+   ```bat
+   gcloud run services update emlynk-sheet-sync-worker --region asia-south1 --update-secrets=DATABASE_URL=DATABASE_URL:latest
+   ```
+3. If one secret is shared by several services, check what else reads it first, or bind a separate secret to one service.
+
+#### Verification
+The Settings page then showed integration status **OK**. `sheet_sync_runs` showed `TEST_CONNECTION` `SUCCEEDED` (`CONNECTED`, `SCHEMA_VALID`) and `RECONCILE` `SUCCEEDED`.
+
+#### Lesson
+A new secret version has no effect until a new revision starts. Compare project refs (not whole URLs) when two systems must share one database.
+
+---
+
+### 53.6 Cloud Run Still Showed the Old `SUPABASE_URL` (Plain Env Var, Not a Secret)
+
+#### Problem
+After the secrets were updated, the old Supabase URL was still visible.
+
+#### Root Cause
+`SUPABASE_URL` and `SUPABASE_BUCKET` are plain Cloud Run environment variables, not secrets. New secret versions never change them.
+
+#### Solution
+```bat
+gcloud run services update emlynk-submission-worker --region asia-northeast1 --update-env-vars=SUPABASE_URL=https://<NEW_REF>.supabase.co,SUPABASE_BUCKET=<NEW_BUCKET>
+```
+and the same for any other service holding them. The values can be printed safely: `gcloud run services describe <service> --region <region> --format="yaml(spec.template.spec.containers[0].env)"` shows plain values and only the **name** of each secret.
+
+Vercel needs the same change for `SUPABASE_URL` and `VITE_SUPABASE_URL`, then a redeploy **with the build cache cleared**, because `VITE_*` values are baked in at build time.
+
+#### Verification
+The new URL then appeared in the `describe` output.
+
+#### Lesson
+Secrets and plain variables are updated separately. List both when changing a project.
+
+---
+
+### 53.7 Sync Wrote to the Old Google Sheet (`SHEET_SPREADSHEET_ID` Not Updated on Cloud Run)
+
+#### Problem
+The sync succeeded, but it updated the **old** Google Sheet; the new production Sheet was not changed, although the new spreadsheet ID and name had been added to `.env.prod`.
+
+#### Symptoms
+- `sheet_sync_runs`: `RECONCILE` `SUCCEEDED`, `dry_run` **false**, summary `updated 1`, `appended 0`, `sheetRows 1`.
+- `sheet_sync_state`: `write_gate` `ENABLED`, `target_hint` `…JirMpE / Emlynk Candidate Operational Mirror`, the **old** spreadsheet's ending.
+
+#### Root Cause
+- `.env.prod` is a local file. Cloud Run does not read it, so the worker kept the old `SHEET_SPREADSHEET_ID` and `SHEET_TAB_NAME` from its last revision.
+- Writes were already enabled (`SHEET_SYNC_ENABLED` is `"true"` in `deploy/sheet-sync-worker.env.yaml`), so the run wrote to the old Sheet instead of only reporting. If `SHEET_SYNC_DESTINATIONS` is set, it also overrides the two variables above.
+
+#### Solution
+1. Set the new target on the service, with writes **off** until the new Sheet is verified:
+   ```bat
+   gcloud run services update emlynk-sheet-sync-worker --region asia-south1 --update-env-vars="SHEET_SPREADSHEET_ID=<NEW_ID>,SHEET_TAB_NAME=<TAB_NAME>,SHEET_SYNC_ENABLED=false"
+   ```
+2. Print the variables to confirm, and remove `SHEET_SYNC_DESTINATIONS` if it exists (`--remove-env-vars=SHEET_SYNC_DESTINATIONS`).
+3. Share the new Sheet with the worker's service account as **Editor** (`gcloud run services describe … --format="value(spec.template.spec.serviceAccountName)"`).
+4. Check `target_hint` ends with the new ID's last 6 characters, press **Test Connection** (`CONNECTED`, `SCHEMA_VALID`), then enable writing and press **Sync Now**.
+5. The old Sheet that was written to can be restored from its **Version history**.
+
+#### Status
+Fix given. The final `target_hint` and a write to the new Sheet were **not confirmed** in the session.
+
+#### Lesson
+A local env file never changes a deployed service. Disable writing while changing the target Sheet, and read `target_hint` before every enable.
+
+---
+
+### 53.8 Tooling Pitfalls on Windows (cmd vs PowerShell, Supabase SQL Editor)
+
+| Problem | Cause | Fix |
+|---|---|---|
+| `gcloud run services logs read …` failed with `INVALID_ARGUMENT: Unparseable filter` | Placeholders or quoting in the Windows shell | Use `gcloud logging read` with a double-quoted filter |
+| `gcloud logging read 'resource.type=… AND …'` failed with `unrecognized arguments: AND` | The prompt was **cmd**, where single quotes do not quote | Double quotes in cmd (single quotes only in PowerShell/bash) |
+| Some log lines were blank | The format printed only `textPayload` and `jsonPayload.event`; other entries have neither | Print `jsonPayload`, or filter with `severity>=WARNING` |
+| "The request was not authenticated" warnings | Someone opened the private service URL without a token | Harmless; the service is private by design |
+| Only one SQL result appeared | The Supabase SQL editor shows the result of the **last** statement only | Run each statement on its own |
+| The ref-extraction regex command failed in cmd | `-replace` is PowerShell syntax | Run it in PowerShell |
+
+---
+
+### 53.9 Summary and Prevention
+
+When moving an environment, change and verify **every** layer:
+
+| Layer | Updated how |
+|---|---|
+| Supabase project | migrations, bucket, Auth redirect URLs, admin `user` row |
+| Secret Manager | new secret **versions**, then a new revision of each reading service |
+| Cloud Run plain env vars | `--update-env-vars` (`SUPABASE_URL`, `SUPABASE_BUCKET`, `SHEET_*`) |
+| Vercel | new values on the right scope, redeploy with build cache cleared |
+| Sheet worker instance | `min-instances=1`, `max-instances=1`, `--no-cpu-throttling` |
+| Google Sheet | shared with the worker's service account as Editor |
+
+Keep `SHEET_SYNC_ENABLED=false` until `target_hint` and Test Connection show the new Sheet.
 
 ---
 
