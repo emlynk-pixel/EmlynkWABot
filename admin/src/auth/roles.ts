@@ -89,7 +89,7 @@ export const canRegisterCandidates = (user: WithRole) => hasRole(user, REGISTRAT
 export const isAdmin = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 export const isOwner = (user: WithRole) => user?.role === ROLES.OWNER;
 // Settings > Google Sheet Sync (src/routes/sheetSyncSettings.js): ADMIN, and MANAGER for the status
-// and Update Sheet (the bulk candidate import). Test Connection, Sync Now and the destination stay ADMIN.
+// and Upload (the bulk candidate import). Test Connection, Sync Now and the destination stay ADMIN.
 // A MANAGER sees no other Settings tab.
 export const SHEET_SYNC_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
 export const canOpenSheetSync = (user: WithRole) => hasRole(user, SHEET_SYNC_ROLES);

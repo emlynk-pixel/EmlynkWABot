@@ -7,7 +7,7 @@ import { formatNumber, humanize } from "./format";
 import { ToneBadge, type Tone } from "./StatusBadge";
 import { readWorkbook, WorkbookError } from "./importWorkbook";
 
-// Settings -> Google Sheet Sync -> Update Sheet: upload a legacy candidate sheet, preview, confirm.
+// Settings -> Google Sheet Sync -> Upload: upload a legacy candidate sheet, preview, confirm.
 //   1. choose a .xlsx: read HERE (the file never leaves the browser)
 //   2. preview: the server validates and classifies the allow-listed columns; nothing is written
 //   3. confirm: the rows are committed chunk by chunk, one request at a time
@@ -104,7 +104,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
         }
     }
 
-    const title = "Update Sheet: import candidates";
+    const title = "Upload: import candidates";
 
     if (step.kind === "choose" || step.kind === "reading") {
         return (

@@ -1,6 +1,6 @@
 import type { ImportRow } from "../api/candidateImport";
 
-// Reading the legacy candidate workbook IN THE BROWSER (Update Sheet). The file
+// Reading the legacy candidate workbook IN THE BROWSER (Upload). The file
 // never leaves this machine: only the allow-listed columns of each row are
 // sent to the server (which validates everything again). Nothing here logs.
 

@@ -5,7 +5,7 @@ import type { ImportPreview } from "../api/candidateImport";
 import { UPDATE_SHEET_HINT } from "../pages/SettingsPage";
 import { RENDER_STEP, renderApp, signedInBackend, userWithRole, type FetchRoutes } from "./helpers";
 
-// Settings -> Google Sheet Sync -> Update Sheet. SYNTHETIC rows only; the backend is stubbed.
+// Settings -> Google Sheet Sync -> Upload. SYNTHETIC rows only; the backend is stubbed.
 // The binary .xlsx read (read-excel-file) is replaced in the dialog flow; the column extraction
 // and file checks it feeds are tested for real below.
 
@@ -32,11 +32,11 @@ const asRole = (role: string, routes: FetchRoutes = {}) =>
 
 beforeEach(() => readWorkbookMock.mockReset());
 
-describe("Update Sheet button and roles", () => {
-    test("1. ADMIN sees Update Sheet (with its hint) next to Test Connection and Sync Now", async () => {
+describe("Upload button and roles", () => {
+    test("1. ADMIN sees Upload (with its hint) next to Test Connection and Sync Now", async () => {
         asRole("ADMIN");
         renderApp("/settings/sheet-sync");
-        const button = await screen.findByRole("button", { name: "Update Sheet" }, RENDER_STEP);
+        const button = await screen.findByRole("button", { name: "Upload" }, RENDER_STEP);
         expect(screen.getByRole("button", { name: "Test Connection" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Sync Now" })).toBeInTheDocument();
         expect(button).toHaveAccessibleDescription(UPDATE_SHEET_HINT);
@@ -46,10 +46,10 @@ describe("Update Sheet button and roles", () => {
         expect(screen.getByRole("tooltip")).toBeVisible();
     });
 
-    test("2/3. MANAGER opens Google Sheet Sync and gets Update Sheet; Test Connection, Sync Now and the destination switch stay ADMIN only", async () => {
+    test("2/3. MANAGER opens Google Sheet Sync and gets Upload; Test Connection, Sync Now and the destination switch stay ADMIN only", async () => {
         asRole("MANAGER");
         renderApp("/settings/sheet-sync");
-        expect(await screen.findByRole("button", { name: "Update Sheet" }, RENDER_STEP)).toBeInTheDocument();
+        expect(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Test Connection" })).toBeNull();
         expect(screen.queryByRole("button", { name: "Sync Now" })).toBeNull();
         expect(await screen.findByText("Main Mirror")).toBeInTheDocument();
@@ -57,11 +57,11 @@ describe("Update Sheet button and roles", () => {
     });
 
     for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
-        test(`4/5. ${role}: no Update Sheet, no Settings data`, async () => {
+        test(`4/5. ${role}: no Upload, no Settings data`, async () => {
             const { calls } = asRole(role);
             renderApp("/settings/sheet-sync");
             expect(await screen.findByRole("heading", { name: "Access Restricted" }, RENDER_STEP)).toBeInTheDocument();
-            expect(screen.queryByRole("button", { name: "Update Sheet" })).toBeNull();
+            expect(screen.queryByRole("button", { name: "Upload" })).toBeNull();
             expect(calls.some((c) => c.path.startsWith(BASE))).toBe(false);
         });
     }
@@ -126,8 +126,8 @@ describe("the import flow", () => {
         });
         renderApp("/settings/sheet-sync");
         const user = userEvent.setup();
-        await user.click(await screen.findByRole("button", { name: "Update Sheet" }, RENDER_STEP));
-        const dialog = await screen.findByRole("dialog", { name: /Update Sheet/ });
+        await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /^Upload: import candidates/ });
         await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), new File(["x"], "legacy.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
 
         // Preview: counts and masked problem rows; nothing committed yet.
@@ -157,8 +157,8 @@ describe("the import flow", () => {
         const { calls } = asRole("ADMIN", { [`GET ${BASE}/import/source-columns`]: { status: 200, body: { allowed: ALLOWED, required: REQUIRED } } });
         renderApp("/settings/sheet-sync");
         const user = userEvent.setup();
-        await user.click(await screen.findByRole("button", { name: "Update Sheet" }, RENDER_STEP));
-        const dialog = await screen.findByRole("dialog", { name: /Update Sheet/ });
+        await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /^Upload: import candidates/ });
         await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), new File(["x"], "legacy.xlsx"));
         expect(await within(dialog).findByRole("alert")).toHaveTextContent("The sheet is missing required headings: SURNAME.");
         expect(calls.some((c) => c.path.endsWith("/import/preview"))).toBe(false);

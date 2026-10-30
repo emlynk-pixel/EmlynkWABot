@@ -140,8 +140,10 @@ function CandidateForm() {
         );
     }
 
+    // The form itself (steps beside the fields) uses a wider page on large screens; the
+    // verification and message cards stay narrow (styles.css, "wider screens").
     return (
-        <div className="page">
+        <div className={view.name === "form" ? "page page-wide" : "page"}>
             <header className="site-header">
                 <div className="site-header-inner">
                     <p className="brand">

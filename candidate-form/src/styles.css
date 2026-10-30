@@ -690,6 +690,8 @@ button:disabled { opacity: 0.6; cursor: default; }
     .review dl { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; }
     .step-actions { flex-direction: row-reverse; flex-wrap: wrap; justify-content: flex-start; align-items: center; }
     .step-actions button.primary, .step-actions button.secondary { width: auto; min-width: 160px; }
+    /* "Before you start" is long bilingual text: wider than the verification card from tablets up. */
+    .shell > section.panel.guidelines { max-width: 55rem; }
 }
 
 @media (min-width: 1024px) {
@@ -700,6 +702,15 @@ button:disabled { opacity: 0.6; cursor: default; }
     .step-list { display: flex; flex-direction: column; gap: 2px; }
     .step-list button, .step-list .stage { flex-direction: row; gap: 10px; padding: 4px 8px 4px 2px; font-size: 0.9375rem; text-align: left; }
     .step-list li.current button { background: var(--primary-soft); }
+}
+
+@media (min-width: 1280px) {
+    /* Desktop: the form page (App.tsx .page-wide) widens from 1120px to 1440px, the header with it,
+       so the fields get the room instead of empty margins; a slightly wider steps column and
+       roomier card padding. */
+    .page-wide .shell, .page-wide .site-header-inner { max-width: 1440px; padding-left: 32px; padding-right: 32px; }
+    .form-layout { grid-template-columns: 300px minmax(0, 1fr); column-gap: 36px; }
+    .step-panel { padding: 32px 40px; }
 }
 
 /* ---------- date picker (components/DatePicker.tsx) ---------- */

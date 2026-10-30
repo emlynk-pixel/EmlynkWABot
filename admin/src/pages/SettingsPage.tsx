@@ -18,7 +18,7 @@ import { SETTINGS_TABS } from "../layout/navigation";
 export const ACTIVE_RUN_POLL_MS = 5_000;
 
 // Settings (/admin/settings). ADMIN: every tab. MANAGER: the Google Sheet
-// Sync tab only (its status and Update Sheet). Other roles see an "Access
+// Sync tab only (its status and Upload). Other roles see an "Access
 // Restricted" card and no Settings data is requested. The backend enforces
 // the same rules on every Settings API route (requireRole); this page only
 // mirrors them.
@@ -315,14 +315,14 @@ const DEFAULT_SCHEDULE = { times: ["06:00", "12:00", "18:00"], timeZone: "Asia/C
 
 export const UPDATE_SHEET_HINT = "Upload an existing candidate sheet to validate and import candidate records into Emlynk, then sync them to the Candidate Operational Mirror.";
 
-// "Update Sheet" with its hint on hover and keyboard focus (the hint is the button's description).
+// "Upload" (the bulk candidate import) with its hint on hover and keyboard focus (the hint is the button's description).
 function UpdateSheetButton({ onClick }: { onClick: () => void }) {
     const hintId = useId();
     const [open, setOpen] = useState(false);
     return (
         <span className="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
             <button type="button" className={secondaryButton} aria-describedby={hintId} onClick={onClick} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}>
-                Update Sheet
+                Upload
             </button>
             <span
                 role="tooltip"
