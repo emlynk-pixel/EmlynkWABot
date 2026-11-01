@@ -64,7 +64,7 @@ export function SubmittedPersonalDetails({ submitted }: { submitted: Record<stri
         return value === "N/A" || !row.show ? value : row.show(value, submitted);
     };
     return (
-        <section aria-labelledby="submitted-personal-title" data-testid="submitted-personal-details" className="mt-6 rounded border border-border p-4">
+        <section aria-labelledby="submitted-personal-title" data-testid="submitted-personal-details" className="mt-6 rounded-lg border border-border p-4">
             <h3 id="submitted-personal-title" className="text-label-md font-semibold text-ink">Submitted on the Candidate Form</h3>
             <p className="mt-1 text-label-sm text-ink-muted">Answers with no field of their own above, as the candidate submitted them. A confirmed value becomes part of the candidate&apos;s record. The distance is approximate (straight line, not by road).</p>
             <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
@@ -77,8 +77,8 @@ export function SubmittedPersonalDetails({ submitted }: { submitted: Record<stri
 function SubmittedRow({ row, value }: { row: Row; value: string }) {
     const conflict = useFieldConflict(row.confirm ? row.path : undefined);
     const highlight = conflict.focused
-        ? "rounded-md bg-critical-bg p-2 -m-2 ring-2 ring-critical"
-        : conflict.pending ? "rounded-md bg-review-bg p-2 -m-2 ring-1 ring-review-border" : "";
+        ? "rounded-lg bg-critical-bg p-2 -m-2 ring-2 ring-critical"
+        : conflict.pending ? "rounded-lg bg-review-bg p-2 -m-2 ring-1 ring-review-border" : "";
     return (
         <div className={`min-w-0 ${highlight}`.trim()} data-conflict-field={row.confirm ? row.path : undefined}>
             <dt className="text-label-sm text-ink-muted">{row.label}</dt>

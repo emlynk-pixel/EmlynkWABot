@@ -45,7 +45,7 @@ export function HelpTip({ label, text }: { label: string; text: string }) {
                 <span
                     role="tooltip"
                     id={tipId}
-                    className="absolute left-0 top-full z-30 mt-1.5 w-60 max-w-[calc(100vw-3rem)] rounded-md border border-border bg-surface px-3 py-2 text-body-sm font-normal text-ink shadow-popover"
+                    className="absolute left-0 top-full z-30 mt-1.5 w-60 max-w-[calc(100vw-3rem)] rounded-lg border border-border bg-surface px-3 py-2 text-body-sm font-normal text-ink shadow-popover"
                 >
                     {text}
                 </span>

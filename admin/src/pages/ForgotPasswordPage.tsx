@@ -1,3 +1,4 @@
+import { AuthShell } from "../components/AuthShell";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { appUrl, getAuthClient } from "../auth/supabaseClient";
@@ -43,19 +44,9 @@ export function ForgotPasswordPage() {
     }
 
     return (
-        <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
-            <div className="w-full max-w-sm">
-                <div className="mb-6 flex items-center gap-3">
-                    <span className="flex size-10 items-center justify-center rounded-lg bg-sidebar text-headline-sm text-sidebar-text-active">
-                        E
-                    </span>
-                    <div>
-                        <p className="text-headline-sm text-ink">Data Collector</p>
-                        <p className="text-label-caps uppercase text-ink-subtle">Admin Console</p>
-                    </div>
-                </div>
+        <AuthShell>
 
-                <div className="rounded-lg border border-border bg-surface p-6 shadow-surface">
+                <div className="rounded-xl border border-border bg-surface p-6 shadow-surface">
                     {submitted ? (
                         <div className="text-center py-2">
                             <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-verified-bg text-verified">
@@ -71,7 +62,7 @@ export function ForgotPasswordPage() {
                             <div className="mt-6">
                                 <Link
                                     to="/login"
-                                    className="flex h-10 w-full items-center justify-center rounded-md bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover"
+                                    className="flex h-8 w-full items-center justify-center rounded-lg bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover"
                                 >
                                     Return to sign in
                                 </Link>
@@ -87,7 +78,7 @@ export function ForgotPasswordPage() {
                             {error && (
                                 <div
                                     role="alert"
-                                    className="mt-4 flex items-start gap-2 rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical"
+                                    className="mt-4 flex items-start gap-2 rounded-lg border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical"
                                 >
                                     <Icon name="error" className="mt-px size-4 shrink-0" />
                                     <span>{error}</span>
@@ -97,7 +88,7 @@ export function ForgotPasswordPage() {
                             <form className="mt-6 space-y-5" onSubmit={handleSubmit} noValidate>
                                 <FormField id="email" label="Email" required help="The email address you sign in with." error={fieldError}>
                                     <div className="relative">
-                                        <Icon name="mail" className="pointer-events-none absolute left-3 top-3 size-4 text-ink-subtle" />
+                                        <Icon name="mail" className="pointer-events-none absolute left-3 top-2 size-4 text-ink-subtle" />
                                         <input
                                             {...fieldA11y("email", fieldError)}
                                             name="email"
@@ -119,7 +110,7 @@ export function ForgotPasswordPage() {
                                 <button
                                     type="submit"
                                     disabled={submitting}
-                                    className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
+                                    className="flex h-8 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
                                 >
                                     {submitting && <Icon name="progress_activity" className="size-4 animate-spin" />}
                                     {submitting ? "Sending reset link…" : "Send reset link"}
@@ -138,7 +129,6 @@ export function ForgotPasswordPage() {
                         </>
                     )}
                 </div>
-            </div>
-        </div>
+        </AuthShell>
     );
 }

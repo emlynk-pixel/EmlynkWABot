@@ -261,7 +261,7 @@ describe("Candidates list", () => {
         const register = header.getByRole("link", { name: "Register Candidate" });
         expect(register).toHaveAttribute("href", "/candidates/new");
         // The existing header controls are unchanged and still there.
-        for (const name of ["Sync", "Dark mode", "Sign out"]) expect(header.getByRole("button", { name })).toBeInTheDocument();
+        for (const name of ["Sync", "Dark mode"]) expect(header.getByRole("button", { name })).toBeInTheDocument();
         await userEvent.setup().click(register);
         expect(await screen.findByRole("button", { name: "Register candidate" })).toBeEnabled();
         expect(screen.getByLabelText("Passport ID *")).toBeEnabled();
@@ -285,7 +285,7 @@ describe("Candidates list", () => {
             const header = within(screen.getByRole("banner"));
             expect(header.getAllByRole("link", { name: "Register Candidate" })).toHaveLength(1);
             expect(header.getByRole("link", { name: "Register Candidate" })).toHaveAttribute("href", "/candidates/new");
-            for (const name of ["Sync", "Dark mode", "Sign out"]) expect(header.getByRole("button", { name })).toBeInTheDocument();
+            for (const name of ["Sync", "Dark mode"]) expect(header.getByRole("button", { name })).toBeInTheDocument();
             // The one breadcrumb tops the content, not the header.
             expect(header.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
             expect(screen.getAllByRole("navigation", { name: "Breadcrumb" })).toHaveLength(1);
@@ -763,7 +763,7 @@ describe("Candidate deployment", () => {
     describe("removing a document", () => {
         const stored = (documentId: string, name: string) => ({ documentId, originalFilename: name, verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-01T00:00:00.000Z" });
         const withNic: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, NIC: stored("doc-nic", "nic-scan.pdf") } };
-        const rowOf = (fileLabel: string) => within(screen.getByLabelText(fileLabel).closest("div.rounded-lg") as HTMLElement);
+        const rowOf = (fileLabel: string) => within(screen.getByLabelText(fileLabel).closest("div.rounded-xl") as HTMLElement);
 
         test("only a stored document has Remove; the reason is required; removing empties the row and says Removed", async () => {
             const { calls } = signedInBackend({
@@ -1947,7 +1947,7 @@ describe("Call log drawer: closing", () => {
         expect(within(form).getByRole("heading", { name: "Add New Call Log" })).toBeInTheDocument();
         for (const label of ["Date *", "Time *", "What the candidate said *"]) expect(within(form).getByLabelText(label)).toBeInTheDocument();
         expect(within(form).getByLabelText("What the candidate said *")).toHaveAttribute("rows", "2");
-        expect(classes(within(form).getByLabelText("Date *"))).toContain("h-9");
+        expect(classes(within(form).getByLabelText("Date *"))).toContain("h-8");
         // Date and time side by side, stacked only on a very narrow screen.
         expect(classes(screen.getByTestId("call-log-when"))).toEqual(expect.arrayContaining(["grid-cols-1", "min-[340px]:grid-cols-2"]));
         // Every button keeps its name and a 32px height.
@@ -2727,7 +2727,7 @@ describe("Visa submission document", () => {
         });
         renderApp("/candidates/N0000002?stage=VISA_SUBMISSION");
         expect(await screen.findByRole("heading", { name: "Visa submission" })).toBeInTheDocument();
-        const row = screen.getByText("Visa submission document").closest("div.rounded-lg") as HTMLElement;
+        const row = screen.getByText("Visa submission document").closest("div.rounded-xl") as HTMLElement;
         expect(within(row).getByText(/No file uploaded/)).toBeInTheDocument();
         expect(within(row).getByRole("button", { name: "Upload" })).toBeEnabled();
         const completedBefore = (screen.getByRole("checkbox", { name: "Stage completed" }) as HTMLInputElement).checked;
@@ -2744,7 +2744,7 @@ describe("Visa submission document", () => {
         signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
         renderApp("/candidates/N0000002?stage=VISA_SUBMISSION");
         await screen.findByRole("heading", { name: "Visa submission" });
-        const row = screen.getByText("Visa submission document").closest("div.rounded-lg") as HTMLElement;
+        const row = screen.getByText("Visa submission document").closest("div.rounded-xl") as HTMLElement;
         expect(within(row).getByRole("button", { name: "Upload" })).toBeDisabled();
     });
 });

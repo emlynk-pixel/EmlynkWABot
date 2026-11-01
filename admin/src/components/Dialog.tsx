@@ -12,8 +12,8 @@ export function ActionDialog({ title, busy, onClose, children }: { title: string
         return () => window.removeEventListener("keydown", onKey);
     }, [busy, onClose]);
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4">
-            <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg border border-border bg-surface p-5 shadow-modal">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-xs">
+            <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border border-border bg-surface p-5 shadow-modal">
                 <h2 id={titleId} className="text-headline-sm text-ink">{title}</h2>
                 <div className="mt-3">{children}</div>
             </div>

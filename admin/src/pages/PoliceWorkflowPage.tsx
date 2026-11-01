@@ -29,20 +29,20 @@ function StatCard({ label, value, icon, status, active, onSelect }: { label: str
             type="button"
             aria-pressed={active}
             onClick={() => onSelect(status)}
-            className={`flex items-start justify-between rounded-lg border bg-surface p-4 text-left shadow-surface hover:border-border-focus ${active ? "border-primary" : "border-border"}`}
+            className={`flex items-start justify-between rounded-xl border bg-surface p-4 text-left shadow-surface hover:border-border-focus ${active ? "border-primary" : "border-border"}`}
         >
             <span>
-                <span className="block text-label-caps uppercase text-ink-subtle">{label}</span>
+                <span className="block text-label-sm text-ink-muted">{label}</span>
                 <span className="mt-1 block text-headline-xl tabular-nums text-ink">{value === undefined ? "—" : formatNumber(value)}</span>
             </span>
-            <span className={`flex size-9 items-center justify-center rounded ${statusTone(status) === "critical" ? "bg-critical-bg text-critical" : "bg-primary-soft text-primary"}`}>
+            <span className={`flex size-9 items-center justify-center rounded-lg ${statusTone(status) === "critical" ? "bg-critical-bg text-critical" : "bg-primary-soft text-primary"}`}>
                 <Icon name={icon} className="size-5" />
             </span>
         </button>
     );
 }
 
-// Police Workflow (Stitch "Police Workflow"): the 21-day follow-up for the
+// Police Workflow: the 21-day follow-up for the
 // final police report of every client, calculated by the backend. Read-only;
 // the search only narrows the list (passport ID, unique ID or name).
 export function PoliceWorkflowPage() {
@@ -101,7 +101,7 @@ export function PoliceWorkflowPage() {
                         placeholder="Search by passport ID, unique ID or name…"
                         className={control}
                     />
-                    <button type="submit" className="h-9 rounded bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
+                    <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                 </form>
                 <label htmlFor="police-status" className="text-label-md text-ink">Status</label>
                 <select id="police-status" value={params.status ?? ""} onChange={(e) => update({ status: e.target.value || undefined })} className={`${control} max-w-xs`}>
@@ -171,9 +171,9 @@ export function PoliceWorkflowPage() {
                         <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body-sm text-ink-muted">
                             <p>{formatNumber(data.pagination.total)} {data.pagination.total === 1 ? "client" : "clients"} · as of {formatDay(data.businessDate)}</p>
                             <div className="flex items-center gap-2">
-                                <button type="button" disabled={data.pagination.page <= 1} onClick={() => update({ page: String(data.pagination.page - 1) }, { keepPage: true })} className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Previous</button>
+                                <button type="button" disabled={data.pagination.page <= 1} onClick={() => update({ page: String(data.pagination.page - 1) }, { keepPage: true })} className="h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Previous</button>
                                 <span aria-current="page">Page {data.pagination.page} of {data.pagination.totalPages}</span>
-                                <button type="button" disabled={data.pagination.page >= data.pagination.totalPages} onClick={() => update({ page: String(data.pagination.page + 1) }, { keepPage: true })} className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Next</button>
+                                <button type="button" disabled={data.pagination.page >= data.pagination.totalPages} onClick={() => update({ page: String(data.pagination.page + 1) }, { keepPage: true })} className="h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Next</button>
                             </div>
                         </nav>
                     </>

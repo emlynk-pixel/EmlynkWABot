@@ -78,6 +78,7 @@ const ACTION_LABELS: Record<string, string> = {
     DETAILS_VERIFICATION_RESET: "Details verification reset (details changed)",
     DOCUMENTS_VERIFICATION_RESET: "Documents verification reset (documents changed)",
     SET_SHEET_DESTINATION: "Sheet sync destination changed",
+    UPDATE_FORM_BRANDING: "Candidate form branding changed",
     UPLOAD_DOCUMENT: "Document uploaded",
     REMOVE_DOCUMENT: "Document removed",
     DELETE_TEMPORARY_DOCUMENT: "Temporary document deleted",
@@ -179,7 +180,7 @@ export function AuditLogsPage() {
     if (!isAdmin(user)) {
         return (
             <div className="mx-auto max-w-4xl p-6">
-                <div role="alert" className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+                <div role="alert" className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                     <h1 className="text-headline-sm font-semibold">Access Restricted</h1>
                     <p className="mt-1 text-body-sm text-ink-muted">
@@ -294,8 +295,8 @@ function AuditLogsView() {
                         />
                     </FilterField>
                     <div className="flex items-end gap-2">
-                        <button type="submit" className="h-10 rounded-md bg-primary px-4 text-label-md text-on-primary hover:opacity-90">Apply</button>
-                        <button type="button" onClick={clearFilters} disabled={!filtered} className={secondaryButton.replace("h-9", "h-10")}>Clear filters</button>
+                        <button type="submit" className="h-8 rounded-lg bg-primary px-2.5 text-label-md text-on-primary hover:bg-primary-hover">Apply</button>
+                        <button type="button" onClick={clearFilters} disabled={!filtered} className={secondaryButton.replace("h-8", "h-10")}>Clear filters</button>
                     </div>
                 </form>
                 {params.passportId && (
@@ -340,9 +341,9 @@ function AuditLogsView() {
                                 <select id="audit-page-size" value={params.pageSize} onChange={(e) => update({ pageSize: e.target.value })} className={`${filterControl} h-8 w-20`}>
                                     {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
                                 </select>
-                                <button type="button" disabled={data.pagination.page <= 1} onClick={() => update({ page: String(data.pagination.page - 1) }, { keepPage: true })} className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Previous</button>
+                                <button type="button" disabled={data.pagination.page <= 1} onClick={() => update({ page: String(data.pagination.page - 1) }, { keepPage: true })} className="h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Previous</button>
                                 <span aria-current="page">Page {data.pagination.page} of {data.pagination.totalPages}</span>
-                                <button type="button" disabled={data.pagination.page >= data.pagination.totalPages} onClick={() => update({ page: String(data.pagination.page + 1) }, { keepPage: true })} className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Next</button>
+                                <button type="button" disabled={data.pagination.page >= data.pagination.totalPages} onClick={() => update({ page: String(data.pagination.page + 1) }, { keepPage: true })} className="h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Next</button>
                             </div>
                         </nav>
                     </>

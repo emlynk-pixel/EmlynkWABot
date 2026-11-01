@@ -126,7 +126,7 @@ export function MultiSelect({ label, options, selected, onChange, disabled, erro
             {options.length === 0 ? (
                 <p className="mt-1 text-body-sm text-ink-muted">{empty}</p>
             ) : (
-                <ul aria-label={label} className={`mt-2 max-h-48 divide-y divide-border overflow-y-auto rounded border ${error ? "border-critical" : "border-border"}`}>
+                <ul aria-label={label} className={`mt-2 max-h-48 divide-y divide-border overflow-y-auto rounded-lg border ${error ? "border-critical" : "border-border"}`}>
                     {shown.map((option) => {
                         const boxId = `${id}-${option.id}`;
                         const isChosen = chosen.has(option.id);
@@ -190,7 +190,7 @@ export function StatusDialog({ title, summary, target, onConfirm, onClose }: {
 export function RestrictedPage({ what }: { what: string }) {
     return (
         <div className="mx-auto max-w-4xl p-6">
-            <div role="alert" className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+            <div role="alert" className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                 <h1 className="text-headline-sm font-semibold">Access Restricted</h1>
                 <p className="mt-1 text-body-sm text-ink-muted">Your role cannot manage {what}.</p>
             </div>

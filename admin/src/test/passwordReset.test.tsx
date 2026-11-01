@@ -90,7 +90,7 @@ describe("Reset Password (Supabase recovery session)", () => {
         expect(fakeAuth.currentSession).toBeNull();
         expect(calls.some((c) => c.path.includes("reset-password")), "no backend reset endpoint").toBe(false);
         await userEvent.setup().click(screen.getByRole("button", { name: "Continue to Sign In" }));
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
     });
 
     test("an expired or used recovery link -> 'request a new link'", async () => {

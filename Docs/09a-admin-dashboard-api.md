@@ -16,7 +16,7 @@ Status: **Final Phase 10 scope implemented and verified.** All Phase 10 migratio
 
 Not built (by decision): a reject action (business rule: there is none, §4c), uploads (including an admin upload of the actual police report), exports, WhatsApp messaging, reminders or warnings for police reports (Phase 11), scheduled jobs, a Settings page, global search, client editing, batch actions, roles (Phase 12).
 
-Visual source of truth: Stitch project **EmlynkWABot Admin Dashboard UI** (`13688778730186190970`), design system **Precision Enterprise Console**. The Stitch project is read-only for development; nothing is generated or changed there from the code.
+Visual source of truth: the EMLYNK design system (`emlynk-design-system/`). The Stitch project this dashboard started from is retired; references to it below are history.
 
 ## 1. Structure
 
@@ -31,7 +31,7 @@ admin/
 └── src/
     ├── main.tsx              # BrowserRouter (basename /admin) + AuthProvider
     ├── App.tsx               # Routes
-    ├── index.css             # Tailwind + Stitch design tokens (@theme)
+    ├── index.css             # Tailwind + EMLYNK design tokens (@theme)
     ├── api/
     │   ├── client.ts         # fetch wrapper, ApiError, safe error messages
     │   ├── auth.ts           # GET /auth/me, POST /auth/complete-invite (sign-in itself is Supabase Auth)
@@ -44,8 +44,9 @@ admin/
     │   └── roles.ts          # the four roles and what the UI shows each
     ├── layout/
     │   ├── AdminLayout.tsx   # shell: sidebar + header + content
-    │   ├── Sidebar.tsx       # dark sidebar, 240px, collapsible to 64px rail, mobile drawer
-    │   ├── Header.tsx        # 56px utility bar: breadcrumb, Sync, dark mode, admin, sign out
+    │   ├── Sidebar.tsx       # slate sidebar, 256px, collapsible to 48px rail, mobile drawer
+    │   ├── AccountMenu.tsx   # account card at the sidebar's foot, with Sign out
+    │   ├── Header.tsx        # 56px utility bar: Sync, dark mode, notifications
     │   └── navigation.ts     # sidebar entries
     ├── components/           # Icon, StatusBadge, Confidence, DocumentsTable, ClientTable, Dialog, States, format
     ├── pages/                # Login, Overview, Documents, Review Queue/Detail, Clients, Client Details,
@@ -769,13 +770,13 @@ The header has **Sync** and the dark-mode toggle on every page (§4j). Every pag
 
 ## 6. Design system
 
-`admin/src/index.css` defines the Stitch tokens as a Tailwind v4 `@theme`:
+`admin/src/index.css` defines the EMLYNK design tokens as a Tailwind v4 `@theme`:
 
 - **Colours:** primary `#2563eb` (hover `#1d4ed8`, active `#1e40af`); canvas `#f8fafc`; surfaces `#ffffff` with `#e2e8f0` borders; dark sidebar `#0f172a` / `#1e293b`; status sets for verified, review, pending, critical and duplicate (text / background / border). Dark mode redefines the same tokens (§4j).
-- **Typography:** Inter (self-hosted via `@fontsource-variable/inter`) with tabular figures; scale `headline-xl` … `label-sm` as in Stitch.
+- **Typography:** Inter and Montserrat (self-hosted via `@fontsource-variable`), tabular figures, and no text below 12px; the scale is in `index.css`.
 - **Shapes and depth:** radius 2 / 4 / 6 / 8 / 12 px; hairline borders with very light shadows; focus ring `0 0 0 3px rgba(37,99,235,.15)`.
 - **Layout:** sidebar 240px (rail 64px), header 56px, content max 1600px.
-- **Icons:** Material Symbols Outlined, imported one SVG at a time from `@material-symbols/svg-400` (a few hundred bytes each instead of a 1–1.5 MB icon font).
+- **Icons:** Lucide (`lucide-react`). Screens name an icon through `components/Icon.tsx`, the only file that imports the set.
 
 No external CDN or Google Fonts request is made, so the backend's Content Security Policy (`script-src 'self'`) applies unchanged.
 

@@ -136,7 +136,7 @@ export function ConfirmDialog({
         : primaryButton;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-xs">
             <div
                 ref={dialogRef}
                 role="dialog"
@@ -144,7 +144,7 @@ export function ConfirmDialog({
                 aria-labelledby={titleId}
                 aria-describedby={bodyContent ? descriptionId : undefined}
                 onKeyDown={handleKeyDown}
-                className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg border border-border bg-surface p-5 shadow-modal"
+                className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border border-border bg-surface p-5 shadow-modal"
             >
                 <div className="flex items-start gap-3">
                     {isDestructive && (

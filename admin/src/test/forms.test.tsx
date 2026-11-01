@@ -84,19 +84,12 @@ describe("inline validation", () => {
     });
 });
 
-describe("Candidates screens keep their original look", () => {
-    test("candidate routes render inside .ui-classic and mark the page; other pages don't", async () => {
+describe("One design across the app", () => {
+    test("candidate routes use the same design as every other page", async () => {
         signedInBackend({ "GET /api/admin/candidates": { status: 200, body: { items: [], pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 } } } });
-        const { unmount } = renderApp("/candidates");
+        renderApp("/candidates");
         const heading = await screen.findByRole("heading", { name: "Candidates", level: 1 });
-        expect(heading.closest(".ui-classic")).not.toBeNull();
-        expect(document.body).toHaveClass("ui-classic-page");
-        unmount();
-        expect(document.body).not.toHaveClass("ui-classic-page");
-
-        renderApp("/");
-        const overview = await screen.findByRole("heading", { name: "Overview", level: 1 });
-        expect(overview.closest(".ui-classic")).toBeNull();
+        expect(heading.closest(".ui-classic")).toBeNull();
         expect(document.body).not.toHaveClass("ui-classic-page");
     });
 });

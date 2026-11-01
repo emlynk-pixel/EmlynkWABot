@@ -25,7 +25,7 @@ const STATUS_TONE: Record<string, Tone> = { VALID: "verified", WARNING: "review"
 
 function Tile({ label, value, tone }: { label: string; value: number; tone?: "critical" | "review" }) {
     return (
-        <div className="min-w-0 rounded-md border border-border bg-canvas px-3 py-2">
+        <div className="min-w-0 rounded-lg border border-border bg-canvas px-3 py-2">
             <dt className="text-label-sm text-ink-muted">{label}</dt>
             <dd className={`mt-0.5 text-body-md tabular-nums ${tone === "critical" && value ? "text-critical" : tone === "review" && value ? "text-review" : "text-ink"}`}>{formatNumber(value)}</dd>
         </div>
@@ -40,8 +40,8 @@ function Shell({ title, busy, onClose, children }: { title: string; busy: boolea
         return () => window.removeEventListener("keydown", onKey);
     }, [busy, onClose]);
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4">
-            <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg border border-border bg-surface p-5 shadow-modal">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-xs">
+            <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-border bg-surface p-5 shadow-modal">
                 <h2 id={titleId} className="text-headline-sm text-ink">{title}</h2>
                 <div className="mt-3">{children}</div>
             </div>
@@ -120,7 +120,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                     accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     disabled={busy}
                     onChange={(event) => { void choose(event.target.files?.[0]); event.target.value = ""; }}
-                    className="mt-1 block w-full text-body-sm text-ink file:mr-3 file:h-9 file:rounded file:border file:border-border-strong file:bg-surface file:px-3 file:text-label-md file:text-ink-soft"
+                    className="mt-1 block w-full text-body-sm text-ink file:mr-3 file:h-8 file:rounded-lg file:border file:border-border-strong file:bg-surface file:px-3 file:text-label-md file:text-ink-soft"
                 />
                 {step.kind === "reading" && <p role="status" className="mt-3 text-body-sm text-ink-muted">Reading and checking the sheet…</p>}
                 <DialogError message={error} />
@@ -160,10 +160,10 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
 
                 {problems.length > 0 && (
                     <div className="mt-4">
-                        <h3 className="text-label-caps uppercase text-ink-subtle">Rows to review{problemsTruncated ? ` (first ${formatNumber(problems.length)})` : ""}</h3>
-                        <div className="mt-2 max-h-64 overflow-auto rounded border border-border">
+                        <h3 className="text-label-sm text-ink-muted">Rows to review{problemsTruncated ? ` (first ${formatNumber(problems.length)})` : ""}</h3>
+                        <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-border">
                             <table className="w-full text-left text-body-sm">
-                                <thead className="sticky top-0 bg-canvas text-label-sm text-ink-muted">
+                                <thead className="sticky top-0 bg-surface text-label-md text-ink">
                                     <tr><th className="px-3 py-1.5">Row</th><th className="px-3 py-1.5">Passport</th><th className="px-3 py-1.5">Status</th><th className="px-3 py-1.5">Reasons</th></tr>
                                 </thead>
                                 <tbody>
@@ -224,7 +224,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                     : result.syncRunId ? "The Google Sheet sync was requested." : "Nothing was saved, so no Google Sheet sync was needed."}
             </p>
             {failures.length > 0 && (
-                <ul className="mt-3 max-h-40 overflow-auto rounded border border-border px-3 py-2 text-body-sm">
+                <ul className="mt-3 max-h-40 overflow-auto rounded-lg border border-border px-3 py-2 text-body-sm">
                     {failures.map((f) => <li key={f.rowNumber}>Row {f.rowNumber} ({f.passport}): {f.codes.map(humanize).join(", ")}</li>)}
                 </ul>
             )}

@@ -99,7 +99,7 @@ describe("Police Workflow page", () => {
     test("without a session -> login, no API call", async () => {
         const { calls } = stubBackend({});
         renderApp("/police");
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
         expect(calls.filter((c) => c.path.startsWith("/api/admin"))).toHaveLength(0);
     });
 });

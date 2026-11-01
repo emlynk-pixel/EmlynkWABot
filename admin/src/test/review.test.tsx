@@ -500,7 +500,7 @@ describe("review routes stay protected", () => {
         test(`${path} without a session -> login, no admin API call`, async () => {
             const { calls } = stubBackend({});
             renderApp(path);
-            expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+            expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
             expect(calls.filter((c) => c.path.startsWith("/api/admin"))).toHaveLength(0);
         });
     }

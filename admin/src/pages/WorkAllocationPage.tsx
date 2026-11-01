@@ -33,9 +33,9 @@ import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge
 // the server, which applies them BEFORE paging: the count and every page are those of the whole
 // filtered list, never a filter over the rows already loaded.
 
-const th = "h-[34px] whitespace-nowrap border-b border-border bg-canvas px-3 text-left text-label-caps uppercase text-ink-subtle";
-const td = "h-11 border-b border-canvas-muted px-3 py-2 text-body-sm align-middle";
-const countInput = "h-8 w-16 rounded border border-border-strong bg-surface px-2 text-right text-body-sm tabular-nums text-ink focus:border-primary focus:shadow-focus focus:outline-none";
+const th = "h-10 whitespace-nowrap border-b border-border px-3 text-left text-label-md text-ink";
+const td = "h-10 border-b border-border px-3 py-2 text-body-sm align-middle";
+const countInput = "h-8 w-16 rounded-lg border border-border-strong bg-surface px-2 text-right text-body-sm tabular-nums text-ink focus:border-primary focus:shadow-focus focus:outline-none";
 
 // The filters (all applied on the server, before paging): URL parameter -> API filter.
 const FILTER_PARAMS = { from: "registeredFrom", to: "registeredTo", jobType: "jobType", wstatus: "workflowStatus", stage: "stage" } as const;
@@ -48,7 +48,7 @@ const STATUS_OPTIONS: { code: WorkflowStatus["code"]; label: string }[] = [
     { code: "DOCUMENTS_VERIFIED", label: "Documents Verified" },
     { code: "VISA_DOCUMENT_READY", label: "Visa Document Ready" },
 ];
-const filterSelect = "h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
+const filterSelect = "h-8 w-full rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
 
 const VIEWS: { status: AllocationStatus; label: string }[] = [
     { status: "UNALLOCATED", label: "Unallocated" },
@@ -60,7 +60,7 @@ export function WorkAllocationPage() {
     if (!canManageAllocations(user)) {
         return (
             <div className="mx-auto max-w-4xl p-6">
-                <div role="alert" className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+                <div role="alert" className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                     <h1 className="text-headline-sm font-semibold">Access Restricted</h1>
                     <p className="mt-1 text-body-sm text-ink-muted">Only Managers and Admins can allocate candidates.</p>
@@ -296,14 +296,14 @@ function WorkAllocationView() {
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3">
-                <div role="group" aria-label="View" className="flex gap-1 rounded-md border border-border bg-surface p-1">
+                <div role="group" aria-label="View" className="flex gap-1 rounded-lg border border-border bg-surface p-1">
                     {VIEWS.map((view) => (
                         <button
                             key={view.status}
                             type="button"
                             aria-pressed={status === view.status}
                             onClick={() => go({ view: view.status === "ALLOCATED" ? "allocated" : null, analyst: null })}
-                            className={`h-8 rounded px-3 text-label-md ${status === view.status ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
+                            className={`h-8 rounded-lg px-3 text-label-md ${status === view.status ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
                         >
                             {view.label}
                             {view.status === "UNALLOCATED" && analysts.data && <span className="ml-1.5 tabular-nums opacity-80">{formatNumber(analysts.data.unallocatedCount)}</span>}
@@ -319,13 +319,13 @@ function WorkAllocationView() {
                         maxLength={100}
                         onChange={(event) => setSearchText(event.target.value)}
                         placeholder="Name, passport ID, contact or WhatsApp number…"
-                        className="h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
+                        className="h-8 w-full rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
                     />
-                    <button type="submit" className="h-9 rounded bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
+                    <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                 </form>
             </div>
 
-            <section aria-label="Filters" className="rounded-lg border border-border bg-surface p-3">
+            <section aria-label="Filters" className="rounded-xl border border-border bg-surface p-3">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto] lg:items-end">
                     <label className="block text-label-sm text-ink-muted" htmlFor="allocation-from">
                         Registered from
@@ -371,8 +371,8 @@ function WorkAllocationView() {
                 )}
             </section>
 
-            {notice && <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
-            {actionError && !confirm && <p role="alert" className="rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">{actionError}</p>}
+            {notice && <div role="status" className="rounded-xl border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
+            {actionError && !confirm && <p role="alert" className="rounded-lg border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">{actionError}</p>}
 
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
                 <Card>
@@ -385,7 +385,7 @@ function WorkAllocationView() {
                                 <select
                                     value={analystFilter ?? ""}
                                     onChange={(event) => go({ analyst: event.target.value || null })}
-                                    className="h-8 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink"
+                                    className="h-8 rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink"
                                 >
                                     <option value="">All Analysts</option>
                                     {filterAnalysts.map((analyst) => <option key={analyst.analystId} value={analyst.analystId}>{analyst.name}</option>)}
@@ -459,7 +459,7 @@ function WorkAllocationView() {
                                                         ) : "—"}
                                                     </td>
                                                     <td className={td}>
-                                                        <span className={`rounded px-2 py-0.5 text-label-sm ${item.analyst ? "bg-verified-bg text-verified" : "bg-pending-bg text-pending"}`}>
+                                                        <span className={`rounded-lg px-2 py-0.5 text-label-sm ${item.analyst ? "bg-verified-bg text-verified" : "bg-pending-bg text-pending"}`}>
                                                             {item.analyst ? "Allocated" : "Unallocated"}
                                                         </span>
                                                     </td>
@@ -483,7 +483,7 @@ function WorkAllocationView() {
                     {analysts.status === "error" && <ErrorState message={analysts.error.message} onRetry={analysts.reload} />}
                     {analysts.status === "loading" && !analysts.data && <LoadingState label="Loading Analysts…" />}
                     {analysts.data && activeAnalysts.length === 0 && (
-                        <p className="mt-3 rounded border border-border bg-canvas px-3 py-2 text-body-sm text-ink-muted">No active Analysts are available for allocation.</p>
+                        <p className="mt-3 rounded-lg border border-border bg-canvas px-3 py-2 text-body-sm text-ink-muted">No active Analysts are available for allocation.</p>
                     )}
                     {activeAnalysts.length > 0 && (
                         <>
@@ -530,7 +530,7 @@ function WorkAllocationView() {
                                 ))}
                             </ul>
 
-                            <div className="mt-3 space-y-1.5 rounded border border-border bg-canvas p-3 text-body-sm">
+                            <div className="mt-3 space-y-1.5 rounded-lg border border-border bg-canvas p-3 text-body-sm">
                                 <div className="flex justify-between text-ink">
                                     <span className="text-ink-muted">Selected candidates:</span>
                                     <span className="font-medium tabular-nums">{formatNumber(selectedCount)}</span>
@@ -607,7 +607,7 @@ function WorkAllocationView() {
                                 {formatNumber(alreadyAllocated.length)} already allocated {alreadyAllocated.length === 1 ? "candidate" : "candidates"} will be skipped and remain with their current analysts.
                             </p>
                         )}
-                        <div className="space-y-1 rounded border border-border bg-canvas p-3 text-label-sm">
+                        <div className="space-y-1 rounded-lg border border-border bg-canvas p-3 text-label-sm">
                             <div className="flex justify-between">
                                 <span className="text-ink-muted">Selected candidates:</span>
                                 <span className="tabular-nums font-medium">{formatNumber(selectedCount)}</span>

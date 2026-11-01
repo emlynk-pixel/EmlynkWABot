@@ -1,4 +1,4 @@
-# Emlynk Candidate Recruitment & Document Automation
+# EMOPS: Candidate Recruitment & Document Automation
 
 [![Node.js](https://img.shields.io/badge/Node.js-22.18%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express.js-v5.2-000000?style=for-the-badge&logo=express&logoColor=white)](https://expressjs.com/)
@@ -579,17 +579,11 @@ Details: [`Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md`](Docs/CANDIDATE_PAGINAT
 
 ### Light and Dark Theme
 
-Light is the default; Dark is a per-browser choice. Both are driven by the colour tokens in one stylesheet, `admin/src/index.css` (Tailwind v4 `@theme`; there is no `tailwind.config` for these tokens). Light uses the root token values, Dark overrides them under `:root[data-theme="dark"]`, and the Candidates screens add their own overrides under `.ui-classic`.
+EMOPS follows the EMLYNK design system (`emlynk-design-system/` beside this repository): Inter and Montserrat, Lucide icons, a near-black primary, a slate sidebar, and red only as a signal. The admin's tokens are in one stylesheet, `admin/src/index.css` (Tailwind v4 `@theme`), and screens only name tokens, so a colour changes in one place.
 
-The Light Theme's borders and dividers were too faint (card edges, tables, inputs, the Candidate screens and the Candidate History drawer). Only the three existing Light border tokens were retuned:
+Light is the admin's default and Dark is a per-browser choice; Dark is the brand slate (`#1f242b`). The Candidate Form opens in the device's theme until the candidate picks one, and follows the device while open. Its colours can be changed under **Settings > Candidate Form**.
 
-| Token | Before (main) | Before (Candidates) | Now (both) |
-|---|---|---|---|
-| `--color-border` | `#d5dce5` | `#e2e8f0` | `#c9d1dc` |
-| `--color-border-strong` | `#b6c0cd` | `#cbd5e1` | `#a9b5c4` |
-| `--color-border-focus` | `#8494a8` | `#94a3b8` | `#7a8ba1` |
-
-Dark Theme values, backgrounds, surfaces, status colours and shadows were not changed, no tokens were added, and no component logic changed. The Daily Report's one `border-border/60` row line now uses the normal `border-border`.
+EMOPS differs from the design system in three deliberate ways: it keeps the light/dark switch, no text is smaller than 12px, and `--color-critical` is `#c10007` so red text stays readable on its tint.
 
 ---
 

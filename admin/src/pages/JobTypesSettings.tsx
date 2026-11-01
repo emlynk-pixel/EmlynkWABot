@@ -77,7 +77,7 @@ export function JobTypesSettings() {
                 {list.status === "loading" && !list.data && <LoadingState label="Loading job types…" />}
                 {list.status === "error" && <ErrorState message={list.error.message} onRetry={list.reload} />}
                 {list.data && (
-                    <div className="overflow-x-auto rounded border border-border">
+                    <div className="overflow-x-auto rounded-lg border border-border">
                         <table className="w-full" aria-label="Job types">
                             <thead>
                                 <tr>

@@ -48,6 +48,7 @@ See `04-whatsapp-integration.md` for the full mechanics. In summary: HMAC-SHA256
 
 ## Database and Storage
 
+- **Form branding:** the Candidate Form's logo is stored as a size-limited `data:` URI whose bytes are checked against its type, and is only ever shown in an `<img>`, where an SVG cannot run scripts. The form's CSP needed no change. `POST /branding` is public by design: it returns no candidate data, and is rate limited per IP.
 - **Row-level security:** every table has RLS enabled with no policies defined, and Supabase's public API roles (`anon`, `authenticated`) have had all privileges explicitly revoked — including on tables created by future migrations (`ALTER DEFAULT PRIVILEGES`). The backend connects as the table owner, which bypasses RLS, so this only restricts Supabase's own public API, not the backend.
 - **Parameterized queries only:** Prisma throughout; no raw SQL string concatenation anywhere in the codebase.
 - **Private bucket:** no public or signed URLs are ever created. The admin dashboard streams a file preview through an authenticated Express/Vercel route instead of handing out a storage URL.

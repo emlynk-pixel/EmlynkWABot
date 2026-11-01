@@ -94,7 +94,7 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
     };
 
     return (
-        <div className="rounded-lg border border-border px-4 py-3" title={title}>
+        <div className="rounded-xl border border-border px-4 py-3" title={title}>
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
                     <p className="text-label-md text-ink">

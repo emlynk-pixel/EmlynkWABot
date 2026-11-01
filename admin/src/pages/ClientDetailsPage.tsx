@@ -17,7 +17,7 @@ import { DatePicker } from "../components/DatePicker";
 function Field({ label, children }: { label: string; children: ReactNode }) {
     return (
         <div>
-            <dt className="text-label-caps uppercase text-ink-subtle">{label}</dt>
+            <dt className="text-label-sm text-ink-muted">{label}</dt>
             <dd className="mt-0.5 text-body-md text-ink">{children ?? "—"}</dd>
         </div>
     );
@@ -25,8 +25,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 function PoliceDocument({ label, doc }: { label: string; doc: ClientDetails["police"]["latestSlip"] }) {
     return (
-        <div className="rounded-lg bg-canvas p-3">
-            <p className="text-label-caps uppercase text-ink-subtle">{label}</p>
+        <div className="rounded-xl bg-canvas p-3">
+            <p className="text-label-sm text-ink-muted">{label}</p>
             {doc ? (
                 <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-body-sm text-ink">Received {formatDateTime(doc.receivedDate)}</span>
@@ -49,9 +49,9 @@ function PoliceCountdownPanel({ countdown }: { countdown: ClientDetails["police"
         NOT_UPLOADED: "No police slip has been received, so no countdown is running.",
     };
     return (
-        <div className="rounded-lg border border-border p-3" aria-label="Police report follow-up" role="group">
+        <div className="rounded-xl border border-border p-3" aria-label="Police report follow-up" role="group">
             <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-label-caps uppercase text-ink-subtle">21-day follow-up</p>
+                <p className="text-label-sm text-ink-muted">21-day follow-up</p>
                 <ToneBadge tone={statusTone(countdown.status)}>{policeStatusLabel(countdown.status)}</ToneBadge>
             </div>
             {countdown.submittedDate && (
@@ -120,7 +120,7 @@ function PoliceDateDialog({ slip, onClose, onSaved }: { slip: NonNullable<Client
                         setDate(next);
                         setFieldError(null);
                     }}
-                    className="mt-1 h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                    className="mt-1 h-8 w-full rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
                 />
                 <label htmlFor="slip-date-reason" className="mt-3 block text-label-md text-ink">
                     Reason <span aria-hidden="true" className="text-critical">*</span>
@@ -135,7 +135,7 @@ function PoliceDateDialog({ slip, onClose, onSaved }: { slip: NonNullable<Client
                         setReason(event.target.value);
                         setFieldError(null);
                     }}
-                    className="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
+                    className="mt-1 w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-border-focus focus:outline-none"
                 />
                 {fieldError && <p className="mt-2 text-label-sm text-critical">{fieldError}</p>}
                 <DialogError message={error} />
@@ -163,12 +163,12 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
             <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-3">
                     <h1 id="page-title" className="text-headline-xl text-ink">{client.name ?? client.passportId}</h1>
-                    <span className="rounded bg-canvas-muted px-2 py-0.5 text-label-caps uppercase text-ink-muted">Unique ID {client.uniqueId}</span>
+                    <span className="rounded-lg bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-muted">Unique ID {client.uniqueId}</span>
                     <ToneBadge tone={data.complete ? "verified" : "review"}>{data.complete ? "Complete" : "Incomplete"}</ToneBadge>
                 </div>
             </div>
 
-            {notice && <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
+            {notice && <div role="status" className="rounded-xl border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
 
             <Card className="p-5">
                 <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -203,7 +203,7 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
 
                 <Card className="space-y-3 p-5">
                     <div className="flex items-center gap-2">
-                        <span className="flex size-8 items-center justify-center rounded bg-primary-soft text-primary"><Icon name="local_police" className="size-5" /></span>
+                        <span className="flex size-8 items-center justify-center rounded-lg bg-primary-soft text-primary"><Icon name="local_police" className="size-5" /></span>
                         <SectionHeading title="Police documents" description="Latest stored slip and final report" />
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -212,7 +212,7 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
                     </div>
                     <PoliceCountdownPanel countdown={data.police.countdown} />
                     {slip && (
-                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-canvas p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-canvas p-3">
                             <span className="text-body-sm text-ink">
                                 Latest slip submitted date: <span className="font-medium">{slip.policeSubmittedDate ? formatDay(slip.policeSubmittedDate) : "not set"}</span>
                             </span>
@@ -225,7 +225,7 @@ function ClientContent({ data, onChanged }: { data: ClientDetails; onChanged: ()
                     )}
                     {data.police.dateChanges.length > 0 && (
                         <div>
-                            <p className="text-label-caps uppercase text-ink-subtle">Date changes</p>
+                            <p className="text-label-sm text-ink-muted">Date changes</p>
                             <ol aria-label="Police slip date changes" className="mt-1 divide-y divide-border">
                                 {data.police.dateChanges.map((change) => (
                                     <li key={change.auditId} className="py-1.5 text-body-sm">

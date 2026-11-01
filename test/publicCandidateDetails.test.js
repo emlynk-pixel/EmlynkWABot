@@ -452,6 +452,8 @@ describe("SECRET: candidate-form holds no backend configuration", () => {
         assert.match(vite, /const ENV_PREFIX = "VITE_API_"/);
         assert.match(vite, /envPrefix: ENV_PREFIX/);
         assert.match(vite, /sourcemap: false/);
+        // In development the form reaches the backend through this proxy; without it every call is a 404.
+        assert.match(vite, /proxy: \{ "\/api\/public": \{ target: apiTarget, changeOrigin: false \} \}/);
         // Either line ending: a Windows checkout (core.autocrlf) has CRLF.
         const example = fs.readFileSync(path.join(ROOT, ".env.example"), "utf8").split(/\r?\n/).filter((line) => /^[A-Z]/.test(line));
         assert.deepEqual(example, ["VITE_API_BASE_URL=", "VITE_API_ADMIN_MOBILE_NUMBERS="]);

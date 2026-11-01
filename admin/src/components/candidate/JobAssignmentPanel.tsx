@@ -158,7 +158,7 @@ function AssignToJobDialog({ token, candidate, assignedJobIds = [], onClose, onA
                         <EmptyState title={search ? "No processing jobs match your search" : "There are no processing jobs"} description={search ? undefined : "Create a job in Admin > Jobs first."} />
                     )}
                     {items.length > 0 && (
-                        <ul aria-label="Processing jobs" className="mt-3 max-h-72 divide-y divide-border overflow-y-auto rounded border border-border">
+                        <ul aria-label="Processing jobs" className="mt-3 max-h-72 divide-y divide-border overflow-y-auto rounded-lg border border-border">
                             {items.map((job) => (
                                 <li key={job.jobId} className="flex items-center justify-between gap-3 px-3 py-2">
                                     <div className="min-w-0 text-body-sm">

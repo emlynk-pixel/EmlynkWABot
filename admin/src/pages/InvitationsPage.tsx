@@ -136,7 +136,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
     if (!allowed) {
         return (
             <div className="mx-auto max-w-4xl p-6">
-                <div className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+                <div className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                     <h2 className="text-headline-sm font-semibold">Access Restricted</h2>
                     <p className="mt-1 text-body-sm text-ink-muted">Only users with the <strong>Admin</strong> role (or a <strong>Manager</strong>, for Job Handlers) can invite users.</p>
@@ -146,7 +146,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
     }
 
     return (
-        <div className="mx-auto max-w-6xl space-y-6">
+        <div className="space-y-6">
             <div>
                 {embedded
                     ? <h2 className="text-headline-md text-ink">Invite User</h2>
@@ -156,20 +156,20 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                 </p>
             </div>
 
-            <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
+            <div className="rounded-xl border border-border bg-surface p-6 shadow-sm">
                 <div className="mb-5 flex items-center gap-2 border-b border-border pb-4">
                     <Icon name="person_add" className="size-5 text-primary" />
                     <h2 className="text-headline-sm font-semibold text-ink">Invite a new user</h2>
                 </div>
 
                 {formSuccess && (
-                    <div className="mb-5 flex items-start gap-3 rounded border border-verified-border bg-verified-bg p-4 text-body-sm text-verified" role="status">
+                    <div className="mb-5 flex items-start gap-3 rounded-lg border border-verified-border bg-verified-bg p-4 text-body-sm text-verified" role="status">
                         <Icon name="check_circle" className="size-5 shrink-0" />
                         <p>{formSuccess}</p>
                     </div>
                 )}
                 {formError && (
-                    <div className="mb-5 flex items-start gap-3 rounded border border-critical-border bg-critical-bg p-4 text-body-sm text-critical" role="alert">
+                    <div className="mb-5 flex items-start gap-3 rounded-lg border border-critical-border bg-critical-bg p-4 text-body-sm text-critical" role="alert">
                         <Icon name="error" className="size-5 shrink-0" />
                         <div>
                             <p className="font-medium">Cannot send the invitation</p>
@@ -218,7 +218,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                         <button
                             type="submit"
                             disabled={submitting}
-                            className="flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-label-md font-medium text-on-primary hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+                            className="flex h-8 items-center gap-2 rounded-lg bg-primary px-2.5 text-label-md font-medium text-on-primary hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             <Icon name={submitting ? "progress_activity" : "send"} className={`size-4 ${submitting ? "animate-spin" : ""}`} />
                             <span>{submitting ? "Sending…" : "Send Invitation"}</span>
@@ -228,20 +228,20 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
             </div>
 
             {/* The users and their re-send / deactivate actions: ADMIN only. */}
-            {managesUsers && <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
+            {managesUsers && <div className="rounded-xl border border-border bg-surface p-6 shadow-sm">
                 <div className="mb-4 flex items-center justify-between border-b border-border pb-4">
                     <div>
                         <h2 className="text-headline-sm font-semibold text-ink">Users</h2>
                         <p className="text-body-sm text-ink-muted">Everyone invited to the console and their status.</p>
                     </div>
-                    <button type="button" onClick={() => load()} className="flex h-8 items-center gap-1 rounded border border-border-strong bg-surface px-3 text-label-sm text-ink hover:bg-canvas">
+                    <button type="button" onClick={() => load()} className="flex h-8 items-center gap-1 rounded-lg border border-border-strong bg-surface px-3 text-label-sm text-ink hover:bg-canvas">
                         <Icon name="refresh" className="size-4" />
                         <span>Refresh</span>
                     </button>
                 </div>
 
-                {fetchError && <div role="alert" className="mb-4 rounded border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">{fetchError}</div>}
-                {actionError && <div role="alert" className="mb-4 rounded border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">{actionError}</div>}
+                {fetchError && <div role="alert" className="mb-4 rounded-lg border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">{fetchError}</div>}
+                {actionError && <div role="alert" className="mb-4 rounded-lg border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">{actionError}</div>}
 
                 {loading ? (
                     <div className="py-12 text-center text-ink-muted">
@@ -251,7 +251,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-body-sm">
-                            <thead className="border-b border-border bg-canvas text-label-caps uppercase text-ink-muted">
+                            <thead className="border-b border-border text-label-md text-ink">
                                 <tr>
                                     <th className="px-4 py-3">User</th>
                                     <th className="px-4 py-3">Role</th>
@@ -272,7 +272,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                                             </td>
                                             <td className="px-4 py-3">{ROLE_LABELS[entry.role as Role] ?? entry.role}</td>
                                             <td className="px-4 py-3">
-                                                <span className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-label-sm font-medium ${badge.className}`}>
+                                                <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-label-sm font-medium ${badge.className}`}>
                                                     <Icon name={badge.icon} className="size-3.5" />
                                                     {badge.label}
                                                 </span>
