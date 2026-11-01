@@ -100,10 +100,10 @@ describe("the policy (requireRole.js)", () => {
 
     test("who manages, assigns and invites what", () => {
         assert.deepEqual(Object.keys(ASSIGNABLE_ROLES), ["OWNER", "ADMIN"]);
-        assert.deepEqual(ASSIGNABLE_ROLES.ADMIN, ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
-        assert.deepEqual(ASSIGNABLE_ROLES.OWNER, ["ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        assert.deepEqual(ASSIGNABLE_ROLES.ADMIN, ["TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        assert.deepEqual(ASSIGNABLE_ROLES.OWNER, ["ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         // An account with a retired (MANAGER) or unknown role: the OWNER only.
-        for (const role of ["ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER", "MANAGER", "VIEWER"]) assert.ok(canManageAccount("OWNER", role), `OWNER manages ${role}`);
+        for (const role of ["ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER", "MANAGER", "VIEWER"]) assert.ok(canManageAccount("OWNER", role), `OWNER manages ${role}`);
         for (const role of ["OWNER", "ADMIN", "MANAGER", "VIEWER"]) assert.equal(canManageAccount("ADMIN", role), false, `ADMIN never manages ${role}`);
         for (const actor of ["OWNER", "ADMIN"]) {
             assert.equal(canManageAccount(actor, "OWNER"), false, `${actor} never manages an OWNER`);

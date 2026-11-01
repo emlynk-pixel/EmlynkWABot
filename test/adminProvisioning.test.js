@@ -28,7 +28,7 @@ describe("provisionUser: create", () => {
     });
 
     test("any application role may be given; others are refused", async () => {
-        for (const role of ["OWNER", "ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
+        for (const role of ["OWNER", "ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             const db = createFakeAdminDb([]);
             await provisionUser(input({ role }), { db, authAdmin: createFakeAuthAdmin() });
             assert.equal(db.rows[0].role, role);

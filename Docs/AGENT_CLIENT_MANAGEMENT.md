@@ -199,7 +199,7 @@ Handled by `src/services/agentService.js` and routes in `src/routes/admin.js`.
 - **Client Protection Rule**: An Agent edit **cannot** orphan a Client. If removing a Client would leave that Client with zero linked Agents across the entire system, the request is rejected with `409 CLIENT_NEEDS_AGENT`.
 - **Inactive Agent Rule**: An inactive Agent cannot be given new clients (`409 AGENT_INACTIVE`). However, an existing linked Agent that later becomes inactive retains its existing links.
 
-### 6.2 Agent Endpoints (ADMIN and JOB_HANDLER only)
+### 6.2 Agent Endpoints (ADMIN, TEAM_LEAD and JOB_HANDLER only)
 
 | Method | Endpoint | Description | Request Body | Response |
 |---|---|---|---|---|
@@ -225,7 +225,7 @@ Handled by `src/services/clientService.js` and routes in `src/routes/admin.js`.
   - If an Agent already linked becomes inactive in the future, it may remain linked; however, new links cannot be formed to inactive Agents.
 - **Compatibility Endpoint**: `PATCH /api/admin/client-management/:clientId/agent` with `{ agentId }` is retained for backwards compatibility; it replaces the agent list with `agentIds: [agentId]`.
 
-### 7.2 Client Endpoints (ADMIN and JOB_HANDLER only)
+### 7.2 Client Endpoints (ADMIN, TEAM_LEAD and JOB_HANDLER only)
 
 | Method | Endpoint | Description | Request Body | Response |
 |---|---|---|---|---|

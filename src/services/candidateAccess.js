@@ -6,7 +6,7 @@ import { ROLES, hasRole } from "../middleware/requireRole.js";
 // read from the database by requireActiveUser, and the allocation here), so
 // a reassignment or role change applies to the very next request.
 //
-//   OWNER, ADMIN,                       every candidate
+//   OWNER, ADMIN, TEAM_LEAD,            every candidate
 //   REGISTRATION_DESK
 //   JOB_HANDLER                         every candidate, to READ (routes/admin.js gives it
 //                                       no candidate write route) and to staff its jobs
@@ -14,7 +14,7 @@ import { ROLES, hasRole } from "../middleware/requireRole.js";
 //                                       (candidate_allocation.analyst_id)
 //   anything else                       none (fails closed; a retired MANAGER too)
 
-const UNRESTRICTED_ROLES = Object.freeze([ROLES.ADMIN, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER]);
+const UNRESTRICTED_ROLES = Object.freeze([ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER]);
 
 // Matches no candidate: a passport ID is never empty.
 const NO_CANDIDATE = Object.freeze({ passportId: { in: [] } });

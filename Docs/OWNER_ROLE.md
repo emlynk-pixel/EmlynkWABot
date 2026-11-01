@@ -6,12 +6,14 @@ database only**: the application never gives the OWNER role, and never changes o
 OWNER account, whoever asks (the OWNER included).
 
 ```
-OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER
+OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER
 ```
+
+TEAM_LEAD (added 2026-11-01) sits below ADMIN for user management (an ADMIN may give it) but inherits no ADMIN permission: it has its own operational set (`ROLES_AND_PERMISSIONS.md`).
 
 The former `MANAGER` role was retired on 2026-10-30 (ADMIN holds everything it could do); see `ROLES_AND_PERMISSIONS.md` §6.
 
-(The roles below ADMIN are not ranked against each other for user management: an OWNER or ADMIN manages all of them alike.)
+(The roles below ADMIN, TEAM_LEAD included, are not ranked against each other for user management: an OWNER or ADMIN manages all of them alike, and none of them manages users.)
 
 The role is stored like every other role: `public."user".role` is plain `TEXT`, validated by the
 application (`src/middleware/requireRole.js`). There is no database CHECK on it, so **no migration**
@@ -19,20 +21,20 @@ was needed and no existing row was changed. Existing ADMIN accounts stay ADMIN.
 
 ## Permission model
 
-| | OWNER | ADMIN | ANALYST / REGISTRATION_DESK / JOB_HANDLER |
+| | OWNER | ADMIN | TEAM_LEAD / ANALYST / REGISTRATION_DESK / JOB_HANDLER |
 |---|---|---|---|
 | Every ADMIN page and API route (Settings, Audit Logs, Job Types, Sheet Sync, …) | ✅ | ✅ | as before |
 | List users | ✅ | ✅ | ❌ |
 | Change the role of / deactivate an OWNER account | ❌ 403 `OWNER_LOCKED` (database only) | ❌ 403 `OWNER_LOCKED` | ❌ |
 | Change the role of / deactivate an ADMIN account | ✅ | ❌ 403 `OWNER_REQUIRED` | ❌ |
-| Change the role of / deactivate an ANALYST, REGISTRATION_DESK, JOB_HANDLER | ✅ | ✅ | ❌ |
+| Change the role of / deactivate a TEAM_LEAD, ANALYST, REGISTRATION_DESK, JOB_HANDLER | ✅ | ✅ | ❌ |
 | Change the role of / deactivate an account still holding the retired MANAGER role | ✅ | ❌ 403 `OWNER_REQUIRED` | ❌ |
 | Give the OWNER role | ❌ 403 `OWNER_LOCKED` (database only) | ❌ 403 `OWNER_LOCKED` | ❌ |
 | Give the ADMIN role (Change Roles) | ✅ | ❌ 403 | ❌ |
-| Give a role below ADMIN | ✅ | ✅ | ❌ |
+| Give a role below ADMIN (TEAM_LEAD included) | ✅ | ✅ | ❌ |
 | Give or invite the retired MANAGER role | ❌ 400 `INVALID_ROLE` | ❌ 400 `INVALID_ROLE` | ❌ |
 | Invite ADMIN | ✅ | ❌ 403 | ❌ |
-| Invite ANALYST / REGISTRATION_DESK / JOB_HANDLER | ✅ | ✅ | ❌ |
+| Invite TEAM_LEAD / ANALYST / REGISTRATION_DESK / JOB_HANDLER | ✅ | ✅ | ❌ |
 | Invite OWNER | ❌ | ❌ | ❌ |
 | Re-invite / reactivate an existing account | any account but an OWNER's | accounts below ADMIN | ❌ |
 | Change or deactivate your own account | ❌ 400 `SELF_CHANGE` | ❌ 400 | – |

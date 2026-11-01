@@ -170,21 +170,32 @@ function contentDisposition(fileName) {
 // stages, candidate documents, call logs); nothing else.
 // Work Allocation: an ANALYST only sees and changes the candidates allocated
 // to them (services/candidateAccess.js), on every candidate route and in the
-// lists that name candidates; ADMIN and REGISTRATION_DESK see all.
+// lists that name candidates; ADMIN, TEAM_LEAD and REGISTRATION_DESK see all.
 // JOB_HANDLER: Jobs, Agents and Clients (manage), Candidates (read only: the
 // list, the details and what the details page reads); nothing else. Every
 // candidate WRITE route keeps its own tier, which JOB_HANDLER is not in.
-const { ADMIN, ANALYST, REGISTRATION_DESK, JOB_HANDLER } = ROLES;
+// TEAM_LEAD: exactly seven areas, nothing inferred from them: the Candidates
+// area for every candidate (the CANDIDATE_STAFF / CANDIDATE_READERS /
+// REGISTRATION_STAFF routes), Need Attention (list, flag, complete), Work
+// Allocation, Jobs (JOB_READERS / JOB_MANAGERS), Agents and Clients
+// (MASTER_DATA_STAFF) and the standard Daily Report (REPORT_READERS). It is in no
+// ADMINS_ONLY route: verification, Candidate Form confirm / reject, follow-up
+// delete, the job-group form link, Summary by Roles, Job Types, police-date
+// corrections, Settings, users and Audit Logs stay ADMIN only; and it is not in the
+// dashboard or review tiers.
+const { ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK, JOB_HANDLER } = ROLES;
 // The set of roles allowed for each endpoint tier.
-const ALL_ACTIVE = [ADMIN, ANALYST];                            // overview, reports, etc
-const CANDIDATE_STAFF = [ADMIN, ANALYST, REGISTRATION_DESK];    // the Candidates area
-const ANALYSTS_UP = [ADMIN, ANALYST];                           // analyst or above
-const ADMINS_ONLY = [ADMIN];                                    // administrators only
-const REGISTRATION_STAFF = [ADMIN, REGISTRATION_DESK];          // registering a new candidate
-const CANDIDATE_READERS = [...CANDIDATE_STAFF, JOB_HANDLER];    // candidate READS only (GET)
-const JOB_READERS = [ADMIN, ANALYST, JOB_HANDLER];              // job lists and details
-const JOB_MANAGERS = [ADMIN, JOB_HANDLER];                      // job writes (create, edit, members, close)
-const MASTER_DATA_STAFF = [ADMIN, JOB_HANDLER];                 // Agents and Client Management
+const ALL_ACTIVE = [ADMIN, ANALYST];                                    // overview, documents, review, police, monthly
+const REPORT_READERS = [ADMIN, TEAM_LEAD, ANALYST];                     // the Daily Report
+const CANDIDATE_STAFF = [ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK]; // the Candidates area
+const ANALYSTS_UP = [ADMIN, ANALYST];                                   // review actions
+const ADMINS_ONLY = [ADMIN];                                            // administrators only
+const ALLOCATION_MANAGERS = [ADMIN, TEAM_LEAD];                         // Work Allocation
+const REGISTRATION_STAFF = [ADMIN, TEAM_LEAD, REGISTRATION_DESK];       // registering a new candidate
+const CANDIDATE_READERS = [...CANDIDATE_STAFF, JOB_HANDLER];            // candidate READS only (GET)
+const JOB_READERS = [ADMIN, TEAM_LEAD, ANALYST, JOB_HANDLER];           // job lists and details
+const JOB_MANAGERS = [ADMIN, TEAM_LEAD, JOB_HANDLER];                   // job writes (create, edit, members, close)
+const MASTER_DATA_STAFF = [ADMIN, TEAM_LEAD, JOB_HANDLER];              // Agents and Client Management
 // (an ANALYST works only on candidates allocated to them, and a new
 // candidate is unallocated, so registration is not an Analyst action)
 
@@ -258,7 +269,7 @@ export function createAdminRouter({
     });
 
     // Daily report for one business day (Sri Lanka), default today.
-    router.get("/reports/daily", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/reports/daily", requireRole(REPORT_READERS), async (req, res) => {
         const parsed = parseDailyReportQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -269,7 +280,7 @@ export function createAdminRouter({
 
     // Daily Report page (dailyReportService.js). Summary: the same roles as
     // the daily report. Summary by Roles: ADMIN only.
-    router.get("/reports/daily/summary", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/reports/daily/summary", requireRole(REPORT_READERS), async (req, res) => {
         const parsed = parseDailyReportQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -278,7 +289,7 @@ export function createAdminRouter({
         return res.json(await getDailySummary({ db: client, date: parsed.params.date, scope: candidateScope(req.user) }));
     });
 
-    router.get("/reports/daily/incomplete", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/reports/daily/incomplete", requireRole(REPORT_READERS), async (req, res) => {
         const parsed = parseIncompleteQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -821,11 +832,11 @@ export function createAdminRouter({
         })));
     });
 
-    // ---------------------------------------------------------------- Work Allocation (ADMIN only)
+    // ---------------------------------------------------------------- Work Allocation (ADMIN and TEAM_LEAD)
     // Which Analyst each candidate is assigned to (workAllocationService.js).
     // Every change is one transaction (all or nothing) and audited.
 
-    router.get("/work-allocation/candidates", requireRole(ADMINS_ONLY), async (req, res) => {
+    router.get("/work-allocation/candidates", requireRole(ALLOCATION_MANAGERS), async (req, res) => {
         const parsed = parseAllocationListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -834,12 +845,12 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await listAllocationCandidates({ db: client, params: parsed.params })));
     });
 
-    router.get("/work-allocation/analysts", requireRole(ADMINS_ONLY), async (req, res) => {
+    router.get("/work-allocation/analysts", requireRole(ALLOCATION_MANAGERS), async (req, res) => {
         const client = await resolveDb(db);
         return res.json(await listAllocationAnalysts({ db: client }));
     });
 
-    router.post("/work-allocation/assign", requireRole(ADMINS_ONLY), async (req, res) => {
+    router.post("/work-allocation/assign", requireRole(ALLOCATION_MANAGERS), async (req, res) => {
         const parsed = parseAssignBody(req.body);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
@@ -857,10 +868,10 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.json(await autoAllocateCandidates({ db: client, actor: req.user, ...parsed.values })));
     };
 
-    router.post("/work-allocation/auto-allocate", requireRole(ADMINS_ONLY), handleAutoAllocate);
-    router.post("/work-allocation/allocate", requireRole(ADMINS_ONLY), handleAutoAllocate);
+    router.post("/work-allocation/auto-allocate", requireRole(ALLOCATION_MANAGERS), handleAutoAllocate);
+    router.post("/work-allocation/allocate", requireRole(ALLOCATION_MANAGERS), handleAutoAllocate);
 
-    router.post("/work-allocation/unassign", requireRole(ADMINS_ONLY), async (req, res) => {
+    router.post("/work-allocation/unassign", requireRole(ALLOCATION_MANAGERS), async (req, res) => {
         const parsed = parseUnassignBody(req.body);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
@@ -870,7 +881,7 @@ export function createAdminRouter({
     });
 
     // ---------------------------------------------------------------- Jobs (jobService.js)
-    // ADMIN and JOB_HANDLER manage jobs; an ANALYST reads only the jobs that
+    // ADMIN, TEAM_LEAD and JOB_HANDLER manage jobs; an ANALYST reads only the jobs that
     // hold a candidate allocated to them (and sees only those candidates);
     // REGISTRATION_DESK has no access. Creating a job type and the job-group Candidate
     // Form link stay ADMIN only. Membership rules (one PROCESSING job per
@@ -992,7 +1003,7 @@ export function createAdminRouter({
     });
 
     // ---------------------------------------------------------------- Agents and Clients (agentService.js, clientService.js)
-    // ADMIN and JOB_HANDLER (every method); no delete route exists: Agents and
+    // ADMIN, TEAM_LEAD and JOB_HANDLER (every method); no delete route exists: Agents and
     // Clients are made ACTIVE / INACTIVE, never removed. The employer Client lives
     // under /client-management because /clients is the legacy candidate-documents area.
     const entityParam = (name, notFound) => (req, res) => {

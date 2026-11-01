@@ -85,7 +85,7 @@ describe("POST /api/admin/users/invite", () => {
         for (const role of ["MANAGER", "manager", "VIEWER", "REVIEWER", "SUPERADMIN", "", undefined]) {
             const result = await invite({ email: "x@example.invalid", name: "X", role });
             assert.equal(result.status, 400, String(role));
-            assert.deepEqual(result.body.errors.find((e) => e.field === "role"), { field: "role", message: "must be one of: OWNER, ADMIN, ANALYST, REGISTRATION_DESK, JOB_HANDLER" }, String(role));
+            assert.deepEqual(result.body.errors.find((e) => e.field === "role"), { field: "role", message: "must be one of: OWNER, ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK, JOB_HANDLER" }, String(role));
         }
         assert.equal(rowOf("x@example.invalid"), undefined, "no account with a refused role");
         assert.equal(authAdmin.calls.length, calls);

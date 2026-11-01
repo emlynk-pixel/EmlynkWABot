@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError } from "../../api/client";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink, type CreatedFormShareLink, type FormShareStatus } from "../../api/candidates";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink, type CandidateJobAssignment, type CreatedJobGroupShareLink, type JobGroupShareStatus } from "../../api/jobs";
-import { canManageJobs, useAuth } from "../../auth/AuthProvider";
+import { canShareJobGroupForm, useAuth } from "../../auth/AuthProvider";
 import { ActionDialog, DialogError, dangerButton, primaryButton, secondaryButton } from "../Dialog";
 import { formatDateTime } from "../format";
 
@@ -158,7 +158,7 @@ function ShareFormDialog({ passportId, jobs, onClose }: { passportId: string; jo
 
 const whatsappLink = (url: string) => `https://wa.me/?text=${encodeURIComponent(`Please fill in your details for Emlynk using this link. You will need your Passport Number and NIC Number.\n${url}`)}`;
 
-// "Share link for the job group". Only for roles that manage jobs; needs the
+// "Share link for the job group". ADMIN only (the API's tier); needs the
 // candidate to be on a PROCESSING job (otherwise disabled, with the reason). With
 // several, the job is chosen first (the newest is preselected).
 function JobGroupSection({ jobs }: { jobs: CandidateJobAssignment[] }) {
@@ -171,7 +171,7 @@ function JobGroupSection({ jobs }: { jobs: CandidateJobAssignment[] }) {
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
     const [confirm, setConfirm] = useState<"create" | "revoke" | null>(null);
-    const manages = canManageJobs(user);
+    const manages = canShareJobGroupForm(user);
     const jobId = currentJob && currentJob.status === "PROCESSING" ? currentJob.jobId : null;
 
     useEffect(() => {

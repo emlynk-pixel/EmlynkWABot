@@ -4,7 +4,7 @@ import { getDailyRoleSummary, getDailySummary, getIncompleteCandidates, type Dai
 import { STAGE_LABELS, type CandidateStageKey } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
-import { ADMIN_ONLY, ROLES, hasRole, roleLabel as labelOfRole, type Role } from "../auth/roles";
+import { ROLES, canViewRoleReport, roleLabel as labelOfRole, type Role } from "../auth/roles";
 import { activityLabel, exportRolePdf, exportSummaryPdf, reportTypeLabel } from "../components/dailyReportPdf";
 import { formatDateTime, formatDay, formatNumber, formatTime, todayInSriLanka } from "../components/format";
 import { Icon } from "../components/Icon";
@@ -23,7 +23,7 @@ import { DatePicker } from "../components/DatePicker";
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const shiftDay = (ymd: string, days: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 // The order of the role selector.
-const REPORT_ROLES: Role[] = [ROLES.ANALYST, ROLES.ADMIN, ROLES.OWNER, ROLES.REGISTRATION_DESK];
+const REPORT_ROLES: Role[] = [ROLES.ANALYST, ROLES.TEAM_LEAD, ROLES.ADMIN, ROLES.OWNER, ROLES.REGISTRATION_DESK];
 const PREVIEW_ROWS = 10;
 
 const button = "h-9 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50";
@@ -418,7 +418,8 @@ export function DailyReportPage() {
     const today = todayInSriLanka();
     const requested = searchParams.get("date");
     const date = requested && DATE_PATTERN.test(requested) && requested <= today ? requested : today;
-    const canSeeRoles = hasRole(user, ADMIN_ONLY);
+    // Summary by Roles is ADMIN only (a TEAM_LEAD and an ANALYST see the Summary).
+    const canSeeRoles = canViewRoleReport(user);
     const view = canSeeRoles && searchParams.get("view") === "roles" ? "roles" : "summary";
     const requestedRole = searchParams.get("role") as Role | null;
     const role: Role = requestedRole && REPORT_ROLES.includes(requestedRole) ? requestedRole : ROLES.ANALYST;

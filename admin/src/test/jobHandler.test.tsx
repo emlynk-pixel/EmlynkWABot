@@ -167,7 +167,7 @@ describe("Invite User", () => {
         backend(ADMIN, { "GET /api/admin/users": { status: 200, body: USERS } });
         renderApp("/settings/invite");
         const select = await screen.findByRole("combobox", { name: /^Role/ }, RENDER_STEP);
-        expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Analyst", "Registration Desk", "Job Handler"]);
+        expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Team Lead", "Analyst", "Registration Desk", "Job Handler"]);
         expect(await screen.findByText("Someone")).toBeInTheDocument();
     });
 

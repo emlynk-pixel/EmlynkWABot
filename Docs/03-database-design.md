@@ -31,7 +31,7 @@ The application's staff profile table (Prisma model `User`, table `public."user"
 - `adminId`: the primary key (kept under this name; audit entries and call logs reference it).
 - `authUserId` (`auth_user_id`): required, unique UUID that references `auth.users.id`. It links a staff profile to its Supabase Auth identity and is only ever taken from a verified Supabase session, never from a request body. The foreign key to `auth.users` (`ON DELETE RESTRICT`) is created by the migration where the `auth` schema exists (Supabase), so a profile can't outlive or be detached from its identity by accident.
 - `email` (unique), `name`.
-- `role`: `OWNER`, `ADMIN`, `ANALYST`, `REGISTRATION_DESK` or `JOB_HANDLER` (hierarchy `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`; the retired `MANAGER` is no longer valid, see `ROLES_AND_PERMISSIONS.md` §6; the single OWNER is set in the database only, see `OWNER_ROLE.md`). The application's authorization source of truth; never read from a token or Supabase metadata.
+- `role`: `OWNER`, `ADMIN`, `TEAM_LEAD`, `ANALYST`, `REGISTRATION_DESK` or `JOB_HANDLER` (hierarchy `OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER`; the retired `MANAGER` is no longer valid, see `ROLES_AND_PERMISSIONS.md` §6; the single OWNER is set in the database only, see `OWNER_ROLE.md`). The application's authorization source of truth; never read from a token or Supabase metadata.
 - `status`: `INVITED` (invitation sent, password not yet set), `ACTIVE` or `INACTIVE`. Only `ACTIVE` users can use the API, checked on every request.
 
 Relations: `auditLogs` (as the actor) and `callLogs`. There are no password hash, token, invitation or reset tables: invitations and password recovery are Supabase Auth's (`SUPABASE_AUTH.md`). Role and status rules: `10-security.md`.
@@ -417,7 +417,7 @@ The staff user table represents console users (administrators, managers, analyst
 - `status` (`TEXT`): Operational state (`INVITED`, `ACTIVE`, `INACTIVE`).
 
 #### 4.3 Supported Roles
-Hierarchy: `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. `role` is plain `TEXT` (no CHECK constraint); the allowed values are validated by the application (`src/middleware/requireRole.js`), so retiring `MANAGER` needed no schema migration, only a data conversion of existing rows (`npm run user:migrate-manager`, `ROLES_AND_PERMISSIONS.md` §6).
+Hierarchy: `OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. `role` is plain `TEXT` (no CHECK constraint); the allowed values are validated by the application (`src/middleware/requireRole.js`), so adding `TEAM_LEAD` (2026-11-01) needed no migration, and retiring `MANAGER` needed no schema migration, only a data conversion of existing rows (`npm run user:migrate-manager`, `ROLES_AND_PERMISSIONS.md` §6).
 - `OWNER`: the single system owner, set in the database only. Every ADMIN permission, plus managing ADMIN accounts. See `OWNER_ROLE.md`.
 - `ADMIN`: Full access to all operations (Work Allocation, verification and confirming Candidate Form values included), user management, invitations, role modifications, audit logs, and settings.
 - `ANALYST`: Operational review, document classification, candidate profile updates, call logs.

@@ -84,13 +84,13 @@ The one-PROCESSING-job rule is enforced three times: the service under row locks
 
 | Endpoint | Roles | Purpose |
 |---|---|---|
-| `GET /jobs?view=processing\|completed\|cancelled&search=&page=` | ADMIN, JOB_HANDLER, ANALYST (scoped) | list (50 per page) with tab counts |
+| `GET /jobs?view=processing\|completed\|cancelled&search=&page=` | ADMIN, TEAM_LEAD, JOB_HANDLER, ANALYST (scoped) | list (50 per page) with tab counts |
 | `GET /jobs/:jobId` | same | details and assigned candidates |
-| `POST /jobs` | ADMIN, JOB_HANDLER | create (see §4) |
-| `PUT /jobs/:jobId` `{ vacancies?, jobTypeId?, clientId?, companyJobId? }` | ADMIN, JOB_HANDLER | update a PROCESSING job; `companyJobId` alone also on a finished job |
-| `POST /jobs/:jobId/candidates`, `DELETE /jobs/:jobId/candidates/:passportId` | ADMIN, JOB_HANDLER | membership |
-| `POST /jobs/:jobId/complete`, `POST /jobs/:jobId/cancel` | ADMIN, JOB_HANDLER | lifecycle |
-| `GET /job-options` | ADMIN, JOB_HANDLER | active job types, **active clients of active agents (with their `agentId`)**, active agents |
+| `POST /jobs` | ADMIN, TEAM_LEAD, JOB_HANDLER | create (see §4) |
+| `PUT /jobs/:jobId` `{ vacancies?, jobTypeId?, clientId?, companyJobId? }` | ADMIN, TEAM_LEAD, JOB_HANDLER | update a PROCESSING job; `companyJobId` alone also on a finished job |
+| `POST /jobs/:jobId/candidates`, `DELETE /jobs/:jobId/candidates/:passportId` | ADMIN, TEAM_LEAD, JOB_HANDLER | membership |
+| `POST /jobs/:jobId/complete`, `POST /jobs/:jobId/cancel` | ADMIN, TEAM_LEAD, JOB_HANDLER | lifecycle |
+| `GET /job-options` | ADMIN, TEAM_LEAD, JOB_HANDLER | active job types, **active clients of active agents (with their `agentId`)**, active agents |
 | `POST /job-types { name }` | ADMIN | add a job type |
 
 Agents and Clients have their own endpoints (`AGENT_CLIENT_MANAGEMENT.md` §6); there is no `/companies` route.

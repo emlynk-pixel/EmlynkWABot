@@ -913,10 +913,11 @@ Authentication is Supabase Auth; authorization is the application's. The full de
 
 ### 12.1 Roles
 
-The role is `public."user".role`, read from the database on every request (never from the token). Hierarchy: `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. The former `MANAGER` role is retired (its permissions are ADMIN's): it is not a valid role, and an account still holding it gets 403 `ROLE_NOT_SUPPORTED` on every route (`ROLES_AND_PERMISSIONS.md` §6).
+The role is `public."user".role`, read from the database on every request (never from the token). Hierarchy: `OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER` (who manages whom; TEAM_LEAD inherits no ADMIN permission). The former `MANAGER` role is retired (its permissions are ADMIN's): it is not a valid role, and an account still holding it gets 403 `ROLE_NOT_SUPPORTED` on every route (`ROLES_AND_PERMISSIONS.md` §6).
 
 - **`OWNER`**: the single system owner. Inherits every ADMIN permission (a tier that admits ADMIN admits OWNER: `hasRole()` in `src/middleware/requireRole.js` and `admin/src/auth/roles.ts`), plus managing ADMIN accounts. Set in the database only; see section 13 and [`OWNER_ROLE.md`](OWNER_ROLE.md).
 - **`ADMIN`**: everything, including Settings, Work Allocation, verification, police slip date corrections and user management of the roles below ADMIN (`/api/admin/users`); never another ADMIN's or the OWNER's account.
+- **`TEAM_LEAD`**: exactly seven areas: the Candidates area for every candidate (`CANDIDATE_STAFF`, `CANDIDATE_READERS`, `REGISTRATION_STAFF`), Need Attention (list, flag, complete), Work Allocation, Jobs (`JOB_READERS`, `JOB_MANAGERS`), Agents and Clients, and the standard Daily Report. Every ADMIN-only action stays ADMIN only (verification, Candidate Form confirm / reject, follow-up delete, the job-group form link, Summary by Roles, Job Types); no dashboards, review, police, monthly overview, Settings, Audit Logs or user management.
 - **`ANALYST`**: dashboard reads, review actions, corrections and candidate work; cannot correct police slip dates.
 - **`REGISTRATION_DESK`**: candidate list, lookup, registration and details only.
 - **`JOB_HANDLER`**: Jobs, Agents and Clients; reads Candidates (list, details) and changes no candidate record; no dashboards, reports, review, Settings, Audit Logs or user management (`JOB_MANAGEMENT_IMPLEMENTATION.md`, `AGENT_CLIENT_MANAGEMENT.md`).
@@ -930,17 +931,19 @@ Endpoint tiers (`src/routes/admin.js`):
 
 | Tier | Roles | Routes |
 |---|---|---|
-| Dashboard reads | ADMIN, ANALYST | overview, documents, clients, police, reports (Summary by Roles: ADMIN only), review (read) |
-| Candidates (`CANDIDATE_STAFF`) | ADMIN, ANALYST, REGISTRATION_DESK | the whole Candidates area: list, registration, details, stages, candidate documents, call logs, additional details; Priority Follow-Ups: flag a call (`POST /candidates/:passportId/call-logs/:callLogId/follow-up`), list (`GET /follow-ups`) and complete (`POST /follow-ups/:id/complete`) |
-| Work Allocation | ADMIN | `/work-allocation/*` (section 4p) |
-| Registration | ADMIN, REGISTRATION_DESK | `POST /candidates` |
+| Dashboard reads (`ALL_ACTIVE`) | ADMIN, ANALYST | overview, documents, clients, police, monthly overview, review (read) |
+| Daily Report (`REPORT_READERS`) | ADMIN, TEAM_LEAD, ANALYST | `GET /reports/daily`, `/reports/daily/summary`, `/reports/daily/incomplete` |
+| Summary by Roles | ADMIN | `GET /reports/daily/roles` |
+| Candidates (`CANDIDATE_STAFF`) | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | the whole Candidates area: list, registration, details, stages, candidate documents, call logs, additional details; Priority Follow-Ups: flag a call (`POST /candidates/:passportId/call-logs/:callLogId/follow-up`), list (`GET /follow-ups`) and complete (`POST /follow-ups/:id/complete`) |
+| Work Allocation (`ALLOCATION_MANAGERS`) | ADMIN, TEAM_LEAD | `/work-allocation/*` (section 4p); work goes to ACTIVE Analysts only |
+| Registration (`REGISTRATION_STAFF`) | ADMIN, TEAM_LEAD, REGISTRATION_DESK | `POST /candidates` |
 | Verification, Candidate Form confirm / reject | ADMIN | `POST /candidates/:id/verification`, `POST /candidates/:id/form-submission/*` |
-| Follow-up delete (Need Attention page) | ADMIN | `DELETE /follow-ups/:id`: removes the follow-up row only (never the call log, candidate or documents); ANALYST and REGISTRATION_DESK get 403. The role is the signed-in user's, read from the database on every request |
+| Follow-up delete (Need Attention page) | ADMIN | `DELETE /follow-ups/:id`: removes the follow-up row only (never the call log, candidate or documents); TEAM_LEAD, ANALYST and REGISTRATION_DESK get 403. The role is the signed-in user's, read from the database on every request |
 | Review and corrections | ADMIN, ANALYST | review actions, temporary document delete |
 | Police date correction | ADMIN | `POST /documents/:id/police-date` |
 | Users, Audit Logs and Settings | OWNER, ADMIN | `/api/admin/users/*` (which accounts each may change: section 13), `/api/admin/audit-logs`, `/api/admin/settings/sheet-sync/*` (status, runs, Upload, Test Connection, Sync Now, destination) |
 
-The tiers in `src/routes/admin.js` name ADMIN only; OWNER passes each of them through `hasRole()`. Jobs, Agents and Clients have their own tiers (ADMIN, JOB_HANDLER; an ANALYST reads the jobs holding their own candidates; job types and the job-group form link: ADMIN only): see `JOB_MANAGEMENT_IMPLEMENTATION.md` and `AGENT_CLIENT_MANAGEMENT.md`.
+The tiers in `src/routes/admin.js` name ADMIN only; OWNER passes each of them through `hasRole()`. TEAM_LEAD passes only the tiers that name it (it inherits nothing from ADMIN). Jobs, Agents and Clients have their own tiers (ADMIN, TEAM_LEAD, JOB_HANDLER; an ANALYST reads the jobs holding their own candidates; job types and the job-group form link: ADMIN only): see `JOB_MANAGEMENT_IMPLEMENTATION.md` and `AGENT_CLIENT_MANAGEMENT.md`.
 
 `GET /auth/me` and `POST /auth/complete-invite` need a Supabase session but not a particular role.
 
@@ -954,12 +957,14 @@ Routes in `src/routes/users.js`, mounted at `/api/admin/users`; every one needs 
 
 Summary of the rules (all enforced server-side on the database rows, inside the transaction and with the rows locked; hiding controls in the UI is not the security boundary):
 
-- **OWNER** is the highest role and inherits all ADMIN access. It changes the role of, deactivates and re-invites ADMIN accounts and every lower role, gives the ADMIN role, and invites ADMIN, ANALYST, REGISTRATION_DESK and JOB_HANDLER. It is the only role that changes an account still holding the retired MANAGER role.
+- **OWNER** is the highest role and inherits all ADMIN access. It changes the role of, deactivates and re-invites ADMIN accounts and every lower role, gives the ADMIN role, and invites ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK and JOB_HANDLER. It is the only role that changes an account still holding the retired MANAGER role.
 - **Nobody invites an OWNER**, and nobody gives the OWNER role or changes, deactivates or re-invites an OWNER account through the application, the OWNER included (403 `OWNER_LOCKED`). The single OWNER is created or changed in the database only (`OWNER_ROLE.md`, *Making the first OWNER* / *Changing the OWNER*).
 - **ADMIN cannot** change another ADMIN's role, deactivate another ADMIN, modify the OWNER, give the ADMIN or OWNER role, invite an ADMIN or OWNER, or use a re-invite to reactivate or change an ADMIN or OWNER account (403 `OWNER_REQUIRED` / `OWNER_LOCKED`). A requested role is refused, never silently downgraded.
 - **Nobody changes their own account** here (400 `SELF_CHANGE`).
 - **No automatic conversion:** existing ADMIN accounts stayed ADMIN when OWNER was introduced (no migration; `role` is `TEXT`).
 - **The retired MANAGER role is never given:** inviting or changing a user to `MANAGER` is refused with 400 (`INVALID_ROLE`, or an invitation `errors` entry for `role`), never replaced by another role. Existing MANAGER accounts are converted with `npm run user:migrate-manager` (`ROLES_AND_PERMISSIONS.md` §6).
+- **ADMIN** gives, invites, changes and deactivates **TEAM_LEAD** like the other roles below ADMIN.
+- **TEAM_LEAD** manages no account: every `/api/admin/users/*` route answers 403.
 - ANALYST, REGISTRATION_DESK and JOB_HANDLER keep their existing access.
 
 | Method | Path | Purpose |

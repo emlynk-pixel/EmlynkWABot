@@ -55,7 +55,7 @@ describe("Settings tabs", () => {
         expect(activeTab()).toBe("Change Roles");
         expect(screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent)).toEqual(["Settings"]);
         const annRole = await screen.findByRole("combobox", { name: "Change role for Ann Analyst" });
-        expect(within(annRole).getAllByRole("option").map((o) => o.getAttribute("value"))).toEqual(["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        expect(within(annRole).getAllByRole("option").map((o) => o.getAttribute("value"))).toEqual(["TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         await user.selectOptions(annRole, "JOB_HANDLER");
         const dialog = await screen.findByRole("dialog", { name: "Confirm Role Change" });
         await user.click(within(dialog).getByRole("button", { name: "Confirm Change" }));
@@ -188,7 +188,7 @@ describe("Settings tabs", () => {
         expect(select).toBeEnabled();
         expect(select).toHaveDisplayValue("Manager (retired)");
         const options = within(select).getAllByRole("option") as HTMLOptionElement[];
-        expect(options.map((o) => [o.value, o.disabled])).toEqual([["MANAGER", true], ["ADMIN", false], ["ANALYST", false], ["REGISTRATION_DESK", false], ["JOB_HANDLER", false]]);
+        expect(options.map((o) => [o.value, o.disabled])).toEqual([["MANAGER", true], ["ADMIN", false], ["TEAM_LEAD", false], ["ANALYST", false], ["REGISTRATION_DESK", false], ["JOB_HANDLER", false]]);
         await user.selectOptions(select, "ADMIN");
         const dialog = await screen.findByRole("dialog", { name: "Confirm Role Change" });
         expect(dialog).toHaveTextContent("from Manager (retired) to Admin");

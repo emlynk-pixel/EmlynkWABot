@@ -1,6 +1,8 @@
 # Candidate Form Feature Architecture
 
 > **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md).
+>
+> **Role note (2026-11-01):** the `TEAM_LEAD` role was added (`OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER`). A TEAM_LEAD shares and revokes a candidate's form link and views submissions like the other Candidates roles; everything this document calls ADMIN only (confirming or rejecting submitted values, the job-group link) stays ADMIN only.
 
 Status: describes the implementation on branch `version/candidate-extra-details-form` as of 2026-10-17. Anything not yet built is marked **Pending** (see section 26). Exact values (lifetimes, limits, column names, routes, roles) were taken from the code and tests, not from memory.
 

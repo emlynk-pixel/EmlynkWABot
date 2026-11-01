@@ -16,12 +16,13 @@ foreign key to `auth.users` on Supabase, `ON DELETE RESTRICT`).
 
 ## Roles
 
-Hierarchy: `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. The former `MANAGER` role was retired on 2026-10-30 (ADMIN holds everything it could do); see `ROLES_AND_PERMISSIONS.md` §6.
+Hierarchy: `OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER` (TEAM_LEAD inherits no ADMIN permission). The former `MANAGER` role was retired on 2026-10-30 (ADMIN holds everything it could do); see `ROLES_AND_PERMISSIONS.md` §6.
 
 | Role | Access (enforced by `src/routes/admin.js`) |
 |---|---|
 | `OWNER` | everything ADMIN has, plus managing ADMIN accounts; the single OWNER is set in the database only (`OWNER_ROLE.md`) |
 | `ADMIN` | everything, including users (`/api/admin/users`: the roles below ADMIN only) and Settings |
+| `TEAM_LEAD` | Candidates (every candidate), Need Attention, Work Allocation, Jobs, Agents, Clients, the standard Daily Report; no ADMIN-only action, Settings, users, Audit Logs, dashboards or review (`ROLES_AND_PERMISSIONS.md`) |
 | `ANALYST` | dashboard reads, review actions, corrections, candidate work; not police-date corrections |
 | `REGISTRATION_DESK` | candidate list, lookup, registration and details only |
 | `JOB_HANDLER` | Jobs, Agents and Clients; reads Candidates (list, details), changes no candidate record |

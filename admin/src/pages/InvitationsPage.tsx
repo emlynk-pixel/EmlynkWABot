@@ -15,6 +15,7 @@ const dateFormat = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Colombo", 
 const ROLE_HELP: Record<Role, string> = {
     OWNER: "Everything an Admin does, plus managing Admin accounts.",
     ADMIN: "Everything, including Settings, Work Allocation, verification and managing the users below Admin.",
+    TEAM_LEAD: "Candidates (all of them), Need Attention, Work Allocation, Jobs, Agents, Clients and the Daily Report. No Settings, user management or Admin-only actions.",
     ANALYST: "Reviews documents and works on candidates; no police-date corrections.",
     REGISTRATION_DESK: "Registers and looks up candidates only.",
     JOB_HANDLER: "Manages Jobs, Agents and Clients; views candidates without changing them.",

@@ -4,6 +4,8 @@ import { canViewDashboard, useAuth } from "./auth/AuthProvider";
 import { ROLES, hasRole, type Role } from "./auth/roles";
 
 const JOB_HANDLER_ONLY: readonly Role[] = [ROLES.JOB_HANDLER];
+// The dashboard pages (Overview's areas, Review, Police, Missing Documents): not JOB_HANDLER, not TEAM_LEAD.
+const NO_DASHBOARD: readonly Role[] = [ROLES.JOB_HANDLER, ROLES.TEAM_LEAD];
 import { RequireAuth } from "./auth/RequireAuth";
 import { AdminLayout } from "./layout/AdminLayout";
 import { CandidateDeploymentPage } from "./pages/CandidateDeploymentPage";
@@ -62,10 +64,10 @@ function HomePage() {
     return <Navigate to={hasRole(user, [ROLES.JOB_HANDLER]) ? "/jobs" : "/candidates"} replace />;
 }
 
-// Pages outside the Job Handler's modules whose own component has no role check: opened
-// by URL by a JOB_HANDLER they show "Access Restricted" instead of loading (the API refuses
-// them either way). Only the listed roles are stopped, so every other role sees these pages
-// exactly as before.
+// Pages whose own component has no role check: opened by URL by a role outside them (a
+// JOB_HANDLER, and a TEAM_LEAD for the dashboard pages) they show "Access Restricted" instead
+// of loading (the API refuses them either way). Only the listed roles are stopped, so every
+// other role sees these pages exactly as before.
 function DenyRoles({ roles }: { roles: readonly Role[] }) {
     const { user } = useAuth();
     if (!hasRole(user, roles)) return <Outlet />;
@@ -98,7 +100,7 @@ export function AppRoutes() {
                 }
             >
                 <Route index element={<HomePage />} />
-                <Route element={<DenyRoles roles={JOB_HANDLER_ONLY} />}>
+                <Route element={<DenyRoles roles={NO_DASHBOARD} />}>
                     <Route path="documents" element={<DocumentsPage />} />
                     <Route path="review" element={<ReviewQueuePage />} />
                     <Route path="review/:id" element={<ReviewDetailPage />} />
@@ -108,6 +110,8 @@ export function AppRoutes() {
                     <Route path="clients/:passportId" element={<ClientDetailsPage />} />
                     <Route path="missing-documents" element={<MissingDocumentsPage />} />
                     <Route path="police" element={<PoliceWorkflowPage />} />
+                </Route>
+                <Route element={<DenyRoles roles={JOB_HANDLER_ONLY} />}>
                     <Route path="reports/daily" element={<DailyReportPage />} />
                 </Route>
                 <Route element={<ClassicArea />}>

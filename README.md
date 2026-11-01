@@ -47,7 +47,7 @@ This README is the high-level overview. Detailed documentation lives in [`Docs/`
 | **Documents** | Admin uploads and WhatsApp intake, checksums and duplicate handling, a Missing Documents view, and the Police report 21-day workflow. |
 | **OCR and review** | OCR runs in a separate worker. Low-confidence or unclear documents go to a Review Queue for a person's decision. |
 | **WhatsApp intake** | A Meta webhook receives candidate documents and hands them to a durable background queue. |
-| **Work Allocation** | ADMIN and OWNER allocate candidates to Analysts; an Analyst sees only their own candidates. |
+| **Work Allocation** | OWNER, ADMIN and TEAM_LEAD allocate candidates to Analysts; an Analyst sees only their own candidates. |
 | **Jobs, Agents, Clients** | Jobs with yearly job codes, many-to-many Agent and Client links, Job Types (ADMIN-managed list), and candidate assignment to jobs. |
 | **Need Attention** | Call logs can be flagged for follow-up; follow-ups are listed by candidate and can be completed. |
 | **Reports** | Overview, Daily Report (Asia/Colombo days, PDF export) and a monthly overview. |
@@ -61,16 +61,19 @@ This README is the high-level overview. Detailed documentation lives in [`Docs/`
 ## Role Model
 
 ```
-OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER
+OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER
 ```
 
 | Role | Scope |
 |---|---|
 | `OWNER` | Highest authority. Everything ADMIN can do, plus managing ADMIN accounts. There is one OWNER per environment, set **in the database only**; the application never gives, changes or deactivates the OWNER role. |
 | `ADMIN` | Full operational access: Settings, Google Sheet Sync, Job Types, Work Allocation, verification, Audit Logs and managing the roles below ADMIN. Cannot change or invite another ADMIN or the OWNER. |
+| `TEAM_LEAD` | Exactly seven areas, **not** every ADMIN permission: Candidates (all of them), Need Attention, Work Allocation, Jobs, Agents, Clients and the standard Daily Report. Every ADMIN-only action inside them (verification, Candidate Form confirm / reject, follow-up delete, job-group form link, Summary by Roles) stays ADMIN only; no Settings, user management, Audit Logs, Job Types, dashboards or review queue. |
 | `ANALYST` | Review and candidate work on the candidates allocated to them. |
 | `REGISTRATION_DESK` | The Candidates area: registration, details, stages, documents and call logs. No Settings or user management. |
 | `JOB_HANDLER` | Manages Jobs, Agents and Clients. Reads Candidates; changes no candidate record. |
+
+The hierarchy shows who manages whom, not inherited permissions: OWNER inherits every ADMIN permission, but TEAM_LEAD inherits nothing from ADMIN. OWNER and ADMIN may give the TEAM_LEAD role; TEAM_LEAD manages no user account.
 
 The former `MANAGER` role was **retired on 2026-10-30**. It is not an active role: it cannot be given or invited, and an account still holding it is refused on every route (`ROLE_NOT_SUPPORTED`) until an OWNER converts it to ADMIN (`npm run user:migrate-manager`).
 
@@ -440,7 +443,7 @@ Start with [`Docs/README.md`](Docs/README.md), the categorised index of every do
 ## Current Status and Notes
 
 - **Active development** on the `dev` branch; `stage` and `main` follow the release flow in the deployment guide.
-- **Roles:** `OWNER` was introduced above `ADMIN`; `MANAGER` was retired on 2026-10-30. The active model is `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`.
+- **Roles:** `OWNER` was introduced above `ADMIN`; `MANAGER` was retired on 2026-10-30. `TEAM_LEAD` was added on 2026-11-01 with an explicit operational permission set. The active model is `OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER`.
 - **Update Sheet is now Upload:** the bulk import button was renamed.
 - **Authentication** moved fully to Supabase Auth; the application no longer issues its own tokens or sends account emails.
 - Some documents under `Docs/` still describe earlier behavior; where a document and the code disagree, the code is correct.

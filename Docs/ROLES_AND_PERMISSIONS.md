@@ -1,6 +1,6 @@
 # Roles and Permissions
 
-What each staff role in the Emlynk admin dashboard can and cannot do. Checked against the code on `dev` (2026-10-30):
+What each staff role in the Emlynk admin dashboard can and cannot do. Checked against the code on `dev` (2026-11-01):
 - route guards: `src/routes/admin.js`, `users.js`, `sheetSyncSettings.js`, `candidateImport.js`
 - user-management rules: `src/middleware/requireRole.js`, `src/services/userAccountService.js`
 - candidate scope: `src/services/candidateAccess.js`
@@ -13,20 +13,23 @@ What each staff role in the Emlynk admin dashboard can and cannot do. Checked ag
 ## 1. The roles at a glance
 
 ```
-OWNER  >  ADMIN  >  ANALYST / REGISTRATION_DESK / JOB_HANDLER
+OWNER  >  ADMIN  >  TEAM_LEAD  >  ANALYST / REGISTRATION_DESK / JOB_HANDLER
 ```
 
 | Role | In one sentence |
 |---|---|
 | **OWNER** | The single system owner: everything an ADMIN can do, plus managing ADMIN accounts. Set in the database only. |
 | **ADMIN** | Runs the system and the operation: all candidate, document, review, police, job and allocation work (verification and approvals included), Settings, Audit Logs, Google Sheet Sync, and managing every user below ADMIN. |
+| **TEAM_LEAD** | Exactly seven areas: Candidates (**every** candidate), Need Attention, Work Allocation, Jobs, Agents, Clients and the standard Daily Report. Every ADMIN-only action inside them stays ADMIN only; no Settings, user management, Audit Logs, dashboards or review queue. |
 | **ANALYST** | Does the candidate work for **the candidates allocated to them**: review, documents, stages, call logs. |
 | **REGISTRATION_DESK** | Registers candidates and works on candidate records (details, stages, documents, call logs); nothing outside the Candidates area. |
 | **JOB_HANDLER** | Manages Jobs, Agents and Clients; can **read** candidates (to staff jobs) but never changes a candidate record. |
 
-The roles below ADMIN are separate kinds of work, not a ladder: none of ANALYST, REGISTRATION_DESK and JOB_HANDLER includes another's permissions.
+**The hierarchy is about who manages whom, not about inherited permissions.** OWNER inherits every ADMIN permission. **TEAM_LEAD inherits nothing from ADMIN:** it has an explicit operational permission set (section 3), and a route admits TEAM_LEAD only where its tier names TEAM_LEAD. TEAM_LEAD is above the operational roles because it allocates their work and supervises it, and because an ADMIN may give the TEAM_LEAD role; it manages no user account itself.
 
-The **MANAGER** role was retired on 2026-10-30; ADMIN holds everything it could do (section 6).
+The roles below TEAM_LEAD are separate kinds of work, not a ladder: none of ANALYST, REGISTRATION_DESK and JOB_HANDLER includes another's permissions.
+
+The **MANAGER** role was retired on 2026-10-30; ADMIN holds everything it could do (section 6). TEAM_LEAD (added 2026-11-01) is a new role with its own permission set, not a revived MANAGER.
 
 ---
 
@@ -36,111 +39,116 @@ The **MANAGER** role was retired on 2026-10-30; ADMIN holds everything it could 
 
 ### Dashboard and documents
 
-| Capability | OWNER | ADMIN | ANALYST | REG. DESK | JOB HANDLER |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Overview dashboard | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Documents list, Missing Documents | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Clients (candidate documents view) | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Daily Report: Summary, Incomplete, Monthly | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Daily Report: **Summary by Roles** | ✅ | ✅ | ❌ | ❌ | ❌ |
-| **Audit Logs** | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Overview dashboard | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
+| Documents list, Missing Documents | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
+| Clients (candidate documents view) | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
+| Daily Report: Summary, Incomplete | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Monthly overview | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
+| Daily Report: **Summary by Roles** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Audit Logs** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+
 
 ### Review queue (WhatsApp submissions)
 
-| Capability | OWNER | ADMIN | ANALYST | REG. DESK | JOB HANDLER |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Open the review queue and items | ✅ | ✅ | ✅ *Own*¹ | ❌ | ❌ |
-| Approve, keep pending, remove from review | ✅ | ✅ | ✅ *Own*¹ | ❌ | ❌ |
-| Set document type, assign to a client, retry processing | ✅ | ✅ | ✅ *Own*¹ | ❌ | ❌ |
-| Replace a verified document / keep as a version | ✅ | ✅ | ✅ *Own*¹ | ❌ | ❌ |
-| Delete a temporary (unprocessed) document | ✅ | ✅ | ✅ *Own*¹ | ❌ | ❌ |
+| Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Open the review queue and items | ✅ | ✅ | ❌ | ✅ *Own*¹ | ❌ | ❌ |
+| Approve, keep pending, remove from review | ✅ | ✅ | ❌ | ✅ *Own*¹ | ❌ | ❌ |
+| Set document type, assign to a client, retry processing | ✅ | ✅ | ❌ | ✅ *Own*¹ | ❌ | ❌ |
+| Replace a verified document / keep as a version | ✅ | ✅ | ❌ | ✅ *Own*¹ | ❌ | ❌ |
+| Delete a temporary (unprocessed) document | ✅ | ✅ | ❌ | ✅ *Own*¹ | ❌ | ❌ |
 
 ¹ An item already linked to a candidate outside the Analyst's allocation is "not found" for them. A file not yet linked to any candidate is open to every Analyst, since that is the review work.
 
 ### Police workflow
 
-| Capability | OWNER | ADMIN | ANALYST | REG. DESK | JOB HANDLER |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Police Workflow page (21-day countdown) | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **Correct a police slip's submitted date** | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Police Workflow page (21-day countdown) | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
+| **Correct a police slip's submitted date** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ### Candidates
 
-| Capability | OWNER | ADMIN | ANALYST | REG. DESK | JOB HANDLER |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Candidate list and candidate page | ✅ | ✅ | ✅ *Own* | ✅ | ✅ *Read* |
-| **Register a new candidate** | ✅ | ✅ | ❌² | ✅ | ❌ |
-| Edit candidate details, additional details | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
-| Update stages (Test details … Finalizing Job) | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
-| Upload and remove candidate documents | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
-| Add call logs | ✅ | ✅ | ✅ *Own* | ✅ | ❌ (reads them) |
-| **Verify** a candidate's details / documents | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Share / revoke a candidate's Candidate Form link | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
-| View a submitted Candidate Form | ✅ | ✅ | ✅ *Own* | ✅ | ✅ *Read* |
-| **Confirm / reject submitted form changes** into the record | ✅ | ✅ | ❌ | ❌ | ❌ |
-| **Assign to Job** from the candidate's page | ✅ | ✅ | ❌ | ❌ | ❌ (assigns from the Job page) |
-| Bulk candidate import (Settings → Google Sheet Sync → **Upload**) | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Candidate list and candidate page | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ✅ *Read* |
+| **Register a new candidate** | ✅ | ✅ | ✅ | ❌² | ✅ | ❌ |
+| Edit candidate details, additional details | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
+| Update stages (Test details … Finalizing Job) | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
+| Upload and remove candidate documents | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
+| Add call logs | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ (reads them) |
+| **Verify** a candidate's details / documents | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Share / revoke a candidate's Candidate Form link | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
+| View a submitted Candidate Form | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ✅ *Read* |
+| **Confirm / reject submitted form changes** into the record | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Assign to Job** from the candidate's page | ✅ | ✅ | ❌ (assigns from the Job page) | ❌ | ❌ | ❌ (assigns from the Job page) |
+| Bulk candidate import (Settings → Google Sheet Sync → **Upload**) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ² A new candidate is unallocated, and an Analyst only works on candidates allocated to them.
 
 ### Need Attention (call-log follow-ups)
 
-| Capability | OWNER | ADMIN | ANALYST | REG. DESK | JOB HANDLER |
-|---|:-:|:-:|:-:|:-:|:-:|
-| See Need Attention | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
-| Flag a call for follow-up, mark complete | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
-| **Delete** a follow-up | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| See Need Attention | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
+| Flag a call for follow-up, mark complete | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
+| **Delete** a follow-up | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ### Work allocation
 
-| Capability | OWNER | ADMIN | ANALYST | REG. DESK | JOB HANDLER |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Work Allocation page | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Assign, reassign, unassign, auto-allocate candidates to Analysts | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Work Allocation page | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Assign, reassign, unassign, auto-allocate candidates to Analysts | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+
+Work is only ever allocated to **ACTIVE ANALYST** accounts (the server refuses any other target: `NOT_AN_ANALYST`), so nobody can allocate work to an OWNER, ADMIN or TEAM_LEAD.
 
 ### Jobs, Agents and Clients
 
-| Capability | OWNER | ADMIN | ANALYST | REG. DESK | JOB HANDLER |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Jobs list and job details | ✅ | ✅ | ✅ *Read*³ | ❌ | ✅ |
-| Create / edit a job | ✅ | ✅ | ❌ | ❌ | ✅ |
-| Add / remove candidates on a job | ✅ | ✅ | ❌ | ❌ | ✅ |
-| Complete / cancel a job | ✅ | ✅ | ❌ | ❌ | ✅ |
-| Add a **new** Job Type (from the New Job dialog) | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Manage Job Types (Settings → Job Types: list, rename, activate) | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Share / revoke a **job-group** Candidate Form link | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Agents: list, create, edit, activate/deactivate | ✅ | ✅ | ❌ | ❌ | ✅ |
-| Client Management: list, create, edit, change agent, activate/deactivate | ✅ | ✅ | ❌ | ❌ | ✅ |
+| Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Jobs list and job details | ✅ | ✅ | ✅ | ✅ *Read*³ | ❌ | ✅ |
+| Create / edit a job | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
+| Add / remove candidates on a job | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
+| Complete / cancel a job | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
+| Add a **new** Job Type (from the New Job dialog) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Manage Job Types (Settings → Job Types: list, rename, activate) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Share / revoke a **job-group** Candidate Form link | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Agents: list, create, edit, activate/deactivate | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
+| Client Management: list, create, edit, change agent, activate/deactivate | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 
 ³ An Analyst sees only the jobs that hold their own candidates.
 
 ### Settings and Google Sheet Sync
 
-| Capability | OWNER | ADMIN | ANALYST | REG. DESK | JOB HANDLER |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Open Settings (every tab) | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Google Sheet Sync: status, run history | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Google Sheet Sync: **Upload** (bulk import) | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Google Sheet Sync: **Test Connection**, **Sync Now** | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Google Sheet Sync: switch the **Sync Destination** | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Open Settings (every tab) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Google Sheet Sync: status, run history | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Google Sheet Sync: **Upload** (bulk import) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Google Sheet Sync: **Test Connection**, **Sync Now** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Google Sheet Sync: switch the **Sync Destination** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ### User management
 
-| Capability | OWNER | ADMIN | ANALYST | REG. DESK | JOB HANDLER |
-|---|:-:|:-:|:-:|:-:|:-:|
-| List users (Change Roles, Invite User tabs) | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Invite ADMIN | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Invite ANALYST, REGISTRATION_DESK, JOB_HANDLER | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Change role / deactivate / re-invite an **ADMIN** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Change role / deactivate / re-invite a user **below ADMIN** | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Change an account still holding the retired **MANAGER** role | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Give the **ADMIN** role | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Give or invite the retired **MANAGER** role | ❌⁵ | ❌⁵ | ❌ | ❌ | ❌ |
-| Give the **OWNER** role, or change / deactivate an OWNER | ❌⁴ | ❌ | ❌ | ❌ | ❌ |
-| Change or deactivate **your own** account | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| List users (Change Roles, Invite User tabs) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Invite ADMIN | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Invite TEAM_LEAD, ANALYST, REGISTRATION_DESK, JOB_HANDLER | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Change role / deactivate / re-invite an **ADMIN** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Change role / deactivate / re-invite a user **below ADMIN** (TEAM_LEAD included) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Change an account still holding the retired **MANAGER** role | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Give the **ADMIN** role | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Give the **TEAM_LEAD** role | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Give or invite the retired **MANAGER** role | ❌⁵ | ❌⁵ | ❌ | ❌ | ❌ | ❌ |
+| Give the **OWNER** role, or change / deactivate an OWNER | ❌⁴ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Change or deactivate **your own** account | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ⁴ The OWNER is set in the database only, never through the app, the OWNER included. See [`OWNER_ROLE.md`](OWNER_ROLE.md).
-⁵ Refused with 400 (`INVALID_ROLE` / "must be one of: OWNER, ADMIN, ANALYST, REGISTRATION_DESK, JOB_HANDLER"); never replaced by another role.
+⁵ Refused with 400 (`INVALID_ROLE` / "must be one of: OWNER, ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK, JOB_HANDLER"); never replaced by another role.
 
 ### Every role
 
@@ -179,10 +187,10 @@ There is one OWNER, created or changed in the database only ([`OWNER_ROLE.md`](O
 - **Work Allocation.**
 - Jobs (create, edit, staff, complete, cancel), job-group form links, adding a new Job Type from the New Job dialog.
 - Agents and Clients.
-- Daily Report including *Summary by Roles*.
+- Daily Report including *Summary by Roles* (every role).
 - Every Settings tab: Change Roles, Invite User, Google Sheet Sync (Test Connection, Sync Now, Sync Destination, Upload) and Job Types.
 - Audit Logs.
-- Invite, change, deactivate and re-invite **ANALYST, REGISTRATION_DESK and JOB_HANDLER** accounts.
+- Invite, change, deactivate and re-invite **TEAM_LEAD, ANALYST, REGISTRATION_DESK and JOB_HANDLER** accounts, and give the TEAM_LEAD role.
 
 **Cannot:**
 - Change another ADMIN's role, deactivate another ADMIN, or re-invite an ADMIN's email.
@@ -193,6 +201,30 @@ There is one OWNER, created or changed in the database only ([`OWNER_ROLE.md`](O
 - Change their own account.
 
 A requested role the ADMIN may not give is refused (403 `OWNER_REQUIRED` / `OWNER_LOCKED`, or 400 for MANAGER), never quietly replaced by a lower one.
+
+### TEAM_LEAD
+Exactly seven areas, nothing inferred from them. It is **not** "ADMIN minus something": a TEAM_LEAD gets only what is listed here, and every action that is ADMIN only inside these areas stays ADMIN only.
+
+**Can:**
+- **Candidates**, on every candidate (not limited to an allocation): list, open, register, edit details and additional details, update stages, upload and remove documents, add call logs, share and revoke the candidate's Candidate Form link, view a submitted form. (The same Candidates-area actions REGISTRATION_DESK has.)
+- **Need Attention:** see every follow-up, flag a call, mark a follow-up complete.
+- **Work Allocation:** view unallocated candidates and Analysts; assign, reassign, unassign; select one, several or all; equal (even) distribution. Work goes to ACTIVE Analysts only.
+- **Jobs:** list and view (processing and completed), create and edit, add and remove candidates on the Job's page, complete and cancel (the Job Handler's job actions).
+- **Agents** and **Clients** (Client Management): list, view, create, edit, link, activate and deactivate.
+- **Daily Report:** the standard report (Summary and Incomplete), as an ANALYST sees it.
+
+**Cannot (ADMIN only, or outside the seven areas):**
+- Verify a candidate's details or documents.
+- Confirm or reject submitted Candidate Form values.
+- Delete a Need Attention follow-up.
+- Share a job-group Candidate Form link.
+- "Assign to Job" from the candidate's page (it assigns from the Job's page instead).
+- Daily Report *Summary by Roles*.
+- Add a new Job Type from the New Job dialog, or manage Job Types.
+- Settings (any tab): Change Roles, Invite User, Google Sheet Sync (status, Test Connection, Sync Now, Sync Destination, Upload) and Job Types.
+- User management of any kind: list users, invite, give or change roles, deactivate, manage OWNER or ADMIN accounts.
+- Audit Logs.
+- Overview, Documents, Missing Documents, Review Queue, Police Workflow, the Monthly overview, and correcting police slip dates.
 
 ### ANALYST
 **Can (only for candidates allocated to them):**
@@ -245,6 +277,8 @@ A requested role the ADMIN may not give is refused (403 `OWNER_REQUIRED` / `OWNE
 | Compared with | The lower role **cannot** |
 |---|---|
 | **ADMIN vs OWNER** | Manage ADMIN accounts (change, deactivate, re-invite), give the ADMIN role, invite ADMINs, convert an account still holding the retired MANAGER role. |
+| **TEAM_LEAD vs ADMIN** | Verification; confirming or rejecting form values; deleting follow-ups; job-group form links; Assign to Job from the candidate's page; *Summary by Roles*; Settings (every tab, Google Sheet Sync and Upload included); user management; Audit Logs; Job Types (Settings, and adding one from the New Job dialog); the dashboard, documents, review queue, police workflow and monthly overview; police-date corrections. |
+| **ANALYST vs TEAM_LEAD** | Work outside their allocated candidates; register candidates; Work Allocation; job writes; Agents and Clients. (The ANALYST, unlike the TEAM_LEAD, has the dashboard, documents, review queue and police workflow.) |
 | **ANALYST vs ADMIN** | Work outside their allocated candidates; register candidates; verify; confirm form changes; correct police dates; delete follow-ups; Work Allocation; job writes; Agents and Clients; Summary by Roles; bulk import; job-group form links; adding job types; Settings; Audit Logs; user management. |
 | **REGISTRATION_DESK vs ADMIN** | Everything outside the Candidates area (dashboard, review, police, reports, jobs, agents, clients, allocation); verification; confirming form changes; deleting follow-ups; bulk import; Settings; Audit Logs; user management. |
 | **JOB_HANDLER vs ADMIN** | Any candidate change (read only); review, police, dashboard, reports, Need Attention, allocation; verification; adding job types; job-group form links; bulk import; Settings; Audit Logs; user management. |
@@ -254,7 +288,8 @@ A requested role the ADMIN may not give is refused (403 `OWNER_REQUIRED` / `OWNE
 ## 5. Notes
 
 - **OWNER = ADMIN for access.** Every rule that names ADMIN admits OWNER too (`hasRole()`); OWNER only adds managing ADMIN accounts (and accounts holding a retired role).
-- **Analyst scope follows Work Allocation on every request.** Reassigning a candidate moves access immediately. If an Analyst is deactivated or given another role, their allocations stay recorded until someone reassigns them.
+- **TEAM_LEAD inherits nothing.** `hasRole()` admits TEAM_LEAD only where a tier names it (`REPORT_READERS`, `CANDIDATE_STAFF`, `CANDIDATE_READERS`, `REGISTRATION_STAFF`, `ALLOCATION_MANAGERS`, `JOB_READERS`, `JOB_MANAGERS`, `MASTER_DATA_STAFF` in `src/routes/admin.js`). It is in no `ADMINS_ONLY` route and in no user-management, Settings, Sheet Sync or import route.
+- **Analyst scope follows Work Allocation on every request.** Reassigning a candidate moves access immediately. If an Analyst is deactivated or given another role, their allocations stay recorded until someone reassigns them. TEAM_LEAD, like ADMIN and REGISTRATION_DESK, sees every candidate.
 - **Error responses.**
   - 401: not signed in.
   - 403 `ACCOUNT_NOT_ACTIVE`: the account isn't ACTIVE.
@@ -274,7 +309,7 @@ A requested role the ADMIN may not give is refused (403 `OWNER_REQUIRED` / `OWNE
 
 ## 6. The retired MANAGER role
 
-Until 2026-10-30 there was a **MANAGER** role between ADMIN and the other roles. It was retired because ADMIN already held every MANAGER permission (business decision: "admin = manager"). The supported hierarchy is now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`.
+Until 2026-10-30 there was a **MANAGER** role between ADMIN and the other roles. It was retired because ADMIN already held every MANAGER permission (business decision: "admin = manager"). The supported hierarchy is now `OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. TEAM_LEAD (added 2026-11-01) is a new role with its own explicit permission set (section 3); it is not a revived MANAGER, and no MANAGER permission or account was moved to it (every former MANAGER-only action stays ADMIN only).
 
 ### Where each MANAGER permission went
 

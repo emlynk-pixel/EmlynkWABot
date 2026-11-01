@@ -100,12 +100,12 @@ describe("the role (ROLE-001, ROLE-002)", () => {
     });
 
     test("ROLE-002: the existing roles stay valid and unchanged; unknown roles stay invalid", () => {
-        assert.deepEqual(ALL_ROLES, ["OWNER", "ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        assert.deepEqual(ALL_ROLES, ["OWNER", "ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         for (const role of ["ADMIN", "ANALYST", "REGISTRATION_DESK"]) assert.ok(isValidRole(role));
         for (const role of ["MANAGER", "VIEWER", "job_handler", "JOBHANDLER", ""]) assert.equal(isValidRole(role), false);
         // OWNER: every role but OWNER; ADMIN: the roles below ADMIN (test/ownerRole.test.js). The same lists decide invitations.
-        assert.deepEqual(ASSIGNABLE_ROLES.OWNER, ["ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
-        assert.deepEqual(ASSIGNABLE_ROLES.ADMIN, ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        assert.deepEqual(ASSIGNABLE_ROLES.OWNER, ["ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        assert.deepEqual(ASSIGNABLE_ROLES.ADMIN, ["TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         assert.equal(ASSIGNABLE_ROLES.MANAGER, undefined, "the retired MANAGER gives no role");
     });
 });

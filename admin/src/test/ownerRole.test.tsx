@@ -38,10 +38,10 @@ describe("roles.ts", () => {
     });
 
     test("what each role may invite and give", () => {
-        expect(invitableRoles(OWNER)).toEqual(["ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
-        expect(invitableRoles(userWithRole("ADMIN"))).toEqual(["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
-        expect(assignableRoles(OWNER)).toEqual(["ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
-        expect(assignableRoles(userWithRole("ADMIN"))).toEqual(["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        expect(invitableRoles(OWNER)).toEqual(["ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        expect(invitableRoles(userWithRole("ADMIN"))).toEqual(["TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        expect(assignableRoles(OWNER)).toEqual(["ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        expect(assignableRoles(userWithRole("ADMIN"))).toEqual(["TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         // A retired MANAGER account (not converted yet) gives and invites nothing.
         for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             expect(invitableRoles(userWithRole(role))).toEqual([]);
@@ -51,7 +51,7 @@ describe("roles.ts", () => {
     });
 
     test("MANAGER is retired: not a role, in no list; it reads as such where history still names it", () => {
-        expect(ALL_ROLES).toEqual(["OWNER", "ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        expect(ALL_ROLES).toEqual(["OWNER", "ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         expect(Object.values(ROLES)).not.toContain("MANAGER");
         for (const list of [ADMIN_ONLY, DASHBOARD_ROLES, MASTER_DATA_ROLES]) expect(list as readonly string[]).not.toContain("MANAGER");
         expect(isAdmin(userWithRole("MANAGER"))).toBe(false);
@@ -92,7 +92,7 @@ describe("OWNER in the admin app", () => {
         renderApp("/settings/roles");
         const adminSelect = await screen.findByRole("combobox", { name: "Change role for Adam Admin" }, RENDER_STEP);
         expect(adminSelect).toBeEnabled();
-        expect(optionsOf(adminSelect)).toEqual(["ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        expect(optionsOf(adminSelect)).toEqual(["ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         const ownerSelect = screen.getByRole("combobox", { name: "Change role for Olga Owner" });
         expect(ownerSelect).toBeDisabled();
         expect(optionsOf(ownerSelect)).toEqual(["OWNER"]);
@@ -104,7 +104,7 @@ describe("OWNER in the admin app", () => {
         as("OWNER");
         renderApp("/settings/invite");
         const select = await screen.findByRole("combobox", { name: /^Role/ }, RENDER_STEP);
-        expect(optionsOf(select)).toEqual(["ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        expect(optionsOf(select)).toEqual(["ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         expect(within(await rowOf("Adam Admin")).getByRole("button", { name: "Re-invite" })).toBeInTheDocument();
         expect(within(await rowOf("Olga Owner")).queryAllByRole("button")).toEqual([]);
     });
@@ -122,7 +122,7 @@ describe("ADMIN: no control over Admin and Owner accounts", () => {
         expect(optionsOf(ownerSelect)).toEqual(["OWNER"]);
         const deskSelect = screen.getByRole("combobox", { name: "Change role for Dee Desk" });
         expect(deskSelect).toBeEnabled();
-        expect(optionsOf(deskSelect)).toEqual(["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        expect(optionsOf(deskSelect)).toEqual(["TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         expect(screen.getByText(/Admin accounts can be changed by an Owner only/)).toBeInTheDocument();
         expect(within(await rowOf("Olga Owner")).getByText("Owner", { selector: "span" })).toBeInTheDocument();
     });

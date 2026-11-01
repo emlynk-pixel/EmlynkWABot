@@ -16,7 +16,9 @@ Authentication is Supabase Auth's; authorization is the application's. The desig
 
 ## Role-Based Access Control
 
-Five roles, stored in `public."user".role` and enforced by `requireRole` middleware on every admin route. Hierarchy: `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. OWNER passes every tier that admits ADMIN (`hasRole()`); the single OWNER is set in the database only (`OWNER_ROLE.md`). A role that isn't one of the five (the retired `MANAGER`, or anything else) is refused before any role check: `requireActiveUser` answers 403 `ROLE_NOT_SUPPORTED`, so such an account reaches no route (`ROLES_AND_PERMISSIONS.md` §6).
+Six roles, stored in `public."user".role` and enforced by `requireRole` middleware on every admin route. Hierarchy: `OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER` (who manages whom, not inherited permissions). OWNER passes every tier that admits ADMIN (`hasRole()`); the single OWNER is set in the database only (`OWNER_ROLE.md`). A role that isn't one of the six (the retired `MANAGER`, or anything else) is refused before any role check: `requireActiveUser` answers 403 `ROLE_NOT_SUPPORTED`, so such an account reaches no route (`ROLES_AND_PERMISSIONS.md` §6).
+
+**TEAM_LEAD** is not a column in this table: it has exactly seven areas (Candidates for every candidate, Need Attention, Work Allocation, Jobs, Agents, Clients and the standard Daily Report), with every ADMIN-only action inside them kept ADMIN only, and no Settings, user management, Audit Logs, Job Types, dashboards or review, listed in full in [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md) §2–3. It inherits nothing from ADMIN.
 
 | Action | OWNER | ADMIN | ANALYST | REGISTRATION_DESK | JOB_HANDLER |
 |---|:---:|:---:|:---:|:---:|:---:|

@@ -23,7 +23,7 @@ import { createFakeAuthAdmin, fakeVerifyAccessToken, tokenFor } from "./helpers/
 const user = (role, status = "ACTIVE") => ({ adminId: `user-${role}-${status}`, name: role, email: `${role}-${status}@example.invalid`.toLowerCase(), role, status });
 const USERS = [...ALL_ROLES.map((role) => user(role)), user("VIEWER"), user("MANAGER"), user("ADMIN", "INACTIVE"), user("ANALYST", "INVITED")];
 const DOCUMENT_ID = "00000000-0000-4000-8000-000000000001";
-const CANDIDATE_STAFF = ["ADMIN", "ANALYST", "REGISTRATION_DESK"];
+const CANDIDATE_STAFF = ["ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK"];
 // JOB_HANDLER reads candidates (never writes them).
 const CANDIDATE_READERS = [...CANDIDATE_STAFF, "JOB_HANDLER"];
 
@@ -34,14 +34,15 @@ const admits = (allowed, role) => allowed.includes(role) || (role === "OWNER" &&
 const MATRIX = [
     ["GET", "/overview", undefined, ["ADMIN", "ANALYST"]],
     ["GET", "/documents", undefined, ["ADMIN", "ANALYST"]],
-    ["GET", "/reports/daily", undefined, ["ADMIN", "ANALYST"]],
+    // The Daily Report: the dashboard roles plus TEAM_LEAD.
+    ["GET", "/reports/daily", undefined, ["ADMIN", "TEAM_LEAD", "ANALYST"]],
     ["GET", "/candidates", undefined, CANDIDATE_READERS],
     // Registering is not an Analyst action: a new candidate is unallocated (Work Allocation).
-    ["POST", "/candidates", {}, ["ADMIN", "REGISTRATION_DESK"]],
-    // Work Allocation: ADMIN only (an invalid request, so the allowed roles get 400).
-    ["GET", "/work-allocation/candidates?status=NOPE", undefined, ["ADMIN"]],
-    ["POST", "/work-allocation/assign", {}, ["ADMIN"]],
-    ["POST", "/work-allocation/unassign", {}, ["ADMIN"]],
+    ["POST", "/candidates", {}, ["ADMIN", "TEAM_LEAD", "REGISTRATION_DESK"]],
+    // Work Allocation: ADMIN and TEAM_LEAD (an invalid request, so the allowed roles get 400).
+    ["GET", "/work-allocation/candidates?status=NOPE", undefined, ["ADMIN", "TEAM_LEAD"]],
+    ["POST", "/work-allocation/assign", {}, ["ADMIN", "TEAM_LEAD"]],
+    ["POST", "/work-allocation/unassign", {}, ["ADMIN", "TEAM_LEAD"]],
     ["GET", "/candidates/N1023757", undefined, CANDIDATE_READERS],
     ["PUT", "/candidates/N1023757", {}, CANDIDATE_STAFF],
     ["PUT", "/candidates/N1023757/stages/IVS_INTERVIEW", {}, CANDIDATE_STAFF],
@@ -93,8 +94,8 @@ async function call(method, path, adminId, body) {
 }
 
 describe("role constants", () => {
-    test("exactly the five application roles; the retired MANAGER and legacy VIEWER/REVIEWER are not roles", () => {
-        assert.deepEqual(ALL_ROLES, ["OWNER", "ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+    test("exactly the six application roles; the retired MANAGER and legacy VIEWER/REVIEWER are not roles", () => {
+        assert.deepEqual(ALL_ROLES, ["OWNER", "ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         assert.deepEqual(Object.values(ROLES), ALL_ROLES);
         assert.deepEqual(RETIRED_ROLES, { MANAGER: "MANAGER" });
         for (const legacy of ["MANAGER", "manager", "VIEWER", "REVIEWER", "admin", "owner", "SUPERADMIN", "", null]) assert.equal(isValidRole(legacy), false);

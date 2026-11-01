@@ -5,6 +5,9 @@ export const ROLES = {
     // The system owner (one, set in the database only): every ADMIN permission, plus managing Admin accounts.
     OWNER: "OWNER",
     ADMIN: "ADMIN",
+    // Exactly seven areas (not every ADMIN permission): Candidates (all of them), Need Attention, Work
+    // Allocation, Jobs, Agents, Clients and the standard Daily Report. No ADMIN-only action within them.
+    TEAM_LEAD: "TEAM_LEAD",
     ANALYST: "ANALYST",
     REGISTRATION_DESK: "REGISTRATION_DESK",
     // Manages Jobs, Agents and Clients; reads Candidates (changes no candidate record).
@@ -13,11 +16,12 @@ export const ROLES = {
 
 export type Role = (typeof ROLES)[keyof typeof ROLES];
 
-export const ALL_ROLES: readonly Role[] = [ROLES.OWNER, ROLES.ADMIN, ROLES.ANALYST, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER];
+export const ALL_ROLES: readonly Role[] = [ROLES.OWNER, ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.ANALYST, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER];
 
 export const ROLE_LABELS: Record<Role, string> = {
     OWNER: "Owner",
     ADMIN: "Admin",
+    TEAM_LEAD: "Team Lead",
     ANALYST: "Analyst",
     REGISTRATION_DESK: "Registration Desk",
     JOB_HANDLER: "Job Handler",
@@ -33,24 +37,29 @@ const RETIRED_ROLE_LABELS: Record<string, string> = {
 export const roleLabel = (role: string): string => ROLE_LABELS[role as Role] ?? RETIRED_ROLE_LABELS[role] ?? role;
 
 export const DASHBOARD_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.ANALYST];
+// The Daily Report (src/routes/admin.js REPORT_READERS): the dashboard roles plus TEAM_LEAD.
+export const REPORT_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.ANALYST];
 export const REVIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.ANALYST];
 // The Candidates area with its changes (registration, details, stages, documents, call logs).
 // Listed explicitly: JOB_HANDLER is NOT here (it only reads candidates: CANDIDATE_VIEW_ROLES).
-export const CANDIDATE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.ANALYST, ROLES.REGISTRATION_DESK];
+export const CANDIDATE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.ANALYST, ROLES.REGISTRATION_DESK];
 // Opening the Candidates list and a candidate's page (read only for JOB_HANDLER).
 export const CANDIDATE_VIEW_ROLES: readonly Role[] = [...CANDIDATE_ROLES, ROLES.JOB_HANDLER];
-// Administrators (an OWNER too): user management, Settings, Audit Logs, Work Allocation,
-// verification, police-date corrections, confirming Candidate Form values, deleting
-// follow-ups, job types and the job-group form link.
+// Administrators (an OWNER too): user management, Settings, Audit Logs, police-date
+// corrections, job types, verification, confirming Candidate Form values, deleting
+// follow-ups, the job-group form link and Summary by Roles. Never TEAM_LEAD.
 export const ADMIN_ONLY: readonly Role[] = [ROLES.ADMIN];
+// Work Allocation (src/routes/admin.js ALLOCATION_MANAGERS): ADMIN and TEAM_LEAD.
+export const ALLOCATION_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD];
 // Registering a new candidate. Not ANALYST: an Analyst works only on the
 // candidates allocated to them, and a new candidate is unallocated.
-export const REGISTRATION_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.REGISTRATION_DESK];
+export const REGISTRATION_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.REGISTRATION_DESK];
 
 type WithRole = { role: string } | null | undefined;
 
 // OWNER holds every ADMIN permission: a list that admits ADMIN admits OWNER too (the backend's
-// requireRole.js hasRole), so the lists here name ADMIN only.
+// requireRole.js hasRole), so the lists here name ADMIN only. TEAM_LEAD inherits nothing: it is
+// in a list only where the list names it.
 export const hasRole = (user: WithRole, roles: readonly Role[]): boolean =>
     Boolean(user && ((roles as readonly string[]).includes(user.role) || (user.role === ROLES.OWNER && roles.includes(ROLES.ADMIN))));
 
@@ -69,22 +78,30 @@ export const canCorrectPoliceDates = (user: WithRole) => hasRole(user, ADMIN_ONL
 export const canDeleteFollowUps = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 // Verifying a candidate's details or documents (Candidate details / Document submission): ADMIN only.
 export const canVerifyCandidate = (user: WithRole) => hasRole(user, ADMIN_ONLY);
-// Work Allocation (the page and its API): ADMIN only.
-export const canManageAllocations = (user: WithRole) => hasRole(user, ADMIN_ONLY);
-// Jobs: ADMIN and JOB_HANDLER manage them; an ANALYST reads the jobs holding
+// Work Allocation (the page and its API): ADMIN and TEAM_LEAD.
+export const canManageAllocations = (user: WithRole) => hasRole(user, ALLOCATION_ROLES);
+// The standard Daily Report (ADMIN, TEAM_LEAD, ANALYST), and its Summary by Roles view (ADMIN only).
+export const canViewDailyReport = (user: WithRole) => hasRole(user, REPORT_VIEW_ROLES);
+export const canViewRoleReport = (user: WithRole) => hasRole(user, ADMIN_ONLY);
+// Jobs: ADMIN, TEAM_LEAD and JOB_HANDLER manage them; an ANALYST reads the jobs holding
 // their own candidates (the server scopes the lists). REGISTRATION_DESK: no Jobs area.
-export const JOB_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.ANALYST, ROLES.JOB_HANDLER];
-export const JOB_MANAGE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.JOB_HANDLER];
+export const JOB_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.ANALYST, ROLES.JOB_HANDLER];
+export const JOB_MANAGE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.JOB_HANDLER];
 // Creating a job type (the New job dialog's "Add job type"): ADMIN only, not JOB_HANDLER.
 export const canCreateJobTypes = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 export const canViewJobs = (user: WithRole) => hasRole(user, JOB_VIEW_ROLES);
 export const canManageJobs = (user: WithRole) => hasRole(user, JOB_MANAGE_ROLES);
 // Confirming a candidate-submitted Candidate Form value into the candidate's record (one field at a time):
-// ADMIN only. Analysts and the Registration Desk see the submitted change but cannot apply it.
+// ADMIN only. TEAM_LEAD, Analysts and the Registration Desk see the submitted change but cannot apply it.
 export const canConfirmSubmittedChanges = (user: WithRole) => hasRole(user, ADMIN_ONLY);
-// Agents and Client Management (the employer clients): ADMIN and JOB_HANDLER,
+// The job-group Candidate Form link (Share Form > job group): ADMIN only.
+export const canShareJobGroupForm = (user: WithRole) => hasRole(user, ADMIN_ONLY);
+// "Assign to Job" on the candidate's page: an ADMIN workflow (ADMIN only). Job managers (TEAM_LEAD and
+// JOB_HANDLER) assign candidates from the Job's own page, which is the Jobs feature.
+export const canAssignJobFromCandidatePage = (user: WithRole) => hasRole(user, ADMIN_ONLY);
+// Agents and Client Management (the employer clients): ADMIN, TEAM_LEAD and JOB_HANDLER,
 // for reading and writing. The other roles get no entry and the API answers 403.
-export const MASTER_DATA_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.JOB_HANDLER];
+export const MASTER_DATA_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.JOB_HANDLER];
 export const canManageMasterData = (user: WithRole) => hasRole(user, MASTER_DATA_ROLES);
 // Registering a new candidate.
 export const canRegisterCandidates = (user: WithRole) => hasRole(user, REGISTRATION_ROLES);
@@ -97,8 +114,9 @@ export const canImportCandidates = (user: WithRole) => hasRole(user, ADMIN_ONLY)
 // User management (src/middleware/requireRole.js ASSIGNABLE_ROLES): an OWNER changes every account
 // and gives, or invites, every role but the Owner's; an ADMIN only the accounts and roles below
 // ADMIN (never another Admin). Nobody gives the Owner role or changes an Owner account in the app:
-// the Owner is set in the database only. The server enforces all of it.
-const BELOW_ADMIN: readonly Role[] = [ROLES.ANALYST, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER];
+// the Owner is set in the database only. TEAM_LEAD is below ADMIN and manages no account.
+// The server enforces all of it.
+const BELOW_ADMIN: readonly Role[] = [ROLES.TEAM_LEAD, ROLES.ANALYST, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER];
 const BELOW_OWNER: readonly Role[] = [ROLES.ADMIN, ...BELOW_ADMIN];
 // The roles the user may give in Change Roles, and invite in Invite User.
 export const assignableRoles = (user: WithRole): readonly Role[] => (isOwner(user) ? BELOW_OWNER : isAdmin(user) ? BELOW_ADMIN : []);

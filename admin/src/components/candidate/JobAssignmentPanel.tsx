@@ -4,7 +4,7 @@ import { ApiError } from "../../api/client";
 import { activeJobsOf, getCandidate, type CandidateDetails, type JobAssignments } from "../../api/candidates";
 import { addCandidateToJob, listJobs, type CandidateJobAssignment, type JobListItem } from "../../api/jobs";
 import { useAdminResource } from "../../api/useAdminResource";
-import { canManageCandidates, canManageJobs, canViewJobs, useAuth } from "../../auth/AuthProvider";
+import { canAssignJobFromCandidatePage, canManageCandidates, canManageJobs, canViewJobs, useAuth } from "../../auth/AuthProvider";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { formatDate } from "../format";
 import { Detail, JobStatusBadge, NO_COMPANY_JOB_ID } from "../job/JobParts";
@@ -50,9 +50,9 @@ export function JobAssignmentPanel({ assignments, candidate, testPassed = false,
 }) {
     const { user, token } = useAuth();
     const [assigning, setAssigning] = useState(false);
-    // A JOB_HANDLER reads this page only (it assigns from the Jobs module): the action is offered
-    // to roles that both manage jobs and change candidates (ADMIN).
-    const canAssign = canManageJobs(user) && canManageCandidates(user) && Boolean(candidate && onChanged && token);
+    // "Assign to Job" here is an ADMIN workflow: a JOB_HANDLER reads this page only, and a TEAM_LEAD
+    // (like a JOB_HANDLER) assigns candidates from the Job's own page (the Jobs feature).
+    const canAssign = canAssignJobFromCandidatePage(user) && canManageJobs(user) && canManageCandidates(user) && Boolean(candidate && onChanged && token);
     const active = activeJobsOf(assignments);
     return (
         <Card className="p-5">

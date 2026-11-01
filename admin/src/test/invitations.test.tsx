@@ -18,7 +18,7 @@ describe("Invite User page", () => {
         renderApp("/invitations");
         expect(await screen.findByRole("heading", { name: "Invite User" })).toBeInTheDocument();
         const roleOptions = within(screen.getByRole("combobox", { name: /^Role/ })).getAllByRole("option").map((o) => o.getAttribute("value"));
-        expect(roleOptions).toEqual(["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        expect(roleOptions).toEqual(["TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         expect(await screen.findByText("Pending Person")).toBeInTheDocument();
         expect(screen.getByText("Invitation sent")).toBeInTheDocument();
         expect(screen.getByText("Inactive")).toBeInTheDocument();

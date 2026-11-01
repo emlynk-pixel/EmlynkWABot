@@ -22,6 +22,7 @@ export { JOB_STATUS, candidateMatchesJobTypes };
 //
 // Roles (the routes check them; the service applies the Analyst scope):
 //   ADMIN            manages jobs and reference data
+//   TEAM_LEAD        manages jobs and every candidate on them (not job types)
 //   JOB_HANDLER      manages jobs (not job types: those stay ADMIN only)
 //   ANALYST          read-only, and only jobs holding a candidate allocated to them
 //   REGISTRATION_DESK no access to the Jobs API

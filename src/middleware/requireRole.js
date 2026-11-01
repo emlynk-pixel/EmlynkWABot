@@ -8,6 +8,11 @@
 //   ADMIN              everything, including Settings, Work Allocation,
 //                      verification and managing the roles below ADMIN; never
 //                      another ADMIN or an OWNER
+//   TEAM_LEAD          exactly seven areas, NOT every ADMIN permission: the
+//                      Candidates area for every candidate, Need Attention, Work
+//                      Allocation, Jobs, Agents, Clients and the standard Daily
+//                      Report; no ADMIN-only action within them, no Settings, user
+//                      management, Audit Logs, dashboards or review
 //   ANALYST            reads, review actions, corrections and candidate work;
 //                      not police-date corrections on stored documents
 //   REGISTRATION_DESK  the Candidates area only: list, lookup, registration,
@@ -24,13 +29,14 @@
 export const ROLES = Object.freeze({
     OWNER: "OWNER",
     ADMIN: "ADMIN",
+    TEAM_LEAD: "TEAM_LEAD",
     ANALYST: "ANALYST",
     REGISTRATION_DESK: "REGISTRATION_DESK",
     JOB_HANDLER: "JOB_HANDLER",
 });
 
 // The only values a role may be set to (public."user".role is TEXT, validated here).
-export const ALL_ROLES = Object.freeze([ROLES.OWNER, ROLES.ADMIN, ROLES.ANALYST, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER]);
+export const ALL_ROLES = Object.freeze([ROLES.OWNER, ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.ANALYST, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER]);
 
 export const isValidRole = (value) => ALL_ROLES.includes(value);
 
@@ -40,7 +46,8 @@ export const isValidRole = (value) => ALL_ROLES.includes(value);
 export const RETIRED_ROLES = Object.freeze({ MANAGER: "MANAGER" });
 
 // Whether `role` is in a tier. OWNER holds every ADMIN permission, so a tier that admits ADMIN
-// admits OWNER too: the route tiers name ADMIN only. Every role check goes through here.
+// admits OWNER too: the route tiers name ADMIN only. TEAM_LEAD inherits nothing: it is in a tier
+// only where the tier names it. Every role check goes through here.
 export const hasRole = (role, allowedRoles) => allowedRoles.includes(role) || (role === ROLES.OWNER && allowedRoles.includes(ROLES.ADMIN));
 
 // User management (routes/users.js, services/userAccountService.js). An OWNER changes every
@@ -48,8 +55,9 @@ export const hasRole = (role, allowedRoles) => allowedRoles.includes(role) || (r
 // below ADMIN: never another ADMIN's account, never the ADMIN role. Nobody changes their own
 // account there. The OWNER is set in the database only (Docs/OWNER_ROLE.md): no one gives the
 // OWNER role, or changes or deactivates an OWNER account, through the application. Inviting
-// (POST /api/admin/users/invite) follows the same lists: nobody invites an OWNER.
-const BELOW_ADMIN = Object.freeze([ROLES.ANALYST, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER]);
+// (POST /api/admin/users/invite) follows the same lists: nobody invites an OWNER. TEAM_LEAD is
+// below ADMIN (an ADMIN may give it) and manages no account itself.
+const BELOW_ADMIN = Object.freeze([ROLES.TEAM_LEAD, ROLES.ANALYST, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER]);
 const BELOW_OWNER = Object.freeze([ROLES.ADMIN, ...BELOW_ADMIN]);
 export const ASSIGNABLE_ROLES = Object.freeze({
     [ROLES.OWNER]: BELOW_OWNER,
