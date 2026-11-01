@@ -1,973 +1,450 @@
-# Emlynk Candidate Recruitment & Document Automation
+# EmlynkWABot: Candidate Recruitment & Document Automation
 
 [![Node.js](https://img.shields.io/badge/Node.js-22.18%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
-[![Express](https://img.shields.io/badge/Express.js-v5.2-000000?style=for-the-badge&logo=express&logoColor=white)](https://expressjs.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-v16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Prisma](https://img.shields.io/badge/Prisma_ORM-v6%2Fv7-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io/)
-[![Supabase](https://img.shields.io/badge/Supabase-Auth%20%26%20Storage-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
-[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
-[![License](https://img.shields.io/badge/License-ISC-blue?style=for-the-badge)](LICENSE)
+[![Express](https://img.shields.io/badge/Express.js-v5-000000?style=for-the-badge&logo=express&logoColor=white)](https://expressjs.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Supabase-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://supabase.com/)
+[![Prisma](https://img.shields.io/badge/Prisma_ORM-v6-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![License](https://img.shields.io/badge/License-ISC-blue?style=for-the-badge)](#license)
 
-> An enterprise-grade recruitment automation platform. Candidates submit verification documents over WhatsApp; staff manage the full recruitment pipeline — registration, document review, interviews and visa processing — from an admin dashboard backed by Supabase Auth, role-based authorization, OCR extraction, and a one-way Google Sheet operational mirror.
+EmlynkWABot is an internal recruitment platform. Staff register candidates and move them through a deployment pipeline (test, job, details, documents, interview, visa) from an admin dashboard. Candidates send documents over WhatsApp and fill in a personal-details form through a private link. OCR reads the documents, a review queue catches anything uncertain, and a Google Sheet mirrors the database for staff who work in a spreadsheet.
 
-> [!NOTE]
-> This README defines the target architecture and approved product specification. Some implementation changes described here are scheduled for migration and may not yet exist in the current codebase.
+This README is the high-level overview. Detailed documentation lives in [`Docs/`](Docs/README.md) and is linked from each section below.
 
 ---
 
 ## Table of Contents
 
-- [Project Overview](#project-overview)
-  - [Business Problem](#business-problem)
-  - [Solution Architecture](#solution-architecture)
-- [Key Capabilities](#key-capabilities)
-- [User Roles](#user-roles)
-- [High-Level Architecture](#high-level-architecture)
-- [Database Architecture](#database-architecture)
-  - [candidate](#candidate)
-  - [user](#user)
-  - [document](#document)
-  - [candidate_stage](#candidate_stage)
-  - [call_log](#call_log)
-  - [call_log_follow_up](#call_log_follow_up)
-  - [Supabase-Managed Identity (auth.users)](#supabase-managed-identity-authusers)
-- [ER Diagram](#er-diagram)
-- [Authentication & Authorization](#authentication--authorization)
-  - [Authentication — Supabase Auth](#authentication--supabase-auth)
-  - [Authorization — Backend RBAC](#authorization--backend-rbac)
-- [User Invitation Flow](#user-invitation-flow)
-- [Candidate Registration](#candidate-registration)
-  - [WhatsApp Number Format](#whatsapp-number-format)
-  - [Required & Optional Fields](#required--optional-fields)
-  - [Field Hints](#field-hints)
-- [Candidate Progress Flow](#candidate-progress-flow)
-- [Document Processing](#document-processing)
-  - [Single Scan Rule](#single-scan-rule)
-  - [Document Confidence Decision Engine](#document-confidence-decision-engine)
-  - [Police Report 21-Day Countdown Workflow](#police-report-21-day-countdown-workflow)
-- [WhatsApp Integration](#whatsapp-integration)
-- [OCR Service](#ocr-service)
-- [Google Sheet Operational Mirror](#google-sheet-operational-mirror)
-  - [Scheduled Sync](#scheduled-sync)
-  - [Sync Destination (Multi-Sheet Configuration)](#sync-destination-multi-sheet-configuration)
-  - [Document Status Mapping](#document-status-mapping)
-  - [Sync Safety Principles](#sync-safety-principles)
-- [Admin Dashboard Overview](#admin-dashboard-overview)
-  - [Candidate Search](#candidate-search)
-  - [Light and Dark Theme](#light-and-dark-theme)
-- [Candidate History & Need Attention](#candidate-history--need-attention)
-  - [Need Attention page](#need-attention-page)
-- [Daily Reports](#daily-reports)
-- [Settings & Administration](#settings--administration)
-- [Security](#security)
-- [Technology Stack](#technology-stack)
-- [Project Structure](#project-structure)
-- [Environment & Setup](#environment--setup)
-  - [Prerequisites](#prerequisites)
-  - [Environment Configuration](#environment-configuration)
-  - [Database & Docker Setup](#database--docker-setup)
-  - [Running the Application](#running-the-application)
-- [Available API Endpoints](#available-api-endpoints)
-- [Development Roadmap](#development-roadmap)
-- [Development Workflow & Git Conventions](#development-workflow--git-conventions)
-- [Documentation Reference](#documentation-reference)
-- [Project Status & License](#project-status--license)
+1. [Core Capabilities](#core-capabilities)
+2. [Role Model](#role-model)
+3. [Candidate Workflow](#candidate-workflow)
+4. [System Architecture](#system-architecture)
+5. [Database Overview](#database-overview)
+6. [Important Database Features](#important-database-features)
+7. [Google Sheet Sync](#google-sheet-sync)
+8. [OCR and Document Processing](#ocr-and-document-processing)
+9. [Candidate Bulk Import](#candidate-bulk-import)
+10. [Authentication and Security](#authentication-and-security)
+11. [Deployment Overview](#deployment-overview)
+12. [Local Development](#local-development)
+13. [Environment Configuration](#environment-configuration)
+14. [Testing and Quality](#testing-and-quality)
+15. [Repository Structure](#repository-structure)
+16. [Documentation Index](#documentation-index)
+17. [Current Status and Notes](#current-status-and-notes)
+18. [License](#license)
 
 ---
 
-## Project Overview
+## Core Capabilities
 
-**Emlynk** streamlines recruitment candidate onboarding, document collection and deployment tracking. Candidates submit verification documents — passports, police reports/slips, medical certificates and other required forms — directly through WhatsApp. Staff (OWNER, ADMIN, ANALYST, REGISTRATION_DESK, JOB_HANDLER) manage the candidate through a single pipeline: registration, document review, interviews, visa processing and job finalization, from one admin dashboard.
-
-The system receives document payloads via WhatsApp webhooks, performs OCR/Document AI extraction, reconciles candidate records against existing entries, routes documents by OCR confidence, tracks the police report 21-day deadline, and mirrors operational state to a Google Sheet for staff who work outside the dashboard.
-
-### Business Problem
-
-Manual processing of candidate verification documents via messaging channels presents severe operational challenges:
-
-1. **High Error & Misplacement Risk**: Manual downloading, renaming, and filing leads to lost records and misidentified documents.
-2. **Data Overwrite & Identity Conflict**: Unchecked updates can silently overwrite verified candidate data with incorrect information from new submissions.
-3. **Tracking Police Report Deadlines**: Police report slips require follow-up within a strict 21-day window. Tracking these manually across hundreds of candidates causes compliance failures.
-4. **Poor Document Quality**: Unclear or low-resolution document uploads stall processing without a clear audit trail or manual fallback.
-5. **Fragmented Visibility**: Staff who track candidates in a spreadsheet lose sync with the system of record, and call notes that need follow-up get lost in long histories.
-
-### Solution Architecture
-
-- **Automated Webhook Receiver**: Captures incoming WhatsApp media payloads securely via the official Meta WhatsApp Business API.
-- **Asynchronous Background Processing**: Moves file downloads, OCR, and storage tasks to background queues to maintain low endpoint latency.
-- **Smart Identity Reconciliation**: Uses dual identifiers (`candidate.passport_id` as the primary key, `candidate.unique_id` as a backload/legacy reference) and matches incoming WhatsApp sender numbers to safeguard existing records.
-- **Multi-Tier Confidence Engine**: Routes documents based on OCR confidence thresholds, preserving unclear or undefined files for manual staff review rather than discarding or misfiling them.
-- **21-Day Police Report Scheduler**: Extracts submission dates from police slips, starts a 21-day timer, and tracks status until staff upload and finalize the completed police report.
-- **Candidate Progress Pipeline**: A fixed sequence of stages (registration through job finalization) staff advance a candidate through, each independently trackable.
-- **Supabase-Backed Identity**: Supabase Auth owns authentication; the application's own `user` table owns staff profile, role and authorization.
-- **One-Way Operational Mirror**: A scheduled worker mirrors candidate/document/stage state to a Google Sheet for staff who need a spreadsheet view; the database is always the source of truth.
-
----
-
-## Key Capabilities
-
-- 📥 **WhatsApp Candidate Intake**: Meta webhook verification (`hub.verify_token`) and event ingestion for candidate-submitted documents.
-- 🔍 **Passport OCR & Extraction**: Extracts Passport ID, full name, DOB, expiry date and place of birth via a dedicated OCR service.
-- 🛡️ **Conflict-Aware Identity Matching**: Reconciles candidate identity using WhatsApp number and Passport ID; prevents silent overwriting of trusted records.
-- 📊 **Multi-Level Confidence Matrix**: 5-tier OCR confidence rules (>95%, 90–95%, 60–89%, 40–59%, <40%) drive auto-renaming vs. warning flags vs. manual review routing.
-- ⏱️ **Police Slip 21-Day Countdown**: Tracks police report slip submission dates; suppresses reminders once staff mark the final police report `COMPLETED`.
-- 📁 **Single-Scan Document Model**: One scan slot per candidate — no separate agreement/affidavit/contract slots to manage.
-- 🔐 **Supabase-Secured Admin Portal**: Supabase Auth identity plus backend role-based authorization (`OWNER` / `ADMIN` / `ANALYST` / `REGISTRATION_DESK` / `JOB_HANDLER`) guards every protected route.
-- 🧭 **Candidate Progress Pipeline**: Test Details → Candidate Details → Document Submission → VISA Submission → IVS Interview → Visa Approval → Finalizing the Job.
-- 📞 **Candidate History & Need Attention**: The call log drawer is a **Candidate History** timeline (calls, **No Answer** attempts and candidate activity). A call can be flagged **Need attention**; it then also appears on the Admin **Need Attention** page, grouped by candidate, without leaving the candidate's history. Every staff role can complete a follow-up; only ADMIN can delete one (the call log is always kept).
-- 📄 **Google Sheet Operational Mirror**: Scheduled, one-way database → Sheet sync (06:00 / 12:00 / 18:00) for staff who work from a spreadsheet.
-- 📈 **Daily Reports**: A Summary and a role-based Summary by Roles for any business day (Asia/Colombo), with a structured PDF export.
-- 🔎 **Server-Side Candidate Search**: Name, passport ID, unique ID, NIC, contact and WhatsApp numbers, searched in PostgreSQL before paging (100 per page), including Sri Lankan `07…` / `947…` number forms.
-- 🎨 **Light and Dark Theme**: One token-driven stylesheet; the Light Theme's borders and dividers were strengthened globally.
-
----
-
-## User Roles
-
-Staff are never uniformly "admins" — every staff member is a `user` with exactly one role, enforced per-endpoint by backend RBAC:
-
-| Role | Access |
+| Area | What it does |
 |---|---|
-| `OWNER` | Everything ADMIN has, plus managing ADMIN accounts. One per environment, set in the database only — see [`Docs/OWNER_ROLE.md`](Docs/OWNER_ROLE.md) |
-| `ADMIN` | Full access, including Settings, Sheet configuration, Work Allocation, verification and staff/user management of the roles below ADMIN (never another ADMIN or the OWNER) |
-| `ANALYST` | Reads, plus review actions and candidate workflow updates (stages, call logs, document review) |
-| `REGISTRATION_DESK` | Full access to the **Candidate** section — registration, candidate details, progress stages, documents and call logs for the complete candidate process. No access to Admin-only functions (staff management, Settings, Sheet configuration) |
-| `JOB_HANDLER` | Jobs, Agents and Clients (manage); Candidates read only |
-
-The former `MANAGER` role is retired: `ADMIN` holds everything it could do. It can't be given, and an account still holding it is refused on every route until it is converted (see [`Docs/ROLES_AND_PERMISSIONS.md`](Docs/ROLES_AND_PERMISSIONS.md#the-retired-manager-role)).
-
-Use "staff", "user", or the specific role name (e.g. "an ANALYST") rather than describing every system user as "an admin".
+| **Candidates** | Registration, server-side search and paging (100 per page), details, additional details, a derived workflow Status, and a Candidate History timeline of call logs and activity. |
+| **Stages** | Per-candidate stage records: Test details, Job details, Candidate details, Document submission, IVS interview, Visa submission, Visa approval, Finalizing the job. |
+| **Candidate Form** | A public, separately hosted form. Staff share a link; the candidate verifies with Passport + NIC and submits once. Staff then confirm or reject each answer field by field. Also supports job-group links. |
+| **Verification** | Staff explicitly verify a candidate's details and documents. The verification resets automatically when the data it covered changes. |
+| **Documents** | Admin uploads and WhatsApp intake, checksums and duplicate handling, a Missing Documents view, and the Police report 21-day workflow. |
+| **OCR and review** | OCR runs in a separate worker. Low-confidence or unclear documents go to a Review Queue for a person's decision. |
+| **WhatsApp intake** | A Meta webhook receives candidate documents and hands them to a durable background queue. |
+| **Work Allocation** | ADMIN and OWNER allocate candidates to Analysts; an Analyst sees only their own candidates. |
+| **Jobs, Agents, Clients** | Jobs with yearly job codes, many-to-many Agent and Client links, Job Types (ADMIN-managed list), and candidate assignment to jobs. |
+| **Need Attention** | Call logs can be flagged for follow-up; follow-ups are listed by candidate and can be completed. |
+| **Reports** | Overview, Daily Report (Asia/Colombo days, PDF export) and a monthly overview. |
+| **Google Sheet** | A one-way database-to-Sheet operational mirror, plus a Candidate Form Submissions tab. |
+| **Bulk import** | Upload a legacy `.xlsx` candidate sheet with preview, validation and a chunked commit. |
+| **Audit** | An append-only audit log of review actions, corrections, role changes, allocations, imports and more. |
+| **Auth and RBAC** | Supabase Auth for identity; a backend role check on every route. |
 
 ---
 
-## High-Level Architecture
+## Role Model
 
-```mermaid
-flowchart TD
-    Roles["Users / Roles<br/>(OWNER, ADMIN, ANALYST, REGISTRATION_DESK, JOB_HANDLER)"] --> Frontend[Admin Frontend]
-    WA[WhatsApp Cloud API] --> Backend[Backend API]
-    Frontend --> Backend
-
-    Backend --> SupaAuth["Supabase Auth<br/>(auth.users)"]
-    Backend --> OCR["OCR Cloud Run Worker"]
-    Backend --> DB[(PostgreSQL)]
-    Backend --> SheetWorker["Sheet Sync Worker"]
-
-    SupaAuth -->|auth_user_id| PublicUser["public.user"]
-    DB --- PublicUser
-    PublicUser --> RoleProfile["role / profile / status"]
-    PublicUser --> Candidate["public.candidate"]
-
-    Candidate --> Document["document"]
-    Candidate --> Stage["candidate_stage"]
-    Candidate --> CallLog["call_log"]
-
-    SheetWorker --> SheetMirror["Emlynk Candidate Operational Mirror<br/>(Google Sheet, scheduled sync)"]
-    Document --> SheetWorker
-    Stage --> SheetWorker
-    CallLog --> NeedAttention["Need Attention (Admin view)"]
+```
+OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER
 ```
 
-Separate services behind this diagram:
+| Role | Scope |
+|---|---|
+| `OWNER` | Highest authority. Everything ADMIN can do, plus managing ADMIN accounts. There is one OWNER per environment, set **in the database only**; the application never gives, changes or deactivates the OWNER role. |
+| `ADMIN` | Full operational access: Settings, Google Sheet Sync, Job Types, Work Allocation, verification, Audit Logs and managing the roles below ADMIN. Cannot change or invite another ADMIN or the OWNER. |
+| `ANALYST` | Review and candidate work on the candidates allocated to them. |
+| `REGISTRATION_DESK` | The Candidates area: registration, details, stages, documents and call logs. No Settings or user management. |
+| `JOB_HANDLER` | Manages Jobs, Agents and Clients. Reads Candidates; changes no candidate record. |
 
-- **Admin Frontend** — React/TypeScript dashboard used by staff.
-- **Backend API** — Express/Prisma REST API; the only service with database and Supabase service-role access.
-- **Supabase Auth** — authentication identity provider (see [Authentication & Authorization](#authentication--authorization)).
-- **OCR Cloud Run Worker** (`ocr-worker/`) — isolated text-extraction service (see [OCR Service](#ocr-service)).
-- **Sheet Sync Worker** — scheduled job that mirrors candidate data to Google Sheets (see [Google Sheet Operational Mirror](#google-sheet-operational-mirror)).
+The former `MANAGER` role was **retired on 2026-10-30**. It is not an active role: it cannot be given or invited, and an account still holding it is refused on every route (`ROLE_NOT_SUPPORTED`) until an OWNER converts it to ADMIN (`npm run user:migrate-manager`).
 
----
-
-## Database Architecture
-
-The application database uses singular table names. There are no legacy tables, compatibility views, or parallel old/new schemas — the system is pre-production and existing data is test data, so the migration goes directly to this schema.
-
-### candidate
-
-Candidate identity, contact details, passport information and recruitment data. `passport_id` is the primary identifier used throughout the application; `unique_id` is a separate backload/legacy reference and must never be treated as interchangeable with `passport_id` in code, routes, or queries.
-
-### user
-
-Staff profiles: name, email, role, status. Authenticated via Supabase Auth; linked by `user.auth_user_id` → `auth.users.id`. Holds no password or session data of its own — that belongs to `auth.users`.
-
-### document
-
-One row per submitted file: document type, verification/processing status, OCR confidence, and (for police slips) the submitted date that drives the 21-day countdown. See [Single Scan Rule](#single-scan-rule) — a candidate has one scan slot, not a growing set of document types.
-
-### candidate_stage
-
-One row per candidate per pipeline stage (see [Candidate Progress Flow](#candidate-progress-flow)): completion state, timestamp, and staff notes. Stages are independent — any can be completed in any order, except where the UI temporarily disables a stage.
-
-### call_log
-
-Staff call notes for a candidate (the source of truth for the note, call time and caller). See [Candidate History & Need Attention](#candidate-history--need-attention).
-
-### call_log_follow_up
-
-A call log marked as needing attention (`call_log_follow_up`): references the call log and holds only follow-up state: `status` (`OPEN` / `COMPLETED`), who flagged it and when, who completed it and when. At most one open follow-up per call log (partial unique index). Deleting a follow-up removes this row only.
-
-### Supabase-Managed Identity (`auth.users`)
-
-Supabase owns `auth.users` — authentication identity, credentials, sessions, JWTs, invitation/auth flows and password recovery. It is **not** renamed or restructured by this application; `user.auth_user_id` references `auth.users.id`, and `auth.users` never stores application profile, role, or candidate data.
-
-Operational/support tables (rate-limit counters, Sheet sync queue and run state) exist alongside this core schema as infrastructure, not business data, and are not part of the diagrams above.
+The role is read from the database on every request, never from the token, so a role change applies to the next request. Details: [`Docs/ROLES_AND_PERMISSIONS.md`](Docs/ROLES_AND_PERMISSIONS.md) and [`Docs/OWNER_ROLE.md`](Docs/OWNER_ROLE.md).
 
 ---
 
-## ER Diagram
+## Candidate Workflow
+
+The candidate's stages are stored in `candidate_stages`, one row per candidate and stage (`CANDIDATE_STAGES` in [`src/services/candidateService.js`](src/services/candidateService.js)):
+
+```mermaid
+flowchart LR
+    R["Registration"] --> S1["TEST_DETAILS"]
+    S1 --> S2["JOB_DETAILS"]
+    S2 --> S3["CANDIDATE_DETAILS"]
+    S3 --> S4["DOCUMENT_SUBMISSION"]
+    S4 --> S5["IVS_INTERVIEW"]
+    S5 --> S6["VISA_SUBMISSION"]
+    S6 --> S7["VISA_APPROVAL"]
+    S7 --> S8["FINALIZING_JOB"]
+```
+
+The diagram shows display order only. **The application does not enforce this order**: stages are independent and can be completed in any order.
+
+- `CANDIDATE_DETAILS` and `DOCUMENT_SUBMISSION` are completed **by data**, not by hand: the first when the required details and a passport are on record, the second when the required documents are (`PASSPORT`, `MEDICAL`, `POLICE_REPORT`, `SCAN`). The other stages are completed by staff.
+- `TEST_DETAILS` records the test agent, Test ID, result (PASS or FAIL) and date. `JOB_DETAILS` reads the candidate's job and client from their job assignment.
+- The progress stepper in the admin UI hides `IVS_INTERVIEW` and `FINALIZING_JOB`. Their data and panels still exist.
+- The candidate list shows one derived **Status** (nothing stores it): Registered, Stopped with Test (a FAIL test result), Job Assigned, Form Submitted, Details Verified, Documents Verified, Visa Document Ready.
+- Assigning a candidate to a job requires a passed test, and a candidate can be on several PROCESSING jobs at once.
+
+More: [`Docs/20-candidate-management.md`](Docs/20-candidate-management.md), [`Docs/JOB_MANAGEMENT_IMPLEMENTATION.md`](Docs/JOB_MANAGEMENT_IMPLEMENTATION.md), [`Docs/AGENT_CLIENT_MANAGEMENT.md`](Docs/AGENT_CLIENT_MANAGEMENT.md).
+
+---
+
+## System Architecture
+
+```mermaid
+flowchart LR
+    Staff["Staff"] --> Admin["Admin Dashboard<br/>React, /admin"]
+    Candidate["Candidate"] --> Form["Candidate Form<br/>separate Vercel project"]
+    Phone["Candidate on WhatsApp"] --> Meta["WhatsApp Cloud API"]
+
+    subgraph Vercel["Vercel"]
+        Admin
+        API["Backend API<br/>Express"]
+    end
+
+    Admin --> API
+    Form --> API
+    Meta -->|"signed webhook"| API
+
+    API --> DB[("Supabase PostgreSQL")]
+    API --> Auth["Supabase Auth"]
+    API --> Storage[("Supabase Storage")]
+
+    subgraph CloudRun["Google Cloud Run"]
+        Worker["Submission Worker"]
+        OCR["OCR Worker"]
+        Sync["Sheet Sync Worker"]
+    end
+
+    Worker --> DB
+    Worker --> Storage
+    Worker -->|"identity token"| OCR
+    Sync --> DB
+    Scheduler["Cloud Scheduler<br/>06:00, 12:00, 18:00"] --> Sync
+    Sync --> Sheets["Google Sheets"]
+```
+
+| Component | Notes |
+|---|---|
+| **Admin Dashboard** (`admin/`) | React 19, TypeScript, Vite, Tailwind CSS. Built into `public/admin` on Vercel, or served by Express locally. |
+| **Backend API** (`src/`, `api/index.js`) | Express 5. A Vercel function in production (`api/index.js` calls `src/httpHandler.js`), a normal Node process locally. Serves the admin API, `/auth`, the WhatsApp webhook and the public Candidate Form API. |
+| **Candidate Form** (`candidate-form/`) | A separate React app on its own Vercel project, talking to `/api/public/candidate-details`. |
+| **Submission Worker** (`src/worker.js`) | Polls PostgreSQL for WhatsApp submissions and runs OCR, classification, identity matching and storage placement. Locally, `npm start` runs it inside the API process. |
+| **OCR Worker** (`ocr-worker/`) | Tesseract.js and PDF text extraction as a private Cloud Run service. |
+| **Sheet Sync Worker** (`src/sheetSyncWorker.js`) | Cloud Run service that writes to Google Sheets. The API on Vercel has no Google access. |
+| **Supabase** | PostgreSQL (database and job queue), Auth (identity) and Storage (private document bucket). |
+
+PostgreSQL is the coordination point: the API writes a row, the workers poll for it. There is no separate queue service. More: [`Docs/02-system-architecture.md`](Docs/02-system-architecture.md).
+
+---
+
+## Database Overview
+
+The schema is [`prisma/schema.prisma`](prisma/schema.prisma) (about 30 tables) with forward-only SQL migrations in [`prisma/migrations/`](prisma/migrations). Prisma model names differ from table names; the diagram uses table names.
+
+| Group | Tables |
+|---|---|
+| **Staff and audit** | `user`, `audit_logs`, `rate_limits` |
+| **Candidate core** | `candidate`, `candidate_stages`, `candidate_call_logs`, `call_log_follow_up`, `candidate_additional_details`, `candidate_verification`, `candidate_allocation` |
+| **Documents** | `documents`, `temporary_data` (WhatsApp submissions awaiting processing or review) |
+| **Candidate Form** | `candidate_form_link`, `candidate_form_access`, `candidate_form_response`, `candidate_form_draft`, `candidate_form_prefill_snapshot`, `candidate_form_field_review`, `candidate_form_sheet_sync` |
+| **Jobs, Agents, Clients** | `job`, `job_type`, `job_job_type`, `job_candidate`, `job_code_counter`, `agent`, `client`, `agent_client` |
+| **Sheet Sync** | `sheet_sync_queue`, `sheet_sync_runs`, `sheet_sync_state` |
+| **Bulk import** | `candidate_import` |
 
 ```mermaid
 erDiagram
-    AUTH_USERS {
-        string id PK "Supabase-managed (auth.users)"
-        string email
-    }
+    AUTH_USERS ||--|| USER : "auth_user_id"
+    USER ||--o{ AUDIT_LOGS : "acts"
+    USER ||--o{ CANDIDATE_CALL_LOGS : "logs"
+    USER ||--o{ CANDIDATE_ALLOCATION : "analyst"
+    USER ||--o{ CANDIDATE_IMPORT : "imports"
 
-    USER {
-        string user_id PK
-        string auth_user_id UK "FK to auth.users.id"
-        string name
-        string email UK
-        string role "OWNER | ADMIN | ANALYST | REGISTRATION_DESK | JOB_HANDLER"
-        string status
-        datetime created_date
-        datetime updated_date
-    }
+    CANDIDATE ||--o{ DOCUMENTS : "has"
+    CANDIDATE ||--o{ CANDIDATE_STAGES : "progresses"
+    CANDIDATE ||--o{ CANDIDATE_CALL_LOGS : "has"
+    CANDIDATE ||--o| CANDIDATE_ALLOCATION : "allocated"
+    CANDIDATE ||--o| CANDIDATE_ADDITIONAL_DETAILS : "extra details"
+    CANDIDATE ||--o| CANDIDATE_VERIFICATION : "verified"
+    CANDIDATE ||--o{ TEMPORARY_DATA : "submissions"
+    TEMPORARY_DATA ||--o{ DOCUMENTS : "stored as"
+    CANDIDATE_CALL_LOGS ||--o{ CALL_LOG_FOLLOW_UP : "flagged"
 
-    CANDIDATE {
-        string passport_id PK "Primary candidate identifier"
-        string unique_id UK "Backload / legacy reference"
-        string first_name
-        string other_name
-        string nic UK
-        string nationality
-        string sex
-        datetime date_of_birth
-        string place_of_birth
-        datetime passport_issue_date
-        datetime passport_expiry_date
-        string whatsapp_number
-        string contact_number
-        string address "Optional"
-        string job_types
-        string job_experience
-        datetime created_date
-        datetime updated_date
-    }
+    CANDIDATE ||--o{ JOB_CANDIDATE : "assigned"
+    JOB ||--o{ JOB_CANDIDATE : "members"
+    CLIENT ||--o{ JOB : "owns"
+    AGENT ||--o{ JOB : "responsible"
+    AGENT ||--o{ AGENT_CLIENT : "links"
+    CLIENT ||--o{ AGENT_CLIENT : "links"
+    JOB ||--o{ JOB_JOB_TYPE : "types"
+    JOB_TYPE ||--o{ JOB_JOB_TYPE : "types"
 
-    DOCUMENT {
-        string document_id PK
-        string passport_id FK
-        string document_type
-        string processing_status
-        string verification_status
-        decimal ocr_confidence
-        char file_sha256
-        date police_submitted_date
-        datetime created_date
-        datetime updated_date
-    }
+    CANDIDATE ||--o{ CANDIDATE_FORM_LINK : "share links"
+    JOB ||--o{ CANDIDATE_FORM_LINK : "job group link"
+    CANDIDATE ||--o| CANDIDATE_FORM_ACCESS : "lock"
+    CANDIDATE ||--o| CANDIDATE_FORM_RESPONSE : "answers"
+    CANDIDATE ||--o| CANDIDATE_FORM_DRAFT : "draft"
+    CANDIDATE ||--o| CANDIDATE_FORM_PREFILL_SNAPSHOT : "prefill"
+    CANDIDATE ||--o{ CANDIDATE_FORM_FIELD_REVIEW : "staff review"
+    CANDIDATE ||--o| CANDIDATE_FORM_SHEET_SYNC : "sheet outbox"
 
-    CANDIDATE_STAGE {
-        string passport_id PK "Part of composite PK; FK to CANDIDATE"
-        string stage PK "TEST_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION | VISA_SUBMISSION | IVS_INTERVIEW | VISA_APPROVAL | FINALIZING_JOB"
-        boolean completed
-        datetime completed_at
-        string notes
-        datetime updated_at
-    }
-
-    CALL_LOG {
-        string call_log_id PK
-        string passport_id FK
-        string user_id FK
-        string note
-        datetime created_date
-    }
-
-    CALL_LOG_FOLLOW_UP {
-        string follow_up_id PK
-        string call_log_id FK
-        string status
-        string flagged_by FK
-        datetime flagged_date
-        string completed_by FK
-        datetime completed_date
-    }
-
-    AUTH_USERS ||--|| USER : "auth_user_id -> id"
-    CANDIDATE ||--o{ DOCUMENT : "owns"
-    CANDIDATE ||--o{ CANDIDATE_STAGE : "progresses through"
-    CANDIDATE ||--o{ CALL_LOG : "has"
-    USER ||--o{ CALL_LOG : "logs"
-    CALL_LOG ||--o{ CALL_LOG_FOLLOW_UP : "flagged as"
+    CANDIDATE ||..o{ SHEET_SYNC_QUEUE : "unique_id, no FK"
 ```
+
+Key relationships:
+
+- `passport_id` is the candidate's primary key and the foreign key everywhere. `unique_id` is a separate business reference and the Sheet's row identity. They are never interchangeable.
+- `user.auth_user_id` links to Supabase's `auth.users`. The application stores no password.
+- An Agent has many Clients and a Client has many Agents (`agent_client`). A Job belongs to one Client and one responsible Agent, and has one or more Job Types (`job_job_type`).
+- `audit_logs` keeps plain IDs without foreign keys to reviewed rows, so history outlives them. Users are deactivated, never deleted.
+- The Sheet Sync tables hold counts and codes only, no candidate data.
+
+Detailed schema: [`Docs/03-database-design.md`](Docs/03-database-design.md).
 
 ---
 
-## Authentication & Authorization
+## Important Database Features
 
-Authentication (who you are) and authorization (what you can do) are handled by two different layers.
+- **Unique IDs** are zero-padded numbers (`0001`, `0002`, ...), assigned by the application as the highest existing number plus one. They are not a database sequence. The bulk import allocates them under an advisory lock.
+- **Uniqueness:** `passport_id` (primary key), `nic`, `unique_id` and `user.email` are unique. WhatsApp numbers are unique by their **canonical phone key** (`candidate_phone_key()`), so `0771234567`, `94771234567` and `+94771234567` count as the same number.
+- **Verification-reset triggers** clear a candidate's Details Verified or Documents Verified marker in the same transaction as any change to the data it covered, whichever code path made the change.
+- **Sheet-sync outbox triggers** on `candidate`, `candidate_stages`, `documents` and `candidate_additional_details` enqueue a row in `sheet_sync_queue` in the same transaction as the change. At most one PENDING row exists per candidate, so changes coalesce.
+- **Append-only audit log:** a trigger rejects any update or delete on `audit_logs`.
+- **Candidate Form integrity:** a submission is written once, and a submitted form's lock is terminal (both enforced by triggers).
+- **Job rules:** a membership can be active only on a PROCESSING job, and finishing a job releases only that job's memberships.
+- **Postgres-backed rate limiting** (`rate_limits`) shared by every serverless instance, storing no IP addresses.
+- **Row Level Security** is enabled on application tables with no policies, so Supabase's public API roles see nothing. The backend connects with a role that bypasses RLS.
+
+---
+
+## Google Sheet Sync
+
+The database is always the source of truth. The **Emlynk Candidate Operational Mirror** tab is a one-way copy of candidate, document and stage state (83 columns). Edits made in the Sheet are never read back.
 
 ```mermaid
 flowchart LR
-    U[User] --> Frontend[Admin Frontend]
-    Frontend --> Backend[Backend API]
-    Backend --> SupaAuth[Supabase Auth]
-    SupaAuth --> JWT["Verified identity / JWT"]
-    JWT --> Lookup["public.user lookup"]
-    Lookup --> RBAC["Backend RBAC (user.role)"]
-    RBAC --> Functions["Protected application functions"]
+    Change["Candidate change"] -->|"DB trigger"| Queue["sheet_sync_queue"]
+    Admin["Settings: Sync Now, Test Connection"] -->|"inserts a run request"| Runs["sheet_sync_runs"]
+    Scheduler["Cloud Scheduler"] --> Worker["Sheet Sync Worker"]
+    Queue --> Worker
+    Runs --> Worker
+    Worker --> Sheet["Google Sheet"]
+    Worker -->|"reports state"| State["sheet_sync_state"]
 ```
 
-### Authentication — Supabase Auth
+- **Reconciliation** compares the Sheet with the database and writes only the differences. It runs on a schedule (06:00, 12:00 and 18:00 Asia/Colombo, once the Cloud Scheduler trigger is configured for the environment) and on demand (**Sync Now**). There is no real-time sync.
+- **Test Connection** checks the Sheet connection, tab and headers without writing.
+- **Safety:** a write gate (`SHEET_SYNC_ENABLED`), a deletion guard, header validation before any write, and a writer lease so a single process writes at a time. Google credentials stay in the worker.
+- **Sync destination:** the worker can be configured with several Sheets. An ADMIN switches the destination from Settings; it is validated before it becomes active.
+- A second tab, **Candidate Form Submissions**, receives each Candidate Form submission through its own outbox (`candidate_form_sheet_sync`).
+- The bulk **Upload** feature feeds this same pipeline (see [Candidate Bulk Import](#candidate-bulk-import)).
 
-Supabase Auth is the sole identity provider: it issues and verifies JWTs, manages sessions, and handles invitation and password-recovery emails. The backend never stores a password or session token of its own. No service-role keys, tokens, or other credentials are documented here — they are runtime secrets, not README content.
-
-### Authorization — Backend RBAC
-
-Once a request carries a verified Supabase identity, the backend resolves the matching `public.user` row and authorizes the action against `user.role` — one of `OWNER`, `ADMIN`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER` (see [User Roles](#user-roles)). Backend RBAC is the application's security boundary for every protected route; Supabase confirms identity, the backend decides access.
+More: [`Docs/GOOGLE_SHEET_INTEGRATION.md`](Docs/GOOGLE_SHEET_INTEGRATION.md) and [`Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md).
 
 ---
 
-## User Invitation Flow
+## OCR and Document Processing
 
-An OWNER invites ADMIN and every lower role, an ADMIN the roles below ADMIN; nobody invites an OWNER, and nobody can invite the retired MANAGER role. The sidebar/menu action is **"Invite User"**, not "Invite Admin".
+1. A candidate sends a document over WhatsApp. The signed webhook (`POST /whatsapp/webhook`) validates it, stores the file temporarily and commits a `temporary_data` row, then answers Meta immediately.
+2. The **Submission Worker** claims the row with a lease and runs OCR, document classification, passport/MRZ extraction, identity matching and field reconciliation.
+3. The result is routed by confidence: stored under the candidate, stored with a review flag, or held in the **Review Queue** for a person to approve, keep pending, re-type, assign to a client, replace or remove. Unclear results never silently overwrite trusted data.
+4. Police slips start the **21-day police report** countdown, tracked on the Police Workflow page.
 
-```
-Admin
-    ->
-Invite User
-    ->
-enter email
-    ->
-select role (the roles the signed-in user may give)
-    ->
-backend uses trusted Supabase Auth admin functionality
-    ->
-Supabase sends invite/setup link
-    ->
-invited user opens link
-    ->
-user sets password
-    ->
-Supabase authenticates user
-    ->
-application loads the matching public.user profile and role
-```
+The **OCR Worker** (`ocr-worker/`) is a separate, stateless Cloud Run service. The backend calls it over HTTPS with a Google identity token, so OCR load never affects webhook latency or the admin API. It has no database or storage access.
 
-"Invite User" lives inside [Settings & Administration](#settings--administration), alongside role management and Sheet configuration.
+More: [`Docs/04-whatsapp-integration.md`](Docs/04-whatsapp-integration.md), [`Docs/05-ocr-document-processing.md`](Docs/05-ocr-document-processing.md), [`Docs/06-storage-management.md`](Docs/06-storage-management.md), [`ocr-worker/README.md`](ocr-worker/README.md).
 
 ---
 
-## Candidate Registration
+## Candidate Bulk Import
 
-### WhatsApp Number Format
+**Settings, Google Sheet Sync, Upload** (ADMIN and OWNER) imports a legacy candidate `.xlsx` into the database.
 
-The WhatsApp number field is **not** hardcoded to `+94`. The rule:
+- **Upload:** the workbook is read in the browser; only allow-listed columns are sent to the server.
+- **Preview:** each row is normalized, validated and classified as new, existing, duplicate, conflict or invalid. Nothing is written yet.
+- **Conflicts:** a passport that appears twice in the file, or an NIC that belongs to another passport, is reported and skipped.
+- **Existing candidates:** only blank fields are filled; a non-empty value is never overwritten. A candidate whose details are verified is skipped.
+- **Commit:** after confirmation, 100 rows per request, each chunk in its own short transaction and hash-checked against the preview. A failed chunk rolls back alone.
+- **Reconciliation:** the import's writes go through the normal triggers and a Sheet reconciliation is requested when it finishes.
 
-- the field always starts with a fixed, non-removable `+`
-- the candidate's own country code and number are entered after it
-- any valid international number is supported, e.g. `+94771234567`, `+447911123456`, `+61412345678`
+More: [`Docs/CANDIDATE_BULK_IMPORT.md`](Docs/CANDIDATE_BULK_IMPORT.md).
 
-### Required & Optional Fields
+---
 
-| Field | Requirement |
+## Authentication and Security
+
+- **Supabase Auth** owns credentials, sessions, invitations and password recovery. The browser signs in with `signInWithPassword` and sends the access token as `Authorization: Bearer`. No cookie authenticates a request.
+- **The backend checks the token with Supabase on every request** (so a signed-out session stops working), then loads the `user` row by `auth_user_id`. It must exist, be `ACTIVE` and hold a supported role. Roles from tokens or request bodies are never trusted.
+- **Route authorization** is a role list per route in `src/routes/admin.js`; OWNER passes every list that names ADMIN. Retired or unknown roles are refused everywhere.
+- **Audit logs** record review actions, role changes, allocations, imports and similar events, and cannot be edited.
+- **Other protections:** a signed WhatsApp webhook, a strict Content Security Policy, helmet headers, PostgreSQL-backed rate limits, hashed Candidate Form link secrets with lockout after failed verifications, and RLS on application tables.
+- **Secrets** (service-role key, Meta and Google credentials, database URL) exist only in server environments, never in the browser build.
+
+More: [`Docs/SUPABASE_AUTH.md`](Docs/SUPABASE_AUTH.md), [`Docs/10-security.md`](Docs/10-security.md), [`Docs/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md`](Docs/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md).
+
+---
+
+## Deployment Overview
+
+| Piece | Where |
 |---|---|
-| WhatsApp number | Required |
-| NIC | Required |
-| Address | **Optional** |
-| Passport issue date | **Required** |
-| Passport expiry date | **Required** |
-| Job type(s) | Required |
-| Job experience | Required |
+| Admin Dashboard and Backend API | Vercel project A (`vercel.json`; the API is `api/index.js`) |
+| Candidate Form | Vercel project B (root directory `candidate-form`) |
+| Submission Worker | Google Cloud Run (the root `Dockerfile`, started with `node src/worker.js`) |
+| OCR Worker | Google Cloud Run, private (`ocr-worker/Dockerfile`) |
+| Sheet Sync Worker | Google Cloud Run (`deploy/sheet-sync-worker.env.yaml` holds its non-secret settings) |
+| Database, Auth, Storage | Supabase |
 
-Other existing candidate field validations not listed above (e.g. NIC format, date ordering) remain unchanged.
+Each environment (local, stage, production) has its own Supabase project, Vercel settings and Cloud Run configuration. The OWNER account is set separately in each. Schema changes are applied with `npx prisma migrate deploy`; the server never runs migrations itself.
 
-### Field Hints
-
-Candidate registration fields support short, unobtrusive hints — a small info/exclamation icon next to the field, revealed on hover or click, never a full inline paragraph. For example, the Passport Number field explains the accepted passport-number format.
+Branches and the release flow, environment variables, migration rules and smoke tests: [`Docs/08-cloud-deployment.md`](Docs/08-cloud-deployment.md).
 
 ---
 
-## Candidate Progress Flow
+## Local Development
 
-```mermaid
-flowchart LR
-    S1["1. Test Details"] --> S2["2. Candidate Details"]
-    S2 --> S3["3. Document Submission"]
-    S3 --> S4["4. VISA Submission"]
-    S4 --> S5["5. IVS Interview<br/>(temporarily disabled)"]
-    S5 --> S6["6. Visa Approval<br/>(temporarily disabled)"]
-    S6 --> S7["7. Finalizing the Job<br/>(temporarily disabled)"]
+Requires Node.js 22.18+ (or 23.6+), npm, and a PostgreSQL database (the repo includes `docker-compose.yml` with PostgreSQL 16, or point `DATABASE_URL` at a Supabase project).
+
+```bash
+# 1. Install and configure
+npm install                      # also runs `prisma generate`
+cp .env.example .env             # then fill in values (see Environment Configuration)
+
+# 2. Database (optional local PostgreSQL)
+docker compose up -d
+npx prisma validate
+npx prisma migrate deploy        # forward-only; do not run `migrate dev` against a shared database
+npm run db:check                 # checks the database connection
+
+# 3. First staff account
+npm run user:create -- --name "Full Name" --email owner@example.com --role OWNER
+
+# 4. Run
+npm start                        # backend API (also runs the submission worker); /health
+npm run admin:install            # once
+npm run admin:dev                # admin dashboard at http://localhost:5173/admin/
 ```
 
-Stages are tracked independently in `candidate_stage`; a candidate can have any subset completed. **VISA Submission** is a new stage whose primary action is document upload (the candidate's scan, routed through the same [Single Scan Rule](#single-scan-rule) as every other document). IVS Interview, Visa Approval and Finalizing the Job remain part of the architecture and schema but are **temporarily disabled** in the UI — shown, not removed, and not selectable until re-enabled.
+Optional processes:
+
+```bash
+npm run ocr:install && npm run ocr:start      # local OCR worker on :8080 (set OCR_SERVICE_URL)
+npm run worker                                # submission worker alone
+npm run sheet:worker                          # Sheet Sync worker (also sheet:check, sheet:request, sheet:demo)
+npm --prefix candidate-form install && npm --prefix candidate-form run dev   # Candidate Form
+```
+
+Full guide: [`Docs/11-development-guide.md`](Docs/11-development-guide.md). Coding rules: [`Docs/CODING_STANDARDS.md`](Docs/CODING_STANDARDS.md).
 
 ---
 
-## Document Processing
+## Environment Configuration
 
-### Single Scan Rule
+- **Local:** a git-ignored `.env` in the repository root. [`.env.example`](.env.example) lists every setting the server checks at startup. The admin dashboard reads `admin/.env.local` (see `admin/.env.example`).
+- **Configuration groups:** the database connection; Supabase (project URL, storage bucket and the server-side service-role key); WhatsApp (verify token, access token, Meta app secret); the OCR worker URL; Candidate Form settings (its origin and token secret); the public base URL; and the Google Sheet settings.
+- **Vercel and Cloud Run:** the same variables are set per project and per service, with secrets in the platform's secret store (for example Secret Manager on Cloud Run). The Cloud Run workers use their service identity, so no Google key file exists.
+- **Admin build:** only `VITE_SUPABASE_URL` and the public anon key are embedded in the browser build. A secret key is refused.
+- **Separation:** stage and production use separate Supabase projects, Vercel settings and Google resources.
 
-**There is only one scan.** A candidate has a single scan slot in `document`, not separate agreement, affidavit or contract slots. Do not introduce additional scan categories; a new document requirement is a new `document_type` value on the same single slot, not a new slot.
+> Never commit `.env` files or real credentials. Setting names are documented; values are not.
 
-### Document Confidence Decision Engine
-
-```mermaid
-flowchart TD
-    Doc[Document Payload Ingested] --> Temp[Store Temporarily & Create Pending Record]
-    Temp --> Classify[Classify Document & Run OCR]
-    Classify --> ConfCheck{Evaluate OCR Confidence Score}
-
-    ConfCheck -->|Confidence > 95%| Clear[Verified: Rename by Type -> Permanent Folder]
-    ConfCheck -->|90% <= Confidence <= 95%| High[High Confidence: Rename -> Permanent Folder -> Optional Review Flag]
-    ConfCheck -->|60% <= Confidence <= 89%| Mid[Slightly Unclear: Rename -> Permanent Folder -> Warning Flag]
-    ConfCheck -->|40% <= Confidence <= 59%| Unclear[Unclear: Keep Original Filename -> Permanent Folder -> Review Flag]
-    ConfCheck -->|Confidence < 40%| Undefined[Undefined: Keep Original Filename -> Undefined Folder -> Staff Review Flag]
-
-    Clear --> UpdateDB[Create / Update document Record & Purge Temporary Copy]
-    High --> UpdateDB
-    Mid --> UpdateDB
-    Unclear --> UpdateDB
-    Undefined --> StaffReview[Admin Dashboard Review]
-```
-
-### Police Report 21-Day Countdown Workflow
-
-```mermaid
-stateDiagram-v2
-    [*] --> SlipReceived: Police Slip Uploaded via WhatsApp
-    SlipReceived --> DateExtracted: Extract Submission Date via OCR
-    DateExtracted --> CountdownActive: 21-Day Timer Started (Status: PENDING)
-
-    state CountdownActive {
-        [*] --> CheckingCompletion
-        CheckingCompletion --> FinalizedCheck: Check if Staff Uploaded Final Police Report
-        FinalizedCheck --> CompletedState: Final Police Report Uploaded
-        FinalizedCheck --> ActiveTimer: Final Police Report Not Found
-
-        ActiveTimer --> DueSoon: Days Remaining <= 3
-        ActiveTimer --> DueToday: Days Remaining == 0
-        ActiveTimer --> Overdue: Days Remaining < 0
-    }
-
-    CompletedState --> [*]: Status = COMPLETED (Countdown & Reminders Stopped)
-    Overdue --> StaffIntervention: Alert Admin Dashboard
-    StaffIntervention --> CompletedState: Staff Uploads & Finalizes Police Report
-```
-
-1. **Slip Ingestion**: Candidate uploads a police report slip/receipt via WhatsApp.
-2. **Date Extraction**: OCR extracts the official submission date from the slip.
-3. **Countdown Trigger**: A 21-day timer begins based on the submission date.
-4. **Completion Checking**: Before sending reminders, the system checks whether staff have uploaded and finalized the actual police report.
-5. **Staff Completion**: Once the finalized police report record is created, the status transitions to `COMPLETED`.
-6. **Automatic Warning Suppression**: Transitioning to `COMPLETED` halts the countdown and cancels all due-soon, due-today and overdue notifications.
+Details: [`Docs/08-cloud-deployment.md`](Docs/08-cloud-deployment.md) (Environment Variables) and [`Docs/SUPABASE_AUTH.md`](Docs/SUPABASE_AUTH.md).
 
 ---
 
-## WhatsApp Integration
+## Testing and Quality
 
-The backend exposes a dedicated webhook router compatible with the official Meta WhatsApp Business API:
-
-1. **Verification Request (`GET /whatsapp/webhook`)**: Meta sends `hub.mode`, `hub.verify_token` and `hub.challenge`; the route validates `hub.mode === "subscribe"` and checks the token against `WHATSAPP_VERIFY_TOKEN`, returning `hub.challenge` as raw text on match.
-2. **Event Ingestion (`POST /whatsapp/webhook`)**: Meta posts incoming messages, document attachments, sender numbers and timestamps. The handler acknowledges with HTTP 200 immediately, offloading media download and OCR to background processing so Meta's delivery never waits on it.
-3. **Signature Verification**: Every webhook payload is validated against Meta's HMAC SHA-256 signature before processing.
-4. **Candidate Matching**: The sending WhatsApp number is matched against `candidate.whatsapp_number` (see [WhatsApp Number Format](#whatsapp-number-format) for the accepted format), with Passport ID as the secondary identifier for conflict detection.
-
----
-
-## OCR Service
-
-Text extraction (OCR and scanned-PDF text) runs in its own service, `ocr-worker/`, deployed on Google Cloud Run — isolated from the main backend so OCR load and dependencies never affect webhook latency or the admin API. The backend's submission queue sends each document to it over a Google-signed identity token; the webhook never waits for a result.
-
-- Extracts Passport ID, full name, date of birth, expiry date and place of birth from passport scans (MRZ + printed-field extraction with check digits).
-- Extracts the police slip submission date for the 21-day countdown.
-- Runs OCR and PDF text extraction for police reports and medical certificates.
-
-Document and OCR architecture details: [`Docs/05-ocr-document-processing.md`](Docs/05-ocr-document-processing.md).
-
----
-
-## Google Sheet Operational Mirror
-
-The operational Google Sheet is **`Emlynk Candidate Operational Mirror`**. The database is always the source of truth; the Sheet is a **one-way** mirror:
-
-```
-Database -> Google Sheet
-```
-
-Edits made directly in the Sheet never update candidate database records.
-
-### Scheduled Sync
-
-Sync runs on a fixed schedule, **not** continuously or in real time:
-
-```mermaid
-flowchart LR
-    DB[(PostgreSQL)] -->|"Scheduled: 06:00 / 12:00 / 18:00"| Worker["Google Sheet Sync Worker"]
-    Worker --> Validate["Schema & Identity Validation"]
-    Validate --> Sheet["Emlynk Candidate Operational Mirror"]
-
-    Settings["Admin Settings"] --> Config["Sheet Configuration / Target"]
-    Config --> Worker
-```
-
-Candidate and database updates made between scheduled runs are consolidated and written together at the next run.
-
-### Sync Destination (Multi-Sheet Configuration)
-
-The Sheet the mirror writes to is shown and, when more than one Sheet is configured for the worker, switched from **Settings → Google Sheet Sync** (admin-only):
-
-- The **Sync destination** dropdown lists the Sheets configured for the worker and shows the active one. Today only the existing operational Sheet is configured, so there is one option and no switch action; no placeholder Sheets are listed.
-- With more than one Sheet configured, choosing a Sheet does nothing until **Use this destination** is clicked. The server records the choice as *pending*; the worker then validates the Sheet (connection, tab, headers). Only if validation passes does it become the destination of every run, and the change is audited. If validation fails, the previous destination stays active and the page shows the reason.
-- Switching never copies Sheet data into the database and never clears the previous Sheet. The one-way rule (Database → Sheet) is unchanged.
-- Google credentials and full spreadsheet IDs are never sent to the browser.
-
-Details: [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md) (Google Sheet Sync tab) and [`Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md).
-
-### Document Status Mapping
-
-Every mirrored document field follows one rule:
-
-- **Submitted** → show the relevant submitted/updated date.
-- **Not submitted** → show `Not Submitted`.
-
-| Document field | Submitted | Not submitted |
-|---|---|---|
-| Passport | Submission date | `Not Submitted` |
-| Police Slip | Submission date | `Not Submitted` |
-| Police Report | Submission date | `Not Submitted` |
-| Medical Certificate | Submission date | `Not Submitted` |
-
-This rule applies consistently across every document type mirrored to the Sheet — no document field is ever left blank.
-
-### Sync Safety Principles
-
-- The database is always authoritative; the Sheet never writes back to it.
-- Candidate matching never relies on manually editable values (Passport ID, NIC) entered directly in the Sheet.
-- The internal candidate ID (not a Sheet row position) is the identity used to match rows across syncs.
-- A changed or blanked Sheet value is repaired by the next scheduled sync, overwritten from the database.
-- Schema or column changes in the Sheet are detected safely (the worker validates structure before writing) rather than silently corrupting data.
-- Manual changes made directly in the Sheet must never modify the application database.
-
----
-
-## Admin Dashboard Overview
-
-The Admin Dashboard is served at `/admin`. What a person sees depends on their role (`OWNER`, `ADMIN`, `ANALYST`, `REGISTRATION_DESK`, `JOB_HANDLER`); the backend enforces it on every request. The full reference is [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md).
-
-| Area | What it is |
+| Check | Command |
 |---|---|
-| **Overview** | Dashboard counts and links into the work that needs doing |
-| **Documents** | Candidate documents and their status |
-| **Review Queue** | WhatsApp submissions held for a person's decision (ADMIN, ANALYST) |
-| **Candidates** | Candidate list (server-side search and paging), registration, the stage pipeline, additional details, documents, and the Call Log / **Candidate History** drawer |
-| **Need Attention** | Calls flagged for follow-up, grouped by candidate (the former *Priority Follow-Ups*) |
-| **Missing Documents** | Incomplete candidates and the required documents they lack |
-| **Police Workflow** | The 21-day police report countdown |
-| **Daily Report** | Summary and Summary by Roles for a chosen day, with PDF export (ADMIN, ANALYST; Summary by Roles ADMIN only; not REGISTRATION_DESK) |
-| **Audit Logs** | Append-only record of every action (OWNER and ADMIN) |
-| **Settings** | Change Roles, Invite User and Google Sheet Sync (OWNER and ADMIN) |
+| Backend tests (Node's built-in runner, fakes only, no live services) | `npm test` |
+| Admin tests (Vitest) | `npm run admin:test` |
+| Admin typecheck | `npm --prefix admin run typecheck` |
+| Admin production build (typecheck and Vite build) | `npm run admin:build` |
+| Candidate Form tests and typecheck | `npm --prefix candidate-form test`, `npm --prefix candidate-form run typecheck` |
+| OCR worker tests | `npm run ocr:test` |
+| Prisma schema validation | `npx prisma validate` |
 
-### Candidate Search
+Tests use in-memory fakes for the database and storage, and synthetic fixtures; no real candidate data is used. Tests needing a real PostgreSQL run only against a throwaway container. Load and stress testing was done on the dedicated branches `version/load-testing` and `hotfix/loadtest-production-fixes`; no load-test tooling is part of `dev`.
 
-The Candidates search runs in PostgreSQL **before** pagination (100 candidates per page), so paging covers matches only. Submitting a search starts again at page 1, and the search term and page stay in the URL (`?search=…&page=…`).
-
-- **Fields:** name (first and other), passport ID, unique ID, NIC, contact number and WhatsApp number.
-- **Words:** the text is split on spaces (up to five words) and every word must match one of the fields, case-insensitively, as a substring.
-- **Sri Lankan phone numbers:** a phone-like word (digits, an optional leading `+`, dashes) also matches the other local/international form, so `0771234567` finds a number stored as `94771234567` and the other way round. Numbers are matched as stored; spaces inside a number split it into separate words and are **not** normalised.
-
-Details: [`Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md`](Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md).
-
-### Light and Dark Theme
-
-Light is the default; Dark is a per-browser choice. Both are driven by the colour tokens in one stylesheet, `admin/src/index.css` (Tailwind v4 `@theme`; there is no `tailwind.config` for these tokens). Light uses the root token values, Dark overrides them under `:root[data-theme="dark"]`, and the Candidates screens add their own overrides under `.ui-classic`.
-
-The Light Theme's borders and dividers were too faint (card edges, tables, inputs, the Candidate screens and the Candidate History drawer). Only the three existing Light border tokens were retuned:
-
-| Token | Before (main) | Before (Candidates) | Now (both) |
-|---|---|---|---|
-| `--color-border` | `#d5dce5` | `#e2e8f0` | `#c9d1dc` |
-| `--color-border-strong` | `#b6c0cd` | `#cbd5e1` | `#a9b5c4` |
-| `--color-border-focus` | `#8494a8` | `#94a3b8` | `#7a8ba1` |
-
-Dark Theme values, backgrounds, surfaces, status colours and shadows were not changed, no tokens were added, and no component logic changed. The Daily Report's one `border-border/60` row line now uses the normal `border-border`.
+More: [`Docs/12-testing-and-quality.md`](Docs/12-testing-and-quality.md).
 
 ---
 
-## Candidate History & Need Attention
-
-Each candidate page has a **Call log** button that opens a right-hand drawer: the candidate summary, **Candidate History** (formerly *Call History*), and the **Add New Call Log** form. The database model keeps its technical name (`candidate_call_logs`, `CandidateCallLog`); only what users read changed.
-
-**Candidate History** is one timeline, newest first, of the staff's call logs and the candidate's activity, so it shows what was discussed and what changed afterwards:
-
-| Entry | Tone | Source |
-|---|---|---|
-| **Call log** | soft amber | `candidate_call_logs` |
-| **No Answer** | soft red | a call log with the `NO_ANSWER` outcome |
-| **Candidate activity** | soft green | what is already on record: documents received, verified or removed; registration; details, additional details and stage saves |
-
-Colour is only a supplement: every entry also says what it is in words and an icon, and the tints come from the theme's tokens so they stay readable in both Light and Dark. Activity is built only from existing records (no new table); a few things are not on record and are never reconstructed, such as stage completions that were never audited. The limits are listed in [`Docs/20-candidate-management.md`](Docs/20-candidate-management.md) §4.3.
-
-**Current Documents** is no longer shown in the drawer or on the Need Attention page, to cut clutter and free vertical space for the history and the action items. Only the display was removed: the API still returns `documentStatus`, and document status is still on the candidate page.
-
-**Adding a call.** The form is compact and responsive so the history gets most of the drawer. A chevron collapses it (down chevron when expanded, up when collapsed): collapsed, the Date, Time and note fields are hidden, the buttons stay, and what was typed is kept (the state is only in the page). Always visible: **Close**, **No Answer**, **Need Attention** and **Add call**.
-
-- **No Answer** records an unanswered attempt at the chosen date and time, signed with the staff member, **without a note**. It is a normal call row (`call_outcome = 'NO_ANSWER'`, empty note), so it counts in the Daily Report's *Calls taken*. It does not open a follow-up by itself; flag it with the flag icon, or turn **Need Attention** on first.
-- **Need Attention** (in the form) creates the call and its open follow-up in one request. On each call a compact **flag icon** beside the caller is the indicator and the action; the earlier large text button is gone. It reuses the existing follow-up record: nothing was duplicated.
-- The drawer closes with **X**, **Close**, **Escape**, or a click on the page behind it. A click inside the drawer, or a text selection dragged out of it, does not close it, and nothing closes it while a call is being saved.
-
-### Need Attention page
-
-The former **Priority Follow-Ups** page (`/admin/follow-ups`). Only the user-facing wording changed; the route, API (`/api/admin/follow-ups`), table (`call_log_follow_up`) and audit actions keep their names.
-
-```
-Candidate Call Log -> staff flags a call -> call_log_follow_up (references the call, copies nothing)
-     -> the call stays in Candidate History -> the follow-up shows on Need Attention, by candidate
-```
-
-- Grouped by candidate (one card each, newest follow-up first), with an **Open** (default) and a **Completed** view.
-- The state is a compact icon in each row: a filled flag while open, a muted check once completed; **Mark complete** and **Delete** remain buttons in the row's footer.
-- **Mark complete:** ADMIN, ANALYST, REGISTRATION_DESK. Completed follow-ups are kept as history (who and when).
-- **Delete:** ADMIN only (enforced by the API). It removes the follow-up row only; the call log, the candidate and the documents stay.
-- Audited as `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP`, `DELETE_FOLLOW_UP`.
-
----
-
-## Daily Reports
-
-Daily reports describe **Candidates**, not "Clients". The page (`/admin/reports/daily`) works on one business day at a time, using **Asia/Colombo** day boundaries. The date can be changed with **Previous day**, **Next day** (not past today), **Today** or a date picker.
-
-Two views:
-
-- **Summary**: *Candidates Registered*, *Candidates Completed*, *Visa Completed*, *Calls Taken* and *Documents Submitted*; the Registered and Completed candidate lists; documents by type and source (WhatsApp / manual); and, under a *Current state* heading, the **Incomplete Candidates** breakdown by process and the **Police status** snapshot.
-- **Summary by Roles** (ADMIN only): pick Analyst, Admin, Owner or Registration Desk to see the calls taken and the manually uploaded documents of staff currently holding that role, a staff breakdown and an activity list. Files received by WhatsApp have no staff member and are never attributed to a role.
-
-*Calls Taken* counts call rows, so a **No Answer** attempt counts as a call.
-
-**Export PDF** produces a structured, concise A4 PDF of the selected date and view (the role view for Summary by Roles), with repeated table headers and page numbers.
-
-Known limits, stated on the page: the Incomplete Candidates and Police sections show the state **now**, not on the selected day (no daily snapshots are kept); completions rely on the stage's stored completion time, so a stage unticked later no longer counts; staff are grouped by their **current** role (role changes are not versioned); *Registered by* comes from the audit log and is blank for older registrations.
-
-Details: [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md) (Daily Report).
-
----
-
-## Settings & Administration
-
-Administration is consolidated under one **Settings** item (OWNER and ADMIN) with three tabs, one URL each:
-
-| Tab | Route |
-|---|---|
-| **Change Roles** (opens first) | `/admin/settings/roles` |
-| **Invite User** | `/admin/settings/invite` |
-| **Google Sheet Sync** | `/admin/settings/sheet-sync` |
-
-There is **no Configurations tab** (it existed briefly and was removed); new system settings become tabs or sections here, not sidebar entries. The old `/admin/invitations` and `/admin/roles` URLs redirect to their tabs. Every user-facing reference to "Invite Admin" is **"Invite User"**.
-
-The **Google Sheet Sync** tab has a cleaner, grouped status layout and shows **scheduled** and **manual** sync separately: the automatic runs (06:00 / 12:00 / 18:00 Asia/Colombo) are identified by the scheduler as their source, never by clock time, so a manual run at 13:45 does not look like the 12:00 run. It also shows the **Sync destination** (see [Sync Destination](#sync-destination-multi-sheet-configuration)); only ADMIN can switch it, a new destination is validated before it is activated, and the one-way Database → Sheet rule is unchanged.
-
----
-
-## Security
-
-- 🔑 **Credential Isolation**: Environment variables, database connection strings, and API/Supabase secrets are loaded exclusively from the server environment, never committed to Git, and never sent to the frontend.
-- 🔐 **Supabase-Managed Credentials**: Supabase Auth owns password handling and session tokens; the application never stores a password or raw session token of its own.
-- 🛡️ **Backend RBAC**: Every protected route authorizes against `user.role`, independent of whether the caller's identity came from Supabase Auth — see [Authorization — Backend RBAC](#authorization--backend-rbac).
-- 🙅 **Generic Error Responses**: Authentication failures never reveal whether a given email exists in the system.
-- 🛑 **Data Overwrite Prevention**: Low-confidence OCR results or unverified identity matches never silently overwrite existing trusted candidate data.
-- 📝 **Append-Only Audit Trail**: Review actions and corrections on candidate records are recorded in an append-only audit log; audit entries are never edited or deleted.
-- 🔒 **Google Sheet Isolation**: Google service credentials are confined to the Sheet Sync worker and never reach the admin frontend (see [Sync Safety Principles](#sync-safety-principles)).
-
----
-
-## Technology Stack
-
-| Layer | Technology | Purpose / Details |
-|---|---|---|
-| **Runtime** | Node.js `^22.18.0 || >=23.6.0` (ES Modules) | Loads the generated TypeScript Prisma client directly |
-| **Web Framework** | Express.js (v5.2+) | HTTP routing & REST API backend |
-| **Database** | PostgreSQL 16 | Relational data store |
-| **ORM** | Prisma ORM | Type-safe query engine & migration tool |
-| **Authentication** | Supabase Auth (`auth.users`) | Identity, credentials, sessions, JWTs, invitations, password recovery — see [Authentication & Authorization](#authentication--authorization) |
-| **Object Storage** | Supabase Storage, private bucket | Candidate document storage |
-| **OCR** | Dedicated `ocr-worker/` service on Google Cloud Run (Tesseract OCR, PDF text extraction) | Passport/police/medical text extraction, isolated from the main backend |
-| **Messaging Channel** | Meta WhatsApp Business API | Official cloud API webhook integration |
-| **Google Sheet Sync** | Google Sheets API, scheduled sync worker | One-way database → Sheet operational mirror |
-| **Admin Dashboard** | React, TypeScript, Vite, Tailwind CSS | `admin/` frontend |
-| **Containerization** | Docker & Docker Compose | Local PostgreSQL service |
-
----
-
-## Project Structure
+## Repository Structure
 
 ```text
 EmlynkWABot/
-├── .env                          # Local environment variables (git-ignored)
-├── .gitignore                    # Version control exclusion rules
-├── docker-compose.yml            # PostgreSQL 16 container definition
-├── package.json                  # Node.js dependencies & scripts
-├── package-lock.json             # Dependency lockfile
-├── prisma7.config.ts             # Prisma CLI config (schema, migrations, datasource)
-├── README.md                     # Project documentation
-│
-├── admin/                        # Admin dashboard (React + TypeScript + Vite), served at /admin
-│   ├── vite.config.ts            # base /admin/, dev proxy to the backend, Vitest
-│   └── src/                      # api/, auth/, layout/, pages/, components/, test/
-│
-├── ocr-worker/                   # Separate OCR text-extraction service (Google Cloud Run)
-│
-├── Docs/                         # Project design specs & progress logs
-│   ├── 01-initial-backend-database-setup.md
-│   ├── 02-seed-data.md
-│   ├── 03-admin-authentication.md
-│   ├── 05-ocr-document-processing.md
-│   ├── Updates.txt
-│   ├── WhatsApp-Document-Submission-Proposal.pdf
-│   └── WhatsApp_Document_Processing_Project_Proposal_Final.md
-│
-├── scripts/                      # Operator tools (not part of the server)
-│   ├── createAdmin.js
-│   ├── checkDatabaseConnection.js
-│   └── diagnoseDocument.js
-│
-├── prisma/                       # Database schema & migrations
-│   ├── schema.prisma             # Core models: Candidate, User, Document, CandidateStage, CallLog
-│   ├── seed.js                   # Idempotent database seed script
-│   └── migrations/               # SQL migration files
-│
-└── src/                          # Application source code
-    ├── app.js                    # Express application entry point & routes
-    ├── config/                   # Configuration adapters
-    ├── middleware/                # HTTP middleware (auth, RBAC, WhatsApp signature verification)
-    ├── routes/                    # API route definitions
-    ├── services/                  # Business logic & integration services
-    └── utils/                     # Utility functions
+├── src/                  Backend: app.js (entry), createApp.js, worker.js, sheetSync*.js
+│   ├── routes/           admin, auth, users, whatsapp, candidateImport, sheetSyncSettings, publicCandidateDetails
+│   ├── services/         business logic (candidates, jobs, review, OCR client, sheet sync, import, ...)
+│   ├── middleware/       requireActiveUser, requireRole, rate limiting, webhook signature
+│   ├── auth/             Supabase token verification
+│   └── config/ utils/
+├── api/                  Vercel function entry (index.js)
+├── admin/                Admin dashboard (React, TypeScript, Vite, Vitest)
+├── candidate-form/       Public Candidate Form (separate Vercel project)
+├── ocr-worker/           OCR service (Cloud Run)
+├── prisma/               schema.prisma and SQL migrations
+├── deploy/               Non-secret Cloud Run settings for the Sheet Sync worker
+├── scripts/              Operator tools (user:create, migrate MANAGER role, DB check, ...)
+├── test/                 Backend tests, helpers and fixtures
+├── Docs/                 Project documentation (start at Docs/README.md)
+├── Dockerfile            Backend and submission worker image
+├── vercel.json           Vercel routing, build and security headers
+└── docker-compose.yml    Local PostgreSQL 16
 ```
 
 ---
 
-## Environment & Setup
+## Documentation Index
 
-### Prerequisites
+Start with [`Docs/README.md`](Docs/README.md), the categorised index of every document.
 
-- [Node.js](https://nodejs.org/) 22.18+ (or 23.6+). The server checks this at startup: the generated Prisma client is TypeScript that Node loads directly.
-- [npm](https://www.npmjs.com/) (v9.0.0 or higher)
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (with Docker Compose)
-- [Git](https://git-scm.com/)
-
-### Environment Configuration
-
-Create a `.env` file in the project root (copy values from `.env.example` if available):
-
-```env
-# Server Configuration
-PORT=3000
-
-# PostgreSQL Connection String (Docker Container)
-DATABASE_URL="Add database URL here"
-
-# Supabase project (Auth + Storage share the same project)
-SUPABASE_URL="Add Supabase project URL here"
-SUPABASE_SERVICE_ROLE_KEY="Add Supabase service-role key here"
-SUPABASE_BUCKET="Add Supabase storage bucket name here"
-
-# WhatsApp Business API Webhook Verification Token
-WHATSAPP_VERIFY_TOKEN="Add whatsapp verify token here"
-
-# OCR service (ocr-worker/): locally http://127.0.0.1:8080, in production the Cloud Run URL
-OCR_SERVICE_URL="http://127.0.0.1:8080"
-
-# Optional: documents every candidate must have (must include PASSPORT;
-# allowed: PASSPORT, POLICE_SLIP, POLICE_REPORT, MEDICAL). Invalid values stop the server.
-# REQUIRED_DOCUMENT_TYPES=PASSPORT,POLICE_REPORT,MEDICAL
-```
-
-`.env.example` lists every setting the server checks at startup.
-
-> [!CAUTION]
-> Never commit `.env` files or real production credentials to Git repositories. Supabase service-role keys and other secrets are runtime configuration only — they are never documented with real values here.
-
-### Database & Docker Setup
-
-1. **Start PostgreSQL Container**:
-   ```bash
-   docker compose up -d
-   docker ps
-   ```
-
-2. **Generate Prisma Client**: `npm install` (and `npm ci --omit=dev` in production) runs this automatically (`postinstall`). Run it by hand after changing `schema.prisma`, or if dependencies were installed with `--ignore-scripts`:
-   ```bash
-   npx prisma generate
-   ```
-   The client goes to `generated/prisma` (not in git). Without it the server stops at startup with "The Prisma client is not generated".
-
-3. **Run Database Migrations**:
-   ```bash
-   npx prisma migrate dev --name init_schema
-   ```
-
-4. **Seed Database with Sample Data**:
-   ```bash
-   npx prisma db seed
-   ```
-
-5. **(Optional) Inspect Database via Prisma Studio**:
-   ```bash
-   npx prisma studio
-   ```
-
-### Running the Application
-
-Start the Express backend server:
-
-```bash
-npm start
-```
-
-Verify backend health at `http://localhost:3000/health`:
-```json
-{
-  "status": "OK",
-  "message": "Emlynk backend is running..!"
-}
-```
-
-**OCR Service** (`ocr-worker/`) runs locally alongside the backend:
-
-```bash
-npm run ocr:install     # once; also needed by the backend tests
-npm run ocr:start       # http://127.0.0.1:8080, with OCR_SERVICE_URL=http://127.0.0.1:8080
-npm run ocr:test
-```
-
-**Admin Dashboard**:
-
-```bash
-npm run admin:install   # once
-npm run admin:dev       # development: http://localhost:5173/admin/ (proxies /auth and /api to :3000)
-npm run admin:build     # production build into admin/dist, then `npm start`
-                        # and open http://localhost:3000/admin/
-npm run admin:test      # frontend tests
-```
+| Topic | Document |
+|---|---|
+| Overview and setup | [`01-project-overview.md`](Docs/01-project-overview.md), [`11-development-guide.md`](Docs/11-development-guide.md), [`CODING_STANDARDS.md`](Docs/CODING_STANDARDS.md) |
+| Architecture and backend | [`02-system-architecture.md`](Docs/02-system-architecture.md), [`07-backend-development.md`](Docs/07-backend-development.md) |
+| Database | [`03-database-design.md`](Docs/03-database-design.md) |
+| WhatsApp, OCR, storage | [`04-whatsapp-integration.md`](Docs/04-whatsapp-integration.md), [`05-ocr-document-processing.md`](Docs/05-ocr-document-processing.md), [`06-storage-management.md`](Docs/06-storage-management.md) |
+| Admin dashboard | [`09a-admin-dashboard-api.md`](Docs/09a-admin-dashboard-api.md) (API), [`09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md) (screens) |
+| Roles and RBAC | [`ROLES_AND_PERMISSIONS.md`](Docs/ROLES_AND_PERMISSIONS.md), [`OWNER_ROLE.md`](Docs/OWNER_ROLE.md) |
+| Candidates | [`20-candidate-management.md`](Docs/20-candidate-management.md), [`CANDIDATE_PAGINATION_AND_PERFORMANCE.md`](Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md), [`CANDIDATE_BULK_IMPORT.md`](Docs/CANDIDATE_BULK_IMPORT.md) |
+| Candidate Form | [`CANDIDATE_FORM_FEATURE_ARCHITECTURE.md`](Docs/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md), [`CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md`](Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md), [`CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md`](Docs/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md), [`candidate-form/README.md`](candidate-form/README.md) |
+| Jobs, Agents, Clients | [`JOB_MANAGEMENT_IMPLEMENTATION.md`](Docs/JOB_MANAGEMENT_IMPLEMENTATION.md), [`AGENT_CLIENT_MANAGEMENT.md`](Docs/AGENT_CLIENT_MANAGEMENT.md) |
+| Google Sheet | [`GOOGLE_SHEET_INTEGRATION.md`](Docs/GOOGLE_SHEET_INTEGRATION.md), [`GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md) |
+| Security and auth | [`10-security.md`](Docs/10-security.md), [`SUPABASE_AUTH.md`](Docs/SUPABASE_AUTH.md) |
+| Deployment | [`08-cloud-deployment.md`](Docs/08-cloud-deployment.md), [`ocr-worker/README.md`](ocr-worker/README.md) |
+| Testing | [`12-testing-and-quality.md`](Docs/12-testing-and-quality.md) |
+| Issues and history | [`EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md`](Docs/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md), [`archive/`](Docs/archive) (historical) |
+| Research, not implemented | [`NOTIFICATION_SYSTEM_AUDIT.md`](Docs/NOTIFICATION_SYSTEM_AUDIT.md) |
 
 ---
 
-## Available API Endpoints
+## Current Status and Notes
 
-### System & Health
+- **Active development** on the `dev` branch; `stage` and `main` follow the release flow in the deployment guide.
+- **Roles:** `OWNER` was introduced above `ADMIN`; `MANAGER` was retired on 2026-10-30. The active model is `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`.
+- **Update Sheet is now Upload:** the bulk import button was renamed.
+- **Authentication** moved fully to Supabase Auth; the application no longer issues its own tokens or sends account emails.
+- Some documents under `Docs/` still describe earlier behavior; where a document and the code disagree, the code is correct.
 
-| Method | Endpoint | Protection | Description |
-|---|---|:---:|---|
-| `GET` | `/health` | Public | Returns service status and health message |
-| `GET` | `/admin/*` | Public page, data behind auth | Admin dashboard (built React app); client-side routes fall back to `index.html` |
+## License
 
-### Authentication (`/auth`)
-
-Backed by Supabase Auth (see [Authentication & Authorization](#authentication--authorization)); the backend resolves the caller's `public.user` profile and role on every request.
-
-| Method | Endpoint | Protection | Description |
-|---|---|:---:|---|
-| `POST` | `/auth/login` | Public | Authenticates via Supabase Auth and establishes the session |
-| `GET` | `/auth/me` | Protected | Returns the current authenticated user's profile and role |
-
-### Admin Dashboard API (`/api/admin`)
-
-Every route requires an authenticated, active `user`; access to each route is additionally scoped by role (see [User Roles](#user-roles)). Reads, plus review actions and corrections — each writes an append-only audit entry.
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/admin/overview` | KPIs, candidate completeness, police counts, submission summaries, recent documents, review-queue summary |
-| `GET` | `/api/admin/documents` | Paginated, filterable, sortable list of stored documents |
-| `GET` | `/api/admin/documents/missing` | Incomplete candidates and their missing required documents |
-| `POST` | `/api/admin/documents/:documentId/police-date` | Set or correct a stored police slip's submitted date (reason required; audited) |
-| `GET` | `/api/admin/candidates` | Candidate directory: search, complete/incomplete, missing type, paging |
-| `GET` | `/api/admin/candidates/:passportId` | Candidate profile, documents, stage status, call logs |
-| `GET` | `/api/admin/candidates/:passportId/call-logs` | A candidate's Candidate History: call logs plus candidate activity |
-| `POST` | `/api/admin/candidates/:passportId/call-logs` | Log a call (`{ note, calledAt, needsAttention?, outcome? }`; `outcome: "NO_ANSWER"` needs no note) |
-| `POST` | `/api/admin/candidates/:passportId/call-logs/:callLogId/follow-up` | Mark a call as Need attention (creates a follow-up, shown on the Need Attention page) |
-| `GET` | `/api/admin/follow-ups?status` | Need Attention follow-ups grouped by candidate (`status`: `OPEN` default, or `COMPLETED`) |
-| `POST` | `/api/admin/follow-ups/:followUpId/complete` | Complete a follow-up |
-| `DELETE` | `/api/admin/follow-ups/:followUpId` | Delete a follow-up (ADMIN only) |
-| `GET` | `/api/admin/reports/daily` | Daily report (`?date=YYYY-MM-DD`) — see [Daily Reports](#daily-reports) for the views |
-| `GET` | `/api/admin/review` | Review queue: waiting files and documents needing review |
-| `POST` | `/api/admin/review/:reviewId/approve` | Approve a reviewed item; audit entry |
-| `POST` | `/api/admin/review/:reviewId/keep-pending` | Keep pending with a required reason; audit entry |
-| `POST` | `/api/admin/review/:reviewId/remove` | Remove from review (reason required); never removes a verified document; audit entry kept |
-| `GET` | `/api/admin/police` | Every candidate's 21-day police-report status |
-| `GET` | `/api/admin/users` | Staff directory (OWNER and ADMIN) |
-| `POST` | `/api/admin/users/invite` | Invite User — enter email, select role; triggers the Supabase invitation flow |
-| `PUT` | `/api/admin/users/:userId/role` | Change a staff member's role (OWNER: ADMIN and below; ADMIN: below ADMIN; never the OWNER) |
-| `GET`/`PUT` | `/api/admin/settings/sheet-sync` | Google Sheet configuration and sync controls (OWNER and ADMIN) |
-
-### WhatsApp Webhooks (`/whatsapp`)
-
-| Method | Endpoint | Protection | Description |
-|---|---|:---:|---|
-| `GET` | `/whatsapp/webhook` | Meta Token | Verifies the Meta WhatsApp webhook integration token |
-| `POST` | `/whatsapp/webhook` | Meta Webhook (HMAC) | Ingests incoming WhatsApp candidate messages & document events |
-
----
-
-## Development Roadmap
-
-| Phase | Area | Status | Key Deliverables |
-|:---:|---|:---:|---|
-| **1** | Core Document Pipeline | ✅ Completed | WhatsApp ingestion, OCR extraction, confidence engine, police 21-day workflow |
-| **2** | Admin Dashboard Foundation | ✅ Completed | Overview, Documents, Review Queue, Candidate directory, Police Workflow |
-| **3** | Candidate Management Pipeline | ✅ Completed | Candidate registration, progress stages, call logs, single-scan document model |
-| **4** | Google Sheet Operational Mirror | ✅ Completed | One-way database → Sheet mirror |
-| **5** | Role-Based Staff Management | ✅ Completed | Four-role model at the time (`ADMIN`/`MANAGER`/`ANALYST`/`REGISTRATION_DESK`), backend RBAC. *Historical: OWNER and JOB_HANDLER were added later, and MANAGER was retired on 2026-10-30.* |
-| **6** | Supabase Auth Migration | ✅ Completed | Supabase Auth for sign-in, Invite User and password recovery |
-| **7** | Candidate Progress Expansion | ⏳ Planned | Add VISA Submission stage; temporarily disable IVS Interview, Visa Approval, Finalizing the Job in the UI |
-| **8** | Scheduled Sheet Sync & Multi-Sheet Config | ✅ Completed | 06:00/12:00/18:00 scheduled runs, scheduled vs manual status, Sync Destination (ADMIN-only, validated before activation) |
-| **9** | Call Logs: Follow-Ups (now Need Attention) | ✅ Completed | Need attention action, `call_log_follow_up` table, follow-ups page (now **Need Attention**) |
-| **10** | Daily Report Redesign | ✅ Completed | Summary and Summary by Roles views, date navigation, PDF export |
-| **11** | Settings Consolidation | ✅ Completed | Single Settings area: Change Roles, Invite User, Google Sheet Sync |
-| **11a** | Candidate History & UI refinement | ✅ Completed | Candidate History timeline, No Answer, compact/collapsible call form, Need Attention page cleanup, Light Theme border visibility, family-detail rules |
-| **12** | Security, QA & Deployment | ⏳ Planned | Load testing, production deployment hardening |
-
----
-
-## Development Workflow & Git Conventions
-
-The project enforces a process-level, checkpoint-based Git development workflow:
-
-```text
-Implement Single Process -> Test & Verify -> Update Docs -> Git Commit Checkpoint -> Next Process
-```
-
-### Commit Message Standards
-
-| Prefix | Category | Example |
-|---|---|---|
-| `feat:` | New feature | `feat: add candidate VISA submission stage` |
-| `fix:` | Bug fix | `fix: handle missing authorization header gracefully` |
-| `chore:` | Setup / Tooling | `chore: setup PostgreSQL container in docker-compose` |
-| `docs:` | Documentation | `docs: document the Supabase Auth migration` |
-| `test:` | Testing | `test: add unit test for password hashing utility` |
-| `refactor:` | Restructuring | `refactor: extract prisma client initialization into config` |
-
----
-
-## Documentation Reference
-
-Setup logs, implementation history and architectural proposals are maintained under the [`Docs/`](Docs/) directory:
-
-- 📄 [`Docs/09b-admin-dashboard-guide.md`](Docs/09b-admin-dashboard-guide.md): Admin Dashboard guide: every screen, action, rule and setting.
-- 📄 [`Docs/09a-admin-dashboard-api.md`](Docs/09a-admin-dashboard-api.md): Admin Dashboard API reference.
-- 📄 [`Docs/20-candidate-management.md`](Docs/20-candidate-management.md): Candidate management: stages, Candidate History, Need Attention, additional details.
-- 📄 [`Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md`](Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md): Candidates list: server-side search and paging.
-- 📄 [`Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md): Google Sheet sync architecture, including Sync Destination.
-- 📄 [`Docs/GOOGLE_SHEET_INTEGRATION.md`](Docs/GOOGLE_SHEET_INTEGRATION.md): Google Sheet sync feature, operations and troubleshooting.
-- 📄 [`Docs/SUPABASE_AUTH.md`](Docs/SUPABASE_AUTH.md): Supabase Auth setup and flows.
-- 📄 [`Docs/03-database-design.md`](Docs/03-database-design.md): Database design and detailed schema reference.
-- 📄 [`Docs/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md`](Docs/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md): Project issues, fixes and lessons learned.
-- 📄 [`Docs/archive/`](Docs/archive/): Archived setup logs, early phase notes and the original proposal (historical).
----
-
-## Project Status & License
-
-- **Project Status**: Active development. This README is the approved target specification; see [Development Roadmap](#development-roadmap) for what is implemented versus scheduled for migration.
-- **License**: ISC License (Internal Project for Emlynk)
+ISC (internal project for Emlynk).
