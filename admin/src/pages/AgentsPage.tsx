@@ -62,7 +62,7 @@ function AgentsView() {
     const filtered = Boolean(search || country || status);
 
     return (
-        <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
+        <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Agents</h1>

@@ -38,7 +38,13 @@ The first ADMIN is created on the server with `npm run user:create` (a Supabase 
 - **Register Candidate** quick access (`/admin/candidates/new`): a button on every page, left of Sync, for the roles that can register candidates (ADMIN, TEAM_LEAD, REGISTRATION_DESK). It is the same registration form the Candidates page's *Add candidate* button opens; no other role sees it. On small screens it shows the icon only.
 - **Sync** reloads the data on the current page from the server. Your filters, search and page are kept. While it runs the button shows *Syncing…* and can't be pressed again; afterwards the header shows *Synced HH:MM:SS* or *Sync failed*. Sync only reloads the page's data. It does not talk to WhatsApp or any other system.
 - **Dark mode** toggle (moon / sun icon). The choice is remembered in this browser. Light mode is the default. See *Light and dark theme* below for how the colours work.
-- Your name and role, and **Sign out**.
+### Sidebar (every page)
+
+The order is Overview, Candidates, Need Attention, Work Allocation, Jobs, Agents, Client Management, Missing Documents, Review Queue, Police Workflow, Documents and Daily Report, then Configuration. You see only the entries your role can use.
+
+Your **account card** is at the bottom of the sidebar, with your name and role. Click it to see your email and **Sign out**.
+
+To make the sidebar narrower, click the **panel icon** at the left of the top bar. Click it again to widen it. EMOPS remembers the choice in this browser. On a phone the same icon opens the sidebar. Every page fills the full width beside the sidebar.
 
 ### Overview
 
@@ -642,8 +648,6 @@ Light is the default; Dark is a per-browser choice. One stylesheet, `admin/src/i
 |---|---|
 | Light | the root token values (the `@theme` block) |
 | Dark | `:root[data-theme="dark"]` |
-| Candidates screens, Light | `:root:not([data-theme="dark"]) .ui-classic` (restores the pre-redesign canvas and text values, and had its own, lighter borders) |
-| Candidates screens, Dark | `:root[data-theme="dark"] .ui-classic` |
 
 **Light Theme border visibility.** Borders and dividers were too faint in Light (card edges, table rows, input and select boundaries, panels and dialogs), and the Candidates area was fainter still because `.ui-classic` overrode the border tokens with lighter values. Only the three existing Light border tokens were adjusted, in both the base and the `.ui-classic` Light blocks:
 
@@ -787,6 +791,17 @@ The log is **append-only**: the API has no way to edit or delete an entry, and a
 | Completed | Client: all required documents verified. Police Workflow: a verified police report exists. |
 
 Other statuses: `MANUAL_REVIEW` and `CONFLICT` (held for review), `DUPLICATE` (the same file is already on record) and `FAILED` (processing error). `FAILED` stays separate from review: it is listed under *Failed processing*, never in Pending review.
+
+### Candidate Form (Settings tab, `/admin/settings/candidate-form`) — ADMIN Only
+
+Sets what candidates see on the public form: its **title**, its **logo**, and three colours (**Accent**, **Background**, **Surface**) for each of the Light and Dark themes. Previews of both themes update as you edit, before anything is saved.
+
+- **Logo:** PNG, JPG, WebP or SVG, up to 256 KB. One logo shows in both themes, so check it in both previews. Without one, the form shows the EMLYNK logo. **Use EMLYNK logo** drops an uploaded logo and goes back to that one.
+- **Show a logo on the form:** untick it to show no logo at all, only the title. An uploaded logo is kept and comes back if you tick the box again. Both previews drop the logo straight away, and candidates see it the next time the form loads.
+- **Readability:** the server refuses colours that would leave the form's text hard to read and says which field to change. Accent-coloured text and button labels are worked out by the form, so they stay readable with any accent.
+- **Reset to EMLYNK defaults** removes the uploaded logo, shows the logo again, and restores the title and colours, after asking.
+- Saves are recorded in Audit Logs as *Candidate form branding changed*, with the title, colours, whether the logo changed and whether it is shown, never the image. Candidates see changes the next time the form loads.
+- If the settings can't be loaded, the form still works, with the defaults.
 
 ## 5. Settings and running
 

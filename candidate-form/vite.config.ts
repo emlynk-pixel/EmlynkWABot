@@ -13,6 +13,11 @@ import { buildMetaContentSecurityPolicy } from "./csp";
 // variable, including any other VITE_* value, is never embedded.
 const ENV_PREFIX = "VITE_API_";
 
+// Backend the dev server forwards the public API to (the Express app, `npm start`).
+// With VITE_API_BASE_URL empty the form calls its own origin, which in development
+// is this server. Never reaches the bundle: it has no VITE_API_ prefix.
+const apiTarget = process.env.FORM_API_PROXY_TARGET || "http://localhost:3000";
+
 // Production builds get the Content-Security-Policy <meta> from csp.ts:
 // connect-src is exactly the configured API origin. An invalid
 // VITE_API_BASE_URL fails the build. (frame-ancestors and the other headers a
@@ -35,7 +40,12 @@ export default defineConfig(({ mode }) => {
         // than "public" so a generic "public/" ignore rule cannot drop it.
         publicDir: "static",
         plugins: [react(), contentSecurityPolicy((env.VITE_API_BASE_URL ?? "").trim())],
-        server: { port: 5174, strictPort: true },
+        server: {
+            port: 5174,
+            strictPort: true,
+            // Keeps the browser's Origin, which the backend checks against CANDIDATE_FORM_ORIGIN.
+            proxy: { "/api/public": { target: apiTarget, changeOrigin: false } },
+        },
         preview: { port: 4174, strictPort: true },
         build: {
             outDir: "dist",

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { loadCandidateForm } from "./api/candidateDetails";
 import { ApiError } from "./api/client";
+import logoOnDark from "./assets/emlynk-on-dark.svg";
+import logoOnLight from "./assets/emlynk-on-light.svg";
+import { useBranding } from "./branding/branding";
+import { BrandingProvider } from "./branding/BrandingProvider";
 import { ContactAdminScreen } from "./components/ContactAdmin";
 import { LanguageSwitch } from "./components/LanguageSwitch";
 import { ThemeSwitch } from "./components/ThemeSwitch";
@@ -33,9 +37,11 @@ type View =
 export function App() {
     return (
         <ThemeProvider>
-            <LanguageProvider>
-                <CandidateForm />
-            </LanguageProvider>
+            <BrandingProvider>
+                <LanguageProvider>
+                    <CandidateForm />
+                </LanguageProvider>
+            </BrandingProvider>
         </ThemeProvider>
     );
 }
@@ -54,6 +60,7 @@ function StatusScreen({ title, text, tone = "plain", children }: { title: Messag
 }
 
 function CandidateForm() {
+    const { branding, ready } = useBranding();
     const { t } = useLanguage();
     // The link secret was read from the address (and removed from it) before
     // the first render (main.tsx). Without one there is nothing to verify.
@@ -146,10 +153,17 @@ function CandidateForm() {
         <div className={view.name === "form" ? "page page-wide" : "page"}>
             <header className="site-header">
                 <div className="site-header-inner">
-                    <p className="brand">
-                        <span className="brand-mark" aria-hidden="true">C</span>
+                    <p className={ready ? "brand" : "brand brand-pending"}>
+                        {!branding.showLogo ? null : branding.logo ? (
+                            <img className="brand-logo" src={branding.logo} alt="" />
+                        ) : (
+                            <>
+                                <img className="brand-logo logo-on-light" src={logoOnLight} alt="EMLYNK" />
+                                <img className="brand-logo logo-on-dark" src={logoOnDark} alt="EMLYNK" />
+                            </>
+                        )}
                         <span className="brand-text">
-                            <span className="brand-name">Candidate Form</span>
+                            <span className="brand-name">{branding.formTitle}</span>
                             <span className="brand-sub">{t("app.subtitle")}</span>
                         </span>
                     </p>

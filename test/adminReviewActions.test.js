@@ -618,6 +618,7 @@ describe("security and error handling", () => {
             "PUT /candidates/:passportId/additional-details",
             "PUT /candidates/:passportId/stages/:stage",
             "PUT /jobs/:jobId",
+            "PUT /settings/form-branding", // Settings > Candidate Form: ADMIN only, audited (candidateFormBranding.test.js)
         ]);
     });
 

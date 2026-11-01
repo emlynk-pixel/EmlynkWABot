@@ -287,12 +287,11 @@ describe("Dark mode", () => {
 
     test("every text colour is readable (WCAG AA 4.5:1) on every surface, in both themes", () => {
         const texts = ["ink", "ink-soft", "ink-muted", "ink-subtle", "primary"];
-        const surfaces = ["surface", "canvas", "canvas-muted"];
+        const surfaces = ["page", "surface", "canvas", "canvas-muted"];
         for (const [name, theme] of [["light", LIGHT], ["dark", DARK]] as const) {
             for (const text of texts) {
                 for (const surface of surfaces) {
-                    if (name === "light" && text === "ink-subtle" && surface === "canvas-muted") continue; // unchanged Stitch light pair, used for captions only
-                    expect(contrast(theme[text], theme[surface]), `${name}: ${text} on ${surface}`).toBeGreaterThanOrEqual(name === "light" && text === "ink-subtle" ? 4.3 : 4.5);
+                    expect(contrast(theme[text], theme[surface]), `${name}: ${text} on ${surface}`).toBeGreaterThanOrEqual(4.5);
                 }
             }
         }
@@ -310,22 +309,29 @@ describe("Dark mode", () => {
         expect(contrast(DARK.primary, DARK["primary-soft"])).toBeGreaterThanOrEqual(4.5);
     });
 
-    test("light mode keeps the brand identity (the redesign changes only canvas, borders and subtle text)", () => {
-        expect(LIGHT).toMatchObject({ primary: "#2563eb", canvas: "#f3f5f8", surface: "#ffffff", ink: "#0f172a", "ink-muted": "#475569", sidebar: "#0f172a", critical: "#dc2626", "on-primary": "#ffffff" });
+    test("light mode's layers can be told apart: surface from page, canvas from both, and controls have a 3:1 outline", () => {
+        expect(contrast(LIGHT.surface, LIGHT.page)).toBeGreaterThanOrEqual(1.1);
+        expect(contrast(LIGHT.surface, LIGHT.canvas)).toBeGreaterThanOrEqual(1.2);
+        expect(contrast(LIGHT.page, LIGHT.canvas)).toBeGreaterThanOrEqual(1.1);
+        expect(contrast(LIGHT.page, LIGHT.border)).toBeGreaterThanOrEqual(1.3);
+        expect(contrast(LIGHT["border-strong"], LIGHT.surface)).toBeGreaterThanOrEqual(3);
     });
 
-    test("the Candidates screens (.ui-classic) get back every previous value the redesign changed", () => {
-        const block = (selector: string) => css.slice(css.indexOf(selector), css.indexOf("}", css.indexOf(selector)));
-        const light = tokens(block(':root:not([data-theme="dark"]) .ui-classic'));
-        expect(light).toEqual({ canvas: "#f8fafc", "canvas-muted": "#f1f5f9", border: "#c9d1dc", "border-strong": "#a9b5c4", "border-focus": "#7a8ba1", "ink-subtle": "#64748b" });
-        const dark = tokens(block(':root[data-theme="dark"] .ui-classic'));
-        expect(dark).toEqual({ border: "#243044", "border-strong": "#3a4a61", "border-focus": "#64748b" });
-        const text = block(".ui-classic {");
-        // Text with no size class inherits the base size from <body>; the
-        // wrapper must re-apply the original one.
-        for (const size of ["--text-body-sm: 13px", "--text-body-md: 14px", "--text-label-md: 13px", "--text-label-sm: 12px", "--text-label-caps: 11px", "font-size: var(--text-body-md)", "line-height: var(--text-body-md--line-height)"]) {
-            expect(text, size).toContain(size);
-        }
+    test("light mode carries the EMLYNK identity: near-black primary, slate sidebar, 10px radius, Montserrat headings", () => {
+        expect(LIGHT).toMatchObject({ primary: "#171717", page: "#f0f0f0", surface: "#ffffff", canvas: "#e5e5e5", border: "#d4d4d4", ink: "#0a0a0a", sidebar: "#1f242b", accent: "#ef4444", "on-primary": "#fafafa" });
+        expect(css).toContain("--radius: 0.625rem");
+        expect(css).toContain('--font-heading: "Montserrat Variable"');
+    });
+
+    test("dark mode is the brand slate surface", () => {
+        expect(DARK).toMatchObject({ page: "#1f242b", surface: "#262c34", border: "#353c46", sidebar: "#1f242b" });
+    });
+
+    test("no text token is below 12px, and the old classic overrides are gone", () => {
+        const sizes = [...css.matchAll(/--text-[a-z]+-[a-z]+:\s*(\d+)px/g)].map((match) => Number(match[1]));
+        expect(sizes.length).toBeGreaterThan(0);
+        expect(Math.min(...sizes)).toBeGreaterThanOrEqual(12);
+        expect(css).not.toContain("ui-classic");
     });
 
     test("components use tokens, not fixed colours that break in dark mode", () => {

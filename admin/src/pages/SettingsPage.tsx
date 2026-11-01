@@ -27,6 +27,7 @@ export const ACTIVE_RUN_POLL_MS = 5_000;
 //   /settings/invite      Invite User   (InvitationsPage, unchanged)      ADMIN
 //   /settings/sheet-sync  Google Sheet Sync                              ADMIN
 //   /settings/job-types   Job Types     (JobTypesSettings)               ADMIN
+//   /settings/candidate-form  Candidate Form (FormBrandingSettings)      ADMIN
 // /settings opens the first tab the user may open (App.tsx, SettingsIndex).
 // The old /roles and /invitations URLs redirect here.
 // The tabs themselves are listed in layout/navigation.ts (the breadcrumb names them too).
@@ -40,7 +41,7 @@ const tabClass = ({ isActive }: { isActive: boolean }) =>
 function AccessRestricted({ children }: { children: ReactNode }) {
     return (
         <div className="mx-auto max-w-4xl p-6">
-            <div className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+            <div className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                 <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                 <h2 className="text-headline-sm font-semibold">Access Restricted</h2>
                 <p className="mt-1 text-body-sm text-ink-muted">{children}</p>
@@ -56,7 +57,7 @@ export function SettingsPage() {
     }
     const tabs = SETTINGS_TABS.filter((tab) => hasRole(user, tab.roles));
     return (
-        <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-5">
+        <section aria-labelledby="page-title" className="space-y-5">
             <div>
                 <h1 id="page-title" className="text-headline-lg text-ink">Settings</h1>
                 <p className="mt-1 text-body-sm text-ink-muted">System configuration and integrations.</p>
@@ -178,7 +179,7 @@ function SyncDestinationSection({ status, onChanged }: { status: SheetSyncStatus
                     <p role={message.tone === "error" ? "alert" : "status"} className={`text-body-sm ${message.tone === "error" ? "text-critical" : "text-ink-muted"}`}>{message.text}</p>
                 )}
                 {pending && (
-                    <p role="status" className="rounded border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
+                    <p role="status" className="rounded-lg border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
                         Checking access and headers of {nameOf(pending)}… {active ? `${active.name} stays the destination until the check passes.` : ""}
                     </p>
                 )}
@@ -219,7 +220,7 @@ function SourceBadge({ run }: { run: SheetSyncRun }) {
     return (
         <span
             title={run.trigger === "OPERATOR" ? "Requested with the operator command" : run.trigger === "ADMIN" ? "Requested with Sync Now" : "Run by the automatic schedule"}
-            className="inline-flex h-[22px] items-center whitespace-nowrap rounded-full border border-border-strong px-2 text-label-sm text-ink-muted"
+            className="inline-flex h-5 items-center whitespace-nowrap rounded-full border border-border-strong px-2 text-label-sm text-ink-muted"
         >
             {triggerLabel(run.trigger)}
         </span>
@@ -231,7 +232,7 @@ function Group({ title, aside, children }: { title: string; aside?: ReactNode; c
     return (
         <section className="border-t border-border pt-4">
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                <h3 className="text-label-caps uppercase text-ink-subtle">{title}</h3>
+                <h3 className="text-label-sm text-ink-muted">{title}</h3>
                 {aside}
             </div>
             {children}
@@ -252,7 +253,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 // A small tile for the status summary.
 function StatusTile({ label, children }: { label: string; children: ReactNode }) {
     return (
-        <div className="min-w-0 rounded-md border border-border bg-canvas px-4 py-3">
+        <div className="min-w-0 rounded-lg border border-border bg-canvas px-4 py-3">
             <dt className="text-label-md text-ink-muted">{label}</dt>
             <dd className="mt-1.5">{children}</dd>
         </div>
@@ -326,7 +327,7 @@ function UpdateSheetButton({ onClick }: { onClick: () => void }) {
             <span
                 role="tooltip"
                 id={hintId}
-                className={`${open ? "" : "sr-only"} absolute right-0 top-full z-30 mt-1.5 w-72 max-w-[calc(100vw-3rem)] rounded-md border border-border bg-surface px-3 py-2 text-body-sm font-normal text-ink shadow-popover`}
+                className={`${open ? "" : "sr-only"} absolute right-0 top-full z-30 mt-1.5 w-72 max-w-[calc(100vw-3rem)] rounded-lg border border-border bg-surface px-3 py-2 text-body-sm font-normal text-ink shadow-popover`}
             >
                 {UPDATE_SHEET_HINT}
             </span>
@@ -395,7 +396,7 @@ function GoogleSheetSyncSection() {
             {importing && <CandidateImportDialog onClose={() => { setImporting(false); reload(); }} />}
 
             {message && (
-                <div role={message.tone === "error" ? "alert" : "status"} className={`mt-4 rounded border px-4 py-3 text-body-sm ${message.tone === "error" ? "border-critical-border bg-critical-bg text-critical" : "border-verified-border bg-verified-bg text-verified"}`}>
+                <div role={message.tone === "error" ? "alert" : "status"} className={`mt-4 rounded-lg border px-4 py-3 text-body-sm ${message.tone === "error" ? "border-critical-border bg-critical-bg text-critical" : "border-verified-border bg-verified-bg text-verified"}`}>
                     {message.text}
                 </div>
             )}
@@ -409,7 +410,7 @@ function GoogleSheetSyncSection() {
                         <p role="alert" className="text-body-sm text-critical">The status could not be refreshed: {status.error.message}</p>
                     )}
                     {!data.worker.online && (
-                        <div role="alert" className="rounded border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
+                        <div role="alert" className="rounded-lg border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
                             The sheet-sync worker is not reporting{data.worker.lastHeartbeatAt ? ` (last seen ${formatDateTime(data.worker.lastHeartbeatAt)})` : ""}. Requests stay queued until it runs.
                         </div>
                     )}

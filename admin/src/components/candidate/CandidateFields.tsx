@@ -6,8 +6,8 @@ import { HelpTip } from "../Form";
 import { DatePicker } from "../DatePicker";
 import { SubmittedHint, useFieldConflict } from "./submittedChanges";
 
-export const fieldControl = "h-10 w-full rounded border border-border-strong bg-surface px-3 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
-export const textAreaControl = "w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
+export const fieldControl = "h-8 w-full rounded-lg border border-border-strong bg-surface px-3 text-body-lg text-ink md:text-body-sm focus:border-border-focus focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
+export const textAreaControl = "w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none disabled:bg-canvas disabled:text-ink-muted";
 
 export const emptyDetails = (): CandidateDetailsInput => ({
     surname: "", otherNames: "", nic: "", address: "", jobTypes: [], jobExperience: "",
@@ -131,8 +131,8 @@ export function Field({ label, required, error, htmlFor, children, className = "
     const text = <>{label}{required && <span className="text-critical"> *</span>}</>;
     const conflict = useFieldConflict(submitted);
     const highlight = conflict.focused
-        ? "rounded-md bg-critical-bg p-2 -m-2 ring-2 ring-critical"
-        : conflict.pending ? "rounded-md bg-review-bg p-2 -m-2 ring-1 ring-review-border" : "";
+        ? "rounded-lg bg-critical-bg p-2 -m-2 ring-2 ring-critical"
+        : conflict.pending ? "rounded-lg bg-review-bg p-2 -m-2 ring-1 ring-review-border" : "";
     return (
         <div className={`${className} ${highlight}`.trim()} data-conflict-field={submitted} data-conflict={conflict.pending ? (conflict.focused ? "focused" : "pending") : undefined}>
             {help ? (
@@ -165,7 +165,7 @@ function WhatsAppInput({ id, value, onChange, disabled, locked, invalid }: { id:
     const displayValue = locked ? whatsappLocalPart(value) : (value.startsWith("+") ? value.slice(1) : value);
     return (
         <div className="flex">
-            <span aria-hidden="true" className="inline-flex h-10 shrink-0 items-center rounded-l border border-r-0 border-border-strong bg-canvas px-3 text-body-sm text-ink-muted">
+            <span aria-hidden="true" className="inline-flex h-8 shrink-0 items-center rounded-l-lg border border-r-0 border-border-strong bg-canvas px-3 text-body-sm text-ink-muted">
                 +
             </span>
             <span id={prefixId} className="sr-only">Prefix +</span>
@@ -209,9 +209,9 @@ function JobTypesInput({ id, value, onChange, disabled, invalid }: { id: string;
     const notListed = (v: string) => !isNoPreference(v) && choices.data !== null && !active.some((name) => name.toLowerCase() === v.toLowerCase());
     return (
         <div>
-            <div className={`flex min-h-10 flex-wrap items-center gap-1.5 rounded border bg-surface px-2 py-1.5 focus-within:border-primary focus-within:shadow-focus ${invalid ? "border-critical" : "border-border-strong"} ${disabled ? "bg-canvas" : ""}`}>
+            <div className={`flex min-h-8 flex-wrap items-center gap-1.5 rounded-lg border bg-surface px-2 py-1.5 focus-within:border-primary focus-within:shadow-focus ${invalid ? "border-critical" : "border-border-strong"} ${disabled ? "bg-canvas" : ""}`}>
                 {value.map((jobType) => (
-                    <span key={jobType} className="inline-flex items-center gap-1 rounded bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft" title={notListed(jobType) ? "Not in the current job type list (kept as saved)" : undefined}>
+                    <span key={jobType} className="inline-flex items-center gap-1 rounded-lg bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft" title={notListed(jobType) ? "Not in the current job type list (kept as saved)" : undefined}>
                         {jobTypeLabel(jobType)}
                         {notListed(jobType) && <span className="text-ink-subtle">(not in list)</span>}
                         {!disabled && (

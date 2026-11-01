@@ -1,3 +1,4 @@
+import { AuthShell } from "../components/AuthShell";
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { Icon } from "../components/Icon";
@@ -86,17 +87,9 @@ export function SetupPasswordPage() {
     }
 
     return (
-        <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
-            <div className="w-full max-w-md">
-                <div className="mb-6 flex items-center justify-center gap-3">
-                    <span className="flex size-10 items-center justify-center rounded bg-primary text-headline-sm font-semibold text-on-primary">E</span>
-                    <div>
-                        <p className="text-headline-sm font-bold text-ink">Data Collector</p>
-                        <p className="text-label-caps uppercase text-ink-subtle">Admin Console</p>
-                    </div>
-                </div>
+        <AuthShell>
 
-                <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
+                <div className="rounded-xl border border-border bg-surface p-6 shadow-sm">
                     {loading ? (
                         <div className="py-8 text-center text-ink-muted" role="status">
                             <Icon name="progress_activity" className="mx-auto mb-3 size-7 animate-spin text-primary" />
@@ -109,7 +102,7 @@ export function SetupPasswordPage() {
                             </div>
                             <h2 className="text-headline-sm font-semibold text-ink">Invitation Problem</h2>
                             <p className="mt-2 text-body-sm text-ink-muted">{validationError}</p>
-                            <button type="button" onClick={() => navigate("/login")} className="mt-6 w-full rounded bg-primary py-2 text-label-md font-medium text-on-primary hover:bg-primary-hover">
+                            <button type="button" onClick={() => navigate("/login")} className="mt-6 w-full rounded-lg bg-primary py-2 text-label-md font-medium text-on-primary hover:bg-primary-hover">
                                 Return to Sign In
                             </button>
                         </div>
@@ -120,7 +113,7 @@ export function SetupPasswordPage() {
                             </div>
                             <h2 className="text-headline-sm font-semibold text-ink">Account Activated!</h2>
                             <p className="mt-2 text-body-sm text-ink-muted">Your password is set and your account is active.</p>
-                            <button type="button" onClick={() => navigate("/", { replace: true })} className="mt-6 w-full rounded bg-primary py-2 text-label-md font-medium text-on-primary hover:bg-primary-hover">
+                            <button type="button" onClick={() => navigate("/", { replace: true })} className="mt-6 w-full rounded-lg bg-primary py-2 text-label-md font-medium text-on-primary hover:bg-primary-hover">
                                 Continue to the console
                             </button>
                         </div>
@@ -132,7 +125,7 @@ export function SetupPasswordPage() {
                             </div>
 
                             {submitError && (
-                                <div role="alert" className="mb-4 flex items-start gap-2 rounded border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">
+                                <div role="alert" className="mb-4 flex items-start gap-2 rounded-lg border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">
                                     <Icon name="error" className="mt-0.5 size-4 shrink-0" />
                                     <span>{submitError}</span>
                                 </div>
@@ -159,7 +152,7 @@ export function SetupPasswordPage() {
                                 <button
                                     type="submit"
                                     disabled={submitting}
-                                    className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+                                    className="flex h-8 w-full items-center justify-center gap-2 rounded-lg bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                     <Icon name={submitting ? "progress_activity" : "check_circle"} className={`size-4 ${submitting ? "animate-spin" : ""}`} />
                                     <span>{submitting ? "Activating Account…" : "Activate Account"}</span>
@@ -168,7 +161,6 @@ export function SetupPasswordPage() {
                         </div>
                     )}
                 </div>
-            </div>
-        </div>
+        </AuthShell>
     );
 }

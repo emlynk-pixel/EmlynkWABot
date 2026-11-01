@@ -9,6 +9,15 @@ export const THEME_STORAGE_KEY = "candidate-form-theme";
 
 const isTheme = (value: unknown): value is Theme => value === "light" || value === "dark";
 
+// Whether the candidate has picked a theme; until they do, the form follows the device.
+export function hasSavedTheme(): boolean {
+    try {
+        return isTheme(window.localStorage.getItem(THEME_STORAGE_KEY));
+    } catch {
+        return false;
+    }
+}
+
 // The saved choice, else the device's preference, else Light. Storage may be
 // blocked (private mode, strict settings): then the form simply follows the
 // device.

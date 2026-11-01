@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { Navigate, Outlet, Route, Routes } from "react-router";
 import { canViewDashboard, useAuth } from "./auth/AuthProvider";
 import { ROLES, hasRole, type Role } from "./auth/roles";
@@ -36,24 +35,10 @@ import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { SettingsIndex, SettingsPage, SettingsTab, SheetSyncSettings } from "./pages/SettingsPage";
 import { ADMIN_ONLY } from "./auth/roles";
+import { FormBrandingSettings } from "./pages/FormBrandingSettings";
 import { JobTypesSettings } from "./pages/JobTypesSettings";
 import { SetupPasswordPage } from "./pages/SetupPasswordPage";
 import { WorkAllocationPage } from "./pages/WorkAllocationPage";
-
-// The Candidates screens keep their original look; .ui-classic (index.css)
-// restores the previous design tokens inside them, and the body class the
-// previous page background behind them.
-function ClassicArea() {
-    useEffect(() => {
-        document.body.classList.add("ui-classic-page");
-        return () => document.body.classList.remove("ui-classic-page");
-    }, []);
-    return (
-        <div className="ui-classic">
-            <Outlet />
-        </div>
-    );
-}
 
 // The landing page: the Overview, or for a role without dashboard access (which
 // the API would otherwise refuse) its own first area: Jobs for JOB_HANDLER,
@@ -73,7 +58,7 @@ function DenyRoles({ roles }: { roles: readonly Role[] }) {
     if (!hasRole(user, roles)) return <Outlet />;
     return (
         <div className="mx-auto max-w-4xl p-6">
-            <div role="alert" className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+            <div role="alert" className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                 <h1 className="text-headline-sm font-semibold">Access Restricted</h1>
                 <p className="mt-1 text-body-sm text-ink-muted">Your role cannot open this page.</p>
             </div>
@@ -82,9 +67,8 @@ function DenyRoles({ roles }: { roles: readonly Role[] }) {
 }
 
 // Routes are relative to the /admin base (see main.tsx). Overview,
-// Documents, Review Queue, Review Detail, Client Details and Police Workflow
-// follow their Stitch screens; Clients, Missing Documents and Daily Report
-// use the same design language (Stitch has no screen for them).
+// Documents, Review Queue, Review Detail, Client Details, Police Workflow,
+// Clients, Missing Documents and Daily Report.
 export function AppRoutes() {
     return (
         <Routes>
@@ -114,7 +98,7 @@ export function AppRoutes() {
                 <Route element={<DenyRoles roles={JOB_HANDLER_ONLY} />}>
                     <Route path="reports/daily" element={<DailyReportPage />} />
                 </Route>
-                <Route element={<ClassicArea />}>
+                <Route>
                     {/* A JOB_HANDLER opens Candidates read only (canManageCandidates decides every change). */}
                     <Route path="candidates" element={<CandidatesPage />} />
                     <Route path="candidates/new" element={<CandidateRegistrationPage />} />
@@ -142,6 +126,7 @@ export function AppRoutes() {
                     <Route path="invite" element={<SettingsTab roles={ADMIN_ONLY}><InvitationsPage embedded /></SettingsTab>} />
                     <Route path="sheet-sync" element={<SheetSyncSettings />} />
                     <Route path="job-types" element={<SettingsTab roles={ADMIN_ONLY}><JobTypesSettings /></SettingsTab>} />
+                    <Route path="candidate-form" element={<SettingsTab roles={ADMIN_ONLY}><FormBrandingSettings /></SettingsTab>} />
                 </Route>
                 <Route path="*" element={<NotFoundPage />} />
             </Route>

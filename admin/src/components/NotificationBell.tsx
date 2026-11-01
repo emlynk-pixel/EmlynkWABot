@@ -140,19 +140,19 @@ export function NotificationBell() {
             <button
                 type="button"
                 onClick={handleToggle}
-                className="relative flex h-9 items-center justify-center rounded-md border border-border-strong bg-surface px-2 text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-60"
+                className="relative flex h-8 items-center justify-center rounded-lg border border-border-strong bg-surface px-2 text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label={badgeText ? `Notifications (${badgeText} unread)` : "Notifications"}
             >
                 <Icon name={badgeText ? "notifications_active" : "notifications"} className="size-4" />
                 {badgeText && (
-                    <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-critical px-1 text-[10px] font-medium leading-none text-on-critical">
+                    <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-critical px-1 text-label-sm font-medium leading-none text-on-critical">
                         {badgeText}
                     </span>
                 )}
             </button>
 
             {isOpen && (
-                <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-lg border border-border bg-surface shadow-lg z-50 flex flex-col max-h-[85vh]">
+                <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-xl border border-border bg-surface shadow-lg z-50 flex flex-col max-h-[85vh]">
                     <div className="flex items-center justify-between border-b border-border px-4 py-3 shrink-0">
                         <h3 className="font-medium text-ink">Notifications</h3>
                         {unreadCount > 0 && (

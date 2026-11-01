@@ -1,3 +1,4 @@
+import { getFormBranding, parseBrandingBody, updateFormBranding } from "../services/candidateFormBrandingService.js";
 import express from "express";
 
 import { createRequireActiveUser } from "../middleware/requireActiveUser.js";
@@ -190,6 +191,8 @@ const REPORT_READERS = [ADMIN, TEAM_LEAD, ANALYST];                     // the D
 const CANDIDATE_STAFF = [ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK]; // the Candidates area
 const ANALYSTS_UP = [ADMIN, ANALYST];                                   // review actions
 const ADMINS_ONLY = [ADMIN];                                            // administrators only
+// A 256 KB logo as base64 in JSON, with the title and colours.
+const FORM_BRANDING_BODY_LIMIT = "512kb";
 const ALLOCATION_MANAGERS = [ADMIN, TEAM_LEAD];                         // Work Allocation
 const REGISTRATION_STAFF = [ADMIN, TEAM_LEAD, REGISTRATION_DESK];       // registering a new candidate
 const CANDIDATE_READERS = [...CANDIDATE_STAFF, JOB_HANDLER];            // candidate READS only (GET)
@@ -1117,6 +1120,15 @@ export function createAdminRouter({
     // Reads PostgreSQL and records run requests; never calls Google. routes/sheetSyncSettings.js
     // checks the role again (and routes/candidateImport.js for Upload).
     router.use("/settings/sheet-sync", requireRole(ADMINS_ONLY), createSheetSyncSettingsRouter({ db }));
+
+    // Settings > Candidate Form: the public form's title, logo and colours. ADMIN only.
+    // Parses its own body, after the role check, because a save can carry a logo (createApp.js).
+    router.get("/settings/form-branding", requireRole(ADMINS_ONLY), async (req, res) => res.json(await getFormBranding({ db: await resolveDb(db) })));
+    router.put("/settings/form-branding", requireRole(ADMINS_ONLY), express.json({ limit: FORM_BRANDING_BODY_LIMIT }), async (req, res) => {
+        const parsed = parseBrandingBody(req.body);
+        if (parsed.errors) return res.status(400).json({ message: "Please check the highlighted fields.", errors: parsed.errors });
+        return res.json(await updateFormBranding({ db: await resolveDb(db), actor: req.user, values: parsed.values }));
+    });
 
     // Anything else under /api/admin (only reached by an authenticated admin).
     router.use((req, res) => res.status(404).json({ message: "Not found" }));

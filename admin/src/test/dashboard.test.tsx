@@ -68,7 +68,7 @@ describe("Overview", () => {
     test("a 401 from the API (session ended) signs the admin out", async () => {
         signedInBackend({ "GET /api/admin/overview": { status: 401, body: { message: "Invalid or Expired Token" } } });
         renderApp("/");
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
         expect(fakeAuth.currentSession).toBeNull();
     });
 });
@@ -199,7 +199,7 @@ describe("protected routes stay protected", () => {
         test(`${path} without a session -> login, no admin API call`, async () => {
             const { calls } = stubBackend({});
             renderApp(path);
-            expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+            expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
             expect(calls.filter((c) => c.path.startsWith("/api/admin"))).toHaveLength(0);
         });
     }
@@ -208,7 +208,7 @@ describe("protected routes stay protected", () => {
         fakeAuth.setSession(SESSION_TOKEN);
         const { calls } = stubBackend({ "GET /auth/me": { status: 401, body: { message: "Invalid or Expired Token" } } });
         renderApp("/clients/N1234567");
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
         expect(calls.map((c) => c.path)).toEqual(["/auth/me"]);
         expect(fakeAuth.currentSession).toBeNull();
     });

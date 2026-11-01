@@ -5,7 +5,7 @@ import { documentTypeLabel, formatDateTime, shortId } from "./format";
 import { StatusBadge } from "./StatusBadge";
 import { tableCell, tableHead } from "./ui";
 
-// High-density documents table (Stitch "Data Tables"). Columns can be
+// High-density documents table. Columns can be
 // dropped where the context already says them (e.g. the client page).
 export function DocumentsTable({ documents, showClient = true, caption }: { documents: DocumentItem[]; showClient?: boolean; caption: string }) {
     const th = `sticky top-0 ${tableHead}`;

@@ -64,7 +64,7 @@ export function ClientTable({ items, caption, showWhatsapp = true }: { items: Cl
 
 // "Page 1 of 3" with Previous / Next (same controls as the other lists).
 export function Pager({ pagination, noun, onPage }: { pagination: ClientList["pagination"]; noun: [string, string]; onPage: (page: number) => void }) {
-    const button = "h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:bg-canvas disabled:opacity-50";
+    const button = "h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:bg-canvas disabled:opacity-50";
     return (
         <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body-sm text-ink-muted">
             <p>{formatNumber(pagination.total)} {pagination.total === 1 ? noun[0] : noun[1]}</p>

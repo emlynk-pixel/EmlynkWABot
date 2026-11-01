@@ -189,8 +189,8 @@ describe("Invite User", () => {
 describe("existing roles", () => {
     test("UI-JH-015: ADMIN, ANALYST and REGISTRATION_DESK keep their sidebars (no Manager-only Invite User entry any more)", { timeout: 30_000 }, async () => {
         const expected: Record<string, string[]> = {
-            ADMIN: ["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Agents", "Client Management", "Work Allocation", "Missing Documents", "Police Workflow", "Daily Report", "Audit Logs", "Settings"],
-            ANALYST: ["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Missing Documents", "Police Workflow", "Daily Report"],
+            ADMIN: ["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Missing Documents", "Review Queue", "Police Workflow", "Documents", "Daily Report", "Audit Logs", "Settings"],
+            ANALYST: ["Overview", "Candidates", "Need Attention", "Jobs", "Missing Documents", "Review Queue", "Police Workflow", "Documents", "Daily Report"],
             REGISTRATION_DESK: ["Candidates", "Need Attention"],
         };
         for (const [role, links] of Object.entries(expected)) {

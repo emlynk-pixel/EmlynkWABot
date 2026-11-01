@@ -23,7 +23,7 @@ describe("route guard", () => {
     test("an unauthenticated visitor is redirected to the login page, nothing requested", async () => {
         const { calls } = stubBackend({});
         renderApp("/");
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
         expect(screen.queryByRole("navigation", { name: "Main navigation" })).not.toBeInTheDocument();
         expect(calls).toHaveLength(0);
     });
@@ -32,7 +32,7 @@ describe("route guard", () => {
         stubBackend({});
         for (const path of ["/documents", "/review", "/clients", "/police", "/invitations", "/anything"]) {
             const { unmount } = renderApp(path);
-            expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+            expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
             unmount();
         }
     });
@@ -44,7 +44,7 @@ describe("login (Supabase Auth)", () => {
         fakeAuth.addAccount(ADMIN.email, PASSWORD, token);
         const { calls } = backendFor(ADMIN);
         renderApp("/");
-        await screen.findByRole("heading", { name: "Sign in" });
+        await screen.findByRole("heading", { name: "Sign in to EMOPS" });
         await fillAndSubmit();
 
         expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
@@ -61,7 +61,7 @@ describe("login (Supabase Auth)", () => {
         fakeAuth.addAccount(ADMIN.email, PASSWORD, newToken());
         backendFor(ADMIN);
         renderApp("/review");
-        await screen.findByRole("heading", { name: "Sign in" });
+        await screen.findByRole("heading", { name: "Sign in to EMOPS" });
         await fillAndSubmit();
         expect(await screen.findByRole("heading", { name: "Review Queue" })).toBeInTheDocument();
     });
@@ -143,7 +143,7 @@ describe("session restore (page refresh)", () => {
         fakeAuth.setSession(SESSION_TOKEN);
         stubBackend({ "GET /auth/me": { status: 401, body: { message: "Invalid or Expired Token" } } });
         renderApp("/");
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
         expect(fakeAuth.currentSession).toBeNull();
     });
 
@@ -170,14 +170,14 @@ describe("session restore (page refresh)", () => {
         fakeAuth.setSession(SESSION_TOKEN);
         stubBackend({ "GET /auth/me": { status: 403, body: { message: "x", code: "ACCOUNT_NOT_ACTIVE" } } });
         renderApp("/");
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
         expect(screen.getByRole("alert")).toHaveTextContent("Your account is not active");
     });
 
     test("no session (expired and not refreshable) -> login, the backend never called", async () => {
         const { calls } = stubBackend({});
         renderApp("/");
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
         expect(calls).toHaveLength(0);
     });
 
@@ -186,7 +186,7 @@ describe("session restore (page refresh)", () => {
         stubBackend({});
         (globalThis.fetch as unknown as { mockRejectedValue: (e: Error) => void }).mockRejectedValue(new TypeError("Failed to fetch"));
         renderApp("/");
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
     });
 
     test("a refreshed Supabase access token is used for the next API call", async () => {
@@ -205,7 +205,7 @@ describe("session restore (page refresh)", () => {
         renderApp("/");
         await screen.findByTestId("admin-name");
         act(() => fakeAuth.expireSession());
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
     });
 });
 
@@ -220,14 +220,14 @@ describe("dashboard shell", () => {
 
     test("ADMIN: every section, then Audit Logs and Settings (Invite User and Change Roles are Settings tabs)", async () => {
         await signedIn();
-        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Agents", "Client Management", "Work Allocation", "Missing Documents", "Police Workflow", "Daily Report", "Audit Logs", "Settings"]);
+        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Missing Documents", "Review Queue", "Police Workflow", "Documents", "Daily Report", "Audit Logs", "Settings"]);
         await userEvent.setup().click(screen.getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });
 
     test("ANALYST: the dashboard sections and Jobs; no user management, Settings, Agents, Client Management or Work Allocation", async () => {
         await signedIn("/", userWithRole("ANALYST"));
-        expect(navLinks()).toEqual(["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Missing Documents", "Police Workflow", "Daily Report"]);
+        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention", ...allocation, "Jobs", ...masterData, "Missing Documents", "Review Queue", "Police Workflow", "Documents", "Daily Report", ...invite]);
     });
 
     test("REGISTRATION_DESK: Candidates and Need Attention only, and lands there instead of the Overview", async () => {
@@ -253,16 +253,25 @@ describe("dashboard shell", () => {
     test("the sidebar collapses to an icon rail and remembers it", async () => {
         await signedIn();
         const user = userEvent.setup();
-        await user.click(screen.getByRole("button", { name: "Collapse" }));
-        expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false");
+        // The panel icon in the header is the only control; the sidebar has no Collapse row.
+        expect(screen.queryByRole("button", { name: "Collapse" })).not.toBeInTheDocument();
+        const toggle = screen.getByRole("button", { name: "Toggle sidebar" });
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+        await user.click(toggle);
+        expect(screen.getByRole("button", { name: "Toggle sidebar" })).toHaveAttribute("aria-expanded", "false");
         expect(window.localStorage.getItem("emlynk.admin.sidebarCollapsed")).toBe("1");
+        await user.click(screen.getByRole("button", { name: "Toggle sidebar" }));
+        expect(screen.getByRole("button", { name: "Toggle sidebar" })).toHaveAttribute("aria-expanded", "true");
+        expect(window.localStorage.getItem("emlynk.admin.sidebarCollapsed")).toBe("0");
     });
 
     test("sign out ends the Supabase session everywhere and returns to the login page", async () => {
         await signedIn("/documents");
-        await userEvent.setup().click(screen.getByRole("button", { name: "Sign out" }));
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("button", { name: /^Account:/ }));
+        await user.click(screen.getByRole("button", { name: "Sign out" }));
 
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
         expect(fakeAuth.calls.find((c) => c.method === "signOut")?.args).toEqual([undefined]);
         expect(fakeAuth.currentSession).toBeNull();
     });
@@ -270,9 +279,32 @@ describe("dashboard shell", () => {
     test("sign out still clears the local session when Supabase can't be reached", async () => {
         await signedIn();
         fakeAuth.failures.signOut = { status: 0, message: "network" };
-        await userEvent.setup().click(screen.getByRole("button", { name: "Sign out" }));
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("button", { name: /^Account:/ }));
+        await user.click(screen.getByRole("button", { name: "Sign out" }));
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
         expect(fakeAuth.calls.filter((c) => c.method === "signOut").map((c) => c.args[0])).toEqual([undefined, { scope: "local" }]);
+    });
+
+    test("the account card is at the foot of the sidebar, not in the header, and its menu closes with Escape or an outside click", async () => {
+        await signedIn();
+        const user = userEvent.setup();
+        const sidebar = within(document.getElementById("admin-sidebar")!);
+        expect(sidebar.getByTestId("admin-name")).toHaveTextContent("Test Admin");
+        expect(within(screen.getByRole("banner")).queryByTestId("admin-name")).not.toBeInTheDocument();
+
+        const card = sidebar.getByRole("button", { name: /^Account:/ });
+        expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+        await user.click(card);
+        expect(card).toHaveAttribute("aria-expanded", "true");
+        expect(sidebar.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+        await user.keyboard("{Escape}");
+        expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+        expect(card).toHaveFocus();
+
+        await user.click(card);
+        await user.click(screen.getByRole("banner"));
+        expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
     });
 
     test("unknown paths inside the app show a not-found page", async () => {

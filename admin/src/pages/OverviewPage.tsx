@@ -16,10 +16,10 @@ function KpiCard({ label, value, hint, icon }: { label: string; value: number; h
         <Card className="flex flex-col justify-between p-5">
             <div className="flex items-start justify-between">
                 <div>
-                    <p className="text-label-caps uppercase text-ink-subtle">{label}</p>
+                    <p className="text-label-sm text-ink-muted">{label}</p>
                     <p className="mt-1 text-headline-xl tabular-nums text-ink">{formatNumber(value)}</p>
                 </div>
-                <span className="flex size-9 items-center justify-center rounded bg-primary-soft text-primary">
+                <span className="flex size-9 items-center justify-center rounded-lg bg-primary-soft text-primary">
                     <Icon name={icon} className="size-5" />
                 </span>
             </div>
@@ -28,7 +28,7 @@ function KpiCard({ label, value, hint, icon }: { label: string; value: number; h
     );
 }
 
-// Horizontal bars with count and share (Stitch "Document Processing Statuses").
+// Horizontal bars with count and share (Document Processing Statuses).
 function Breakdown({ counts, label, dotClass }: { counts: Record<string, number>; label: (key: string) => string; dotClass: (key: string) => string }) {
     const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
     const total = entries.reduce((sum, [, n]) => sum + n, 0);
@@ -79,7 +79,7 @@ function PoliceDue({ police }: { police: Overview["police"] }) {
             <ul className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Police reports by status">
                 {items.map((item) => (
                     <li key={item.status}>
-                        <Link to={`/police?status=${item.status}`} className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2 hover:bg-canvas-muted">
+                        <Link to={`/police?status=${item.status}`} className="flex items-center justify-between rounded-xl bg-canvas px-3 py-2 hover:bg-canvas-muted">
                             <span className="text-body-sm text-ink">{item.label}</span>
                             <span className={`text-headline-md tabular-nums ${item.critical && item.value > 0 ? "text-critical" : "text-ink"}`}>{formatNumber(item.value)}</span>
                         </Link>
@@ -108,7 +108,7 @@ function ClientCompleteness({ clients, requiredTypes }: { clients: Overview["cli
             <ul className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Clients by completeness">
                 {items.map((item) => (
                     <li key={item.label}>
-                        <Link to={item.to} className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2 hover:bg-canvas-muted">
+                        <Link to={item.to} className="flex items-center justify-between rounded-xl bg-canvas px-3 py-2 hover:bg-canvas-muted">
                             <span className="text-body-sm text-ink">{item.label}</span>
                             <span className={`text-headline-md tabular-nums ${item.critical && item.value > 0 ? "text-critical" : "text-ink"}`}>{formatNumber(item.value)}</span>
                         </Link>
@@ -183,7 +183,7 @@ function MonthlyOverview() {
                             aria-label="Month"
                             value={month ?? data.month}
                             onChange={(event) => setMonth(event.target.value)}
-                            className="h-8 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
+                            className="h-8 rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
                         >
                             {recentMonths(data.thisMonth, MONTH_OPTIONS).map((option) => (
                                 <option key={option} value={option}>{monthLabel(option)}</option>
@@ -197,7 +197,7 @@ function MonthlyOverview() {
             {data && (
                 <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label={`Monthly overview for ${monthLabel(data.month)}`} aria-busy={report.status === "loading"}>
                     {items.map((item) => (
-                        <li key={item.label} className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2">
+                        <li key={item.label} className="flex items-center justify-between rounded-xl bg-canvas px-3 py-2">
                             <span className="text-body-sm text-ink">{item.label}</span>
                             <span className={`text-headline-md tabular-nums ${item.value > 0 ? item.tone : "text-ink"}`}>{formatNumber(item.value)}</span>
                         </li>
@@ -345,7 +345,7 @@ export function OverviewPage() {
                         type="button"
                         onClick={toggleMonthly}
                         aria-pressed={showMonthly}
-                        className={`h-8 rounded border px-3 text-label-md shadow-surface ${showMonthly ? "border-primary bg-primary-soft text-primary" : "border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"}`}
+                        className={`h-8 rounded-lg border px-3 text-label-md shadow-surface ${showMonthly ? "border-primary bg-primary-soft text-primary" : "border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"}`}
                     >
                         Monthly overview
                     </button>
@@ -353,7 +353,7 @@ export function OverviewPage() {
                         type="button"
                         onClick={overview.reload}
                         disabled={overview.status === "loading" || syncing}
-                        className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft shadow-surface hover:border-border-focus hover:bg-canvas disabled:opacity-60"
+                        className="h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft shadow-surface hover:border-border-focus hover:bg-canvas disabled:opacity-60"
                     >
                         Refresh
                     </button>

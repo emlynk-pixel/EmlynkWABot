@@ -17,6 +17,8 @@ export const STORAGE_CONNECT_SRC = "https://*.supabase.co";
 
 // Settings -> Google Sheet Sync -> Update Sheet (routes/candidateImport.js).
 export const CANDIDATE_IMPORT_API_PATH = "/api/admin/settings/sheet-sync/import/";
+// Settings -> Candidate Form: a save can carry a logo (routes/admin.js).
+export const FORM_BRANDING_API_PATH = "/api/admin/settings/form-branding";
 
 // Builds the Express app without starting a server, so tests can use it.
 // Environment variables must already be loaded (src/app.js does that first).
@@ -63,10 +65,10 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
             req.rawBody = buffer;
         },
     });
-    // The bulk candidate import parses its own, larger bodies, and only once the admin router
-    // has authenticated the request (routes/candidateImport.js); every other path keeps this
-    // parser and its default limit.
-    app.use((req, res, next) => (req.path.startsWith(CANDIDATE_IMPORT_API_PATH) ? next() : jsonBody(req, res, next)));
+    // The bulk candidate import and the form branding parse their own, larger bodies, and only
+    // once the admin router has authenticated the request; every other path keeps this parser
+    // and its default limit.
+    app.use((req, res, next) => (req.path.startsWith(CANDIDATE_IMPORT_API_PATH) || req.path === FORM_BRANDING_API_PATH ? next() : jsonBody(req, res, next)));
 
     app.use("/auth", authRouter);
     app.use("/whatsapp", whatsappRoutes);

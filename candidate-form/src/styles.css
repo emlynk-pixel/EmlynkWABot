@@ -1,69 +1,72 @@
-/* Candidate Form: calm, public, mobile-first. Light and Dark themes are the
-   same tokens with different values (<html data-theme>). No inline styles
-   anywhere (the CSP is style-src 'self'). */
+/* Candidate Form: calm, public, mobile-first, on the EMLYNK design system
+   (emlynk-design-system/). Light and Dark themes are the same tokens with
+   different values (<html data-theme>); dark is the brand slate. Settings >
+   Candidate Form can replace some of them (src/branding/branding.ts). No inline
+   styles anywhere (the CSP is style-src 'self'). */
 
 :root {
     color-scheme: light;
-    --bg: #f3f6fb;
+    --bg: #f0f0f0;
     --surface: #ffffff;
-    --surface-2: #f6f8fc;
-    --ink: #1b2433;
-    --muted: #4b5565;
-    --border: #d5dbe5;
-    --border-strong: #8a96a8;
-    --primary: #1d4ed8;
-    --primary-hover: #1e40af;
+    --surface-2: #e5e5e5;
+    --ink: #0a0a0a;
+    --muted: #525252;
+    --border: #d4d4d4;
+    --border-strong: #949494;
+    /* The accent as a fill; the guide's AA-safe red, since white text on #ef4444 is 3.76:1. */
+    --primary: #e7000b;
+    --primary-hover: #c10007;
     --primary-ink: #ffffff;
-    --primary-soft: #eef3ff;
-    --brand-a: #1d4ed8;
-    --brand-b: #0e7490;
-    --error: #b42318;
-    --error-soft: #fef3f2;
-    --error-border: #fecdca;
-    --success: #067647;
-    --success-soft: #ecfdf3;
-    --success-border: #abefc6;
-    --notice-soft: #f2f4f7;
-    --important: #93370d;
-    --important-soft: #fef0c7;
-    --focus: #1d4ed8;
-    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 16px rgba(16, 24, 40, 0.06);
-    /* Google's default look: Roboto for English, Noto Sans Sinhala for Sinhala, both
-       self-hosted (below). Their unicode-ranges do not overlap, so each script gets its
-       own font; the installed fonts after them are fallbacks if a file cannot load. */
-    font-family: Roboto, "Noto Sans Sinhala", system-ui, -apple-system, "Segoe UI", Arial, "Nirmala UI", "Iskoola Pota", "Sinhala Sangam MN", sans-serif;
+    /* The accent as text and lines. */
+    --primary-text: #c10007;
+    --primary-soft: #fef2f2;
+    --error: #c10007;
+    --error-soft: #fef2f2;
+    --error-border: #ffc9c9;
+    --success: #006045;
+    --success-soft: #d0fae5;
+    --success-border: #a4f4cf;
+    --notice-soft: #e5e5e5;
+    --important: #973c00;
+    --important-soft: #fef3c6;
+    --focus: #c10007;
+    /* Inter for English, Noto Sans Sinhala for Sinhala, both self-hosted (below). Their
+       unicode-ranges do not overlap, so each script gets its own font; the installed fonts
+       after them are fallbacks if a file cannot load. */
+    --font-body: Inter, "Noto Sans Sinhala", system-ui, -apple-system, "Segoe UI", Arial, "Nirmala UI", "Iskoola Pota", "Sinhala Sangam MN", sans-serif;
+    --font-heading: Montserrat, "Noto Sans Sinhala", system-ui, -apple-system, "Segoe UI", Arial, "Nirmala UI", "Iskoola Pota", "Sinhala Sangam MN", sans-serif;
+    font-family: var(--font-body);
     font-size: 16px;
     line-height: 1.55;
     color: var(--ink);
     background: var(--bg);
+    -webkit-font-smoothing: antialiased;
 }
 
 :root[data-theme="dark"] {
     color-scheme: dark;
-    --bg: #0f1520;
-    --surface: #172030;
-    --surface-2: #1c2738;
-    --ink: #e8edf5;
-    --muted: #aab5c5;
-    --border: #2d3b50;
-    --border-strong: #5b6b83;
-    --primary: #7aa7ff;
-    --primary-hover: #9dbdff;
-    --primary-ink: #0b1220;
-    --primary-soft: #1b2b48;
-    --brand-a: #3b6fe0;
-    --brand-b: #1597b5;
-    --error: #ff9b90;
-    --error-soft: #3a1b1d;
-    --error-border: #6b2b2b;
-    --success: #6fe0a6;
-    --success-soft: #10301f;
-    --success-border: #1f5a3a;
-    --notice-soft: #1c2738;
-    --important: #fec84b;
-    --important-soft: #3a2a0a;
-    --focus: #9dbdff;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+    --bg: #1f242b;
+    --surface: #262c34;
+    --surface-2: #2c333c;
+    --ink: #e5e7eb;
+    --muted: #9ca3af;
+    --border: #353c46;
+    --border-strong: #6b7280;
+    --primary: #e7000b;
+    --primary-hover: #c10007;
+    --primary-ink: #ffffff;
+    --primary-text: #ff8a8c;
+    --primary-soft: #40202a;
+    --error: #ff8a8c;
+    --error-soft: #40202a;
+    --error-border: #6e2f38;
+    --success: #5ee9b5;
+    --success-soft: #143a30;
+    --success-border: #1f5a4a;
+    --notice-soft: #2c333c;
+    --important: #fee685;
+    --important-soft: #3a2e12;
+    --focus: #ff8a8c;
 }
 
 * { box-sizing: border-box; }
@@ -77,27 +80,42 @@ p, label, legend, h1, h2, h3, h4, dt, li { overflow-wrap: break-word; }
 dd, input { overflow-wrap: anywhere; }
 
 /* Fonts are self-hosted (static/fonts/) so the page's font-src 'self' policy holds and no
-   candidate request goes to a third party. Each file is a variable-weight Google Fonts subset
-   covering every weight the page uses (400-700); unicode-range makes a file download only
-   when its characters are on the page, and swap shows text at once.
+   candidate request goes to a third party. Each file is a variable-weight subset, and
+   unicode-range makes a file download only when its characters are on the page, and swap
+   shows text at once. The zero-width joiners (U+200C-200D) are left to the Sinhala font so
+   Sinhala conjuncts stay in one font.
 
-   English: Roboto (SIL Open Font License 1.1: static/fonts/OFL-roboto.txt). Google's latin
-   and latin-ext subsets, except that the zero-width joiners (U+200C-200D) are left to the
-   Sinhala font so Sinhala conjuncts stay in one font. */
+   Inter and Montserrat (SIL Open Font License 1.1: static/fonts/OFL-inter.txt, OFL-montserrat.txt). */
 @font-face {
-    font-family: Roboto;
+    font-family: Inter;
     font-style: normal;
-    font-weight: 400 700;
+    font-weight: 100 900;
     font-display: swap;
-    src: url("/fonts/roboto-latin-400-700.woff2") format("woff2");
+    src: url("/fonts/inter-latin.woff2") format("woff2");
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-200B, U+200E-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
-    font-family: Roboto;
+    font-family: Inter;
     font-style: normal;
-    font-weight: 400 700;
+    font-weight: 100 900;
     font-display: swap;
-    src: url("/fonts/roboto-latin-ext-400-700.woff2") format("woff2");
+    src: url("/fonts/inter-latin-ext.woff2") format("woff2");
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+    font-family: Montserrat;
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("/fonts/montserrat-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-200B, U+200E-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+    font-family: Montserrat;
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("/fonts/montserrat-latin-ext.woff2") format("woff2");
     unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 /* Sinhala: Noto Sans Sinhala (SIL Open Font License 1.1: static/fonts/OFL-noto-sans-sinhala.txt),
@@ -135,14 +153,8 @@ dd, input { overflow-wrap: anywhere; }
     z-index: 100;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    /* Subtle shadow to lift the header off the content when scrolled. */
-    box-shadow: 0 1px 4px rgba(16, 24, 40, 0.06);
     /* Prevent bleed-through on browsers that composite layers */
     will-change: transform;
-}
-/* Dark theme: slightly stronger shadow lift */
-:root[data-theme="dark"] .site-header {
-    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
 }
 
 .site-header-inner {
@@ -157,21 +169,15 @@ dd, input { overflow-wrap: anywhere; }
 }
 
 .brand { margin: 0; display: flex; align-items: center; gap: 10px; min-width: 0; }
-.brand-mark {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
-    background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
-    color: #ffffff;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-}
+/* The header waits for the saved branding, so a custom title never replaces the default on screen. */
+.brand-pending { visibility: hidden; }
+.brand-logo { display: block; flex: none; width: auto; height: 32px; max-width: 120px; object-fit: contain; }
+/* The default wordmark has one file per theme. */
+.logo-on-dark { display: none; }
+:root[data-theme="dark"] .logo-on-dark { display: block; }
+:root[data-theme="dark"] .logo-on-light { display: none; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
-.brand-name { font-weight: 700; font-size: 1.0625rem; }
+.brand-name { font-family: var(--font-heading); font-weight: 600; font-size: 1.0625rem; }
 .brand-sub { color: var(--muted); font-size: 0.875rem; }
 
 .header-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -205,11 +211,11 @@ dd, input { overflow-wrap: anywhere; }
     transition: background 0.15s ease, color 0.15s ease;
 }
 .segmented button:hover:not(.active) { background: var(--notice-soft); color: var(--ink); }
+/* Near-black in light, near-white in dark: red is kept for the page's one action. */
 .segmented button.active {
-    background: var(--primary);
-    color: var(--primary-ink);
+    background: var(--ink);
+    color: var(--surface);
     font-weight: 700;
-    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12);
 }
 
 /* Theme switch: icon-only square buttons inside the same segmented shell. */
@@ -222,7 +228,7 @@ dd, input { overflow-wrap: anywhere; }
     color: var(--muted);
 }
 .theme-switch button:hover:not(.active) { background: var(--notice-soft); color: var(--ink); }
-.theme-switch button.active { color: var(--primary-ink); }
+.theme-switch button.active { color: var(--surface); }
 .theme-icon { display: block; flex: none; }
 
 /* ---------- page ---------- */
@@ -233,17 +239,17 @@ dd, input { overflow-wrap: anywhere; }
 .panel {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 16px;
+    border-radius: 14px;
     padding: 22px 18px;
-    box-shadow: var(--shadow);
 }
 
 /* The verification card stays narrow. */
 .shell > form.panel, .shell > section.panel { max-width: 520px; margin: 10px auto 0; }
 
-h1 { font-size: 1.5rem; line-height: 1.3; margin: 0 0 6px; }
-h2 { font-size: 1.25rem; line-height: 1.35; margin: 0 0 4px; }
-h3, h4 { font-size: 1.0625rem; line-height: 1.4; margin: 0 0 12px; }
+h1, h2, h3, h4 { font-family: var(--font-heading); }
+h1 { font-size: 1.5rem; font-weight: 700; line-height: 1.3; margin: 0 0 6px; }
+h2 { font-size: 1.25rem; font-weight: 600; line-height: 1.35; margin: 0 0 4px; }
+h3, h4 { font-size: 1.0625rem; font-weight: 600; line-height: 1.4; margin: 0 0 12px; }
 
 .lead { color: var(--muted); margin: 0 0 16px; }
 
@@ -311,8 +317,8 @@ progress {
     -webkit-appearance: none;
 }
 progress::-webkit-progress-bar { background: var(--border); border-radius: 999px; }
-progress::-webkit-progress-value { background: linear-gradient(90deg, var(--brand-a), var(--brand-b)); border-radius: 999px; }
-progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a), var(--brand-b)); border-radius: 999px; }
+progress::-webkit-progress-value { background: var(--primary); border-radius: 999px; }
+progress::-moz-progress-bar { background: var(--primary); border-radius: 999px; }
 
 /* Four stages in one compact row on phones (number above a short name); a
    vertical list beside the form on wide screens. */
@@ -387,7 +393,7 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
     border-radius: 50%;
     border: 1px solid var(--border-strong);
     background: var(--surface);
-    color: var(--primary);
+    color: var(--primary-text);
     font: inherit;
     font-size: 0.875rem;
     font-weight: 700;
@@ -419,15 +425,14 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 .field input:not([type="radio"]):hover:not(:disabled),
 .field select:hover:not(:disabled),
 .field textarea:hover:not(:disabled) {
-    border-color: var(--border-strong);
-    box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.06);
+    border-color: var(--muted);
 }
 .field input:not([type="radio"]):focus,
 .field select:focus,
 .field textarea:focus {
     outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
+    border-color: var(--primary-text);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary-text) 30%, transparent);
 }
 .field textarea { resize: vertical; }
 /* Date controls keep to the screen's width on small phones. */
@@ -437,7 +442,7 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 .field input:disabled, .field select:disabled, .field textarea:disabled { background: var(--notice-soft); box-shadow: none; cursor: not-allowed; }
 
 .field-invalid input:not([type="radio"]), .field-invalid select, .field-invalid textarea { border-color: var(--error); border-width: 2px; }
-.field-invalid input:not([type="radio"]):focus, .field-invalid select:focus, .field-invalid textarea:focus { box-shadow: 0 0 0 3px rgba(180, 35, 24, 0.12); }
+.field-invalid input:not([type="radio"]):focus, .field-invalid select:focus, .field-invalid textarea:focus { box-shadow: 0 0 0 2px color-mix(in oklab, var(--error) 30%, transparent); }
 
 .error { color: var(--error); font-size: 0.875rem; margin: 6px 0 0; font-weight: 600; }
 
@@ -497,8 +502,7 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
 /* ---------- review ---------- */
 
 .review { display: grid; gap: 14px; }
-.review-card { border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; background: var(--surface-2); transition: box-shadow 0.15s ease; }
-.review-card:hover { box-shadow: 0 2px 8px rgba(16, 24, 40, 0.06); }
+.review-card { border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; background: var(--surface-2); }
 .review-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
 .review-card-head h3 { flex: 1 1 12rem; }
 .review-card h3 { margin-bottom: 8px; }
@@ -574,7 +578,7 @@ progress::-moz-progress-bar { background: linear-gradient(90deg, var(--brand-a),
     font-size: 1.0625rem;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
-    color: var(--primary);
+    color: var(--primary-text);
     word-break: break-all;
 }
 /* Under an inline failure: smaller and left-aligned, the form above stays usable. */
@@ -626,11 +630,9 @@ button.primary {
     border: 0;
     background: var(--primary);
     color: var(--primary-ink);
-    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.1);
 }
 button.primary:hover:not(:disabled) {
     background: var(--primary-hover);
-    box-shadow: 0 2px 8px rgba(29, 78, 216, 0.22);
 }
 button.secondary {
     border: 1px solid var(--border-strong);
@@ -669,7 +671,7 @@ button:disabled { opacity: 0.6; cursor: default; }
     padding: 2px 4px;
     border: 0;
     background: transparent;
-    color: var(--primary);
+    color: var(--primary-text);
     font: inherit;
     font-weight: 600;
     text-decoration: underline;
@@ -698,7 +700,7 @@ button:disabled { opacity: 0.6; cursor: default; }
     /* The steps beside the form, with their names. */
     .form-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); column-gap: 28px; align-items: start; }
     /* progress-block top offset: the sticky header + the sticky notice + breathing room */
-    .progress-block { position: sticky; top: calc(var(--site-header-h, 57px) + var(--form-notice-h, 0px) + 28px); padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+    .progress-block { position: sticky; top: calc(var(--site-header-h, 57px) + var(--form-notice-h, 0px) + 28px); padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
     .step-list { display: flex; flex-direction: column; gap: 2px; }
     .step-list button, .step-list .stage { flex-direction: row; gap: 10px; padding: 4px 8px 4px 2px; font-size: 0.9375rem; text-align: left; }
     .step-list li.current button { background: var(--primary-soft); }
@@ -725,7 +727,7 @@ button:disabled { opacity: 0.6; cursor: default; }
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: var(--primary);
+    color: var(--primary-text);
     background: var(--surface);
     border: 1px solid var(--border-strong);
     border-radius: 10px;
@@ -748,7 +750,7 @@ button:disabled { opacity: 0.6; cursor: default; }
     background: var(--surface);
     border: 1px solid var(--border-strong);
     border-radius: 14px;
-    box-shadow: var(--shadow), 0 12px 32px rgba(0, 0, 0, 0.18);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
 }
 /* Phones: a sheet at the bottom of the screen with big touch targets. */
 .date-picker-backdrop { position: fixed; inset: 0; z-index: 999; background: rgba(0, 0, 0, 0.4); }
@@ -764,7 +766,7 @@ button:disabled { opacity: 0.6; cursor: default; }
     --rdp-nav_button-height: 40px;
     --rdp-nav_button-width: 40px;
     --rdp-selected-border: 2px solid var(--primary);
-    --rdp-today-color: var(--primary);
+    --rdp-today-color: var(--primary-text);
     --rdp-weekday-opacity: 1;
     margin: 0 auto;
     width: fit-content;
@@ -777,7 +779,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 .date-picker-popover .rdp-disabled { opacity: 0.35; }
 .date-picker-popover .rdp-outside { opacity: 0.6; }
 .date-picker-popover .rdp-weekday { color: var(--muted); font-size: 0.8125rem; font-weight: 600; }
-.date-picker-popover .rdp-button_previous, .date-picker-popover .rdp-button_next { color: var(--primary); }
+.date-picker-popover .rdp-button_previous, .date-picker-popover .rdp-button_next { color: var(--primary-text); }
 .date-picker-popover .rdp-chevron { fill: currentColor; }
 .date-picker-popover .rdp-day_button:focus-visible, .date-picker-popover .rdp-button_previous:focus-visible, .date-picker-popover .rdp-button_next:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
 /* Month and year lists. */
@@ -791,7 +793,7 @@ button:disabled { opacity: 0.6; cursor: default; }
     padding: 6px 14px;
     font: inherit;
     font-weight: 600;
-    color: var(--primary);
+    color: var(--primary-text);
     background: transparent;
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -799,3 +801,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 .date-picker-footer button:hover { background: var(--primary-soft); }
 .date-picker-footer button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+    * { transition-duration: 0.01ms !important; }
+}

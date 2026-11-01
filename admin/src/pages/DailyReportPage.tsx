@@ -26,8 +26,8 @@ const shiftDay = (ymd: string, days: number) => new Date(Date.parse(`${ymd}T00:0
 const REPORT_ROLES: Role[] = [ROLES.ANALYST, ROLES.TEAM_LEAD, ROLES.ADMIN, ROLES.OWNER, ROLES.REGISTRATION_DESK];
 const PREVIEW_ROWS = 10;
 
-const button = "h-9 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50";
-const th = "border-b border-border px-3 py-2 text-left text-label-caps uppercase text-ink-subtle";
+const button = "h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50";
+const th = "border-b border-border px-3 py-2 text-left text-label-sm text-ink-muted";
 const thRight = `${th} text-right`;
 const td = "border-b border-border px-3 py-2 text-body-sm text-ink";
 const tdRight = `${td} text-right tabular-nums`;
@@ -310,7 +310,7 @@ function SummaryView({ report }: { report: DailySummary }) {
                 <CallsPanel report={report} />
             </div>
             {actions.length > 0 && (
-                <details className="rounded-lg border border-border bg-surface px-4 py-3 text-body-sm">
+                <details className="rounded-xl border border-border bg-surface px-4 py-3 text-body-sm">
                     <summary className="cursor-pointer text-label-md text-ink-soft">Review and admin actions this day ({formatNumber(actions.reduce((sum, [, n]) => sum + n, 0))})</summary>
                     <ul className="mt-2 divide-y divide-border">
                         {actions.map(([action, count]) => (
@@ -445,7 +445,7 @@ export function DailyReportPage() {
         }
     };
 
-    const tab = (active: boolean) => `h-8 rounded px-3 text-label-md ${active ? "bg-surface text-ink shadow-surface" : "text-ink-muted hover:text-ink"}`;
+    const tab = (active: boolean) => `h-8 rounded-lg px-3 text-label-md ${active ? "bg-surface text-ink shadow-surface" : "text-ink-muted hover:text-ink"}`;
 
     return (
         <section aria-labelledby="page-title" className="space-y-5">
@@ -466,7 +466,7 @@ export function DailyReportPage() {
                         required
                         value={date}
                         onChange={(next) => next && setDate(next)}
-                        className="h-9 w-40 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
+                        className="h-8 w-40 rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
                     />
                     <button type="button" className={button} disabled={date >= today} onClick={() => setDate(shiftDay(date, 1))}>Next day</button>
                     <button type="button" className={button} disabled={date === today} onClick={() => setDate(today)}>Today</button>
@@ -479,7 +479,7 @@ export function DailyReportPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-3">
                 {canSeeRoles ? (
-                    <div role="tablist" aria-label="Report view" className="inline-flex rounded-md border border-border bg-canvas p-0.5">
+                    <div role="tablist" aria-label="Report view" className="inline-flex rounded-lg border border-border bg-canvas p-0.5">
                         <button type="button" role="tab" aria-selected={view === "summary"} className={tab(view === "summary")} onClick={() => update({ view: null })}>Summary</button>
                         <button type="button" role="tab" aria-selected={view === "roles"} className={tab(view === "roles")} onClick={() => update({ view: "roles" })}>Summary by Roles</button>
                     </div>
@@ -491,7 +491,7 @@ export function DailyReportPage() {
                             aria-label="Role"
                             value={role}
                             onChange={(event) => update({ role: event.target.value })}
-                            className="h-9 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
+                            className="h-8 rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
                         >
                             {REPORT_ROLES.map((r) => <option key={r} value={r}>{labelOfRole(r)}</option>)}
                         </select>

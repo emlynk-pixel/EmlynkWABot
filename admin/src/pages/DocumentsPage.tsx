@@ -94,7 +94,7 @@ export function DocumentsPage() {
                             placeholder="Search by document ID, client name, passport or unique ID…"
                             className={`${control} w-full`}
                         />
-                        <button type="submit" className="h-9 rounded bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
+                        <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                     </form>
                     <label className="md:col-span-2">
                         <span className="sr-only">Document type</span>
@@ -171,7 +171,7 @@ export function DocumentsPage() {
                                     type="button"
                                     disabled={data.pagination.page <= 1}
                                     onClick={() => update({ page: String(data.pagination.page - 1) }, { keepPage: true })}
-                                    className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50"
+                                    className="h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50"
                                 >
                                     Previous
                                 </button>
@@ -180,7 +180,7 @@ export function DocumentsPage() {
                                     type="button"
                                     disabled={data.pagination.page >= data.pagination.totalPages}
                                     onClick={() => update({ page: String(data.pagination.page + 1) }, { keepPage: true })}
-                                    className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50"
+                                    className="h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50"
                                 >
                                     Next
                                 </button>

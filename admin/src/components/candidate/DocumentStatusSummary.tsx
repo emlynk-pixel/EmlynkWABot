@@ -23,7 +23,7 @@ export function DocumentStatusSummary({ documents, className = "" }: { documents
     return (
         <div className={className}>
             <p className="flex items-baseline justify-between gap-3">
-                <span className="text-label-caps uppercase text-ink-subtle">Current documents</span>
+                <span className="text-label-sm text-ink-muted">Current documents</span>
                 <span className="text-label-sm text-ink-muted tabular-nums">{uploaded} of {documents.length} uploaded</span>
             </p>
             <ul aria-label="Current documents" className="mt-1.5 flex flex-wrap gap-1.5">

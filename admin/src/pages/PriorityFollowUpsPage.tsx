@@ -20,9 +20,9 @@ import { Card, EmptyState, ErrorState, LoadingState } from "../components/States
 // changes the call log: it stays in the candidate's Candidate History.
 
 // Row actions, a size smaller than the dialog buttons.
-const compactButton = "h-8 rounded px-3 text-label-md disabled:cursor-not-allowed disabled:opacity-60";
+const compactButton = "h-8 rounded-lg px-3 text-label-md disabled:cursor-not-allowed disabled:opacity-60";
 const compactSecondary = `${compactButton} border border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas`;
-const compactDanger = "flex h-8 items-center rounded border border-critical-border bg-surface px-2 text-critical hover:bg-critical-bg disabled:cursor-not-allowed disabled:opacity-60";
+const compactDanger = "flex h-8 items-center rounded-lg border border-critical-border bg-surface px-2 text-critical hover:bg-critical-bg disabled:cursor-not-allowed disabled:opacity-60";
 
 const FILTERS: { status: FollowUpStatus; label: string }[] = [
     { status: "OPEN", label: "Open" },
@@ -109,14 +109,14 @@ export function PriorityFollowUpsPage() {
                     <h1 id="page-title" className="text-headline-lg text-ink">Need Attention</h1>
                     <p className="mt-1 text-body-sm text-ink-muted">Calls and candidate follow-ups that require action.</p>
                 </div>
-                <div role="group" aria-label="Follow-up status" className="inline-flex rounded border border-border-strong bg-surface p-0.5">
+                <div role="group" aria-label="Follow-up status" className="inline-flex rounded-lg border border-border-strong bg-surface p-0.5">
                     {FILTERS.map((filter) => (
                         <button
                             key={filter.status}
                             type="button"
                             aria-pressed={status === filter.status}
                             onClick={() => selectFilter(filter.status)}
-                            className={`h-8 rounded-sm px-3 text-label-md ${status === filter.status ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
+                            className={`h-8 rounded-md px-3 text-label-md ${status === filter.status ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
                         >
                             {filter.label}
                         </button>
@@ -124,7 +124,7 @@ export function PriorityFollowUpsPage() {
                 </div>
             </div>
 
-            {notice && <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
+            {notice && <div role="status" className="rounded-xl border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
 
             {list.status === "loading" && !list.data && <Card><LoadingState label="Loading follow-ups…" /></Card>}
             {list.status === "error" && !list.data && <Card><ErrorState message={list.error.message} onRetry={list.reload} /></Card>}
@@ -166,7 +166,7 @@ export function PriorityFollowUpsPage() {
                     <p className="text-body-sm text-ink-soft">
                         The follow-up is removed from Need Attention permanently. The original call log, the candidate and their documents are kept.
                     </p>
-                    <blockquote className="mt-3 rounded border border-border bg-canvas px-3 py-2 text-body-sm text-ink-soft [overflow-wrap:anywhere]">
+                    <blockquote className="mt-3 rounded-lg border border-border bg-canvas px-3 py-2 text-body-sm text-ink-soft [overflow-wrap:anywhere]">
                         {confirmDelete.callLog.note}
                     </blockquote>
                     <DialogError message={deleteError} />
@@ -285,7 +285,7 @@ function FollowUpRow({ item, canDelete, busy, disabled, error, onComplete, onDel
 function FollowUpFlag({ open }: { open: boolean }) {
     const label = open ? "Needs attention" : "Follow-up completed";
     return (
-        <span role="img" aria-label={label} title={label} className={`flex size-7 shrink-0 items-center justify-center rounded ${open ? "text-review" : "text-ink-subtle"}`}>
+        <span role="img" aria-label={label} title={label} className={`flex size-7 shrink-0 items-center justify-center rounded-lg ${open ? "text-review" : "text-ink-subtle"}`}>
             <Icon name={open ? "flag_fill" : "task_alt"} className="size-4" />
         </span>
     );

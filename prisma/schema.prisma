@@ -1023,6 +1023,21 @@ model SheetSyncRun {
 // Vercel has no Google access and reads it from here), and the writer lease
 // that keeps a single process writing to the Sheet at a time.
 // integrationState: UNKNOWN | OK | CONFIG_ERROR | DATA_INTEGRITY.
+// Settings > Candidate Form: the public form's title, logo and colours. At most one
+// row (id = 'default', enforced by a CHECK); no row means the EMLYNK defaults.
+// logo_data_uri is a small image as a data: URI (candidateFormBrandingService.js).
+model CandidateFormBranding {
+  id          String   @id @default("default")
+  formTitle   String   @map("form_title")
+  // { light: { accent, background, surface }, dark: { ... }, showLogo? }, each colour
+  // #rrggbb. showLogo false hides the logo altogether; absent means it shows.
+  colors      Json
+  logoDataUri String?  @map("logo_data_uri")
+  updatedAt   DateTime @default(now()) @map("updated_at")
+
+  @@map("candidate_form_branding")
+}
+
 model SheetSyncState {
   stateId                 String    @id @map("state_id")
   integrationState        String    @default("UNKNOWN") @map("integration_state")

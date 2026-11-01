@@ -116,7 +116,7 @@ function VerifyBar({ details, kind, onChange }: { details: CandidateDetails; kin
         }
     };
     return (
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded border border-border px-3 py-2">
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
             <p className={`inline-flex items-center gap-1.5 text-body-sm ${state ? "text-verified" : "text-ink-muted"}`}>
                 {state && <Icon name="check" className="size-4" />}
                 {state ? `Verified${state.by ? ` by ${state.by}` : ""} on ${state.at.slice(0, 10)}` : `Not verified yet`}
@@ -435,9 +435,9 @@ export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelPro
                 )}
             />
             <ul className="mt-4 flex flex-wrap items-center gap-2 border-b border-border pb-4" aria-label="Required documents">
-                <li className="text-label-caps uppercase text-ink-subtle">Required checklist:</li>
+                <li className="text-label-sm text-ink-muted">Required checklist:</li>
                 {details.requiredDocuments.map((r) => (
-                    <li key={r.documentType} className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-label-sm ${r.included ? "border-verified-border bg-verified-bg text-verified" : "border-border text-ink-muted"}`}>
+                    <li key={r.documentType} className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-label-sm ${r.included ? "border-verified-border bg-verified-bg text-verified" : "border-border text-ink-muted"}`}>
                         {r.included && <Icon name="check" className="size-3.5" />}
                         {documentTypeLabel(r.documentType)}
                         <span className="sr-only">{r.included ? "included" : "missing"}</span>

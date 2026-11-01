@@ -53,7 +53,7 @@ export function ConflictIndicator({ passportId, fields }: { passportId: string; 
             title={summary}
             aria-label={summary}
             data-testid={`form-conflict-${passportId}`}
-            className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-critical text-[10px] font-bold leading-none text-on-critical hover:bg-critical-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-critical"
+            className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-critical text-label-sm font-bold leading-none text-on-critical hover:bg-critical-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-critical"
         >
             <span aria-hidden="true">!</span>
         </Link>

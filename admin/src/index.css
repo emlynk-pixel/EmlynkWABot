@@ -1,184 +1,187 @@
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
+@import "@fontsource-variable/montserrat";
 
 /*
- * Design tokens from the Stitch design system "Precision Enterprise Console"
- * (project "EmlynkWABot Admin Dashboard UI"). Stitch is the source of truth;
- * change values there first, then here.
+ * Design tokens from the EMLYNK design system (emlynk-design-system/). The
+ * guide is the source of truth; change values there first, then here. Token
+ * names stay semantic so screens never name a colour. EmOps' documented
+ * differences from the guide: the light/dark switch stays, dark is built on
+ * the brand slate, and no text is smaller than 12px.
  */
 @theme {
     --font-sans: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
+    --font-heading: "Montserrat Variable", Montserrat, ui-sans-serif, system-ui, sans-serif;
 
-    /* Brand */
-    --color-primary: #2563eb;
-    --color-primary-hover: #1d4ed8;
-    --color-primary-active: #1e40af;
-    --color-primary-soft: #eff6ff;
-    --color-primary-soft-border: #bfdbfe;
+    /* Primary is near-black: in the workspace, red only signals something. */
+    --color-primary: #171717;
+    --color-primary-hover: #454545;
+    --color-primary-active: #0a0a0a;
+    --color-primary-soft: #e5e5e5;
+    --color-primary-soft-border: #d4d4d4;
     /* Text and icons on a solid primary / critical background */
-    --color-on-primary: #ffffff;
+    --color-on-primary: #fafafa;
     --color-on-critical: #ffffff;
     /* Candidate stepper: white in both themes (not redefined for dark mode) */
     --color-stepper-white: #ffffff;
+    /* The brand red, for urgent icons and rings. Small red text uses critical. */
+    --color-accent: #ef4444;
 
-    /* Canvas, surfaces, borders */
-    /* Redesign: a slightly deeper canvas so white cards stand out, and
-       borders visible enough to separate sections without shadows. */
-    --color-canvas: #f3f5f8;
-    --color-canvas-muted: #ecf0f4;
+    /* Surface layers: a grey page, white surfaces, canvas one step darker for
+       hover states and inset blocks, then lines. border-strong marks controls
+       (3:1 on white). */
+    --color-page: #f0f0f0;
+    --color-canvas: #e5e5e5;
+    --color-canvas-muted: #e5e5e5;
     --color-surface: #ffffff;
-    --color-border: #c9d1dc;
-    --color-border-strong: #a9b5c4;
-    --color-border-focus: #7a8ba1;
-    --color-ink: #0f172a;
-    --color-ink-soft: #1e293b;
-    --color-ink-muted: #475569;
-    --color-ink-subtle: #5a6679;
+    --color-border: #d4d4d4;
+    --color-border-strong: #949494;
+    --color-border-focus: #737373;
+    --color-ink: #0a0a0a;
+    --color-ink-soft: #171717;
+    --color-ink-muted: #525252;
+    --color-ink-subtle: #616161;
 
-    /* Dark sidebar workspace */
-    --color-sidebar: #0f172a;
-    --color-sidebar-hover: #1e293b;
-    --color-sidebar-text: #94a3b8;
+    /* Slate sidebar, and the slate behind the sign-in pages */
+    --color-sidebar: #1f242b;
+    --color-sidebar-hover: #2c333c;
+    --color-sidebar-border: #353c46;
+    --color-sidebar-text: #e5e7eb;
+    --color-sidebar-text-muted: #9ca3af;
     --color-sidebar-text-active: #ffffff;
 
     /* Backdrop behind dialogs and the mobile navigation drawer */
-    --color-overlay: rgba(15, 23, 42, 0.4);
+    --color-overlay: rgba(0, 0, 0, 0.1);
 
-    /* Status semantic system: text / background / border */
-    --color-verified: #059669;
-    --color-verified-bg: #ecfdf5;
-    --color-verified-border: #a7f3d0;
-    --color-review: #d97706;
-    --color-review-bg: #fffbeb;
-    --color-review-border: #fde68a;
-    --color-pending: #475569;
-    --color-pending-bg: #f1f5f9;
+    /* Fixed for the Candidate Form preview: it shows the form's colours, not the admin's. */
+    --color-on-brand: #ffffff;
+    --preview-ink-light: #0a0a0a;
+    --preview-ink-dark: #e5e7eb;
+
+    /* Status roles: text / background / border */
+    --color-verified: #006045;
+    --color-verified-bg: #d0fae5;
+    --color-verified-border: #a4f4cf;
+    --color-review: #973c00;
+    --color-review-bg: #fef3c6;
+    --color-review-border: #fee685;
+    --color-pending: #314158;
+    --color-pending-bg: #e2e8f0;
     --color-pending-border: #cbd5e1;
-    --color-critical: #dc2626;
-    --color-critical-hover: #b91c1c;
-    --color-critical-bg: #fef2f2;
-    --color-critical-border: #fecaca;
-    --color-duplicate: #7c3aed;
-    --color-duplicate-bg: #f5f3ff;
-    --color-duplicate-border: #ddd6fe;
+    /* Red-700: unlike the guide's #e7000b it stays readable on its own tint. */
+    --color-critical: #c10007;
+    --color-critical-hover: #9f0712;
+    --color-critical-bg: #ffe2e2;
+    --color-critical-border: #ffc9c9;
+    --color-duplicate: #5d0ec0;
+    --color-duplicate-bg: #ede9fe;
+    --color-duplicate-border: #ddd6ff;
 
-    /* Typography scale (size / line height / tracking / weight) */
-    --text-headline-xl: 28px;
+    /* Typography scale (size / line height / tracking / weight). No text below 12px. */
+    --text-headline-xl: 30px;
     --text-headline-xl--line-height: 36px;
-    --text-headline-xl--letter-spacing: -0.02em;
-    --text-headline-xl--font-weight: 700;
-    --text-headline-lg: 22px;
-    --text-headline-lg--line-height: 28px;
-    --text-headline-lg--letter-spacing: -0.015em;
+    --text-headline-xl--letter-spacing: -0.025em;
+    --text-headline-xl--font-weight: 600;
+    --text-headline-lg: 24px;
+    --text-headline-lg--line-height: 32px;
+    --text-headline-lg--letter-spacing: -0.025em;
     --text-headline-lg--font-weight: 600;
     --text-headline-md: 18px;
-    --text-headline-md--line-height: 24px;
-    --text-headline-md--letter-spacing: -0.01em;
+    --text-headline-md--line-height: 28px;
     --text-headline-md--font-weight: 600;
     --text-headline-sm: 16px;
     --text-headline-sm--line-height: 22px;
-    --text-headline-sm--letter-spacing: -0.005em;
-    --text-headline-sm--font-weight: 600;
-    /* Redesign: no text below 12px, and more line height for scanning
-       long tables and forms. */
+    --text-headline-sm--font-weight: 500;
     --text-body-lg: 16px;
     --text-body-lg--line-height: 24px;
-    --text-body-lg--letter-spacing: -0.005em;
-    --text-body-md: 15px;
-    --text-body-md--line-height: 22px;
+    --text-body-md: 14px;
+    --text-body-md--line-height: 20px;
     --text-body-sm: 14px;
     --text-body-sm--line-height: 20px;
     --text-label-caps: 12px;
     --text-label-caps--line-height: 16px;
-    --text-label-caps--letter-spacing: 0.04em;
+    --text-label-caps--letter-spacing: 0.05em;
     --text-label-caps--font-weight: 600;
     --text-label-md: 14px;
     --text-label-md--line-height: 20px;
     --text-label-md--font-weight: 500;
-    --text-label-sm: 13px;
-    --text-label-sm--line-height: 18px;
-    --text-label-sm--letter-spacing: 0.005em;
+    --text-label-sm: 12px;
+    --text-label-sm--line-height: 16px;
     --text-label-sm--font-weight: 500;
 
-    /* Shapes */
-    --radius-sm: 0.125rem;
-    --radius: 0.25rem;
-    --radius-md: 0.375rem;
-    --radius-lg: 0.5rem;
-    --radius-xl: 0.75rem;
+    /* Shapes: everything derives from one 10px radius. */
+    --radius: 0.625rem;
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
 
-    /* Elevation: borders and planar contrast, very light shadows */
-    --shadow-surface: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
-    --shadow-popover: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
-    --shadow-modal: 0 20px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.06);
-    --shadow-focus: 0 0 0 3px rgba(37, 99, 235, 0.15);
-    --shadow-invalid: 0 0 0 3px rgba(220, 38, 38, 0.15);
+    /* Elevation: flat cards, shadow only for what floats */
+    --shadow-surface: 0 0 #0000;
+    --shadow-popover: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+    --shadow-modal: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+    --shadow-focus: 0 0 0 3px rgba(115, 115, 115, 0.5);
+    --shadow-invalid: 0 0 0 3px rgba(193, 0, 7, 0.2);
 
     /* Layout */
-    --spacing-sidebar: 240px;
-    --spacing-sidebar-rail: 64px;
+    --spacing-sidebar: 256px;
+    --spacing-sidebar-rail: 48px;
     --spacing-header: 56px;
     --container-content: 1600px;
 }
 
 /*
- * Dark mode: the same Stitch design language on dark slate surfaces. Only
- * the token values change (never the components), so every screen follows.
- * Text tokens keep at least 4.5:1 contrast on the surfaces they are used on
- * (checked by src/test/theme.test.tsx). Light mode is the block above,
- * unchanged. The choice is stored per browser (src/theme/theme.ts).
+ * Dark mode: the brand slate surface. Only the token values change (never the
+ * components), so every screen follows. Text tokens keep at least 4.5:1
+ * contrast on the surfaces they are used on (checked in
+ * src/test/phase10.test.tsx). The choice is stored per browser (src/theme/theme.ts).
  */
 :root[data-theme="dark"] {
     color-scheme: dark;
 
-    --color-primary: #60a5fa;
-    --color-primary-hover: #93c5fd;
-    --color-primary-active: #bfdbfe;
-    --color-primary-soft: #172554;
-    --color-primary-soft-border: #1e40af;
-    --color-on-primary: #0b1220;
-    --color-on-critical: #0b1220;
+    --color-primary: #e5e5e5;
+    --color-primary-hover: #d4d4d4;
+    --color-primary-active: #a1a1a1;
+    --color-primary-soft: #353c46;
+    --color-primary-soft-border: #4a5360;
+    --color-on-primary: #171717;
+    --color-on-critical: #171717;
 
-    --color-canvas: #0b1220;
-    --color-canvas-muted: #1a2436;
-    --color-surface: #111a2b;
-    --color-border: #2b384d;
-    --color-border-strong: #45556d;
-    --color-border-focus: #6b7b92;
-    --color-ink: #f1f5f9;
-    --color-ink-soft: #e2e8f0;
-    --color-ink-muted: #b6c2d3;
-    --color-ink-subtle: #97a6ba;
+    --color-page: #1f242b;
+    --color-canvas: #2c333c;
+    --color-canvas-muted: #2c333c;
+    --color-surface: #262c34;
+    --color-border: #353c46;
+    --color-border-strong: #4a5360;
+    --color-border-focus: #6b7280;
+    --color-ink: #ffffff;
+    --color-ink-soft: #e5e7eb;
+    --color-ink-muted: #b0b6bf;
+    --color-ink-subtle: #a8afb9;
 
-    --color-sidebar: #060b16;
-    --color-sidebar-hover: #1a2436;
-    --color-sidebar-text: #a3b1c4;
-    --color-sidebar-text-active: #ffffff;
-
-    --color-verified: #34d399;
-    --color-verified-bg: #062a1f;
-    --color-verified-border: #0f5c43;
-    --color-review: #fbbf24;
-    --color-review-bg: #2b1d05;
-    --color-review-border: #6b4a0c;
+    --color-verified: #5ee9b5;
+    --color-verified-bg: #143a30;
+    --color-verified-border: #1f5a4a;
+    --color-review: #fee685;
+    --color-review-bg: #3a2e12;
+    --color-review-border: #6b5518;
     --color-pending: #cbd5e1;
-    --color-pending-bg: #1a2436;
-    --color-pending-border: #3a4a61;
-    --color-critical: #f87171;
-    --color-critical-hover: #fca5a5;
-    --color-critical-bg: #2e0f12;
-    --color-critical-border: #7f1d1d;
+    --color-pending-bg: #2c333c;
+    --color-pending-border: #4a5360;
+    --color-critical: #ff8a8c;
+    --color-critical-hover: #ffa2a2;
+    --color-critical-bg: #40202a;
+    --color-critical-border: #6e2f38;
     --color-duplicate: #c4b5fd;
-    --color-duplicate-bg: #1f1640;
+    --color-duplicate-bg: #2a2350;
     --color-duplicate-border: #4c3a8f;
 
-    --color-overlay: rgba(2, 6, 16, 0.7);
+    --color-overlay: rgba(0, 0, 0, 0.4);
 
-    --shadow-surface: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
-    --shadow-popover: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
-    --shadow-modal: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
-    --shadow-focus: 0 0 0 3px rgba(96, 165, 250, 0.3);
-    --shadow-invalid: 0 0 0 3px rgba(248, 113, 113, 0.3);
+    --shadow-popover: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+    --shadow-modal: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
+    --shadow-focus: 0 0 0 3px rgba(115, 115, 115, 0.5);
+    --shadow-invalid: 0 0 0 3px rgba(255, 138, 140, 0.3);
 }
 
 @layer base {
@@ -189,9 +192,18 @@
     }
 
     body {
-        @apply bg-canvas font-sans text-body-md text-ink antialiased;
+        @apply bg-page font-sans text-body-md text-ink antialiased;
         /* Tabular figures for IDs, counts and timestamps */
         font-feature-settings: "tnum" on, "cv05" on, "zero" on;
+    }
+
+    /* Montserrat for titles and large numerals, everywhere they are used. */
+    h1, h2, h3, [class*="text-headline-"] {
+        font-family: var(--font-heading);
+    }
+
+    button:not(:disabled), [role="button"]:not(:disabled) {
+        cursor: pointer;
     }
 
     :focus-visible {
@@ -200,58 +212,8 @@
     }
 }
 
-@layer components {
-    .icon > svg {
-        width: 100%;
-        height: 100%;
-        fill: currentColor;
-    }
-}
-
-/*
- * Candidates screens keep their original look (they are out of scope of the
- * redesign): AdminLayout wraps those routes in .ui-classic, which restores
- * the previous token values inside them. Only tokens the redesign changed
- * are listed. Light colours apply only in light mode, so dark mode keeps
- * its own values there.
- */
-.ui-classic {
-    --text-body-lg: 15px;
-    --text-body-lg--line-height: 22px;
-    --text-body-md: 14px;
-    --text-body-md--line-height: 20px;
-    --text-body-sm: 13px;
-    --text-body-sm--line-height: 18px;
-    --text-label-caps: 11px;
-    --text-label-caps--letter-spacing: 0.06em;
-    --text-label-md: 13px;
-    --text-label-md--line-height: 18px;
-    --text-label-sm: 12px;
-    --text-label-sm--line-height: 16px;
-    --text-label-sm--letter-spacing: 0.01em;
-    /* body sets the base text size, and children inherit body's computed
-       (redesigned) value; re-apply the original base size here. */
-    font-size: var(--text-body-md);
-    line-height: var(--text-body-md--line-height);
-}
-
-:root:not([data-theme="dark"]) .ui-classic {
-    --color-canvas: #f8fafc;
-    --color-canvas-muted: #f1f5f9;
-    --color-border: #c9d1dc;
-    --color-border-strong: #a9b5c4;
-    --color-border-focus: #7a8ba1;
-    --color-ink-subtle: #64748b;
-}
-
-:root[data-theme="dark"] .ui-classic {
-    --color-border: #243044;
-    --color-border-strong: #3a4a61;
-    --color-border-focus: #64748b;
-}
-
-:root:not([data-theme="dark"]) body.ui-classic-page {
-    background-color: #f8fafc;
+@media (prefers-reduced-motion: reduce) {
+    .animate-spin, .animate-pulse { animation: none; }
 }
 
 /* ---------- date picker (components/DatePicker.tsx) ---------- */
@@ -267,7 +229,7 @@
     color: var(--color-primary);
     background: var(--color-surface);
     border: 1px solid var(--color-border-strong);
-    border-radius: 0.25rem;
+    border-radius: var(--radius-lg);
     cursor: pointer;
 }
 .date-picker-button:hover:not(:disabled) { background: var(--color-primary-soft); }
@@ -285,7 +247,7 @@
     color: var(--color-ink);
     background: var(--color-surface);
     border: 1px solid var(--color-border-strong);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-xl);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
 }
 .date-picker-backdrop { position: fixed; inset: 0; z-index: 999; background: rgba(0, 0, 0, 0.4); }
@@ -309,7 +271,7 @@
 }
 .date-picker-popover .rdp-day_button { color: var(--color-ink); background: transparent; font: inherit; }
 .date-picker-popover .rdp-day_button:hover:not(:disabled) { background: var(--color-primary-soft); }
-.date-picker-popover .rdp-selected .rdp-day_button { background: var(--color-primary); color: #ffffff; border-color: var(--color-primary); font-weight: 700; }
+.date-picker-popover .rdp-selected .rdp-day_button { background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary); font-weight: 700; }
 .date-picker-popover .rdp-today:not(.rdp-selected) .rdp-day_button { border-color: var(--color-primary); font-weight: 700; }
 .date-picker-popover .rdp-disabled { opacity: 0.35; }
 .date-picker-popover .rdp-outside { opacity: 0.6; }
@@ -330,7 +292,7 @@
     color: var(--color-primary);
     background: transparent;
     border: 1px solid var(--color-border);
-    border-radius: 0.25rem;
+    border-radius: var(--radius-lg);
     cursor: pointer;
 }
 .date-picker-footer button:hover { background: var(--color-primary-soft); }

@@ -309,32 +309,35 @@ describe("Fonts", () => {
         expect(face).toMatch(/unicode-range:[^;]*U\+200C-200D/); // ZWJ / ZWNJ for conjuncts
         expect(face).toMatch(/font-display:\s*swap/);
         expect(face).toMatch(/font-weight:\s*400 700/);
-        expect(styles).toMatch(/font-family:\s*Roboto, "Noto Sans Sinhala", system-ui, -apple-system, "Segoe UI", Arial, "Nirmala UI", "Iskoola Pota", "Sinhala Sangam MN", sans-serif;/);
+        expect(styles).toMatch(/--font-body:\s*Inter, "Noto Sans Sinhala", system-ui, -apple-system, "Segoe UI", Arial, "Nirmala UI", "Iskoola Pota", "Sinhala Sangam MN", sans-serif;/);
         expect(styles).not.toMatch(/fonts\.googleapis|fonts\.gstatic|@import/);
         expect(faces.every((f) => /src:\s*url\("\/fonts\/[\w-]+\.woff2"\) format\("woff2"\);/.test(f))).toBe(true);
         // The font files and their licences ship with the app (static/ is copied as-is).
         const shipped = Object.keys(import.meta.glob("../../static/fonts/*", { query: "?url", eager: true }));
         expect(shipped.sort()).toEqual([
+            "../../static/fonts/OFL-inter.txt",
+            "../../static/fonts/OFL-montserrat.txt",
             "../../static/fonts/OFL-noto-sans-sinhala.txt",
-            "../../static/fonts/OFL-roboto.txt",
+            "../../static/fonts/inter-latin-ext.woff2",
+            "../../static/fonts/inter-latin.woff2",
+            "../../static/fonts/montserrat-latin-ext.woff2",
+            "../../static/fonts/montserrat-latin.woff2",
             "../../static/fonts/noto-sans-sinhala-sinhala-400-700.woff2",
-            "../../static/fonts/roboto-latin-400-700.woff2",
-            "../../static/fonts/roboto-latin-ext-400-700.woff2",
         ]);
         // The page policy still allows fonts only from the app itself.
         expect(buildMetaContentSecurityPolicy("https://api.example.test")).toContain("font-src 'self'");
     });
 
-    test("FONT-003 Roboto is self-hosted for Latin text (latin + latin-ext), weights 400-700, swap; it never claims Sinhala or the joiners", () => {
-        const roboto = faces.filter((f) => /font-family:\s*Roboto;/.test(f));
-        expect(roboto.map((f) => f.match(/url\("([^"]+)"\)/)?.[1])).toEqual(["/fonts/roboto-latin-400-700.woff2", "/fonts/roboto-latin-ext-400-700.woff2"]);
-        for (const face of roboto) {
+    test.each(["Inter", "Montserrat"])("FONT-003 %s is self-hosted for Latin text (latin + latin-ext), swap; it never claims Sinhala or the joiners", (family) => {
+        const latin = faces.filter((f) => new RegExp(`font-family:\\s*${family};`).test(f));
+        const slug = family.toLowerCase();
+        expect(latin.map((f) => f.match(/url\("([^"]+)"\)/)?.[1])).toEqual([`/fonts/${slug}-latin.woff2`, `/fonts/${slug}-latin-ext.woff2`]);
+        for (const face of latin) {
             expect(face).toMatch(/font-display:\s*swap/);
-            expect(face).toMatch(/font-weight:\s*400 700/);
             expect(range(face)).not.toMatch(/U\+0D|U\+200C|U\+200D|U\+2000-206F|U\+0964|U\+25CC/);
         }
-        expect(range(roboto[0])).toMatch(/U\+0000-00FF/);
-        expect(range(roboto[0])).toMatch(/U\+2000-200B, U\+200E-206F/);
+        expect(range(latin[0])).toMatch(/U\+0000-00FF/);
+        expect(range(latin[0])).toMatch(/U\+2000-200B, U\+200E-206F/);
     });
 
     test("FONT-002 Sinhala texts render as Sinhala (conjuncts keep their zero-width joiner) and the required-field messages switch with the language", async () => {
