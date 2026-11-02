@@ -24,6 +24,8 @@
     --color-on-critical: #ffffff;
     /* Candidate stepper: white in both themes (not redefined for dark mode) */
     --color-stepper-white: #ffffff;
+    /* Candidate stepper: the "!" on an unselected circle, the same in both themes */
+    --color-stepper-ink: #1c2126;
     /* The brand red, for urgent icons and rings. Small red text uses critical. */
     --color-accent: #ef4444;
 
