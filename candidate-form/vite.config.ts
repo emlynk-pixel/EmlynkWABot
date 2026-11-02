@@ -13,10 +13,11 @@ import { buildMetaContentSecurityPolicy } from "./csp";
 // variable, including any other VITE_* value, is never embedded.
 const ENV_PREFIX = "VITE_API_";
 
-// Backend the dev server forwards the public API to (the Express app, `npm start`).
+// Backend the dev server forwards the public API to (the Express app, `npm start`):
+// FORM_API_PROXY_TARGET, read with loadEnv below (the environment or a .env file).
 // With VITE_API_BASE_URL empty the form calls its own origin, which in development
 // is this server. Never reaches the bundle: it has no VITE_API_ prefix.
-const apiTarget = process.env.FORM_API_PROXY_TARGET || "http://localhost:3000";
+const DEFAULT_API_TARGET = "http://localhost:3000";
 
 // Production builds get the Content-Security-Policy <meta> from csp.ts:
 // connect-src is exactly the configured API origin. An invalid
@@ -34,6 +35,7 @@ function contentSecurityPolicy(apiBaseUrl: string): Plugin {
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, ".", ENV_PREFIX);
+    const apiTarget = loadEnv(mode, ".", "FORM_API_PROXY_TARGET").FORM_API_PROXY_TARGET || DEFAULT_API_TARGET;
     return {
         envPrefix: ENV_PREFIX,
         // Static files copied as they are (robots.txt). Named "static" rather
