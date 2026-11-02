@@ -87,6 +87,18 @@ export function listJobs(token: string, params: { view: JobView; search?: string
     return apiRequest<JobList>(`/api/admin/jobs?${query.toString()}`, { token, signal });
 }
 
+// The job candidate picker (New job, Add candidates): only the candidates a job may take (test
+// PASS), with only what the picker shows. ADMIN, TEAM_LEAD and JOB_HANDLER (the server checks);
+// the JOB_HANDLER's only way to list candidates, as it has no Candidates area.
+export type JobCandidateOption = { passportId: string; uniqueId: string; name: string | null; nic: string | null; workflowStatus: WorkflowStatus };
+export type JobCandidateOptions = { items: JobCandidateOption[]; pagination: JobList["pagination"]; filters: { search: string | null } };
+
+export function listJobCandidateOptions(token: string, params: { page: number; pageSize: number; search?: string }, signal?: AbortSignal): Promise<JobCandidateOptions> {
+    const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
+    if (params.search) query.set("search", params.search);
+    return apiRequest<JobCandidateOptions>(`/api/admin/job-candidate-options?${query.toString()}`, { token, signal });
+}
+
 export const getJob = (token: string, jobId: string, signal?: AbortSignal) => apiRequest<JobDetails>(jobPath(jobId), { token, signal });
 export const getJobOptions = (token: string, signal?: AbortSignal) => apiRequest<JobOptions>("/api/admin/job-options", { token, signal });
 export const createJob = (token: string, body: CreateJobInput) => apiRequest<JobDetails>("/api/admin/jobs", { method: "POST", token, body });

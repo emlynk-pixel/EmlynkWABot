@@ -79,12 +79,13 @@ describe("OWNER in the admin app", () => {
         as("OWNER");
         renderApp("/settings");
         expect(await screen.findByRole("heading", { name: "Settings", level: 1 }, RENDER_STEP)).toBeInTheDocument();
-        expect(screen.getByText("Owner", { selector: "p" })).toBeInTheDocument();
+        // The account card at the foot of the sidebar: the name, then the role.
+        expect(screen.getByTestId("admin-name").nextElementSibling).toHaveTextContent("Owner");
         const nav = within(screen.getByRole("navigation", { name: "Main navigation" }));
         for (const name of ["Overview", "Candidates", "Jobs", "Work Allocation", "Audit Logs", "Settings"]) expect(nav.getByRole("link", { name })).toBeInTheDocument();
         expect(nav.queryByRole("link", { name: "Invite User" })).toBeNull();
         const tabs = within(screen.getByRole("navigation", { name: "Settings sections" })).getAllByRole("link").map((l) => l.textContent);
-        expect(tabs).toEqual(["Change Roles", "Invite User", "Google Sheet Sync", "Job Types"]);
+        expect(tabs).toEqual(["Change Roles", "Invite User", "Google Sheet Sync", "Job Types", "Candidate Form"]);
     });
 
     test("Change Roles: Admin and below for an Admin account, never Owner; Owner and own account locked; the Owner marked", async () => {

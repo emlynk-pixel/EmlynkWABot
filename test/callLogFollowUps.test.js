@@ -27,7 +27,8 @@ const USERS = {
     ANALYST: { adminId: "user-analyst", authUserId: "00000000-0000-4000-8000-000000000003", name: "Ann Analyst", email: "ann@example.invalid", role: "ANALYST" },
     REGISTRATION_DESK: { adminId: "user-desk", authUserId: "00000000-0000-4000-8000-000000000004", name: "Dee Desk", email: "dee@example.invalid", role: "REGISTRATION_DESK" },
 };
-const STAFF_ROLES = ["ADMIN", "OWNER", "ANALYST", "REGISTRATION_DESK"];
+// The call log and Need Attention roles. Not REGISTRATION_DESK: it has the registration workflow only.
+const STAFF_ROLES = ["ADMIN", "OWNER", "ANALYST"];
 const BASE = {
     surname: "De Soysa", otherNames: "Anusha", address: "Negombo, Sri Lanka", dateOfBirth: "1996-02-23",
     jobTypes: ["Caregiver"], jobExperience: "2 years", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14",
@@ -161,6 +162,29 @@ describe("migration", () => {
     });
 });
 
+describe("REGISTRATION_DESK (the registration workflow, Need Attention read only)", () => {
+    test("lists Need Attention; reads no call log, adds none, flags, completes and deletes no follow-up (403); nothing is written", async () => {
+        const { callLogId, followUpId } = await flagged(A, "Passport not uploaded");
+        const listed = await as("REGISTRATION_DESK", "/follow-ups?status=OPEN");
+        assert.equal(listed.status, 200);
+        assert.ok(listed.body.groups.flatMap((g) => g.followUps).some((f) => f.followUpId === followUpId));
+        for (const [path, init] of [
+            [`/candidates/${A}/call-logs`, undefined],
+            [`/candidates/${A}/call-logs`, { method: "POST", body: { note: "x" } }],
+            [`/candidates/${A}/call-logs`, { method: "POST", body: { note: "x", needsAttention: true } }],
+            [`/candidates/${A}/call-logs/${callLogId}/follow-up`, { method: "POST" }],
+            [`/follow-ups/${followUpId}/complete`, { method: "POST" }],
+            [`/follow-ups/${followUpId}`, { method: "DELETE" }],
+        ]) {
+            const response = await as("REGISTRATION_DESK", path, init);
+            assert.equal(response.status, 403, `${init?.method ?? "GET"} ${path}`);
+            assert.deepEqual(response.body, { message: "Insufficient permissions" });
+        }
+        assert.equal(await prisma.candidateCallLog.count(), 1);
+        assert.equal((await followUpRow(followUpId)).status, "OPEN");
+    });
+});
+
 describe("flagging a call log", () => {
     test("1-3. every call log role can flag; the follow-up references the original call log, which is unchanged", async () => {
         for (const role of STAFF_ROLES) {
@@ -179,7 +203,7 @@ describe("flagging a call log", () => {
             assert.equal(row.completedDate, null);
             assert.deepEqual(await callLogRow(callLogId), before, "the call log is not changed");
         }
-        assert.equal(await prisma.candidateCallLog.count(), 4, "no call log added or removed");
+        assert.equal(await prisma.candidateCallLog.count(), 3, "no call log added or removed");
     });
 
     test("the follow-up copies none of the call log: no note, call time or candidate column", async () => {
@@ -221,12 +245,12 @@ describe("flagging a call log", () => {
 
     test("the call log shows its follow-up state: none, OPEN, then COMPLETED", async () => {
         const callLogId = await logCall(A, "Will send the police report");
-        const state = async () => (await as("REGISTRATION_DESK", `/candidates/${A}/call-logs`)).body.items.find((i) => i.callLogId === callLogId).followUp;
+        const state = async () => (await as("ANALYST", `/candidates/${A}/call-logs`)).body.items.find((i) => i.callLogId === callLogId).followUp;
         assert.equal(await state(), null);
-        const { body } = await flag("REGISTRATION_DESK", A, callLogId);
+        const { body } = await flag("ANALYST", A, callLogId);
         assert.equal((await state()).status, "OPEN");
         assert.equal((await state()).followUpId, body.followUp.followUpId);
-        await complete("REGISTRATION_DESK", body.followUp.followUpId);
+        await complete("ANALYST", body.followUp.followUpId);
         assert.equal((await state()).status, "COMPLETED");
     });
 });
@@ -294,7 +318,7 @@ describe("listing Priority Follow-Ups", () => {
     });
 
     test("an empty list is an empty list", async () => {
-        assert.deepEqual((await list("REGISTRATION_DESK")).body, { status: "OPEN", total: 0, truncated: false, groups: [] });
+        assert.deepEqual((await list("ANALYST")).body, { status: "OPEN", total: 0, truncated: false, groups: [] });
     });
 
     test("34. a fixed number of queries whatever the number of follow-ups and candidates (no N+1)", async () => {
@@ -394,7 +418,7 @@ describe("deleting a follow-up", () => {
         });
     }
 
-    for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+    for (const role of ["ANALYST"]) {
         test(`21-22. ${role} cannot delete (403), and nothing is removed`, async () => {
             const { followUpId } = await flagged(A, "x", role);
             const response = await remove(role, followUpId);
@@ -423,13 +447,13 @@ describe("deleting a follow-up", () => {
 
 describe("audit", () => {
     test("flag, complete and delete are each written once, by the signed-in user, with the candidate", async () => {
-        const { followUpId } = await flagged(A, "x", "REGISTRATION_DESK");
-        await complete("ANALYST", followUpId);
+        const { followUpId } = await flagged(A, "x", "ANALYST");
+        await complete("ADMIN", followUpId);
         await remove("OWNER", followUpId);
         const rows = await followUpAudit();
         assert.deepEqual(rows.map((r) => [r.action, r.adminId, r.passportId, r.previousStatus, r.newStatus]), [
-            ["FLAG_FOLLOW_UP", USERS.REGISTRATION_DESK.adminId, A, "NONE", "OPEN"],
-            ["COMPLETE_FOLLOW_UP", USERS.ANALYST.adminId, A, "OPEN", "COMPLETED"],
+            ["FLAG_FOLLOW_UP", USERS.ANALYST.adminId, A, "NONE", "OPEN"],
+            ["COMPLETE_FOLLOW_UP", USERS.ADMIN.adminId, A, "OPEN", "COMPLETED"],
             ["DELETE_FOLLOW_UP", USERS.OWNER.adminId, A, "COMPLETED", "DELETED"],
         ]);
     });
@@ -619,7 +643,7 @@ describe("candidate history (activity with the call logs)", () => {
             prisma.candidateCallLog.findMany({ orderBy: { callLogId: "asc" } }),
         ]);
         const before = await snapshot();
-        await history(A, "REGISTRATION_DESK");
+        await history(A, "ANALYST");
         assert.deepEqual(await snapshot(), before);
     });
 });
@@ -720,7 +744,7 @@ describe("No Answer calls", () => {
     test("13. a No Answer call can be flagged, completed and deleted like any call, and always stays in the history", async () => {
         const created = await add({ outcome: "NO_ANSWER" });
         const { callLogId } = created.body.items[0];
-        const flagged = await flag("REGISTRATION_DESK", A, callLogId);
+        const flagged = await flag("ANALYST", A, callLogId);
         assert.equal(flagged.status, 201, JSON.stringify(flagged.body));
         const group = (await list("ANALYST")).body.groups.find((g) => g.candidate.passportId === A);
         assert.deepEqual([group.followUps[0].callLog.outcome, group.followUps[0].callLog.note], ["NO_ANSWER", ""]);

@@ -62,7 +62,7 @@ Every item below is implemented in the current code.
 | Bulk Upload | Excel/Sheet import of candidates into the database (ADMIN) |
 | Auth and users | Supabase Auth, invitations, password recovery, role management |
 | Audit logging | Append-only audit trail with an admin-facing Audit Logs page |
-| Notifications | A notification bell exists in the header. The full notification system is **research only**, not implemented ([audit](Docs/NOTIFICATION_SYSTEM_AUDIT.md)) |
+| Notifications | A notification bell in the header, sourced per role from data the role can already open: the Review Queue (OWNER, ADMIN, ANALYST) or open Need Attention follow-ups (TEAM_LEAD); none for REGISTRATION_DESK and JOB_HANDLER ([roles](Docs/ROLES_AND_PERMISSIONS.md)). The full notification system is **research only**, not implemented ([audit](Docs/NOTIFICATION_SYSTEM_AUDIT.md)) |
 | UI | Light/dark theme, responsive layout, collapsible sidebar |
 
 ## Role-Based Access Control
@@ -79,8 +79,8 @@ The hierarchy shows **who manages whom**, not automatic permission inheritance. 
 | **ADMIN** | Runs the system: candidates, documents, review, police, jobs, allocation, verification, Settings, Audit Logs, Google Sheet Sync, and user management below ADMIN. |
 | **TEAM_LEAD** | Exactly seven areas: Candidates (all of them), Need Attention, Work Allocation, Jobs, Agents, Clients and the standard Daily Report. ADMIN-only actions inside those areas stay ADMIN-only. No Settings, user management, Audit Logs, Overview or Review Queue. |
 | **ANALYST** | Candidate work (review, documents, stages, call logs) on **the candidates allocated to them** only; can read the Jobs holding their candidates. |
-| **REGISTRATION_DESK** | Registers candidates and works on candidate records; nothing outside the Candidates area. |
-| **JOB_HANDLER** | Manages Jobs, Agents and Clients; can read candidates but never changes a candidate record. |
+| **REGISTRATION_DESK** | The candidate registration workflow (Add Candidate): register, or load an existing passport ID and save its registration details and documents; views Need Attention read only. Nothing else. |
+| **JOB_HANDLER** | Manages Jobs, Agents and Clients; views candidates and their workflow read only, never changes a candidate record. |
 
 > **MANAGER is retired and unsupported.** An account still holding it is refused everywhere until converted (`npm run user:migrate-manager`). ADMIN holds everything MANAGER could do.
 

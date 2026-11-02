@@ -50,9 +50,15 @@ const DETAILS: CandidateDetails = {
 };
 
 // A signed-in user without candidate permissions: the retired VIEWER role
-// (the backend refuses it too). Every application role, REGISTRATION_DESK
-// included, manages candidates; this checks the read-only rendering.
+// (the backend refuses it too). Every role that opens a candidate's page,
+// REGISTRATION_DESK included, manages candidates.
 const VIEWER = { ...ADMIN, role: "VIEWER" };
+// A role without candidate permissions can't open a Candidates page at all (App.tsx AllowRoles, the
+// same roles as the server): "Access Restricted", and nothing of any candidate is requested.
+async function expectNoCandidateAccess(calls: { path: string }[]) {
+    expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
+    expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(false);
+}
 const DESK = { ...ADMIN, role: "REGISTRATION_DESK" };
 
 // A document upload: the API issues a signed URL for one staged object
@@ -270,9 +276,9 @@ describe("Candidates list", () => {
     });
 
     test("REGISTRATION_DESK gets the Register Candidate quick access too", async () => {
-        signedInBackend({ "GET /auth/me": { status: 200, body: { user: DESK } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
-        renderApp("/candidates");
-        await screen.findByRole("table", { name: "Candidates" });
+        signedInBackend({ "GET /auth/me": { status: 200, body: { user: DESK } } });
+        renderApp("/candidates/new");
+        await screen.findByRole("heading", { name: "Add candidate", level: 1 });
         expect(within(screen.getByRole("banner")).getByRole("link", { name: "Register Candidate" })).toHaveAttribute("href", "/candidates/new");
     });
 
@@ -303,12 +309,10 @@ describe("Candidates list", () => {
         expect(screen.getByLabelText("Passport ID *")).toBeEnabled();
     });
 
-    test("a viewer cannot add candidates", async () => {
-        signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates": { status: 200, body: LIST } });
+    test("a viewer (no candidate permissions) can't open the Candidates list, so no Add candidate", async () => {
+        const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates");
-        await screen.findByRole("table", { name: "Candidates" });
-        expect(screen.queryByRole("link", { name: "Add candidate" })).not.toBeInTheDocument();
-        expect(screen.queryByRole("link", { name: "Register Candidate" })).not.toBeInTheDocument();
+        await expectNoCandidateAccess(calls);
     });
 });
 
@@ -415,15 +419,10 @@ describe("Candidate deployment", () => {
             for (const label of ["Test result", "Test date", "Agent name", "Test ID", "Client name", "Job ID"]) expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
         });
 
-        test("a viewer sees the test details but cannot change them", async () => {
-            signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withTest("PASS", "2026-09-28") } });
+        test("a viewer (no candidate permissions) can't open the candidate's Test details", async () => {
+            const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
             renderApp("/candidates/N0000002?stage=TEST_DETAILS");
-            expect(await screen.findByLabelText("Test result")).toBeDisabled();
-            expect(screen.getByLabelText("Test result")).toHaveValue("PASS");
-            expect(screen.getByLabelText("Test date")).toBeDisabled();
-            expect(screen.getByLabelText("Agent name")).toBeDisabled();
-            expect(screen.getByLabelText("Test ID")).toBeDisabled();
-            expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+            await expectNoCandidateAccess(calls);
         });
     });
 
@@ -468,8 +467,8 @@ describe("Candidate deployment", () => {
             expect(await screen.findByText("Verified by Test Admin on 2026-10-20")).toBeInTheDocument();
         });
 
-        test("an Analyst or the Registration Desk cannot verify: no button, and no 'not verified' prompt", async () => {
-            for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+        test("an Analyst or a Team Lead cannot verify: no button, and no 'not verified' prompt", async () => {
+            for (const role of ["ANALYST", "TEAM_LEAD"]) {
                 signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withStage("CANDIDATE_DETAILS", true) } });
                 const view = renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
                 expect(await screen.findByRole("heading", { name: "Candidate details" })).toBeInTheDocument();
@@ -602,13 +601,10 @@ describe("Candidate deployment", () => {
             expect(screen.getByLabelText("Client name")).toHaveValue("Beta Foods");
         });
 
-        test("STAGE-JOB-024: a viewer sees Job details but cannot change Date, Note or completion", async () => {
-            signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders", jobDate: "2026-10-05" }) } });
+        test("STAGE-JOB-024: a viewer (no candidate permissions) can't open the candidate's Job details", async () => {
+            const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
             renderApp(OPEN);
-            expect(await screen.findByLabelText("Date")).toBeDisabled();
-            expect(screen.getByLabelText("Note")).toBeDisabled();
-            expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeDisabled();
-            expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+            await expectNoCandidateAccess(calls);
         });
     });
 
@@ -690,16 +686,10 @@ describe("Candidate deployment", () => {
             expect(police.getAllByRole("button", { name: "Remove" })).toHaveLength(1);
         });
 
-        test("a viewer sees the files but can't upload or remove", async () => {
-            signedInBackend({
-                "GET /auth/me": { status: 200, body: { user: VIEWER } },
-                "GET /api/admin/candidates/N0000002": { status: 200, body: withPolice({ ROMANIA: document("r", "ROMANIA", "romania.pdf") }) },
-            });
+        test("a viewer (no candidate permissions) can't open the candidate's police reports", async () => {
+            const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
             renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
-            await screen.findByRole("region", { name: "Police report" });
-            const police = groupOf("Police report");
-            expect(police.getByText(/romania\.pdf/)).toBeInTheDocument();
-            for (const button of police.getAllByRole("button")) expect(button).toBeDisabled();
+            await expectNoCandidateAccess(calls);
         });
     });
 
@@ -818,11 +808,10 @@ describe("Candidate deployment", () => {
             expect(rowOf("NIC document file").queryByRole("status")).not.toBeInTheDocument();
         });
 
-        test("a viewer has no Remove", async () => {
-            signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: withNic } });
+        test("a viewer (no candidate permissions) can't open the candidate's documents, so no Remove", async () => {
+            const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
             renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
-            await screen.findByLabelText("NIC document file");
-            expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+            await expectNoCandidateAccess(calls);
         });
     });
 
@@ -1064,17 +1053,10 @@ describe("Call log", () => {
     });
 
 
-    test("a viewer sees the calls but can't add one", async () => {
-        signedInBackend({
-            "GET /auth/me": { status: 200, body: { user: VIEWER } },
-            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
-            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALLS },
-        });
+    test("a viewer (no candidate permissions) can't open the candidate, so no call log", async () => {
+        const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates/N0000002");
-        const dialog = await openCallLog();
-        expect(await within(dialog).findByText("Asked about the medical")).toBeInTheDocument();
-        expect(within(dialog).queryByLabelText("What the candidate said *")).not.toBeInTheDocument();
-        expect(within(dialog).queryByRole("button", { name: "Add call" })).not.toBeInTheDocument();
+        await expectNoCandidateAccess(calls);
     });
 
     test("collapse: form is expanded by default when the drawer opens", async () => {
@@ -1408,20 +1390,10 @@ describe("Call log: Need attention and current documents", () => {
         expect(again).toHaveAttribute("title", "Follow-up completed (mark again)");
     });
 
-    test("a viewer sees the follow-up states but no flag action", async () => {
-        signedInBackend({
-            "GET /auth/me": { status: 200, body: { user: VIEWER } },
-            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
-            "GET /api/admin/candidates/N0000002/call-logs": {
-                status: 200,
-                body: { items: [{ ...CALLS.items[0], followUp: { followUpId: "f-0", status: "COMPLETED", flaggedAt: "2026-10-02T05:00:00.000Z" } }, { ...CALLS.items[1], followUp: { followUpId: "f-1", status: "OPEN", flaggedAt: "2026-10-07T05:00:00.000Z" } }] },
-            },
-        });
+    test("a viewer (no candidate permissions) can't open the candidate, so no follow-up flags", async () => {
+        const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates/N0000002");
-        const dialog = await openCallLog();
-        expect(within(await callItem(dialog, "Passport not uploaded")).getByRole("img", { name: "Needs attention" })).toBeInTheDocument();
-        expect(within(await callItem(dialog, "Medical not uploaded yet")).getByRole("img", { name: "Follow-up completed" })).toBeInTheDocument();
-        expect(within(within(dialog).getByRole("list", { name: "Candidate history" })).queryByRole("button")).toBeNull();
+        await expectNoCandidateAccess(calls);
     });
 
     test("already marked elsewhere (409): the calls are reloaded and it shows as flagged", async () => {
@@ -1788,16 +1760,10 @@ describe("Call log: No Answer", () => {
         expect(posts(calls)).toHaveLength(0);
     });
 
-    test("a viewer has no form, so no No Answer button", async () => {
-        signedInBackend({
-            "GET /auth/me": { status: 200, body: { user: VIEWER } },
-            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
-            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: WITH_NO_ANSWER },
-        });
+    test("a viewer (no candidate permissions) can't open the candidate, so no No Answer button", async () => {
+        const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates/N0000002");
-        const dialog = await openCallLog();
-        await within(dialog).findByText("Asked about the medical");
-        expect(within(dialog).queryByRole("button", { name: "No Answer" })).toBeNull();
+        await expectNoCandidateAccess(calls);
     });
 
     test("the Need Attention page shows a flagged No Answer call as No Answer, not as an empty row", async () => {
@@ -2034,6 +2000,46 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
         expect(await screen.findByRole("navigation", { name: "Deployment stages" })).toBeInTheDocument();
         expect(calls.find((c) => c.method === "POST" && c.path === "/api/admin/candidates")!.body).toMatchObject({ address: "", whatsappNumber: "94771234567", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14" });
         expect(calls.some((c) => c.path.includes("/documents/"))).toBe(false);
+    });
+
+    test("REGISTRATION_DESK stays on Add Candidate after registering: a confirmation, the form cleared for the next one", async () => {
+        let created = false;
+        const { calls } = signedInBackend({
+            "GET /auth/me": { status: 200, body: { user: DESK } },
+            "POST /api/admin/candidates": () => { created = true; return { status: 201, body: { passportId: "N0000002", uniqueId: "0002" } }; },
+            "GET /api/admin/candidates/N0000002": () => (created ? { status: 200, body: DETAILS } : { status: 404, body: { message: "Candidate not found" } }),
+        });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await fillRegistrationSix(user);
+        await user.click(screen.getByRole("button", { name: "Register candidate" }));
+        expect(await screen.findByRole("status")).toHaveTextContent("Candidate N0000002 was registered.");
+        expect(screen.getByRole("heading", { name: "Add candidate", level: 1 })).toBeInTheDocument();
+        expect(screen.getByLabelText("Passport ID *")).toHaveValue("");
+        expect(screen.getByLabelText("Surname *")).toHaveValue("");
+        expect(screen.queryByRole("navigation", { name: "Deployment stages" })).not.toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual(["/api/admin/candidates"]);
+    });
+
+    test("REGISTRATION_DESK: an existing passport ID loads the candidate; Replace is offered but not Remove; saving stays on the form", async () => {
+        const doc = { documentId: "doc-p", originalFilename: "passport.pdf", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-01T00:00:00.000Z" };
+        const existing: CandidateDetails = { ...DETAILS, documents: { ...DETAILS.documents, PASSPORT: doc } };
+        const { calls } = signedInBackend({
+            "GET /auth/me": { status: 200, body: { user: DESK } },
+            "GET /api/admin/candidates/N0000002": { status: 200, body: existing },
+            "PUT /api/admin/candidates/N0000002": { status: 200, body: existing },
+        });
+        renderApp("/candidates/new");
+        const user = userEvent.setup();
+        await user.type(await screen.findByLabelText("Passport ID *"), "N0000002");
+        await user.tab();
+        expect(await screen.findByText("Existing candidate found — details loaded.")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Replace" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "Save changes" }));
+        expect(await screen.findByRole("status")).toHaveTextContent("The details of N0000002 were saved.");
+        expect(screen.queryByRole("navigation", { name: "Deployment stages" })).not.toBeInTheDocument();
+        expect(calls.filter((c) => c.method !== "GET").map((c) => `${c.method} ${c.path}`)).toEqual(["PUT /api/admin/candidates/N0000002"]);
     });
 
     test("a file that failed at registration is reported until it's uploaded; the upload says Saved; form edits still save to the same records", async () => {
@@ -2436,74 +2442,54 @@ describe("Candidate Document Submission: Police Slip", () => {
         expect(within(row!).getByRole("button", { name: "Replace" })).toBeInTheDocument();
     });
 
-    test("VIEWER cannot upload a Police slip", async () => {
-        signedInBackend({
-            "GET /auth/me": { status: 200, body: { user: VIEWER } },
-            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS }
-        });
+    test("VIEWER can't open the candidate, so can't upload a Police slip", async () => {
+        const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates/N0000002?stage=DOCUMENT_SUBMISSION");
-        await screen.findByRole("heading", { name: "Document submission" });
-        const row = screen.getByText("Police slip").closest("div.border") as HTMLElement;
-        expect(within(row!).getByRole("button", { name: "Upload" })).toBeDisabled();
+        await expectNoCandidateAccess(calls);
     });
 });
 
-describe("REGISTRATION_DESK: the whole Candidates area", () => {
+describe("REGISTRATION_DESK: the registration workflow, Need Attention read only", () => {
     const asDesk = (routes: Record<string, { status: number; body?: unknown }> = {}) =>
         signedInBackend({ "GET /auth/me": { status: 200, body: { user: DESK } }, "GET /api/admin/candidates": { status: 200, body: LIST }, ...routes });
     const nav = () => within(screen.getByRole("navigation", { name: "Main navigation" }));
 
-    test("sees Candidates and Need Attention in the sidebar and nothing ADMIN-only; no separate registration link; no Review Queue bell", async () => {
+    test("sees Add Candidate and Need Attention in the sidebar; lands on Add Candidate; no bell", async () => {
         const { calls } = asDesk();
-        renderApp("/candidates");
-        await screen.findByRole("table", { name: "Candidates" });
-        expect(nav().getAllByRole("link").map((l) => l.textContent)).toEqual(["Candidates", "Need Attention"]);
-        for (const name of ["Invite User", "Change Roles", "Audit Logs", "Settings", "Review Queue", "Overview"]) {
+        renderApp("/");
+        expect(await screen.findByRole("button", { name: "Register candidate" })).toBeEnabled();
+        expect(nav().getAllByRole("link").map((l) => l.textContent)).toEqual(["Add Candidate", "Need Attention"]);
+        expect(nav().getByRole("link", { name: "Add Candidate" })).toHaveAttribute("href", "/candidates/new");
+        for (const name of ["Candidates", "Invite User", "Change Roles", "Audit Logs", "Settings", "Review Queue", "Overview"]) {
             expect(nav().queryByRole("link", { name })).toBeNull();
         }
-        // The sidebar has no separate registration entry (the header quick access is checked below).
-        expect(nav().queryByRole("link", { name: /register candidate|new candidate/i })).toBeNull();
         expect(screen.queryByRole("button", { name: /notification/i })).toBeNull();
         expect(calls.some((c) => c.path.startsWith("/api/admin/review"))).toBe(false);
     });
 
-    test("registers from the Candidates page: Add candidate opens the registration form", async () => {
+    test("the Candidates list is not theirs: blocked by URL, with no request for it", async () => {
+        const { calls } = asDesk();
+        renderApp("/candidates");
+        expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
+        expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(false);
+    });
+
+    test("registers from Add Candidate: the registration form", async () => {
         asDesk();
         renderApp("/candidates");
-        const add = await screen.findByRole("link", { name: "Add candidate" });
-        expect(add).toHaveAttribute("href", "/candidates/new");
-        await userEvent.setup().click(add);
+        await userEvent.setup().click(await screen.findByRole("link", { name: "Add Candidate" }));
         expect(await screen.findByRole("button", { name: "Register candidate" })).toBeEnabled();
         expect(screen.getByLabelText("Passport ID *")).toBeEnabled();
     });
 
-    test("can edit details, upload and remove documents and save stages", async () => {
-        const withNic: CandidateDetails = {
-            ...DETAILS,
-            documents: { ...DETAILS.documents, NIC: { documentId: "doc-n", originalFilename: "nic.pdf", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-01T00:00:00.000Z" } },
-        };
-        asDesk({ "GET /api/admin/candidates/N0000002": { status: 200, body: withNic } });
-        renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
-        expect(await screen.findByLabelText("Surname *")).toBeEnabled();
-        expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
-        for (const upload of screen.getAllByRole("button", { name: /Upload|Replace/ })) expect(upload).toBeEnabled();
-
-        const user = userEvent.setup();
-        await user.click(within(screen.getByRole("navigation", { name: "Deployment stages" })).getByRole("button", { name: /^7. Visa approval/ }));
-        expect(await screen.findByRole("checkbox", { name: "Stage completed" })).toBeEnabled();
-        expect(screen.getByLabelText("Notes")).toBeEnabled();
-    });
-
-    test("can read and add calls", async () => {
-        asDesk({
-            "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
-            "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: { items: [] } },
-        });
-        renderApp("/candidates/N0000002");
-        await userEvent.setup().click(await screen.findByRole("button", { name: "Call log" }));
-        const dialog = await screen.findByRole("dialog", { name: "Call Logs" });
-        expect(await within(dialog).findByLabelText("What the candidate said *")).toBeEnabled();
-        expect(within(dialog).getByRole("button", { name: "Add call" })).toBeInTheDocument();
+    test("the candidate's page and its call log are not theirs: blocked by URL, nothing requested", async () => {
+        for (const path of ["/candidates/N0000002?stage=CANDIDATE_DETAILS", "/candidates/N0000002"]) {
+            const { calls } = asDesk({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+            const { unmount } = renderApp(path);
+            expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
+            expect(calls.some((c) => /\/api\/admin\/(candidates|follow-ups)/.test(c.path)), path).toBe(false);
+            unmount();
+        }
     });
 });
 
@@ -2721,7 +2707,7 @@ describe("Visa submission document", () => {
             documents: { ...DETAILS.documents, VISA_SUBMISSION: { documentId: "doc-visa", originalFilename: "N0000002 - VISA_SUBMISSION.PDF", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-09T00:00:00.000Z" } },
         };
         const { calls } = signedInBackend({
-            "GET /auth/me": { status: 200, body: { user: DESK } },
+            "GET /auth/me": { status: 200, body: { user: userWithRole("TEAM_LEAD") } },
             "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
             ...directUploadRoutes("N0000002", uploaded),
         });
@@ -2740,11 +2726,9 @@ describe("Visa submission document", () => {
         expect((screen.getByRole("checkbox", { name: "Stage completed" }) as HTMLInputElement).checked).toBe(completedBefore);
     });
 
-    test("read-only for a user without candidate permissions", async () => {
-        signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } }, "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
+    test("a user without candidate permissions can't open the candidate's Visa submission", async () => {
+        const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates/N0000002?stage=VISA_SUBMISSION");
-        await screen.findByRole("heading", { name: "Visa submission" });
-        const row = screen.getByText("Visa submission document").closest("div.rounded-xl") as HTMLElement;
-        expect(within(row).getByRole("button", { name: "Upload" })).toBeDisabled();
+        await expectNoCandidateAccess(calls);
     });
 });

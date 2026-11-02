@@ -1,10 +1,10 @@
 # Roles and Permissions
 
-What each staff role in the Emlynk admin dashboard can and cannot do. Checked against the code on `dev` (2026-11-01):
+What each staff role in the Emlynk admin dashboard can and cannot do. Checked against the code on `dev` (2026-11-02):
 - route guards: `src/routes/admin.js`, `users.js`, `sheetSyncSettings.js`, `candidateImport.js`
 - user-management rules: `src/middleware/requireRole.js`, `src/services/userAccountService.js`
 - candidate scope: `src/services/candidateAccess.js`
-- screens: `admin/src/auth/roles.ts`, `admin/src/layout/navigation.ts`
+- screens: `admin/src/auth/roles.ts` (the shared permission mapping), `admin/src/layout/navigation.ts` (sidebar), `admin/src/App.tsx` (page guards)
 
 **How it is enforced.** A user's role is read from the database (`public."user".role`) on **every request**, never from the sign-in token. A change applies to the user's next click. The server refuses anything outside the role with **403**. Hiding menu items and buttons in the dashboard is only a convenience, not the protection. An account must also be **ACTIVE** and hold a **supported role**: INVITED and INACTIVE accounts, and accounts still holding the retired MANAGER role, can't use the dashboard at all.
 
@@ -22,8 +22,8 @@ OWNER  >  ADMIN  >  TEAM_LEAD  >  ANALYST / REGISTRATION_DESK / JOB_HANDLER
 | **ADMIN** | Runs the system and the operation: all candidate, document, review, police, job and allocation work (verification and approvals included), Settings, Audit Logs, Google Sheet Sync, and managing every user below ADMIN. |
 | **TEAM_LEAD** | Exactly seven areas: Candidates (**every** candidate), Need Attention, Work Allocation, Jobs, Agents, Clients and the standard Daily Report. Every ADMIN-only action inside them stays ADMIN only; no Settings, user management, Audit Logs, dashboards or review queue. |
 | **ANALYST** | Does the candidate work for **the candidates allocated to them**: review, documents, stages, call logs. |
-| **REGISTRATION_DESK** | Registers candidates and works on candidate records (details, stages, documents, call logs); nothing outside the Candidates area. |
-| **JOB_HANDLER** | Manages Jobs, Agents and Clients; can **read** candidates (to staff jobs) but never changes a candidate record. |
+| **REGISTRATION_DESK** | The **candidate registration workflow** (Add Candidate): register a candidate, or load an existing one by passport ID and save their registration details and documents; and **views** Need Attention without acting on it. Nothing else. |
+| **JOB_HANDLER** | Manages Jobs, Agents and Clients; **views** candidates and their workflow (the list and the candidate's page) but never changes a candidate record. |
 
 **The hierarchy is about who manages whom, not about inherited permissions.** OWNER inherits every ADMIN permission. **TEAM_LEAD inherits nothing from ADMIN:** it has an explicit operational permission set (section 3), and a route admits TEAM_LEAD only where its tier names TEAM_LEAD. TEAM_LEAD is above the operational roles because it allocates their work and supervises it, and because an ADMIN may give the TEAM_LEAD role; it manages no user account itself.
 
@@ -73,27 +73,32 @@ The **MANAGER** role was retired on 2026-10-30; ADMIN holds everything it could 
 
 | Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Candidate list and candidate page | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ✅ *Read* |
+| Candidates **list** (browse, search) | ✅ | ✅ | ✅ | ✅ *Own* | ❌ | ✅ *Read* |
+| Candidate page (the workflow: stages, documents, call logs, additional details, submitted form) | ✅ | ✅ | ✅ | ✅ *Own* | ❌ | ✅ *Read* |
+| Registration lookup by passport ID (Add Candidate) | ✅ | ✅ | ✅ | ✅ *Own* | ✅³ | ✅ *Read* |
 | **Register a new candidate** | ✅ | ✅ | ✅ | ❌² | ✅ | ❌ |
-| Edit candidate details, additional details | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
-| Update stages (Test details … Finalizing Job) | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
-| Upload and remove candidate documents | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
-| Add call logs | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ (reads them) |
+| Edit candidate details | ✅ | ✅ | ✅ | ✅ *Own* | ✅³ | ❌ |
+| Edit additional details | ✅ | ✅ | ✅ | ✅ *Own* | ❌ | ❌ |
+| Update stages (Test details … Finalizing Job) | ✅ | ✅ | ✅ | ✅ *Own* | ❌ (Candidate Details note only³) | ❌ |
+| Upload candidate documents | ✅ | ✅ | ✅ | ✅ *Own* | Passport, NIC, Skill video only³ | ❌ |
+| Remove candidate documents | ✅ | ✅ | ✅ | ✅ *Own* | ❌ | ❌ |
+| Add call logs | ✅ | ✅ | ✅ | ✅ *Own* | ❌ | ❌ (reads them) |
 | **Verify** a candidate's details / documents | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Share / revoke a candidate's Candidate Form link | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
-| View a submitted Candidate Form | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ✅ *Read* |
+| Share / revoke a candidate's Candidate Form link | ✅ | ✅ | ✅ | ✅ *Own* | ❌ | ❌ |
+| View a submitted Candidate Form | ✅ | ✅ | ✅ | ✅ *Own* | ❌ | ✅ *Read* |
 | **Confirm / reject submitted form changes** into the record | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Assign to Job** from the candidate's page | ✅ | ✅ | ❌ (assigns from the Job page) | ❌ | ❌ | ❌ (assigns from the Job page) |
 | Bulk candidate import (Settings → Google Sheet Sync → **Upload**) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ² A new candidate is unallocated, and an Analyst only works on candidates allocated to them.
+³ Only inside the Add Candidate form: entering an existing passport ID loads that candidate into the form, whose details, Candidate Details note and registration documents (Passport, NIC, Skill video: Upload / Replace, never Remove) can be saved. After saving, the Registration Desk stays on Add Candidate (the form is cleared); it never opens the candidate's page. The server enforces the same limits (`REGISTRATION_WORKFLOW` in `src/routes/admin.js`).
 
 ### Need Attention (call-log follow-ups)
 
 | Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|
-| See Need Attention | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
-| Flag a call for follow-up, mark complete | ✅ | ✅ | ✅ | ✅ *Own* | ✅ | ❌ |
+| See Need Attention | ✅ | ✅ | ✅ | ✅ *Own* | ✅ *Read* | ❌ |
+| Flag a call for follow-up (also "Need Attention" when adding a call), mark complete | ✅ | ✅ | ✅ | ✅ *Own* | ❌ | ❌ |
 | **Delete** a follow-up | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ### Work allocation
@@ -109,8 +114,9 @@ Work is only ever allocated to **ACTIVE ANALYST** accounts (the server refuses a
 
 | Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Jobs list and job details | ✅ | ✅ | ✅ | ✅ *Read*³ | ❌ | ✅ |
+| Jobs list and job details (with the job's candidates: name, passport ID, NIC, Status, assigned date) | ✅ | ✅ | ✅ | ✅ *Read*⁶ | ❌ | ✅ |
 | Create / edit a job | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
+| Job candidate picker (New job, Add candidates: test-PASS candidates; name, passport ID, NIC, Status only) | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Add / remove candidates on a job | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Complete / cancel a job | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Add a **new** Job Type (from the New Job dialog) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
@@ -119,7 +125,17 @@ Work is only ever allocated to **ACTIVE ANALYST** accounts (the server refuses a
 | Agents: list, create, edit, activate/deactivate | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Client Management: list, create, edit, change agent, activate/deactivate | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 
-³ An Analyst sees only the jobs that hold their own candidates.
+⁶ An Analyst sees only the jobs that hold their own candidates, and only those candidates on them.
+
+### Notification bell (header)
+
+| Capability | OWNER | ADMIN | TEAM LEAD | ANALYST | REG. DESK | JOB HANDLER |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Bell shown | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Source | Review Queue | Review Queue | **Open Need Attention follow-ups** | Review Queue (*Own* + unlinked) | — | — |
+| Where an item leads | the review item | the review item | Need Attention | the review item | — | — |
+
+The bell only ever reads data the role can already open (`GET /review` or `GET /follow-ups?status=OPEN`) and only links to a page it can open (`admin/src/auth/roles.ts` `notificationSource`). TEAM_LEAD gets no Review Queue access for it: `GET /review` stays 403 for TEAM_LEAD. No role's bell carries admin, security, Settings, user-management or integration alerts. Read/unread state is per user in the browser (`localStorage`).
 
 ### Settings and Google Sheet Sync
 
@@ -206,8 +222,8 @@ A requested role the ADMIN may not give is refused (403 `OWNER_REQUIRED` / `OWNE
 Exactly seven areas, nothing inferred from them. It is **not** "ADMIN minus something": a TEAM_LEAD gets only what is listed here, and every action that is ADMIN only inside these areas stays ADMIN only.
 
 **Can:**
-- **Candidates**, on every candidate (not limited to an allocation): list, open, register, edit details and additional details, update stages, upload and remove documents, add call logs, share and revoke the candidate's Candidate Form link, view a submitted form. (The same Candidates-area actions REGISTRATION_DESK has.)
-- **Need Attention:** see every follow-up, flag a call, mark a follow-up complete.
+- **Candidates**, on every candidate (not limited to an allocation): list, open, register, edit details and additional details, update stages, upload and remove documents, add call logs, share and revoke the candidate's Candidate Form link, view a submitted form.
+- **Need Attention:** see every follow-up, flag a call, mark a follow-up complete. The header bell lists the open follow-ups and leads to Need Attention (it never reads the Review Queue).
 - **Work Allocation:** view unallocated candidates and Analysts; assign, reassign, unassign; select one, several or all; equal (even) distribution. Work goes to ACTIVE Analysts only.
 - **Jobs:** list and view (processing and completed), create and edit, add and remove candidates on the Job's page, complete and cancel (the Job Handler's job actions).
 - **Agents** and **Clients** (Client Management): list, view, create, edit, link, activate and deactivate.
@@ -245,27 +261,32 @@ Exactly seven areas, nothing inferred from them. It is **not** "ADMIN minus some
 - Daily Report *Summary by Roles*, Audit Logs, Settings, user management.
 
 ### REGISTRATION_DESK
-**Can, on every candidate:**
-- Register new candidates.
-- Edit details and additional details, update stages, upload and remove documents.
-- Add call logs, share and revoke Candidate Form links, view submitted forms.
-- Flag and complete follow-ups in Need Attention.
+Sidebar: **Add Candidate** and **Need Attention**. Lands on Add Candidate. No notification bell.
+
+**Can (the candidate registration workflow, and Need Attention read only):**
+- Register new candidates, with their Passport, NIC and Skill video.
+- Enter a passport ID that already exists: that candidate loads into the same form, and its registration details, Candidate Details note and Passport / NIC / Skill video (Upload or Replace) can be saved.
+- After registering or saving, it stays on Add Candidate with a confirmation, and the form is cleared for the next candidate.
+- **View** Need Attention (Open and Completed) for every candidate. A candidate's name there is not a link (it opens no candidate page).
 
 **Cannot:**
-- Anything outside the Candidates area: Overview, Documents, Review Queue, Police Workflow, Missing Documents, Daily Report.
-- Verify candidates, confirm form changes, delete follow-ups.
-- Work Allocation, Jobs, Agents, Clients.
-- Audit Logs, Settings, user management.
+- Open the Candidates list or any candidate's page.
+- Other stages, additional details, other documents, removing a document, call logs, Candidate Form links or submitted forms.
+- Act on Need Attention: flag a call, mark a follow-up complete, or delete one.
+- Anything else: Overview, Documents, Review Queue, Police Workflow, Missing Documents, Daily Report, Work Allocation, Jobs, Agents, Clients, Audit Logs, Settings, user management.
+- Verify candidates, confirm form changes.
 
 ### JOB_HANDLER
+Sidebar: **Candidates**, **Jobs**, **Agents**, **Client Management**. Lands on Jobs. No notification bell.
+
 **Can:**
-- Jobs: list, view, create, edit, add and remove candidates, complete and cancel.
+- Jobs: list, view, create, edit, add and remove candidates, complete and cancel. The job pickers use the job candidate picker (`GET /job-candidate-options`: candidates who passed the test, with name, passport ID, NIC and Status).
+- **View** candidates and their workflow, read only: the Candidates list, the candidate's page (stages, documents, call logs, additional details, a submitted form), opened from the list or a job's candidates.
 - Agents and Client Management, fully.
-- **Read** candidates (the list, candidate pages, call logs, a submitted form), to staff jobs.
 
 **Cannot:**
-- Change any candidate record (no edits, stages, documents, call logs, form links).
-- Register candidates, verify them, or confirm form changes.
+- Change any candidate record: no edits, stages, uploads or removals, call logs, Need Attention flags or Candidate Form links (every candidate write route is 403; the page shows no change control).
+- Register, verify, or confirm form changes.
 - Need Attention, Review Queue, Overview, Documents, Police Workflow, Daily Report, Work Allocation.
 - Add a new Job Type, manage Job Types, or share job-group form links.
 - Audit Logs, Settings, user management.
@@ -280,7 +301,7 @@ Exactly seven areas, nothing inferred from them. It is **not** "ADMIN minus some
 | **TEAM_LEAD vs ADMIN** | Verification; confirming or rejecting form values; deleting follow-ups; job-group form links; Assign to Job from the candidate's page; *Summary by Roles*; Settings (every tab, Google Sheet Sync and Upload included); user management; Audit Logs; Job Types (Settings, and adding one from the New Job dialog); the dashboard, documents, review queue, police workflow and monthly overview; police-date corrections. |
 | **ANALYST vs TEAM_LEAD** | Work outside their allocated candidates; register candidates; Work Allocation; job writes; Agents and Clients. (The ANALYST, unlike the TEAM_LEAD, has the dashboard, documents, review queue and police workflow.) |
 | **ANALYST vs ADMIN** | Work outside their allocated candidates; register candidates; verify; confirm form changes; correct police dates; delete follow-ups; Work Allocation; job writes; Agents and Clients; Summary by Roles; bulk import; job-group form links; adding job types; Settings; Audit Logs; user management. |
-| **REGISTRATION_DESK vs ADMIN** | Everything outside the Candidates area (dashboard, review, police, reports, jobs, agents, clients, allocation); verification; confirming form changes; deleting follow-ups; bulk import; Settings; Audit Logs; user management. |
+| **REGISTRATION_DESK vs ADMIN** | Everything outside the Add Candidate registration workflow and viewing Need Attention: the Candidates list, the candidate's page, other stages and documents, removing documents, call logs, Candidate Form links, any Need Attention action, dashboard, review, police, reports, jobs, agents, clients, allocation; verification; confirming form changes; bulk import; Settings; Audit Logs; user management. |
 | **JOB_HANDLER vs ADMIN** | Any candidate change (read only); review, police, dashboard, reports, Need Attention, allocation; verification; adding job types; job-group form links; bulk import; Settings; Audit Logs; user management. |
 
 ---
@@ -288,8 +309,9 @@ Exactly seven areas, nothing inferred from them. It is **not** "ADMIN minus some
 ## 5. Notes
 
 - **OWNER = ADMIN for access.** Every rule that names ADMIN admits OWNER too (`hasRole()`); OWNER only adds managing ADMIN accounts (and accounts holding a retired role).
-- **TEAM_LEAD inherits nothing.** `hasRole()` admits TEAM_LEAD only where a tier names it (`REPORT_READERS`, `CANDIDATE_STAFF`, `CANDIDATE_READERS`, `REGISTRATION_STAFF`, `ALLOCATION_MANAGERS`, `JOB_READERS`, `JOB_MANAGERS`, `MASTER_DATA_STAFF` in `src/routes/admin.js`). It is in no `ADMINS_ONLY` route and in no user-management, Settings, Sheet Sync or import route.
-- **Analyst scope follows Work Allocation on every request.** Reassigning a candidate moves access immediately. If an Analyst is deactivated or given another role, their allocations stay recorded until someone reassigns them. TEAM_LEAD, like ADMIN and REGISTRATION_DESK, sees every candidate.
+- **TEAM_LEAD inherits nothing.** `hasRole()` admits TEAM_LEAD only where a tier names it (`REPORT_READERS`, `CANDIDATE_STAFF`, `CANDIDATE_READERS`, `REGISTRATION_WORKFLOW`, `REGISTRATION_STAFF`, `ALLOCATION_MANAGERS`, `JOB_READERS`, `JOB_MANAGERS`, `MASTER_DATA_STAFF` in `src/routes/admin.js`). It is in no `ADMINS_ONLY` route and in no user-management, Settings, Sheet Sync or import route.
+- **The screens follow the same lists.** `admin/src/auth/roles.ts` holds the role lists; the sidebar (`navigation.ts`) and the page guards (`App.tsx` `AllowRoles`, an allow-list: a role not named is refused) use them, so a page hidden from a role also shows "Access Restricted" when opened by URL, and requests nothing.
+- **Analyst scope follows Work Allocation on every request.** Reassigning a candidate moves access immediately. If an Analyst is deactivated or given another role, their allocations stay recorded until someone reassigns them. The scope is applied in the database before search, filters, paging and totals, on the candidate page and every route under it, Need Attention, jobs and the reports, so another Analyst's or an unallocated candidate is never listed and reads as 404 by URL (`test/roleScopeRegression.test.js`). TEAM_LEAD, like ADMIN and JOB_HANDLER (read only), sees every candidate; REGISTRATION_DESK can look up any passport ID from Add Candidate.
 - **Error responses.**
   - 401: not signed in.
   - 403 `ACCOUNT_NOT_ACTIVE`: the account isn't ACTIVE.

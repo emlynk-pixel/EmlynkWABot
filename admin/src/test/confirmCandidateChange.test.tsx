@@ -173,8 +173,8 @@ describe("who can confirm (CONFIRM-013 / 014)", () => {
         }
     });
 
-    test("an Analyst and the Registration Desk see what was submitted but have no Confirm button", async () => {
-        for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+    test("an Analyst and a Team Lead see what was submitted but have no Confirm button", async () => {
+        for (const role of ["ANALYST", "TEAM_LEAD"]) {
             backend(role);
             const view = open();
             expect(await hint("basic.birthDate")).toHaveTextContent("Candidate submitted: 06 May 2003");
@@ -229,8 +229,8 @@ describe("the full submission panel is gone; only inline hints remain (CLEAN-001
         expect(writes[0].body).toEqual({ field: "basic.birthDate", expectedCurrentValue: "2003-06-05", expectedSubmittedValue: "2003-05-06" });
     });
 
-    test("CLEAN-011 the roles are unchanged: Admin and Owner confirm; Analyst and Registration Desk see the hint only", async () => {
-        for (const [role, confirms] of [["ADMIN", true], ["OWNER", true], ["ANALYST", false], ["REGISTRATION_DESK", false]] as const) {
+    test("CLEAN-011 the roles are unchanged: Admin and Owner confirm; Analyst and Team Lead see the hint only", async () => {
+        for (const [role, confirms] of [["ADMIN", true], ["OWNER", true], ["ANALYST", false], ["TEAM_LEAD", false]] as const) {
             backend(role, [ADDRESS]);
             const view = open();
             const address = await hint("contact.address");

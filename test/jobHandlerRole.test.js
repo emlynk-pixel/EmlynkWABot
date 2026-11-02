@@ -231,6 +231,8 @@ describe("Candidates: read only (JOB-HANDLER-CANDIDATE-001 to 007)", () => {
     test("CANDIDATE-001 / 002: lists, searches and opens candidates (and what the details page reads)", async () => {
         const list = ok(await api(JH, "GET", "/candidates?search=nimal&testResult=PASS&available=true"));
         assert.deepEqual(list.items.map((c) => c.passportId), [PID]);
+        // The job candidate picker: the same candidate, with only what the picker shows.
+        assert.deepEqual(Object.keys(ok(await api(JH, "GET", "/job-candidate-options?search=nimal")).items[0]).sort(), ["name", "nic", "passportId", "uniqueId", "workflowStatus"]);
         assert.equal(ok(await api(JH, "GET", `/candidates/${PID}`)).candidate.passportId, PID);
         for (const path of ["call-logs", "additional-details", "form-submission"]) ok(await api(JH, "GET", `/candidates/${PID}/${path}`));
         ok(await api(JH, "GET", "/job-type-choices"));
@@ -283,7 +285,10 @@ describe("restricted areas (JOB-HANDLER-SETTINGS-001, JOB-HANDLER-ADMIN-001)", (
 // are ADMIN only). Each role must get exactly this access; JOB_HANDLER gets its own column.
 const T = {
     ALL_ACTIVE: ["ADMIN", "ANALYST"],
-    CANDIDATE_STAFF: ["ADMIN", "ANALYST", "REGISTRATION_DESK"],
+    // The Candidates area: not REGISTRATION_DESK (the registration workflow only).
+    CANDIDATE_STAFF: ["ADMIN", "ANALYST"],
+    // The routes the Add Candidate form uses: REGISTRATION_DESK too (an empty body is a 400).
+    REGISTRATION_WORKFLOW: ["ADMIN", "ANALYST", "REGISTRATION_DESK"],
     ANALYSTS_UP: ["ADMIN", "ANALYST"],
     ADMINS_ONLY: ["ADMIN"],
     REGISTRATION_STAFF: ["ADMIN", "REGISTRATION_DESK"],
@@ -303,19 +308,19 @@ const ROUTES = [
     ["POST", `/review/${REVIEW}/document-type`, T.ANALYSTS_UP, false], ["POST", `/review/${REVIEW}/assign-client`, T.ANALYSTS_UP, false],
     ["DELETE", `/temporary-documents/${NO_ID}`, T.ANALYSTS_UP, false], ["POST", `/documents/${NO_ID}/police-date`, T.ADMINS_ONLY, false],
     ["GET", "/candidates", T.CANDIDATE_STAFF, true], ["POST", "/candidates", T.REGISTRATION_STAFF, false],
-    ["GET", `/candidates/${P}`, T.CANDIDATE_STAFF, true], ["PUT", `/candidates/${P}`, T.CANDIDATE_STAFF, false],
+    ["GET", `/candidates/${P}`, T.REGISTRATION_WORKFLOW, true], ["PUT", `/candidates/${P}`, T.REGISTRATION_WORKFLOW, false],
     ["PUT", `/candidates/${P}/stages/IVS_INTERVIEW`, T.CANDIDATE_STAFF, false], ["POST", `/candidates/${P}/verification`, T.ADMINS_ONLY, false],
-    ["POST", `/candidates/${P}/documents/upload-target`, T.CANDIDATE_STAFF, false], ["POST", `/candidates/${P}/documents/finalize`, T.CANDIDATE_STAFF, false],
+    ["POST", `/candidates/${P}/documents/upload-target`, T.REGISTRATION_WORKFLOW, false], ["POST", `/candidates/${P}/documents/finalize`, T.REGISTRATION_WORKFLOW, false],
     ["POST", `/candidates/${P}/documents/${NO_ID}/remove`, T.CANDIDATE_STAFF, false], ["GET", `/candidates/${P}/call-logs`, T.CANDIDATE_STAFF, true],
     ["POST", `/candidates/${P}/call-logs`, T.CANDIDATE_STAFF, false], ["POST", `/candidates/${P}/call-logs/${NO_ID}/follow-up`, T.CANDIDATE_STAFF, false],
-    ["GET", "/follow-ups", T.CANDIDATE_STAFF, false], ["POST", `/follow-ups/${NO_ID}/complete`, T.CANDIDATE_STAFF, false], ["DELETE", `/follow-ups/${NO_ID}`, T.ADMINS_ONLY, false],
+    ["GET", "/follow-ups", T.REGISTRATION_WORKFLOW, false], ["POST", `/follow-ups/${NO_ID}/complete`, T.CANDIDATE_STAFF, false], ["DELETE", `/follow-ups/${NO_ID}`, T.ADMINS_ONLY, false],
     ["GET", `/candidates/${P}/additional-details`, T.CANDIDATE_STAFF, true], ["PUT", `/candidates/${P}/additional-details`, T.CANDIDATE_STAFF, false],
     ["GET", `/candidates/${P}/form-submission`, T.CANDIDATE_STAFF, true], ["GET", `/candidates/${P}/form-share`, T.CANDIDATE_STAFF, false],
     ["POST", `/candidates/${P}/form-share`, T.CANDIDATE_STAFF, false], ["POST", `/candidates/${P}/form-share/revoke`, T.CANDIDATE_STAFF, false],
     ["GET", "/work-allocation/candidates?status=NOPE", T.ADMINS_ONLY, false], ["GET", "/work-allocation/analysts", T.ADMINS_ONLY, false],
     ["POST", "/work-allocation/assign", T.ADMINS_ONLY, false], ["POST", "/work-allocation/auto-allocate", T.ADMINS_ONLY, false],
     ["POST", "/work-allocation/allocate", T.ADMINS_ONLY, false], ["POST", "/work-allocation/unassign", T.ADMINS_ONLY, false],
-    ["GET", "/job-options", T.ADMINS_ONLY, true], ["GET", "/job-type-choices", T.CANDIDATE_STAFF, true], ["GET", "/job-types", T.ADMINS_ONLY, false],
+    ["GET", "/job-options", T.ADMINS_ONLY, true], ["GET", "/job-candidate-options?pageSize=0", T.ADMINS_ONLY, true], ["GET", "/job-type-choices", T.REGISTRATION_WORKFLOW, true], ["GET", "/job-types", T.ADMINS_ONLY, false],
     ["PATCH", `/job-types/${NO_ID}`, T.ADMINS_ONLY, false], ["POST", "/job-types", T.ADMINS_ONLY, false],
     ["GET", "/jobs?view=nope", T.ALL_ACTIVE, true], ["POST", "/jobs", T.ADMINS_ONLY, true], ["GET", `/jobs/${NO_ID}`, T.ALL_ACTIVE, true],
     ["PUT", `/jobs/${NO_ID}`, T.ADMINS_ONLY, true], ["POST", `/jobs/${NO_ID}/candidates`, T.ADMINS_ONLY, true],

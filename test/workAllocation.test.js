@@ -111,13 +111,15 @@ describe("the access rule (candidateAccess.js)", () => {
 });
 
 describe("RBAC: candidate lists", () => {
-    test("1, 4, 7, 30, 31. ADMIN, OWNER and REGISTRATION_DESK see every candidate; totals stay global", async () => {
+    test("1, 4, 7, 30, 31. ADMIN and OWNER see every candidate; totals stay global. REGISTRATION_DESK opens any candidate's page but has no list", async () => {
         await seedAllocations();
-        for (const who of [USERS.ADMIN, USERS.OWNER, USERS.DESK]) {
+        for (const who of [USERS.ADMIN, USERS.OWNER]) {
             const { ids, pagination } = await listIds(who);
             assert.equal(pagination.totalItems, TOTAL, who.role);
             assert.deepEqual(ids, NEWEST_FIRST);
         }
+        assert.equal((await api(USERS.DESK, "GET", "/candidates")).status, 403);
+        for (const id of NEWEST_FIRST) assert.equal((await api(USERS.DESK, "GET", `/candidates/${id}`)).status, 200, id);
     });
 
     test("10-12, 29. an ANALYST sees only their own candidates: not unallocated ones, not another Analyst's; totals are theirs", async () => {
@@ -142,12 +144,14 @@ describe("RBAC: candidate lists", () => {
 });
 
 describe("RBAC: editing", () => {
-    test("2, 5, 8. ADMIN, OWNER and REGISTRATION_DESK can edit any candidate, allocated or not", async () => {
+    test("2, 5, 8. ADMIN and OWNER can edit any candidate, allocated or not; REGISTRATION_DESK looks any one up but edits no stage beyond Candidate Details", async () => {
         await seedAllocations();
-        for (const [who, i] of [[USERS.ADMIN, 1], [USERS.OWNER, 4], [USERS.DESK, 20]]) {
+        for (const [who, i] of [[USERS.ADMIN, 1], [USERS.OWNER, 4]]) {
             assert.equal((await api(who, "PUT", `/candidates/${pid(i)}/stages/VISA_APPROVAL`, { completed: true })).status, 200, who.role);
             assert.equal((await api(who, "GET", `/candidates/${pid(i)}`)).status, 200, who.role);
         }
+        assert.equal((await api(USERS.DESK, "PUT", `/candidates/${pid(20)}/stages/VISA_APPROVAL`, { completed: true })).status, 403);
+        assert.equal((await api(USERS.DESK, "GET", `/candidates/${pid(20)}`)).status, 200, "the registration lookup");
     });
 
     test("13-14. an ANALYST edits their own candidate; another Analyst's or an unallocated one is 404, and nothing changes", async () => {
@@ -216,7 +220,8 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
         const groups = (who) => api(who, "GET", "/follow-ups").then(({ body }) => body.groups.map((g) => g.candidate.passportId).sort());
         assert.deepEqual(await groups(USERS.ANN), [pid(1)]);
         assert.deepEqual(await groups(USERS.ADMIN), [pid(1), pid(4), pid(20)]);
-        assert.deepEqual(await groups(USERS.DESK), [pid(1), pid(4), pid(20)]);
+        assert.deepEqual(await groups(USERS.DESK), [pid(1), pid(4), pid(20)], "the Registration Desk reads every follow-up");
+        assert.equal((await api(USERS.DESK, "POST", `/follow-ups/${followUps[4]}/complete`)).status, 403, "but completes none");
         assert.equal((await api(USERS.ANN, "POST", `/follow-ups/${followUps[4]}/complete`)).status, 404, "Ben's");
         assert.equal((await api(USERS.ANN, "POST", `/follow-ups/${followUps[20]}/complete`)).status, 404, "unallocated");
         assert.equal((await api(USERS.ANN, "POST", `/follow-ups/${followUps[1]}/complete`)).status, 200, "their own");

@@ -34,7 +34,7 @@ The first ADMIN is created on the server with `npm run user:create` (a Supabase 
 ### Header (every page)
 
 - **Breadcrumb** with the current section.
-- **Review Queue Notification Bell**: Displays an alert bell icon in the top header with a real-time badge count of unread Review Queue submissions. Clicking the bell opens a dropdown panel listing recent pending items with quick navigation to `/admin/review/:id` and a "Mark all as read" button. Read/unread tracking is persisted in `localStorage` per staff user (`emlynk.admin.readNotifications.<userId>`).
+- **Notification Bell**: an alert bell in the top header with a badge count of unread items, sourced per role from data the role can already open (`roles.ts` `notificationSource`): OWNER, ADMIN and ANALYST see the Review Queue submissions (each opening `/admin/review/:id`); TEAM_LEAD sees its open **Need Attention** follow-ups (each opening `/admin/follow-ups`; the Review Queue is never requested and stays 403 for it); REGISTRATION_DESK and JOB_HANDLER have no bell. The dropdown has a "Mark all as read" button. Read/unread tracking is persisted in `localStorage` per staff user (`emlynk.admin.readNotifications.<userId>`).
 - **Register Candidate** quick access (`/admin/candidates/new`): a button on every page, left of Sync, for the roles that can register candidates (ADMIN, TEAM_LEAD, REGISTRATION_DESK). It is the same registration form the Candidates page's *Add candidate* button opens; no other role sees it. On small screens it shows the icon only.
 - **Sync** reloads the data on the current page from the server. Your filters, search and page are kept. While it runs the button shows *Syncing…* and can't be pressed again; afterwards the header shows *Synced HH:MM:SS* or *Sync failed*. Sync only reloads the page's data. It does not talk to WhatsApp or any other system.
 - **Dark mode** toggle (moon / sun icon). The choice is remembered in this browser. Light mode is the default. See *Light and dark theme* below for how the colours work.
@@ -336,7 +336,7 @@ The Daily Report endpoints are architected for high concurrency and sub-second r
 
 The primary interface for managing candidate registrations and deployment workflows (`/admin/candidates`). In the dashboard sidebar, Candidates replaces the older Clients link.
 
-Who works here: ADMIN (and OWNER), TEAM_LEAD and REGISTRATION_DESK on every candidate; ANALYST on the candidates allocated to them; JOB_HANDLER read only. A TEAM_LEAD has the same Candidates-area actions as the Registration Desk (register, edit, stages, documents, call logs, the candidate's Share Form link) on every candidate. Verifying details or documents, confirming or rejecting submitted form values, the job-group form link and **Assign to Job** on the candidate's page stay ADMIN only; a TEAM_LEAD assigns candidates from the Job's own page.
+Who works here: ADMIN (and OWNER) and TEAM_LEAD on every candidate; ANALYST on the candidates allocated to them; JOB_HANDLER read only (the list and the candidate's page, no change control). REGISTRATION_DESK has only **Add Candidate** (its one sidebar entry): it registers there, or loads an existing passport ID and saves its registration details and Passport / NIC / Skill video; after saving it stays on the form (cleared) and never opens the candidate's page. A TEAM_LEAD has the same Candidates-area actions as the Registration Desk (register, edit, stages, documents, call logs, the candidate's Share Form link) on every candidate. Verifying details or documents, confirming or rejecting submitted form values, the job-group form link and **Assign to Job** on the candidate's page stay ADMIN only; a TEAM_LEAD assigns candidates from the Job's own page.
 
 - **Candidate Pool (`/admin/candidates`)**:
   - Lists candidates from `public.candidate` with server-side pagination.
@@ -381,7 +381,7 @@ Who works here: ADMIN (and OWNER), TEAM_LEAD and REGISTRATION_DESK on every cand
 
 ### Need Attention (`/admin/follow-ups`)
 
-Formerly *Priority Follow-Ups*. Calls flagged **Need attention** in a candidate's Call Log, so important follow-ups are not lost in a long history. In the sidebar after Candidates; visible to every role that uses call logs (ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK). A TEAM_LEAD sees every candidate's follow-ups; an Analyst only their own candidates'. Only the wording users read changed: the route, the API (`/api/admin/follow-ups`), the `call_log_follow_up` table and the audit actions keep their technical names.
+Formerly *Priority Follow-Ups*. Calls flagged **Need attention** in a candidate's Call Log, so important follow-ups are not lost in a long history. In the sidebar after Candidates; visible to ADMIN, TEAM_LEAD, ANALYST and REGISTRATION_DESK. A TEAM_LEAD sees every candidate's follow-ups; an Analyst only their own candidates'. REGISTRATION_DESK sees every follow-up **read only**: no Mark complete, no Delete, and the candidate's name is not a link (the server refuses its follow-up actions with 403). JOB_HANDLER has no Need Attention. Only the wording users read changed: the route, the API (`/api/admin/follow-ups`), the `call_log_follow_up` table and the audit actions keep their technical names.
 
 - **By candidate**: each candidate appears once as a compact card with name, passport ID, WhatsApp (or contact) number and the number of follow-ups. Their follow-ups are listed inside, newest first, each with the call's date and time, who called, the note (a **No Answer** call shows a No Answer badge instead), who flagged it and when. Candidates with the newest follow-up come first. The *Current documents* block that used to be on each card was removed (the API still sends `documentStatus`; nothing renders it here).
 - **Compact flag icon**: the follow-up's state is a small icon at the top right of each row, beside who called, like a call in Candidate History: a filled flag (*Needs attention*) while open, a muted check (*Follow-up completed*) once completed. It shows the state only; the large *Needs attention* text badge was removed.
@@ -848,7 +848,8 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/documents/:documentId/police-date` | ADMIN | Set or correct a police slip date `{ policeSubmittedDate, reason }` |
 | GET | `/clients` | ADMIN, ANALYST | Clients directory (`search`, `completion`, `missingType`, paging) — legacy candidate document view |
 | GET | `/clients/:passportId` | ADMIN, ANALYST | Client details — legacy candidate document profile |
-| GET | `/candidates` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Candidate list (search, filters, paging; Analysts see allocated only) |
+| GET | `/candidates` | ADMIN, TEAM_LEAD, ANALYST, JOB_HANDLER (read) | Candidate list (search, filters, paging; Analysts see allocated only) |
+| GET | `/job-candidate-options` | ADMIN, TEAM_LEAD, JOB_HANDLER | Job candidate picker: test-PASS candidates, `{ passportId, uniqueId, name, nic, workflowStatus }` only |
 | POST | `/candidates` | ADMIN, TEAM_LEAD, REGISTRATION_DESK | Candidate registration `{ passportId, nic, firstName, ... }` (not ANALYST: a new candidate is unallocated) |
 | GET | `/candidates/:passportId` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Candidate details and stage status (returns `jobAssignments: { current, history }`) |
 | PUT | `/candidates/:passportId` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Update candidate details |
@@ -857,8 +858,8 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | POST | `/candidates/:passportId/documents/finalize` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Finalize and verify candidate document upload |
 | POST | `/candidates/:passportId/documents/:documentId/remove` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Remove candidate document `{ reason }` |
 | GET | `/candidates/:passportId/call-logs` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Candidate call logs and candidate activity (Candidate History) |
-| POST | `/candidates/:passportId/call-logs` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Record call log `{ note, calledAt, needsAttention?, outcome? }` (`outcome: "NO_ANSWER"`: no note needed) |
-| POST | `/candidates/:passportId/call-logs/:callLogId/follow-up` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Mark a call for follow-up (201; 409 `FOLLOW_UP_EXISTS` if it already has an open one; 404 if the call isn't this candidate's) |
+| POST | `/candidates/:passportId/call-logs` | ADMIN, TEAM_LEAD, ANALYST | Record call log `{ note, calledAt, needsAttention?, outcome? }` (`outcome: "NO_ANSWER"`: no note needed) |
+| POST | `/candidates/:passportId/call-logs/:callLogId/follow-up` | ADMIN, TEAM_LEAD, ANALYST | Mark a call for follow-up (201; 409 `FOLLOW_UP_EXISTS` if it already has an open one; 404 if the call isn't this candidate's) |
 | GET | `/work-allocation/candidates?status&analystId&search&page` | ADMIN, TEAM_LEAD | Work Allocation list: Unallocated or Allocated candidates, 100 a page |
 | GET | `/work-allocation/analysts` | ADMIN, TEAM_LEAD | Active Analysts with their candidate counts |
 | POST | `/work-allocation/assign` | ADMIN, TEAM_LEAD | Manual assign / distribute / reassign `{ candidateIds, allocations: [{ analystId, count }], reassign? }` |
@@ -890,8 +891,8 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | PATCH | `/client-management/:clientId` | ADMIN, TEAM_LEAD, JOB_HANDLER | Update employer Client details (not Agent or status) |
 | PATCH | `/client-management/:clientId/agent` | ADMIN, TEAM_LEAD, JOB_HANDLER | Change responsible Agent `{ agentId }` (ACTIVE agent required; existing Jobs keep historical Agent) |
 | PATCH | `/client-management/:clientId/status` | ADMIN, TEAM_LEAD, JOB_HANDLER | Change status `{ status: "ACTIVE" \| "INACTIVE" }` (blocked if PROCESSING jobs exist) |
-| GET | `/follow-ups?status` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Need Attention follow-ups grouped by candidate (default `OPEN`; at most 500 follow-ups, newest first) |
-| POST | `/follow-ups/:followUpId/complete` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Complete a follow-up (409 `FOLLOW_UP_COMPLETED` if already completed); the row is kept |
+| GET | `/follow-ups?status` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK (read only) | Need Attention follow-ups grouped by candidate (default `OPEN`; at most 500 follow-ups, newest first) |
+| POST | `/follow-ups/:followUpId/complete` | ADMIN, TEAM_LEAD, ANALYST | Complete a follow-up (409 `FOLLOW_UP_COMPLETED` if already completed); the row is kept |
 | DELETE | `/follow-ups/:followUpId` | ADMIN | Delete the follow-up row only; the call log, candidate and documents stay |
 | GET | `/candidates/:passportId/additional-details` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Additional details `{ passportId, details, suggested, updatedDate }` |
 | PUT | `/candidates/:passportId/additional-details` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Save additional details (full replacement; audited) |
@@ -946,10 +947,12 @@ All application endpoints enforce server-side role validation via `requireRole` 
 | **Job Management** (`/jobs`, `/api/admin/jobs`) | Full | Full | Full (no Job Types, no job-group link) | Read-Only (Scoped to allocated candidates) | None (403) | Full |
 | **Work Allocation** (`/work-allocation`, `/api/admin/work-allocation/*`) | Full | Full | Full | None (403) | None (403) | None (403) |
 | **Candidate Registration** (`/candidates/new`, `POST /candidates`) | Yes | Yes | Yes | No (Unallocated by default) | Yes | No (403) |
-| **Candidate Deployment & Profile** (`/candidates/:passportId`) | Full | Full | Full, every candidate (no verification, no form confirm / reject, no Assign to Job here) | Scoped (Allocated candidates only) | Full | Read-Only (list, details) |
-| **Candidate Documents** (Upload & Removal) | Yes | Yes | Yes | Yes (Allocated candidates only) | Yes | No (403) |
+| **Candidates list** (`/candidates`, `GET /candidates`) | Full | Full | Full, every candidate | Scoped (Allocated candidates only) | None (403; Add Candidate only) | Read-Only |
+| **Candidate Deployment & Profile** (`/candidates/:passportId`) | Full | Full | Full, every candidate (no verification, no form confirm / reject, no Assign to Job here) | Scoped (Allocated candidates only) | None (403; registration details and documents inside Add Candidate only) | Read-Only |
+| **Candidate Documents** (Upload & Removal) | Yes | Yes | Yes | Yes (Allocated candidates only) | Upload / Replace of Passport, NIC, Skill video in Add Candidate only (no Removal) | No (403) |
 | **Verify details / documents; confirm or reject form values** | Yes | Yes | No (403) | No (403) | No (403) | No (403) |
-| **Call Logs & Need Attention** (`/follow-ups`) | Full (Delete open) | Full (Delete open) | Flag & Complete, every candidate (no Delete) | Scoped (Flag & Complete) | Full (Flag & Complete) | None (403) |
+| **Call Logs & Need Attention** (`/follow-ups`) | Full (Delete open) | Full (Delete open) | Flag & Complete, every candidate (no Delete) | Scoped (Flag & Complete) | Need Attention view only; no call logs | Reads call logs; no Need Attention (403) |
+| **Notification bell** | Review Queue | Review Queue | Need Attention (open follow-ups) | Review Queue (scoped) | None | None |
 | **Review Queue** (`/review`) | Full | Full | None (403) | Full | None (403) | None (403) |
 | **Overview, Documents, Missing Documents, Police Workflow, Monthly overview** | Yes | Yes | None (403) | Yes | None (403) | None (403) |
 | **Police Slip Date Correction** | Yes | Yes | No (403) | No (403) | No (403) | No (403) |

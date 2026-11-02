@@ -1,10 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError } from "../api/client";
-import { listCandidates, type CandidateListItem } from "../api/candidates";
-import { addCandidateToJob, cancelJob, completeJob, createJobType, getJob, getJobOptions, removeCandidateFromJob, updateJob, type JobDetails, type JobOptions } from "../api/jobs";
+import { addCandidateToJob, cancelJob, completeJob, createJobType, getJob, getJobOptions, listJobCandidateOptions, removeCandidateFromJob, updateJob, type JobCandidateOption, type JobDetails, type JobOptions } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
-import { canCreateJobTypes, canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
+import { canCreateJobTypes, canManageJobs, canViewCandidates, canViewJobs, useAuth } from "../auth/AuthProvider";
 import { ActionDialog, ConfirmDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
 import { JobTypesMultiSelect } from "./JobsPage";
 import { useBreadcrumbLabel } from "../components/Breadcrumbs";
@@ -54,6 +53,9 @@ function JobDetailsView() {
     const { user, token } = useAuth();
     const { jobId = "" } = useParams();
     const canManage = canManageJobs(user);
+    // A candidate's name links to their page only for a role that can open it: a JOB_HANDLER
+    // sees the job's own read-only rows (name, passport ID, NIC, Status, assigned date).
+    const openCandidates = canViewCandidates(user);
     const resource = useAdminResource(`job:${jobId}`, (t, signal) => getJob(t, jobId, signal));
     const [updated, setUpdated] = useState<JobDetails | null>(null);
     const [dialog, setDialog] = useState<Dialog>(null);
@@ -162,7 +164,9 @@ function JobDetailsView() {
                                     <tbody>
                                         {job.candidates.map((candidate) => (
                                             <tr key={candidate.passportId} className={tableRow}>
-                                                <td className={tableCell}><Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="font-medium text-primary hover:underline">{candidate.name ?? candidate.passportId}</Link></td>
+                                                <td className={tableCell}>{openCandidates
+                                                    ? <Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="font-medium text-primary hover:underline">{candidate.name ?? candidate.passportId}</Link>
+                                                    : <span className="font-medium text-ink">{candidate.name ?? candidate.passportId}</span>}</td>
                                                 <td className={tableCell}>
                                                     <span className="block">{candidate.passportId}</span>
                                                     {candidate.nic && <span className="block text-label-sm text-ink-muted">NIC: {candidate.nic}</span>}
@@ -325,7 +329,7 @@ function CancelDialog({ token, job, onDone, onClose }: { token: string; job: Job
 // next to the search.
 function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string; job: JobDetails; onChanged: (job: JobDetails) => void; onClose: () => void }) {
     const [text, setText] = useState("");
-    const [results, setResults] = useState<CandidateListItem[] | null>(null);
+    const [results, setResults] = useState<JobCandidateOption[] | null>(null);
     const [added, setAdded] = useState<Set<string>>(() => new Set(job.candidates.map((c) => c.passportId)));
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -339,14 +343,14 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
         setError(null);
         setNotice(null);
         try {
-            setResults((await listCandidates(token, { page: 1, pageSize: 100, search: term, testResult: "PASS" })).items.slice(0, 20));
+            setResults((await listJobCandidateOptions(token, { page: 1, pageSize: 20, search: term })).items);
         } catch (caught) {
             setError(message(caught));
         } finally {
             setBusy(false);
         }
     };
-    const add = async (candidate: CandidateListItem) => {
+    const add = async (candidate: JobCandidateOption) => {
         setBusy(true);
         setError(null);
         setNotice(null);

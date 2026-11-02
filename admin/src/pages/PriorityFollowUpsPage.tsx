@@ -5,7 +5,7 @@ import { completeFollowUp, deleteFollowUp, listFollowUps, type FollowUpGroup, ty
 import type { FollowUpStatus } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
-import { canDeleteFollowUps } from "../auth/roles";
+import { canDeleteFollowUps, canViewCandidates, canWorkFollowUps } from "../auth/roles";
 import { ActionDialog, DialogError, dangerSolidButton, secondaryButton } from "../components/Dialog";
 import { formatDate, formatDateTime, formatNumber, formatTime } from "../components/format";
 import { NoAnswerBadge } from "../components/candidate/NoAnswerBadge";
@@ -15,8 +15,8 @@ import { Card, EmptyState, ErrorState, LoadingState } from "../components/States
 // Need Attention (internally still the Priority Follow-Ups feature: same
 // route, API and audit names): call logs marked as needing attention, one
 // card per candidate with their follow-ups (newest first). Open by default;
-// Completed shows the history. Every Candidates role can mark one complete;
-// ADMIN can delete one. Completing or deleting a follow-up never
+// Completed shows the history. ADMIN, TEAM_LEAD and ANALYST can mark one
+// complete (the Registration Desk sees the page read only); ADMIN can delete one. Completing or deleting a follow-up never
 // changes the call log: it stays in the candidate's Candidate History.
 
 // Row actions, a size smaller than the dialog buttons.
@@ -35,6 +35,9 @@ export function PriorityFollowUpsPage() {
     const status: FollowUpStatus = searchParams.get("status") === "completed" ? "COMPLETED" : "OPEN";
     const list = useAdminResource(`follow-ups:${status}`, (t, signal) => listFollowUps(t, status, signal));
     const canDelete = canDeleteFollowUps(user);
+    const canComplete = canWorkFollowUps(user);
+    // The candidate's name links to their page only for a role that opens it (not the Registration Desk).
+    const canOpen = canViewCandidates(user);
 
     // Follow-ups completed or deleted here leave this view at once.
     const [removed, setRemoved] = useState<Set<string>>(() => new Set());
@@ -107,7 +110,7 @@ export function PriorityFollowUpsPage() {
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Need Attention</h1>
-                    <p className="mt-1 text-body-sm text-ink-muted">Calls and candidate follow-ups that require action.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">{canComplete ? "Calls and candidate follow-ups that require action." : "Calls and candidate follow-ups that require action (view only)."}</p>
                 </div>
                 <div role="group" aria-label="Follow-up status" className="inline-flex rounded-lg border border-border-strong bg-surface p-0.5">
                     {FILTERS.map((filter) => (
@@ -150,6 +153,8 @@ export function PriorityFollowUpsPage() {
                                         key={group.candidate.passportId}
                                         group={group}
                                         canDelete={canDelete}
+                                        canComplete={canComplete}
+                                        canOpen={canOpen}
                                         working={working}
                                         actionError={actionError}
                                         onComplete={markComplete}
@@ -182,9 +187,11 @@ export function PriorityFollowUpsPage() {
     );
 }
 
-function CandidateGroup({ group, canDelete, working, actionError, onComplete, onDelete }: {
+function CandidateGroup({ group, canDelete, canComplete, canOpen, working, actionError, onComplete, onDelete }: {
     group: FollowUpGroup;
     canDelete: boolean;
+    canComplete: boolean;
+    canOpen: boolean;
     working: string | null;
     actionError: { followUpId: string; message: string } | null;
     onComplete: (item: FollowUpItem) => void;
@@ -200,7 +207,7 @@ function CandidateGroup({ group, canDelete, working, actionError, onComplete, on
                 <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 px-4 pt-3.5 sm:px-5">
                     <div className="min-w-0">
                         <h2 className="truncate text-headline-sm text-ink">
-                            <Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="hover:underline">{name}</Link>
+                            {canOpen ? <Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="hover:underline">{name}</Link> : name}
                         </h2>
                         <p className="mt-0.5 flex flex-wrap gap-x-3 text-body-sm text-ink-muted tabular-nums">
                             <span><span className="sr-only">Passport ID </span>{candidate.passportId}</span>
@@ -217,6 +224,7 @@ function CandidateGroup({ group, canDelete, working, actionError, onComplete, on
                             key={item.followUpId}
                             item={item}
                             canDelete={canDelete}
+                            canComplete={canComplete}
                             busy={working === item.followUpId}
                             disabled={working !== null}
                             error={actionError?.followUpId === item.followUpId ? actionError.message : null}
@@ -233,10 +241,11 @@ function CandidateGroup({ group, canDelete, working, actionError, onComplete, on
 // One follow-up, laid out like a call in Candidate History: when and who
 // called, with the state as a compact flag at the top right; the note (or a
 // No Answer badge); then who flagged it and the actions.
-function FollowUpRow({ item, canDelete, busy, disabled, error, onComplete, onDelete }: {
-    item: FollowUpItem; canDelete: boolean; busy: boolean; disabled: boolean; error: string | null; onComplete: () => void; onDelete: () => void;
+function FollowUpRow({ item, canDelete, canComplete, busy, disabled, error, onComplete, onDelete }: {
+    item: FollowUpItem; canDelete: boolean; canComplete: boolean; busy: boolean; disabled: boolean; error: string | null; onComplete: () => void; onDelete: () => void;
 }) {
     const open = item.status === "OPEN";
+    const completable = open && canComplete;
     return (
         // A completed follow-up reads as resolved: the same layout, one step quieter (muted note, muted check).
         <li data-state={open ? "open" : "completed"} className={`px-4 py-3 sm:px-5 ${open ? "" : "bg-canvas/50"}`}>
@@ -257,9 +266,9 @@ function FollowUpRow({ item, canDelete, busy, disabled, error, onComplete, onDel
                     Flagged {formatDateTime(item.flaggedAt)}{item.flaggedByName ? ` by ${item.flaggedByName}` : ""}
                     {item.completedAt && <> · Completed {formatDateTime(item.completedAt)}{item.completedByName ? ` by ${item.completedByName}` : ""}</>}
                 </p>
-                {(open || canDelete) && (
+                {(completable || canDelete) && (
                     <div className="flex shrink-0 items-center gap-2">
-                        {open && (
+                        {completable && (
                             <button type="button" onClick={onComplete} disabled={disabled} className={compactSecondary}>
                                 {busy ? "Saving…" : "Mark complete"}
                             </button>

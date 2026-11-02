@@ -238,18 +238,17 @@ describe("Review Detail", () => {
         expect(screen.queryByText("You have view-only access and cannot review documents.")).not.toBeInTheDocument();
     });
 
-    test("a role without review permission (defensive; no such role exists today) sees details only", async () => {
-        signedInBackend({
+    test("a role without review permission (defensive; no such role exists today) can't open the review item", async () => {
+        const { calls } = signedInBackend({
             "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "UNKNOWN_ROLE" } } },
             [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: ITEM },
             [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse,
         });
         renderApp(`/review/pending-${TEMP_ID}`);
-        expect(await screen.findByRole("heading", { name: "11111111" })).toBeInTheDocument();
-        expect(screen.queryByRole("group", { name: "Review actions" })).not.toBeInTheDocument();
+        expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: "11111111" })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: "Keep Pending" })).not.toBeInTheDocument();
-        expect(screen.getByText("You have view-only access and cannot review documents.")).toBeInTheDocument();
+        expect(calls.some((c) => c.path.startsWith("/api/admin/review"))).toBe(false);
     });
 });
 

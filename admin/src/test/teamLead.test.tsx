@@ -71,7 +71,7 @@ describe("TEAM_LEAD in the admin app", () => {
         renderApp("/");
         await screen.findByRole("navigation", { name: "Main navigation" }, RENDER_STEP);
         await waitFor(() => expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(true), RENDER_STEP);
-        expect(navLinks()).toEqual(["Candidates", "Need Attention", "Jobs", "Agents", "Client Management", "Work Allocation", "Daily Report"]);
+        expect(navLinks()).toEqual(["Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Daily Report"]);
         for (const name of ["Overview", "Documents", "Review Queue", "Missing Documents", "Police Workflow", "Audit Logs", "Settings"]) {
             expect(within(screen.getByRole("navigation", { name: "Main navigation" })).queryByRole("link", { name })).not.toBeInTheDocument();
         }

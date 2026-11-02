@@ -187,23 +187,23 @@ describe("Invite User", () => {
 });
 
 describe("existing roles", () => {
-    test("UI-JH-015: ADMIN, ANALYST and REGISTRATION_DESK keep their sidebars (no Manager-only Invite User entry any more)", { timeout: 30_000 }, async () => {
+    test("UI-JH-015: ADMIN and ANALYST keep their sidebars; REGISTRATION_DESK has Add Candidate and Need Attention", { timeout: 30_000 }, async () => {
         const expected: Record<string, string[]> = {
-            ADMIN: ["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Missing Documents", "Review Queue", "Police Workflow", "Documents", "Daily Report", "Audit Logs", "Settings"],
-            ANALYST: ["Overview", "Candidates", "Need Attention", "Jobs", "Missing Documents", "Review Queue", "Police Workflow", "Documents", "Daily Report"],
-            REGISTRATION_DESK: ["Candidates", "Need Attention"],
+            ADMIN: ["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report", "Audit Logs", "Settings"],
+            ANALYST: ["Overview", "Candidates", "Need Attention", "Jobs", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report"],
+            REGISTRATION_DESK: ["Add Candidate", "Need Attention"],
         };
         for (const [role, links] of Object.entries(expected)) {
-            backend(userWithRole(role), { "GET /api/admin/follow-ups": { status: 200, body: { items: [], total: 0 } } });
+            backend(userWithRole(role));
             const { unmount } = renderApp("/candidates");
-            await screen.findByRole("table", { name: "Candidates" }, RENDER_STEP);
+            await screen.findByRole("navigation", { name: "Main navigation" }, RENDER_STEP);
             expect(navLinks(), role).toEqual(links);
             unmount();
         }
     });
 
     test("UI-JH-015: a candidate role still edits candidates (the read-only switch is the JOB_HANDLER's only)", { timeout: 20_000 }, async () => {
-        backend(userWithRole("REGISTRATION_DESK"));
+        backend(userWithRole("TEAM_LEAD"));
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
         expect(await screen.findByRole("heading", { name: "SAMAN SILVA" }, RENDER_STEP)).toBeInTheDocument();
         await waitFor(() => expect(screen.getAllByRole("textbox").some((box) => !(box as HTMLInputElement).disabled)).toBe(true));

@@ -3,6 +3,7 @@ import { useLocation, useParams, useSearchParams } from "react-router";
 import { CANDIDATE_STAGES, STAGE_LABELS, activeJobsOf, getAdditionalDetails, getCandidate, getFormSubmission, type AdditionalDetailsView, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { canConfirmSubmittedChanges, canManageCandidates, useAuth } from "../auth/AuthProvider";
+import { canWorkFollowUps } from "../auth/roles";
 import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { CONFLICT_FIELD_PARAM, useConflictFocus } from "../components/candidate/formConflicts";
 import { AdditionalDetailsPanel } from "../components/candidate/AdditionalDetailsPanel";
@@ -160,7 +161,7 @@ export function CandidateDeploymentPage() {
                 </Card>
             )}
 
-            {callLogOpen && <CallLogDialog passportId={c.passportId} candidate={c} canEdit={canEdit} onClose={() => setCallLogOpen(false)} />}
+            {callLogOpen && <CallLogDialog passportId={c.passportId} candidate={c} canEdit={canEdit} canFlag={canWorkFollowUps(user)} onClose={() => setCallLogOpen(false)} />}
         </section>
         </SubmittedChangesProvider>
     );

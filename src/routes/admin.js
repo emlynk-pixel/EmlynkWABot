@@ -2,7 +2,7 @@ import { getFormBranding, parseBrandingBody, updateFormBranding } from "../servi
 import express from "express";
 
 import { createRequireActiveUser } from "../middleware/requireActiveUser.js";
-import { requireRole, ROLES } from "../middleware/requireRole.js";
+import { hasRole, requireRole, ROLES } from "../middleware/requireRole.js";
 import { createApiRateLimiter } from "../middleware/apiRateLimiter.js";
 import {
     getOverview,
@@ -82,6 +82,7 @@ import {
     updateJobType,
     getJob,
     isValidJobIdParam,
+    listJobCandidateOptions,
     listJobOptions,
     listJobs,
     parseAddCandidateBody,
@@ -167,14 +168,18 @@ function contentDisposition(fileName) {
 // ADMIN: full access, including user management, Settings, Work Allocation,
 // verification, police-date corrections and confirming Candidate Form values
 // (an OWNER holds every ADMIN permission: requireRole.js hasRole).
-// REGISTRATION_DESK: the whole Candidates area (registration, details,
-// stages, candidate documents, call logs); nothing else.
+// REGISTRATION_DESK: the registration workflow only (REGISTRATION_WORKFLOW):
+// the passport-ID lookup, registering, saving an existing candidate's
+// registration details (with the Candidate Details note) and uploading the
+// registration documents (passport, NIC, skill video); and Need Attention READ
+// ONLY (FOLLOW_UP_READERS: the list, no flag, complete or delete). No Candidates
+// list, candidate page, other stages, call logs or anything else.
 // Work Allocation: an ANALYST only sees and changes the candidates allocated
 // to them (services/candidateAccess.js), on every candidate route and in the
 // lists that name candidates; ADMIN, TEAM_LEAD and REGISTRATION_DESK see all.
 // JOB_HANDLER: Jobs, Agents and Clients (manage), Candidates (read only: the
-// list, the details and what the details page reads); nothing else. Every
-// candidate WRITE route keeps its own tier, which JOB_HANDLER is not in.
+// list, the candidate's page and what it reads; CANDIDATE_READERS); nothing
+// else. Every candidate WRITE route keeps its own tier, which JOB_HANDLER is not in.
 // TEAM_LEAD: exactly seven areas, nothing inferred from them: the Candidates
 // area for every candidate (the CANDIDATE_STAFF / CANDIDATE_READERS /
 // REGISTRATION_STAFF routes), Need Attention (list, flag, complete), Work
@@ -188,7 +193,7 @@ const { ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK, JOB_HANDLER } = ROLES;
 // The set of roles allowed for each endpoint tier.
 const ALL_ACTIVE = [ADMIN, ANALYST];                                    // overview, documents, review, police, monthly
 const REPORT_READERS = [ADMIN, TEAM_LEAD, ANALYST];                     // the Daily Report
-const CANDIDATE_STAFF = [ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK]; // the Candidates area
+const CANDIDATE_STAFF = [ADMIN, TEAM_LEAD, ANALYST];                    // the Candidates area and Need Attention
 const ANALYSTS_UP = [ADMIN, ANALYST];                                   // review actions
 const ADMINS_ONLY = [ADMIN];                                            // administrators only
 // A 256 KB logo as base64 in JSON, with the title and colours.
@@ -196,6 +201,10 @@ const FORM_BRANDING_BODY_LIMIT = "512kb";
 const ALLOCATION_MANAGERS = [ADMIN, TEAM_LEAD];                         // Work Allocation
 const REGISTRATION_STAFF = [ADMIN, TEAM_LEAD, REGISTRATION_DESK];       // registering a new candidate
 const CANDIDATE_READERS = [...CANDIDATE_STAFF, JOB_HANDLER];            // candidate READS only (GET)
+// The registration workflow (Add Candidate): the Candidates area roles, plus REGISTRATION_DESK
+// for exactly what the form does (registrationOnly below).
+const REGISTRATION_WORKFLOW = [...CANDIDATE_STAFF, REGISTRATION_DESK];
+const FOLLOW_UP_READERS = [...CANDIDATE_STAFF, REGISTRATION_DESK];      // Need Attention list (REGISTRATION_DESK: read only)
 const JOB_READERS = [ADMIN, TEAM_LEAD, ANALYST, JOB_HANDLER];           // job lists and details
 const JOB_MANAGERS = [ADMIN, TEAM_LEAD, JOB_HANDLER];                   // job writes (create, edit, members, close)
 const MASTER_DATA_STAFF = [ADMIN, TEAM_LEAD, JOB_HANDLER];              // Agents and Client Management
@@ -549,6 +558,13 @@ export function createAdminRouter({
         return passportId;
     };
 
+    // REGISTRATION_DESK on a REGISTRATION_WORKFLOW route: only what the Add Candidate form does,
+    // the Candidate Details stage (its note) and the registration documents.
+    const REGISTRATION_STAGE = "CANDIDATE_DETAILS";
+    const REGISTRATION_DOCUMENTS = ["PASSPORT", "NIC", "SKILL_VIDEO"];
+    const registrationOnly = (req) => !hasRole(req.user.role, CANDIDATE_STAFF);
+    const forbidden = (res) => res.status(403).json({ message: "Insufficient permissions" });
+
     router.get("/candidates", requireRole(CANDIDATE_READERS), async (req, res) => {
         const parsed = parseCandidateListQuery(req.query);
         if (parsed.errors) {
@@ -585,7 +601,7 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.status(201).json(await createCandidate({ db: client, values, actor: req.user })));
     });
 
-    router.get("/candidates/:passportId", requireRole(CANDIDATE_READERS), async (req, res) => {
+    router.get("/candidates/:passportId", requireRole([...CANDIDATE_READERS, REGISTRATION_DESK]), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
         // Also the registration lookup: the response carries the stored passport ID.
@@ -595,7 +611,7 @@ export function createAdminRouter({
         return res.json(candidate);
     });
 
-    router.put("/candidates/:passportId", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.put("/candidates/:passportId", requireRole(REGISTRATION_WORKFLOW), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseCandidateBody(req.body, { creating: false });
         if (parsed.errors) {
@@ -611,9 +627,10 @@ export function createAdminRouter({
         });
     });
 
-    router.put("/candidates/:passportId/stages/:stage", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.put("/candidates/:passportId/stages/:stage", requireRole(REGISTRATION_WORKFLOW), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         if (!isCandidateStage(req.params.stage)) return res.status(404).json({ message: "Stage not found" });
+        if (registrationOnly(req) && req.params.stage !== REGISTRATION_STAGE) return forbidden(res);
         const parsed = parseStageBody(req.body, req.params.stage);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
@@ -640,12 +657,13 @@ export function createAdminRouter({
     // to this API (candidateService.js, "direct uploads"). Both requests are
     // small JSON bodies (express.json in createApp.js); no route here parses
     // a file body.
-    router.post("/candidates/:passportId/documents/upload-target", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.post("/candidates/:passportId/documents/upload-target", requireRole(REGISTRATION_WORKFLOW), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseUploadTargetBody(req.body);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
+        if (registrationOnly(req) && !REGISTRATION_DOCUMENTS.includes(parsed.values.documentType)) return forbidden(res);
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
         return candidateAction(res, async () => res.json(await createUploadTarget({
             db: client,
@@ -657,12 +675,13 @@ export function createAdminRouter({
         })));
     });
 
-    router.post("/candidates/:passportId/documents/finalize", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.post("/candidates/:passportId/documents/finalize", requireRole(REGISTRATION_WORKFLOW), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const parsed = parseFinalizeUploadBody(req.body);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
+        if (registrationOnly(req) && !REGISTRATION_DOCUMENTS.includes(parsed.values.documentType)) return forbidden(res);
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
         return candidateAction(res, async () => res.json(await finalizeUpload({
             db: client,
@@ -713,10 +732,11 @@ export function createAdminRouter({
         })));
     });
 
-    // Priority Follow-Ups (callLogFollowUpService.js). Flag, list and
-    // complete: every Candidates-area role (the call log roles). Delete:
-    // ADMIN only, and it removes the follow-up row only — never
-    // the call log, the candidate or a document.
+    // Priority Follow-Ups (callLogFollowUpService.js), shown as Need Attention.
+    // List: the Candidates-area roles and REGISTRATION_DESK (read only). Flag and
+    // complete: the Candidates-area roles (ADMIN, TEAM_LEAD, ANALYST; not
+    // REGISTRATION_DESK or JOB_HANDLER). Delete: ADMIN only, and it removes the
+    // follow-up row only — never the call log, the candidate or a document.
     const invalidId = (res, field) => res.status(400).json({ message: `Invalid ${field}`, errors: [{ field, message: "must be an ID" }] });
 
     router.post("/candidates/:passportId/call-logs/:callLogId/follow-up", requireRole(CANDIDATE_STAFF), async (req, res) => {
@@ -728,7 +748,7 @@ export function createAdminRouter({
         })));
     });
 
-    router.get("/follow-ups", requireRole(CANDIDATE_STAFF), async (req, res) => {
+    router.get("/follow-ups", requireRole(FOLLOW_UP_READERS), async (req, res) => {
         const parsed = parseFollowUpListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -904,9 +924,19 @@ export function createAdminRouter({
         const client = await resolveDb(db);
         return res.json(await listJobOptions({ db: client }));
     });
+    // The job candidate picker (New job, Add candidates): only the candidates a job
+    // may take (test PASS), with only what the picker shows. The JOB_HANDLER's one
+    // way to list candidates; it has no Candidates route.
+    router.get("/job-candidate-options", requireRole(JOB_MANAGERS), async (req, res) => {
+        const parsed = parseCandidateListQuery(req.query);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        const client = await resolveDb(db);
+        return res.json(await listJobCandidateOptions({ db: client, params: parsed.params }));
+    });
     // Candidate job type choices for the Candidates area (registration, Candidate
-    // Details): the ACTIVE names and the "No Preferred Type" system option. Read-only.
-    router.get("/job-type-choices", requireRole(CANDIDATE_READERS), async (req, res) => {
+    // Details) and Work Allocation: the ACTIVE names and the "No Preferred Type"
+    // system option. Read-only.
+    router.get("/job-type-choices", requireRole([...CANDIDATE_READERS, REGISTRATION_DESK]), async (req, res) => {
         const client = await resolveDb(db);
         return res.json({ jobTypes: await activeJobTypeNames(client), noPreference: NO_PREFERRED_JOB_TYPE });
     });

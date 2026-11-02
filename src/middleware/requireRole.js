@@ -15,11 +15,13 @@
 //                      management, Audit Logs, dashboards or review
 //   ANALYST            reads, review actions, corrections and candidate work;
 //                      not police-date corrections on stored documents
-//   REGISTRATION_DESK  the Candidates area only: list, lookup, registration,
-//                      details, stages, candidate documents and call logs
-//   JOB_HANDLER        manages Jobs, Agents and Clients; reads Candidates (list,
-//                      details) and changes no candidate record; no dashboards,
-//                      reports, review, Settings, Audit Logs or user management
+//   REGISTRATION_DESK  registration: the lookup, registering, and the candidate's
+//                      page (details, stages, candidate documents, call logs);
+//                      Need Attention read only; not the Candidates list
+//   JOB_HANDLER        manages Jobs, Agents and Clients; candidates only through
+//                      the Jobs workflow (the job candidate picker, a job's own
+//                      rows), no Candidates route; no dashboards, reports, review,
+//                      Need Attention, Settings, Audit Logs or user management
 //
 // The per-route tiers are in routes/admin.js. A role outside the allowed list
 // gets 403; the body never names the role or the user. A retired role

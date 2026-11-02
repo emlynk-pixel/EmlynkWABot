@@ -314,7 +314,7 @@ const TEAM_LEAD_ROUTES = [
     ["GET", "/work-allocation/candidates?status=NOPE", true], ["GET", "/work-allocation/analysts", true],
     ["POST", "/work-allocation/assign", true], ["POST", "/work-allocation/auto-allocate", true],
     ["POST", "/work-allocation/allocate", true], ["POST", "/work-allocation/unassign", true],
-    ["GET", "/job-options", true], ["GET", "/job-type-choices", true], ["GET", "/job-types", false],
+    ["GET", "/job-options", true], ["GET", "/job-candidate-options", true], ["GET", "/job-type-choices", true], ["GET", "/job-types", false],
     ["PATCH", `/job-types/${NO_ID}`, false], ["POST", "/job-types", false],
     ["GET", "/jobs?view=nope", true], ["POST", "/jobs", true], ["GET", `/jobs/${NO_ID}`, true], ["PUT", `/jobs/${NO_ID}`, true],
     ["POST", `/jobs/${NO_ID}/candidates`, true], ["DELETE", `/jobs/${NO_ID}/candidates/${P}`, true],

@@ -194,12 +194,12 @@ describe("GET / PUT additional details", () => {
 
 describe("audit", () => {
     test("the first save is CREATE_ADDITIONAL_DETAILS with the fields given, by req.user", async () => {
-        await withServer("REGISTRATION_DESK", async (call) => {
+        await withServer("ADMIN", async (call) => {
             await call("/N1023757/additional-details", { method: "PUT", body: { tshirtSize: "M", fatherAlive: true, fatherFullName: "Sunil De Soysa" } });
         });
         const [row] = await auditRows();
         assert.equal(row.action, "CREATE_ADDITIONAL_DETAILS");
-        assert.equal(row.adminId, USERS.REGISTRATION_DESK.adminId);
+        assert.equal(row.adminId, USERS.ADMIN.adminId);
         assert.equal(row.passportId, "N1023757");
         assert.deepEqual([row.previousStatus, row.newStatus], ["NONE", "CREATED"]);
         assert.deepEqual(JSON.parse(row.previousValue), { tshirtSize: null, fatherAlive: null, fatherFullName: null });
@@ -242,7 +242,7 @@ describe("audit", () => {
 });
 
 describe("roles", () => {
-    for (const role of ["OWNER", "ADMIN", "ANALYST", "REGISTRATION_DESK"]) {
+    for (const role of ["OWNER", "ADMIN", "ANALYST"]) {
         test(`${role} can read and save`, async () => {
             // An Analyst works on the candidates allocated to them (here the stand-in user's ID).
             if (role === "ANALYST") await prisma.candidateAllocation.create({ data: { passportId: "N1023757", analystId: USERS.ADMIN.adminId } });
@@ -253,11 +253,13 @@ describe("roles", () => {
         });
     }
 
-    test("any other role is refused and nothing is written", async () => {
-        await withServer("VIEWER", async (call) => {
-            assert.equal((await call("/N1023757/additional-details")).status, 403);
-            assert.equal((await call("/N1023757/additional-details", { method: "PUT", body: { tshirtSize: "S" } })).status, 403);
-        });
+    test("any other role (REGISTRATION_DESK included: registration only) is refused and nothing is written", async () => {
+        for (const role of ["VIEWER", "REGISTRATION_DESK"]) {
+            await withServer(role, async (call) => {
+                assert.equal((await call("/N1023757/additional-details")).status, 403, role);
+                assert.equal((await call("/N1023757/additional-details", { method: "PUT", body: { tshirtSize: "S" } })).status, 403, role);
+            });
+        }
         assert.equal(await prisma.candidateAdditionalDetails.count(), 0);
     });
 });

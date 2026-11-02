@@ -70,7 +70,7 @@ const table = () => screen.findByRole("table", { name: "Jobs" }, RENDER_STEP);
 // Job details opens on its Job Details tab; the assigned candidates are on the other tab.
 const openCandidatesTab = async (user: ReturnType<typeof userEvent.setup>) => user.click(await screen.findByRole("tab", { name: /^Assigned Candidates/ }, RENDER_STEP));
 // New job Step 2 lists the eligible candidates (none here unless a test gives some).
-const NO_ELIGIBLE = { "GET /api/admin/candidates": { status: 200, body: { ...SEARCH_RESULT, items: [], pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 } } } };
+const NO_ELIGIBLE = { "GET /api/admin/job-candidate-options": { status: 200, body: { ...SEARCH_RESULT, items: [], pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 } } } };
 
 describe("Jobs list", () => {
     test("Processing is the default view: code, type, country, agent, company, candidates, vacancies, status", async () => {
@@ -236,7 +236,7 @@ describe("Job details", () => {
     });
 
     test("JOB-PASS-007: the Add candidate search asks the server for candidates who passed the test only, and says so", async () => {
-        const { calls } = backend("OWNER", { ...getJob(details(base, [CAND])), "GET /api/admin/candidates": { status: 200, body: { ...SEARCH_RESULT, items: [] } } });
+        const { calls } = backend("OWNER", { ...getJob(details(base, [CAND])), "GET /api/admin/job-candidate-options": { status: 200, body: { ...SEARCH_RESULT, items: [] } } });
         renderApp(path);
         const user = userEvent.setup();
         await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
@@ -245,14 +245,16 @@ describe("Job details", () => {
         await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "failed person");
         await user.click(within(dialog).getByRole("button", { name: "Search" }));
         expect(await within(dialog).findByText("No eligible candidates found.")).toBeInTheDocument();
-        const search = calls.find((c) => c.path.startsWith("/api/admin/candidates?"))!;
-        expect(Object.fromEntries(search.url.searchParams)).toMatchObject({ search: "failed person", testResult: "PASS" });
+        // The job-scoped picker: the server lists only candidates who passed the test (never the Candidates list).
+        const search = calls.find((c) => c.path.startsWith("/api/admin/job-candidate-options?"))!;
+        expect(Object.fromEntries(search.url.searchParams)).toMatchObject({ search: "failed person" });
+        expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(false);
     });
 
     test("JOB-PASS-008: if the server refuses a candidate who has not passed, its message is shown and nothing is added", async () => {
         const { calls } = backend("OWNER", {
             ...getJob(details(base, [CAND])),
-            "GET /api/admin/candidates": { status: 200, body: SEARCH_RESULT },
+            "GET /api/admin/job-candidate-options": { status: 200, body: SEARCH_RESULT },
             [`POST /api/admin/jobs/${base.jobId}/candidates`]: { status: 409, body: { message: "Candidate must pass the test before being assigned to a job.", code: "CANDIDATE_TEST_NOT_PASSED" } },
         });
         renderApp(path);
@@ -272,7 +274,7 @@ describe("Job details", () => {
         let attempt = 0;
         const { calls } = backend("OWNER", {
             ...getJob(details(base, [CAND])),
-            "GET /api/admin/candidates": { status: 200, body: SEARCH_RESULT },
+            "GET /api/admin/job-candidate-options": { status: 200, body: SEARCH_RESULT },
             [`POST /api/admin/jobs/${base.jobId}/candidates`]: () => (++attempt === 1
                 ? { status: 409, body: { message: "This candidate is already on the PROCESSING job JOB-2026-000007. Complete or cancel that job, or remove the candidate from it, first.", code: "CANDIDATE_ON_ACTIVE_JOB" } }
                 : { status: 201, body: after }),

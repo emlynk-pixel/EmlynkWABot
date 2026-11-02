@@ -2,9 +2,9 @@
 // public."user".role, read on every request; the Supabase session only says
 // who the caller is. Matrix (routes/admin.js tiers):
 //   ALL_ACTIVE      ADMIN, ANALYST                              reads (overview, documents, reports, …)
-//   CANDIDATE_STAFF ADMIN, ANALYST, REGISTRATION_DESK           the Candidates area: list, registration,
-//                                                               details, stages, documents, call logs,
-//                                                               additional details
+//   CANDIDATE_STAFF ADMIN, TEAM_LEAD, ANALYST                   the Candidates area and Need Attention
+//   CANDIDATE_READERS  … plus JOB_HANDLER                       candidate reads (list, page)
+//   REGISTRATION_WORKFLOW  … plus REGISTRATION_DESK             the Add Candidate form's routes
 //   ANALYSTS_UP     ADMIN, ANALYST                              review actions, corrections
 //   ADMINS_ONLY     ADMIN                                       users, Audit Logs, Settings, Work Allocation,
 //                                                               police-date correction (the former MANAGER tier)
@@ -23,9 +23,12 @@ import { createFakeAuthAdmin, fakeVerifyAccessToken, tokenFor } from "./helpers/
 const user = (role, status = "ACTIVE") => ({ adminId: `user-${role}-${status}`, name: role, email: `${role}-${status}@example.invalid`.toLowerCase(), role, status });
 const USERS = [...ALL_ROLES.map((role) => user(role)), user("VIEWER"), user("MANAGER"), user("ADMIN", "INACTIVE"), user("ANALYST", "INVITED")];
 const DOCUMENT_ID = "00000000-0000-4000-8000-000000000001";
-const CANDIDATE_STAFF = ["ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK"];
+// The Candidates area and Need Attention: not REGISTRATION_DESK (registration only), not JOB_HANDLER.
+const CANDIDATE_STAFF = ["ADMIN", "TEAM_LEAD", "ANALYST"];
 // JOB_HANDLER reads candidates (never writes them).
 const CANDIDATE_READERS = [...CANDIDATE_STAFF, "JOB_HANDLER"];
+// The routes the Add Candidate form uses (the lookup, saving details, registration documents).
+const REGISTRATION_WORKFLOW = [...CANDIDATE_STAFF, "REGISTRATION_DESK"];
 
 // OWNER holds every ADMIN permission, so a tier naming ADMIN admits OWNER too.
 const admits = (allowed, role) => allowed.includes(role) || (role === "OWNER" && allowed.includes("ADMIN"));
@@ -37,20 +40,27 @@ const MATRIX = [
     // The Daily Report: the dashboard roles plus TEAM_LEAD.
     ["GET", "/reports/daily", undefined, ["ADMIN", "TEAM_LEAD", "ANALYST"]],
     ["GET", "/candidates", undefined, CANDIDATE_READERS],
+    // The job candidate picker: the job managers.
+    ["GET", "/job-candidate-options", undefined, ["ADMIN", "TEAM_LEAD", "JOB_HANDLER"]],
     // Registering is not an Analyst action: a new candidate is unallocated (Work Allocation).
     ["POST", "/candidates", {}, ["ADMIN", "TEAM_LEAD", "REGISTRATION_DESK"]],
     // Work Allocation: ADMIN and TEAM_LEAD (an invalid request, so the allowed roles get 400).
     ["GET", "/work-allocation/candidates?status=NOPE", undefined, ["ADMIN", "TEAM_LEAD"]],
     ["POST", "/work-allocation/assign", {}, ["ADMIN", "TEAM_LEAD"]],
     ["POST", "/work-allocation/unassign", {}, ["ADMIN", "TEAM_LEAD"]],
-    ["GET", "/candidates/N1023757", undefined, CANDIDATE_READERS],
-    ["PUT", "/candidates/N1023757", {}, CANDIDATE_STAFF],
+    ["GET", "/candidates/N1023757", undefined, [...CANDIDATE_READERS, "REGISTRATION_DESK"]],
+    ["PUT", "/candidates/N1023757", {}, REGISTRATION_WORKFLOW],
+    // REGISTRATION_DESK: the Candidate Details stage (its note) only.
     ["PUT", "/candidates/N1023757/stages/IVS_INTERVIEW", {}, CANDIDATE_STAFF],
-    ["POST", "/candidates/N1023757/documents/upload-target", {}, CANDIDATE_STAFF],
-    ["POST", "/candidates/N1023757/documents/finalize", {}, CANDIDATE_STAFF],
+    ["POST", "/candidates/N1023757/documents/upload-target", {}, REGISTRATION_WORKFLOW],
+    ["POST", "/candidates/N1023757/documents/finalize", {}, REGISTRATION_WORKFLOW],
     ["POST", `/candidates/N1023757/documents/${DOCUMENT_ID}/remove`, {}, CANDIDATE_STAFF],
     ["GET", "/candidates/N1023757/call-logs", undefined, CANDIDATE_READERS],
     ["POST", "/candidates/N1023757/call-logs", {}, CANDIDATE_STAFF],
+    // Need Attention: REGISTRATION_DESK reads it (no flag, complete or delete).
+    ["GET", "/follow-ups", undefined, [...CANDIDATE_STAFF, "REGISTRATION_DESK"]],
+    ["POST", "/follow-ups/11111111-1111-4111-8111-111111111111/complete", {}, CANDIDATE_STAFF],
+    ["DELETE", "/follow-ups/11111111-1111-4111-8111-111111111111", undefined, ["ADMIN"]],
     ["GET", "/candidates/N1023757/additional-details", undefined, CANDIDATE_READERS],
     ["PUT", "/candidates/N1023757/additional-details", {}, CANDIDATE_STAFF],
     ["GET", "/review", undefined, ["ADMIN", "ANALYST"]],

@@ -23,8 +23,10 @@ Six roles, stored in `public."user".role` and enforced by `requireRole` middlewa
 | Action | OWNER | ADMIN | ANALYST | REGISTRATION_DESK | JOB_HANDLER |
 |---|:---:|:---:|:---:|:---:|:---:|
 | View overview, documents, clients, review queue, police workflow, reports | ✓ | ✓ | ✓ | — | — |
-| Candidate list and details | ✓ | ✓ | ✓ | ✓ | read only |
-| Candidate registration | ✓ | ✓ | — | ✓ | — |
+| Candidate list and candidate page | ✓ | ✓ | ✓ (own) | — | read only |
+| Candidate registration (Add Candidate: lookup, register, registration details and Passport / NIC / Skill video) | ✓ | ✓ | — | ✓ | — |
+| Candidate changes beyond registration (stages, other documents, removing, call logs, form links) | ✓ | ✓ | ✓ (own) | — | — |
+| Need Attention: view / flag and complete | ✓ / ✓ | ✓ / ✓ | own / own | ✓ / — | — / — |
 | Review actions, corrections, candidate work | ✓ | ✓ | ✓ | — | — |
 | Verification, confirming Candidate Form values, Work Allocation, deleting follow-ups | ✓ | ✓ | — | — | — |
 | Correct a stored police slip's date | ✓ | ✓ | — | — | — |
@@ -35,7 +37,11 @@ Six roles, stored in `public."user".role` and enforced by `requireRole` middlewa
 | Give the OWNER role, change or deactivate an OWNER account, invite an OWNER | — (database only) | — | — | — | — |
 | Give or invite the retired MANAGER role | — (400) | — (400) | — | — | — |
 
-The Registration Desk restriction (Candidates area only) is unchanged by OWNER.
+The Registration Desk restriction (the Add Candidate registration workflow and a read-only Need Attention, enforced per route by `REGISTRATION_WORKFLOW`: the `CANDIDATE_DETAILS` stage and the `PASSPORT` / `NIC` / `SKILL_VIDEO` uploads only) is unchanged by OWNER. JOB_HANDLER reads candidates and changes none; its job pickers use `GET /job-candidate-options` (test-PASS candidates, only `passportId`, `uniqueId`, `name`, `nic`, `workflowStatus`).
+
+**Notification bell.** It reads only data the role can already open, and links only to pages it can open: the Review Queue for OWNER, ADMIN and ANALYST (scoped for the Analyst), open Need Attention follow-ups for TEAM_LEAD (which still gets 403 on `GET /review`), nothing for REGISTRATION_DESK and JOB_HANDLER. It carries no admin, security, Settings, user-management or integration alerts.
+
+**Pages in the dashboard** use the same role lists as the server (`admin/src/auth/roles.ts`): the sidebar shows a page only to its roles, and a page opened by URL by any other role shows "Access Restricted" without requesting data (`App.tsx` `AllowRoles` is an allow-list, so a role not named is refused).
 
 A failed authorization check returns a generic `403`, without indicating which specific permission was missing. The route-by-route map is in `09a-admin-dashboard-api.md`.
 

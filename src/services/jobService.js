@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-import { CandidateError, TEST_RESULT_PASS, WORKFLOW_STATUS_SELECT, candidateWorkflowStatuses, listPagination, resolveCandidatePassportId } from "./candidateService.js";
+import { CandidateError, TEST_RESULT_PASS, WORKFLOW_STATUS_SELECT, candidateWorkflowStatuses, listCandidates, listPagination, resolveCandidatePassportId } from "./candidateService.js";
 import { candidateScope, isCandidateScoped } from "./candidateAccess.js";
 import { JOB_SELECT, JOB_STATUS, jobSummaryView } from "./jobAssignmentReader.js";
 import { candidateMatchesJobTypes } from "./jobTypeCatalog.js";
@@ -550,6 +550,20 @@ export async function getJob({ db, jobId, user }) {
             assignedAt: iso(member.assignedAt),
             workflowStatus: statuses.get(member.candidate.passportId),
         })),
+    };
+}
+
+// GET /api/admin/job-candidate-options: the job candidate picker (New job, Add
+// candidates). Only the candidates a job may take (test PASS), searched and paged on
+// the database like the Candidates list, and only the fields the picker shows: never
+// the candidate's details, documents, stages or call logs. Job managers only (the
+// route); none of them is candidate-scoped, so every eligible candidate is listed.
+export async function listJobCandidateOptions({ db, params }) {
+    const list = await listCandidates({ db, params: { ...params, testResult: TEST_RESULT_PASS } });
+    return {
+        items: list.items.map(({ passportId, uniqueId, name, nic, workflowStatus }) => ({ passportId, uniqueId, name, nic, workflowStatus })),
+        pagination: list.pagination,
+        filters: { search: list.filters.search },
     };
 }
 

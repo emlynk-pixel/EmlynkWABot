@@ -1,12 +1,20 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Link } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
+import type { NotificationSource } from "../auth/roles";
 import { getReviewQueue } from "../api/admin";
+import { listFollowUps } from "../api/followUps";
 import { Icon } from "./Icon";
 import { reviewReasonLabel } from "./reviewLabels";
 
+// The header bell. Its source is chosen by role (roles.ts notificationSource) and is
+// always data the role can already open, linking only to a page it can open:
+//   review      the Review Queue (GET /review), each item linking to its review page
+//   follow-ups  the open Need Attention follow-ups (GET /follow-ups?status=OPEN), each
+//               linking to Need Attention: TEAM_LEAD, which has no Review Queue
+
 // Extract base type for items from the queue
-type NotificationItem = {
+type ReviewItem = {
     reviewId: string;
     documentType: string;
     receivedDate: string;
@@ -16,6 +24,9 @@ type NotificationItem = {
     verificationStatus?: string;
     identityStatus?: string;
 };
+
+// One row of the dropdown, whatever its source.
+type NotificationItem = { id: string; title: string; body: string; meta: string; at: string; to: string; linkLabel: string };
 
 const STORAGE_KEY_PREFIX = "emlynk.admin.readNotifications.";
 
@@ -40,7 +51,79 @@ function saveReadIds(userId: string, ids: string[]) {
     }
 }
 
-export function NotificationBell() {
+function reviewNotification(item: ReviewItem): NotificationItem {
+    let title = "Document requires review";
+    let body = "A document requires manual attention.";
+    let meta = "";
+
+    if (item.reviewReason === "DOCUMENT_TYPE_UNCLEAR") {
+        title = "Unrecognized document received";
+        body = "A document could not be identified automatically.";
+        meta = "Document type unclear";
+    } else if (item.reviewReason === "IDENTITY_NOT_CONFIRMED") {
+        body = "A document could not be securely matched to a candidate.";
+        meta = "Identity not confirmed";
+    } else if (item.reviewReason) {
+        // Some type coercion since reviewReasonLabel expects specific enum values
+        meta = reviewReasonLabel(item.reviewReason as any) || "Manual review required";
+    } else {
+        meta = "Manual review required";
+    }
+
+    if (item.confidence != null && item.confidence > 0) {
+        meta += ` · ${item.confidence}% confidence`;
+    }
+    // Relative to the router's basename (/admin), like every other link in the app.
+    return { id: item.reviewId, title, body, meta, at: item.receivedDate, to: `/review/${encodeURIComponent(item.reviewId)}`, linkLabel: "Review document" };
+}
+
+async function loadReviewNotifications(token: string, signal?: AbortSignal): Promise<NotificationItem[]> {
+    let page = 1;
+    const pageSize = 100; // max allowed page size
+    const allItems: ReviewItem[] = [];
+    let keepFetching = true;
+
+    // Fetch pages until we get all active items up to the maximum queue window
+    while (keepFetching) {
+        const res = await getReviewQueue(token, { page, pageSize, order: "desc" }, signal);
+        const fetchedItems = res.items as unknown as ReviewItem[];
+        allItems.push(...fetchedItems);
+
+        if (allItems.length >= res.summary.total || fetchedItems.length < pageSize) {
+            keepFetching = false;
+        } else {
+            page++;
+        }
+    }
+    return allItems.map(reviewNotification);
+}
+
+// Open follow-ups only (the server scopes them to the user's candidates), newest flag first.
+async function loadFollowUpNotifications(token: string, signal?: AbortSignal): Promise<NotificationItem[]> {
+    const list = await listFollowUps(token, "OPEN", signal);
+    return list.groups
+        .flatMap((group) => group.followUps.map((followUp) => {
+            const name = group.candidate.name ?? group.candidate.passportId;
+            const note = followUp.callLog.outcome === "NO_ANSWER" ? "No answer" : followUp.callLog.note;
+            return {
+                id: followUp.followUpId,
+                title: "Needs attention",
+                body: note ? `${name}: ${note}` : name,
+                meta: followUp.flaggedByName ? `Flagged by ${followUp.flaggedByName}` : "Flagged for follow-up",
+                at: followUp.flaggedAt,
+                to: "/follow-ups",
+                linkLabel: "Open Need Attention",
+            };
+        }))
+        .sort((a, b) => b.at.localeCompare(a.at));
+}
+
+const LOADERS: Record<NotificationSource, (token: string, signal?: AbortSignal) => Promise<NotificationItem[]>> = {
+    review: loadReviewNotifications,
+    "follow-ups": loadFollowUpNotifications,
+};
+
+export function NotificationBell({ source = "review" }: { source?: NotificationSource }) {
     const { user, token } = useAuth();
     const [isOpen, setIsOpen] = useState(false);
     const [items, setItems] = useState<NotificationItem[]>([]);
@@ -66,28 +149,11 @@ export function NotificationBell() {
         setLoading(true);
         setError(false);
         try {
-            let page = 1;
-            const pageSize = 100; // max allowed page size
-            const allItems: NotificationItem[] = [];
-            let keepFetching = true;
-
-            // Fetch pages until we get all active items up to the maximum queue window
-            while (keepFetching) {
-                const res = await getReviewQueue(token, { page, pageSize, order: "desc" }, abortSignal);
-                const fetchedItems = res.items as unknown as NotificationItem[];
-                allItems.push(...fetchedItems);
-
-                if (allItems.length >= res.summary.total || fetchedItems.length < pageSize) {
-                    keepFetching = false;
-                } else {
-                    page++;
-                }
-            }
-
+            const allItems = await LOADERS[source](token, abortSignal);
             setItems(allItems);
 
-            // Reconcile read IDs: remove stale ones no longer active in the queue
-            const currentIds = new Set(allItems.map(i => i.reviewId));
+            // Reconcile read IDs: remove stale ones no longer active in the source
+            const currentIds = new Set(allItems.map(i => i.id));
             const storedRead = getReadIds(user.userId);
             const validReadIds = storedRead.filter(id => currentIds.has(id));
 
@@ -100,7 +166,7 @@ export function NotificationBell() {
         } finally {
             setLoading(false);
         }
-    }, [token, user]);
+    }, [token, user, source]);
 
     // Initial fetch
     useEffect(() => {
@@ -117,17 +183,17 @@ export function NotificationBell() {
         setIsOpen(!isOpen);
     };
 
-    const markAsRead = (reviewId: string) => {
-        if (!user || readIds.has(reviewId)) return;
+    const markAsRead = (id: string) => {
+        if (!user || readIds.has(id)) return;
         const next = new Set(readIds);
-        next.add(reviewId);
+        next.add(id);
         setReadIds(next);
         saveReadIds(user.userId, Array.from(next));
     };
 
     const markAllAsRead = () => {
         if (!user) return;
-        const allIds = items.map(i => i.reviewId);
+        const allIds = items.map(i => i.id);
         setReadIds(new Set(allIds));
         saveReadIds(user.userId, allIds);
     };
@@ -182,50 +248,27 @@ export function NotificationBell() {
                         ) : (
                             <ul className="divide-y divide-border">
                                 {items.map(item => {
-                                    const isRead = readIds.has(item.reviewId);
-
-                                    let title = "Document requires review";
-                                    let body = "A document requires manual attention.";
-                                    let meta = "";
-
-                                    if (item.reviewReason === "DOCUMENT_TYPE_UNCLEAR") {
-                                        title = "Unrecognized document received";
-                                        body = "A document could not be identified automatically.";
-                                        meta = "Document type unclear";
-                                    } else if (item.reviewReason === "IDENTITY_NOT_CONFIRMED") {
-                                        body = "A document could not be securely matched to a candidate.";
-                                        meta = "Identity not confirmed";
-                                    } else if (item.reviewReason) {
-                                        // Some type coercion since reviewReasonLabel expects specific enum values
-                                        meta = reviewReasonLabel(item.reviewReason as any) || "Manual review required";
-                                    } else {
-                                        meta = "Manual review required";
-                                    }
-
-                                    if (item.confidence != null && item.confidence > 0) {
-                                        meta += ` · ${item.confidence}% confidence`;
-                                    }
-
-                                    const time = new Date(item.receivedDate).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-                                    const date = new Date(item.receivedDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+                                    const isRead = readIds.has(item.id);
+                                    const time = new Date(item.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+                                    const date = new Date(item.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
                                     const receivedStr = `${date}, ${time}`;
 
                                     return (
-                                        <li key={item.reviewId} className={`relative flex flex-col p-4 transition-colors hover:bg-canvas-muted ${isRead ? "opacity-60" : "bg-primary-soft/10"}`}>
+                                        <li key={item.id} className={`relative flex flex-col p-4 transition-colors hover:bg-canvas-muted ${isRead ? "opacity-60" : "bg-primary-soft/10"}`}>
                                             {!isRead && <span className="absolute left-1.5 top-5 size-1.5 rounded-full bg-primary" aria-hidden="true" />}
                                             <div className="pl-3">
-                                                <p className="text-label-md text-ink">{title}</p>
-                                                <p className="mt-0.5 text-body-sm text-ink-soft">{body}</p>
-                                                <p className="mt-1 text-label-sm text-ink-subtle">{meta} · {receivedStr}</p>
+                                                <p className="text-label-md text-ink">{item.title}</p>
+                                                <p className="mt-0.5 text-body-sm text-ink-soft [overflow-wrap:anywhere]">{item.body}</p>
+                                                <p className="mt-1 text-label-sm text-ink-subtle">{item.meta} · {receivedStr}</p>
                                                 <Link
-                                                    to={`/admin/review/${item.reviewId}`}
+                                                    to={item.to}
                                                     onClick={() => {
-                                                        markAsRead(item.reviewId);
+                                                        markAsRead(item.id);
                                                         setIsOpen(false);
                                                     }}
                                                     className="mt-2 inline-flex text-label-sm text-primary hover:underline"
                                                 >
-                                                    Review document
+                                                    {item.linkLabel}
                                                 </Link>
                                             </div>
                                         </li>

@@ -267,7 +267,7 @@ describe("roles and the public API (CONFIRM-013, 014, 015)", () => {
         assert.equal((await confirm(USERS.OWNER, seen)).status, 200);
         // They can still SEE the submitted change (Analyst within their scope).
         assert.ok((await view(USERS.ANN)).body.pending.length > 0);
-        assert.ok((await view(USERS.DESK)).body.pending.length > 0);
+        assert.equal((await view(USERS.DESK)).status, 403, "the Registration Desk has the registration workflow only");
         assert.equal((await confirm(USERS.ADMIN, { field: "basic.birthDate", expectedCurrentValue: null, expectedSubmittedValue: null }, "N9999999")).status, 404, "unknown candidate");
     });
 

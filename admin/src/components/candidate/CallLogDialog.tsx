@@ -40,7 +40,9 @@ const prefersReducedMotion =() => typeof window.matchMedia === "function" && win
 // Opens as a drawer from the right over the candidate page; Escape, Close or
 // a click on the page outside the drawer closes it, except while a call is
 // being saved.
-export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { passportId: string; candidate?: CallLogCandidate; canEdit: boolean; onClose: () => void }) {
+// canEdit: adding calls. canFlag: marking a call as needs attention (Need Attention; not the
+// Registration Desk, for which it is read only).
+export function CallLogDialog({ passportId, candidate, canEdit, canFlag = canEdit, onClose }: { passportId: string; candidate?: CallLogCandidate; canEdit: boolean; canFlag?: boolean; onClose: () => void }) {
     const { token } = useAuth();
     const log = useAdminResource(`call-logs:${passportId}`, (t, signal) => listCallLogs(t, passportId, signal));
     const [added, setAdded] = useState<CallLogList | null>(null);
@@ -283,7 +285,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                                     <CallItem
                                                         key={item.id}
                                                         entry={item.call}
-                                                        canEdit={canEdit}
+                                                        canEdit={canFlag}
                                                         busy={flagging === item.call.callLogId}
                                                         disabled={flagging !== null}
                                                         error={flagError?.callLogId === item.call.callLogId ? flagError.message : null}
@@ -350,7 +352,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                     No Answer
                                 </button>
                                 {/* Marks the NEW call for follow-up when it is added (one request: the call and its follow-up together). */}
-                                <button
+                                {canFlag && <button
                                     type="button"
                                     aria-pressed={needsAttention}
                                     onClick={() => setNeedsAttention((on) => !on)}
@@ -360,7 +362,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                 >
                                     <Icon name={needsAttention ? "flag_fill" : "flag"} className="size-4" />
                                     Need Attention
-                                </button>
+                                </button>}
                                 <button type="submit" disabled={busy || !note.trim()} className={compactButton(primaryButton)}>{busy ? "Saving…" : "Add call"}</button>
                             </div>
                         </form>

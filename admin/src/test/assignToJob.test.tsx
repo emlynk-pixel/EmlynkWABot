@@ -81,8 +81,8 @@ describe("Assign to Job (Candidate Details)", () => {
         }
     });
 
-    test("ASSIGN-UI-003 / 004 an Analyst and the Registration Desk see the card but no management action", async () => {
-        for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+    test("ASSIGN-UI-003 / 004 an Analyst and a Team Lead see the card but no management action", async () => {
+        for (const role of ["ANALYST", "TEAM_LEAD"]) {
             backend(role);
             const view = renderApp(PATH);
             const region = await card();

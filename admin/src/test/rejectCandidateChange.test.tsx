@@ -160,8 +160,8 @@ describe("Revoke next to Confirm", () => {
 });
 
 describe("who can revoke (REJECT-011 / 012)", () => {
-    test("ADMIN and OWNER get Revoke; an Analyst and the Registration Desk see the hint and no buttons", async () => {
-        for (const [role, can] of [["ADMIN", true], ["OWNER", true], ["ANALYST", false], ["REGISTRATION_DESK", false]] as const) {
+    test("ADMIN and OWNER get Revoke; an Analyst and a Team Lead see the hint and no buttons", async () => {
+        for (const [role, can] of [["ADMIN", true], ["OWNER", true], ["ANALYST", false], ["TEAM_LEAD", false]] as const) {
             backend(role, [ADDRESS]);
             const view = open();
             const address = await hint("contact.address");

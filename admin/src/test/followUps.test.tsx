@@ -116,7 +116,7 @@ describe("Need Attention page", () => {
 
     test("16-17. Mark complete: the follow-up leaves the open view; the last one takes its candidate card with it", async () => {
         const { calls } = signedInBackend({
-            ...asRole("REGISTRATION_DESK"),
+            ...asRole("ANALYST"),
             ...listRoute(),
             "POST /api/admin/follow-ups/f-3/complete": { status: 200, body: { followUp: item("f-3", "Police report pending", { status: "COMPLETED" }) } },
             "POST /api/admin/follow-ups/f-1/complete": { status: 200, body: { followUp: item("f-1", "Passport not uploaded", { status: "COMPLETED" }) } },
@@ -157,7 +157,7 @@ describe("Need Attention page", () => {
         });
     }
 
-    for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+    for (const role of ["TEAM_LEAD", "ANALYST"]) {
         test(`20-21. ${role} does not see Delete, but can mark complete`, async () => {
             signedInBackend({ ...asRole(role), ...listRoute() });
             renderApp("/follow-ups");
@@ -166,6 +166,18 @@ describe("Need Attention page", () => {
             expect(within(saman).getAllByRole("button", { name: "Mark complete" })).toHaveLength(2);
         });
     }
+
+    test("REGISTRATION_DESK sees Need Attention read only: the follow-ups, no Mark complete, no Delete, no candidate links", async () => {
+        const { calls } = signedInBackend({ ...asRole("REGISTRATION_DESK"), ...listRoute() });
+        renderApp("/follow-ups");
+        const saman = await group("SAMAN SILVA");
+        expect(within(saman).getByText("Passport not uploaded")).toBeInTheDocument();
+        expect(screen.getByText(/require action \(view only\)/)).toBeInTheDocument();
+        expect(within(saman).queryByRole("link", { name: "SAMAN SILVA" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Mark complete" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Delete follow-up" })).toBeNull();
+        expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+    });
 
     test("22-23. Delete asks first; Cancel keeps it; confirming removes the follow-up only", async () => {
         const { calls } = signedInBackend({

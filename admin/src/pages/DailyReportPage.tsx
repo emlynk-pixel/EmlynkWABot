@@ -4,7 +4,7 @@ import { getDailyRoleSummary, getDailySummary, getIncompleteCandidates, type Dai
 import { STAGE_LABELS, type CandidateStageKey } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
-import { ROLES, canViewRoleReport, roleLabel as labelOfRole, type Role } from "../auth/roles";
+import { ROLES, canViewDashboard, canViewRoleReport, roleLabel as labelOfRole, type Role } from "../auth/roles";
 import { activityLabel, exportRolePdf, exportSummaryPdf, reportTypeLabel } from "../components/dailyReportPdf";
 import { formatDateTime, formatDay, formatNumber, formatTime, todayInSriLanka } from "../components/format";
 import { Icon } from "../components/Icon";
@@ -248,6 +248,8 @@ function IncompleteRow({ row }: { row: IncompleteStage }) {
 }
 
 function CurrentState({ report }: { report: DailySummary }) {
+    // The counts are part of the report; the Police Workflow page is not every report role's (not TEAM_LEAD's).
+    const { user } = useAuth();
     const { incomplete, police } = report.current;
     return (
         <section aria-labelledby="current-heading" className="space-y-3">
@@ -268,7 +270,7 @@ function CurrentState({ report }: { report: DailySummary }) {
             <Panel
                 title="Police reports"
                 description="21-day police report status of every candidate."
-                aside={<Link to="/police" className="text-label-md text-primary hover:underline">Police Workflow</Link>}
+                aside={canViewDashboard(user) ? <Link to="/police" className="text-label-md text-primary hover:underline">Police Workflow</Link> : undefined}
             >
                 <dl aria-label="Police report status" className="grid grid-cols-2 gap-x-4 gap-y-3 px-3 py-3 sm:grid-cols-5">
                     {([

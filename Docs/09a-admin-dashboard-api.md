@@ -105,7 +105,7 @@ Supabase Auth owns credentials and sessions; the backend maps the Supabase sessi
 3. **Reload / new visit in the same tab:** Supabase restores its stored session and the app checks it again with `GET /auth/me`. If the backend rejects it (signed out, user deactivated) or cannot be reached, the user is shown the login page.
 4. **Refresh:** Supabase refreshes the access token automatically; the app uses the new token for the next request. If the session cannot be refreshed, the app signs out.
 5. **Sign out:** `supabase.auth.signOut()` ends the session (refresh tokens revoked); the access token stops being accepted by the backend at once. The local session is cleared even if Supabase cannot be reached.
-6. **Route guard:** while the session is being restored, a "Checking your session" screen is shown; without a valid session every protected route redirects to `/admin/login`, which returns to the requested page after sign-in (only paths inside the app are followed). A role without dashboard access (REGISTRATION_DESK) lands on Candidates instead of the Overview.
+6. **Route guard:** while the session is being restored, a "Checking your session" screen is shown; without a valid session every protected route redirects to `/admin/login`, which returns to the requested page after sign-in (only paths inside the app are followed). A role without dashboard access lands on its own first area instead of the Overview: Candidates (TEAM_LEAD), Add Candidate (REGISTRATION_DESK, its only page), Jobs (JOB_HANDLER). Every page that has no role check of its own opens only to the roles listed for it (`App.tsx` `AllowRoles`, the same lists as the sidebar); anyone else sees "Access Restricted" and nothing is requested.
 
 Error messages: Supabase's sign-in failures are shown as one generic message ("Invalid email or password"), whether or not the email exists; rate limiting and service errors get short fixed texts, never provider details.
 
@@ -750,7 +750,7 @@ Body `{ candidateIds: [passportId…], confirm: true }`. Responds `{ unassigned,
 
 ### Analyst scoping of the other endpoints
 
-For `ANALYST` the server limits these to the candidates allocated to them: `GET /candidates` (search and totals included), every `/candidates/:passportId/...` route (404 *Candidate not found* otherwise), `GET /clients/:passportId` (404), `GET /follow-ups`, `POST /follow-ups/:id/complete` (404), `GET /clients`, `GET /documents`, `GET /documents/missing`, `GET /police`, and `POST /review/:id/assign-client` (409 `CLIENT_NOT_FOUND` for any other candidate). `POST /candidates` (registration) is ADMIN and REGISTRATION_DESK only. The review queue, overview and daily report endpoints are not scoped.
+For `ANALYST` the server limits these to the candidates allocated to them: `GET /candidates` (search and totals included), every `/candidates/:passportId/...` route (404 *Candidate not found* otherwise), `GET /clients/:passportId` (404), `GET /follow-ups`, `POST /follow-ups/:id/complete` (404), `GET /clients`, `GET /documents`, `GET /documents/missing`, `GET /police`, and `POST /review/:id/assign-client` (409 `CLIENT_NOT_FOUND` for any other candidate). `POST /candidates` (registration) is ADMIN, TEAM_LEAD and REGISTRATION_DESK only. The review queue (an item linked to another candidate is 404; files not yet linked to any candidate stay open to every Analyst), the overview, the daily and monthly reports and the jobs (`GET /jobs`, `GET /jobs/:jobId`: only jobs holding their candidates, and only those candidates on them) are scoped the same way. The scope is applied in the database before search, filters, paging and totals (`test/roleScopeRegression.test.js`).
 
 ## 5. Pages and data
 
@@ -920,8 +920,8 @@ The role is `public."user".role`, read from the database on every request (never
 - **`ADMIN`**: everything, including Settings, Work Allocation, verification, police slip date corrections and user management of the roles below ADMIN (`/api/admin/users`); never another ADMIN's or the OWNER's account.
 - **`TEAM_LEAD`**: exactly seven areas: the Candidates area for every candidate (`CANDIDATE_STAFF`, `CANDIDATE_READERS`, `REGISTRATION_STAFF`), Need Attention (list, flag, complete), Work Allocation, Jobs (`JOB_READERS`, `JOB_MANAGERS`), Agents and Clients, and the standard Daily Report. Every ADMIN-only action stays ADMIN only (verification, Candidate Form confirm / reject, follow-up delete, the job-group form link, Summary by Roles, Job Types); no dashboards, review, police, monthly overview, Settings, Audit Logs or user management.
 - **`ANALYST`**: dashboard reads, review actions, corrections and candidate work; cannot correct police slip dates.
-- **`REGISTRATION_DESK`**: candidate list, lookup, registration and details only.
-- **`JOB_HANDLER`**: Jobs, Agents and Clients; reads Candidates (list, details) and changes no candidate record; no dashboards, reports, review, Settings, Audit Logs or user management (`JOB_MANAGEMENT_IMPLEMENTATION.md`, `AGENT_CLIENT_MANAGEMENT.md`).
+- **`REGISTRATION_DESK`**: the registration workflow only (`REGISTRATION_WORKFLOW`): the passport-ID lookup (`GET /candidates/:passportId`), `POST /candidates`, `PUT /candidates/:passportId`, the `CANDIDATE_DETAILS` stage (its note) and uploads of `PASSPORT`, `NIC` and `SKILL_VIDEO`; Need Attention read only (`GET /follow-ups`, `FOLLOW_UP_READERS`); every other candidate route, other stage or document type, and any follow-up action: 403.
+- **`JOB_HANDLER`**: Jobs, Agents and Clients; reads Candidates (list, the candidate's page and what it reads: `CANDIDATE_READERS`) and changes no candidate record; no dashboards, reports, review, Need Attention, Settings, Audit Logs or user management (`JOB_MANAGEMENT_IMPLEMENTATION.md`, `AGENT_CLIENT_MANAGEMENT.md`).
 
 ### 12.2 Authorization middleware
 
@@ -935,7 +935,10 @@ Endpoint tiers (`src/routes/admin.js`):
 | Dashboard reads (`ALL_ACTIVE`) | ADMIN, ANALYST | overview, documents, clients, police, monthly overview, review (read) |
 | Daily Report (`REPORT_READERS`) | ADMIN, TEAM_LEAD, ANALYST | `GET /reports/daily`, `/reports/daily/summary`, `/reports/daily/incomplete` |
 | Summary by Roles | ADMIN | `GET /reports/daily/roles` |
-| Candidates (`CANDIDATE_STAFF`) | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | the whole Candidates area: list, registration, details, stages, candidate documents, call logs, additional details; Priority Follow-Ups: flag a call (`POST /candidates/:passportId/call-logs/:callLogId/follow-up`), list (`GET /follow-ups`) and complete (`POST /follow-ups/:id/complete`) |
+| Candidates (`CANDIDATE_STAFF`) | ADMIN, TEAM_LEAD, ANALYST | the Candidates area's changes: stages, candidate documents (remove), call logs, additional details, form links; Priority Follow-Ups: flag and complete (`POST /follow-ups/:id/complete`); the list (`GET /follow-ups`) also for REGISTRATION_DESK, read only (`FOLLOW_UP_READERS`) |
+| Candidate reads (`CANDIDATE_READERS`) | ADMIN, TEAM_LEAD, ANALYST, JOB_HANDLER | `GET /candidates`, `GET /candidates/:passportId` and its call logs, additional details and submitted form |
+| Registration workflow (`REGISTRATION_WORKFLOW`) | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | `GET /candidates/:passportId` (lookup), `PUT /candidates/:passportId`, `PUT …/stages/:stage` and `POST …/documents/upload-target` / `finalize`; REGISTRATION_DESK only for the `CANDIDATE_DETAILS` stage and `PASSPORT` / `NIC` / `SKILL_VIDEO` (otherwise 403) |
+| Job candidate picker (`JOB_MANAGERS`) | ADMIN, TEAM_LEAD, JOB_HANDLER | `GET /job-candidate-options?search=&page=&pageSize=`: test-PASS candidates only, `{ passportId, uniqueId, name, nic, workflowStatus }` per item, paged like `GET /candidates` |
 | Work Allocation (`ALLOCATION_MANAGERS`) | ADMIN, TEAM_LEAD | `/work-allocation/*` (section 4p); work goes to ACTIVE Analysts only |
 | Registration (`REGISTRATION_STAFF`) | ADMIN, TEAM_LEAD, REGISTRATION_DESK | `POST /candidates` |
 | Verification, Candidate Form confirm / reject | ADMIN | `POST /candidates/:id/verification`, `POST /candidates/:id/form-submission/*` |

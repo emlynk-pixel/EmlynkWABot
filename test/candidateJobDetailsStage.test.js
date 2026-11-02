@@ -280,7 +280,7 @@ describe("historical Job fallback on Job details (JOB-HISTORY-001 to 014)", () =
         assert.equal((await api(USERS.OTHER_ANALYST, "GET", `/candidates/${P1}`)).status, 404);
         assert.equal((await save(P1, "JOB_DETAILS", { notes: "x" }, USERS.OTHER_ANALYST)).status, 404);
         assert.equal((await save(P1, "JOB_DETAILS", { notes: "x" }, USERS.ANALYST)).status, 200);
-        assert.equal((await save(P1, "JOB_DETAILS", { notes: "x" }, USERS.DESK)).status, 200);
+        assert.equal((await save(P1, "JOB_DETAILS", { notes: "x" }, USERS.DESK)).status, 403, "the Registration Desk saves only the Candidate Details note");
     });
 });
 
@@ -363,8 +363,9 @@ describe("other stages are unchanged (STAGE-JOB-016 to 020)", () => {
 });
 
 describe("RBAC is unchanged (STAGE-JOB-024)", () => {
-    test("ADMIN, OWNER and REGISTRATION_DESK can save a Job details stage; an ANALYST only for an allocated candidate", async () => {
-        for (const who of [USERS.ADMIN, USERS.OWNER, USERS.DESK]) {
+    test("ADMIN and OWNER can save a Job details stage; an ANALYST only for an allocated candidate; REGISTRATION_DESK never", async () => {
+        assert.equal((await save(P1, "JOB_DETAILS", { notes: "by the desk" }, USERS.DESK)).status, 403);
+        for (const who of [USERS.ADMIN, USERS.OWNER]) {
             assert.equal((await save(P1, "JOB_DETAILS", { notes: `by ${who.role}` }, who)).status, 200, who.role);
         }
         assert.equal((await save(P1, "JOB_DETAILS", { notes: "by its analyst" }, USERS.ANALYST)).status, 200);

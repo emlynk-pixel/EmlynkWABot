@@ -8,8 +8,9 @@ import { ROLES, hasRole } from "../middleware/requireRole.js";
 //
 //   OWNER, ADMIN, TEAM_LEAD,            every candidate
 //   REGISTRATION_DESK
-//   JOB_HANDLER                         every candidate, to READ (routes/admin.js gives it
-//                                       no candidate write route) and to staff its jobs
+//   JOB_HANDLER                         every candidate a job may take, through the Jobs
+//                                       workflow only (routes/admin.js gives it no
+//                                       Candidates route), to staff its jobs
 //   ANALYST                             only the candidates allocated to them
 //                                       (candidate_allocation.analyst_id)
 //   anything else                       none (fails closed; a retired MANAGER too)

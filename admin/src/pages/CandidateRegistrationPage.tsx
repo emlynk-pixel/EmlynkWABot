@@ -15,6 +15,7 @@ import {
     type FailedUpload,
 } from "../api/candidates";
 import { canRegisterCandidates, useAuth } from "../auth/AuthProvider";
+import { canListCandidates, canManageCandidates, canViewCandidates } from "../auth/roles";
 import { CandidateFields, detailsFrom, emptyDetails, Field, textAreaControl, validateDetails } from "../components/candidate/CandidateFields";
 import { DocumentRow, DOCUMENT_ACCEPT, VIDEO_ACCEPT } from "../components/candidate/DocumentRow";
 import { DialogError, primaryButton, secondaryButton } from "../components/Dialog";
@@ -74,6 +75,8 @@ export function CandidateRegistrationPage() {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<{ message: string; existingId?: string } | null>(null);
     const [lookup, setLookup] = useState<Lookup>({ status: "idle" });
+    // What was just saved, for a role that stays on this form (the Registration Desk).
+    const [saved, setSaved] = useState<string | null>(null);
     // The lookup for the current passport ID, shared by blur and submit so
     // the same ID is fetched once.
     const pending = useRef<{ passportId: string; promise: Promise<CandidateDetails | null> } | null>(null);
@@ -83,6 +86,22 @@ export function CandidateRegistrationPage() {
     }
 
     const existing = lookup.status === "found" ? lookup.details : null;
+    // The Candidates list, for the roles that have it; the Registration Desk (no list) starts over instead.
+    const hasList = canListCandidates(user);
+    // Registration continues on the candidate's page for the roles that open it. The Registration
+    // Desk (the registration workflow only) stays here: the form is cleared for the next candidate.
+    const opensCandidate = canViewCandidates(user);
+    const finish = (candidateId: string, message: string, failedUploads: FailedUpload[] = []) => {
+        if (opensCandidate) {
+            navigate(`/candidates/${encodeURIComponent(candidateId)}?stage=CANDIDATE_DETAILS`, { state: failedUploads.length ? { failedUploads } : undefined });
+            return;
+        }
+        startOver();
+        setFiles({ PASSPORT: null, NIC: null, SKILL_VIDEO: null });
+        setBusy(false);
+        const notUploaded = failedUploads.map((failed) => `${documentTypeLabel(failed.documentType)}: ${failed.message}`).join("; ");
+        setSaved(notUploaded ? `${message} These files were not uploaded — ${notUploaded}. Enter the passport ID again to upload them.` : message);
+    };
 
     const load = (found: CandidateDetails) => {
         setLookup({ status: "found", details: found });
@@ -155,7 +174,7 @@ export function CandidateRegistrationPage() {
             if (comment.trim() !== notesOf(current).trim()) {
                 await updateCandidateStage(token, candidateId, "CANDIDATE_DETAILS", { notes: comment.trim() || null });
             }
-            navigate(`/candidates/${encodeURIComponent(candidateId)}?stage=CANDIDATE_DETAILS`);
+            finish(candidateId, `The details of ${candidateId} were saved.`);
         } catch (caught) {
             setError({ message: caught instanceof ApiError ? caught.message : "The changes could not be saved." });
             setBusy(false);
@@ -165,6 +184,7 @@ export function CandidateRegistrationPage() {
     const submit = async (event: FormEvent) => {
         event.preventDefault();
         if (!token) return;
+        setSaved(null);
         if (existing) return saveExisting(existing);
 
         // An existing passport ID loads that candidate instead of registering.
@@ -218,11 +238,11 @@ export function CandidateRegistrationPage() {
                 failedUploads.push({ documentType, message: caught instanceof ApiError ? caught.message : "upload failed" });
             }
         }
-        navigate(`/candidates/${encodeURIComponent(created)}?stage=CANDIDATE_DETAILS`, {
-            state: failedUploads.length ? { failedUploads } : undefined,
-        });
+        finish(created, `Candidate ${created} was registered.`, failedUploads);
     };
 
+    // Upload / Replace only for the Registration Desk: removing a document is candidate management.
+    const canRemove = canManageCandidates(user);
     const setFile = (type: keyof typeof files) => (file: File | null) => setFiles((previous) => ({ ...previous, [type]: file }));
     const onUploaded = (next: CandidateDetails) => setLookup({ status: "found", details: next });
 
@@ -252,9 +272,10 @@ export function CandidateRegistrationPage() {
     return (
         <section aria-labelledby="page-title" className="mx-auto max-w-4xl space-y-4">
             <div>
-                <Link to="/candidates" className="text-label-md text-primary hover:underline">Candidates</Link>
+                {hasList && <Link to="/candidates" className="text-label-md text-primary hover:underline">Candidates</Link>}
                 <h1 id="page-title" className="mt-1 text-headline-lg text-ink">Add candidate</h1>
             </div>
+            {saved && <p role="status" className="rounded-xl border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{saved}</p>}
             <Card className="p-6">
                 <form onSubmit={submit} noValidate>
                     <h2 className="text-headline-sm text-ink">Candidate details</h2>
@@ -273,9 +294,9 @@ export function CandidateRegistrationPage() {
                     </div>
                     {existing ? (
                         <div className="mt-6 space-y-2">
-                            <DocumentRow passportId={existing.candidate.passportId} documentType="PASSPORT" label="Passport" document={existing.documents.PASSPORT} onUploaded={onUploaded} />
-                            <DocumentRow passportId={existing.candidate.passportId} documentType="NIC" label="NIC document" document={existing.documents.NIC} onUploaded={onUploaded} />
-                            <DocumentRow passportId={existing.candidate.passportId} documentType="SKILL_VIDEO" label="Skill video" document={existing.documents.SKILL_VIDEO} accept={VIDEO_ACCEPT} onUploaded={onUploaded} />
+                            <DocumentRow passportId={existing.candidate.passportId} documentType="PASSPORT" label="Passport" document={existing.documents.PASSPORT} removable={canRemove} onUploaded={onUploaded} />
+                            <DocumentRow passportId={existing.candidate.passportId} documentType="NIC" label="NIC document" document={existing.documents.NIC} removable={canRemove} onUploaded={onUploaded} />
+                            <DocumentRow passportId={existing.candidate.passportId} documentType="SKILL_VIDEO" label="Skill video" document={existing.documents.SKILL_VIDEO} accept={VIDEO_ACCEPT} removable={canRemove} onUploaded={onUploaded} />
                             {others.length > 0 && <p className="text-label-sm text-ink-subtle">Also on record: {others.join(", ")}</p>}
                         </div>
                     ) : (
@@ -293,13 +314,13 @@ export function CandidateRegistrationPage() {
                     {error && (
                         <div>
                             <DialogError message={error.message} />
-                            {error.existingId && (
+                            {error.existingId && opensCandidate && (
                                 <Link to={`/candidates/${encodeURIComponent(error.existingId)}`} className="mt-2 inline-block text-label-md text-primary hover:underline">Open the registered candidate</Link>
                             )}
                         </div>
                     )}
                     <div className="mt-6 flex justify-end gap-2">
-                        <button type="button" onClick={() => navigate("/candidates")} disabled={busy} className={secondaryButton}>Cancel</button>
+                        <button type="button" onClick={() => (hasList ? navigate("/candidates") : startOver())} disabled={busy} className={secondaryButton}>Cancel</button>
                         <button type="submit" disabled={busy} className={primaryButton}>
                             {existing ? (busy ? "Saving…" : "Save changes") : busy ? "Registering…" : "Register candidate"}
                         </button>

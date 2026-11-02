@@ -161,7 +161,7 @@ describe("session restore (page refresh)", () => {
         fakeAuth.setSession(SESSION_TOKEN);
         stubBackend({ "GET /auth/me": { status: 403, body: { message: "Your account's role is no longer supported. Contact the Owner to update it.", code: "ROLE_NOT_SUPPORTED" } } });
         renderApp("/");
-        expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
         expect(screen.getByRole("alert")).toHaveTextContent("no longer supported");
         expect(screen.queryByRole("navigation", { name: "Main navigation" })).not.toBeInTheDocument();
     });
@@ -220,20 +220,20 @@ describe("dashboard shell", () => {
 
     test("ADMIN: every section, then Audit Logs and Settings (Invite User and Change Roles are Settings tabs)", async () => {
         await signedIn();
-        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Missing Documents", "Review Queue", "Police Workflow", "Documents", "Daily Report", "Audit Logs", "Settings"]);
+        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report", "Audit Logs", "Settings"]);
         await userEvent.setup().click(screen.getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });
 
     test("ANALYST: the dashboard sections and Jobs; no user management, Settings, Agents, Client Management or Work Allocation", async () => {
         await signedIn("/", userWithRole("ANALYST"));
-        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention", ...allocation, "Jobs", ...masterData, "Missing Documents", "Review Queue", "Police Workflow", "Documents", "Daily Report", ...invite]);
+        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention", "Jobs", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report"]);
     });
 
-    test("REGISTRATION_DESK: Candidates and Need Attention only, and lands there instead of the Overview", async () => {
+    test("REGISTRATION_DESK: Add Candidate and Need Attention only, and lands on Add Candidate instead of the Overview", async () => {
         await signedIn("/", userWithRole("REGISTRATION_DESK"));
-        expect(navLinks()).toEqual(["Candidates", "Need Attention"]);
-        expect(await screen.findByRole("heading", { name: "Candidates", level: 1 })).toBeInTheDocument();
+        expect(navLinks()).toEqual(["Add Candidate", "Need Attention"]);
+        expect(await screen.findByRole("heading", { name: "Add candidate", level: 1 })).toBeInTheDocument();
     });
 
     test("the header shows the role's label", async () => {

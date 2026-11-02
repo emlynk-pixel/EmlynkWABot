@@ -1,10 +1,6 @@
 import { Navigate, Outlet, Route, Routes } from "react-router";
-import { canViewDashboard, useAuth } from "./auth/AuthProvider";
-import { ROLES, hasRole, type Role } from "./auth/roles";
-
-const JOB_HANDLER_ONLY: readonly Role[] = [ROLES.JOB_HANDLER];
-// The dashboard pages (Overview's areas, Review, Police, Missing Documents): not JOB_HANDLER, not TEAM_LEAD.
-const NO_DASHBOARD: readonly Role[] = [ROLES.JOB_HANDLER, ROLES.TEAM_LEAD];
+import { useAuth } from "./auth/AuthProvider";
+import { CANDIDATE_LIST_ROLES, CANDIDATE_VIEW_ROLES, DASHBOARD_ROLES, FOLLOW_UP_VIEW_ROLES, REPORT_VIEW_ROLES, hasRole, landingPath, type Role } from "./auth/roles";
 import { RequireAuth } from "./auth/RequireAuth";
 import { AdminLayout } from "./layout/AdminLayout";
 import { CandidateDeploymentPage } from "./pages/CandidateDeploymentPage";
@@ -41,21 +37,21 @@ import { SetupPasswordPage } from "./pages/SetupPasswordPage";
 import { WorkAllocationPage } from "./pages/WorkAllocationPage";
 
 // The landing page: the Overview, or for a role without dashboard access (which
-// the API would otherwise refuse) its own first area: Jobs for JOB_HANDLER,
-// Candidates for REGISTRATION_DESK.
+// the API would otherwise refuse) its own first area (roles.ts landingPath):
+// Jobs for JOB_HANDLER, Add Candidate for REGISTRATION_DESK, Candidates for TEAM_LEAD.
 function HomePage() {
     const { user } = useAuth();
-    if (canViewDashboard(user)) return <OverviewPage />;
-    return <Navigate to={hasRole(user, [ROLES.JOB_HANDLER]) ? "/jobs" : "/candidates"} replace />;
+    const to = landingPath(user);
+    return to ? <Navigate to={to} replace /> : <OverviewPage />;
 }
 
-// Pages whose own component has no role check: opened by URL by a role outside them (a
-// JOB_HANDLER, and a TEAM_LEAD for the dashboard pages) they show "Access Restricted" instead
-// of loading (the API refuses them either way). Only the listed roles are stopped, so every
-// other role sees these pages exactly as before.
-function DenyRoles({ roles }: { roles: readonly Role[] }) {
+// Pages whose own component has no role check open only to the listed roles (the same
+// lists as the sidebar, layout/navigation.ts). Anyone else opening one by URL sees
+// "Access Restricted" and nothing is requested (the API refuses them either way). An
+// allow-list: a role not named, a new one included, is refused by default.
+function AllowRoles({ roles }: { roles: readonly Role[] }) {
     const { user } = useAuth();
-    if (!hasRole(user, roles)) return <Outlet />;
+    if (hasRole(user, roles)) return <Outlet />;
     return (
         <div className="mx-auto max-w-4xl p-6">
             <div role="alert" className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
@@ -84,7 +80,7 @@ export function AppRoutes() {
                 }
             >
                 <Route index element={<HomePage />} />
-                <Route element={<DenyRoles roles={NO_DASHBOARD} />}>
+                <Route element={<AllowRoles roles={DASHBOARD_ROLES} />}>
                     <Route path="documents" element={<DocumentsPage />} />
                     <Route path="review" element={<ReviewQueuePage />} />
                     <Route path="review/:id" element={<ReviewDetailPage />} />
@@ -95,18 +91,22 @@ export function AppRoutes() {
                     <Route path="missing-documents" element={<MissingDocumentsPage />} />
                     <Route path="police" element={<PoliceWorkflowPage />} />
                 </Route>
-                <Route element={<DenyRoles roles={JOB_HANDLER_ONLY} />}>
+                <Route element={<AllowRoles roles={REPORT_VIEW_ROLES} />}>
                     <Route path="reports/daily" element={<DailyReportPage />} />
                 </Route>
-                <Route>
-                    {/* A JOB_HANDLER opens Candidates read only (canManageCandidates decides every change). */}
+                <Route element={<AllowRoles roles={CANDIDATE_LIST_ROLES} />}>
                     <Route path="candidates" element={<CandidatesPage />} />
-                    <Route path="candidates/new" element={<CandidateRegistrationPage />} />
+                </Route>
+                {/* The page checks the registration roles itself (with its own explanation). */}
+                <Route path="candidates/new" element={<CandidateRegistrationPage />} />
+                {/* JOB_HANDLER opens it read only (canManageCandidates decides every change); not REGISTRATION_DESK. */}
+                <Route element={<AllowRoles roles={CANDIDATE_VIEW_ROLES} />}>
                     <Route path="candidates/:passportId" element={<CandidateDeploymentPage />} />
                 </Route>
-                <Route element={<DenyRoles roles={JOB_HANDLER_ONLY} />}>
+                <Route element={<AllowRoles roles={FOLLOW_UP_VIEW_ROLES} />}>
                     <Route path="follow-ups" element={<PriorityFollowUpsPage />} />
                 </Route>
+                {/* These pages check their own roles (the same lists as the sidebar). */}
                 <Route path="jobs" element={<JobsPage />} />
                 <Route path="jobs/:jobId" element={<JobDetailsPage />} />
                 <Route path="agents" element={<AgentsPage />} />

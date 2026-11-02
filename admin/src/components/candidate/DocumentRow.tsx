@@ -23,7 +23,7 @@ function statusLine(document: CandidateDocument | null, description?: string, sh
 // (a police report with no known variant). Remove deletes the stored document
 // and its file, after a confirmation with a reason (kept in the audit log).
 // onUploaded gets the candidate after an upload or a removal.
-export function DocumentRow({ passportId, documentType, label, removeTitle = label, description, required, document, variant, uploadable = true, accept = DOCUMENT_ACCEPT, readOnly, onUploaded, title }: {
+export function DocumentRow({ passportId, documentType, label, removeTitle = label, description, required, document, variant, uploadable = true, removable = true, accept = DOCUMENT_ACCEPT, readOnly, onUploaded, title }: {
     passportId: string;
     documentType: CandidateDocumentType;
     label: string;
@@ -35,6 +35,8 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
     uploadable?: boolean;
     accept?: string;
     readOnly?: boolean;
+    // false: Upload / Replace without Remove (the registration form for the Registration Desk).
+    removable?: boolean;
     onUploaded: (details: CandidateDetails) => void;
     title?: string;
 }) {
@@ -113,7 +115,7 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
                             </button>
                         </>
                     )}
-                    {document && !readOnly && (
+                    {document && !readOnly && removable && (
                         <button type="button" disabled={busy} onClick={() => setRemoving(true)} className={`${dangerButton} inline-flex items-center gap-1.5`}>
                             <Icon name="delete" className="size-4" />Remove
                         </button>

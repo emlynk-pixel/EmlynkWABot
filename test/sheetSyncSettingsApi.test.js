@@ -160,8 +160,8 @@ describe("ADMIN", () => {
 });
 
 describe("existing routes are unchanged", () => {
-    test("Candidate Pool list still answers for every supported role it allowed before", async () => {
-        for (const role of ROLES.filter((r) => r !== "MANAGER")) {
+    test("Candidate Pool list still answers for every Candidates list role (not REGISTRATION_DESK, which has none)", async () => {
+        for (const role of ROLES.filter((r) => !["MANAGER", "REGISTRATION_DESK"].includes(r))) {
             const response = await fetch(`${baseUrl}/api/admin/candidates`, { headers: { Authorization: `Bearer ${token(`admin-${role}`)}` } });
             assert.equal(response.status, 200, role);
         }

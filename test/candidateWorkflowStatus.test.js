@@ -660,9 +660,10 @@ describe("the list itself (STATUS-018) and RBAC", () => {
         assert.deepEqual(page2.body.filters, { search: null }, "no Status filter was added");
     });
 
-    test("every Candidates role sees the Status; an Analyst only for their own candidates", async () => {
+    test("every Candidates list role sees the Status; an Analyst only for their own candidates", async () => {
         await prisma.candidateAllocation.create({ data: { passportId: P, analystId: USERS.ANALYST.adminId } });
-        for (const who of [USERS.ADMIN, USERS.OWNER, USERS.DESK]) assert.equal((await statusOf(P, who)).code, "REGISTERED", who.role);
+        for (const who of [USERS.ADMIN, USERS.OWNER]) assert.equal((await statusOf(P, who)).code, "REGISTERED", who.role);
+        assert.equal((await api(USERS.DESK, "GET", "/candidates")).status, 403, "REGISTRATION_DESK has no Candidates list");
         const own = await api(USERS.ANALYST, "GET", "/candidates");
         assert.deepEqual(own.body.items.map((i) => [i.passportId, i.workflowStatus.code]), [[P, "REGISTERED"]]);
     });

@@ -147,7 +147,8 @@ describe("NotificationBell", () => {
         await user.click(screen.getByRole("button"));
 
         const link = screen.getByRole("link", { name: /Review document/i });
-        expect(link).toHaveAttribute("href", "/admin/review/rev-123");
+        // Relative to the router's basename (/admin in the app): never /admin/admin/review/...
+        expect(link).toHaveAttribute("href", "/review/rev-123");
 
         await user.click(link);
 

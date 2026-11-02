@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
+import { useAuth } from "../auth/AuthProvider";
+import { DASHBOARD_ROLES, hasRole, type Role } from "../auth/roles";
 import { NAV_ITEMS, SETTINGS_TABS } from "../layout/navigation";
 
 // The one breadcrumb of the admin shell: AdminLayout renders it above every
@@ -7,11 +9,15 @@ import { NAV_ITEMS, SETTINGS_TABS } from "../layout/navigation";
 // The trail comes from the URL: Admin > the section (a sidebar entry, or
 // Clients, which has no entry) > the page inside it. A details page names
 // its record (useBreadcrumbLabel); until it does, the last item says "Details".
+// A section the user can't open is named without a link (a Registration Desk
+// on a candidate's page has no Candidates list).
 
 export type Crumb = { label: string; to?: string };
 
+type Section = { to: string; label: string; end?: boolean; roles: readonly Role[] };
+
 // Sections that are not sidebar entries but have pages under them.
-const EXTRA_SECTIONS: { to: string; label: string; end?: boolean }[] = [{ to: "/clients", label: "Clients" }];
+const EXTRA_SECTIONS: Section[] = [{ to: "/clients", label: "Clients", roles: DASHBOARD_ROLES }];
 
 // Fixed pages inside a section (anything else under a section is a record).
 const SUB_PAGES: Record<string, string> = {
@@ -19,17 +25,20 @@ const SUB_PAGES: Record<string, string> = {
     ...Object.fromEntries(SETTINGS_TABS.map((tab) => [tab.to, tab.label])),
 };
 
+// A sidebar entry that is itself a fixed page (Add Candidate) stays a page of its section.
+const SECTIONS: Section[] = [...NAV_ITEMS.filter((item) => !SUB_PAGES[item.to]), ...EXTRA_SECTIONS].sort((a, b) => b.to.length - a.to.length);
+
 const inSection = (pathname: string, section: { to: string; end?: boolean }) =>
     section.end ? pathname === section.to : pathname === section.to || pathname.startsWith(`${section.to}/`);
 
-export function breadcrumbTrail(pathname: string, recordLabel: string | null): Crumb[] {
+// `user`: the signed-in user, whose sections get links (omitted: every section is linked).
+export function breadcrumbTrail(pathname: string, recordLabel: string | null, user?: { role: string } | null): Crumb[] {
     const home: Crumb = { label: "Admin", to: "/" };
-    const section = [...NAV_ITEMS, ...EXTRA_SECTIONS]
-        .sort((a, b) => b.to.length - a.to.length)
-        .find((item) => inSection(pathname, item));
+    const section = SECTIONS.find((item) => inSection(pathname, item));
     if (!section) return [home, { label: "Page not found" }];
     if (pathname === section.to) return [home, { label: section.label }];
-    return [home, { label: section.label, to: section.to }, { label: SUB_PAGES[pathname] ?? recordLabel ?? "Details" }];
+    const linked = user === undefined || hasRole(user, section.roles);
+    return [home, linked ? { label: section.label, to: section.to } : { label: section.label }, { label: SUB_PAGES[pathname] ?? recordLabel ?? "Details" }];
 }
 
 const SetLabelContext = createContext<((label: string | null) => void) | null>(null);
@@ -56,7 +65,8 @@ export function useBreadcrumbLabel(label: string | null | undefined) {
 
 export function Breadcrumbs() {
     const { pathname } = useLocation();
-    const trail = breadcrumbTrail(pathname, useContext(LabelContext));
+    const { user } = useAuth();
+    const trail = breadcrumbTrail(pathname, useContext(LabelContext), user);
     return (
         <nav aria-label="Breadcrumb" className="mb-4 min-w-0" data-testid="breadcrumb">
             <ol className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-body-sm text-ink-subtle">

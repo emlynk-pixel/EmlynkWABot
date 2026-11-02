@@ -1,5 +1,4 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { listCandidates, type CandidateList, type CandidateListItem } from "../api/candidates";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ApiError } from "../api/client";
 import {
@@ -9,7 +8,10 @@ import {
     getJobOptions,
     JOB_VIEWS,
     jobViewCount,
+    listJobCandidateOptions,
     listJobs,
+    type JobCandidateOption,
+    type JobCandidateOptions,
     type JobOptions,
     type JobView,
 } from "../api/jobs";
@@ -377,7 +379,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     const [fromCountryCode, setFromCountryCode] = useState(DEFAULT_FROM_COUNTRY);
     const [vacancies, setVacancies] = useState("");
     const [companyJobId, setCompanyJobId] = useState("");
-    const [selected, setSelected] = useState<Map<string, CandidateListItem>>(() => new Map());
+    const [selected, setSelected] = useState<Map<string, JobCandidateOption>>(() => new Map());
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const vacanciesId = useId();
@@ -408,7 +410,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
         setError(null);
         setStep(2);
     };
-    const toggle = (candidate: CandidateListItem) => setSelected((previous) => {
+    const toggle = (candidate: JobCandidateOption) => setSelected((previous) => {
         const nextSelection = new Map(previous);
         if (nextSelection.has(candidate.passportId)) nextSelection.delete(candidate.passportId);
         else nextSelection.set(candidate.passportId, candidate);
@@ -534,16 +536,16 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
 
 // The candidates who can be assigned now (the server's list: test PASS; candidates on other jobs included),
 // searchable and paged. The selection is kept across searches and pages.
-function CandidatePicker({ token, selected, onToggle, disabled }: { token: string; selected: Map<string, CandidateListItem>; onToggle: (candidate: CandidateListItem) => void; disabled: boolean }) {
+function CandidatePicker({ token, selected, onToggle, disabled }: { token: string; selected: Map<string, JobCandidateOption>; onToggle: (candidate: JobCandidateOption) => void; disabled: boolean }) {
     const [text, setText] = useState("");
     const [query, setQuery] = useState({ search: "", page: 1 });
-    const [list, setList] = useState<CandidateList | null>(null);
+    const [list, setList] = useState<JobCandidateOptions | null>(null);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [attempt, setAttempt] = useState(0);
     useEffect(() => {
         const controller = new AbortController();
         setLoadError(null);
-        listCandidates(token, { page: query.page, pageSize: CANDIDATE_PAGE_SIZE, search: query.search || undefined, testResult: "PASS" }, controller.signal)
+        listJobCandidateOptions(token, { page: query.page, pageSize: CANDIDATE_PAGE_SIZE, search: query.search || undefined }, controller.signal)
             .then(setList)
             .catch((caught) => {
                 if (!controller.signal.aborted) setLoadError(message(caught));

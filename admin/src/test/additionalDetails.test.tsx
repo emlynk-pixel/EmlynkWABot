@@ -251,8 +251,8 @@ describe("Additional Details", () => {
         expect(await screen.findByRole("button", { name: "Try again" }, RENDER_STEP)).toBeInTheDocument();
     });
 
-    test("REGISTRATION_DESK can edit and save", async () => {
-        const { calls } = backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } }, { ...ADMIN, role: "REGISTRATION_DESK" });
+    test("TEAM_LEAD can edit and save", async () => {
+        const { calls } = backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } }, { ...ADMIN, role: "TEAM_LEAD" });
         renderApp("/candidates/N0000002");
         await openTab();
         const user = userEvent.setup();
@@ -262,12 +262,12 @@ describe("Additional Details", () => {
         await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
     });
 
-    test("a user without candidate permissions sees the details read-only", async () => {
-        backend(SAVED_VIEW, {}, { ...ADMIN, role: "VIEWER" });
+    test("a user without candidate permissions can't open the candidate's additional details", async () => {
+        const { calls } = backend(SAVED_VIEW, {}, { ...ADMIN, role: "VIEWER" });
         renderApp("/candidates/N0000002?tab=additional");
-        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
-        expect(screen.getByLabelText("T-shirt size")).toBeDisabled();
-        expect(screen.queryByRole("button", { name: "Save additional details" })).toBeNull();
+        expect(await screen.findByText("Access Restricted", {}, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.queryByRole("form", { name: "Additional details" })).toBeNull();
+        expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(false);
     });
 });
 
