@@ -123,7 +123,7 @@ export function parseReviewQueueQuery(query = {}) {
 
 // Prisma where clauses for the sources under the given filters.
 // scope: the signed-in user's candidates (candidateAccess.js candidateScope).
-// Empty for ADMIN, MANAGER and REGISTRATION_DESK; for an Analyst, items of
+// Empty for ADMIN and REGISTRATION_DESK; for an Analyst, items of
 // their own candidates plus waiting files not linked to any candidate yet.
 export function buildReviewWhere(params, scope = {}) {
     const pending = { AND: [REVIEW_PENDING_WHERE] };

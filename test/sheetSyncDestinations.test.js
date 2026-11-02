@@ -362,7 +362,8 @@ describe("API: PUT /settings/sheet-sync/destination", () => {
     test("10. ADMIN only: other roles get 403 and nothing is recorded", async () => {
         const { worker } = setup();
         await worker.tick();
-        for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+        // MANAGER: an account still holding the retired role.
+        for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             const response = await withAdminApi(role, (call) => call("PUT", "/destination", { key: "romania" }));
             assert.equal(response.status, 403, role);
         }

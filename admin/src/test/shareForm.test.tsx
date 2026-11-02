@@ -112,10 +112,11 @@ describe("Share Form", () => {
         expect(within(dialog).queryByLabelText("Share link for this candidate")).toBeNull();
     });
 
-    test("a role that can't edit the candidate sees no Share Form button", async () => {
-        backend({}, "VIEWER");
+    test("a role that can't edit the candidate can't open the page, so no Share Form button", async () => {
+        const { calls } = backend({}, "VIEWER");
         renderApp("/candidates/N0000002?tab=additional");
-        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        expect(await screen.findByText("Access Restricted", {}, RENDER_STEP)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Share Form" })).toBeNull();
+        expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(false);
     });
 });

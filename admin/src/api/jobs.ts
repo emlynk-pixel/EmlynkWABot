@@ -1,7 +1,7 @@
 import type { WorkflowStatus } from "./candidates";
 import { apiRequest } from "./client";
 
-// Job Management (src/services/jobService.js). ADMIN and MANAGER manage jobs;
+// Job Management (src/services/jobService.js). ADMIN and JOB_HANDLER manage jobs;
 // an ANALYST reads only the jobs holding their own candidates; the server
 // enforces both.
 
@@ -87,6 +87,18 @@ export function listJobs(token: string, params: { view: JobView; search?: string
     return apiRequest<JobList>(`/api/admin/jobs?${query.toString()}`, { token, signal });
 }
 
+// The job candidate picker (New job, Add candidates): only the candidates a job may take (test
+// PASS), with only what the picker shows. ADMIN, TEAM_LEAD and JOB_HANDLER (the server checks);
+// the JOB_HANDLER's only way to list candidates, as it has no Candidates area.
+export type JobCandidateOption = { passportId: string; uniqueId: string; name: string | null; nic: string | null; workflowStatus: WorkflowStatus };
+export type JobCandidateOptions = { items: JobCandidateOption[]; pagination: JobList["pagination"]; filters: { search: string | null } };
+
+export function listJobCandidateOptions(token: string, params: { page: number; pageSize: number; search?: string }, signal?: AbortSignal): Promise<JobCandidateOptions> {
+    const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
+    if (params.search) query.set("search", params.search);
+    return apiRequest<JobCandidateOptions>(`/api/admin/job-candidate-options?${query.toString()}`, { token, signal });
+}
+
 export const getJob = (token: string, jobId: string, signal?: AbortSignal) => apiRequest<JobDetails>(jobPath(jobId), { token, signal });
 export const getJobOptions = (token: string, signal?: AbortSignal) => apiRequest<JobOptions>("/api/admin/job-options", { token, signal });
 export const createJob = (token: string, body: CreateJobInput) => apiRequest<JobDetails>("/api/admin/jobs", { method: "POST", token, body });
@@ -116,7 +128,7 @@ export const updateJobType = (token: string, id: string, body: { name?: string; 
 export type JobTypeChoices = { jobTypes: string[]; noPreference: { code: string; label: string } };
 export const getJobTypeChoices = (token: string, signal?: AbortSignal) => apiRequest<JobTypeChoices>("/api/admin/job-type-choices", { token, signal });
 
-// Candidate Form job-group link (src/services/candidateFormJobGroupService.js): ADMIN and MANAGER.
+// Candidate Form job-group link (src/services/candidateFormJobGroupService.js): ADMIN only.
 // Bound to the job's immutable id on the server; the URL carries only an opaque secret.
 export type JobGroupShareStatus = {
     jobId: string;

@@ -31,3 +31,5 @@ admin/dist/
 .vercel
 .env*
 .claude/settings.local.json
+
+/CSV Examples

@@ -13,7 +13,7 @@ import { errorHandler } from "../src/middleware/errorHandler.js";
 const SECRET = "test-candidate-form-secret-0123456789-abcdefghijklmnop";
 const ORIGIN = "https://candidate-form.example.test";
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4), BEN: user("u-ben", "ANALYST", 5) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4), BEN: user("u-ben", "ANALYST", 5) };
 const A = {
     passportId: "N6100001", uniqueId: "6101", firstName: "Anusha", otherName: "De Soysa", nic: "610000001V", sex: "F", address: "1 old road", placeOfBirth: "Negombo",
     whatsappNumber: "+94761000001", contactNumber: "0771234567", dateOfBirth: new Date("2003-06-05"), jobExperience: "3 years", passportIssueDate: new Date("2020-01-15"), passportExpiryDate: new Date("2030-01-14"),
@@ -100,12 +100,12 @@ describe("Reject (Revoke) keeps the record, records the decision (REJECT-003 .. 
         await submitForm();
         const candidateBefore = JSON.stringify(await candidateRow());
         const responseBefore = JSON.stringify(await responseRow());
-        const r = await reject(USERS.MANAGER, await body("basic.birthDate"));
+        const r = await reject(USERS.OWNER, await body("basic.birthDate"));
         assert.equal(r.status, 200, JSON.stringify(r.body));
         assert.equal(JSON.stringify(await candidateRow()), candidateBefore, "canonical record is exactly as it was");
         assert.equal(JSON.stringify(await responseRow()), responseBefore, "candidate_form_response is exactly as submitted");
         const review = await reviewOf("basic.birthDate");
-        assert.deepEqual([review.status, review.submittedValue, review.currentValue, review.reviewedById], ["REJECTED", "2003-05-06", "2003-06-05", USERS.MANAGER.adminId]);
+        assert.deepEqual([review.status, review.submittedValue, review.currentValue, review.reviewedById], ["REJECTED", "2003-05-06", "2003-06-05", USERS.OWNER.adminId]);
         // The refreshed state: Birthday is no longer pending (and shows as reviewed); Address and the others remain pending.
         const pending = pendingOf(r);
         assert.equal(pending["basic.birthDate"], undefined);
@@ -114,7 +114,7 @@ describe("Reject (Revoke) keeps the record, records the decision (REJECT-003 .. 
         assert.deepEqual(r.body.reviews, [{ field: "basic.birthDate", status: "REJECTED" }]);
         // Audit: actor, candidate, field, current value and the rejected submitted value; never a secret.
         const [audit] = await prisma.auditLog.findMany({ where: { action: "CANDIDATE_FORM_FIELD_REJECTED" } });
-        assert.deepEqual([audit.adminId, audit.passportId, audit.newStatus], [USERS.MANAGER.adminId, A.passportId, "REJECTED"]);
+        assert.deepEqual([audit.adminId, audit.passportId, audit.newStatus], [USERS.OWNER.adminId, A.passportId, "REJECTED"]);
         assert.deepEqual(JSON.parse(audit.newValue), { field: "basic.birthDate", currentValue: "2003-06-05", rejectedSubmittedValue: "2003-05-06" });
         assert.ok(audit.createdDate);
         assert.equal(await prisma.auditLog.count({ where: { action: "CANDIDATE_FORM_FIELD_CONFIRMED" } }), 0);
@@ -136,12 +136,12 @@ describe("Reject (Revoke) keeps the record, records the decision (REJECT-003 .. 
         const seen = await body("contact.address");
         assert.equal((await reject(USERS.ADMIN, seen)).status, 200);
         // Confirm after Reject: refused, nothing applied.
-        const again = await confirm(USERS.MANAGER, seen);
+        const again = await confirm(USERS.OWNER, seen);
         assert.deepEqual([again.status, again.body.code], [409, "FORM_FIELD_REVIEW_STALE"]);
         assert.equal((await candidateRow()).address, "1 old road");
         assert.equal((await reviewOf("contact.address")).status, "REJECTED");
         // Reject twice: refused.
-        assert.equal((await reject(USERS.MANAGER, seen)).body.code, "FORM_FIELD_REVIEW_STALE");
+        assert.equal((await reject(USERS.OWNER, seen)).body.code, "FORM_FIELD_REVIEW_STALE");
         // Confirm then Reject: nothing left to review (the record equals the submitted value).
         const birth = await body("basic.birthDate");
         assert.equal((await confirm(USERS.ADMIN, birth)).status, 200);
@@ -178,7 +178,7 @@ describe("stale and concurrent reviews (REJECT-010)", () => {
     test("another Admin decided it first: 409 FORM_FIELD_REVIEW_STALE and no silent overwrite; two at once give one winner", async () => {
         await submitForm();
         const seen = await body("passport.expiryDate");
-        const results = await Promise.all([reject(USERS.ADMIN, seen), reject(USERS.MANAGER, seen), confirm(USERS.ADMIN, seen)]);
+        const results = await Promise.all([reject(USERS.ADMIN, seen), reject(USERS.OWNER, seen), confirm(USERS.ADMIN, seen)]);
         assert.equal(results.filter((r) => r.status === 200).length, 1);
         assert.ok(results.filter((r) => r.status === 409).every((r) => ["FORM_FIELD_REVIEW_STALE", "FORM_FIELD_NOT_PENDING"].includes(r.body.code)));
         assert.equal(await prisma.candidateFormFieldReview.count({ where: { fieldKey: "passport.expiryDate" } }), 1);
@@ -188,13 +188,13 @@ describe("stale and concurrent reviews (REJECT-010)", () => {
 });
 
 describe("roles, allowlist and the public API (REJECT-011, 012, 014, 015)", () => {
-    test("ADMIN and MANAGER reject; Analyst and Registration Desk cannot", async () => {
+    test("ADMIN and OWNER reject; Analyst and Registration Desk cannot", async () => {
         await submitForm();
         const seen = await body("contact.address");
         for (const who of [USERS.ANN, USERS.DESK, USERS.BEN]) assert.equal((await reject(who, seen)).status, 403, who.role);
         assert.equal(await reviewOf("contact.address"), null);
         assert.equal((await reject(USERS.ADMIN, seen)).status, 200);
-        assert.equal((await reject(USERS.MANAGER, await body("basic.birthDate"))).status, 200);
+        assert.equal((await reject(USERS.OWNER, await body("basic.birthDate"))).status, 200);
         assert.equal((await reject(USERS.ADMIN, { field: "basic.birthDate", expectedCurrentValue: null, expectedSubmittedValue: null }, "N9999999")).status, 404);
         // They still see the pending changes (Analyst within their scope).
         assert.ok((await view(USERS.ANN)).body.pending.length > 0);

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError } from "../../api/client";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink, type CreatedFormShareLink, type FormShareStatus } from "../../api/candidates";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink, type CandidateJobAssignment, type CreatedJobGroupShareLink, type JobGroupShareStatus } from "../../api/jobs";
-import { canManageJobs, useAuth } from "../../auth/AuthProvider";
+import { canShareJobGroupForm, useAuth } from "../../auth/AuthProvider";
 import { ActionDialog, DialogError, dangerButton, primaryButton, secondaryButton } from "../Dialog";
 import { formatDateTime } from "../format";
 
@@ -14,7 +14,7 @@ import { formatDateTime } from "../format";
 // The link is shown ONCE, right after it is created (only a hash is stored).
 // Creating a new link replaces the old one; revoking locks the form again.
 //
-// ADMIN and MANAGER also get "Share link for the job group": one link for every
+// ADMIN also gets "Share link for the job group": one link for every
 // candidate on one of the candidate's PROCESSING jobs (chosen when they hold several;
 // bound to the job's immutable id;
 // each candidate still verifies with their own Passport and NIC and submits once).
@@ -101,7 +101,7 @@ function ShareFormDialog({ passportId, jobs, onClose }: { passportId: string; jo
 
             {!status && !error && <p role="status" className="mt-3 text-body-sm text-ink-muted">Loading…</p>}
             {status && (
-                <div className="mt-3 rounded border border-border bg-canvas px-3 py-2 text-body-sm" role="status">
+                <div className="mt-3 rounded-lg border border-border bg-canvas px-3 py-2 text-body-sm" role="status">
                     <p className="font-medium text-ink">{STATE_TEXT[status.state]}</p>
                     {status.link && (
                         <p className="mt-1 text-ink-muted">
@@ -116,7 +116,7 @@ function ShareFormDialog({ passportId, jobs, onClose }: { passportId: string; jo
             {created && (
                 <div className="mt-3 space-y-2">
                     <label htmlFor="share-link-url" className="block text-label-md text-ink">Share link for this candidate</label>
-                    <input id="share-link-url" readOnly value={created.url} onFocus={(e) => e.currentTarget.select()} className="h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink" />
+                    <input id="share-link-url" readOnly value={created.url} onFocus={(e) => e.currentTarget.select()} className="h-8 w-full rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink" />
                     <p className="text-label-sm text-ink-muted">
                         Shown only now: if it is lost, create a new link. Send it only to the candidate. Expires {formatDateTime(created.expiresAt)}.
                     </p>
@@ -158,7 +158,7 @@ function ShareFormDialog({ passportId, jobs, onClose }: { passportId: string; jo
 
 const whatsappLink = (url: string) => `https://wa.me/?text=${encodeURIComponent(`Please fill in your details for Emlynk using this link. You will need your Passport Number and NIC Number.\n${url}`)}`;
 
-// "Share link for the job group". Only for roles that manage jobs; needs the
+// "Share link for the job group". ADMIN only (the API's tier); needs the
 // candidate to be on a PROCESSING job (otherwise disabled, with the reason). With
 // several, the job is chosen first (the newest is preselected).
 function JobGroupSection({ jobs }: { jobs: CandidateJobAssignment[] }) {
@@ -171,7 +171,7 @@ function JobGroupSection({ jobs }: { jobs: CandidateJobAssignment[] }) {
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
     const [confirm, setConfirm] = useState<"create" | "revoke" | null>(null);
-    const manages = canManageJobs(user);
+    const manages = canShareJobGroupForm(user);
     const jobId = currentJob && currentJob.status === "PROCESSING" ? currentJob.jobId : null;
 
     useEffect(() => {
@@ -236,14 +236,14 @@ function JobGroupSection({ jobs }: { jobs: CandidateJobAssignment[] }) {
             {jobs.length > 1 && (
                 <div className="mt-2">
                     <label htmlFor="group-link-job" className="mb-1 block text-label-sm text-ink-muted">Job ({jobs.length} processing jobs)</label>
-                    <select id="group-link-job" value={currentJob?.jobId ?? ""} disabled={busy} onChange={(event) => { setSelectedId(event.target.value); setConfirm(null); }} className="h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink">
+                    <select id="group-link-job" value={currentJob?.jobId ?? ""} disabled={busy} onChange={(event) => { setSelectedId(event.target.value); setConfirm(null); }} className="h-8 w-full rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink">
                         {jobs.map((job) => <option key={job.jobId} value={job.jobId}>{job.jobCode} · {job.jobType.name}</option>)}
                     </select>
                 </div>
             )}
             {jobId && currentJob && (
                 <>
-                    <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 rounded border border-border bg-canvas px-3 py-2 text-body-sm">
+                    <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg border border-border bg-canvas px-3 py-2 text-body-sm">
                         <dt className="text-ink-muted">Job code</dt><dd className="text-ink">{currentJob.jobCode}</dd>
                         <dt className="text-ink-muted">Client Job ID</dt><dd className="text-ink">{currentJob.companyJobId ?? "Not assigned"}</dd>
                         <dt className="text-ink-muted">Client</dt><dd className="text-ink">{currentJob.client.name}</dd>
@@ -265,7 +265,7 @@ function JobGroupSection({ jobs }: { jobs: CandidateJobAssignment[] }) {
                     {created && (
                         <div className="mt-2 space-y-2">
                             <label htmlFor="group-link-url" className="block text-label-md text-ink">Job-group link</label>
-                            <input id="group-link-url" readOnly value={created.url} onFocus={(e) => e.currentTarget.select()} className="h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink" />
+                            <input id="group-link-url" readOnly value={created.url} onFocus={(e) => e.currentTarget.select()} className="h-8 w-full rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink" />
                             <p className="text-label-sm text-ink-muted">Shown only now: if it is lost, create a new group link. Each candidate must verify with their own Passport Number and NIC Number. Expires {formatDateTime(created.expiresAt)}.</p>
                             <div className="flex flex-wrap gap-2">
                                 <button type="button" className={primaryButton} onClick={copy}>{copied ? "Copied" : "Copy group link"}</button>

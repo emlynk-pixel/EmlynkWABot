@@ -1,5 +1,7 @@
 # EmlynkWABot — Project Issues, Errors, Blockers, Fixes & Lessons Learned
 
+> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md).
+
 > **Purpose of this document**  
 > This document records the major technical issues, blockers, deployment problems, account/setup problems, database/authentication problems, Google Cloud issues, Google Sheet Sync issues, Git/branching problems, and other important debugging situations encountered while building **EmlynkWABot**.  
 >

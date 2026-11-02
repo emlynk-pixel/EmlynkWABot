@@ -2,7 +2,7 @@ import { apiRequest } from "./client";
 import type { CandidateStageKey, WorkflowStatus } from "./candidates";
 
 // Work Allocation (src/services/workAllocationService.js): which Analyst each
-// candidate is assigned to. ADMIN and MANAGER only; the server checks it.
+// candidate is assigned to. ADMIN only; the server checks it.
 
 export type AllocationStatus = "UNALLOCATED" | "ALLOCATED";
 

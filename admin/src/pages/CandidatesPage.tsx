@@ -14,8 +14,8 @@ import { useRef } from "react";
 
 // The server returns one page at a time (at most 100 candidates).
 const PAGE_SIZE = 100;
-const th = "h-[34px] whitespace-nowrap border-b border-border bg-canvas px-4 text-left text-label-caps uppercase text-ink-subtle";
-const td = "h-11 border-b border-canvas-muted px-4 py-2 text-body-sm";
+const th = "h-10 whitespace-nowrap border-b border-border px-4 text-left text-label-md text-ink";
+const td = "h-10 border-b border-border px-4 py-2 text-body-sm";
 
 // Admin > Candidates: every candidate (users), newest first, 100 a page,
 // paged on the server. Search and page live in the URL (?page=2), so a
@@ -82,9 +82,9 @@ export function CandidatesPage() {
                         maxLength={100}
                         onChange={(event) => setSearchText(event.target.value)}
                         placeholder="Search by name, passport ID, NIC, contact or WhatsApp number…"
-                        className="h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
+                        className="h-8 w-full rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
                     />
-                    <button type="submit" className="h-9 rounded bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
+                    <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                 </form>
             </Card>
 
@@ -138,7 +138,7 @@ export function CandidatesPage() {
                                                     {item.jobTypes.length ? (
                                                         <span className="flex flex-wrap gap-1.5">
                                                             {item.jobTypes.map((jobType) => (
-                                                                <span key={jobType} className="rounded bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft">{jobTypeLabel(jobType)}</span>
+                                                                <span key={jobType} className="rounded-lg bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft">{jobTypeLabel(jobType)}</span>
                                                             ))}
                                                         </span>
                                                     ) : "—"}

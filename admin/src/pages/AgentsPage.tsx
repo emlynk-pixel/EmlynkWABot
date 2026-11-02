@@ -12,7 +12,7 @@ import { CountrySelect, EntityStatusBadge, MultiSelect, RestrictedPage, StatusDi
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl, tableCell, tableHead, tableRow, textareaClass } from "../components/ui";
 
-// Admin > Agents (ADMIN and MANAGER). An Agent is a business entity, not a
+// Admin > Agents (ADMIN and JOB_HANDLER). An Agent is a business entity, not a
 // login: a recruiting partner in one country that works with many Clients (and a
 // Client with many Agents). Agents are never deleted; INACTIVE agents keep their
 // history but take no new Client.
@@ -62,7 +62,7 @@ function AgentsView() {
     const filtered = Boolean(search || country || status);
 
     return (
-        <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
+        <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Agents</h1>

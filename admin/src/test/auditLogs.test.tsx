@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import type { AuditLogItem, AuditLogList } from "../api/admin";
-import { ADMIN, OVERVIEW, RENDER_STEP, SESSION_TOKEN, fakeAuth, renderApp, stubBackend, type FetchRoutes } from "./helpers";
+import { ADMIN, OVERVIEW, RENDER_STEP, SESSION_TOKEN, fakeAuth, renderApp, stubBackend, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
 // Admin > Audit Logs (ADMIN only, view only). Synthetic entries only; the
 // backend is stubbed.
@@ -16,7 +16,7 @@ const ENTRY: AuditLogItem = {
     createdDate: "2026-10-08T04:30:00.000Z",
     action: "UPDATE_CANDIDATE",
     category: "CANDIDATE",
-    actor: { userId: "user-manager", name: "Mia Manager", role: "MANAGER" },
+    actor: { userId: "user-owner", name: "Olive Owner", role: "OWNER" },
     candidate: { passportId: "N1023757", uniqueId: "0001", name: "Anusha De Soysa" },
     documentType: null,
     stage: null,
@@ -51,6 +51,7 @@ const ROLE_ENTRY: AuditLogItem = {
     category: "USER",
     actor: { userId: "admin-1", name: "Test Admin", role: "ADMIN" },
     candidate: null,
+    // History from before the MANAGER role was retired: an audit entry is never rewritten.
     previousStatus: "ANALYST",
     newStatus: "MANAGER",
     previousValue: "ANALYST",
@@ -62,7 +63,7 @@ const ROLE_ENTRY: AuditLogItem = {
 const FILTERS: AuditLogList["filters"] = {
     users: [
         { userId: "user-analyst", name: "Ali Analyst", role: "ANALYST", status: "ACTIVE" },
-        { userId: "user-manager", name: "Mia Manager", role: "MANAGER", status: "ACTIVE" },
+        { userId: "user-owner", name: "Olive Owner", role: "OWNER", status: "ACTIVE" },
         { userId: "admin-1", name: "Test Admin", role: "ADMIN", status: "ACTIVE" },
     ],
     categories: [
@@ -103,13 +104,13 @@ describe("Audit Logs navigation and access", () => {
         expect(await screen.findAllByTestId("audit-row")).toHaveLength(1);
     });
 
-    for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+    for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
         test(`${role}: no Audit Logs link; opening the URL shows Access Restricted and never calls the API`, async () => {
             const { calls } = asRole(role, { [`GET ${PATH}`]: { status: 403, body: { message: "Insufficient permissions" } } });
             renderApp("/audit-logs");
             await screen.findByTestId("admin-name");
             expect(navLinks()).not.toContain("Audit Logs");
-            expect(await screen.findByRole("heading", { name: "Access Restricted" })).toBeInTheDocument();
+            await expectRedirectedHome(role);
             expect(screen.queryByTestId("audit-row")).toBeNull();
             expect(auditCalls(calls)).toHaveLength(0);
         });
@@ -145,8 +146,10 @@ describe("Audit Logs page", () => {
 
         const role = within(rows[2]);
         expect(role.getByText("Role changed")).toBeInTheDocument();
-        expect(role.getByText("ANALYST")).toBeInTheDocument();
-        expect(role.getByText("MANAGER")).toBeInTheDocument();
+        // Roles by their labels; a retired one says so.
+        expect(role.getByText("Analyst")).toBeInTheDocument();
+        expect(role.getByText("Manager (retired)")).toBeInTheDocument();
+        expect(role.queryByText("MANAGER")).toBeNull();
         expect(rows[2]).toHaveTextContent("—");
 
         // View only: nothing to edit, delete, clear or roll back.

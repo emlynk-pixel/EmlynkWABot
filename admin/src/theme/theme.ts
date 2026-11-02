@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 
 // Light / dark mode. The choice is a per-browser convenience kept in
 // localStorage; without it (private window, blocked storage) the dashboard
-// opens in light mode, the Stitch default. The colours themselves are CSS
+// opens in light mode, the workspace default. The colours themselves are CSS
 // tokens (index.css): switching only sets data-theme on <html>.
 export type Theme = "light" | "dark";
 

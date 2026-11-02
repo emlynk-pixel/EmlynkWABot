@@ -1,5 +1,5 @@
 import { normalizePassportId } from "../utils/passportId.js";
-import { normalizePhoneNumber } from "../utils/phoneNumber.js";
+import { phoneKey } from "../utils/phoneNumber.js";
 import { resolveDb } from "../utils/resolveClients.js";
 
 export const LOOKUP_STATUS = Object.freeze({
@@ -45,20 +45,21 @@ export async function findUsersByPassportId(passportId, { db } = {}) {
     return toResult(users);
 }
 
-// whatsapp_number isn't unique and its stored format varies, so narrow by
-// the last four digits in the database, then compare the full normalized
-// numbers here. More than one match is a real, reviewable case.
+// whatsapp_number's stored format varies (older rows: 94771234567; new
+// writes: +94771234567), so narrow by the last four digits in the database,
+// then compare the comparison keys (phoneKey) here. More than one match is a
+// real, reviewable case.
 export async function findUsersByWhatsappNumber(whatsappNumber, { db } = {}) {
-    const normalized = normalizePhoneNumber(whatsappNumber);
-    if (!normalized) return { status: LOOKUP_STATUS.INVALID_INPUT, users: [] };
+    const key = phoneKey(whatsappNumber);
+    if (!key) return { status: LOOKUP_STATUS.INVALID_INPUT, users: [] };
 
     const client = await resolveDb(db);
     const candidates = await client.candidate.findMany({
-        where: { whatsappNumber: { endsWith: normalized.slice(-4) } },
+        where: { whatsappNumber: { endsWith: key.slice(-4) } },
         select: USER_LOOKUP_SELECT,
     });
 
     return toResult(
-        candidates.filter((user) => normalizePhoneNumber(user.whatsappNumber) === normalized)
+        candidates.filter((user) => phoneKey(user.whatsappNumber) === key)
     );
 }

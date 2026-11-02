@@ -11,7 +11,7 @@
 //             follow-up is completed
 //   complete  any Candidates-area role; the row is kept (completed_by,
 //             completed_date) and leaves the default (OPEN) list
-//   delete    ADMIN and MANAGER only (enforced by the route); removes the
+//   delete    ADMIN only (enforced by the route); removes the
 //             follow-up row and nothing else
 //
 // Each change is written to the audit log (CANDIDATE category), with the
@@ -207,7 +207,7 @@ export async function completeFollowUp({ db, actor, followUpId, scope = {}, now 
     });
 }
 
-// DELETE /api/admin/follow-ups/:followUpId (ADMIN and MANAGER; the route
+// DELETE /api/admin/follow-ups/:followUpId (ADMIN only; the route
 // checks the role). Removes the follow-up row only: its call log, the
 // candidate and the candidate's documents are not touched.
 export async function deleteFollowUp({ db, actor, followUpId }) {

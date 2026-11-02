@@ -16,21 +16,40 @@ Authentication is Supabase Auth's; authorization is the application's. The desig
 
 ## Role-Based Access Control
 
-Four roles, stored in `public."user".role` and enforced by `requireRole` middleware on every admin route:
+Six roles, stored in `public."user".role` and enforced by `requireRole` middleware on every admin route. Hierarchy: `OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER` (who manages whom, not inherited permissions). OWNER passes every tier that admits ADMIN (`hasRole()`); the single OWNER is set in the database only (`OWNER_ROLE.md`). A role that isn't one of the six (the retired `MANAGER`, or anything else) is refused before any role check: `requireActiveUser` answers 403 `ROLE_NOT_SUPPORTED`, so such an account reaches no route (`ROLES_AND_PERMISSIONS.md` §6).
 
-| Action | ADMIN | MANAGER | ANALYST | REGISTRATION_DESK |
-|---|:---:|:---:|:---:|:---:|
-| View overview, documents, clients, review queue, police workflow, reports | ✓ | ✓ | ✓ | — |
-| Candidate list, registration and details | ✓ | ✓ | ✓ | ✓ |
-| Review actions, corrections, candidate work | ✓ | ✓ | ✓ | — |
-| Correct a stored police slip's date | ✓ | ✓ | — | — |
-| Invite, list, change role, deactivate users; Settings | ✓ | — | — | — |
+**TEAM_LEAD** is not a column in this table: it has exactly seven areas (Candidates for every candidate, Need Attention, Work Allocation, Jobs, Agents, Clients and the standard Daily Report), with every ADMIN-only action inside them kept ADMIN only, and no Settings, user management, Audit Logs, Job Types, dashboards or review, listed in full in [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md) §2–3. It inherits nothing from ADMIN.
+
+| Action | OWNER | ADMIN | ANALYST | REGISTRATION_DESK | JOB_HANDLER |
+|---|:---:|:---:|:---:|:---:|:---:|
+| View overview, documents, clients, review queue, police workflow, reports | ✓ | ✓ | — | — | — |
+| Candidate list and candidate page | ✓ | ✓ | ✓ (own) | — | read only |
+| Candidate registration (Add Candidate: lookup, register, registration details and Passport / NIC / Skill video) | ✓ | ✓ | — | ✓ | — |
+| Candidate changes beyond registration (stages, other documents, removing, call logs, form links) | ✓ | ✓ | ✓ (own) | — | — |
+| Need Attention: view / flag and complete | ✓ / ✓ | ✓ / ✓ | own / own | ✓ / — | — / — |
+| Review actions, corrections | ✓ | ✓ | — | — | — |
+| Candidate work (own candidates' workflow) | ✓ | ✓ | ✓ (own) | — | — |
+| Verification, confirming Candidate Form values, Work Allocation, deleting follow-ups | ✓ | ✓ | — | — | — |
+| Correct a stored police slip's date | ✓ | ✓ | — | — | — |
+| Jobs, Agents, Clients | ✓ | ✓ | — | — | ✓ |
+| List users; Settings (Google Sheet Sync and Upload included); Audit Logs | ✓ | ✓ | — | — | — |
+| Change role / deactivate / re-invite ADMIN accounts (and accounts holding the retired MANAGER role); give the ADMIN role; invite ADMIN | ✓ | — | — | — | — |
+| Change role / deactivate / re-invite accounts below ADMIN; invite those roles | ✓ | ✓ | — | — | — |
+| Give the OWNER role, change or deactivate an OWNER account, invite an OWNER | — (database only) | — | — | — | — |
+| Give or invite the retired MANAGER role | — (400) | — (400) | — | — | — |
+
+The Registration Desk restriction (the Add Candidate registration workflow and a read-only Need Attention, enforced per route by `REGISTRATION_WORKFLOW`: the `CANDIDATE_DETAILS` stage and the `PASSPORT` / `NIC` / `SKILL_VIDEO` uploads only) is unchanged by OWNER. JOB_HANDLER reads candidates and changes none; its job pickers use `GET /job-candidate-options` (test-PASS candidates, only `passportId`, `uniqueId`, `name`, `nic`, `workflowStatus`).
+
+**Notification bell.** It reads only data the role can already open, and links only to pages it can open: the Review Queue for OWNER, ADMIN and ANALYST (scoped for the Analyst), open Need Attention follow-ups for TEAM_LEAD (which still gets 403 on `GET /review`), nothing for REGISTRATION_DESK and JOB_HANDLER. It carries no admin, security, Settings, user-management or integration alerts.
+
+**Pages in the dashboard** use the same role lists as the server (`admin/src/auth/roles.ts`): the sidebar shows a page only to its roles, and a page opened by URL by any other role (or left from an earlier session at sign-in) takes it to its own home page, without a warning and without requesting the page's data (`App.tsx` `AllowRoles` is an allow-list, so a role not named is refused).
 
 A failed authorization check returns a generic `403`, without indicating which specific permission was missing. The route-by-route map is in `09a-admin-dashboard-api.md`.
 
 ## Invitations and Password Recovery
 
-- **Invitations:** ADMIN only. The backend calls Supabase `inviteUserByEmail()` and Supabase sends the email. The redirect is built only from the required `APP_BASE_URL` (`${APP_BASE_URL}/admin/setup-password`), never from request input or headers; if `APP_BASE_URL` is missing or invalid the invitation is refused (503) before anything is sent. There is no silent fallback to Supabase's Site URL.
+- **User management:** OWNER and ADMIN. An OWNER manages every account but an OWNER's; an ADMIN only the roles below ADMIN, and never gives the ADMIN role. Nobody gives the OWNER role or changes an OWNER account through the application: the single OWNER is set in the database only. Checked server-side on the database rows inside the transaction (with the rows locked), never on the request. See `OWNER_ROLE.md`.
+- **Invitations:** OWNER (ADMIN and below) and ADMIN (below ADMIN); nobody invites an OWNER, and the retired MANAGER role is refused (400). The backend calls Supabase `inviteUserByEmail()` and Supabase sends the email. The redirect is built only from the required `APP_BASE_URL` (`${APP_BASE_URL}/admin/setup-password`), never from request input or headers; if `APP_BASE_URL` is missing or invalid the invitation is refused (503) before anything is sent. There is no silent fallback to Supabase's Site URL.
 - **Password recovery:** Supabase's own flow (`resetPasswordForEmail`, then `updateUser` from the recovery link). The forgot-password page shows the same confirmation whether or not the email has an account. The backend stores no reset tokens.
 - **Redirect allow-list:** the setup and reset URLs of each environment must be in the Supabase allowed redirect URLs, so a link can only return to a known site.
 
@@ -48,6 +67,7 @@ See `04-whatsapp-integration.md` for the full mechanics. In summary: HMAC-SHA256
 
 ## Database and Storage
 
+- **Form branding:** the Candidate Form's logo is stored as a size-limited `data:` URI whose bytes are checked against its type, and is only ever shown in an `<img>`, where an SVG cannot run scripts. The form's CSP needed no change. `POST /branding` is public by design: it returns no candidate data, and is rate limited per IP.
 - **Row-level security:** every table has RLS enabled with no policies defined, and Supabase's public API roles (`anon`, `authenticated`) have had all privileges explicitly revoked — including on tables created by future migrations (`ALTER DEFAULT PRIVILEGES`). The backend connects as the table owner, which bypasses RLS, so this only restricts Supabase's own public API, not the backend.
 - **Parameterized queries only:** Prisma throughout; no raw SQL string concatenation anywhere in the codebase.
 - **Private bucket:** no public or signed URLs are ever created. The admin dashboard streams a file preview through an authenticated Express/Vercel route instead of handing out a storage URL.

@@ -18,7 +18,7 @@ datasource db {
 // auth_user_id = auth.users.id (a foreign key to auth.users where that schema
 // exists, i.e. on Supabase; see migration 20261009120000_supabase_auth_cutover).
 // status: INVITED | ACTIVE | INACTIVE (middleware/requireActiveUser.js).
-// role:   ADMIN | MANAGER | ANALYST | REGISTRATION_DESK | JOB_HANDLER (middleware/requireRole.js;
+// role:   OWNER | ADMIN | ANALYST | REGISTRATION_DESK | JOB_HANDLER (middleware/requireRole.js;
 //         plain TEXT validated by the application, no database CHECK).
 model User {
   adminId               String                     @id @map("admin_id")
@@ -48,8 +48,37 @@ model User {
   assignedJobCandidates JobCandidate[]             @relation("JobCandidateAssignedBy")
   // Candidate Form values this user confirmed or rejected, field by field.
   formFieldReviews      CandidateFormFieldReview[] @relation("FormFieldReviewedBy")
+  // Bulk candidate imports this user previewed / committed.
+  candidateImports      CandidateImport[]
 
   @@map("user")
+}
+
+// Bulk candidate import (Settings > Google Sheet Sync > Update Sheet; src/services/candidateImport*.js).
+// Coordinates the preview with the chunked commit. NO candidate data: counts, safe reason codes,
+// source row numbers and chunk hashes only (migration 20261103120000_candidate_import).
+// status: PREVIEWED | COMMITTING | COMPLETED | COMPLETED_WITH_ERRORS | FAILED
+model CandidateImport {
+  importId      String    @id @map("import_id") @db.Uuid
+  adminId       String    @map("admin_id")
+  fileName      String    @map("file_name")
+  status        String
+  totalRows     Int       @map("total_rows")
+  chunkSize     Int       @map("chunk_size")
+  chunkHashes   Json      @map("chunk_hashes")
+  sourceFlags   Json      @default("{}") @map("source_flags")
+  previewCounts Json      @default("{}") @map("preview_counts")
+  chunkResults  Json      @default("{}") @map("chunk_results")
+  resultCounts  Json?     @map("result_counts")
+  syncRunId     String?   @map("sync_run_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @default(now()) @map("updated_at")
+  completedAt   DateTime? @map("completed_at")
+
+  admin User @relation(fields: [adminId], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([adminId, createdAt])
+  @@map("candidate_import")
 }
 
 // Review actions taken by admins (Phase 10). Append-only: rows are never
@@ -788,7 +817,7 @@ model CandidateAdditionalDetails {
   createdDate      DateTime  @default(now()) @map("created_date")
   updatedDate      DateTime  @updatedAt @map("updated_date")
 
-  // Candidate Form answers confirmed by an Admin / Manager (candidateFormFieldConfirmService.js),
+  // Candidate Form answers confirmed by an Admin (candidateFormFieldConfirmService.js),
   // migration 20261102120000_candidate_form_finalized_details. NULL until confirmed. Never
   // written by the public form, and not part of the Additional Details form (its save leaves them).
   // A+ | A- | B+ | B- | AB+ | AB- | O+ | O-
@@ -883,7 +912,7 @@ model CandidateCallLog {
 // needing attention. The call log stays the source of truth for the note,
 // the call time, the caller and the candidate; this row holds only the
 // follow-up's own state. status: OPEN | COMPLETED. Completing keeps the row
-// (completed_by / completed_date set); Delete (ADMIN and MANAGER only)
+// (completed_by / completed_date set); Delete (ADMIN only)
 // removes this row and never the call log.
 // At most one OPEN follow-up per call log: a partial unique index (not
 // expressible in Prisma's schema DSL), with CHECK constraints on status and
@@ -994,6 +1023,21 @@ model SheetSyncRun {
 // Vercel has no Google access and reads it from here), and the writer lease
 // that keeps a single process writing to the Sheet at a time.
 // integrationState: UNKNOWN | OK | CONFIG_ERROR | DATA_INTEGRITY.
+// Settings > Candidate Form: the public form's title, logo and colours. At most one
+// row (id = 'default', enforced by a CHECK); no row means the EMLYNK defaults.
+// logo_data_uri is a small image as a data: URI (candidateFormBrandingService.js).
+model CandidateFormBranding {
+  id          String   @id @default("default")
+  formTitle   String   @map("form_title")
+  // { light: { accent, background, surface }, dark: { ... }, showLogo? }, each colour
+  // #rrggbb. showLogo false hides the logo altogether; absent means it shows.
+  colors      Json
+  logoDataUri String?  @map("logo_data_uri")
+  updatedAt   DateTime @default(now()) @map("updated_at")
+
+  @@map("candidate_form_branding")
+}
+
 model SheetSyncState {
   stateId                 String    @id @map("state_id")
   integrationState        String    @default("UNKNOWN") @map("integration_state")

@@ -41,7 +41,7 @@ const ANALYSTS: AllocationAnalysts = {
 
 const UNALLOCATED = [candidate(3), candidate(2), candidate(1)];
 
-function backend(role = "MANAGER", extra: FetchRoutes = {}) {
+function backend(role = "OWNER", extra: FetchRoutes = {}) {
     return signedInBackend({
         ...asRole(role),
         "GET /api/admin/work-allocation/candidates": (url) => ({

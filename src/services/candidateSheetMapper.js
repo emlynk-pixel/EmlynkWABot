@@ -10,7 +10,7 @@
 //   documents - its documents rows
 //   details   - its candidate_additional_details row, or null
 // The Candidate Form columns come from `details` ONLY: the canonical record,
-// which holds a submitted answer only once an Admin / Manager confirmed it
+// which holds a submitted answer only once an Admin confirmed it
 // (candidateFormFieldConfirmService.js). candidate_form_response (the raw
 // submission) is never read here. No details, or a value never confirmed: "".
 // DISTANCE TO BUCHAREST (KM) is derived from the confirmed City in Romania
@@ -19,14 +19,14 @@
 // same functions the Admin candidate page uses (candidateService.js), never
 // from a second copy of those rules.
 //
-// TEST NUMBER has no confirmed system data and is always "". DRIVING LICIAN
+// TEST NUMBER has no confirmed system data and is always "". DRIVING LICENSE
 // and POLICE REP FM are document columns with no document type in the
 // application, so no candidate can have one: they are always "Not Submitted"
 // (Sheet output only; nothing is stored). There is one SCAN column only.
 //
-// Document columns (PASSPORT COPY, POLICE REP SRI LANKA (verified), POLICE
-// REP ROMANIA, MEDICAL, SCAN, NATIONAL ID, POLICE REPORT APPLIED, POLICE REP
-// SRI LANKA (normal), VIDEOS) show the submission date of the candidate's
+// Document columns (PASSPORT, POLICE REP SRI LANKA (the SL_VERIFIED police
+// report; SL_NORMAL reports have no mirror column), POLICE REP ROMANIA,
+// MEDICAL, SCAN, NIC COPY, POLICE REPORT APPLIED, VIDEO) show the submission date of the candidate's
 // current document of that type (and variant): its received_date, as the
 // Sri Lanka calendar date YYYY-MM-DD. A replacement or re-upload is a new
 // document row (the old one is kept as SUPERSEDED), so the current
@@ -166,8 +166,10 @@ export function mapCandidateToSheetRow(aggregate, { mirroredAt, recordStatus = R
     const values = {
         testNumber: "",
         passportNumber: text(user.passportId),
-        firstName: text(user.firstName),
-        otherName: text(user.otherName),
+        // The stored meaning, not the column names: other_name holds the surname, first_name
+        // the other (given) names (candidateService.js parseCandidateBody).
+        surname: text(user.otherName),
+        otherNames: text(user.firstName),
         testDate: text(stages.get("TEST_DETAILS")?.testDate),
         birthday: dateOnly(user.dateOfBirth),
         passportExpiryDate: dateOnly(user.passportExpiryDate),
@@ -186,7 +188,6 @@ export function mapCandidateToSheetRow(aggregate, { mirroredAt, recordStatus = R
         nationalId: documentCell(documents, "NIC"),
         policeReportApplied: documentCell(documents, "POLICE_SLIP"),
         submitDate: dateOnly(policeSlip?.policeSubmittedDate),
-        policeReportSriLankaNormal: documentCell(documents, "POLICE_REPORT", "SL_NORMAL"),
         policeReportFm: DOCUMENT_NOT_SUBMITTED,
         videos: documentCell(documents, "SKILL_VIDEO"),
         placeOfBirth: text(user.placeOfBirth),

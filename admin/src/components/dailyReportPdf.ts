@@ -1,6 +1,6 @@
 import type { DailyRoleSummary, DailySummary } from "../api/admin";
 import { STAGE_LABELS, variantLabel, type CandidateStageKey } from "../api/candidates";
-import { ROLE_LABELS, type Role } from "../auth/roles";
+import { roleLabel } from "../auth/roles";
 import { documentTypeLabel, formatDateTime, formatDay, formatNumber, formatTime } from "./format";
 
 // Daily Report PDF (jspdf, in the browser): a structured report, not a
@@ -15,7 +15,6 @@ const MARGIN = 16;
 const LINE = 4.6;
 // WhatsApp files the classifier could not type are "Unclassified" here.
 export const reportTypeLabel = (type: string) => (type === "UNKNOWN" ? "Unclassified" : documentTypeLabel(type));
-const roleLabel = (role: string) => ROLE_LABELS[role as Role] ?? role;
 const stageLabel = (stage: string) => STAGE_LABELS[stage as CandidateStageKey] ?? stage;
 const generatedAt = () => new Date().toLocaleString("en-GB", { timeZone: "Asia/Colombo", dateStyle: "long", timeStyle: "short" });
 

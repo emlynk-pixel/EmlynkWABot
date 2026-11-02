@@ -48,7 +48,7 @@ export const jobCountry = (code: string | null) => (code ? countryName(code) : N
 export function Detail({ label, children }: { label: string; children: ReactNode }) {
     return (
         <div>
-            <dt className="text-label-caps uppercase text-ink-subtle">{label}</dt>
+            <dt className="text-label-sm text-ink-muted">{label}</dt>
             <dd className="mt-0.5 text-body-sm text-ink">{children}</dd>
         </div>
     );

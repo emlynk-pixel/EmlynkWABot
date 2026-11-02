@@ -24,9 +24,9 @@ export type CallLogCandidate = { name: string | null; passportId: string; whatsa
 // The drawer's denser controls: the shared field and button styles, one
 // step shorter (36px fields, 32px buttons) so Candidate History keeps most
 // of the height. Text sizes are unchanged.
-const compactField = fieldControl.replace("h-10", "h-9");
+const compactField = fieldControl;
 const compactTextArea = textAreaControl.replace("py-2", "py-1.5");
-const compactButton = (style: string) => style.replace("h-9", "h-8").replace("px-4", "px-3");
+const compactButton = (style: string) => style.replace("h-8", "h-8").replace("px-4", "px-3");
 
 const prefersReducedMotion =() => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -40,7 +40,9 @@ const prefersReducedMotion =() => typeof window.matchMedia === "function" && win
 // Opens as a drawer from the right over the candidate page; Escape, Close or
 // a click on the page outside the drawer closes it, except while a call is
 // being saved.
-export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { passportId: string; candidate?: CallLogCandidate; canEdit: boolean; onClose: () => void }) {
+// canEdit: adding calls. canFlag: marking a call as needs attention (Need Attention; not the
+// Registration Desk, for which it is read only).
+export function CallLogDialog({ passportId, candidate, canEdit, canFlag = canEdit, onClose }: { passportId: string; candidate?: CallLogCandidate; canEdit: boolean; canFlag?: boolean; onClose: () => void }) {
     const { token } = useAuth();
     const log = useAdminResource(`call-logs:${passportId}`, (t, signal) => listCallLogs(t, passportId, signal));
     const [added, setAdded] = useState<CallLogList | null>(null);
@@ -218,7 +220,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                 className={`relative flex h-full max-h-dvh w-full flex-col overflow-x-hidden overflow-y-auto border-border bg-surface shadow-modal transition-transform duration-200 ease-out motion-reduce:transition-none sm:w-[min(92vw,600px)] sm:rounded-l-xl sm:border-l 2xl:w-[640px] ${shown ? "translate-x-0" : "translate-x-full"}`}
             >
                 <header className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3 sm:px-5">
-                    <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
+                    <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
                         <Icon name="call" className="size-5" />
                     </span>
                     <div className="min-w-0 flex-1">
@@ -231,7 +233,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                         onClick={requestClose}
                         disabled={busy}
                         aria-label="Close call logs"
-                        className="-mr-1 flex size-9 shrink-0 items-center justify-center rounded text-ink-subtle hover:bg-canvas hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                        className="-mr-1 flex size-9 shrink-0 items-center justify-center rounded-lg text-ink-subtle hover:bg-canvas hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         <Icon name="close" className="size-5" />
                     </button>
@@ -240,15 +242,15 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                 {candidate && (
                     <dl aria-label="Candidate" className="grid shrink-0 grid-cols-2 gap-x-5 gap-y-1.5 border-b border-border bg-canvas px-4 py-2.5 text-body-sm min-[480px]:grid-cols-3 sm:px-5">
                         <div className="col-span-2 min-w-0 min-[480px]:col-span-1">
-                            <dt className="text-label-caps uppercase text-ink-subtle">Candidate</dt>
+                            <dt className="text-label-sm text-ink-muted">Candidate</dt>
                             <dd className="truncate font-medium text-ink">{candidate.name ?? "—"}</dd>
                         </div>
                         <div className="min-w-0">
-                            <dt className="text-label-caps uppercase text-ink-subtle">Passport ID</dt>
+                            <dt className="text-label-sm text-ink-muted">Passport ID</dt>
                             <dd className="truncate text-ink-soft tabular-nums">{candidate.passportId}</dd>
                         </div>
                         <div className="min-w-0">
-                            <dt className="text-label-caps uppercase text-ink-subtle">{candidate.whatsappNumber ? "WhatsApp" : "Contact"}</dt>
+                            <dt className="text-label-sm text-ink-muted">{candidate.whatsappNumber ? "WhatsApp" : "Contact"}</dt>
                             <dd className="truncate text-ink-soft tabular-nums">{phone ?? "—"}</dd>
                         </div>
                     </dl>
@@ -269,7 +271,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                         {loaded && (
                             timeline.length === 0
                                 ? (
-                                    <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-border-strong px-4 py-8 text-center">
+                                    <div className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-border-strong px-4 py-8 text-center">
                                         <Icon name="history" className="size-7 text-ink-subtle" />
                                         <p className="text-headline-sm text-ink">No candidate history yet.</p>
                                         <p className="text-body-sm text-ink-muted">Add a call log or wait for candidate activity to appear.</p>
@@ -283,7 +285,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                                     <CallItem
                                                         key={item.id}
                                                         entry={item.call}
-                                                        canEdit={canEdit}
+                                                        canEdit={canFlag}
                                                         busy={flagging === item.call.callLogId}
                                                         disabled={flagging !== null}
                                                         error={flagError?.callLogId === item.call.callLogId ? flagError.message : null}
@@ -313,7 +315,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                     title={formCollapsed ? "Expand call form" : "Collapse call form"}
                                     onClick={() => setFormCollapsed((c) => !c)}
                                     disabled={busy}
-                                    className="-mr-0.5 flex size-7 shrink-0 items-center justify-center rounded text-ink-subtle hover:bg-canvas hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                                    className="-mr-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg text-ink-subtle hover:bg-canvas hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                     <Icon name={formCollapsed ? "keyboard_arrow_up" : "keyboard_arrow_down"} className="size-4" />
                                 </button>
@@ -350,7 +352,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                     No Answer
                                 </button>
                                 {/* Marks the NEW call for follow-up when it is added (one request: the call and its follow-up together). */}
-                                <button
+                                {canFlag && <button
                                     type="button"
                                     aria-pressed={needsAttention}
                                     onClick={() => setNeedsAttention((on) => !on)}
@@ -360,7 +362,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
                                 >
                                     <Icon name={needsAttention ? "flag_fill" : "flag"} className="size-4" />
                                     Need Attention
-                                </button>
+                                </button>}
                                 <button type="submit" disabled={busy || !note.trim()} className={compactButton(primaryButton)}>{busy ? "Saving…" : "Add call"}</button>
                             </div>
                         </form>
@@ -375,7 +377,7 @@ export function CallLogDialog({ passportId, candidate, canEdit, onClose }: { pas
     );
 }
 
-const kindLabel = "text-label-caps uppercase tracking-wide text-ink-muted";
+const kindLabel = "text-label-sm text-ink-muted tracking-wide text-ink-muted";
 
 // What kind of thing a Candidate History entry is, at a glance: a soft tint,
 // a thin accent on the left and a small coloured icon, from the theme's
@@ -399,7 +401,7 @@ function CallItem({ entry, canEdit, busy, disabled, error, onMark }: {
 }) {
     const noAnswer = entry.outcome === "NO_ANSWER";
     return (
-        <li data-kind="call-log" data-tone={noAnswer ? "no-answer" : "call"} className={`min-w-0 rounded-lg border px-3.5 py-2.5 ${noAnswer ? TONE.noAnswer : TONE.call}`}>
+        <li data-kind="call-log" data-tone={noAnswer ? "no-answer" : "call"} className={`min-w-0 rounded-xl border px-3.5 py-2.5 ${noAnswer ? TONE.noAnswer : TONE.call}`}>
             <div className="flex items-center justify-between gap-3">
                 <p className="flex min-w-min flex-1 flex-wrap items-baseline gap-x-2">
                     <span className="whitespace-nowrap text-label-md font-semibold text-ink tabular-nums">
@@ -434,7 +436,7 @@ function FollowUpFlag({ entry, canEdit, busy, disabled, onMark }: {
     entry: CallLogEntry; canEdit: boolean; busy: boolean; disabled: boolean; onMark: () => void;
 }) {
     const status = entry.followUp?.status ?? null;
-    const box = "flex size-7 shrink-0 items-center justify-center rounded";
+    const box = "flex size-7 shrink-0 items-center justify-center rounded-lg";
     if (status === "OPEN") {
         return (
             <span role="img" aria-label="Needs attention" title="Needs attention" className={`${box} text-review`}>
@@ -481,7 +483,7 @@ const ACTIVITY_ICON: Record<CandidateActivity["kind"], IconName> = {
 function ActivityItem({ activity }: { activity: CandidateActivity }) {
     const { title, detail, byline } = describeActivity(activity);
     return (
-        <li data-kind="candidate-activity" data-tone="activity" className={`flex min-w-0 items-start gap-2.5 rounded-lg border px-3.5 py-2 ${TONE.activity}`}>
+        <li data-kind="candidate-activity" data-tone="activity" className={`flex min-w-0 items-start gap-2.5 rounded-xl border px-3.5 py-2 ${TONE.activity}`}>
             <Icon name={ACTIVITY_ICON[activity.kind] ?? "history"} className="mt-0.5 size-4 text-verified" />
             <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">

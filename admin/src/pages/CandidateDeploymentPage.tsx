@@ -3,6 +3,7 @@ import { useLocation, useParams, useSearchParams } from "react-router";
 import { CANDIDATE_STAGES, STAGE_LABELS, activeJobsOf, getAdditionalDetails, getCandidate, getFormSubmission, type AdditionalDetailsView, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { canConfirmSubmittedChanges, canManageCandidates, useAuth } from "../auth/AuthProvider";
+import { canWorkFollowUps } from "../auth/roles";
 import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { CONFLICT_FIELD_PARAM, useConflictFocus } from "../components/candidate/formConflicts";
 import { AdditionalDetailsPanel } from "../components/candidate/AdditionalDetailsPanel";
@@ -112,7 +113,7 @@ export function CandidateDeploymentPage() {
 
     return (
         <SubmittedChangesProvider pending={pendingChanges} rejected={rejectedFields} canConfirm={canConfirmSubmittedChanges(user)} passportId={c.passportId} token={token} onConfirmed={afterConfirm} focusField={focusField}>
-        <section aria-labelledby="page-title" className="mx-auto max-w-5xl space-y-4">
+        <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div className="min-w-0">
                     <h1 id="page-title" className="truncate text-headline-lg text-ink">{c.name ?? c.passportId}</h1>
@@ -124,7 +125,7 @@ export function CandidateDeploymentPage() {
             </div>
 
             {stillMissing.length > 0 && (
-                <p role="alert" className="rounded border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
+                <p role="alert" className="rounded-lg border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
                     The candidate was registered, but these files were not uploaded — {stillMissing.map((failed) => `${documentTypeLabel(failed.documentType)}: ${failed.message}`).join("; ")}
                 </p>
             )}
@@ -160,7 +161,7 @@ export function CandidateDeploymentPage() {
                 </Card>
             )}
 
-            {callLogOpen && <CallLogDialog passportId={c.passportId} candidate={c} canEdit={canEdit} onClose={() => setCallLogOpen(false)} />}
+            {callLogOpen && <CallLogDialog passportId={c.passportId} candidate={c} canEdit={canEdit} canFlag={canWorkFollowUps(user)} onClose={() => setCallLogOpen(false)} />}
         </section>
         </SubmittedChangesProvider>
     );

@@ -28,9 +28,9 @@ function SummaryButton({ label, value, active, onClick }: { label: string; value
             type="button"
             aria-pressed={active}
             onClick={onClick}
-            className={`rounded-lg border bg-surface p-4 text-left shadow-surface hover:border-border-focus ${active ? "border-primary" : "border-border"}`}
+            className={`rounded-xl border bg-surface p-4 text-left shadow-surface hover:border-border-focus ${active ? "border-primary" : "border-border"}`}
         >
-            <span className="block text-label-caps uppercase text-ink-subtle">{label}</span>
+            <span className="block text-label-sm text-ink-muted">{label}</span>
             <span className="mt-1 block text-headline-xl tabular-nums text-ink">{value === undefined ? "—" : formatNumber(value)}</span>
         </button>
     );
@@ -80,8 +80,8 @@ export function ClientsPage() {
                 <SummaryButton label="Clients" value={summary?.total} active={!params.completion && !params.missingType} onClick={() => update({ completion: undefined, missingType: undefined })} />
                 <SummaryButton label="Complete" value={summary?.complete} active={params.completion === "COMPLETE"} onClick={() => update({ completion: params.completion === "COMPLETE" ? undefined : "COMPLETE" })} />
                 <SummaryButton label="Incomplete" value={summary?.incomplete} active={params.completion === "INCOMPLETE"} onClick={() => update({ completion: params.completion === "INCOMPLETE" ? undefined : "INCOMPLETE" })} />
-                <Link to="/missing-documents" className="rounded-lg border border-border bg-surface p-4 shadow-surface hover:border-border-focus">
-                    <span className="block text-label-caps uppercase text-ink-subtle">Missing documents</span>
+                <Link to="/missing-documents" className="rounded-xl border border-border bg-surface p-4 shadow-surface hover:border-border-focus">
+                    <span className="block text-label-sm text-ink-muted">Missing documents</span>
                     <span className={`mt-1 block text-headline-xl tabular-nums ${summary?.missingDocuments ? "text-critical" : "text-ink"}`}>{summary ? formatNumber(summary.missingDocuments) : "—"}</span>
                     <span className="mt-1 block text-label-sm text-ink-muted">{summary ? `${formatNumber(summary.withMissing)} ${summary.withMissing === 1 ? "client" : "clients"} · open view` : "Open view"}</span>
                 </Link>
@@ -100,7 +100,7 @@ export function ClientsPage() {
                             placeholder="Search by passport ID, unique ID, name or WhatsApp number…"
                             className={`${control} w-full`}
                         />
-                        <button type="submit" className="h-9 rounded bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
+                        <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                     </form>
                     <label className="md:col-span-3">
                         <span className="sr-only">Completion</span>

@@ -38,7 +38,7 @@ const submission = (submitted: Record<string, string | null>, pending: PendingCh
 });
 function backend(body: FormSubmission) {
     signedInBackend({
-        "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "MANAGER" } } },
+        "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "OWNER" } } },
         [`GET ${PATH}`]: { status: 200, body: DETAILS },
         [`GET ${PATH}/additional-details`]: { status: 200, body: VIEW },
         [`GET ${PATH}/form-submission`]: { status: 200, body },

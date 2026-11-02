@@ -205,10 +205,10 @@ export function SubmittedHint({ field }: { field: string }) {
             <span>Candidate submitted: <strong className="font-semibold">{display(field, change.submitted)}</strong></span>
             {context.canConfirm && (
                 <>
-                    <button type="button" aria-label={`Confirm ${label}`} onClick={() => context.ask(change, "confirm")} className="rounded border border-review-border bg-review-bg px-2 py-0.5 text-label-sm font-medium text-review hover:opacity-80">
+                    <button type="button" aria-label={`Confirm ${label}`} onClick={() => context.ask(change, "confirm")} className="rounded-lg border border-review-border bg-review-bg px-2 py-0.5 text-label-sm font-medium text-review hover:opacity-80">
                         Confirm
                     </button>
-                    <button type="button" aria-label={`Revoke ${label}`} onClick={() => context.ask(change, "reject")} className="rounded border border-border-strong bg-surface px-2 py-0.5 text-label-sm font-medium text-ink-soft hover:bg-canvas">
+                    <button type="button" aria-label={`Revoke ${label}`} onClick={() => context.ask(change, "reject")} className="rounded-lg border border-border-strong bg-surface px-2 py-0.5 text-label-sm font-medium text-ink-soft hover:bg-canvas">
                         Revoke
                     </button>
                 </>

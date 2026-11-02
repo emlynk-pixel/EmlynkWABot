@@ -1,7 +1,7 @@
 import { apiRequest } from "./client";
 import type { JobStatus } from "./jobs";
 
-// Agent Management (src/services/agentService.js). ADMIN and MANAGER only; the
+// Agent Management (src/services/agentService.js). ADMIN and JOB_HANDLER only; the
 // server enforces it. An Agent is a business entity (not a login) that belongs
 // to one country and works with many Clients, and a Client with many Agents
 // (agent_client). Never deleted: ACTIVE or INACTIVE.

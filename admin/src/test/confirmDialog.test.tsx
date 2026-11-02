@@ -109,7 +109,7 @@ describe("ConfirmDialog", () => {
         render(
             <ConfirmDialog
                 title="Change Role for Kamal Perera"
-                message="Are you sure you want to change role from Manager to Job Handler?"
+                message="Are you sure you want to change role from Analyst to Job Handler?"
                 confirmLabel="Change Role"
                 cancelLabel="Dismiss"
                 onConfirm={vi.fn()}
@@ -118,7 +118,7 @@ describe("ConfirmDialog", () => {
         );
 
         expect(screen.getByRole("heading", { name: "Change Role for Kamal Perera" })).toBeInTheDocument();
-        expect(screen.getByText(/from Manager to Job Handler/)).toBeInTheDocument();
+        expect(screen.getByText(/from Analyst to Job Handler/)).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Change Role" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
     });

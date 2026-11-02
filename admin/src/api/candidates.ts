@@ -259,32 +259,15 @@ export function getCandidate(token: string, passportId: string, signal?: AbortSi
     return apiRequest<CandidateDetails>(base(passportId), { token, signal });
 }
 
-// registrationUploadGrant: only for the registration desk, which may upload
-// this new candidate's registration documents with it and nothing else.
-export function createCandidate(token: string, body: CandidateRegistration): Promise<{ passportId: string; uniqueId: string; registrationUploadGrant?: string }> {
+export function createCandidate(token: string, body: CandidateRegistration): Promise<{ passportId: string; uniqueId: string }> {
     return apiRequest(`/api/admin/candidates`, { method: "POST", token, body });
-}
-
-// The registration desk's upload of a document for the candidate it just
-// registered (PASSPORT, NIC or SKILL_VIDEO), with the grant from
-// createCandidate. The answer is an acknowledgement, not the candidate.
-export async function uploadRegistrationDocument(token: string, passportId: string, documentType: CandidateDocumentType, file: File, grant: string): Promise<void> {
-    const headers = { "X-Registration-Upload": grant };
-    const described = { type: documentType, mimeType: file.type, fileName: file.name };
-    const target = await apiRequest<{ uploadId: string; uploadUrl: string }>(`${base(passportId)}/documents/upload-target`, {
-        method: "POST", token, headers, body: { ...described, fileSize: file.size },
-    });
-    await uploadToSignedUrl(target.uploadUrl, file);
-    await apiRequest(`${base(passportId)}/documents/finalize`, {
-        method: "POST", token, headers, body: { ...described, uploadId: target.uploadId },
-    });
 }
 
 export function updateCandidate(token: string, passportId: string, body: CandidateDetailsInput): Promise<CandidateDetails> {
     return apiRequest<CandidateDetails>(base(passportId), { method: "PUT", token, body });
 }
 
-// Explicit manual verification of a candidate's details or documents (ADMIN and MANAGER; audited).
+// Explicit manual verification of a candidate's details or documents (ADMIN only; audited).
 export function setCandidateVerification(token: string, passportId: string, kind: "DETAILS" | "DOCUMENTS", verified: boolean): Promise<CandidateDetails> {
     return apiRequest<CandidateDetails>(`${base(passportId)}/verification`, { method: "POST", token, body: { kind, verified } });
 }
@@ -443,7 +426,7 @@ export function getFormSubmission(token: string, passportId: string, signal?: Ab
     return apiRequest<FormSubmission>(`${base(passportId)}/form-submission`, { token, signal });
 }
 
-// Confirm ONE candidate-submitted field into the record (ADMIN, MANAGER). The server reads the new
+// Confirm ONE candidate-submitted field into the record (ADMIN only). The server reads the new
 // value from the stored submission; these values only detect a stale screen. Returns the refreshed state.
 export function confirmFormField(
     token: string,
@@ -454,7 +437,7 @@ export function confirmFormField(
 }
 
 // Reject ("Revoke") ONE candidate-submitted field: the record is left as it is and the proposal is marked
-// rejected for good (ADMIN, MANAGER). Same body as confirmFormField; returns the refreshed state.
+// rejected for good (ADMIN only). Same body as confirmFormField; returns the refreshed state.
 export function rejectFormField(
     token: string,
     passportId: string,

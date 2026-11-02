@@ -22,7 +22,7 @@ import { categoryOf, parseAuditLogQuery } from "../src/services/auditLogService.
 
 const USERS = {
     ADMIN: { adminId: "user-admin", authUserId: "00000000-0000-4000-8000-000000000001", name: "Ada Admin", email: "ada@example.com", role: "ADMIN" },
-    MANAGER: { adminId: "user-manager", authUserId: "00000000-0000-4000-8000-000000000002", name: "Mia Manager", email: "mia@example.com", role: "MANAGER" },
+    OWNER: { adminId: "user-owner", authUserId: "00000000-0000-4000-8000-000000000002", name: "Olive Owner", email: "olive@example.com", role: "OWNER" },
     ANALYST: { adminId: "user-analyst", authUserId: "00000000-0000-4000-8000-000000000003", name: "Ali Analyst", email: "ali@example.com", role: "ANALYST" },
     REGISTRATION_DESK: { adminId: "user-desk", authUserId: "00000000-0000-4000-8000-000000000004", name: "Dee Desk", email: "dee@example.com", role: "REGISTRATION_DESK" },
 };
@@ -122,10 +122,10 @@ describe("candidate activity is audited", () => {
 
     test("updating details records only the changed fields, before and after", async () => {
         await register();
-        await updateCandidateDetails({ db: prisma, passportId: "N1023757", values: details({ address: "12 Galle Road", jobExperience: "3 years" }), actor: profile("MANAGER") });
+        await updateCandidateDetails({ db: prisma, passportId: "N1023757", values: details({ address: "12 Galle Road", jobExperience: "3 years" }), actor: profile("OWNER") });
         const row = (await auditRows()).at(-1);
         assert.equal(row.action, "UPDATE_CANDIDATE");
-        assert.equal(row.adminId, USERS.MANAGER.adminId);
+        assert.equal(row.adminId, USERS.OWNER.adminId);
         assert.deepEqual(JSON.parse(row.previousValue), { address: null, jobExperience: "2 years" });
         assert.deepEqual(JSON.parse(row.newValue), { address: "12 Galle Road", jobExperience: "3 years" });
         assert.match(row.reason, /address, jobExperience/);
@@ -222,13 +222,14 @@ describe("candidate activity is audited", () => {
 
 describe("GET /api/admin/audit-logs", () => {
     // Twelve entries: 3 registrations (ADMIN, DESK, DESK), 1 detail change
-    // (MANAGER), 2 stage changes (ANALYST), and 6 user-management entries
-    // written directly, spread over two days.
+    // (OWNER), 2 stage changes (ANALYST), and 6 user-management entries
+    // written directly, spread over two days. Those are history from before the MANAGER role was
+    // retired: an audit entry is never rewritten, so old entries keep naming it.
     async function seed() {
         await register({}, profile("ADMIN"));
         await register({ passportId: "P2000001", surname: "Perera", otherNames: "Kamal", nic: "200012345678", whatsappNumber: "+94770000001" }, profile("REGISTRATION_DESK"));
         await register({ passportId: "P2000002", surname: "Silva", otherNames: "Nimal", nic: "200012345679", whatsappNumber: "+94770000002" }, profile("REGISTRATION_DESK"));
-        await updateCandidateDetails({ db: prisma, passportId: "P2000001", values: details({ passportId: undefined, surname: "Perera", otherNames: "Kamal", nic: "200012345678", whatsappNumber: "+94770000001", address: "Colombo 05" }), actor: profile("MANAGER") });
+        await updateCandidateDetails({ db: prisma, passportId: "P2000001", values: details({ passportId: undefined, surname: "Perera", otherNames: "Kamal", nic: "200012345678", whatsappNumber: "+94770000001", address: "Colombo 05" }), actor: profile("OWNER") });
         await updateStage({ db: prisma, passportId: "N1023757", stage: "IVS_INTERVIEW", values: stage("IVS_INTERVIEW", { completed: true, notes: "Interview passed" }), actor: profile("ANALYST") });
         await updateStage({ db: prisma, passportId: "P2000002", stage: "VISA_APPROVAL", values: stage("VISA_APPROVAL", { completed: true }), actor: profile("ANALYST") });
         for (let i = 0; i < 6; i++) {
@@ -242,7 +243,7 @@ describe("GET /api/admin/audit-logs", () => {
         }
     }
 
-    for (const role of ["MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+    for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
         test(`${role} is refused (403)`, async () => {
             await seed();
             await withServer(role, async (call) => {
@@ -280,7 +281,7 @@ describe("GET /api/admin/audit-logs", () => {
             assert.equal(role.candidate, null);
             assert.deepEqual([role.previousValue, role.newValue, role.category], ["ANALYST", "MANAGER", "USER"]);
 
-            assert.deepEqual(body.filters.users.map((u) => u.name), ["Ada Admin", "Ali Analyst", "Dee Desk", "Mia Manager"]);
+            assert.deepEqual(body.filters.users.map((u) => u.name), ["Ada Admin", "Ali Analyst", "Dee Desk", "Olive Owner"]);
             assert.ok(body.filters.actions.includes("UPDATE_STAGE"));
             assert.deepEqual(body.filters.categories.map((c) => c.category), ["CANDIDATE", "JOB", "AGENT", "CLIENT", "STAGE", "DOCUMENT", "REVIEW", "USER", "OTHER"]);
         });
@@ -363,7 +364,7 @@ describe("GET /api/admin/audit-logs", () => {
             assert.equal((await call("/audit-logs?startDate=2026-02-01&endDate=2026-01-01")).status, 400);
             assert.equal((await call("/audit-logs?startDate=2026-13-01")).status, 400);
             assert.deepEqual((await call("/audit-logs?search=interview%20passed")).body.items.map((i) => i.action), ["UPDATE_STAGE"]);
-            assert.equal((await call("/audit-logs?search=Mia")).body.pagination.total, 1, "by the user's name");
+            assert.equal((await call("/audit-logs?search=Olive")).body.pagination.total, 1, "by the user's name");
             assert.equal((await call("/audit-logs?search=update%20user%20role")).body.pagination.total, 6, "by the action, as words");
         });
     });

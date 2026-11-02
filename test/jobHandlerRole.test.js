@@ -1,7 +1,7 @@
 // The JOB_HANDLER role: Jobs, Agents and Clients (manage), Candidates (read only), no Settings,
-// Audit Logs, user management or other admin areas; ADMIN and MANAGER can invite one (MANAGER:
-// a NEW Job Handler only). Plus a route-by-route sweep proving the four existing roles keep
-// exactly the access they had (RBAC-REG). On a REAL PostgreSQL (PGlite, every migration
+// Audit Logs, user management or other admin areas; ADMIN (and OWNER) can invite one. Plus a
+// route-by-route sweep proving every role has exactly its tier's access (RBAC-REG), and that an
+// account still holding the retired MANAGER role gets none. On a REAL PostgreSQL (PGlite, every migration
 // applied) through the real Prisma client, the real services and the real admin router; the
 // Supabase Auth admin is the test fake (no Supabase).
 import { after, before, beforeEach, describe, test } from "node:test";
@@ -13,11 +13,12 @@ import { noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createFakeAuthAdmin } from "./helpers/fakeSupabaseAuth.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
-import { ALL_ROLES, INVITABLE_ROLES, ROLES, canInviteRole, isValidRole } from "../src/middleware/requireRole.js";
+import { ALL_ROLES, ASSIGNABLE_ROLES, ROLES, canAssignRole, isValidRole } from "../src/middleware/requireRole.js";
 import { completeInvitation } from "../src/services/userAccountService.js";
 
 const user = (role, n) => ({ adminId: `u-${role.toLowerCase()}`, role, name: `${role} user`, email: `${role.toLowerCase()}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, status: "ACTIVE" });
-const USERS = Object.fromEntries(ALL_ROLES.map((role, n) => [role, user(role, n + 1)]));
+// MANAGER: an account still holding the retired role (never a valid role, in no tier).
+const USERS = { ...Object.fromEntries(ALL_ROLES.map((role, n) => [role, user(role, n + 1)])), MANAGER: user("MANAGER", 50) };
 const JH = USERS.JOB_HANDLER;
 const PID = "JH0000001";
 const NO_ID = "11111111-1111-4111-8111-111111111111";
@@ -94,15 +95,18 @@ describe("the role (ROLE-001, ROLE-002)", () => {
         // The Change Roles action accepts it too (ADMIN only, as before).
         const target = await prisma.user.create({ data: { ...user("ANALYST", 99), adminId: "u-target", email: "target@example.invalid" } });
         assert.equal(ok(await api(USERS.ADMIN, "PUT", `/users/${target.adminId}/role`, { role: "JOB_HANDLER" })).user.role, "JOB_HANDLER");
-        forbidden(await api(USERS.MANAGER, "PUT", `/users/${target.adminId}/role`, { role: "JOB_HANDLER" }), "MANAGER role change");
+        forbidden(await api(USERS.ANALYST, "PUT", `/users/${target.adminId}/role`, { role: "JOB_HANDLER" }), "ANALYST role change");
+        forbidden(await api(USERS.MANAGER, "PUT", `/users/${target.adminId}/role`, { role: "JOB_HANDLER" }), "retired MANAGER role change");
     });
 
-    test("ROLE-002: the four existing roles stay valid and unchanged; unknown roles stay invalid", () => {
-        assert.deepEqual(ALL_ROLES, ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
-        for (const role of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]) assert.ok(isValidRole(role));
-        for (const role of ["VIEWER", "job_handler", "JOBHANDLER", ""]) assert.equal(isValidRole(role), false);
-        assert.deepEqual(INVITABLE_ROLES.ADMIN, ALL_ROLES);
-        assert.deepEqual(INVITABLE_ROLES.MANAGER, ["JOB_HANDLER"]);
+    test("ROLE-002: the existing roles stay valid and unchanged; unknown roles stay invalid", () => {
+        assert.deepEqual(ALL_ROLES, ["OWNER", "ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        for (const role of ["ADMIN", "ANALYST", "REGISTRATION_DESK"]) assert.ok(isValidRole(role));
+        for (const role of ["MANAGER", "VIEWER", "job_handler", "JOBHANDLER", ""]) assert.equal(isValidRole(role), false);
+        // OWNER: every role but OWNER; ADMIN: the roles below ADMIN (test/ownerRole.test.js). The same lists decide invitations.
+        assert.deepEqual(ASSIGNABLE_ROLES.OWNER, ["ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        assert.deepEqual(ASSIGNABLE_ROLES.ADMIN, ["TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        assert.equal(ASSIGNABLE_ROLES.MANAGER, undefined, "the retired MANAGER gives no role");
     });
 });
 
@@ -116,42 +120,41 @@ describe("invitations (INVITE-001 to INVITE-005)", () => {
         assert.deepEqual([entry.adminId, entry.reason], [USERS.ADMIN.adminId, "Invited as JOB_HANDLER"]);
     });
 
-    test("INVITE-002: MANAGER invites a Job Handler (audited with the MANAGER as actor)", async () => {
-        const result = ok(await invite(USERS.MANAGER, { role: "job_handler" }), 201);
+    test("INVITE-002: OWNER invites a Job Handler too (audited with the OWNER as actor)", async () => {
+        const result = ok(await invite(USERS.OWNER, { role: "job_handler" }), 201);
         assert.equal(result.user.role, "JOB_HANDLER");
-        assert.equal((await prisma.auditLog.findFirst({ where: { action: "INVITE_USER" } })).adminId, USERS.MANAGER.adminId);
-        // Re-sending a still-pending Job Handler invitation is allowed to the MANAGER too.
-        assert.equal(ok(await invite(USERS.MANAGER, { role: "JOB_HANDLER" }), 201).user.role, "JOB_HANDLER");
+        assert.equal((await prisma.auditLog.findFirst({ where: { action: "INVITE_USER" } })).adminId, USERS.OWNER.adminId);
+        // Re-sending a still-pending Job Handler invitation.
+        assert.equal(ok(await invite(USERS.OWNER, { role: "JOB_HANDLER" }), 201).user.role, "JOB_HANDLER");
     });
 
-    test("INVITE-003: ANALYST, REGISTRATION_DESK and JOB_HANDLER cannot invite a Job Handler (nothing sent)", async () => {
-        for (const who of [USERS.ANALYST, USERS.REGISTRATION_DESK, JH]) forbidden(await invite(who, { role: "JOB_HANDLER" }), who.role);
+    test("INVITE-003: ANALYST, REGISTRATION_DESK, JOB_HANDLER and a retired MANAGER cannot invite a Job Handler (nothing sent)", async () => {
+        for (const who of [USERS.ANALYST, USERS.REGISTRATION_DESK, JH, USERS.MANAGER]) forbidden(await invite(who, { role: "JOB_HANDLER" }), who.role);
         assert.equal(authAdmin.calls.length, 0);
         assert.equal(await prisma.user.count({ where: { email: "new.person@example.invalid" } }), 0);
     });
 
-    test("INVITE-004: the MANAGER's other limits stay: no other role, no existing account, no other user management", async () => {
-        for (const role of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]) forbidden(await invite(USERS.MANAGER, { role }), `MANAGER invites ${role}`);
+    test("INVITE-004: a retired MANAGER account invites nobody and manages no user; MANAGER is never invited; the ADMIN re-invites an existing account", async () => {
+        for (const role of ["ADMIN", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) forbidden(await invite(USERS.MANAGER, { role }), `retired MANAGER invites ${role}`);
+        for (const who of [USERS.OWNER, USERS.ADMIN]) {
+            const refused = await invite(who, { role: "MANAGER", email: "would.be.manager@example.invalid" });
+            assert.equal(refused.status, 400, `${who.role} invites a MANAGER`);
+            assert.ok(refused.body.errors.some((e) => e.field === "role"));
+        }
         assert.equal(authAdmin.calls.length, 0, "no invitation e-mail for a refused request");
-        // An existing account of another role: re-inviting it "as a Job Handler" would change its role.
+        assert.equal(await prisma.user.count({ where: { role: "MANAGER" } }), 1, "only the retired fixture holds MANAGER");
+        for (const [method, path, body] of [["GET", "/users"], ["PUT", "/users/u-analyst/role", { role: "JOB_HANDLER" }], ["POST", "/users/u-analyst/deactivate", {}]]) {
+            forbidden(await api(USERS.MANAGER, method, path, body), `retired MANAGER ${method} ${path}`);
+        }
+        assert.equal(canAssignRole("MANAGER", "JOB_HANDLER"), false);
+        // An existing pending account of another role: re-inviting it as a Job Handler changes its role (an ADMIN's to do).
         await prisma.user.create({ data: { adminId: "u-pending-analyst", authUserId: "00000000-0000-4000-8000-0000000000f1", name: "Pending", email: "pending@example.invalid", role: "ANALYST", status: "INVITED" } });
         authAdmin.users.set("pending@example.invalid", { authUserId: "00000000-0000-4000-8000-0000000000f1", confirmed: false });
-        const relabel = await invite(USERS.MANAGER, { role: "JOB_HANDLER", email: "pending@example.invalid" });
-        assert.deepEqual([relabel.status, relabel.body.code], [403, "ADMIN_REQUIRED"]);
-        // A deactivated account (even a former Job Handler): reactivation stays an ADMIN's.
-        await prisma.user.create({ data: { adminId: "u-gone", authUserId: "00000000-0000-4000-8000-0000000000f2", name: "Gone", email: "gone@example.invalid", role: "ADMIN", status: "INACTIVE" } });
-        assert.equal((await invite(USERS.MANAGER, { role: "JOB_HANDLER", email: "gone@example.invalid" })).status, 403);
-        assert.deepEqual((await prisma.user.findMany({ where: { email: { in: ["pending@example.invalid", "gone@example.invalid"] } }, orderBy: { email: "asc" } })).map((u) => [u.role, u.status]), [["ADMIN", "INACTIVE"], ["ANALYST", "INVITED"]], "untouched");
-        for (const [method, path, body] of [["GET", "/users"], ["PUT", "/users/u-analyst/role", { role: "JOB_HANDLER" }], ["POST", "/users/u-analyst/deactivate", {}]]) {
-            forbidden(await api(USERS.MANAGER, method, path, body), `MANAGER ${method} ${path}`);
-        }
-        assert.equal(canInviteRole("MANAGER", "ADMIN"), false);
-        // The ADMIN still may do all of it.
         assert.equal(ok(await invite(USERS.ADMIN, { role: "JOB_HANDLER", email: "pending@example.invalid" }), 201).user.role, "JOB_HANDLER");
     });
 
     test("INVITE-005: accepting the invitation makes an ACTIVE JOB_HANDLER user, who then has Job Handler access", async () => {
-        const invited = ok(await invite(USERS.MANAGER, { role: "JOB_HANDLER", email: "handler@example.invalid" }), 201);
+        const invited = ok(await invite(USERS.ADMIN, { role: "JOB_HANDLER", email: "handler@example.invalid" }), 201);
         const row = await prisma.user.findUnique({ where: { adminId: invited.user.userId } });
         const accepted = await completeInvitation({ db: prisma, authUserId: row.authUserId });
         assert.deepEqual([accepted.role, accepted.status], ["JOB_HANDLER", "ACTIVE"]);
@@ -192,7 +195,7 @@ describe("Jobs (JOB-HANDLER-JOB-001 to 005)", () => {
         assert.equal((await prisma.auditLog.findFirst({ where: { action: "ADD_CANDIDATE_TO_JOB" } })).adminId, JH.adminId);
     });
 
-    test("not job types, not the job-group Candidate Form link: those stay ADMIN / MANAGER", async () => {
+    test("not job types, not the job-group Candidate Form link: those stay ADMIN only", async () => {
         const job = ok(await api(JH, "POST", "/jobs", { jobTypeId: ids.jobType, clientId: ids.client }), 201);
         forbidden(await api(JH, "POST", "/job-types", { name: "Cook" }), "create job type");
         forbidden(await api(JH, "GET", "/job-types"), "Settings > Job Types");
@@ -228,6 +231,8 @@ describe("Candidates: read only (JOB-HANDLER-CANDIDATE-001 to 007)", () => {
     test("CANDIDATE-001 / 002: lists, searches and opens candidates (and what the details page reads)", async () => {
         const list = ok(await api(JH, "GET", "/candidates?search=nimal&testResult=PASS&available=true"));
         assert.deepEqual(list.items.map((c) => c.passportId), [PID]);
+        // The job candidate picker: the same candidate, with only what the picker shows.
+        assert.deepEqual(Object.keys(ok(await api(JH, "GET", "/job-candidate-options?search=nimal")).items[0]).sort(), ["name", "nic", "passportId", "uniqueId", "workflowStatus"]);
         assert.equal(ok(await api(JH, "GET", `/candidates/${PID}`)).candidate.passportId, PID);
         for (const path of ["call-logs", "additional-details", "form-submission"]) ok(await api(JH, "GET", `/candidates/${PID}/${path}`));
         ok(await api(JH, "GET", "/job-type-choices"));
@@ -276,15 +281,18 @@ describe("restricted areas (JOB-HANDLER-SETTINGS-001, JOB-HANDLER-ADMIN-001)", (
     });
 });
 
-// Every /api/admin route with the tier it had BEFORE the Job Handler role. The four existing
-// roles must get exactly this access; JOB_HANDLER gets its own column.
+// Every /api/admin route with its tier (routes/admin.js; the routes of the retired MANAGER tier
+// are ADMIN only). Each role must get exactly this access; JOB_HANDLER gets its own column.
 const T = {
-    ALL_ACTIVE: ["ADMIN", "MANAGER", "ANALYST"],
-    CANDIDATE_STAFF: ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"],
-    ANALYSTS_UP: ["ADMIN", "MANAGER", "ANALYST"],
-    MANAGERS_UP: ["ADMIN", "MANAGER"],
+    // The dashboard, review and reports: ADMIN (an ANALYST works only on their candidates).
+    ALL_ACTIVE: ["ADMIN"],
+    // The Candidates area: not REGISTRATION_DESK (the registration workflow only).
+    CANDIDATE_STAFF: ["ADMIN", "ANALYST"],
+    // The routes the Add Candidate form uses: REGISTRATION_DESK too (an empty body is a 400).
+    REGISTRATION_WORKFLOW: ["ADMIN", "ANALYST", "REGISTRATION_DESK"],
+    ANALYSTS_UP: ["ADMIN"],
     ADMINS_ONLY: ["ADMIN"],
-    REGISTRATION_STAFF: ["ADMIN", "MANAGER", "REGISTRATION_DESK"],
+    REGISTRATION_STAFF: ["ADMIN", "REGISTRATION_DESK"],
 };
 const P = "ZZ0000009"; // no such candidate: an allowed role gets 404 / 400, never 403
 const REVIEW = "pending-11111111-1111-4111-8111-111111111111";
@@ -292,40 +300,41 @@ const REVIEW = "pending-11111111-1111-4111-8111-111111111111";
 const ROUTES = [
     ["GET", "/overview", T.ALL_ACTIVE, false], ["GET", "/documents/missing", T.ALL_ACTIVE, false], ["GET", "/documents", T.ALL_ACTIVE, false],
     ["GET", "/clients", T.ALL_ACTIVE, false], ["GET", "/reports/daily", T.ALL_ACTIVE, false], ["GET", "/reports/daily/summary", T.ALL_ACTIVE, false],
-    ["GET", "/reports/daily/incomplete", T.ALL_ACTIVE, false], ["GET", "/reports/daily/roles", T.MANAGERS_UP, false], ["GET", "/reports/monthly", T.ALL_ACTIVE, false],
+    ["GET", "/reports/daily/incomplete", T.ALL_ACTIVE, false], ["GET", "/reports/daily/roles", T.ADMINS_ONLY, false], ["GET", "/reports/monthly", T.ALL_ACTIVE, false],
     ["GET", `/clients/${P}`, T.ALL_ACTIVE, false], ["GET", "/review", T.ALL_ACTIVE, false], ["GET", "/police", T.ALL_ACTIVE, false],
     ["GET", `/review/${REVIEW}`, T.ALL_ACTIVE, false], ["GET", `/review/${REVIEW}/file`, T.ALL_ACTIVE, false],
     ["POST", `/review/${REVIEW}/approve`, T.ANALYSTS_UP, false], ["POST", `/review/${REVIEW}/keep-pending`, T.ANALYSTS_UP, false],
     ["POST", `/review/${REVIEW}/remove`, T.ANALYSTS_UP, false], ["POST", `/review/${REVIEW}/retry`, T.ANALYSTS_UP, false],
     ["POST", `/review/${REVIEW}/replace-verified`, T.ANALYSTS_UP, false], ["POST", `/review/${REVIEW}/keep-as-version`, T.ANALYSTS_UP, false],
     ["POST", `/review/${REVIEW}/document-type`, T.ANALYSTS_UP, false], ["POST", `/review/${REVIEW}/assign-client`, T.ANALYSTS_UP, false],
-    ["DELETE", `/temporary-documents/${NO_ID}`, T.ANALYSTS_UP, false], ["POST", `/documents/${NO_ID}/police-date`, T.MANAGERS_UP, false],
+    ["DELETE", `/temporary-documents/${NO_ID}`, T.ANALYSTS_UP, false], ["POST", `/documents/${NO_ID}/police-date`, T.ADMINS_ONLY, false],
     ["GET", "/candidates", T.CANDIDATE_STAFF, true], ["POST", "/candidates", T.REGISTRATION_STAFF, false],
-    ["GET", `/candidates/${P}`, T.CANDIDATE_STAFF, true], ["PUT", `/candidates/${P}`, T.CANDIDATE_STAFF, false],
-    ["PUT", `/candidates/${P}/stages/IVS_INTERVIEW`, T.CANDIDATE_STAFF, false], ["POST", `/candidates/${P}/verification`, T.MANAGERS_UP, false],
-    ["POST", `/candidates/${P}/documents/upload-target`, T.CANDIDATE_STAFF, false], ["POST", `/candidates/${P}/documents/finalize`, T.CANDIDATE_STAFF, false],
+    ["GET", `/candidates/${P}`, T.REGISTRATION_WORKFLOW, true], ["PUT", `/candidates/${P}`, T.REGISTRATION_WORKFLOW, false],
+    ["PUT", `/candidates/${P}/stages/IVS_INTERVIEW`, T.CANDIDATE_STAFF, false], ["POST", `/candidates/${P}/verification`, T.ADMINS_ONLY, false],
+    ["POST", `/candidates/${P}/documents/upload-target`, T.REGISTRATION_WORKFLOW, false], ["POST", `/candidates/${P}/documents/finalize`, T.REGISTRATION_WORKFLOW, false],
     ["POST", `/candidates/${P}/documents/${NO_ID}/remove`, T.CANDIDATE_STAFF, false], ["GET", `/candidates/${P}/call-logs`, T.CANDIDATE_STAFF, true],
     ["POST", `/candidates/${P}/call-logs`, T.CANDIDATE_STAFF, false], ["POST", `/candidates/${P}/call-logs/${NO_ID}/follow-up`, T.CANDIDATE_STAFF, false],
-    ["GET", "/follow-ups", T.CANDIDATE_STAFF, false], ["POST", `/follow-ups/${NO_ID}/complete`, T.CANDIDATE_STAFF, false], ["DELETE", `/follow-ups/${NO_ID}`, T.MANAGERS_UP, false],
+    ["GET", "/follow-ups", T.REGISTRATION_WORKFLOW, false], ["POST", `/follow-ups/${NO_ID}/complete`, T.CANDIDATE_STAFF, false], ["DELETE", `/follow-ups/${NO_ID}`, T.ADMINS_ONLY, false],
     ["GET", `/candidates/${P}/additional-details`, T.CANDIDATE_STAFF, true], ["PUT", `/candidates/${P}/additional-details`, T.CANDIDATE_STAFF, false],
     ["GET", `/candidates/${P}/form-submission`, T.CANDIDATE_STAFF, true], ["GET", `/candidates/${P}/form-share`, T.CANDIDATE_STAFF, false],
     ["POST", `/candidates/${P}/form-share`, T.CANDIDATE_STAFF, false], ["POST", `/candidates/${P}/form-share/revoke`, T.CANDIDATE_STAFF, false],
-    ["GET", "/work-allocation/candidates?status=NOPE", T.MANAGERS_UP, false], ["GET", "/work-allocation/analysts", T.MANAGERS_UP, false],
-    ["POST", "/work-allocation/assign", T.MANAGERS_UP, false], ["POST", "/work-allocation/auto-allocate", T.MANAGERS_UP, false],
-    ["POST", "/work-allocation/allocate", T.MANAGERS_UP, false], ["POST", "/work-allocation/unassign", T.MANAGERS_UP, false],
-    ["GET", "/job-options", T.MANAGERS_UP, true], ["GET", "/job-type-choices", T.CANDIDATE_STAFF, true], ["GET", "/job-types", T.ADMINS_ONLY, false],
-    ["PATCH", `/job-types/${NO_ID}`, T.ADMINS_ONLY, false], ["POST", "/job-types", T.MANAGERS_UP, false],
-    ["GET", "/jobs?view=nope", T.ALL_ACTIVE, true], ["POST", "/jobs", T.MANAGERS_UP, true], ["GET", `/jobs/${NO_ID}`, T.ALL_ACTIVE, true],
-    ["PUT", `/jobs/${NO_ID}`, T.MANAGERS_UP, true], ["POST", `/jobs/${NO_ID}/candidates`, T.MANAGERS_UP, true],
-    ["DELETE", `/jobs/${NO_ID}/candidates/${P}`, T.MANAGERS_UP, true], ["GET", `/jobs/${NO_ID}/form-share`, T.MANAGERS_UP, false],
-    ["POST", `/jobs/${NO_ID}/form-share`, T.MANAGERS_UP, false], ["POST", `/jobs/${NO_ID}/form-share/revoke`, T.MANAGERS_UP, false],
-    ["POST", `/jobs/${NO_ID}/complete`, T.MANAGERS_UP, true], ["POST", `/jobs/${NO_ID}/cancel`, T.MANAGERS_UP, true],
-    ["GET", "/agents?status=NOPE", T.MANAGERS_UP, true], ["GET", "/agent-options", T.MANAGERS_UP, true], ["POST", "/agents", T.MANAGERS_UP, true],
-    ["GET", `/agents/${NO_ID}`, T.MANAGERS_UP, true], ["PATCH", `/agents/${NO_ID}`, T.MANAGERS_UP, true], ["PATCH", `/agents/${NO_ID}/status`, T.MANAGERS_UP, true],
-    ["GET", "/client-management?status=NOPE", T.MANAGERS_UP, true], ["GET", "/client-options", T.MANAGERS_UP, true], ["POST", "/client-management", T.MANAGERS_UP, true],
-    ["GET", `/client-management/${NO_ID}`, T.MANAGERS_UP, true], ["PATCH", `/client-management/${NO_ID}`, T.MANAGERS_UP, true],
-    ["PATCH", `/client-management/${NO_ID}/agent`, T.MANAGERS_UP, true], ["PATCH", `/client-management/${NO_ID}/status`, T.MANAGERS_UP, true],
+    ["GET", "/work-allocation/candidates?status=NOPE", T.ADMINS_ONLY, false], ["GET", "/work-allocation/analysts", T.ADMINS_ONLY, false],
+    ["POST", "/work-allocation/assign", T.ADMINS_ONLY, false], ["POST", "/work-allocation/auto-allocate", T.ADMINS_ONLY, false],
+    ["POST", "/work-allocation/allocate", T.ADMINS_ONLY, false], ["POST", "/work-allocation/unassign", T.ADMINS_ONLY, false],
+    ["GET", "/job-options", T.ADMINS_ONLY, true], ["GET", "/job-candidate-options?pageSize=0", T.ADMINS_ONLY, true], ["GET", "/job-type-choices", T.REGISTRATION_WORKFLOW, true], ["GET", "/job-types", T.ADMINS_ONLY, false],
+    ["PATCH", `/job-types/${NO_ID}`, T.ADMINS_ONLY, false], ["POST", "/job-types", T.ADMINS_ONLY, false],
+    ["GET", "/jobs?view=nope", T.ALL_ACTIVE, true], ["POST", "/jobs", T.ADMINS_ONLY, true], ["GET", `/jobs/${NO_ID}`, T.ALL_ACTIVE, true],
+    ["PUT", `/jobs/${NO_ID}`, T.ADMINS_ONLY, true], ["POST", `/jobs/${NO_ID}/candidates`, T.ADMINS_ONLY, true],
+    ["DELETE", `/jobs/${NO_ID}/candidates/${P}`, T.ADMINS_ONLY, true], ["GET", `/jobs/${NO_ID}/form-share`, T.ADMINS_ONLY, false],
+    ["POST", `/jobs/${NO_ID}/form-share`, T.ADMINS_ONLY, false], ["POST", `/jobs/${NO_ID}/form-share/revoke`, T.ADMINS_ONLY, false],
+    ["POST", `/jobs/${NO_ID}/complete`, T.ADMINS_ONLY, true], ["POST", `/jobs/${NO_ID}/cancel`, T.ADMINS_ONLY, true],
+    ["GET", "/agents?status=NOPE", T.ADMINS_ONLY, true], ["GET", "/agent-options", T.ADMINS_ONLY, true], ["POST", "/agents", T.ADMINS_ONLY, true],
+    ["GET", `/agents/${NO_ID}`, T.ADMINS_ONLY, true], ["PATCH", `/agents/${NO_ID}`, T.ADMINS_ONLY, true], ["PATCH", `/agents/${NO_ID}/status`, T.ADMINS_ONLY, true],
+    ["GET", "/client-management?status=NOPE", T.ADMINS_ONLY, true], ["GET", "/client-options", T.ADMINS_ONLY, true], ["POST", "/client-management", T.ADMINS_ONLY, true],
+    ["GET", `/client-management/${NO_ID}`, T.ADMINS_ONLY, true], ["PATCH", `/client-management/${NO_ID}`, T.ADMINS_ONLY, true],
+    ["PATCH", `/client-management/${NO_ID}/agent`, T.ADMINS_ONLY, true], ["PATCH", `/client-management/${NO_ID}/status`, T.ADMINS_ONLY, true],
     ["GET", "/audit-logs", T.ADMINS_ONLY, false], ["GET", "/settings/sheet-sync/status", T.ADMINS_ONLY, false],
+    ["POST", "/settings/sheet-sync/run", T.ADMINS_ONLY, false], ["POST", "/settings/sheet-sync/import/preview", T.ADMINS_ONLY, false],
     ["GET", "/users", T.ADMINS_ONLY, false], ["PUT", "/users/nobody/role", T.ADMINS_ONLY, false], ["POST", "/users/nobody/deactivate", T.ADMINS_ONLY, false],
 ];
 
@@ -340,14 +349,17 @@ describe("every route, every role (RBAC-REG-001 to 004, and the Job Handler colu
         }
         assert.deepEqual(wrong, [], `${role}:\n${wrong.join("\n")}`);
     };
-    for (const [id, role] of [["RBAC-REG-001", "ADMIN"], ["RBAC-REG-002", "MANAGER"], ["RBAC-REG-003", "ANALYST"], ["RBAC-REG-004", "REGISTRATION_DESK"]]) {
-        test(`${id}: ${role} has exactly the access it had before`, () => sweep(role, (tier) => tier.includes(role)));
+    for (const [id, role] of [["RBAC-REG-001", "ADMIN"], ["RBAC-REG-003", "ANALYST"], ["RBAC-REG-004", "REGISTRATION_DESK"]]) {
+        test(`${id}: ${role} has exactly its tier's access`, () => sweep(role, (tier) => tier.includes(role)));
     }
+    test("RBAC-REG-002: an account still holding the retired MANAGER role gets 403 on every route (its former routes included)", () => sweep("MANAGER", () => false));
     test("JOB_HANDLER: exactly Jobs, Agents, Clients and candidate reads", () => sweep("JOB_HANDLER", (tier, jobHandler) => jobHandler));
-    test("invitations: ADMIN any role, MANAGER Job Handler only (the one MANAGER change), others none", async () => {
+    test("OWNER: exactly the access ADMIN has", () => sweep("OWNER", (tier) => tier.includes("ADMIN")));
+    test("invitations: OWNER all but OWNER, ADMIN below ADMIN, others (a retired MANAGER too) none", async () => {
         const decide = async (who, role) => (await api(who, "POST", "/users/invite", { role })).status; // no name / email: an allowed request is a 400
-        for (const role of ALL_ROLES) assert.equal(await decide(USERS.ADMIN, role), 400, `ADMIN -> ${role}`);
-        for (const role of ALL_ROLES) assert.equal(await decide(USERS.MANAGER, role), role === "JOB_HANDLER" ? 400 : 403, `MANAGER -> ${role}`);
+        for (const role of ALL_ROLES) assert.equal(await decide(USERS.OWNER, role), role === "OWNER" ? 403 : 400, `OWNER -> ${role}`);
+        for (const role of ALL_ROLES) assert.equal(await decide(USERS.ADMIN, role), ["OWNER", "ADMIN"].includes(role) ? 403 : 400, `ADMIN -> ${role}`);
+        for (const role of ALL_ROLES) assert.equal(await decide(USERS.MANAGER, role), 403, `retired MANAGER -> ${role}`);
         for (const who of [USERS.ANALYST, USERS.REGISTRATION_DESK, JH]) assert.equal(await decide(who, "JOB_HANDLER"), 403, who.role);
         assert.equal(authAdmin.calls.length, 0);
     });

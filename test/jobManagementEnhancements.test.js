@@ -16,7 +16,7 @@ import { errorHandler } from "../src/middleware/errorHandler.js";
 import { DEFAULT_FROM_COUNTRY, formatJobCode, isJobFilled, jobCodeYear, parseCreateJobBody } from "../src/services/jobService.js";
 
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4) };
 const pid = (i) => `P${String(i).padStart(7, "0")}`;
 // 1-30 PASS (job type preference Carpenter), 31 FAIL, 32 no test result, 33 PASS with No Preferred Type.
 const PASSED = Array.from({ length: 30 }, (_, n) => n + 1);
@@ -82,13 +82,13 @@ async function api(who, method, urlPath, body) {
     }
 }
 const jobBody = (extra = {}) => ({ jobTypeId: ids.jobType, clientId: ids.acme, vacancies: 20, ...extra });
-const create = (extra = {}, who = USERS.MANAGER) => api(who, "POST", "/jobs", jobBody(extra));
+const create = (extra = {}, who = USERS.OWNER) => api(who, "POST", "/jobs", jobBody(extra));
 const createOk = async (extra = {}) => {
     const response = await create(extra);
     assert.equal(response.status, 201, JSON.stringify(response.body));
     return response.body;
 };
-const add = (job, i) => api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { passportId: pid(i) });
+const add = (job, i) => api(USERS.OWNER, "POST", `/jobs/${job.jobId}/candidates`, { passportId: pid(i) });
 const jobCount = () => prisma.job.count();
 const range = (from, to) => Array.from({ length: to - from + 1 }, (_, n) => from + n);
 
@@ -96,7 +96,7 @@ describe("flexible vacancies (VACANCY-001 to VACANCY-005)", () => {
     test("VACANCY-001/002/003: candidate #20, #21 and up to 23 are all assigned to a job of 20 vacancies; the count stays 23 / 20", async () => {
         const job = await createOk();
         for (const i of range(1, 19)) assert.equal((await add(job, i)).status, 201);
-        let details = (await api(USERS.MANAGER, "GET", `/jobs/${job.jobId}`)).body;
+        let details = (await api(USERS.OWNER, "GET", `/jobs/${job.jobId}`)).body;
         assert.deepEqual([details.candidateCount, details.vacancies, details.filled], [19, 20, false], "19 / 20: not filled yet");
 
         const twentieth = await add(job, 20);
@@ -107,7 +107,7 @@ describe("flexible vacancies (VACANCY-001 to VACANCY-005)", () => {
         assert.equal(twentyFirst.status, 201, "VACANCY-002: candidate #21 is not blocked");
         for (const i of [22, 23]) assert.equal((await add(job, i)).status, 201);
 
-        details = (await api(USERS.MANAGER, "GET", `/jobs/${job.jobId}`)).body;
+        details = (await api(USERS.OWNER, "GET", `/jobs/${job.jobId}`)).body;
         assert.equal(details.candidateCount, 23, "VACANCY-003: not clamped to the vacancies");
         assert.equal(details.candidates.length, 23);
         assert.equal(await prisma.jobCandidate.count({ where: { jobId: job.jobId, isActive: true } }), 23);
@@ -118,18 +118,18 @@ describe("flexible vacancies (VACANCY-001 to VACANCY-005)", () => {
         assert.deepEqual([job.candidateCount, job.vacancies, job.filled, job.status], [23, 20, true, "PROCESSING"]);
         assert.equal((await prisma.job.findUnique({ where: { id: job.jobId } })).vacancies, 20, "VACANCY-005: the target is still 20");
 
-        const list = (await api(USERS.MANAGER, "GET", "/jobs")).body.items.find((row) => row.jobId === job.jobId);
+        const list = (await api(USERS.OWNER, "GET", "/jobs")).body.items.find((row) => row.jobId === job.jobId);
         assert.deepEqual([list.candidateCount, list.vacancies, list.filled], [23, 20, true]);
 
         // Removing down to 20 keeps it Filled; 19 is not.
-        for (const i of [23, 22, 21]) assert.equal((await api(USERS.MANAGER, "DELETE", `/jobs/${job.jobId}/candidates/${pid(i)}`)).status, 200);
-        assert.equal((await api(USERS.MANAGER, "GET", `/jobs/${job.jobId}`)).body.filled, true, "20 / 20");
-        const nineteen = await api(USERS.MANAGER, "DELETE", `/jobs/${job.jobId}/candidates/${pid(20)}`);
+        for (const i of [23, 22, 21]) assert.equal((await api(USERS.OWNER, "DELETE", `/jobs/${job.jobId}/candidates/${pid(i)}`)).status, 200);
+        assert.equal((await api(USERS.OWNER, "GET", `/jobs/${job.jobId}`)).body.filled, true, "20 / 20");
+        const nineteen = await api(USERS.OWNER, "DELETE", `/jobs/${job.jobId}/candidates/${pid(20)}`);
         assert.equal(nineteen.body.filled, false, "19 / 20");
 
         // Completing the job keeps its count (history) and its Filled state.
         assert.equal((await add(job, 20)).status, 201);
-        const completed = await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/complete`, {});
+        const completed = await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, {});
         assert.deepEqual([completed.body.status, completed.body.candidateCount, completed.body.filled], ["COMPLETED", 20, true]);
     });
 
@@ -140,12 +140,10 @@ describe("flexible vacancies (VACANCY-001 to VACANCY-005)", () => {
         assert.equal(isJobFilled(20, 23), true);
     });
 
-    test("an Analyst's Filled counts every candidate of the job, not only their own", async () => {
+    test("Filled counts every candidate of the job; an Analyst has no Jobs area (403)", async () => {
         const job = await createOk({ vacancies: 2, candidateIds: [pid(1), pid(2)] });
-        const asAnalyst = await api(USERS.ANN, "GET", `/jobs/${job.jobId}`);
-        assert.equal(asAnalyst.status, 200);
-        assert.deepEqual([asAnalyst.body.candidateCount, asAnalyst.body.filled], [1, true], "sees only their candidate, the job is still Filled");
-        assert.equal((await api(USERS.ANN, "GET", "/jobs")).body.items[0].filled, true);
+        for (const urlPath of [`/jobs/${job.jobId}`, "/jobs"]) assert.equal((await api(USERS.ANN, "GET", urlPath)).status, 403, urlPath);
+        assert.equal((await api(USERS.OWNER, "GET", "/jobs")).body.items[0].filled, true);
     });
 });
 
@@ -233,7 +231,7 @@ describe("New job with selected candidates (JOB-CREATE-001 to JOB-CREATE-012)", 
         assert.equal(await prisma.jobCandidate.count({ where: { passportId: pid(1), isActive: true } }), 2);
     });
 
-    test("JOB-CREATE-012: only ADMIN and MANAGER create jobs (with or without candidates)", async () => {
+    test("JOB-CREATE-012: only ADMIN and OWNER create jobs (with or without candidates)", async () => {
         for (const who of [USERS.ANN, USERS.DESK]) assert.equal((await create({ candidateIds: [pid(1)] }, who)).status, 403);
         assert.equal((await create({ candidateIds: [pid(1)] }, USERS.ADMIN)).status, 201);
         assert.equal(await jobCount(), 1);
@@ -243,30 +241,30 @@ describe("New job with selected candidates (JOB-CREATE-001 to JOB-CREATE-012)", 
 describe("the eligible candidates of Step 2 (GET /candidates?testResult=PASS&available=true)", () => {
     test("only PASS candidates not on a PROCESSING job; FAIL and untested are left out", async () => {
         await createOk({ candidateIds: [pid(1), pid(2)] });
-        const response = await api(USERS.MANAGER, "GET", "/candidates?testResult=PASS&available=true&pageSize=100");
+        const response = await api(USERS.OWNER, "GET", "/candidates?testResult=PASS&available=true&pageSize=100");
         assert.equal(response.status, 200);
         const listed = response.body.items.map((c) => c.passportId);
         for (const i of [1, 2, FAILED, UNTESTED]) assert.ok(!listed.includes(pid(i)), pid(i));
         for (const i of [3, 30, NO_PREFERENCE]) assert.ok(listed.includes(pid(i)), pid(i));
         assert.equal(response.body.pagination.total, 29);
         assert.deepEqual(response.body.items[0].workflowStatus, { code: "REGISTERED", label: "Registered" });
-        assert.equal((await api(USERS.MANAGER, "GET", "/candidates?available=yes")).status, 400);
+        assert.equal((await api(USERS.OWNER, "GET", "/candidates?available=yes")).status, 400);
     });
 
     test("a candidate released from a job (completed, cancelled or removed) is eligible again", async () => {
         const job = await createOk({ candidateIds: [pid(1), pid(2)] });
-        await api(USERS.MANAGER, "DELETE", `/jobs/${job.jobId}/candidates/${pid(1)}`);
-        let listed = (await api(USERS.MANAGER, "GET", "/candidates?testResult=PASS&available=true&pageSize=100")).body.items.map((c) => c.passportId);
+        await api(USERS.OWNER, "DELETE", `/jobs/${job.jobId}/candidates/${pid(1)}`);
+        let listed = (await api(USERS.OWNER, "GET", "/candidates?testResult=PASS&available=true&pageSize=100")).body.items.map((c) => c.passportId);
         assert.ok(listed.includes(pid(1)) && !listed.includes(pid(2)));
-        await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/cancel`, { reason: "Client withdrew" });
-        listed = (await api(USERS.MANAGER, "GET", "/candidates?testResult=PASS&available=true&pageSize=100")).body.items.map((c) => c.passportId);
+        await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/cancel`, { reason: "Client withdrew" });
+        listed = (await api(USERS.OWNER, "GET", "/candidates?testResult=PASS&available=true&pageSize=100")).body.items.map((c) => c.passportId);
         assert.ok(listed.includes(pid(2)));
     });
 });
 
 describe("To Country and From Country (COUNTRY-001 to COUNTRY-005)", () => {
     test("COUNTRY-001/002: the To Country is the responsible agent's country, for each client; it cannot be sent", async () => {
-        const options = (await api(USERS.MANAGER, "GET", "/job-options")).body;
+        const options = (await api(USERS.OWNER, "GET", "/job-options")).body;
         const countryOf = (agentId) => options.agents.find((a) => a.id === agentId).countryCode;
         assert.deepEqual(options.clients.map((c) => [c.name, c.agentIds.map(countryOf)]), [["Acme Construction", ["RO"]], ["Berlin Bau", ["DE"]]], "a client without an agent is not offered");
         assert.equal((await createOk({ clientId: ids.acme })).countryCode, "RO");
@@ -280,22 +278,22 @@ describe("To Country and From Country (COUNTRY-001 to COUNTRY-005)", () => {
         const job = await createOk();
         assert.equal(job.fromCountryCode, "RO");
         assert.equal((await createOk({ fromCountryCode: "lk" })).fromCountryCode, "LK");
-        const edited = await api(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { fromCountryCode: "IN" });
+        const edited = await api(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { fromCountryCode: "IN" });
         assert.equal(edited.status, 200);
         assert.deepEqual([edited.body.fromCountryCode, edited.body.countryCode], ["IN", "RO"], "the To Country is untouched");
-        assert.equal((await api(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { fromCountryCode: "ZZ" })).status, 400);
-        assert.equal((await api(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { countryCode: "DE" })).status, 400, "the To Country is never edited");
-        await api(USERS.MANAGER, "POST", `/jobs/${job.jobId}/complete`, {});
-        assert.equal((await api(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { fromCountryCode: "RO" })).body.code, "JOB_NOT_PROCESSING");
+        assert.equal((await api(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { fromCountryCode: "ZZ" })).status, 400);
+        assert.equal((await api(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { countryCode: "DE" })).status, 400, "the To Country is never edited");
+        await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, {});
+        assert.equal((await api(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { fromCountryCode: "RO" })).body.code, "JOB_NOT_PROCESSING");
     });
 
     test("COUNTRY-005: a job from before From Country keeps its stored To Country and reads From Country as not recorded", async () => {
         const job = await createOk({ clientId: ids.berlin });
         await pg.exec(`UPDATE "job" SET "from_country_code" = NULL WHERE "id" = '${job.jobId}'`);
-        const details = (await api(USERS.MANAGER, "GET", `/jobs/${job.jobId}`)).body;
+        const details = (await api(USERS.OWNER, "GET", `/jobs/${job.jobId}`)).body;
         assert.deepEqual([details.countryCode, details.fromCountryCode], ["DE", null]);
         // Editing something else keeps it as it is.
-        const edited = (await api(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { vacancies: 7 })).body;
+        const edited = (await api(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { vacancies: 7 })).body;
         assert.deepEqual([edited.vacancies, edited.fromCountryCode], [7, null]);
         await assert.rejects(pg.exec(`UPDATE "job" SET "from_country_code" = 'ro' WHERE "id" = '${job.jobId}'`), /check/i);
     });
@@ -315,7 +313,7 @@ describe("the assigned candidates' Status and identity", () => {
         assert.deepEqual(byId[pid(1)].workflowStatus, { code: "JOB_ASSIGNED", label: "Job Assigned" });
         assert.equal(byId[pid(1)].nic, "200000000001");
         assert.equal(byId[pid(2)].nic, null);
-        const listed = (await api(USERS.MANAGER, "GET", "/candidates?search=P0000001")).body.items[0];
+        const listed = (await api(USERS.OWNER, "GET", "/candidates?search=P0000001")).body.items[0];
         assert.deepEqual(listed.workflowStatus, byId[pid(1)].workflowStatus, "one status source");
     });
 });
@@ -360,19 +358,19 @@ describe("Multiple Job Types per Job (additive many-to-many)", () => {
     });
 
     test("cannot create Job with zero Job Types", async () => {
-        const emptyRes = await api(USERS.MANAGER, "POST", "/jobs", { clientId: ids.acme, jobTypeIds: [] });
+        const emptyRes = await api(USERS.OWNER, "POST", "/jobs", { clientId: ids.acme, jobTypeIds: [] });
         assert.equal(emptyRes.status, 400);
 
-        const noneRes = await api(USERS.MANAGER, "POST", "/jobs", { clientId: ids.acme });
+        const noneRes = await api(USERS.OWNER, "POST", "/jobs", { clientId: ids.acme });
         assert.equal(noneRes.status, 400);
     });
 
     test("duplicate Job Type selection is prevented on create and update", async () => {
-        const dupCreate = await api(USERS.MANAGER, "POST", "/jobs", { clientId: ids.acme, jobTypeIds: [t1, t2, t1] });
+        const dupCreate = await api(USERS.OWNER, "POST", "/jobs", { clientId: ids.acme, jobTypeIds: [t1, t2, t1] });
         assert.equal(dupCreate.status, 400);
 
         const j = await createOk({ jobTypeIds: [t1] });
-        const dupUpdate = await api(USERS.MANAGER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [t2, t2] });
+        const dupUpdate = await api(USERS.OWNER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [t2, t2] });
         assert.equal(dupUpdate.status, 400);
     });
 
@@ -381,7 +379,7 @@ describe("Multiple Job Types per Job (additive many-to-many)", () => {
         assert.equal(j.jobTypes.length, 2);
 
         // Add t3 and remove t2
-        const updated = await api(USERS.MANAGER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [t1, t3] });
+        const updated = await api(USERS.OWNER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [t1, t3] });
         assert.equal(updated.status, 200);
         assert.deepEqual(updated.body.jobTypes.map((t) => t.id), [t1, t3]);
         assert.equal(updated.body.jobType.id, t1);
@@ -391,7 +389,7 @@ describe("Multiple Job Types per Job (additive many-to-many)", () => {
         assert.deepEqual(inDb.jobTypes.map((t) => t.jobTypeId).sort(), [t1, t3].sort());
 
         // Cannot update to empty array
-        const emptyUpdate = await api(USERS.MANAGER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [] });
+        const emptyUpdate = await api(USERS.OWNER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [] });
         assert.equal(emptyUpdate.status, 400);
     });
 
@@ -406,8 +404,8 @@ describe("Multiple Job Types per Job (additive many-to-many)", () => {
 
     test("cannot edit job types on COMPLETED or CANCELLED jobs", async () => {
         const j = await createOk({ jobTypeIds: [t1] });
-        await api(USERS.MANAGER, "POST", `/jobs/${j.jobId}/complete`);
-        const res = await api(USERS.MANAGER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [t1, t2] });
+        await api(USERS.OWNER, "POST", `/jobs/${j.jobId}/complete`);
+        const res = await api(USERS.OWNER, "PUT", `/jobs/${j.jobId}`, { jobTypeIds: [t1, t2] });
         assert.equal(res.status, 409);
         assert.equal(res.body.code, "JOB_NOT_PROCESSING");
     });
@@ -416,7 +414,7 @@ describe("Multiple Job Types per Job (additive many-to-many)", () => {
         const migrationSql = fs.readFileSync(path.join(import.meta.dirname, "..", "prisma", "migrations", "20261030120000_job_multiple_job_types", "migration.sql"), "utf8");
         const j = await createOk({ jobTypeIds: [t1] });
         await pg.exec(migrationSql);
-        const details = (await api(USERS.MANAGER, "GET", `/jobs/${j.jobId}`)).body;
+        const details = (await api(USERS.OWNER, "GET", `/jobs/${j.jobId}`)).body;
         assert.equal(details.jobType.id, t1);
         assert.equal(details.jobTypes.length, 1);
         assert.equal(details.jobTypes[0].id, t1);

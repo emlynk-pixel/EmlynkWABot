@@ -1,10 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError } from "../api/client";
-import { listCandidates, type CandidateListItem } from "../api/candidates";
-import { addCandidateToJob, cancelJob, completeJob, createJobType, getJob, getJobOptions, removeCandidateFromJob, updateJob, type JobDetails, type JobOptions } from "../api/jobs";
+import { addCandidateToJob, cancelJob, completeJob, createJobType, getJob, getJobOptions, listJobCandidateOptions, removeCandidateFromJob, updateJob, type JobCandidateOption, type JobDetails, type JobOptions } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
-import { canCreateJobTypes, canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
+import { canCreateJobTypes, canManageJobs, canViewCandidates, canViewJobs, useAuth } from "../auth/AuthProvider";
 import { ActionDialog, ConfirmDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
 import { JobTypesMultiSelect } from "./JobsPage";
 import { useBreadcrumbLabel } from "../components/Breadcrumbs";
@@ -19,7 +18,7 @@ import { filterControl, inputClass, tableCell, tableHead, tableRow, textareaClas
 // Admin > Jobs > one job, in two tabs: Job Details (the default) and Assigned
 // Candidates. The tab is page state only (no route): switching keeps every open
 // dialog and loaded value, and the actions above the tabs work from either. ADMIN and
-// MANAGER add / remove candidates and complete or cancel a PROCESSING job; an
+// JOB_HANDLER add / remove candidates and complete or cancel a PROCESSING job; an
 // ANALYST sees the job with only their own candidates. A candidate may also be on
 // other PROCESSING jobs (they are never touched); one already on THIS job is refused
 // by the server (409) and the message is shown here.
@@ -31,7 +30,7 @@ export function JobDetailsPage() {
     if (!canViewJobs(user)) {
         return (
             <div className="mx-auto max-w-4xl p-6">
-                <div role="alert" className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+                <div role="alert" className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                     <h1 className="text-headline-sm font-semibold">Access Restricted</h1>
                     <p className="mt-1 text-body-sm text-ink-muted">Your role cannot view jobs.</p>
@@ -54,6 +53,9 @@ function JobDetailsView() {
     const { user, token } = useAuth();
     const { jobId = "" } = useParams();
     const canManage = canManageJobs(user);
+    // A candidate's name links to their page only for a role that can open it: a JOB_HANDLER
+    // sees the job's own read-only rows (name, passport ID, NIC, Status, assigned date).
+    const openCandidates = canViewCandidates(user);
     const resource = useAdminResource(`job:${jobId}`, (t, signal) => getJob(t, jobId, signal));
     const [updated, setUpdated] = useState<JobDetails | null>(null);
     const [dialog, setDialog] = useState<Dialog>(null);
@@ -63,7 +65,7 @@ function JobDetailsView() {
 
     if (!job) {
         return (
-            <div className="mx-auto max-w-5xl space-y-4">
+            <div className="space-y-4">
                 <Card>{resource.status === "error" ? <ErrorState message={resource.error.message} onRetry={resource.reload} /> : <LoadingState label="Loading job…" />}</Card>
             </div>
         );
@@ -76,7 +78,7 @@ function JobDetailsView() {
     };
 
     return (
-        <section aria-labelledby="page-title" className="mx-auto max-w-5xl space-y-4">
+        <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div className="min-w-0">
                     <h1 id="page-title" className="flex flex-wrap items-center gap-3 text-headline-lg text-ink">{job.jobCode}<JobStatusBadge status={job.status} /></h1>
@@ -107,7 +109,7 @@ function JobDetailsView() {
                             <Detail label={job.jobTypes && job.jobTypes.length > 1 ? "Job types" : "Job type"}>
                                 <div className="flex flex-wrap items-center gap-1.5" data-testid="job-details-types">
                                     {((job.jobTypes && job.jobTypes.length > 0) ? job.jobTypes : (job.jobType ? [job.jobType] : [])).map((t) => (
-                                        <span key={t.id} className="inline-flex items-center rounded border border-border bg-canvas-subtle px-2 py-0.5 text-label-md font-medium text-ink">
+                                        <span key={t.id} className="inline-flex items-center rounded-lg border border-border bg-canvas-muted px-2 py-0.5 text-label-md font-medium text-ink">
                                             {t.name}
                                         </span>
                                     ))}
@@ -162,7 +164,9 @@ function JobDetailsView() {
                                     <tbody>
                                         {job.candidates.map((candidate) => (
                                             <tr key={candidate.passportId} className={tableRow}>
-                                                <td className={tableCell}><Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="font-medium text-primary hover:underline">{candidate.name ?? candidate.passportId}</Link></td>
+                                                <td className={tableCell}>{openCandidates
+                                                    ? <Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="font-medium text-primary hover:underline">{candidate.name ?? candidate.passportId}</Link>
+                                                    : <span className="font-medium text-ink">{candidate.name ?? candidate.passportId}</span>}</td>
                                                 <td className={tableCell}>
                                                     <span className="block">{candidate.passportId}</span>
                                                     {candidate.nic && <span className="block text-label-sm text-ink-muted">NIC: {candidate.nic}</span>}
@@ -325,7 +329,7 @@ function CancelDialog({ token, job, onDone, onClose }: { token: string; job: Job
 // next to the search.
 function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string; job: JobDetails; onChanged: (job: JobDetails) => void; onClose: () => void }) {
     const [text, setText] = useState("");
-    const [results, setResults] = useState<CandidateListItem[] | null>(null);
+    const [results, setResults] = useState<JobCandidateOption[] | null>(null);
     const [added, setAdded] = useState<Set<string>>(() => new Set(job.candidates.map((c) => c.passportId)));
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -339,14 +343,14 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
         setError(null);
         setNotice(null);
         try {
-            setResults((await listCandidates(token, { page: 1, pageSize: 100, search: term, testResult: "PASS" })).items.slice(0, 20));
+            setResults((await listJobCandidateOptions(token, { page: 1, pageSize: 20, search: term })).items);
         } catch (caught) {
             setError(message(caught));
         } finally {
             setBusy(false);
         }
     };
-    const add = async (candidate: CandidateListItem) => {
+    const add = async (candidate: JobCandidateOption) => {
         setBusy(true);
         setError(null);
         setNotice(null);
@@ -372,7 +376,7 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
             <p className="mt-2 text-label-sm text-ink-muted">Only candidates who passed the test can be added to a job.</p>
             {results && results.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">No eligible candidates found.</p>}
             {results && results.length > 0 && (
-                <ul aria-label="Candidates found" className="mt-3 divide-y divide-border rounded border border-border">
+                <ul aria-label="Candidates found" className="mt-3 divide-y divide-border rounded-lg border border-border">
                     {results.map((candidate) => (
                         <li key={candidate.passportId} className="flex items-center justify-between gap-3 px-3 py-2">
                             <div className="min-w-0">
@@ -386,7 +390,7 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
                     ))}
                 </ul>
             )}
-            {notice && <p role="status" className="mt-3 rounded border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</p>}
+            {notice && <p role="status" className="mt-3 rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</p>}
             <DialogError message={error} />
             <div className="mt-4 flex justify-end">
                 <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Done</button>

@@ -1,3 +1,4 @@
+import { AuthShell } from "../components/AuthShell";
 import { useState, useEffect, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate, type Location } from "react-router";
 import { ApiError } from "../api/client";
@@ -96,29 +97,21 @@ export function LoginPage() {
     };
 
     return (
-        <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
-            <div className="w-full max-w-sm">
-                <div className="mb-6 flex items-center gap-3">
-                    <span className="flex size-10 items-center justify-center rounded-lg bg-sidebar text-headline-sm text-sidebar-text-active">E</span>
-                    <div>
-                        <p className="text-headline-sm text-ink">Data Collector</p>
-                        <p className="text-label-caps uppercase text-ink-subtle">Admin Console</p>
-                    </div>
-                </div>
+        <AuthShell>
 
-                <div className="rounded-lg border border-border bg-surface p-6 shadow-surface">
-                    <h1 className="text-headline-lg text-ink">Sign in</h1>
+                <div className="rounded-xl bg-surface p-6">
+                    <h1 className="text-headline-lg text-ink">Sign in to EMOPS</h1>
                     <p className="mt-1 text-body-sm text-ink-muted">Use your console account.</p>
 
                     {!error && notice && (
-                        <div role="alert" className="mt-4 flex items-start gap-2 rounded border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
+                        <div role="alert" className="mt-4 flex items-start gap-2 rounded-lg border border-review-border bg-review-bg px-3 py-2 text-body-sm text-review">
                             <Icon name="error" className="mt-px size-4 shrink-0" />
                             <span>{notice}</span>
                         </div>
                     )}
 
                     {error && (
-                        <div role="alert" className="mt-4 flex flex-col gap-1 rounded border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">
+                        <div role="alert" className="mt-4 flex flex-col gap-1 rounded-lg border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">
                             <div className="flex items-start gap-2">
                                 <Icon name="error" className="mt-px size-4 shrink-0" />
                                 <span>{error}</span>
@@ -134,7 +127,7 @@ export function LoginPage() {
                     <form className="mt-6 space-y-5" onSubmit={handleSubmit} noValidate>
                         <FormField id="email" label="Email" required error={fieldErrors.email}>
                             <div className="relative">
-                                <Icon name="mail" className="pointer-events-none absolute left-3 top-3 size-4 text-ink-subtle" />
+                                <Icon name="mail" className="pointer-events-none absolute left-3 top-2 size-4 text-ink-subtle" />
                                 <input
                                     {...fieldA11y("email", fieldErrors.email)}
                                     name="email"
@@ -164,7 +157,7 @@ export function LoginPage() {
                             }
                         >
                             <div className="relative">
-                                <Icon name="lock" className="pointer-events-none absolute left-3 top-3 size-4 text-ink-subtle" />
+                                <Icon name="lock" className="pointer-events-none absolute left-3 top-2 size-4 text-ink-subtle" />
                                 <input
                                     {...fieldA11y("password", fieldErrors.password)}
                                     name="password"
@@ -182,7 +175,7 @@ export function LoginPage() {
                                 <button
                                     type="button"
                                     onClick={() => setShowPassword((value) => !value)}
-                                    className="absolute right-1.5 top-1.5 flex size-7 items-center justify-center rounded text-ink-subtle hover:bg-canvas-muted hover:text-ink"
+                                    className="absolute right-0.5 top-0.5 flex size-7 items-center justify-center rounded-lg text-ink-subtle hover:bg-canvas-muted hover:text-ink"
                                 >
                                     <Icon name={showPassword ? "visibility_off" : "visibility"} className="size-4" />
                                     <span className="sr-only">{showPassword ? "Hide password" : "Show password"}</span>
@@ -193,14 +186,13 @@ export function LoginPage() {
                         <button
                             type="submit"
                             disabled={submitting}
-                            className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
+                            className="flex h-8 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
                         >
                             {submitting && <Icon name="progress_activity" className="size-4 animate-spin" />}
                             {submitting ? "Signing in…" : "Sign in"}
                         </button>
                     </form>
                 </div>
-            </div>
-        </div>
+        </AuthShell>
     );
 }

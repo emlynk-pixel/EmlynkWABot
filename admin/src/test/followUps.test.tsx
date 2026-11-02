@@ -46,7 +46,7 @@ const COMPLETED_LIST: FollowUpList = {
     status: "COMPLETED",
     total: 1,
     truncated: false,
-    groups: [{ ...KAMAL, followUps: [item("f-9", "Scan was missing", { status: "COMPLETED", completedAt: "2026-10-08T05:00:00.000Z", completedByName: "Max Manager" })] }],
+    groups: [{ ...KAMAL, followUps: [item("f-9", "Scan was missing", { status: "COMPLETED", completedAt: "2026-10-08T05:00:00.000Z", completedByName: "Olive Owner" })] }],
 };
 
 const listRoute = (lists: Partial<Record<string, FollowUpList>> = { OPEN: OPEN_LIST, COMPLETED: COMPLETED_LIST }) => ({
@@ -116,7 +116,7 @@ describe("Need Attention page", () => {
 
     test("16-17. Mark complete: the follow-up leaves the open view; the last one takes its candidate card with it", async () => {
         const { calls } = signedInBackend({
-            ...asRole("REGISTRATION_DESK"),
+            ...asRole("ANALYST"),
             ...listRoute(),
             "POST /api/admin/follow-ups/f-3/complete": { status: 200, body: { followUp: item("f-3", "Police report pending", { status: "COMPLETED" }) } },
             "POST /api/admin/follow-ups/f-1/complete": { status: 200, body: { followUp: item("f-1", "Passport not uploaded", { status: "COMPLETED" }) } },
@@ -143,13 +143,13 @@ describe("Need Attention page", () => {
         await userEvent.setup().click(screen.getByRole("button", { name: "Completed" }));
         const kamal = await group("KAMAL PERERA");
         expect(within(kamal).getByText("Scan was missing")).toBeInTheDocument();
-        expect(within(kamal).getByText(/Completed .* by Max Manager/)).toBeInTheDocument();
+        expect(within(kamal).getByText(/Completed .* by Olive Owner/)).toBeInTheDocument();
         expect(within(kamal).queryByRole("button", { name: "Mark complete" })).toBeNull();
         expect(screen.getByRole("button", { name: "Completed" })).toHaveAttribute("aria-pressed", "true");
         expect(calls.some((c) => c.path === "/api/admin/follow-ups?status=COMPLETED")).toBe(true);
     });
 
-    for (const role of ["ADMIN", "MANAGER"]) {
+    for (const role of ["ADMIN", "OWNER"]) {
         test(`18-19. ${role} sees Delete`, async () => {
             signedInBackend({ ...asRole(role), ...listRoute() });
             renderApp("/follow-ups");
@@ -157,7 +157,7 @@ describe("Need Attention page", () => {
         });
     }
 
-    for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+    for (const role of ["TEAM_LEAD", "ANALYST"]) {
         test(`20-21. ${role} does not see Delete, but can mark complete`, async () => {
             signedInBackend({ ...asRole(role), ...listRoute() });
             renderApp("/follow-ups");
@@ -167,9 +167,21 @@ describe("Need Attention page", () => {
         });
     }
 
+    test("REGISTRATION_DESK sees Need Attention read only: the follow-ups, no Mark complete, no Delete, no candidate links", async () => {
+        const { calls } = signedInBackend({ ...asRole("REGISTRATION_DESK"), ...listRoute() });
+        renderApp("/follow-ups");
+        const saman = await group("SAMAN SILVA");
+        expect(within(saman).getByText("Passport not uploaded")).toBeInTheDocument();
+        expect(screen.getByText(/require action \(view only\)/)).toBeInTheDocument();
+        expect(within(saman).queryByRole("link", { name: "SAMAN SILVA" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Mark complete" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Delete follow-up" })).toBeNull();
+        expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+    });
+
     test("22-23. Delete asks first; Cancel keeps it; confirming removes the follow-up only", async () => {
         const { calls } = signedInBackend({
-            ...asRole("MANAGER"),
+            ...asRole("OWNER"),
             ...listRoute(),
             "DELETE /api/admin/follow-ups/f-1": { status: 200, body: { deleted: true, followUpId: "f-1" } },
         });
@@ -290,7 +302,7 @@ describe("Need Attention page", () => {
         expect(icon.className).not.toContain("text-review");
         // The state is not carried by colour alone: another icon shape and another name.
         expect(within(row).queryByRole("img", { name: "Needs attention" })).toBeNull();
-        expect(within(row).getByText(/Completed .* by Max Manager/)).toBeInTheDocument();
+        expect(within(row).getByText(/Completed .* by Olive Owner/)).toBeInTheDocument();
         expect(within(row).queryByRole("button", { name: "Mark complete" })).toBeNull();
         expect(within(row).queryByText(/needs? attention/i)).toBeNull();
         // 4. Resolved reads as quieter: a soft neutral wash, a muted note; an open row has neither.
@@ -325,7 +337,7 @@ describe("Need Attention page", () => {
 
     test("18-19. long call notes wrap inside the card; the row, flag and actions are laid out to wrap without overlap", async () => {
         const long = "x".repeat(400);
-        signedInBackend({ ...asRole("MANAGER"), ...listRoute({ OPEN: { status: "OPEN", total: 1, truncated: false, groups: [{ ...SAMAN, followUps: [item("f-7", long)] }] } }) });
+        signedInBackend({ ...asRole("OWNER"), ...listRoute({ OPEN: { status: "OPEN", total: 1, truncated: false, groups: [{ ...SAMAN, followUps: [item("f-7", long)] }] } }) });
         renderApp("/follow-ups");
         const row = within(within(await group("SAMAN SILVA")).getByRole("list", { name: /^Follow-ups for/ })).getByRole("listitem");
         // jsdom has no layout: check the wrapping rules are applied.
@@ -336,7 +348,7 @@ describe("Need Attention page", () => {
         expect(actions.parentElement!.className).toContain("flex-wrap");
         expect(actions.className).toContain("shrink-0");
         expect(within(row).getByRole("img", { name: "Needs attention" }).className).toContain("shrink-0");
-        // Both actions are present for a MANAGER.
+        // Both actions are present for an OWNER.
         expect(within(actions).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Mark complete", "Delete follow-up"]);
     });
 

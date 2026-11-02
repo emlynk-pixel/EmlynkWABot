@@ -217,7 +217,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
             </div>
 
             {autofilled.length > 0 && (
-                <p role="note" className="rounded border border-pending-border bg-pending-bg px-3 py-2 text-body-sm text-ink-soft">
+                <p role="note" className="rounded-lg border border-pending-border bg-pending-bg px-3 py-2 text-body-sm text-ink-soft">
                     Filled in from the candidate&apos;s record: {autofilled.map((key) => SUGGESTED_LABELS[key]).join(", ")}. Check them and save — nothing is stored until you do.
                 </p>
             )}
@@ -311,7 +311,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
     return (
-        <fieldset className="rounded border border-border p-4">
+        <fieldset className="rounded-lg border border-border p-4">
             <legend className="px-1 text-label-md font-semibold text-ink">{title}</legend>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>
         </fieldset>

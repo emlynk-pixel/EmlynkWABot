@@ -158,8 +158,8 @@ describe("Share Form: job group", () => {
         expect(await within(section).findByRole("alert")).toHaveTextContent(/works only for a PROCESSING job/);
     });
 
-    test("only ADMIN and MANAGER see the group action; an Analyst keeps the personal link only", async () => {
-        for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+    test("only ADMIN and OWNER see the group action; an Analyst keeps the personal link only", async () => {
+        for (const role of ["ANALYST", "TEAM_LEAD"]) {
             const { calls } = backend(JOB, {}, role);
             const view = renderApp("/candidates/N0000002?tab=additional");
             const form = await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);

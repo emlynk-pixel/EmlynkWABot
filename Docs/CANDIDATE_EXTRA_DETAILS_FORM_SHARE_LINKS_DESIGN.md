@@ -1,5 +1,7 @@
 # Candidate Form — Share Links, Verification, Single Submission
 
+> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md).
+
 Branch: `version/candidate-extra-details-form`
 Date: 2026-10-16 (Task 3)
 Status: implemented on the branch, not committed. Migration `20261017120000_candidate_form_share_and_response` is not applied to any shared database yet.
@@ -7,7 +9,7 @@ Status: implemented on the branch, not committed. Migration `20261017120000_cand
 Related documents:
 - [CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md](CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md), section 29 (new risks R-085 to R-094)
 - [CANDIDATE_EXTRA_DETAILS_FORM_ISSUES_AND_SOLUTIONS.md](CANDIDATE_EXTRA_DETAILS_FORM_ISSUES_AND_SOLUTIONS.md) (ISS-035 onwards)
-- [candidate-form/README.md](../candidate-form/README.md), [20-candidate-management.md](20-candidate-management.md) §4.6, [09a-admin-dashboard-api.md](09a-admin-dashboard-api.md) §4q, [DATABASE_IMPLEMENTATION.md](DATABASE_IMPLEMENTATION.md) §2.13–2.16
+- [candidate-form/README.md](../candidate-form/README.md), [20-candidate-management.md](20-candidate-management.md) §4.6, [09a-admin-dashboard-api.md](09a-admin-dashboard-api.md) §4q, [03-database-design.md](03-database-design.md) Part 2 §2.13–2.16
 
 ---
 
@@ -275,6 +277,6 @@ The two link kinds stay separate concepts on one table. Reconciled with dev's Ag
 - `20261018125900_bridge_dev_first_company_job_id`, which sorts just before it, parks dev's column and adds a temporary `company_id`.
 - `20261023120000_reconcile_job_company_job_id` copies the values back and cleans up.
 
-Both are no-ops on every other database (`DATABASE_IMPLEMENTATION.md` §6.8). Rehearsed on PostgreSQL 16 for fresh, latest dev, original Candidate Form branch and shared-equivalent history. All four end with an identical schema, seeded rows unchanged and no orphan links.
+Both are no-ops on every other database (`03-database-design.md` Part 2, §6.8). Rehearsed on PostgreSQL 16 for fresh, latest dev, original Candidate Form branch and shared-equivalent history. All four end with an identical schema, seeded rows unchanged and no orphan links.
 
 **Tests.** `test/candidateFormLinkArchitecture.test.js`: GROUP-LINK-001 to 010, SINGLE-LINK-001 to 010, SECURITY-001 to 010 (PGlite, real routers).

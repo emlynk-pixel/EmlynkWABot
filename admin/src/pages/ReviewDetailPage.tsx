@@ -71,18 +71,18 @@ function FilePreview({ file }: { file: ReviewItem["file"] }) {
 
     return file.mimeType === "application/pdf" ? (
         <div className="flex h-full flex-col">
-            <iframe title={`Preview of ${file.name}`} src={state.url} className="h-[70vh] w-full rounded border border-border bg-canvas" />
+            <iframe title={`Preview of ${file.name}`} src={state.url} className="h-[70vh] w-full rounded-lg border border-border bg-canvas" />
             <a href={state.url} target="_blank" rel="noopener noreferrer" className="mt-2 self-end text-label-md text-primary hover:underline">Open PDF in a new tab</a>
         </div>
     ) : (
-        <img src={state.url} alt={`Preview of ${file.name}`} className="mx-auto max-h-[70vh] w-auto rounded border border-border bg-canvas object-contain" />
+        <img src={state.url} alt={`Preview of ${file.name}`} className="mx-auto max-h-[70vh] w-auto rounded-lg border border-border bg-canvas object-contain" />
     );
 }
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
     return (
         <div className="flex items-start justify-between gap-4 py-1.5">
-            <dt className="text-label-caps uppercase text-ink-subtle">{label}</dt>
+            <dt className="text-label-sm text-ink-muted">{label}</dt>
             <dd className="text-right text-body-sm text-ink">{children ?? "—"}</dd>
         </div>
     );
@@ -223,7 +223,7 @@ function ClientPicker({ selected, onSelect, disabled }: { selected: ClientListIt
             {state.status === "error" && <p role="alert" className="mt-2 text-label-sm text-critical">{state.message}</p>}
             {state.status === "done" && state.items.length === 0 && <p className="mt-2 text-label-sm text-ink-muted">No existing client matches. Only existing clients can be assigned.</p>}
             {state.items.length > 0 && (
-                <ul aria-label="Matching clients" className="mt-2 max-h-48 divide-y divide-border overflow-y-auto rounded border border-border">
+                <ul aria-label="Matching clients" className="mt-2 max-h-48 divide-y divide-border overflow-y-auto rounded-lg border border-border">
                     {state.items.map(({ client }) => (
                         <li key={client.passportId}>
                             <label className="flex cursor-pointer items-center gap-2 px-3 py-2 text-body-sm text-ink hover:bg-canvas">
@@ -562,7 +562,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                 <div className="flex flex-wrap items-center gap-2 text-label-md">
                     <h1 id="page-title" className="font-semibold text-ink">{idLabel}</h1>
                 </div>
-                <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">
+                <div role="status" className="rounded-xl border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">
                     Removed from review. The file and its record were permanently deleted; the audit log entry is kept.
                     {!removed.filesDeleted && " (A stored copy could not be deleted and has been logged for clean-up.)"}
                 </div>
@@ -583,7 +583,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
             </div>
 
             {notice && (
-                <div role="status" className={`rounded-lg border px-3 py-2 text-body-sm ${notice.tone === "success" ? "border-verified-border bg-verified-bg text-verified" : "border-review-border bg-review-bg text-ink"}`}>
+                <div role="status" className={`rounded-xl border px-3 py-2 text-body-sm ${notice.tone === "success" ? "border-verified-border bg-verified-bg text-verified" : "border-review-border bg-review-bg text-ink"}`}>
                     {notice.text}
                 </div>
             )}
@@ -602,7 +602,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
 
                 <div className="space-y-4 xl:col-span-5">
                     {isFailed ? (
-                        <div role="note" className="flex items-start gap-2 rounded-lg border border-critical-border bg-critical-bg px-3 py-2">
+                        <div role="note" className="flex items-start gap-2 rounded-xl border border-critical-border bg-critical-bg px-3 py-2">
                             <Icon name="error" className="mt-0.5 size-5 text-critical" />
                             <div>
                                 <p className="text-label-md text-ink">Processing failed: {failureLabel(item.failure?.code)}</p>
@@ -610,7 +610,7 @@ function ReviewContent({ item, onChanged }: { item: ReviewItem; onChanged: () =>
                             </div>
                         </div>
                     ) : (
-                        <div role="note" className={`flex items-start gap-2 rounded-lg border px-3 py-2 ${reviewReasonTone(item.reviewReason) === "critical" ? "border-critical-border bg-critical-bg" : "border-review-border bg-review-bg"}`}>
+                        <div role="note" className={`flex items-start gap-2 rounded-xl border px-3 py-2 ${reviewReasonTone(item.reviewReason) === "critical" ? "border-critical-border bg-critical-bg" : "border-review-border bg-review-bg"}`}>
                             <Icon name="error" className={`mt-0.5 size-5 ${reviewReasonTone(item.reviewReason) === "critical" ? "text-critical" : "text-review"}`} />
                             <div>
                                 <p className="text-label-md text-ink">{reviewReasonLabel(item.reviewReason)}</p>

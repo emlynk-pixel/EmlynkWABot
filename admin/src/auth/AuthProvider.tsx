@@ -4,7 +4,7 @@ import { fetchCurrentUser, type AppUser } from "../api/auth";
 import { ApiError, setApiAccessToken } from "../api/client";
 import { getAuthClient, SupabaseConfigError } from "./supabaseClient";
 
-export { canCorrectPoliceDates, canCorrectPoliceDates as isManagerOrAdmin, canConfirmSubmittedChanges, canCreateJobTypes, canInviteUsers, canManageAllocations, canManageCandidates, canManageJobs, canManageMasterData, canVerifyCandidate, canViewCandidates, canViewJobs, canRegisterCandidates, canReview, canViewDashboard, invitableRoles, isAdmin } from "./roles";
+export { canCorrectPoliceDates, canConfirmSubmittedChanges, canShareJobGroupForm, canAssignJobFromCandidatePage, canCreateJobTypes, canInviteUsers, canManageAllocations, canManageCandidates, canManageJobs, canManageMasterData, canVerifyCandidate, canViewCandidates, canViewJobs, canRegisterCandidates, canReview, canViewDashboard, invitableRoles, isAdmin, canImportCandidates } from "./roles";
 
 // Supabase Auth owns the session; the backend owns the application user.
 //   checking       the stored Supabase session (if any) is being checked
@@ -24,6 +24,9 @@ type AuthContextValue = AuthState & {
 };
 
 export const ACCOUNT_NOT_ACTIVE_MESSAGE = "Your account is not active. Contact an administrator.";
+// The server's message for an ACTIVE account whose role is not supported any more (a retired
+// Manager not converted yet; src/middleware/requireActiveUser.js ROLE_NOT_SUPPORTED).
+export const ROLE_NOT_SUPPORTED_MESSAGE = "Your account's role is no longer supported. Contact the Owner to update it.";
 const INVALID_LOGIN_MESSAGE = "Invalid email or password";
 const RATE_LIMITED_MESSAGE = "Too many sign-in attempts. Please try again later.";
 const FALLBACK_MESSAGE = "Something went wrong. Please try again.";
@@ -54,9 +57,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // The application user behind a Supabase session. 401: Supabase no longer
     // accepts the session -> drop it here too. 403: a genuine session without
-    // an ACTIVE application user (e.g. an invitation not completed yet) ->
-    // not signed in to the app; the Supabase session is kept for the setup
-    // page. Anything else (backend unreachable): not signed in, try again.
+    // an ACTIVE application user (e.g. an invitation not completed yet), or one
+    // whose role is no longer supported -> not signed in to the app; the
+    // Supabase session is kept for the setup page. Anything else (backend
+    // unreachable): not signed in, try again.
     const loadUser = useCallback(async (session: Session | null, signal?: AbortSignal): Promise<AuthState> => {
         if (!session) return anonymous();
         try {
@@ -68,7 +72,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 await getAuthClient().signOut({ scope: "local" }).catch(() => {});
                 return anonymous();
             }
-            if (error instanceof ApiError && error.status === 403) return anonymous(ACCOUNT_NOT_ACTIVE_MESSAGE);
+            if (error instanceof ApiError && error.status === 403) {
+                return anonymous(error.message === ROLE_NOT_SUPPORTED_MESSAGE ? ROLE_NOT_SUPPORTED_MESSAGE : ACCOUNT_NOT_ACTIVE_MESSAGE);
+            }
             return anonymous(error instanceof ApiError ? error.message : FALLBACK_MESSAGE);
         }
     }, []);

@@ -1,5 +1,4 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { listCandidates, type CandidateList, type CandidateListItem } from "../api/candidates";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ApiError } from "../api/client";
 import {
@@ -9,7 +8,10 @@ import {
     getJobOptions,
     JOB_VIEWS,
     jobViewCount,
+    listJobCandidateOptions,
     listJobs,
+    type JobCandidateOption,
+    type JobCandidateOptions,
     type JobOptions,
     type JobView,
 } from "../api/jobs";
@@ -26,7 +28,7 @@ import { Card, EmptyState, ErrorState, LoadingState } from "../components/States
 import { filterControl, inputClass, tableCell, tableHead, tableRow } from "../components/ui";
 
 // Admin > Jobs: Processing / Completed / Cancelled / All views of the jobs, newest
-// first, paged on the server. ADMIN and MANAGER create and manage jobs; an
+// first, paged on the server. ADMIN and JOB_HANDLER create and manage jobs; an
 // ANALYST sees only jobs holding their own candidates (the server scopes the
 // list and the candidate counts). The view, search and page live in the URL.
 // With no view chosen it opens Processing, or All when there is no Processing
@@ -43,7 +45,7 @@ export function JobsPage() {
     if (!canViewJobs(user)) {
         return (
             <div className="mx-auto max-w-4xl p-6">
-                <div role="alert" className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+                <div role="alert" className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                     <h1 className="text-headline-sm font-semibold">Access Restricted</h1>
                     <p className="mt-1 text-body-sm text-ink-muted">Your role cannot view jobs.</p>
@@ -97,7 +99,7 @@ function JobsView() {
     const items = list.status === "error" || fallBackToAll ? [] : list.data?.items ?? [];
 
     return (
-        <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
+        <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Jobs</h1>
@@ -122,7 +124,7 @@ function JobsView() {
                                 role="tab"
                                 aria-selected={v.view === view}
                                 onClick={() => go({ view: v.view })}
-                                className={`h-8 rounded px-3 text-label-md ${v.view === view ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
+                                className={`h-8 rounded-lg px-3 text-label-md ${v.view === view ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
                             >
                                 {v.label}{counts ? ` (${formatNumber(jobViewCount(counts, v.view))})` : ""}
                             </button>
@@ -187,7 +189,7 @@ function JobsView() {
                                                 const remaining = types.length - 2;
                                                 return (
                                                     <span title={types.map((t) => t.name).join(", ")}>
-                                                        {shown} <span className="inline-block rounded bg-canvas-subtle px-1.5 py-0.5 text-label-sm font-medium text-ink-muted">+{remaining}</span>
+                                                        {shown} <span className="inline-block rounded-lg bg-canvas-muted px-1.5 py-0.5 text-label-sm font-medium text-ink-muted">+{remaining}</span>
                                                     </span>
                                                 );
                                             })()}
@@ -285,7 +287,7 @@ export function JobTypesMultiSelect({
             </div>
 
             {openAdd ? (
-                <div className="mt-1 space-y-2 rounded border border-border bg-canvas p-2">
+                <div className="mt-1 space-y-2 rounded-lg border border-border bg-canvas p-2">
                     <input
                         aria-label="New job type name"
                         value={name}
@@ -308,14 +310,14 @@ export function JobTypesMultiSelect({
             ) : null}
 
             {/* Selected Job Types chips */}
-            <div className="mt-1.5 flex min-h-[36px] flex-wrap items-center gap-1.5 rounded border border-border bg-canvas p-1.5" data-testid="selected-job-types">
+            <div className="mt-1.5 flex min-h-8 flex-wrap items-center gap-1.5 rounded-lg border border-border bg-canvas p-1.5" data-testid="selected-job-types">
                 {selected.length === 0 ? (
                     <span className="text-label-sm text-ink-muted">Select at least one job type</span>
                 ) : (
                     selected.map((item) => (
                         <span
                             key={item.id}
-                            className="inline-flex items-center gap-1 rounded-md border border-border bg-canvas-subtle px-2 py-0.5 text-label-md font-medium text-ink"
+                            className="inline-flex items-center gap-1 rounded-lg border border-border bg-canvas-muted px-2 py-0.5 text-label-md font-medium text-ink"
                         >
                             <span>{item.name}</span>
                             {!disabled && (
@@ -323,7 +325,7 @@ export function JobTypesMultiSelect({
                                     type="button"
                                     onClick={() => onChange(value.filter((valId) => valId !== item.id))}
                                     aria-label={`Remove ${item.name}`}
-                                    className="ml-0.5 rounded text-ink-muted hover:text-ink focus:outline-none"
+                                    className="ml-0.5 rounded-lg text-ink-muted hover:text-ink focus:outline-none"
                                 >
                                     <Icon name="close" className="size-3.5" />
                                 </button>
@@ -377,7 +379,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     const [fromCountryCode, setFromCountryCode] = useState(DEFAULT_FROM_COUNTRY);
     const [vacancies, setVacancies] = useState("");
     const [companyJobId, setCompanyJobId] = useState("");
-    const [selected, setSelected] = useState<Map<string, CandidateListItem>>(() => new Map());
+    const [selected, setSelected] = useState<Map<string, JobCandidateOption>>(() => new Map());
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const vacanciesId = useId();
@@ -408,7 +410,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
         setError(null);
         setStep(2);
     };
-    const toggle = (candidate: CandidateListItem) => setSelected((previous) => {
+    const toggle = (candidate: JobCandidateOption) => setSelected((previous) => {
         const nextSelection = new Map(previous);
         if (nextSelection.has(candidate.passportId)) nextSelection.delete(candidate.passportId);
         else nextSelection.set(candidate.passportId, candidate);
@@ -534,16 +536,16 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
 
 // The candidates who can be assigned now (the server's list: test PASS; candidates on other jobs included),
 // searchable and paged. The selection is kept across searches and pages.
-function CandidatePicker({ token, selected, onToggle, disabled }: { token: string; selected: Map<string, CandidateListItem>; onToggle: (candidate: CandidateListItem) => void; disabled: boolean }) {
+function CandidatePicker({ token, selected, onToggle, disabled }: { token: string; selected: Map<string, JobCandidateOption>; onToggle: (candidate: JobCandidateOption) => void; disabled: boolean }) {
     const [text, setText] = useState("");
     const [query, setQuery] = useState({ search: "", page: 1 });
-    const [list, setList] = useState<CandidateList | null>(null);
+    const [list, setList] = useState<JobCandidateOptions | null>(null);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [attempt, setAttempt] = useState(0);
     useEffect(() => {
         const controller = new AbortController();
         setLoadError(null);
-        listCandidates(token, { page: query.page, pageSize: CANDIDATE_PAGE_SIZE, search: query.search || undefined, testResult: "PASS" }, controller.signal)
+        listJobCandidateOptions(token, { page: query.page, pageSize: CANDIDATE_PAGE_SIZE, search: query.search || undefined }, controller.signal)
             .then(setList)
             .catch((caught) => {
                 if (!controller.signal.aborted) setLoadError(message(caught));
@@ -567,7 +569,7 @@ function CandidatePicker({ token, selected, onToggle, disabled }: { token: strin
             {!loadError && !list && <LoadingState label="Loading candidates…" />}
             {!loadError && list && items.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">{query.search ? "No eligible candidates match your search." : "No candidates can be assigned right now."}</p>}
             {!loadError && items.length > 0 && (
-                <ul aria-label="Eligible candidates" className="mt-3 max-h-72 divide-y divide-border overflow-y-auto rounded border border-border">
+                <ul aria-label="Eligible candidates" className="mt-3 max-h-72 divide-y divide-border overflow-y-auto rounded-lg border border-border">
                     {items.map((candidate) => {
                         const id = `pick-${candidate.passportId}`;
                         return (

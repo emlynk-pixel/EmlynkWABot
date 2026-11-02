@@ -12,7 +12,7 @@ import { EntityStatusBadge, MultiSelect, RestrictedPage, StatusDialog, TextField
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl, tableCell, tableHead, tableRow } from "../components/ui";
 
-// Admin > Client Management (ADMIN and MANAGER): the employer / customer
+// Admin > Client Management (ADMIN and JOB_HANDLER): the employer / customer
 // organisations. A Client works with one or more Agents (and an Agent with many
 // Clients) and has many Jobs. Clients are never deleted; INACTIVE clients keep
 // their jobs but take no new job. The list does not show the agents (Client
@@ -66,7 +66,7 @@ function ClientsView() {
     const agentOptions = agents.data?.agents ?? [];
 
     return (
-        <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
+        <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Client Management</h1>

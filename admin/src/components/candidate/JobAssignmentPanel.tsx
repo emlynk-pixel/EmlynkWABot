@@ -4,7 +4,7 @@ import { ApiError } from "../../api/client";
 import { activeJobsOf, getCandidate, type CandidateDetails, type JobAssignments } from "../../api/candidates";
 import { addCandidateToJob, listJobs, type CandidateJobAssignment, type JobListItem } from "../../api/jobs";
 import { useAdminResource } from "../../api/useAdminResource";
-import { canManageCandidates, canManageJobs, canViewJobs, useAuth } from "../../auth/AuthProvider";
+import { canAssignJobFromCandidatePage, canManageCandidates, canManageJobs, canViewJobs, useAuth } from "../../auth/AuthProvider";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { formatDate } from "../format";
 import { Detail, JobStatusBadge, NO_COMPANY_JOB_ID } from "../job/JobParts";
@@ -15,7 +15,7 @@ import { filterControl } from "../ui";
 // PROCESSING job they are on now (a candidate may hold several), and the completed /
 // cancelled / removed history. Never from the old free-text candidate_stages.job_id.
 //
-// ADMIN and MANAGER get "Assign to Job" (also when the candidate already has jobs). It uses
+// ADMIN gets "Assign to Job" (also when the candidate already has jobs). It uses
 // the same endpoint as Add to job on the Job page (POST /api/admin/jobs/:jobId/candidates);
 // the server refuses the same job twice (409), and other jobs are never touched.
 // Only a candidate whose Test result is PASS can be assigned (the server also
@@ -50,9 +50,9 @@ export function JobAssignmentPanel({ assignments, candidate, testPassed = false,
 }) {
     const { user, token } = useAuth();
     const [assigning, setAssigning] = useState(false);
-    // A JOB_HANDLER reads this page only (it assigns from the Jobs module): the action is offered
-    // to roles that both manage jobs and change candidates (ADMIN and MANAGER, as before).
-    const canAssign = canManageJobs(user) && canManageCandidates(user) && Boolean(candidate && onChanged && token);
+    // "Assign to Job" here is an ADMIN workflow: a JOB_HANDLER reads this page only, and a TEAM_LEAD
+    // (like a JOB_HANDLER) assigns candidates from the Job's own page (the Jobs feature).
+    const canAssign = canAssignJobFromCandidatePage(user) && canManageJobs(user) && canManageCandidates(user) && Boolean(candidate && onChanged && token);
     const active = activeJobsOf(assignments);
     return (
         <Card className="p-5">
@@ -158,7 +158,7 @@ function AssignToJobDialog({ token, candidate, assignedJobIds = [], onClose, onA
                         <EmptyState title={search ? "No processing jobs match your search" : "There are no processing jobs"} description={search ? undefined : "Create a job in Admin > Jobs first."} />
                     )}
                     {items.length > 0 && (
-                        <ul aria-label="Processing jobs" className="mt-3 max-h-72 divide-y divide-border overflow-y-auto rounded border border-border">
+                        <ul aria-label="Processing jobs" className="mt-3 max-h-72 divide-y divide-border overflow-y-auto rounded-lg border border-border">
                             {items.map((job) => (
                                 <li key={job.jobId} className="flex items-center justify-between gap-3 px-3 py-2">
                                     <div className="min-w-0 text-body-sm">

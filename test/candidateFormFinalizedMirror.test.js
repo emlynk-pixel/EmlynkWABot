@@ -1,4 +1,4 @@
-// Candidate Form -> Admin / Manager Confirm -> canonical record -> Google Sheet operational mirror
+// Candidate Form -> Admin Confirm -> canonical record -> Google Sheet operational mirror
 // (SHEET-FINAL-*). Only CONFIRMED values become canonical (candidate / candidate_additional_details),
 // and the mirror reads the canonical record only, never candidate_form_response. Confirming marks
 // the candidate in the existing sheet_sync_queue (database triggers); the Sheet itself is written
@@ -37,14 +37,14 @@ const MIRRORED_AT = new Date("2026-10-27T06:00:00.000Z");
 const SECRET = "test-candidate-form-secret-0123456789-abcdefghijklmnop";
 const ORIGIN = "https://candidate-form.example.test";
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4) };
 const A = {
     passportId: "N8100001", uniqueId: "8101", firstName: "Anusha", otherName: "De Soysa", nic: "810000001V", sex: "F", address: "1 old road", placeOfBirth: "Negombo",
     whatsappNumber: "+94781000001", contactNumber: "0771234567", dateOfBirth: new Date("2003-06-05"), jobExperience: "3 years", job: "PLUMBER",
     passportIssueDate: new Date("2020-01-15"), passportExpiryDate: new Date("2030-01-14"),
 };
-// The Candidate Form columns of the mirror (everything after the original 41).
-const FORM_FIELDS = SHEET_COLUMNS.slice(41).map((c) => c.field);
+// The Candidate Form columns of the mirror (everything after the first 40: FULL NAME onwards).
+const FORM_FIELDS = SHEET_COLUMNS.slice(SHEET_COLUMNS.findIndex((c) => c.header === "FULL NAME")).map((c) => c.field);
 
 // A married candidate with every answer filled (synthetic).
 const ANSWERS = () => ({
@@ -134,7 +134,7 @@ async function review(who, action, field) {
     assert.ok(p, `${field} is pending`);
     return call(who, "POST", `/api/admin/candidates/${A.passportId}/form-submission/${action}-field`, { body: { field, expectedCurrentValue: p.current, expectedSubmittedValue: p.submitted } });
 }
-const confirmField = (field, who = USERS.MANAGER) => review(who, "confirm", field);
+const confirmField = (field, who = USERS.OWNER) => review(who, "confirm", field);
 const rejectField = (field, who = USERS.ADMIN) => review(who, "reject", field);
 // Confirms every pending field, one at a time (each Confirm can resolve others: Married records the spouse name).
 async function confirmAll() {
@@ -277,7 +277,7 @@ describe("submitted -> confirmed -> canonical -> mirror", () => {
             motherName: "KUMARI DE SOYSA", motherPassportNumber: "N7654321", motherBirthday: "1965-02-03", motherAlive: "YES",
             spouseName: "NIMAL PERERA", spousePassportNumber: "N5555555", spouseBirthday: "1988-04-04",
             child1Name: "KASUN", child2Name: "", child3Name: "",
-            guardianName: "KAMAL PERERA", guardianRelationship: "UNCLE", guardianNic: "901234567V", guardianBirthday: "1960-01-01", guardianPhone: "+94 77 123 4567", guardianAddress: "45 LAKE ROAD",
+            guardianName: "KAMAL PERERA", guardianRelationship: "UNCLE", guardianNic: "901234567V", guardianBirthday: "1960-01-01", guardianPhone: "+94771234567", guardianAddress: "45 LAKE ROAD",
         };
         assert.deepEqual(formCells(await mirrorRow()), expected, "mapper output");
         await reconcile(mirror);
@@ -303,7 +303,7 @@ describe("submitted -> confirmed -> canonical -> mirror", () => {
     });
 
     test("SHEET-FINAL-011 a live Sheet without the new headers stops the reconcile with the existing SCHEMA_INVALID, writing nothing", async () => {
-        const mirror = mirrorSetup({ header: SHEET_HEADERS.slice(0, 41) });
+        const mirror = mirrorSetup({ header: SHEET_HEADERS.slice(0, SHEET_HEADERS.indexOf("FULL NAME")) });
         await submitForm();
         await confirmField("basic.bloodGroup");
         const run = await reconcile(mirror);
@@ -331,7 +331,7 @@ describe("submitted -> confirmed -> canonical -> mirror", () => {
 // ---------------------------------------------------------------- confirmation rules
 
 describe("Confirm / Reject rules for the newly confirmable fields", () => {
-    test("only ADMIN and MANAGER can confirm or reject; other roles change nothing", async () => {
+    test("only ADMIN and OWNER can confirm or reject; other roles change nothing", async () => {
         await submitForm();
         for (const who of [USERS.DESK, USERS.ANN]) {
             for (const action of ["confirm", "reject"]) {

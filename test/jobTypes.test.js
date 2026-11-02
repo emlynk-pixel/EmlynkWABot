@@ -23,7 +23,7 @@ const ORIGIN = "https://candidate-form.example.test";
 const SEED_MIGRATION = "20261024120000_seed_job_types";
 const SEEDED = JOB_CATEGORIES.filter((name) => name !== "OTHER");
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), ANALYST: user("u-analyst", "ANALYST", 3), DESK: user("u-desk", "REGISTRATION_DESK", 4) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), ANALYST: user("u-analyst", "ANALYST", 3), DESK: user("u-desk", "REGISTRATION_DESK", 4) };
 
 let database;
 let prisma;
@@ -88,11 +88,11 @@ async function newJob(jobTypeName) {
     const agent = await prisma.agent.create({ data: { name: `Agent ${jobTypeName}`, countryCode: "RO" } });
     const client = await prisma.client.create({ data: { name: `Client ${jobTypeName}`, agentLinks: { create: { agentId: agent.id } } } });
     const jobType = await typeByName(jobTypeName);
-    const r = await admin(USERS.MANAGER, "POST", "/jobs", { jobTypeId: jobType.id, clientId: client.id });
+    const r = await admin(USERS.OWNER, "POST", "/jobs", { jobTypeId: jobType.id, clientId: client.id });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     return r.body;
 }
-const assign = (job, passportId) => admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { passportId });
+const assign = (job, passportId) => admin(USERS.OWNER, "POST", `/jobs/${job.jobId}/candidates`, { passportId });
 const auditActions = async () => (await prisma.auditLog.findMany({ orderBy: { createdDate: "asc" }, select: { action: true } })).map((row) => row.action);
 
 describe("Settings > Job Types (management)", () => {
@@ -110,16 +110,15 @@ describe("Settings > Job Types (management)", () => {
         assert.deepEqual(await auditActions(), ["CREATE_JOB_TYPE"]);
     });
 
-    test("JOB-TYPE-002 only ADMIN manages the list (Settings); ADMIN and MANAGER may add a type (the New Job dialog); others are refused, on the server", async () => {
+    test("JOB-TYPE-002 only ADMIN (an OWNER too) manages the list (Settings) and adds a type (the New Job dialog); others are refused, on the server", async () => {
         const created = await createType("Rigger");
         for (const who of [USERS.ANALYST, USERS.DESK]) {
             assert.equal((await createType("Painter", who)).status, 403, who.role);
             assert.equal((await admin(who, "GET", "/job-types")).status, 403, who.role);
             assert.equal((await admin(who, "PATCH", `/job-types/${created.body.id}`, { name: "X" })).status, 403, who.role);
         }
-        assert.equal((await admin(USERS.MANAGER, "GET", "/job-types")).status, 403, "the Settings list is ADMIN only");
-        assert.equal((await admin(USERS.MANAGER, "PATCH", `/job-types/${created.body.id}`, { isActive: false })).status, 403, "rename / status are ADMIN only");
-        assert.equal((await createType("Painter", USERS.MANAGER)).status, 201, "MANAGER keeps the existing inline add");
+        assert.equal((await admin(USERS.OWNER, "GET", "/job-types")).status, 200, "the Settings list: an OWNER holds every ADMIN permission");
+        assert.equal((await createType("Painter", USERS.OWNER)).status, 201, "OWNER adds inline too");
         assert.equal((await typeByName("Rigger")).isActive, true);
     });
 
@@ -142,7 +141,7 @@ describe("Settings > Job Types (management)", () => {
         const job = await newJob("Fitter");
         const renamed = await admin(USERS.ADMIN, "PATCH", `/job-types/${created.body.id}`, { name: "Pipe Fitter" });
         assert.deepEqual([renamed.status, renamed.body.name, renamed.body.code, renamed.body.jobCount], [200, "Pipe Fitter", "FITTER", 1]);
-        assert.equal((await admin(USERS.MANAGER, "GET", `/jobs/${job.jobId}`)).body.jobType.name, "Pipe Fitter");
+        assert.equal((await admin(USERS.OWNER, "GET", `/jobs/${job.jobId}`)).body.jobType.name, "Pipe Fitter");
         const off = await admin(USERS.ADMIN, "PATCH", `/job-types/${created.body.id}`, { isActive: false });
         assert.equal(off.body.isActive, false);
         const on = await admin(USERS.ADMIN, "PATCH", `/job-types/${created.body.id}`, { isActive: true });
@@ -163,13 +162,13 @@ describe("Settings > Job Types (management)", () => {
         const choices = await admin(USERS.DESK, "GET", "/job-type-choices");
         assert.equal(choices.status, 200);
         assert.ok(!choices.body.jobTypes.includes("Glazier"));
-        assert.ok(!(await admin(USERS.MANAGER, "GET", "/job-options")).body.jobTypes.some((t) => t.name === "Glazier"));
+        assert.ok(!(await admin(USERS.OWNER, "GET", "/job-options")).body.jobTypes.some((t) => t.name === "Glazier"));
         const refused = await register(["Glazier"]);
         assert.equal(refused.status, 400);
         assert.match(refused.body.errors[0].message, /not an active job type/);
         const agent = await prisma.agent.create({ data: { name: "A", countryCode: "RO" } });
         const client = await prisma.client.create({ data: { name: "C", agentLinks: { create: { agentId: agent.id } } } });
-        assert.equal((await admin(USERS.MANAGER, "POST", "/jobs", { jobTypeId: created.body.id, clientId: client.id })).status, 400);
+        assert.equal((await admin(USERS.OWNER, "POST", "/jobs", { jobTypeId: created.body.id, clientId: client.id })).status, 400);
     });
 
     test("JOB-TYPE-008 records keep a type deactivated later: the job still shows it and can be edited; the candidate keeps it and can save", async () => {
@@ -179,10 +178,10 @@ describe("Settings > Job Types (management)", () => {
         assert.equal(candidate.status, 201, JSON.stringify(candidate.body));
         const type = await typeByName("Steel Fixer");
         await admin(USERS.ADMIN, "PATCH", `/job-types/${type.id}`, { isActive: false });
-        const shown = await admin(USERS.MANAGER, "GET", `/jobs/${job.jobId}`);
+        const shown = await admin(USERS.OWNER, "GET", `/jobs/${job.jobId}`);
         assert.equal(shown.body.jobType.name, "Steel Fixer");
         // Editing the job (same type sent back) works; switching TO an inactive type does not.
-        assert.equal((await admin(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { jobTypeId: type.id, vacancies: 4 })).status, 200);
+        assert.equal((await admin(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { jobTypeId: type.id, vacancies: 4 })).status, 200);
         const details = await admin(USERS.ADMIN, "GET", `/candidates/${candidate.passportId}`);
         assert.deepEqual(details.body.candidate.jobTypes, ["Steel Fixer"]);
         // Saving Candidate Details keeps the historical type (and may add an active one).
@@ -203,11 +202,11 @@ describe("Settings > Job Types (management)", () => {
     test("JOB-TYPE-010 No Preferred Type is a system option: no row to rename / deactivate / delete; a job can never use it", async () => {
         assert.equal((await prisma.jobType.count({ where: { OR: [{ code: "NO_PREFERENCE" }, { name: { equals: "No Preferred Type", mode: "insensitive" } }] } })), 0);
         assert.equal((await admin(USERS.ADMIN, "PATCH", "/job-types/NO_PREFERENCE", { isActive: false })).status, 404);
-        assert.ok(!(await admin(USERS.MANAGER, "GET", "/job-options")).body.jobTypes.some((t) => /no.?pref/i.test(t.name)), "never offered for a Job");
+        assert.ok(!(await admin(USERS.OWNER, "GET", "/job-options")).body.jobTypes.some((t) => /no.?pref/i.test(t.name)), "never offered for a Job");
         const agent = await prisma.agent.create({ data: { name: "A", countryCode: "RO" } });
         const client = await prisma.client.create({ data: { name: "C", agentLinks: { create: { agentId: agent.id } } } });
         for (const jobTypeId of ["NO_PREFERENCE", "No Preferred Type"]) {
-            assert.equal((await admin(USERS.MANAGER, "POST", "/jobs", { jobTypeId, clientId: client.id })).status, 400, jobTypeId);
+            assert.equal((await admin(USERS.OWNER, "POST", "/jobs", { jobTypeId, clientId: client.id })).status, 400, jobTypeId);
         }
     });
 });
@@ -236,7 +235,7 @@ describe("job type choices (server side)", () => {
 
     test("DYNAMIC-JOB-TYPE-004 / 007 new jobs use the active types only, never No Preferred Type", async () => {
         await createType("Rebar Worker");
-        const options = (await admin(USERS.MANAGER, "GET", "/job-options")).body.jobTypes.map((t) => t.name);
+        const options = (await admin(USERS.OWNER, "GET", "/job-options")).body.jobTypes.map((t) => t.name);
         assert.ok(options.includes("Rebar Worker"));
         assert.ok(!options.some((name) => /no.?pref|NO_PREFERENCE/i.test(name)));
     });
@@ -310,7 +309,7 @@ describe("job assignment and No Preferred Type", () => {
         assert.equal((await assign(plumberJob, plumber.passportId)).status, 201);
         assert.equal((await assign(plumberJob, open.passportId)).status, 201, "No Preferred Type -> type A");
         // Off job A, then onto job B (it could also have stayed on A: a candidate may hold several jobs).
-        assert.equal((await admin(USERS.MANAGER, "DELETE", `/jobs/${plumberJob.jobId}/candidates/${open.passportId}`)).status, 200);
+        assert.equal((await admin(USERS.OWNER, "DELETE", `/jobs/${plumberJob.jobId}/candidates/${open.passportId}`)).status, 200);
         assert.equal((await assign(welderJob, open.passportId)).status, 201, "No Preferred Type -> type B");
     });
 
@@ -328,7 +327,7 @@ describe("job assignment and No Preferred Type", () => {
         assert.deepEqual([notPassed.status, notPassed.body.code], [409, "CANDIDATE_TEST_NOT_PASSED"]);
         await pass(open.passportId);
         const done = await newJob("TILER");
-        assert.equal((await admin(USERS.MANAGER, "POST", `/jobs/${done.jobId}/complete`, {})).status, 200);
+        assert.equal((await admin(USERS.OWNER, "POST", `/jobs/${done.jobId}/complete`, {})).status, 200);
         assert.equal((await assign(done, open.passportId)).body.code, "JOB_NOT_PROCESSING");
         assert.equal((await assign(job, open.passportId)).status, 201);
         assert.equal((await assign(job, open.passportId)).body.code, "CANDIDATE_ALREADY_IN_JOB");
@@ -344,7 +343,7 @@ describe("job assignment and No Preferred Type", () => {
         await pass(plumber.passportId);
         await pass(open.passportId);
         await prisma.candidateStage.create({ data: { passportId: failed.passportId, stage: "TEST_DETAILS", testResult: "FAIL" } });
-        const listed = await admin(USERS.MANAGER, "GET", "/candidates?testResult=PASS&pageSize=100");
+        const listed = await admin(USERS.OWNER, "GET", "/candidates?testResult=PASS&pageSize=100");
         const ids = listed.body.items.map((item) => item.passportId);
         assert.ok(ids.includes(plumber.passportId) && ids.includes(open.passportId) && !ids.includes(failed.passportId));
         assert.deepEqual(listed.body.items.find((item) => item.passportId === open.passportId).jobTypes, ["NO_PREFERENCE"]);

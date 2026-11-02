@@ -15,7 +15,7 @@ const user = (adminId, role, name, status = "ACTIVE", n = 1) => ({
 
 const USERS = {
     ADMIN: user("u-admin", "ADMIN", "Ada Admin", "ACTIVE", 1),
-    MANAGER: user("u-manager", "MANAGER", "Max Manager", "ACTIVE", 2),
+    OWNER: user("u-owner", "OWNER", "Olive Owner", "ACTIVE", 2),
     ANN: user("u-ann", "ANALYST", "Ann Analyst", "ACTIVE", 3),
     BEN: user("u-ben", "ANALYST", "Ben Analyst", "ACTIVE", 4),
     CAL: user("u-cal", "ANALYST", "Cal Analyst", "ACTIVE", 5),
@@ -99,7 +99,7 @@ describe("Manual QA Scenarios (Cases A through F)", () => {
         const candidateIds = Array.from({ length: 23 }, (_, i) => pid(i + 1));
         const analystIds = [USERS.ANN.adminId, USERS.BEN.adminId, USERS.CAL.adminId, USERS.DAN.adminId];
 
-        const { status, body } = await api(USERS.MANAGER, "POST", "/work-allocation/auto-allocate", { candidateIds, analystIds });
+        const { status, body } = await api(USERS.OWNER, "POST", "/work-allocation/auto-allocate", { candidateIds, analystIds });
         assert.equal(status, 200);
         assert.equal(body.selectedCount, 23);
         assert.equal(body.eligibleCount, 23);

@@ -130,8 +130,8 @@ describe("Admin DatePicker (component)", () => {
         expect(block).toMatch(/\.date-picker-popover \{[^}]*position: fixed;[^}]*width: min\(320px, calc\(100vw - 16px\)\);[^}]*max-height: calc\(100vh - 16px\);/);
         expect(block).toMatch(/\.date-picker-popover\.is-sheet \{[^}]*bottom: 8px;/);
         for (const variable of ["--color-surface", "--color-ink", "--color-primary", "--color-primary-soft", "--color-border-strong"]) expect(block).toContain(`var(${variable})`);
-        // Only one fixed colour: the text on the selected day (white on the primary colour).
-        expect([...block.matchAll(/#[0-9a-fA-F]{3,8}\b/g)]).toHaveLength(1);
+        // No fixed colours: the selected day's text is a theme token too.
+        expect([...block.matchAll(/#[0-9a-fA-F]{3,8}\b/g)]).toHaveLength(0);
     });
 
     test("accessibility: a labelled field and button, a named dialog, month and year lists, a day grid", async () => {

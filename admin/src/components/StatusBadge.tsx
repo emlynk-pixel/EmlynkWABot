@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { humanize } from "./format";
 
-// Stitch status semantic system: text / tinted background / border.
+// Status roles: text / tinted background / border.
 export type Tone = "verified" | "review" | "pending" | "critical" | "duplicate";
 
 const TONE_CLASSES: Record<Tone, string> = {
@@ -57,7 +57,7 @@ export function statusLabel(status: string): string {
 // A pill in one of the status tones, with any label.
 export function ToneBadge({ tone, children }: { tone: Tone; children: ReactNode }) {
     return (
-        <span className={`inline-flex h-[22px] items-center whitespace-nowrap rounded-full border px-2 text-label-sm ${TONE_CLASSES[tone]}`}>
+        <span className={`inline-flex h-5 items-center whitespace-nowrap rounded-full border border-transparent px-2 text-label-sm ${TONE_CLASSES[tone].replace(/ border-\S+$/, "")}`}>
             {children}
         </span>
     );

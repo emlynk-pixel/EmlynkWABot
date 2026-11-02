@@ -18,7 +18,7 @@ const user = (adminId, role, name, status = "ACTIVE", n = 1) => ({
 });
 const USERS = {
     ADMIN: user("u-admin", "ADMIN", "Ada Admin", "ACTIVE", 1),
-    MANAGER: user("u-manager", "MANAGER", "Max Manager", "ACTIVE", 2),
+    OWNER: user("u-owner", "OWNER", "Olive Owner", "ACTIVE", 2),
     DESK: user("u-desk", "REGISTRATION_DESK", "Dee Desk", "ACTIVE", 3),
     ANN: user("u-ann", "ANALYST", "Ann Analyst", "ACTIVE", 4),
     BEN: user("u-ben", "ANALYST", "Ben Analyst", "ACTIVE", 5),
@@ -99,8 +99,8 @@ const allocationAudit = async () => (await prisma.auditLog.findMany({ where: { a
 const assign = (who, candidateIds, allocs, extra = {}) => api(who, "POST", "/work-allocation/assign", { candidateIds, allocations: allocs, ...extra });
 
 describe("the access rule (candidateAccess.js)", () => {
-    test("ADMIN, MANAGER, REGISTRATION_DESK: every candidate; ANALYST: their allocations; anything else: none", () => {
-        for (const role of ["ADMIN", "MANAGER", "REGISTRATION_DESK"]) {
+    test("OWNER, ADMIN, REGISTRATION_DESK: every candidate; ANALYST: their allocations; anything else: none", () => {
+        for (const role of ["OWNER", "ADMIN", "REGISTRATION_DESK"]) {
             assert.equal(isCandidateScoped({ role }), false, role);
             assert.deepEqual(candidateScope({ role, adminId: "x" }), {});
         }
@@ -111,13 +111,15 @@ describe("the access rule (candidateAccess.js)", () => {
 });
 
 describe("RBAC: candidate lists", () => {
-    test("1, 4, 7, 30, 31. ADMIN, MANAGER and REGISTRATION_DESK see every candidate; totals stay global", async () => {
+    test("1, 4, 7, 30, 31. ADMIN and OWNER see every candidate; totals stay global. REGISTRATION_DESK opens any candidate's page but has no list", async () => {
         await seedAllocations();
-        for (const who of [USERS.ADMIN, USERS.MANAGER, USERS.DESK]) {
+        for (const who of [USERS.ADMIN, USERS.OWNER]) {
             const { ids, pagination } = await listIds(who);
             assert.equal(pagination.totalItems, TOTAL, who.role);
             assert.deepEqual(ids, NEWEST_FIRST);
         }
+        assert.equal((await api(USERS.DESK, "GET", "/candidates")).status, 403);
+        for (const id of NEWEST_FIRST) assert.equal((await api(USERS.DESK, "GET", `/candidates/${id}`)).status, 200, id);
     });
 
     test("10-12, 29. an ANALYST sees only their own candidates: not unallocated ones, not another Analyst's; totals are theirs", async () => {
@@ -142,12 +144,14 @@ describe("RBAC: candidate lists", () => {
 });
 
 describe("RBAC: editing", () => {
-    test("2, 5, 8. ADMIN, MANAGER and REGISTRATION_DESK can edit any candidate, allocated or not", async () => {
+    test("2, 5, 8. ADMIN and OWNER can edit any candidate, allocated or not; REGISTRATION_DESK looks any one up but edits no stage beyond Candidate Details", async () => {
         await seedAllocations();
-        for (const [who, i] of [[USERS.ADMIN, 1], [USERS.MANAGER, 4], [USERS.DESK, 20]]) {
+        for (const [who, i] of [[USERS.ADMIN, 1], [USERS.OWNER, 4]]) {
             assert.equal((await api(who, "PUT", `/candidates/${pid(i)}/stages/VISA_APPROVAL`, { completed: true })).status, 200, who.role);
             assert.equal((await api(who, "GET", `/candidates/${pid(i)}`)).status, 200, who.role);
         }
+        assert.equal((await api(USERS.DESK, "PUT", `/candidates/${pid(20)}/stages/VISA_APPROVAL`, { completed: true })).status, 403);
+        assert.equal((await api(USERS.DESK, "GET", `/candidates/${pid(20)}`)).status, 200, "the registration lookup");
     });
 
     test("13-14. an ANALYST edits their own candidate; another Analyst's or an unallocated one is 404, and nothing changes", async () => {
@@ -169,13 +173,13 @@ describe("RBAC: editing", () => {
         assert.equal((await api(USERS.ANN, "POST", "/candidates", body)).status, 403);
         assert.equal((await api(USERS.DESK, "POST", "/candidates", body)).status, 201);
         assert.equal(await prisma.candidateAllocation.count({ where: { passportId: "N1023757" } }), 0);
-        const { body: list } = await api(USERS.MANAGER, "GET", "/work-allocation/candidates?search=N1023757");
+        const { body: list } = await api(USERS.OWNER, "GET", "/work-allocation/candidates?search=N1023757");
         assert.deepEqual(list.items.map((item) => [item.passportId, item.analyst]), [["N1023757", null]]);
     });
 });
 
 describe("41. every candidate-specific route refuses another Analyst's candidate", () => {
-    test("detail, update, stages, documents, call logs, Candidate History, follow-ups, additional details, client details: all 404", async () => {
+    test("detail, update, stages, documents, call logs, Candidate History, follow-ups, additional details: all 404", async () => {
         await seedAllocations();
         const other = pid(4); // Ben's
         const routes = [
@@ -191,7 +195,6 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
             ["POST", `/candidates/${other}/call-logs/00000000-0000-4000-8000-000000000001/follow-up`],
             ["GET", `/candidates/${other}/additional-details`],
             ["PUT", `/candidates/${other}/additional-details`, { tshirtSize: "M" }],
-            ["GET", `/clients/${other}`],
         ];
         for (const [method, path, body] of routes) {
             const response = await api(USERS.ANN, method, path, body);
@@ -203,7 +206,7 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
         assert.equal((await api(USERS.ANN, "GET", `/candidates/${pid(1)}`)).status, 200);
         assert.equal((await api(USERS.ANN, "GET", `/candidates/${pid(1)}/call-logs`)).status, 200);
         assert.equal((await api(USERS.ANN, "POST", `/candidates/${pid(1)}/call-logs`, { note: "Called", calledAt: "2026-01-02T10:00:00.000Z" })).status, 201);
-        assert.equal((await api(USERS.ANN, "GET", `/clients/${pid(1)}`)).status, 200);
+        assert.equal((await api(USERS.ANN, "GET", `/clients/${pid(1)}`)).status, 403, "client details are not the Analyst's page");
     });
 
     test("Need Attention: an ANALYST lists and completes only their own candidates' follow-ups", async () => {
@@ -216,37 +219,24 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
         const groups = (who) => api(who, "GET", "/follow-ups").then(({ body }) => body.groups.map((g) => g.candidate.passportId).sort());
         assert.deepEqual(await groups(USERS.ANN), [pid(1)]);
         assert.deepEqual(await groups(USERS.ADMIN), [pid(1), pid(4), pid(20)]);
-        assert.deepEqual(await groups(USERS.DESK), [pid(1), pid(4), pid(20)]);
+        assert.deepEqual(await groups(USERS.DESK), [pid(1), pid(4), pid(20)], "the Registration Desk reads every follow-up");
+        assert.equal((await api(USERS.DESK, "POST", `/follow-ups/${followUps[4]}/complete`)).status, 403, "but completes none");
         assert.equal((await api(USERS.ANN, "POST", `/follow-ups/${followUps[4]}/complete`)).status, 404, "Ben's");
         assert.equal((await api(USERS.ANN, "POST", `/follow-ups/${followUps[20]}/complete`)).status, 404, "unallocated");
         assert.equal((await api(USERS.ANN, "POST", `/follow-ups/${followUps[1]}/complete`)).status, 200, "their own");
         assert.equal(await prisma.callLogFollowUp.count({ where: { status: "COMPLETED" } }), 1);
     });
 
-    test("candidate lists on other pages are scoped for an ANALYST: Clients, Documents, Missing Documents, Police Workflow", async () => {
+    test("an ANALYST has no other pages: Clients, client details, Documents, Missing Documents, Police Workflow are 403; ADMIN still sees everyone", async () => {
         await seedAllocations();
-        await prisma.document.createMany({
-            data: [1, 4, 20].map((i) => ({
-                documentId: `00000000-0000-4000-8000-0000000000${String(i).padStart(2, "0")}`, passportId: pid(i), documentType: "POLICE_SLIP",
-                originalFilename: "slip.pdf", storedFilename: "slip.pdf", storagePath: `clients/${pid(i)}/slip.pdf`, receivedDate: new Date("2026-01-03T00:00:00Z"),
-                processingStatus: "PROCESSED", verificationStatus: "VERIFIED",
-            })),
-        });
-        const ann = new Set([pid(1), pid(2), pid(3)]);
-        const clients = (await api(USERS.ANN, "GET", "/clients?pageSize=100")).body;
-        assert.deepEqual(new Set(clients.items.map((c) => c.client.passportId)), ann);
-        const documents = (await api(USERS.ANN, "GET", "/documents")).body;
-        assert.deepEqual(documents.items.map((d) => d.client.passportId), [pid(1)]);
-        assert.equal(documents.pagination.total, 1);
-        const missing = (await api(USERS.ANN, "GET", "/documents/missing?pageSize=100")).body;
-        assert.ok(missing.items.length > 0 && missing.items.every((c) => ann.has(c.client.passportId)), "missing documents: own candidates only");
-        const police = (await api(USERS.ANN, "GET", "/police?pageSize=100")).body;
-        assert.ok(police.items.length > 0 && police.items.every((row) => ann.has(row.client.passportId)), "police: own candidates only");
+        for (const path of ["/clients?pageSize=100", `/clients/${pid(1)}`, "/documents", "/documents/missing?pageSize=100", "/police?pageSize=100"]) {
+            assert.equal((await api(USERS.ANN, "GET", path)).status, 403, path);
+        }
         const adminPolice = (await api(USERS.ADMIN, "GET", "/police?pageSize=100")).body;
         assert.ok(adminPolice.items.some((row) => row.client.passportId === pid(20)), "ADMIN still sees everyone");
     });
 
-    test("Review Queue: an ANALYST can only link a waiting file to one of their own candidates; another one reads as not existing", async () => {
+    test("Review Queue: an ANALYST cannot link a waiting file to any candidate (403); ADMIN links any", async () => {
         await seedAllocations();
         const temporaryId = "7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
         await prisma.temporaryData.create({ data: {
@@ -254,160 +244,61 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
             pendingStoragePath: `pending/${temporaryId}.pdf`, processingStatus: "PROCESSED",
         } });
         const link = (who, passportId) => api(who, "POST", `/review/pending-${temporaryId}/assign-client`, { passportId, reason: "Matched by phone" });
-        for (const target of [pid(4), pid(20)]) {
-            const refused = await link(USERS.ANN, target);
-            assert.deepEqual([refused.status, refused.body.code], [409, "CLIENT_NOT_FOUND"], target);
-        }
+        for (const target of [pid(1), pid(4), pid(20)]) assert.equal((await link(USERS.ANN, target)).status, 403, target);
         assert.equal((await prisma.temporaryData.findUnique({ where: { temporaryId } })).passportId, null, "nothing was linked");
-        assert.equal((await link(USERS.ANN, pid(1))).status, 200, "their own candidate");
         assert.equal((await link(USERS.ADMIN, pid(20))).status, 200, "ADMIN: any candidate");
     });
 
-    test("Review Queue: an ANALYST cannot open, act on or delete another candidate's item; unlinked and own items stay open", async () => {
+    test("Review Queue: an ANALYST cannot open, act on or delete any item, their own candidate's included (403); nothing changes", async () => {
         await seedAllocations();
         const documentId = (i) => `00000000-0000-4000-8000-00000000d${String(i).padStart(3, "0")}`;
         await prisma.document.createMany({
-            data: [1, 4, 20].map((i) => ({
+            data: [1, 4].map((i) => ({
                 documentId: documentId(i), passportId: pid(i), documentType: "MEDICAL", originalFilename: "m.pdf", storedFilename: "m.pdf",
                 storagePath: `clients/${pid(i)}/m.pdf`, receivedDate: new Date("2026-01-03T00:00:00Z"), processingStatus: "PROCESSED", verificationStatus: "REVIEW_REQUIRED",
             })),
         });
-        const temporaryId = (n) => `7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a${String(n).padStart(2, "0")}`;
-        await prisma.temporaryData.createMany({
-            data: [[1, pid(4)], [2, pid(20)], [3, null]].map(([n, passportId]) => ({
-                temporaryId: temporaryId(n), passportId, whatsappNumber: "94770000099", documentType: "MEDICAL",
-                temporaryStoragePath: `temporary/${temporaryId(n)}.pdf`, pendingStoragePath: `pending/${temporaryId(n)}.pdf`, processingStatus: "PROCESSED",
-            })),
-        });
-
-        // Another Analyst's candidate (pid 4) and an unallocated one (pid 20): 404 on every route naming the item.
-        for (const reviewId of [`document-${documentId(4)}`, `document-${documentId(20)}`, `pending-${temporaryId(1)}`, `pending-${temporaryId(2)}`]) {
+        const temporaryId = "7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a03";
+        await prisma.temporaryData.create({ data: {
+            temporaryId, passportId: null, whatsappNumber: "94770000099", documentType: "MEDICAL",
+            temporaryStoragePath: `temporary/${temporaryId}.pdf`, pendingStoragePath: `pending/${temporaryId}.pdf`, processingStatus: "PROCESSED",
+        } });
+        for (const reviewId of [`document-${documentId(1)}`, `document-${documentId(4)}`, `pending-${temporaryId}`]) {
             for (const [method, path, body] of [
                 ["GET", `/review/${reviewId}`], ["GET", `/review/${reviewId}/file`],
                 ["POST", `/review/${reviewId}/approve`, {}], ["POST", `/review/${reviewId}/keep-pending`, { reason: "later" }],
                 ["POST", `/review/${reviewId}/remove`, { reason: "bad file" }],
-            ]) {
-                const refused = await api(USERS.ANN, method, path, body);
-                assert.deepEqual([refused.status, refused.body?.message], [404, "Review item not found"], `${method} ${path}`);
-            }
+            ]) assert.equal((await api(USERS.ANN, method, path, body)).status, 403, `${method} ${path}`);
         }
-        for (const n of [1, 2]) {
-            const refused = await api(USERS.ANN, "DELETE", `/temporary-documents/${temporaryId(n)}`);
-            assert.equal(refused.status, 404, `delete submission ${n}`);
-        }
-        assert.equal(await prisma.temporaryData.count({ where: { temporaryId: { in: [1, 2, 3].map(temporaryId) } } }), 3, "nothing was deleted");
-        assert.equal((await prisma.document.findUnique({ where: { documentId: documentId(4) } })).verificationStatus, "REVIEW_REQUIRED", "nothing was changed");
-        assert.equal(await prisma.auditLog.count({ where: { action: { in: ["APPROVE", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "DELETE_TEMPORARY_DOCUMENT"] } } }), 0, "nothing was audited");
-
-        // Their own candidate's item and a file not linked to anyone: open, as before.
-        assert.equal((await api(USERS.ANN, "GET", `/review/document-${documentId(1)}`)).status, 200);
-        assert.equal((await api(USERS.ANN, "GET", `/review/pending-${temporaryId(3)}`)).status, 200);
-        assert.equal((await api(USERS.ANN, "POST", `/review/document-${documentId(1)}/keep-pending`, { reason: "later" })).status, 200);
-        // ADMIN, MANAGER and Ben (the owner) reach it.
-        for (const who of [USERS.ADMIN, USERS.MANAGER, USERS.BEN]) {
-            assert.equal((await api(who, "GET", `/review/document-${documentId(4)}`)).status, 200, who.name);
-        }
+        assert.equal((await api(USERS.ANN, "GET", "/review")).status, 403);
+        assert.equal((await api(USERS.ANN, "DELETE", `/temporary-documents/${temporaryId}`)).status, 403);
+        assert.equal(await prisma.temporaryData.count({ where: { temporaryId } }), 1, "nothing was deleted");
+        assert.equal((await prisma.document.findUnique({ where: { documentId: documentId(1) } })).verificationStatus, "REVIEW_REQUIRED", "nothing was changed");
+        for (const who of [USERS.ADMIN, USERS.OWNER]) assert.equal((await api(who, "GET", `/review/document-${documentId(4)}`)).status, 200, who.name);
     });
 
-    test("Review Queue list, Overview and Daily Report: an ANALYST only gets their own candidates (and unlinked files); ADMIN and MANAGER stay global; reassignment applies next request", async () => {
+    test("Review Queue list, Overview, Daily Report and Monthly overview: 403 for an ANALYST; ADMIN and OWNER reach them", async () => {
         await seedAllocations();
-        const DAY = "2026-01-01"; // every seeded candidate registers on this Colombo day
-        const at = new Date("2026-01-01T04:00:00Z");
-        const documentId = (i) => `00000000-0000-4000-8000-00000000e${String(i).padStart(3, "0")}`;
-        await prisma.document.createMany({
-            data: [1, 4, 20].map((i) => ({
-                documentId: documentId(i), passportId: pid(i), documentType: "MEDICAL", originalFilename: "m.pdf", storedFilename: "m.pdf",
-                storagePath: `clients/${pid(i)}/m.pdf`, receivedDate: at, processingStatus: "PROCESSED", verificationStatus: "REVIEW_REQUIRED",
-            })),
-        });
-        const temporaryId = (n) => `7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3b${String(n).padStart(2, "0")}`;
-        await prisma.temporaryData.createMany({
-            // T1: Ben's candidate; T2: Ann's candidate; T3: not linked to anyone yet.
-            data: [[1, pid(4)], [2, pid(1)], [3, null]].map(([n, passportId]) => ({
-                temporaryId: temporaryId(n), passportId, whatsappNumber: "94770000099", documentType: "MEDICAL", createdDate: at,
-                temporaryStoragePath: `temporary/${temporaryId(n)}.pdf`, pendingStoragePath: `pending/${temporaryId(n)}.pdf`, processingStatus: "PROCESSED",
-            })),
-        });
-        for (const [n, i] of [[1, 1], [2, 4]]) {
-            await prisma.candidateCallLog.create({ data: { callLogId: `00000000-0000-4000-8000-00000000c${String(n).padStart(3, "0")}`, passportId: pid(i), adminId: USERS.ADMIN.adminId, note: "called", createdDate: at } });
-            await prisma.candidateStage.create({ data: { passportId: pid(i), stage: "FINALIZING_JOB", completed: true, completedAt: at } });
+        for (const path of ["/review", "/overview", "/reports/daily", "/reports/daily/summary", "/reports/daily/incomplete?stage=VISA_APPROVAL", "/reports/monthly"]) {
+            assert.equal((await api(USERS.ANN, "GET", path)).status, 403, path);
+            for (const who of [USERS.ADMIN, USERS.OWNER]) assert.equal((await api(who, "GET", path)).status, 200, `${who.name} ${path}`);
         }
-        const others = [pid(4), pid(5), pid(20)];
-        const leaks = (body) => others.filter((id) => JSON.stringify(body).includes(id));
-        const get = async (who, path) => {
-            const response = await api(who, "GET", path);
-            assert.equal(response.status, 200, `${who.name} GET ${path}`);
-            return response.body;
-        };
-
-        // ANALYST (Ann: P1-P3): own items plus the unlinked file.
-        const review = await get(USERS.ANN, "/review?pageSize=100");
-        assert.deepEqual(review.items.map((item) => item.reviewId).sort(), [`document-${documentId(1)}`, `pending-${temporaryId(2)}`, `pending-${temporaryId(3)}`].sort());
-        assert.equal(review.pagination.total, 3);
-        assert.equal(review.summary.total, 3, "the summary counts follow the same scope");
-        assert.equal((await get(USERS.ANN, `/review?passportId=${pid(4)}`)).items.length, 0, "filtering by another candidate finds nothing");
-        assert.deepEqual(leaks(review), []);
-
-        const overview = await get(USERS.ANN, "/overview");
-        assert.equal(overview.kpis.totalClients, 3);
-        assert.equal(overview.kpis.totalDocuments, 1);
-        assert.equal(overview.reviewQueue.pendingFiles, 2);
-        assert.equal(overview.reviewQueue.reviewRequiredDocuments, 1);
-        assert.deepEqual(leaks(overview), []);
-
-        const summary = await get(USERS.ANN, `/reports/daily/summary?date=${DAY}`);
-        assert.deepEqual([summary.summary.candidatesRegistered, summary.summary.callsTaken, summary.summary.candidatesCompleted], [3, 1, 1]);
-        assert.equal(summary.whatsappProcessing.received, 2);
-        assert.equal(summary.current.incomplete.totalCandidates, 3);
-        assert.deepEqual(leaks(summary), []);
-        const incomplete = await get(USERS.ANN, "/reports/daily/incomplete?stage=TEST_DETAILS&page=1");
-        assert.ok(incomplete.items.length > 0 && incomplete.items.every((row) => [pid(1), pid(2), pid(3)].includes(row.passportId)));
-        assert.equal(incomplete.pagination.total, 3);
-        const daily = await get(USERS.ANN, `/reports/daily?date=${DAY}`);
-        assert.equal(daily.daily.totalReceived, 2);
-        assert.equal(daily.current.clients.total, 3);
-        const monthly = await get(USERS.ANN, "/reports/monthly?month=2026-01");
-        assert.equal(monthly.candidatesRegistered, 3);
-        assert.equal(monthly.sources.whatsappSubmissions, 2);
-
-        // ADMIN and MANAGER: global, as before.
-        for (const who of [USERS.ADMIN, USERS.MANAGER]) {
-            assert.equal((await get(who, "/review?pageSize=100")).pagination.total, 6, who.name);
-            assert.equal((await get(who, "/overview")).kpis.totalClients, TOTAL, who.name);
-            const all = await get(who, `/reports/daily/summary?date=${DAY}`);
-            assert.deepEqual([all.summary.candidatesRegistered, all.summary.callsTaken, all.whatsappProcessing.received], [TOTAL, 2, 3], who.name);
-            assert.equal((await get(who, `/reports/daily?date=${DAY}`)).daily.totalReceived, 3, who.name);
-            assert.equal((await get(who, "/reports/monthly?month=2026-01")).candidatesRegistered, TOTAL, who.name);
-        }
-        // REGISTRATION_DESK: still outside these pages.
-        for (const path of ["/review", "/overview", `/reports/daily/summary?date=${DAY}`]) assert.equal((await api(USERS.DESK, "GET", path)).status, 403, path);
-
-        // Reassignment applies on the next request: P1 moves from Ann to Ben.
-        assert.equal((await assign(USERS.MANAGER, [pid(1)], [{ analystId: USERS.BEN.adminId, count: 1 }], { reassign: true })).status, 200);
-        const after = await get(USERS.ANN, "/review?pageSize=100");
-        assert.deepEqual(after.items.map((item) => item.reviewId), [`pending-${temporaryId(3)}`], "only the unlinked file is left");
-        assert.equal((await get(USERS.ANN, "/overview")).kpis.totalClients, 2);
-        assert.equal((await get(USERS.ANN, `/reports/daily/summary?date=${DAY}`)).summary.candidatesRegistered, 2);
-        const annOverview = JSON.stringify(await get(USERS.ANN, "/overview"));
-        assert.ok(![pid(1), ...others].some((id) => annOverview.includes(id)), "the moved candidate is gone from the old Analyst's Overview");
-        const ben = await get(USERS.BEN, "/review?pageSize=100");
-        assert.ok(ben.items.some((item) => item.reviewId === `document-${documentId(1)}`), "the new Analyst gains the item");
     });
 
     test("26. reassignment applies on the next request: the old Analyst loses access, the new one gains it", async () => {
         await seedAllocations();
         assert.equal((await api(USERS.ANN, "GET", `/candidates/${pid(1)}`)).status, 200);
-        assert.equal((await assign(USERS.MANAGER, [pid(1)], [{ analystId: USERS.BEN.adminId, count: 1 }], { reassign: true })).status, 200);
+        assert.equal((await assign(USERS.OWNER, [pid(1)], [{ analystId: USERS.BEN.adminId, count: 1 }], { reassign: true })).status, 200);
         assert.equal((await api(USERS.ANN, "GET", `/candidates/${pid(1)}`)).status, 404);
         assert.equal((await api(USERS.BEN, "GET", `/candidates/${pid(1)}`)).status, 200);
-        // and a role change applies too: Ben as a MANAGER sees everyone.
-        await prisma.user.update({ where: { adminId: USERS.BEN.adminId }, data: { role: "MANAGER" } });
+        // and a role change applies too: Ben as an ADMIN sees everyone.
+        await prisma.user.update({ where: { adminId: USERS.BEN.adminId }, data: { role: "ADMIN" } });
         assert.equal((await listIds(USERS.BEN)).pagination.totalItems, TOTAL);
     });
 });
 
 describe("Work Allocation API: who may use it", () => {
-    test("3, 6, 9, 15. ADMIN and MANAGER may; REGISTRATION_DESK and ANALYST get 403 on every route", async () => {
+    test("3, 6, 9, 15. ADMIN and OWNER may; REGISTRATION_DESK and ANALYST get 403 on every route", async () => {
         for (const who of [USERS.DESK, USERS.ANN]) {
             for (const [method, path, body] of [
                 ["GET", "/work-allocation/candidates"],
@@ -420,7 +311,7 @@ describe("Work Allocation API: who may use it", () => {
             }
         }
         assert.equal(await prisma.candidateAllocation.count(), 0);
-        for (const who of [USERS.ADMIN, USERS.MANAGER]) {
+        for (const who of [USERS.ADMIN, USERS.OWNER]) {
             assert.equal((await api(who, "GET", "/work-allocation/candidates")).status, 200, who.role);
             assert.equal((await api(who, "GET", "/work-allocation/analysts")).status, 200, who.role);
         }
@@ -429,14 +320,14 @@ describe("Work Allocation API: who may use it", () => {
 
 describe("Work Allocation API: assigning", () => {
     test("16. one candidate to one Analyst, audited with the candidate, both Analysts and the acting manager", async () => {
-        const { status, body } = await assign(USERS.MANAGER, [pid(7)], [{ analystId: USERS.ANN.adminId, count: 1 }]);
+        const { status, body } = await assign(USERS.OWNER, [pid(7)], [{ analystId: USERS.ANN.adminId, count: 1 }]);
         assert.equal(status, 200);
         assert.deepEqual([body.assigned, body.reassigned, body.unchanged], [1, 0, 0]);
         assert.deepEqual(await allocations(), { [pid(7)]: USERS.ANN.adminId });
         const [row] = await allocationAudit();
         assert.deepEqual(
             [row.action, row.passportId, row.adminId, row.previousStatus, row.newStatus, row.previousValue, JSON.parse(row.newValue)],
-            ["ASSIGN_CANDIDATE", pid(7), USERS.MANAGER.adminId, "UNALLOCATED", "ALLOCATED", null, { analystId: USERS.ANN.adminId, name: "Ann Analyst" }],
+            ["ASSIGN_CANDIDATE", pid(7), USERS.OWNER.adminId, "UNALLOCATED", "ALLOCATED", null, { analystId: USERS.ANN.adminId, name: "Ann Analyst" }],
         );
     });
 
@@ -449,7 +340,7 @@ describe("Work Allocation API: assigning", () => {
 
     test("18. across several Analysts: newest registered first, handed out in the order of the allocations, whatever the selection order", async () => {
         const ids = [pid(1), pid(9), pid(5), pid(3), pid(7), pid(2)]; // newest first: 9, 7, 5, 3, 2, 1
-        const { status, body } = await assign(USERS.MANAGER, ids, [
+        const { status, body } = await assign(USERS.OWNER, ids, [
             { analystId: USERS.BEN.adminId, count: 2 },
             { analystId: USERS.ANN.adminId, count: 3 },
             { analystId: USERS.CAL.adminId, count: 1 },
@@ -486,8 +377,8 @@ describe("Work Allocation API: assigning", () => {
         assert.equal(await prisma.candidateAllocation.count(), 0);
     });
 
-    test("20-21. only an ACTIVE Analyst can be a target: inactive, ADMIN, MANAGER, REGISTRATION_DESK and unknown users are refused", async () => {
-        for (const [target, code] of [[USERS.GONE, "ANALYST_INACTIVE"], [USERS.ADMIN, "NOT_AN_ANALYST"], [USERS.MANAGER, "NOT_AN_ANALYST"], [USERS.DESK, "NOT_AN_ANALYST"], [{ adminId: "u-nobody" }, "ANALYST_NOT_FOUND"]]) {
+    test("20-21. only an ACTIVE Analyst can be a target: inactive, ADMIN, OWNER, REGISTRATION_DESK and unknown users are refused", async () => {
+        for (const [target, code] of [[USERS.GONE, "ANALYST_INACTIVE"], [USERS.ADMIN, "NOT_AN_ANALYST"], [USERS.OWNER, "NOT_AN_ANALYST"], [USERS.DESK, "NOT_AN_ANALYST"], [{ adminId: "u-nobody" }, "ANALYST_NOT_FOUND"]]) {
             const response = await assign(USERS.ADMIN, [pid(1)], [{ analystId: target.adminId, count: 1 }]);
             assert.deepEqual([response.status, response.body.code], [409, code], target.adminId);
         }
@@ -505,11 +396,11 @@ describe("Work Allocation API: assigning", () => {
 
     test("22, 24. reassignment needs reassign: true (else 409, nothing changed), then moves the candidate and is audited with both Analysts", async () => {
         await seedAllocations();
-        const refused = await assign(USERS.MANAGER, [pid(1), pid(20)], [{ analystId: USERS.BEN.adminId, count: 2 }]);
+        const refused = await assign(USERS.OWNER, [pid(1), pid(20)], [{ analystId: USERS.BEN.adminId, count: 2 }]);
         assert.deepEqual([refused.status, refused.body.code], [409, "ALREADY_ALLOCATED"]);
         assert.equal((await allocations())[pid(20)], undefined, "the unallocated one was not assigned either");
 
-        const { status, body } = await assign(USERS.MANAGER, [pid(1), pid(20)], [{ analystId: USERS.BEN.adminId, count: 2 }], { reassign: true });
+        const { status, body } = await assign(USERS.OWNER, [pid(1), pid(20)], [{ analystId: USERS.BEN.adminId, count: 2 }], { reassign: true });
         assert.equal(status, 200);
         assert.deepEqual([body.assigned, body.reassigned], [1, 1]);
         assert.equal((await allocations())[pid(1)], USERS.BEN.adminId);
@@ -517,7 +408,7 @@ describe("Work Allocation API: assigning", () => {
         const moved = rows.find((r) => r.action === "REASSIGN_CANDIDATE");
         assert.deepEqual(
             [moved.passportId, JSON.parse(moved.previousValue).name, JSON.parse(moved.newValue).name, moved.adminId],
-            [pid(1), "Ann Analyst", "Ben Analyst", USERS.MANAGER.adminId],
+            [pid(1), "Ann Analyst", "Ben Analyst", USERS.OWNER.adminId],
         );
         assert.deepEqual(rows.map((r) => r.action).sort(), ["ASSIGN_CANDIDATE", "REASSIGN_CANDIDATE"]);
     });
@@ -533,7 +424,7 @@ describe("Work Allocation API: assigning", () => {
         const ids = [pid(10), pid(11), pid(12)];
         const results = await Promise.all([
             assign(USERS.ADMIN, ids, [{ analystId: USERS.ANN.adminId, count: 3 }]),
-            assign(USERS.MANAGER, ids, [{ analystId: USERS.BEN.adminId, count: 3 }]),
+            assign(USERS.OWNER, ids, [{ analystId: USERS.BEN.adminId, count: 3 }]),
         ]);
         assert.deepEqual(results.map((r) => r.status).sort(), [200, 409]);
         const owners = new Set(Object.values(await allocations()));
@@ -559,22 +450,22 @@ describe("Work Allocation API: unassigning", () => {
 describe("Work Allocation API: lists and workload", () => {
     test("Unallocated (default) and Allocated views, server-side search and paging, with the current Analyst", async () => {
         await seedAllocations();
-        const unallocated = (await api(USERS.MANAGER, "GET", "/work-allocation/candidates")).body;
+        const unallocated = (await api(USERS.OWNER, "GET", "/work-allocation/candidates")).body;
         assert.equal(unallocated.pagination.totalItems, TOTAL - 5);
         assert.ok(unallocated.items.every((item) => item.analyst === null));
         assert.deepEqual(Object.keys(unallocated.items[0]).sort(), [
             "analyst", "assignedDate", "contactNumber", "currentStage", "jobTypes", "name", "nic", "passportId", "registeredDate",
             "stagesCompleted", "stagesTotal", "uniqueId", "whatsappNumber", "workflowStatus",
         ]);
-        const allocated = (await api(USERS.MANAGER, "GET", "/work-allocation/candidates?status=ALLOCATED")).body;
+        const allocated = (await api(USERS.OWNER, "GET", "/work-allocation/candidates?status=ALLOCATED")).body;
         assert.deepEqual(allocated.items.map((item) => [item.passportId, item.analyst.name]), [
             [pid(5), "Ben Analyst"], [pid(4), "Ben Analyst"], [pid(3), "Ann Analyst"], [pid(2), "Ann Analyst"], [pid(1), "Ann Analyst"],
         ]);
-        const bens = (await api(USERS.MANAGER, "GET", `/work-allocation/candidates?status=ALLOCATED&analystId=${USERS.BEN.adminId}`)).body;
+        const bens = (await api(USERS.OWNER, "GET", `/work-allocation/candidates?status=ALLOCATED&analystId=${USERS.BEN.adminId}`)).body;
         assert.deepEqual(bens.items.map((item) => item.passportId), [pid(5), pid(4)]);
-        const search = (await api(USERS.MANAGER, "GET", "/work-allocation/candidates?search=0710000020")).body;
+        const search = (await api(USERS.OWNER, "GET", "/work-allocation/candidates?search=0710000020")).body;
         assert.deepEqual(search.items.map((item) => item.passportId), [pid(20)]);
-        assert.equal((await api(USERS.MANAGER, "GET", "/work-allocation/candidates?status=BOTH")).status, 400);
+        assert.equal((await api(USERS.OWNER, "GET", "/work-allocation/candidates?status=BOTH")).status, 400);
     });
 
     test("22. Analysts: only ACTIVE Analysts are assignable, with their current counts; inactive holders are listed apart", async () => {

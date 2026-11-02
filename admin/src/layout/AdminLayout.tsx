@@ -49,19 +49,18 @@ export function AdminLayout() {
                 <Sidebar
                     collapsed={collapsed}
                     mobileOpen={mobileOpen}
-                    onToggleCollapsed={toggleCollapsed}
                     onNavigate={() => setMobileOpen(false)}
                 />
                 {mobileOpen && (
                     <div
-                        className="fixed inset-0 z-40 bg-overlay md:hidden"
+                        className="fixed inset-0 z-40 bg-overlay backdrop-blur-xs md:hidden"
                         aria-hidden="true"
                         onClick={() => setMobileOpen(false)}
                     />
                 )}
 
                 <div className={`flex min-h-full flex-col transition-[padding] duration-200 ${collapsed ? "md:pl-sidebar-rail" : "md:pl-sidebar"}`}>
-                    <Header onOpenMenu={() => setMobileOpen(true)} menuOpen={mobileOpen} />
+                    <Header onOpenMenu={() => setMobileOpen(true)} menuOpen={mobileOpen} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
                     <main className="mx-auto w-full max-w-content flex-1 p-4 md:p-6">
                         <Breadcrumbs />
                         <Outlet />

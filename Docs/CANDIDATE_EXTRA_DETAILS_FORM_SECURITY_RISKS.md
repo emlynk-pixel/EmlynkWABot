@@ -1,5 +1,7 @@
 # Candidate Extra Details Form — Security & Data Exposure Risk Assessment
 
+> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md).
+
 **Status:** Pre-implementation security planning, updated on 2026-10-15 with the completed repository audit (static review of the route table, raw SQL, services, migrations, Vite / Vercel configuration, plus four executed read-only checks). Documentation only: nothing in this document is implemented, and no application, schema, migration or deployment file was changed.
 **Branch:** `version/candidate-extra-details-form`
 **Companion documents:** [MASTER_DATABASE_ARCHITECTURE.md](MASTER_DATABASE_ARCHITECTURE.md) (design, section 6), [README.md](../README.md).

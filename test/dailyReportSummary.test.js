@@ -26,7 +26,7 @@ const NOW = new Date("2026-10-11T06:00:00.000Z");
 
 const STAFF = {
     ADMIN: { adminId: "user-admin", authUserId: "00000000-0000-4000-8000-000000000001", name: "Ada Admin", email: "ada@example.invalid", role: "ADMIN" },
-    MANAGER: { adminId: "user-manager", authUserId: "00000000-0000-4000-8000-000000000002", name: "Max Manager", email: "max@example.invalid", role: "MANAGER" },
+    OWNER: { adminId: "user-owner", authUserId: "00000000-0000-4000-8000-000000000002", name: "Olive Owner", email: "olive@example.invalid", role: "OWNER" },
     ANALYST: { adminId: "user-analyst", authUserId: "00000000-0000-4000-8000-000000000003", name: "Ann Analyst", email: "ann@example.invalid", role: "ANALYST" },
     ANALYST2: { adminId: "user-analyst-2", authUserId: "00000000-0000-4000-8000-000000000005", name: "Bob Analyst", email: "bob@example.invalid", role: "ANALYST" },
     REGISTRATION_DESK: { adminId: "user-desk", authUserId: "00000000-0000-4000-8000-000000000004", name: "Dee Desk", email: "dee@example.invalid", role: "REGISTRATION_DESK" },
@@ -253,12 +253,12 @@ describe("Summary by Roles", () => {
 
         const desk = await getDailyRoleSummary({ db: prisma, date: DAY, role: "REGISTRATION_DESK" });
         assert.deepEqual([desk.callsTaken, desk.documentsUploaded], [1, 1]);
-        const manager = await getDailyRoleSummary({ db: prisma, date: DAY, role: "MANAGER" });
-        assert.deepEqual([manager.callsTaken, manager.documentsUploaded, manager.activity.length], [0, 0, 0]);
+        const owner = await getDailyRoleSummary({ db: prisma, date: DAY, role: "OWNER" });
+        assert.deepEqual([owner.callsTaken, owner.documentsUploaded, owner.activity.length], [0, 0, 0]);
         // Every role together: 4 calls, 3 uploads. The 3 WhatsApp files that day belong to no role.
         let calls = 0;
         let docs = 0;
-        for (const role of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+        for (const role of ["ADMIN", "OWNER", "ANALYST", "REGISTRATION_DESK"]) {
             const r = await getDailyRoleSummary({ db: prisma, date: DAY, role });
             calls += r.callsTaken;
             docs += r.documentsUploaded;
@@ -273,35 +273,34 @@ describe("Summary by Roles", () => {
 });
 
 describe("API and permissions", () => {
-    test("25-27. Summary: ADMIN, MANAGER, ANALYST (as the daily report); REGISTRATION_DESK 403", async () => {
-        for (const role of ["ADMIN", "MANAGER", "ANALYST"]) {
+    test("25-27. Summary: ADMIN and OWNER (as the daily report); ANALYST and REGISTRATION_DESK 403", async () => {
+        for (const role of ["ADMIN", "OWNER"]) {
             const { status, body } = await withApi(role, (get) => get(`/reports/daily/summary?date=${DAY}`));
             assert.equal(status, 200, role);
-            // An ANALYST sees their own candidates only (none are allocated to this one); see workAllocation.test.js.
-            assert.equal(body.summary.callsTaken, role === "ANALYST" ? 0 : 4, role);
+            assert.equal(body.summary.callsTaken, 4, role);
         }
-        assert.equal((await withApi("REGISTRATION_DESK", (get) => get(`/reports/daily/summary?date=${DAY}`))).status, 403);
+        for (const role of ["ANALYST", "REGISTRATION_DESK"]) assert.equal((await withApi(role, (get) => get(`/reports/daily/summary?date=${DAY}`))).status, 403, role);
         assert.equal((await withApi("ADMIN", (get) => get("/reports/daily/summary?date=2999-01-01"))).status, 400);
     });
 
-    test("Summary by Roles: ADMIN and MANAGER only; the role must be one of the four", async () => {
-        for (const role of ["ADMIN", "MANAGER"]) {
+    test("Summary by Roles: ADMIN only (an OWNER too); the role must be a supported one", async () => {
+        for (const role of ["ADMIN", "OWNER"]) {
             const { status, body } = await withApi(role, (get) => get(`/reports/daily/roles?date=${DAY}&role=ANALYST`));
             assert.equal(status, 200, role);
             assert.equal(body.role, "ANALYST");
         }
         for (const role of ["ANALYST", "REGISTRATION_DESK"]) assert.equal((await withApi(role, (get) => get(`/reports/daily/roles?date=${DAY}&role=ANALYST`))).status, 403, role);
-        const bad = await withApi("ADMIN", (get) => get(`/reports/daily/roles?date=${DAY}&role=VIEWER`));
-        assert.equal(bad.status, 400);
-        assert.equal(bad.body.errors[0].field, "role");
+        for (const role of ["VIEWER", "MANAGER"]) {
+            const bad = await withApi("ADMIN", (get) => get(`/reports/daily/roles?date=${DAY}&role=${role}`));
+            assert.equal(bad.status, 400, `${role}: not a supported role (MANAGER is retired)`);
+            assert.equal(bad.body.errors[0].field, "role");
+        }
     });
 
-    test("incomplete details: ADMIN, MANAGER, ANALYST; an unknown stage is 400", async () => {
-        const ok = await withApi("ANALYST", (get) => get("/reports/daily/incomplete?stage=VISA_APPROVAL"));
-        assert.equal(ok.status, 200);
-        assert.equal(ok.body.pagination.total, 0);
+    test("incomplete details: ADMIN, OWNER; ANALYST and REGISTRATION_DESK 403; an unknown stage is 400", async () => {
+        for (const role of ["ADMIN", "OWNER"]) assert.equal((await withApi(role, (get) => get("/reports/daily/incomplete?stage=VISA_APPROVAL"))).status, 200, role);
         assert.equal((await withApi("ADMIN", (get) => get("/reports/daily/incomplete?stage=NOPE"))).status, 400);
-        assert.equal((await withApi("REGISTRATION_DESK", (get) => get("/reports/daily/incomplete?stage=VISA_APPROVAL"))).status, 403);
+        for (const role of ["ANALYST", "REGISTRATION_DESK"]) assert.equal((await withApi(role, (get) => get("/reports/daily/incomplete?stage=VISA_APPROVAL"))).status, 403, role);
     });
 
     test("an empty day returns zeros and empty lists", async () => {

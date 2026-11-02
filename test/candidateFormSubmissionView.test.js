@@ -148,7 +148,7 @@ describe("Admin: Candidate Form submission", () => {
 
     test("roles and scope: staff roles read it; an Analyst only for their own candidates; unknown ids 404; the route is read only", async () => {
         await submitAs(A);
-        assert.equal((await admin(USERS.DESK, `/candidates/${A.passportId}/form-submission`)).status, 200);
+        assert.equal((await admin(USERS.DESK, `/candidates/${A.passportId}/form-submission`)).status, 403, "the Registration Desk has the registration workflow only");
         assert.equal((await admin(USERS.ANN, `/candidates/${A.passportId}/form-submission`)).status, 200);
         assert.equal((await admin(USERS.BEN, `/candidates/${A.passportId}/form-submission`)).status, 404, "not Ben's candidate");
         assert.equal((await admin(USERS.ADMIN, "/candidates/N0000000/form-submission")).status, 404);

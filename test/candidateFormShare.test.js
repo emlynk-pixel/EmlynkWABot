@@ -18,7 +18,7 @@ import { ANSWER_FIELDS } from "../src/services/candidateFormDataService.js";
 const SECRET = "test-candidate-form-secret-0123456789-abcdefghijklmnop";
 const ORIGIN = "https://candidate-form.example.test";
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4), BEN: user("u-ben", "ANALYST", 5) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4), BEN: user("u-ben", "ANALYST", 5) };
 
 // A: full records (core + additional details). P: partial (core only, some
 // blanks). E: almost empty. All have a NIC.
@@ -152,15 +152,16 @@ describe("share links (Admin)", () => {
         const second = await share(A);
         assert.equal((await verify(first, A)).status, 401, "the old link no longer works");
         assert.equal((await verify(second, A)).status, 200);
-        const revoked = await admin(USERS.MANAGER, "POST", `/candidates/${A.passportId}/form-share/revoke`);
+        const revoked = await admin(USERS.OWNER, "POST", `/candidates/${A.passportId}/form-share/revoke`);
         assert.deepEqual([revoked.status, revoked.body.state], [200, "LOCKED"]);
         assert.equal((await verify(second, A)).status, 401);
-        assert.equal((await admin(USERS.MANAGER, "POST", `/candidates/${A.passportId}/form-share/revoke`)).status, 404, "nothing left to revoke");
+        assert.equal((await admin(USERS.OWNER, "POST", `/candidates/${A.passportId}/form-share/revoke`)).status, 404, "nothing left to revoke");
         assert.deepEqual((await prisma.auditLog.findMany({ orderBy: { createdDate: "asc" } })).map((a) => a.action), ["CREATE_FORM_LINK", "CREATE_FORM_LINK", "REVOKE_FORM_LINK"]);
     });
 
-    test("roles: ADMIN, MANAGER, REGISTRATION_DESK for any candidate; an ANALYST only for their own; others 404 like a missing candidate", async () => {
-        for (const who of [USERS.ADMIN, USERS.MANAGER, USERS.DESK]) assert.equal((await admin(who, "POST", `/candidates/${P.passportId}/form-share`)).status, 201, who.role);
+    test("roles: ADMIN and OWNER for any candidate; an ANALYST only for their own; others 404 like a missing candidate; REGISTRATION_DESK none (403)", async () => {
+        for (const who of [USERS.ADMIN, USERS.OWNER]) assert.equal((await admin(who, "POST", `/candidates/${P.passportId}/form-share`)).status, 201, who.role);
+        for (const method of ["GET", "POST"]) assert.equal((await admin(USERS.DESK, method, `/candidates/${P.passportId}/form-share`)).status, 403, `desk ${method}`);
         assert.equal((await admin(USERS.ANN, "POST", `/candidates/${A.passportId}/form-share`)).status, 201, "Ann's own candidate");
         for (const path of [`/candidates/${P.passportId}/form-share`, `/candidates/${P.passportId}/form-share/revoke`]) {
             assert.equal((await admin(USERS.ANN, "POST", path)).status, 404, path);

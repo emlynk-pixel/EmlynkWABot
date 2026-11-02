@@ -25,7 +25,7 @@ const col = (field) => SHEET_COLUMNS.findIndex((c) => c.field === field);
 const AL = col("recordStatus");
 const AN = col("lastMirroredAt");
 const B = col("passportNumber");
-const C = col("firstName");
+const C = col("otherNames");
 
 const BODY = {
     passportId: "N1023757", surname: "De Soysa", otherNames: "Anusha", nic: "965404378V",
@@ -157,7 +157,7 @@ describe("scheduled and manual reconciliation", () => {
         const [item] = await queueRows();
         assert.deepEqual([item.status, item.lastResult], ["COMPLETED", "RECONCILED"]);
         const appendCall = sheet.writes().find((c) => c.method === "append");
-        assert.deepEqual([appendCall.range, appendCall.insertDataOption, appendCall.valueInputOption], [`'${TAB}'!A:CF`, "INSERT_ROWS", "RAW"]);
+        assert.deepEqual([appendCall.range, appendCall.insertDataOption, appendCall.valueInputOption], [`'${TAB}'!A:CE`, "INSERT_ROWS", "RAW"]);
         assert.ok((await state()).lastSyncSuccessAt);
     });
 
@@ -282,11 +282,11 @@ describe("failures: the database stays authoritative and unaffected", () => {
 
     test("permanent schema error: CONFIG_ERROR, no writes; the next run after the fix resumes", async () => {
         const header = [...SHEET_HEADERS];
-        header[5] = "RENAMED";
+        header[header.indexOf("BIRTH DATE")] = "RENAMED";
         const { sheet, store, worker } = setup({ header });
         const { uniqueId } = await register();
         const failed = await sync(store, worker);
-        assert.deepEqual([failed.status, failed.errorClass, failed.errorCode], ["FAILED", "SCHEMA_INVALID", "MISSING:BIRTHDAY"]);
+        assert.deepEqual([failed.status, failed.errorClass, failed.errorCode], ["FAILED", "SCHEMA_INVALID", "MISSING:BIRTH DATE"]);
         assert.deepEqual(sheet.writes(), []);
         assert.equal((await state()).integrationState, "CONFIG_ERROR");
 
@@ -394,7 +394,7 @@ describe("reconciliation and durable runs", () => {
             { updated: 1, unchanged: 1, appended: 0, markedInactive: 0 },
         );
         assert.equal(sheet.row(aRow)[C], "Anusha");
-        assert.deepEqual(sheet.writes().slice(writesBefore).map((c) => c.ranges ?? c.method), [[`'${TAB}'!A${aRow}:CF${aRow}`]], "only the drifted row is written");
+        assert.deepEqual(sheet.writes().slice(writesBefore).map((c) => c.ranges ?? c.method), [[`'${TAB}'!A${aRow}:CE${aRow}`]], "only the drifted row is written");
         assert.doesNotMatch(JSON.stringify(run), /Anusha|N1023757|Kamal/);
         assert.equal(rowFor(sheet, b.uniqueId).length, 1);
     });
@@ -521,7 +521,7 @@ describe("reconciliation and durable runs", () => {
 });
 
 describe("document columns: submission date or \"Not Submitted\"", () => {
-    const DOCUMENT_FIELDS = ["passportCopy", "policeReportSriLankaVerified", "policeReportRomania", "medical", "scan", "drivingLicence", "nationalId", "policeReportApplied", "policeReportSriLankaNormal", "policeReportFm", "videos"];
+    const DOCUMENT_FIELDS = ["passportCopy", "policeReportSriLankaVerified", "policeReportRomania", "medical", "scan", "drivingLicence", "nationalId", "policeReportApplied", "policeReportFm", "videos"];
 
     test("a scheduled run writes each document's submission date, and exactly \"Not Submitted\" where there is none", async () => {
         const { sheet, store, worker } = setup();
@@ -534,10 +534,10 @@ describe("document columns: submission date or \"Not Submitted\"", () => {
         assert.equal(row[col("passportCopy")], "2026-10-09");
         assert.equal(row[col("policeReportSriLankaVerified")], "2026-10-07");
         assert.equal(row[col("scan")], "2026-10-08");
-        for (const field of ["policeReportRomania", "medical", "nationalId", "policeReportApplied", "policeReportSriLankaNormal", "videos"]) {
+        for (const field of ["policeReportRomania", "medical", "nationalId", "policeReportApplied", "videos"]) {
             assert.equal(row[col(field)], "Not Submitted", field);
         }
-        assert.equal(row[col("drivingLicence")], "Not Submitted", "no document type exists for DRIVING LICIAN");
+        assert.equal(row[col("drivingLicence")], "Not Submitted", "no document type exists for DRIVING LICENSE");
         assert.equal(row[col("policeReportFm")], "Not Submitted", "no document type exists for POLICE REP FM");
     });
 
@@ -583,7 +583,7 @@ describe("document columns: submission date or \"Not Submitted\"", () => {
         assert.deepEqual(await prisma.document.findMany({ where: { passportId }, orderBy: { documentId: "asc" } }), documentsBefore, "\"Not Submitted\" in the Sheet deleted nothing");
     });
 
-    test("DRIVING LICIAN (R) and POLICE REP FM (W): Sheet output \"Not Submitted\" only; no database write, no new document type", async () => {
+    test("DRIVING LICENSE (S) and POLICE REP FM (X): Sheet output \"Not Submitted\" only; no database write, no new document type", async () => {
         const { sheet, store, worker } = setup();
         const { passportId, uniqueId } = await register();
         await addDocument(passportId, "PASSPORT", { receivedDate: new Date("2026-10-09T03:00:00.000Z") });
