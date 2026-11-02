@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { DailyRoleSummary, DailySummary } from "../api/admin";
 import { todayInSriLanka } from "../components/format";
-import { ADMIN, RENDER_STEP, renderApp, renderAppSignedIn, signedInBackend } from "./helpers";
+import { ADMIN, RENDER_STEP, renderApp, renderAppSignedIn, signedInBackend, expectRedirectedHome } from "./helpers";
 
 // Daily Report page: Summary and Summary by Roles. Synthetic data; the
 // backend is a stub (the figures themselves are tested in
@@ -262,12 +262,11 @@ describe("Daily Report: date", () => {
 // ---------------------------------------------------------------- Summary by Roles
 
 describe("Daily Report: Summary by Roles", () => {
-    test("25. ANALYST sees the Summary only (no role view)", async () => {
+    test("25. ANALYST has no Daily Report: taken to Candidates, nothing requested", async () => {
         const { calls } = signedInBackend({ ...asRole("ANALYST"), ...summaryRoute() });
         renderApp("/reports/daily?view=roles");
-        expect(await screen.findByText("Candidates completed", {}, RENDER_STEP)).toBeInTheDocument();
-        expect(screen.queryByRole("tab", { name: "Summary by Roles" })).toBeNull();
-        expect(requests(calls, "/api/admin/reports/daily/roles")).toEqual([]);
+        await expectRedirectedHome("ANALYST");
+        expect(requests(calls, "/api/admin/reports")).toEqual([]);
     });
 
     for (const role of ["ADMIN", "OWNER"]) {

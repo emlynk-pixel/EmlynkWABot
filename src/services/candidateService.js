@@ -807,6 +807,27 @@ export async function getCandidate({ db, passportId }) {
     };
 }
 
+// The documents the registration form (Add Candidate) collects.
+export const REGISTRATION_DOCUMENT_TYPES = Object.freeze(["PASSPORT", "NIC", "SKILL_VIDEO"]);
+
+// What the registration workflow shows of a candidate (getCandidate's shape, for the
+// Registration Desk): the candidate's details, the Candidate Details stage (its note) and the
+// registration documents. Every other stage, document, job assignment and verification is left
+// out (empty), so the passport-ID lookup reveals no more than registering needs.
+export function registrationView(details) {
+    if (!details) return details;
+    const none = (record) => Object.fromEntries(Object.keys(record).map((key) => [key, null]));
+    return {
+        jobAssignments: { current: null, active: [], history: [] },
+        verification: { details: null, documents: null },
+        candidate: details.candidate,
+        stages: details.stages.filter((stage) => stage.stage === "CANDIDATE_DETAILS"),
+        documents: Object.fromEntries(Object.entries(details.documents).map(([type, document]) => [type, REGISTRATION_DOCUMENT_TYPES.includes(type) ? document : null])),
+        variantDocuments: Object.fromEntries(Object.entries(details.variantDocuments).map(([type, stored]) => [type, { byVariant: none(stored.byVariant), untyped: null }])),
+        requiredDocuments: [],
+    };
+}
+
 // ---------------------------------------------------------------- writing
 
 const isUniqueViolation = (error) => error?.code === "P2002";

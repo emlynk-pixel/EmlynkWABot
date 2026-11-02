@@ -4,16 +4,18 @@ import { describe, expect, test } from "vitest";
 import { CANDIDATE_STAGES, type CandidateDetails } from "../api/candidates";
 import type { FollowUpList } from "../api/followUps";
 import {
-    CANDIDATE_LIST_ROLES, FOLLOW_UP_ROLES, FOLLOW_UP_VIEW_ROLES, canListCandidates, canManageCandidates, canViewCandidates, canViewFollowUps, canWorkFollowUps, landingPath, notificationSource,
+    ALL_ROLES, CANDIDATE_LIST_ROLES, FOLLOW_UP_ROLES, FOLLOW_UP_VIEW_ROLES, canListCandidates, canManageAllocations, canManageCandidates, canManageMasterData, canRegisterCandidates,
+    canViewCandidates, canViewDailyReport, canViewDashboard, canViewFollowUps, canViewJobs, canWorkFollowUps, hasRole, isAdmin, landingPath, notificationSource,
 } from "../auth/roles";
 import { NAV_ITEMS } from "../layout/navigation";
-import { RENDER_STEP, renderApp, signedInBackend, userWithRole, type FetchRoutes } from "./helpers";
+import { RENDER_STEP, renderApp, signedInBackend, userWithRole, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
 // What each narrowed role is offered: the sidebar, the landing page, the notification bell and the
 // pages it may open by URL, which must match the backend tiers (src/routes/admin.js; enforced in
 // test/roleScopeRegression.test.js). TEAM_LEAD's bell reads Need Attention, never the Review Queue;
 // REGISTRATION_DESK has the registration workflow and a read-only Need Attention; JOB_HANDLER views candidates without
-// changing them; ANALYST keeps its pages. Synthetic data; the backend is a stub.
+// changing them; ANALYST has Candidates (allocated only) and Need Attention. A page a role can't
+// open takes it to its home page, with no warning. Synthetic data; the backend is a stub.
 
 const navLinks = () => within(screen.getByRole("navigation", { name: "Main navigation" })).getAllByRole("link").map((link) => link.textContent);
 const PAGE = { page: 1, pageSize: 100, total: 0, totalPages: 1 };
@@ -74,17 +76,37 @@ describe("roles.ts: the shared permission mapping", () => {
         expect([FOLLOW_UP_VIEW_ROLES, FOLLOW_UP_ROLES]).toEqual([["ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK"], ["ADMIN", "TEAM_LEAD", "ANALYST"]]);
     });
 
-    test("the bell's source: the review queue for its roles, Need Attention for TEAM_LEAD, none otherwise", () => {
+    test("the bell's source: the review queue for ADMIN, Need Attention for TEAM_LEAD and ANALYST, none otherwise", () => {
         const source = (role: string) => notificationSource(userWithRole(role));
-        expect(["OWNER", "ADMIN", "ANALYST"].map(source)).toEqual(["review", "review", "review"]);
-        expect(source("TEAM_LEAD")).toBe("follow-ups");
+        expect(["OWNER", "ADMIN"].map(source)).toEqual(["review", "review"]);
+        expect(["TEAM_LEAD", "ANALYST"].map(source)).toEqual(["follow-ups", "follow-ups"]);
         expect(["REGISTRATION_DESK", "JOB_HANDLER", "MANAGER"].map(source)).toEqual([null, null, null]);
     });
 
-    test("landing pages", () => {
+    test("landing pages (also where a page a role can't open takes it)", () => {
         const land = (role: string) => landingPath(userWithRole(role));
-        expect([land("OWNER"), land("ADMIN"), land("ANALYST")]).toEqual([null, null, null]);
-        expect([land("TEAM_LEAD"), land("REGISTRATION_DESK"), land("JOB_HANDLER")]).toEqual(["/candidates", "/candidates/new", "/jobs"]);
+        expect([land("OWNER"), land("ADMIN")]).toEqual([null, null]);
+        expect([land("TEAM_LEAD"), land("ANALYST"), land("REGISTRATION_DESK"), land("JOB_HANDLER")]).toEqual(["/candidates", "/candidates", "/candidates/new", "/jobs"]);
+    });
+
+    test("every sidebar entry opens to exactly the roles its page guard admits (no link to an Access Restricted page, no page without its link)", () => {
+        // The page guard of each sidebar entry: App.tsx AllowRoles, or the page's own check.
+        const guards: Record<string, (user: { role: string }) => boolean> = {
+            "/": canViewDashboard, "/documents": canViewDashboard, "/missing-documents": canViewDashboard, "/review": canViewDashboard, "/police": canViewDashboard,
+            "/candidates": canListCandidates, "/candidates/new": canRegisterCandidates, "/follow-ups": canViewFollowUps,
+            "/work-allocation": canManageAllocations, "/jobs": canViewJobs, "/agents": canManageMasterData, "/client-management": canManageMasterData,
+            "/reports/daily": canViewDailyReport, "/audit-logs": isAdmin, "/settings": isAdmin,
+        };
+        expect(NAV_ITEMS.map((item) => item.to).sort()).toEqual(Object.keys(guards).sort());
+        for (const role of [...ALL_ROLES, "MANAGER"]) {
+            const user = userWithRole(role);
+            for (const item of NAV_ITEMS) {
+                const shown = hasRole(user, item.roles);
+                // Add Candidate is the Registration Desk's own entry; the other registering roles reach it from Candidates and the header.
+                if (item.to === "/candidates/new") expect(!shown || guards[item.to](user), `${role} ${item.to}`).toBe(true);
+                else expect(shown, `${role} ${item.to}`).toBe(guards[item.to](user));
+            }
+        }
     });
 
     test("every sidebar entry names its roles explicitly (never TEAM_LEAD through ADMIN)", () => {
@@ -123,7 +145,7 @@ describe("TEAM_LEAD: the notification bell without the Review Queue", () => {
                 // The landing page is Candidates, not the Overview.
                 await waitFor(() => expect(requested(calls, /^\/api\/admin\/candidates\?/)).toBe(true), RENDER_STEP);
             } else {
-                expect((await screen.findAllByText(/Access Restricted|Only administrators/, {}, RENDER_STEP)).length, path).toBeGreaterThan(0);
+                await expectRedirectedHome("TEAM_LEAD");
             }
             expect(requested(calls, /\/api\/admin\/(review|overview|documents|police|clients|users|settings|audit-logs)/), path).toBe(false);
             unmount();
@@ -157,7 +179,7 @@ describe("REGISTRATION_DESK: the registration workflow and a read-only Need Atte
         for (const path of ["/candidates", "/candidates/N0000002", "/work-allocation", "/jobs", "/agents", "/client-management", "/settings", "/audit-logs", "/reports/daily", "/review", "/documents", "/police"]) {
             const { calls } = backend("REGISTRATION_DESK");
             const { unmount } = renderApp(path);
-            expect((await screen.findAllByText(/Access Restricted|Only administrators|can't|cannot/i, {}, RENDER_STEP)).length, path).toBeGreaterThan(0);
+            await expectRedirectedHome("REGISTRATION_DESK");
             expect(requested(calls, /\/api\/admin\/(candidates|work-allocation|jobs|agents|client-management|settings|audit-logs|reports|review|documents|police)/), path).toBe(false);
             unmount();
         }
@@ -185,7 +207,7 @@ describe("JOB_HANDLER: views candidates, changes none", () => {
         for (const path of ["/follow-ups", "/candidates/new", "/work-allocation", "/reports/daily", "/review"]) {
             const { calls } = backend("JOB_HANDLER");
             const { unmount } = renderApp(path);
-            expect(await screen.findByText(/Access Restricted|Candidate registration is done by/, {}, RENDER_STEP), path).toBeInTheDocument();
+            await expectRedirectedHome("JOB_HANDLER");
             expect(requested(calls, /\/api\/admin\/(follow-ups|work-allocation|reports|review)/), path).toBe(false);
             unmount();
         }
@@ -193,14 +215,24 @@ describe("JOB_HANDLER: views candidates, changes none", () => {
 });
 
 describe("ANALYST", () => {
-    test("keeps its pages; the bell stays the (server-scoped) Review Queue; no allocation, master data or Settings", { timeout: 20_000 }, async () => {
-        const { calls } = backend("ANALYST", { "GET /api/admin/review": { status: 200, body: { items: [], summary: { total: 0 }, pagination: PAGE } } });
-        renderApp("/candidates");
-        await screen.findByRole("navigation", { name: "Main navigation" }, RENDER_STEP);
-        await waitFor(() => expect(requested(calls, /^\/api\/admin\/candidates\?/)).toBe(true), RENDER_STEP);
-        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention", "Jobs", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report"]);
-        await waitFor(() => expect(requested(calls, /^\/api\/admin\/review\?/)).toBe(true));
-        expect(screen.getByRole("button", { name: /^Notifications/ })).toBeInTheDocument();
+    test("Candidates and Need Attention only; lands on Candidates; the bell reads its own Need Attention, never the Review Queue", { timeout: 20_000 }, async () => {
+        const { calls } = backend("ANALYST");
+        renderApp("/");
+        await expectRedirectedHome("ANALYST");
+        expect(navLinks()).toEqual(["Candidates", "Need Attention"]);
+        expect(await screen.findByRole("button", { name: "Notifications (1 unread)" }, RENDER_STEP)).toBeInTheDocument();
+        expect(requested(calls, /^\/api\/admin\/follow-ups\?status=OPEN$/)).toBe(true);
+        expect(requested(calls, /\/api\/admin\/(review|overview|reports|jobs|documents|police)/)).toBe(false);
+    });
+
+    test("every other page takes it to Candidates, with no warning and no request for the page's data", { timeout: 60_000 }, async () => {
+        for (const path of ["/review", "/review/pending-1", "/documents", "/missing-documents", "/police", "/clients", "/clients/N0000002", "/reports/daily", "/jobs", "/jobs/x", "/work-allocation", "/agents", "/client-management", "/candidates/new", "/settings", "/audit-logs"]) {
+            const { calls } = backend("ANALYST");
+            const { unmount } = renderApp(path);
+            await expectRedirectedHome("ANALYST");
+            expect(requested(calls, /\/api\/admin\/(review|overview|reports|jobs|documents|police|clients|work-allocation|agents|client-management|settings|audit-logs|users)/), path).toBe(false);
+            unmount();
+        }
     });
 
     test("a candidate outside the allocation (the server answers 404) shows nothing of it", { timeout: 20_000 }, async () => {

@@ -345,24 +345,11 @@ describe("roles and the Analyst scope (JOB-015, JOB-016)", () => {
         for (const who of [USERS.ADMIN, USERS.OWNER]) assert.equal((await api(who, "GET", "/jobs")).status, 200, who.role);
     });
 
-    test("JOB-016: an Analyst sees only jobs holding their own candidates, and only those candidates", async () => {
-        const [j1, j2, j3] = [await createJob(), await createJob(), await createJob()];
+    test("JOB-016: an Analyst has no Jobs area (their own candidates' jobs included): 403", async () => {
+        const j1 = await createJob();
         await add(USERS.OWNER, j1, 1); // Ann's
-        await add(USERS.OWNER, j1, 2); // Ann's
-        await add(USERS.OWNER, j1, 4); // unallocated
-        await add(USERS.OWNER, j2, 3); // Ben's only
-        void j3; // no candidates
-        const list = await api(USERS.ANN, "GET", "/jobs");
-        assert.deepEqual(list.body.items.map((j) => [j.jobCode, j.candidateCount]), [[j1.jobCode, 2]], "the count is the Analyst's own candidates");
-        assert.deepEqual(list.body.counts, { processing: 1, completed: 0, cancelled: 0 });
-        const detail = await api(USERS.ANN, "GET", `/jobs/${j1.jobId}`);
-        assert.equal(detail.status, 200);
-        assert.deepEqual(detail.body.candidates.map((c) => c.passportId), [pid(1), pid(2)]);
-        assert.equal((await api(USERS.ANN, "GET", `/jobs/${j2.jobId}`)).status, 404, "a job of other Analysts' candidates looks nonexistent");
-        assert.equal((await api(USERS.ANN, "GET", `/jobs/${j3.jobId}`)).status, 404, "an empty job too");
-        const owner = await api(USERS.OWNER, "GET", `/jobs/${j1.jobId}`);
-        assert.equal(owner.body.candidates.length, 3);
-        assert.deepEqual((await api(USERS.BEN, "GET", "/jobs")).body.items.map((j) => j.jobCode), [j2.jobCode]);
+        for (const urlPath of ["/jobs", `/jobs/${j1.jobId}`]) assert.equal((await api(USERS.ANN, "GET", urlPath)).status, 403, urlPath);
+        assert.equal((await api(USERS.OWNER, "GET", `/jobs/${j1.jobId}`)).body.candidates.length, 1);
     });
 });
 

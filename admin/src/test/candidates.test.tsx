@@ -4,7 +4,7 @@ import { describe, expect, test, vi } from "vitest";
 import { CANDIDATE_STAGES, type CandidateDetails, type CandidateList } from "../api/candidates";
 import { FIELD_HINTS, whatsappFromLocal, whatsappLocalPart } from "../components/candidate/CandidateFields";
 import { stepTones } from "../components/candidate/CandidateStepper";
-import { ADMIN, renderApp, signedInBackend, userWithRole } from "./helpers";
+import { ADMIN, renderApp, signedInBackend, userWithRole, expectRedirectedHome } from "./helpers";
 
 // Synthetic candidates only.
 const stages = (done: boolean[]) => CANDIDATE_STAGES.map((stage, i) => ({ stage, completed: done[i] }));
@@ -2405,10 +2405,10 @@ describe("Candidate registration", { timeout: 20_000 }, () => {
         expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
     });
 
-    test("a viewer sees no registration form", async () => {
+    test("a viewer sees no registration form (no page of its own: Access Restricted)", async () => {
         signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
         renderApp("/candidates/new");
-        expect(await screen.findByText(/Candidate registration is done by the Registration Desk or an Admin/)).toBeInTheDocument();
+        expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Register candidate" })).not.toBeInTheDocument();
     });
 });
@@ -2470,7 +2470,7 @@ describe("REGISTRATION_DESK: the registration workflow, Need Attention read only
     test("the Candidates list is not theirs: blocked by URL, with no request for it", async () => {
         const { calls } = asDesk();
         renderApp("/candidates");
-        expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
+        await expectRedirectedHome("REGISTRATION_DESK");
         expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(false);
     });
 
@@ -2486,7 +2486,7 @@ describe("REGISTRATION_DESK: the registration workflow, Need Attention read only
         for (const path of ["/candidates/N0000002?stage=CANDIDATE_DETAILS", "/candidates/N0000002"]) {
             const { calls } = asDesk({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
             const { unmount } = renderApp(path);
-            expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
+            await expectRedirectedHome("REGISTRATION_DESK");
             expect(calls.some((c) => /\/api\/admin\/(candidates|follow-ups)/.test(c.path)), path).toBe(false);
             unmount();
         }

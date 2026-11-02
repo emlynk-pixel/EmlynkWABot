@@ -5,7 +5,7 @@ import {
     canAssignJobFromCandidatePage, canManageAllocations, canManageCandidates, canManageJobs, canManageMasterData, canManageUser, canRegisterCandidates, canReview, canShareJobGroupForm,
     canVerifyCandidate, canViewCandidates, canViewDailyReport, canViewDashboard, canViewJobs, canViewRoleReport, canInviteUsers, invitableRoles, isAdmin, roleLabel,
 } from "../auth/roles";
-import { RENDER_STEP, renderApp, signedInBackend, userWithRole } from "./helpers";
+import { RENDER_STEP, renderApp, signedInBackend, userWithRole, expectRedirectedHome } from "./helpers";
 
 // The TEAM_LEAD role in the admin app: exactly seven areas (not every ADMIN permission). Candidates
 // (all of them), Need Attention, Work Allocation, Jobs, Agents, Clients and the standard Daily
@@ -56,7 +56,8 @@ describe("roles.ts", () => {
     test("the other roles are unchanged", () => {
         const analyst = userWithRole("ANALYST");
         expect([canManageAllocations(analyst), canVerifyCandidate(analyst), canManageJobs(analyst), canManageMasterData(analyst)]).toEqual([false, false, false, false]);
-        expect([canViewDailyReport(analyst), canViewRoleReport(analyst), canViewDashboard(analyst)]).toEqual([true, false, true]);
+        // An Analyst works only on their allocated candidates (and Need Attention): no reports or dashboard.
+        expect([canViewDailyReport(analyst), canViewRoleReport(analyst), canViewDashboard(analyst)]).toEqual([false, false, false]);
         const desk = userWithRole("REGISTRATION_DESK");
         expect([canManageAllocations(desk), canViewJobs(desk), canViewDailyReport(desk)]).toEqual([false, false, false]);
         const handler = userWithRole("JOB_HANDLER");
@@ -83,7 +84,7 @@ describe("TEAM_LEAD in the admin app", () => {
         for (const path of ["/settings", "/settings/roles", "/settings/invite", "/settings/sheet-sync", "/settings/job-types", "/invitations", "/audit-logs", "/documents", "/review", "/police", "/missing-documents", "/clients"]) {
             const { calls } = backend();
             const { unmount } = renderApp(path);
-            expect((await screen.findAllByText(/Access Restricted|Only administrators/, {}, RENDER_STEP)).length, path).toBeGreaterThan(0);
+            await expectRedirectedHome("TEAM_LEAD");
             expect(calls.some((c) => /\/api\/admin\/(users|settings|audit-logs|documents|review|police|clients|overview)/.test(c.path)), path).toBe(false);
             unmount();
         }

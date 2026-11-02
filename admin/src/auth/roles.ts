@@ -37,10 +37,13 @@ const RETIRED_ROLE_LABELS: Record<string, string> = {
 // The label for any stored role value: a supported role, a retired one, or the raw value.
 export const roleLabel = (role: string): string => ROLE_LABELS[role as Role] ?? RETIRED_ROLE_LABELS[role] ?? role;
 
-export const DASHBOARD_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.ANALYST];
-// The Daily Report (src/routes/admin.js REPORT_READERS): the dashboard roles plus TEAM_LEAD.
-export const REPORT_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.ANALYST];
-export const REVIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.ANALYST];
+// Overview, Documents, Missing Documents, Review Queue, Police Workflow, Monthly overview
+// (src/routes/admin.js DASHBOARD_READERS): ADMIN. An ANALYST works only on the candidates
+// allocated to them: their workflow and Need Attention, nothing else.
+export const DASHBOARD_ROLES: readonly Role[] = [ROLES.ADMIN];
+// The Daily Report (src/routes/admin.js REPORT_READERS): ADMIN and TEAM_LEAD.
+export const REPORT_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD];
+export const REVIEW_ROLES: readonly Role[] = [ROLES.ADMIN];
 // The Candidates area with its changes (details, stages, documents, call logs; src/routes/admin.js
 // CANDIDATE_STAFF). Not REGISTRATION_DESK (registration only) and not JOB_HANDLER (read only).
 export const CANDIDATE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.ANALYST];
@@ -94,12 +97,11 @@ export const canDeleteFollowUps = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 export const canVerifyCandidate = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 // Work Allocation (the page and its API): ADMIN and TEAM_LEAD.
 export const canManageAllocations = (user: WithRole) => hasRole(user, ALLOCATION_ROLES);
-// The standard Daily Report (ADMIN, TEAM_LEAD, ANALYST), and its Summary by Roles view (ADMIN only).
+// The standard Daily Report (ADMIN, TEAM_LEAD), and its Summary by Roles view (ADMIN only).
 export const canViewDailyReport = (user: WithRole) => hasRole(user, REPORT_VIEW_ROLES);
 export const canViewRoleReport = (user: WithRole) => hasRole(user, ADMIN_ONLY);
-// Jobs: ADMIN, TEAM_LEAD and JOB_HANDLER manage them; an ANALYST reads the jobs holding
-// their own candidates (the server scopes the lists). REGISTRATION_DESK: no Jobs area.
-export const JOB_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.ANALYST, ROLES.JOB_HANDLER];
+// Jobs: ADMIN, TEAM_LEAD and JOB_HANDLER. No Jobs area for ANALYST or REGISTRATION_DESK.
+export const JOB_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.JOB_HANDLER];
 export const JOB_MANAGE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.JOB_HANDLER];
 // Creating a job type (the New job dialog's "Add job type"): ADMIN only, not JOB_HANDLER.
 export const canCreateJobTypes = (user: WithRole) => hasRole(user, ADMIN_ONLY);
@@ -119,15 +121,16 @@ export const MASTER_DATA_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD,
 export const canManageMasterData = (user: WithRole) => hasRole(user, MASTER_DATA_ROLES);
 // Registering a new candidate.
 export const canRegisterCandidates = (user: WithRole) => hasRole(user, REGISTRATION_ROLES);
-// What the header's notification bell reads, if anything. Review-queue roles: the review queue
-// (GET /review). TEAM_LEAD: its open Need Attention follow-ups (GET /follow-ups), never the review
-// queue, which it can't open. Every other role: no bell (REGISTRATION_DESK and JOB_HANDLER have
-// neither source).
+// What the header's notification bell reads, if anything. The review queue's role (ADMIN): the
+// review queue (GET /review). TEAM_LEAD and ANALYST: their open Need Attention follow-ups (GET
+// /follow-ups; an Analyst's are their own candidates'), never the review queue, which they can't
+// open. Every other role: no bell (REGISTRATION_DESK and JOB_HANDLER).
 export type NotificationSource = "review" | "follow-ups";
-export const FOLLOW_UP_NOTIFICATION_ROLES: readonly Role[] = [ROLES.TEAM_LEAD];
+export const FOLLOW_UP_NOTIFICATION_ROLES: readonly Role[] = [ROLES.TEAM_LEAD, ROLES.ANALYST];
 export const notificationSource = (user: WithRole): NotificationSource | null =>
     hasRole(user, REVIEW_ROLES) ? "review" : hasRole(user, FOLLOW_UP_NOTIFICATION_ROLES) ? "follow-ups" : null;
-// Where a signed-in role lands ("/"): the Overview for the dashboard roles, otherwise its own first area.
+// Where a signed-in role lands ("/"), and where a page it can't open sends it: the Overview for
+// the dashboard roles (null), otherwise its own first area.
 export const landingPath = (user: WithRole): string | null =>
     canViewDashboard(user) ? null : hasRole(user, [ROLES.JOB_HANDLER]) ? "/jobs" : hasRole(user, REGISTRATION_ENTRY_ROLES) ? "/candidates/new" : "/candidates";
 // User management and Settings (an OWNER too).

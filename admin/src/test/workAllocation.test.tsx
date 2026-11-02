@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import { CANDIDATE_STAGES, type CandidateList } from "../api/candidates";
 import type { AllocationAnalysts, AllocationCandidate, AllocationCandidateList } from "../api/workAllocation";
-import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from "./helpers";
+import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
 // Work Allocation page and the Analyst's candidate list. Synthetic candidates
 // only; the backend is a stub (the API's own rules, and the Analyst scoping,
@@ -72,7 +72,7 @@ describe("Work Allocation: who sees it", () => {
         test(`${role}: not in the sidebar; the URL shows Access Restricted and requests nothing`, async () => {
             const { calls } = backend(role);
             renderApp("/work-allocation");
-            expect(await screen.findByText("Access Restricted", {}, RENDER_STEP)).toBeInTheDocument();
+            await expectRedirectedHome(role);
             expect(screen.queryByRole("link", { name: "Work Allocation" })).toBeNull();
             expect(calls.some((c) => c.path.startsWith("/api/admin/work-allocation"))).toBe(false);
         });

@@ -179,7 +179,7 @@ describe("RBAC: editing", () => {
 });
 
 describe("41. every candidate-specific route refuses another Analyst's candidate", () => {
-    test("detail, update, stages, documents, call logs, Candidate History, follow-ups, additional details, client details: all 404", async () => {
+    test("detail, update, stages, documents, call logs, Candidate History, follow-ups, additional details: all 404", async () => {
         await seedAllocations();
         const other = pid(4); // Ben's
         const routes = [
@@ -195,7 +195,6 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
             ["POST", `/candidates/${other}/call-logs/00000000-0000-4000-8000-000000000001/follow-up`],
             ["GET", `/candidates/${other}/additional-details`],
             ["PUT", `/candidates/${other}/additional-details`, { tshirtSize: "M" }],
-            ["GET", `/clients/${other}`],
         ];
         for (const [method, path, body] of routes) {
             const response = await api(USERS.ANN, method, path, body);
@@ -207,7 +206,7 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
         assert.equal((await api(USERS.ANN, "GET", `/candidates/${pid(1)}`)).status, 200);
         assert.equal((await api(USERS.ANN, "GET", `/candidates/${pid(1)}/call-logs`)).status, 200);
         assert.equal((await api(USERS.ANN, "POST", `/candidates/${pid(1)}/call-logs`, { note: "Called", calledAt: "2026-01-02T10:00:00.000Z" })).status, 201);
-        assert.equal((await api(USERS.ANN, "GET", `/clients/${pid(1)}`)).status, 200);
+        assert.equal((await api(USERS.ANN, "GET", `/clients/${pid(1)}`)).status, 403, "client details are not the Analyst's page");
     });
 
     test("Need Attention: an ANALYST lists and completes only their own candidates' follow-ups", async () => {
@@ -228,30 +227,16 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
         assert.equal(await prisma.callLogFollowUp.count({ where: { status: "COMPLETED" } }), 1);
     });
 
-    test("candidate lists on other pages are scoped for an ANALYST: Clients, Documents, Missing Documents, Police Workflow", async () => {
+    test("an ANALYST has no other pages: Clients, client details, Documents, Missing Documents, Police Workflow are 403; ADMIN still sees everyone", async () => {
         await seedAllocations();
-        await prisma.document.createMany({
-            data: [1, 4, 20].map((i) => ({
-                documentId: `00000000-0000-4000-8000-0000000000${String(i).padStart(2, "0")}`, passportId: pid(i), documentType: "POLICE_SLIP",
-                originalFilename: "slip.pdf", storedFilename: "slip.pdf", storagePath: `clients/${pid(i)}/slip.pdf`, receivedDate: new Date("2026-01-03T00:00:00Z"),
-                processingStatus: "PROCESSED", verificationStatus: "VERIFIED",
-            })),
-        });
-        const ann = new Set([pid(1), pid(2), pid(3)]);
-        const clients = (await api(USERS.ANN, "GET", "/clients?pageSize=100")).body;
-        assert.deepEqual(new Set(clients.items.map((c) => c.client.passportId)), ann);
-        const documents = (await api(USERS.ANN, "GET", "/documents")).body;
-        assert.deepEqual(documents.items.map((d) => d.client.passportId), [pid(1)]);
-        assert.equal(documents.pagination.total, 1);
-        const missing = (await api(USERS.ANN, "GET", "/documents/missing?pageSize=100")).body;
-        assert.ok(missing.items.length > 0 && missing.items.every((c) => ann.has(c.client.passportId)), "missing documents: own candidates only");
-        const police = (await api(USERS.ANN, "GET", "/police?pageSize=100")).body;
-        assert.ok(police.items.length > 0 && police.items.every((row) => ann.has(row.client.passportId)), "police: own candidates only");
+        for (const path of ["/clients?pageSize=100", `/clients/${pid(1)}`, "/documents", "/documents/missing?pageSize=100", "/police?pageSize=100"]) {
+            assert.equal((await api(USERS.ANN, "GET", path)).status, 403, path);
+        }
         const adminPolice = (await api(USERS.ADMIN, "GET", "/police?pageSize=100")).body;
         assert.ok(adminPolice.items.some((row) => row.client.passportId === pid(20)), "ADMIN still sees everyone");
     });
 
-    test("Review Queue: an ANALYST can only link a waiting file to one of their own candidates; another one reads as not existing", async () => {
+    test("Review Queue: an ANALYST cannot link a waiting file to any candidate (403); ADMIN links any", async () => {
         await seedAllocations();
         const temporaryId = "7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
         await prisma.temporaryData.create({ data: {
@@ -259,144 +244,45 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
             pendingStoragePath: `pending/${temporaryId}.pdf`, processingStatus: "PROCESSED",
         } });
         const link = (who, passportId) => api(who, "POST", `/review/pending-${temporaryId}/assign-client`, { passportId, reason: "Matched by phone" });
-        for (const target of [pid(4), pid(20)]) {
-            const refused = await link(USERS.ANN, target);
-            assert.deepEqual([refused.status, refused.body.code], [409, "CLIENT_NOT_FOUND"], target);
-        }
+        for (const target of [pid(1), pid(4), pid(20)]) assert.equal((await link(USERS.ANN, target)).status, 403, target);
         assert.equal((await prisma.temporaryData.findUnique({ where: { temporaryId } })).passportId, null, "nothing was linked");
-        assert.equal((await link(USERS.ANN, pid(1))).status, 200, "their own candidate");
         assert.equal((await link(USERS.ADMIN, pid(20))).status, 200, "ADMIN: any candidate");
     });
 
-    test("Review Queue: an ANALYST cannot open, act on or delete another candidate's item; unlinked and own items stay open", async () => {
+    test("Review Queue: an ANALYST cannot open, act on or delete any item, their own candidate's included (403); nothing changes", async () => {
         await seedAllocations();
         const documentId = (i) => `00000000-0000-4000-8000-00000000d${String(i).padStart(3, "0")}`;
         await prisma.document.createMany({
-            data: [1, 4, 20].map((i) => ({
+            data: [1, 4].map((i) => ({
                 documentId: documentId(i), passportId: pid(i), documentType: "MEDICAL", originalFilename: "m.pdf", storedFilename: "m.pdf",
                 storagePath: `clients/${pid(i)}/m.pdf`, receivedDate: new Date("2026-01-03T00:00:00Z"), processingStatus: "PROCESSED", verificationStatus: "REVIEW_REQUIRED",
             })),
         });
-        const temporaryId = (n) => `7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a${String(n).padStart(2, "0")}`;
-        await prisma.temporaryData.createMany({
-            data: [[1, pid(4)], [2, pid(20)], [3, null]].map(([n, passportId]) => ({
-                temporaryId: temporaryId(n), passportId, whatsappNumber: "94770000099", documentType: "MEDICAL",
-                temporaryStoragePath: `temporary/${temporaryId(n)}.pdf`, pendingStoragePath: `pending/${temporaryId(n)}.pdf`, processingStatus: "PROCESSED",
-            })),
-        });
-
-        // Another Analyst's candidate (pid 4) and an unallocated one (pid 20): 404 on every route naming the item.
-        for (const reviewId of [`document-${documentId(4)}`, `document-${documentId(20)}`, `pending-${temporaryId(1)}`, `pending-${temporaryId(2)}`]) {
+        const temporaryId = "7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a03";
+        await prisma.temporaryData.create({ data: {
+            temporaryId, passportId: null, whatsappNumber: "94770000099", documentType: "MEDICAL",
+            temporaryStoragePath: `temporary/${temporaryId}.pdf`, pendingStoragePath: `pending/${temporaryId}.pdf`, processingStatus: "PROCESSED",
+        } });
+        for (const reviewId of [`document-${documentId(1)}`, `document-${documentId(4)}`, `pending-${temporaryId}`]) {
             for (const [method, path, body] of [
                 ["GET", `/review/${reviewId}`], ["GET", `/review/${reviewId}/file`],
                 ["POST", `/review/${reviewId}/approve`, {}], ["POST", `/review/${reviewId}/keep-pending`, { reason: "later" }],
                 ["POST", `/review/${reviewId}/remove`, { reason: "bad file" }],
-            ]) {
-                const refused = await api(USERS.ANN, method, path, body);
-                assert.deepEqual([refused.status, refused.body?.message], [404, "Review item not found"], `${method} ${path}`);
-            }
+            ]) assert.equal((await api(USERS.ANN, method, path, body)).status, 403, `${method} ${path}`);
         }
-        for (const n of [1, 2]) {
-            const refused = await api(USERS.ANN, "DELETE", `/temporary-documents/${temporaryId(n)}`);
-            assert.equal(refused.status, 404, `delete submission ${n}`);
-        }
-        assert.equal(await prisma.temporaryData.count({ where: { temporaryId: { in: [1, 2, 3].map(temporaryId) } } }), 3, "nothing was deleted");
-        assert.equal((await prisma.document.findUnique({ where: { documentId: documentId(4) } })).verificationStatus, "REVIEW_REQUIRED", "nothing was changed");
-        assert.equal(await prisma.auditLog.count({ where: { action: { in: ["APPROVE", "KEEP_PENDING", "REMOVE_FROM_REVIEW", "DELETE_TEMPORARY_DOCUMENT"] } } }), 0, "nothing was audited");
-
-        // Their own candidate's item and a file not linked to anyone: open, as before.
-        assert.equal((await api(USERS.ANN, "GET", `/review/document-${documentId(1)}`)).status, 200);
-        assert.equal((await api(USERS.ANN, "GET", `/review/pending-${temporaryId(3)}`)).status, 200);
-        assert.equal((await api(USERS.ANN, "POST", `/review/document-${documentId(1)}/keep-pending`, { reason: "later" })).status, 200);
-        // ADMIN, OWNER and Ben (whose candidate it is) reach it.
-        for (const who of [USERS.ADMIN, USERS.OWNER, USERS.BEN]) {
-            assert.equal((await api(who, "GET", `/review/document-${documentId(4)}`)).status, 200, who.name);
-        }
+        assert.equal((await api(USERS.ANN, "GET", "/review")).status, 403);
+        assert.equal((await api(USERS.ANN, "DELETE", `/temporary-documents/${temporaryId}`)).status, 403);
+        assert.equal(await prisma.temporaryData.count({ where: { temporaryId } }), 1, "nothing was deleted");
+        assert.equal((await prisma.document.findUnique({ where: { documentId: documentId(1) } })).verificationStatus, "REVIEW_REQUIRED", "nothing was changed");
+        for (const who of [USERS.ADMIN, USERS.OWNER]) assert.equal((await api(who, "GET", `/review/document-${documentId(4)}`)).status, 200, who.name);
     });
 
-    test("Review Queue list, Overview and Daily Report: an ANALYST only gets their own candidates (and unlinked files); ADMIN and OWNER stay global; reassignment applies next request", async () => {
+    test("Review Queue list, Overview, Daily Report and Monthly overview: 403 for an ANALYST; ADMIN and OWNER reach them", async () => {
         await seedAllocations();
-        const DAY = "2026-01-01"; // every seeded candidate registers on this Colombo day
-        const at = new Date("2026-01-01T04:00:00Z");
-        const documentId = (i) => `00000000-0000-4000-8000-00000000e${String(i).padStart(3, "0")}`;
-        await prisma.document.createMany({
-            data: [1, 4, 20].map((i) => ({
-                documentId: documentId(i), passportId: pid(i), documentType: "MEDICAL", originalFilename: "m.pdf", storedFilename: "m.pdf",
-                storagePath: `clients/${pid(i)}/m.pdf`, receivedDate: at, processingStatus: "PROCESSED", verificationStatus: "REVIEW_REQUIRED",
-            })),
-        });
-        const temporaryId = (n) => `7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3b${String(n).padStart(2, "0")}`;
-        await prisma.temporaryData.createMany({
-            // T1: Ben's candidate; T2: Ann's candidate; T3: not linked to anyone yet.
-            data: [[1, pid(4)], [2, pid(1)], [3, null]].map(([n, passportId]) => ({
-                temporaryId: temporaryId(n), passportId, whatsappNumber: "94770000099", documentType: "MEDICAL", createdDate: at,
-                temporaryStoragePath: `temporary/${temporaryId(n)}.pdf`, pendingStoragePath: `pending/${temporaryId(n)}.pdf`, processingStatus: "PROCESSED",
-            })),
-        });
-        for (const [n, i] of [[1, 1], [2, 4]]) {
-            await prisma.candidateCallLog.create({ data: { callLogId: `00000000-0000-4000-8000-00000000c${String(n).padStart(3, "0")}`, passportId: pid(i), adminId: USERS.ADMIN.adminId, note: "called", createdDate: at } });
-            await prisma.candidateStage.create({ data: { passportId: pid(i), stage: "FINALIZING_JOB", completed: true, completedAt: at } });
+        for (const path of ["/review", "/overview", "/reports/daily", "/reports/daily/summary", "/reports/daily/incomplete?stage=VISA_APPROVAL", "/reports/monthly"]) {
+            assert.equal((await api(USERS.ANN, "GET", path)).status, 403, path);
+            for (const who of [USERS.ADMIN, USERS.OWNER]) assert.equal((await api(who, "GET", path)).status, 200, `${who.name} ${path}`);
         }
-        const others = [pid(4), pid(5), pid(20)];
-        const leaks = (body) => others.filter((id) => JSON.stringify(body).includes(id));
-        const get = async (who, path) => {
-            const response = await api(who, "GET", path);
-            assert.equal(response.status, 200, `${who.name} GET ${path}`);
-            return response.body;
-        };
-
-        // ANALYST (Ann: P1-P3): own items plus the unlinked file.
-        const review = await get(USERS.ANN, "/review?pageSize=100");
-        assert.deepEqual(review.items.map((item) => item.reviewId).sort(), [`document-${documentId(1)}`, `pending-${temporaryId(2)}`, `pending-${temporaryId(3)}`].sort());
-        assert.equal(review.pagination.total, 3);
-        assert.equal(review.summary.total, 3, "the summary counts follow the same scope");
-        assert.equal((await get(USERS.ANN, `/review?passportId=${pid(4)}`)).items.length, 0, "filtering by another candidate finds nothing");
-        assert.deepEqual(leaks(review), []);
-
-        const overview = await get(USERS.ANN, "/overview");
-        assert.equal(overview.kpis.totalClients, 3);
-        assert.equal(overview.kpis.totalDocuments, 1);
-        assert.equal(overview.reviewQueue.pendingFiles, 2);
-        assert.equal(overview.reviewQueue.reviewRequiredDocuments, 1);
-        assert.deepEqual(leaks(overview), []);
-
-        const summary = await get(USERS.ANN, `/reports/daily/summary?date=${DAY}`);
-        assert.deepEqual([summary.summary.candidatesRegistered, summary.summary.callsTaken, summary.summary.candidatesCompleted], [3, 1, 1]);
-        assert.equal(summary.whatsappProcessing.received, 2);
-        assert.equal(summary.current.incomplete.totalCandidates, 3);
-        assert.deepEqual(leaks(summary), []);
-        const incomplete = await get(USERS.ANN, "/reports/daily/incomplete?stage=TEST_DETAILS&page=1");
-        assert.ok(incomplete.items.length > 0 && incomplete.items.every((row) => [pid(1), pid(2), pid(3)].includes(row.passportId)));
-        assert.equal(incomplete.pagination.total, 3);
-        const daily = await get(USERS.ANN, `/reports/daily?date=${DAY}`);
-        assert.equal(daily.daily.totalReceived, 2);
-        assert.equal(daily.current.clients.total, 3);
-        const monthly = await get(USERS.ANN, "/reports/monthly?month=2026-01");
-        assert.equal(monthly.candidatesRegistered, 3);
-        assert.equal(monthly.sources.whatsappSubmissions, 2);
-
-        // ADMIN and OWNER: global, as before.
-        for (const who of [USERS.ADMIN, USERS.OWNER]) {
-            assert.equal((await get(who, "/review?pageSize=100")).pagination.total, 6, who.name);
-            assert.equal((await get(who, "/overview")).kpis.totalClients, TOTAL, who.name);
-            const all = await get(who, `/reports/daily/summary?date=${DAY}`);
-            assert.deepEqual([all.summary.candidatesRegistered, all.summary.callsTaken, all.whatsappProcessing.received], [TOTAL, 2, 3], who.name);
-            assert.equal((await get(who, `/reports/daily?date=${DAY}`)).daily.totalReceived, 3, who.name);
-            assert.equal((await get(who, "/reports/monthly?month=2026-01")).candidatesRegistered, TOTAL, who.name);
-        }
-        // REGISTRATION_DESK: still outside these pages.
-        for (const path of ["/review", "/overview", `/reports/daily/summary?date=${DAY}`]) assert.equal((await api(USERS.DESK, "GET", path)).status, 403, path);
-
-        // Reassignment applies on the next request: P1 moves from Ann to Ben.
-        assert.equal((await assign(USERS.OWNER, [pid(1)], [{ analystId: USERS.BEN.adminId, count: 1 }], { reassign: true })).status, 200);
-        const after = await get(USERS.ANN, "/review?pageSize=100");
-        assert.deepEqual(after.items.map((item) => item.reviewId), [`pending-${temporaryId(3)}`], "only the unlinked file is left");
-        assert.equal((await get(USERS.ANN, "/overview")).kpis.totalClients, 2);
-        assert.equal((await get(USERS.ANN, `/reports/daily/summary?date=${DAY}`)).summary.candidatesRegistered, 2);
-        const annOverview = JSON.stringify(await get(USERS.ANN, "/overview"));
-        assert.ok(![pid(1), ...others].some((id) => annOverview.includes(id)), "the moved candidate is gone from the old Analyst's Overview");
-        const ben = await get(USERS.BEN, "/review?pageSize=100");
-        assert.ok(ben.items.some((item) => item.reviewId === `document-${documentId(1)}`), "the new Analyst gains the item");
     });
 
     test("26. reassignment applies on the next request: the old Analyst loses access, the new one gains it", async () => {

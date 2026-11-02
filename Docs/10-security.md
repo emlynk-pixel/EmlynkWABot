@@ -22,15 +22,16 @@ Six roles, stored in `public."user".role` and enforced by `requireRole` middlewa
 
 | Action | OWNER | ADMIN | ANALYST | REGISTRATION_DESK | JOB_HANDLER |
 |---|:---:|:---:|:---:|:---:|:---:|
-| View overview, documents, clients, review queue, police workflow, reports | ✓ | ✓ | ✓ | — | — |
+| View overview, documents, clients, review queue, police workflow, reports | ✓ | ✓ | — | — | — |
 | Candidate list and candidate page | ✓ | ✓ | ✓ (own) | — | read only |
 | Candidate registration (Add Candidate: lookup, register, registration details and Passport / NIC / Skill video) | ✓ | ✓ | — | ✓ | — |
 | Candidate changes beyond registration (stages, other documents, removing, call logs, form links) | ✓ | ✓ | ✓ (own) | — | — |
 | Need Attention: view / flag and complete | ✓ / ✓ | ✓ / ✓ | own / own | ✓ / — | — / — |
-| Review actions, corrections, candidate work | ✓ | ✓ | ✓ | — | — |
+| Review actions, corrections | ✓ | ✓ | — | — | — |
+| Candidate work (own candidates' workflow) | ✓ | ✓ | ✓ (own) | — | — |
 | Verification, confirming Candidate Form values, Work Allocation, deleting follow-ups | ✓ | ✓ | — | — | — |
 | Correct a stored police slip's date | ✓ | ✓ | — | — | — |
-| Jobs, Agents, Clients | ✓ | ✓ | jobs of own candidates (read) | — | ✓ |
+| Jobs, Agents, Clients | ✓ | ✓ | — | — | ✓ |
 | List users; Settings (Google Sheet Sync and Upload included); Audit Logs | ✓ | ✓ | — | — | — |
 | Change role / deactivate / re-invite ADMIN accounts (and accounts holding the retired MANAGER role); give the ADMIN role; invite ADMIN | ✓ | — | — | — | — |
 | Change role / deactivate / re-invite accounts below ADMIN; invite those roles | ✓ | ✓ | — | — | — |
@@ -41,7 +42,7 @@ The Registration Desk restriction (the Add Candidate registration workflow and a
 
 **Notification bell.** It reads only data the role can already open, and links only to pages it can open: the Review Queue for OWNER, ADMIN and ANALYST (scoped for the Analyst), open Need Attention follow-ups for TEAM_LEAD (which still gets 403 on `GET /review`), nothing for REGISTRATION_DESK and JOB_HANDLER. It carries no admin, security, Settings, user-management or integration alerts.
 
-**Pages in the dashboard** use the same role lists as the server (`admin/src/auth/roles.ts`): the sidebar shows a page only to its roles, and a page opened by URL by any other role shows "Access Restricted" without requesting data (`App.tsx` `AllowRoles` is an allow-list, so a role not named is refused).
+**Pages in the dashboard** use the same role lists as the server (`admin/src/auth/roles.ts`): the sidebar shows a page only to its roles, and a page opened by URL by any other role (or left from an earlier session at sign-in) takes it to its own home page, without a warning and without requesting the page's data (`App.tsx` `AllowRoles` is an allow-list, so a role not named is refused).
 
 A failed authorization check returns a generic `403`, without indicating which specific permission was missing. The route-by-route map is in `09a-admin-dashboard-api.md`.
 

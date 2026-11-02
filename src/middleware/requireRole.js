@@ -13,15 +13,16 @@
 //                      Allocation, Jobs, Agents, Clients and the standard Daily
 //                      Report; no ADMIN-only action within them, no Settings, user
 //                      management, Audit Logs, dashboards or review
-//   ANALYST            reads, review actions, corrections and candidate work;
-//                      not police-date corrections on stored documents
-//   REGISTRATION_DESK  registration: the lookup, registering, and the candidate's
-//                      page (details, stages, candidate documents, call logs);
-//                      Need Attention read only; not the Candidates list
-//   JOB_HANDLER        manages Jobs, Agents and Clients; candidates only through
-//                      the Jobs workflow (the job candidate picker, a job's own
-//                      rows), no Candidates route; no dashboards, reports, review,
-//                      Need Attention, Settings, Audit Logs or user management
+//   ANALYST            the candidates allocated to them only: their workflow (the
+//                      candidate's page and its changes) and Need Attention; no
+//                      dashboard, documents, review, police workflow, reports or jobs
+//   REGISTRATION_DESK  the registration workflow only (Add Candidate: the lookup,
+//                      registering, registration details and documents) and Need
+//                      Attention read only; no Candidates list or candidate page
+//   JOB_HANDLER        manages Jobs, Agents and Clients; reads Candidates (the list
+//                      and the candidate's page) and changes no candidate record; no
+//                      dashboards, reports, review, Need Attention, Settings, Audit
+//                      Logs or user management
 //
 // The per-route tiers are in routes/admin.js. A role outside the allowed list
 // gets 403; the body never names the role or the user. A retired role

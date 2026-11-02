@@ -34,7 +34,7 @@ The first ADMIN is created on the server with `npm run user:create` (a Supabase 
 ### Header (every page)
 
 - **Breadcrumb** with the current section.
-- **Notification Bell**: an alert bell in the top header with a badge count of unread items, sourced per role from data the role can already open (`roles.ts` `notificationSource`): OWNER, ADMIN and ANALYST see the Review Queue submissions (each opening `/admin/review/:id`); TEAM_LEAD sees its open **Need Attention** follow-ups (each opening `/admin/follow-ups`; the Review Queue is never requested and stays 403 for it); REGISTRATION_DESK and JOB_HANDLER have no bell. The dropdown has a "Mark all as read" button. Read/unread tracking is persisted in `localStorage` per staff user (`emlynk.admin.readNotifications.<userId>`).
+- **Notification Bell**: an alert bell in the top header with a badge count of unread items, sourced per role from data the role can already open (`roles.ts` `notificationSource`): OWNER and ADMIN see the Review Queue submissions (each opening `/admin/review/:id`); TEAM_LEAD and ANALYST see their open **Need Attention** follow-ups (an Analyst's are their own candidates'; each opening `/admin/follow-ups`; the Review Queue is never requested and stays 403 for them); REGISTRATION_DESK and JOB_HANDLER have no bell. The dropdown has a "Mark all as read" button. Read/unread tracking is persisted in `localStorage` per staff user (`emlynk.admin.readNotifications.<userId>`).
 - **Register Candidate** quick access (`/admin/candidates/new`): a button on every page, left of Sync, for the roles that can register candidates (ADMIN, TEAM_LEAD, REGISTRATION_DESK). It is the same registration form the Candidates page's *Add candidate* button opens; no other role sees it. On small screens it shows the icon only.
 - **Sync** reloads the data on the current page from the server. Your filters, search and page are kept. While it runs the button shows *Syncing…* and can't be pressed again; afterwards the header shows *Synced HH:MM:SS* or *Sync failed*. Sync only reloads the page's data. It does not talk to WhatsApp or any other system.
 - **Dark mode** toggle (moon / sun icon). The choice is remembered in this browser. Light mode is the default. See *Light and dark theme* below for how the colours work.
@@ -133,10 +133,10 @@ The Daily Report (`/admin/reports/daily`) provides operational transparency into
 
 Daily Report access is strictly enforced by the backend (`requireRole` middleware) and reflected in the user interface:
 
-- **Summary View (`GET /api/admin/reports/daily/summary`)**: Accessible to `ADMIN` (and `OWNER`), `TEAM_LEAD` and `ANALYST`. This is the standard Daily Report.
+- **Summary View (`GET /api/admin/reports/daily/summary`)**: Accessible to `ADMIN` (and `OWNER`) and `TEAM_LEAD`. This is the standard Daily Report.
 - **Summary by Roles View (`GET /api/admin/reports/daily/roles`)**: Accessible to `ADMIN` (and `OWNER`) only. Other roles, `TEAM_LEAD` included, receive `403 { message: "Insufficient permissions" }` from the server, and the UI hides the tab.
 - **`REGISTRATION_DESK`**: Has **NO access** to the Daily Report. Direct API requests fail closed with `403`, and no navigation link is rendered in the dashboard.
-- Legacy endpoint `GET /api/admin/reports/daily` remains available for backwards compatibility (`ADMIN`, `TEAM_LEAD`, `ANALYST`).
+- Legacy endpoint `GET /api/admin/reports/daily` remains available for backwards compatibility (`ADMIN`, `TEAM_LEAD`).
 - **`JOB_HANDLER`**: no access (403, no navigation link).
 
 #### Date Navigation & Reporting Window
@@ -410,9 +410,9 @@ Assigns candidates to Analysts. In the sidebar after Need Attention, accessible 
   - **Audit Logging:** Every allocated candidate generates an append-only `ASSIGN_CANDIDATE` audit log entry recording the performing actor, candidate passport ID, and assigned Analyst.
 - **Reassign:** When the selection includes already-allocated candidates, the panel switches to *Reassign N candidates*, requiring confirmation and displaying a list of current Analyst assignments before execution.
 - **Unassign:** *Unassign N* prompts for confirmation and returns allocated candidates to the Unallocated pool (`DELETE` from `candidate_allocation`, logged as `UNASSIGN`).
-- **Analyst Scoped Visibility:** Once allocated, an Analyst sees only their assigned candidates across Candidates, Need Attention, Clients, Documents, Missing Documents, and Police Workflow. Accessing an unassigned candidate URL returns `404 Candidate not found`. Analysts cannot register new candidates (as new registrations start unallocated).
+- **Analyst Scoped Visibility:** Once allocated, an Analyst sees only their assigned candidates, in Candidates and Need Attention (their only two pages; see `ROLES_AND_PERMISSIONS.md`). Accessing an unassigned candidate URL returns `404 Candidate not found`. Analysts cannot register new candidates (as new registrations start unallocated).
 
-### Job Management (`/admin/jobs`) — ADMIN, TEAM_LEAD, JOB_HANDLER (ANALYST Read Scoped)
+### Job Management (`/admin/jobs`) — ADMIN, TEAM_LEAD, JOB_HANDLER
 
 Centralized management for recruitment demand orders (Jobs) placed by employer Clients, and the assignment of candidates to those jobs (`/admin/jobs`).
 
@@ -454,7 +454,7 @@ Centralized management for recruitment demand orders (Jobs) placed by employer C
   - `ADMIN`: Full management (create, update, complete, cancel, assign/release candidates, manage Job Types).
   - `TEAM_LEAD`: the same job management as `JOB_HANDLER` (create, update, complete, cancel, assign / release candidates on the Job's page), on every candidate; without Job Types, adding a Job Type from the New Job dialog, the job-group Candidate Form link, or **Assign to Job** on the candidate's page (those are ADMIN only).
   - `JOB_HANDLER`: the same job management, without Job Types or the job-group Candidate Form link.
-  - `ANALYST`: Scoped read-only access. Analysts can only view Jobs that hold candidates allocated to them, and can only see their own candidates within those jobs. Accessing other jobs returns `404 Not Found`.
+  - `ANALYST`: no Jobs area (403).
   - `REGISTRATION_DESK`: No access to Jobs (routes return 403, hidden from navigation).
 
 #### Job Management enhancements (2026-10-21)
@@ -468,7 +468,6 @@ Added on top of the Job Management rules above; nothing above was removed or cha
 - **Flexible vacancies.** The vacancy count never limits assignment. A job with 20 vacancies accepts the 21st, 22nd, … candidate, through Add to job and through New job alike, and the count is shown as it is (**23 / 20**), never capped.
   - **Filled** is derived, never stored: assigned candidates ≥ vacancies (a job without vacancies is never Filled). 19 / 20 is not Filled; 20 / 20 and 23 / 20 are. It is shown as a green **Filled** badge next to the count (Jobs list, Job Details).
   - Filled is **not** a job status. The job stays `PROCESSING` until someone completes it, because `COMPLETED` releases every candidate and would stop further assignment. The vacancy target itself is never rewritten.
-  - For an Analyst, Filled is measured on every candidate of the job, while they still see only their own candidates.
 - **To Country / From Country** (replace the single Country field; the Jobs list shows both as country names).
   - **To Country** is the selected Client's country (its responsible Agent's country, copied into the existing `job.country_code` when the job is created). It is read-only: the form shows it and follows a change of Client, and the API refuses `countryCode` on create and update. It is a creation-time snapshot, so existing jobs keep the country they were created with.
   - **From Country** is the new nullable `job.from_country_code` (ISO 3166-1 alpha-2, validated against the server's country list). It defaults to **Romania (RO)** for a new job, can be changed in the form, and can be edited on a PROCESSING job from Job Details (**Change**). Jobs created before the column existed show **Not recorded**; nothing is back-filled or guessed.
@@ -944,7 +943,7 @@ All application endpoints enforce server-side role validation via `requireRole` 
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | **Agent Management** (`/agents`, `/api/admin/agents`) | Full | Full | Full | None (403) | None (403) | Full |
 | **Client Management** (`/client-management`, `/api/admin/client-management`) | Full | Full | Full | None (403) | None (403) | Full |
-| **Job Management** (`/jobs`, `/api/admin/jobs`) | Full | Full | Full (no Job Types, no job-group link) | Read-Only (Scoped to allocated candidates) | None (403) | Full |
+| **Job Management** (`/jobs`, `/api/admin/jobs`) | Full | Full | Full (no Job Types, no job-group link) | None (403) | None (403) | Full |
 | **Work Allocation** (`/work-allocation`, `/api/admin/work-allocation/*`) | Full | Full | Full | None (403) | None (403) | None (403) |
 | **Candidate Registration** (`/candidates/new`, `POST /candidates`) | Yes | Yes | Yes | No (Unallocated by default) | Yes | No (403) |
 | **Candidates list** (`/candidates`, `GET /candidates`) | Full | Full | Full, every candidate | Scoped (Allocated candidates only) | None (403; Add Candidate only) | Read-Only |
@@ -952,11 +951,11 @@ All application endpoints enforce server-side role validation via `requireRole` 
 | **Candidate Documents** (Upload & Removal) | Yes | Yes | Yes | Yes (Allocated candidates only) | Upload / Replace of Passport, NIC, Skill video in Add Candidate only (no Removal) | No (403) |
 | **Verify details / documents; confirm or reject form values** | Yes | Yes | No (403) | No (403) | No (403) | No (403) |
 | **Call Logs & Need Attention** (`/follow-ups`) | Full (Delete open) | Full (Delete open) | Flag & Complete, every candidate (no Delete) | Scoped (Flag & Complete) | Need Attention view only; no call logs | Reads call logs; no Need Attention (403) |
-| **Notification bell** | Review Queue | Review Queue | Need Attention (open follow-ups) | Review Queue (scoped) | None | None |
-| **Review Queue** (`/review`) | Full | Full | None (403) | Full | None (403) | None (403) |
-| **Overview, Documents, Missing Documents, Police Workflow, Monthly overview** | Yes | Yes | None (403) | Yes | None (403) | None (403) |
+| **Notification bell** | Review Queue | Review Queue | Need Attention (open follow-ups) | Need Attention (own) | None | None |
+| **Review Queue** (`/review`) | Full | Full | None (403) | None (403) | None (403) | None (403) |
+| **Overview, Documents, Missing Documents, Police Workflow, Monthly overview** | Yes | Yes | None (403) | None (403) | None (403) | None (403) |
 | **Police Slip Date Correction** | Yes | Yes | No (403) | No (403) | No (403) | No (403) |
-| **Daily Report (Summary View)** | Yes | Yes | Yes | Yes | None (403) | None (403) |
+| **Daily Report (Summary View)** | Yes | Yes | Yes | None (403) | None (403) | None (403) |
 | **Daily Report (Summary by Roles)** | Yes | Yes | None (403) | None (403) | None (403) | None (403) |
 | **Audit Logs** (`/audit-logs`) | Full (View Only) | Full (View Only) | None (403) | None (403) | None (403) | None (403) |
 | **Settings (User Roles, Invites, Sheet Sync, Upload, Job Types)** | Full (also manages Admin accounts) | Full (accounts and roles below Admin only, Team Lead included) | None (403) | None (403) | None (403) | None (403) |

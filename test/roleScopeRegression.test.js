@@ -1,6 +1,6 @@
 // Candidate scope and the narrowed operational roles, end to end (Docs/ROLES_AND_PERMISSIONS.md):
 //   ANALYST            only the candidates allocated to them: list, search, paging, filters, the
-//                      candidate page and everything under it, Need Attention, jobs and counts.
+//                      candidate page and everything under it, and Need Attention; nothing else.
 //   TEAM_LEAD          every candidate; Need Attention is its notification source (never the review queue).
 //   JOB_HANDLER        views candidates (the list, the candidate's page and what it reads), changes none.
 //   REGISTRATION_DESK  the registration workflow (lookup, register, registration details and documents)
@@ -73,7 +73,7 @@ beforeEach(async () => {
         DELETE FROM "rate_limits"; DELETE FROM "job_candidate"; DELETE FROM "job"; DELETE FROM "job_code_counter";
         DELETE FROM "agent_client"; DELETE FROM "client"; DELETE FROM "agent";
         DELETE FROM "call_log_follow_up"; DELETE FROM "candidate_call_logs"; DELETE FROM "candidate_allocation";
-        DELETE FROM "candidate_stages"; DELETE FROM "candidate";
+        DELETE FROM "documents"; DELETE FROM "candidate_stages"; DELETE FROM "candidate";
     `);
     for (const [passportId, uniqueId, firstName, otherName, nic, analyst] of CANDIDATES) {
         await prisma.candidate.create({ data: { passportId, uniqueId, firstName, otherName, nic } });
@@ -162,22 +162,54 @@ describe("ANALYST: only the candidates allocated to them", () => {
         assert.equal((await prisma.callLogFollowUp.findUnique({ where: { followUpId: other } })).status, "OPEN");
     });
 
-    test("jobs show only their candidates, and a job holding none of them is not found", async () => {
+    test("no Jobs area, not even for a job holding their own candidate (403)", async () => {
         const shared = ok(await api(USERS.ADMIN, "POST", "/jobs", { jobTypeId: ids.jobType, clientId: ids.client, candidateIds: [C1, C3] }), 201);
-        const foreign = ok(await api(USERS.ADMIN, "POST", "/jobs", { jobTypeId: ids.jobType, clientId: ids.client, candidateIds: [C3] }), 201);
-        assert.deepEqual(ok(await api(A, "GET", `/jobs/${shared.jobId}`)).candidates.map((c) => c.passportId), [C1]);
-        const jobs = ok(await api(A, "GET", "/jobs?view=all"));
-        assert.deepEqual(jobs.items.map((j) => [j.jobId, j.candidateCount]), [[shared.jobId, 1]]);
-        notFound(await api(A, "GET", `/jobs/${foreign.jobId}`), "a job holding only another Analyst's candidate");
+        for (const path of ["/jobs?view=all", `/jobs/${shared.jobId}`]) forbidden(await api(A, "GET", path), path);
     });
 
-    test("candidate counts and shared selectors stay inside the allocation (or are refused)", async () => {
-        // Every fixture candidate has Candidate Details open (no WhatsApp number, no passport dates).
-        const incomplete = (who) => api(who, "GET", "/reports/daily/incomplete?stage=CANDIDATE_DETAILS");
-        const own = ok(await incomplete(A));
-        assert.deepEqual([passports(own), own.pagination.total], [[C1, C2], 2]);
-        assert.equal(ok(await incomplete(USERS.ADMIN)).pagination.total, CANDIDATES.length);
-        for (const path of ["/work-allocation/candidates", "/job-candidate-options"]) forbidden(await api(A, "GET", path), path);
+    test("no reports, dashboard, documents, review queue, police workflow or shared selectors (403)", async () => {
+        for (const path of ["/reports/daily/incomplete?stage=CANDIDATE_DETAILS", "/reports/daily/summary", "/reports/monthly", "/overview", "/documents", "/documents/missing", "/clients", `/clients/${C1}`, "/review", "/police", "/work-allocation/candidates", "/job-candidate-options"]) {
+            forbidden(await api(A, "GET", path), path);
+        }
+        assert.equal(ok(await api(USERS.ADMIN, "GET", "/reports/daily/incomplete?stage=CANDIDATE_DETAILS")).pagination.total, CANDIDATES.length);
+    });
+});
+
+describe("ANALYST: no review queue, police slip dates stay ADMIN only", () => {
+    // A police slip of Candidate 1 (Analyst A's) waiting for review: undated, or with the date OCR read.
+    const slip = (n, policeSubmittedDate = null) => prisma.document.create({ data: {
+        documentId: `${n}${n}${n}${n}${n}${n}${n}${n}-0000-4000-8000-00000000000${n}`, passportId: C1, documentType: "POLICE_SLIP", originalFilename: "slip.pdf", storedFilename: "slip.pdf",
+        storagePath: `clients/${C1}/police-slip/slip${n}.pdf`, mimeType: "application/pdf", fileSize: 10n, receivedDate: new Date("2026-09-10T03:00:00Z"),
+        processingStatus: "STORED", verificationStatus: "REVIEW_REQUIRED", fileSha256: String(n).repeat(64), policeSubmittedDate,
+    } });
+    const approve = (who, documentId, body) => api(who, "POST", `/review/document-${documentId}/approve`, body);
+
+    test("an Analyst cannot approve a slip at all, with or without a date (403); nothing changes; an Admin enters the date", async () => {
+        const undated = await slip(1);
+        for (const body of [{ policeSubmittedDate: "2026-09-02" }, {}]) forbidden(await approve(A, undated.documentId, body), JSON.stringify(body));
+        const row = await prisma.document.findUnique({ where: { documentId: undated.documentId } });
+        assert.deepEqual([row.verificationStatus, row.policeSubmittedDate], ["REVIEW_REQUIRED", null]);
+        assert.equal(await prisma.auditLog.count(), 0);
+
+        ok(await approve(USERS.ADMIN, undated.documentId, { policeSubmittedDate: "2026-09-02" }));
+        assert.equal((await prisma.document.findUnique({ where: { documentId: undated.documentId } })).verificationStatus, "VERIFIED");
+    });
+
+    test("a slip whose date OCR read: an Admin confirms it by sending no date; a different date is refused", async () => {
+        const dated = await slip(2, new Date("2026-09-05T00:00:00Z"));
+        forbidden(await approve(A, dated.documentId, {}), "an Analyst approving");
+        assert.equal((await approve(USERS.ADMIN, dated.documentId, { policeSubmittedDate: "2026-09-06" })).body.code, "POLICE_DATE_ALREADY_SET");
+        ok(await approve(USERS.ADMIN, dated.documentId, {}));
+        const row = await prisma.document.findUnique({ where: { documentId: dated.documentId } });
+        assert.equal(row.verificationStatus, "VERIFIED");
+        assert.equal(row.policeSubmittedDate.toISOString().slice(0, 10), "2026-09-05");
+    });
+
+    test("replacing a verified document, and correcting a stored date, are refused to an Analyst too", async () => {
+        forbidden(await api(A, "POST", "/review/pending-11111111-1111-4111-8111-111111111111/replace-verified", { documentId: "22222222-2222-4222-8222-222222222222", policeSubmittedDate: "2026-09-02" }), "replace-verified");
+        const stored = await slip(3, new Date("2026-09-05T00:00:00Z"));
+        forbidden(await api(A, "POST", `/documents/${stored.documentId}/police-date`, { policeSubmittedDate: "2026-09-06", reason: "x" }), "correct the date");
+        assert.equal((await prisma.document.findUnique({ where: { documentId: stored.documentId } })).policeSubmittedDate.toISOString().slice(0, 10), "2026-09-05");
     });
 });
 
@@ -247,6 +279,26 @@ describe("REGISTRATION_DESK: the registration workflow, and Need Attention read 
         assert.equal(ok(await api(RD, "GET", `/candidates/${NEW}`)).candidate.passportId, NEW, "the lookup finds an existing candidate");
         ok(await api(RD, "PUT", `/candidates/${NEW}`, { surname: "Silva", otherNames: "Saman Kumara", nic: "199012349999", jobTypes: ["Welder"], jobExperience: "3 years", passportIssueDate: "2020-01-01", passportExpiryDate: "2030-01-01" }));
         ok(await api(RD, "PUT", `/candidates/${NEW}/stages/CANDIDATE_DETAILS`, { notes: "Walk-in" }));
+    });
+
+    test("the lookup shows only what registration needs: details, the Candidate Details note, the registration documents", async () => {
+        const job = ok(await api(USERS.ADMIN, "POST", "/jobs", { jobTypeId: ids.jobType, clientId: ids.client, candidateIds: [C1] }), 201);
+        ok(await api(USERS.ADMIN, "PUT", `/candidates/${C1}/stages/IVS_INTERVIEW`, { completed: true, notes: "Interview booked" }));
+        const full = ok(await api(USERS.ADMIN, "GET", `/candidates/${C1}`));
+        assert.ok(full.stages.length > 1 && full.jobAssignments.active.some((a) => a.jobId === job.jobId), "ADMIN sees everything");
+        assert.ok(ok(await api(USERS.JOB_HANDLER, "GET", `/candidates/${C1}`)).stages.length > 1, "JOB_HANDLER reads the whole page");
+
+        const seen = ok(await api(USERS.REGISTRATION_DESK, "GET", `/candidates/${C1}`));
+        assert.equal(seen.candidate.passportId, C1);
+        assert.deepEqual(seen.stages.map((stage) => stage.stage), ["CANDIDATE_DETAILS"]);
+        assert.deepEqual(seen.jobAssignments, { current: null, active: [], history: [] });
+        assert.deepEqual(seen.verification, { details: null, documents: null });
+        assert.deepEqual(Object.entries(seen.documents).filter(([, document]) => document !== null).map(([type]) => type).filter((type) => !["PASSPORT", "NIC", "SKILL_VIDEO"].includes(type)), []);
+        assert.ok(!JSON.stringify(seen).includes("Interview booked"), "no other stage's note");
+        // The same view after a save.
+        const saved = ok(await api(USERS.REGISTRATION_DESK, "PUT", `/candidates/${C1}/stages/CANDIDATE_DETAILS`, { notes: "Walk-in" }));
+        assert.deepEqual(saved.stages.map((stage) => stage.stage), ["CANDIDATE_DETAILS"]);
+        assert.deepEqual(saved.jobAssignments.active, []);
     });
 
     test("uploads only the registration documents (passport, NIC, skill video)", async () => {

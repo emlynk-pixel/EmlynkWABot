@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import { CANDIDATE_STAGES, type CandidateDetails, type CandidateList } from "../api/candidates";
 import type { JobList, JobOptions, JobTypeList } from "../api/jobs";
-import { ADMIN, JOB_TYPE_CHOICES, RENDER_STEP, renderApp, signedInBackend } from "./helpers";
+import { ADMIN, JOB_TYPE_CHOICES, RENDER_STEP, renderApp, signedInBackend, expectRedirectedHome } from "./helpers";
 
 // Settings > Job Types, the dynamic job type pickers and "No Preferred Type"
 // (JOB-TYPE-*, DYNAMIC-JOB-TYPE-* on screen). Synthetic data; the backend is a stub.
@@ -71,7 +71,7 @@ describe("Settings > Job Types", () => {
         for (const role of ["ANALYST", "JOB_HANDLER"]) {
             const { calls } = signedInBackend({ ...asRole(role), "GET /api/admin/job-types": { status: 200, body: LIST } });
             const view = renderApp("/settings/job-types");
-            expect(await screen.findByText("Access Restricted", undefined, RENDER_STEP)).toBeInTheDocument();
+            await expectRedirectedHome(role);
             expect(calls.some((c) => c.path === "/api/admin/job-types")).toBe(false);
             view.unmount();
         }

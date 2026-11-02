@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ImportPreview } from "../api/candidateImport";
 import { UPDATE_SHEET_HINT } from "../pages/SettingsPage";
-import { RENDER_STEP, renderApp, signedInBackend, userWithRole, type FetchRoutes } from "./helpers";
+import { RENDER_STEP, renderApp, signedInBackend, userWithRole, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
 // Settings -> Google Sheet Sync -> Upload. SYNTHETIC rows only; the backend is stubbed.
 // The binary .xlsx read (read-excel-file) is replaced in the dialog flow; the column extraction
@@ -58,7 +58,7 @@ describe("Upload button and roles", () => {
         test(`4/5. ${role}: no Upload, no Settings data`, async () => {
             const { calls } = asRole(role);
             renderApp("/settings/sheet-sync");
-            expect(await screen.findByRole("heading", { name: "Access Restricted" }, RENDER_STEP)).toBeInTheDocument();
+            await expectRedirectedHome(role);
             expect(screen.queryByRole("button", { name: "Upload" })).toBeNull();
             expect(calls.some((c) => c.path.startsWith(BASE))).toBe(false);
         });

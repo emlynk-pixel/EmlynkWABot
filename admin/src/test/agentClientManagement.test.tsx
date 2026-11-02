@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import type { AgentDetails, AgentList, AgentListItem } from "../api/agents";
 import type { ClientDetails, ClientList, ClientListItem } from "../api/clientManagement";
-import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from "./helpers";
+import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
 const asRole = (role: string) => ({ "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role } } } });
 const AGENT_ID = "00000000-0000-4000-8000-0000000000a1";
@@ -57,20 +57,20 @@ describe("navigation and roles", () => {
         }
     });
 
-    test.each(["ANALYST", "REGISTRATION_DESK"])("%s has neither entry and, by URL, gets a restricted page with no API call", async (role) => {
+    test.each(["ANALYST", "REGISTRATION_DESK"])("%s has neither entry and, by URL, is taken to its home page with no API call", async (role) => {
         const { calls } = backend(role);
         renderApp("/agents");
         await screen.findByTestId("admin-name", {}, RENDER_STEP);
         expect(screen.queryByRole("link", { name: "Agents" })).not.toBeInTheDocument();
         expect(screen.queryByRole("link", { name: "Client Management" })).not.toBeInTheDocument();
-        expect(await screen.findByText("Access Restricted", {}, RENDER_STEP)).toBeInTheDocument();
+        await expectRedirectedHome(role);
         expect(calls.some((c) => c.path.startsWith("/api/admin/agents"))).toBe(false);
     });
 
-    test.each(["ANALYST", "REGISTRATION_DESK"])("%s opening /client-management gets a restricted page with no API call", async (role) => {
+    test.each(["ANALYST", "REGISTRATION_DESK"])("%s opening /client-management is taken to its home page with no API call", async (role) => {
         const { calls } = backend(role);
         renderApp("/client-management");
-        expect(await screen.findByText("Access Restricted", {}, RENDER_STEP)).toBeInTheDocument();
+        await expectRedirectedHome(role);
         expect(calls.some((c) => c.path.startsWith("/api/admin/client-management"))).toBe(false);
     });
 

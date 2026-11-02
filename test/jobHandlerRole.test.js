@@ -284,12 +284,13 @@ describe("restricted areas (JOB-HANDLER-SETTINGS-001, JOB-HANDLER-ADMIN-001)", (
 // Every /api/admin route with its tier (routes/admin.js; the routes of the retired MANAGER tier
 // are ADMIN only). Each role must get exactly this access; JOB_HANDLER gets its own column.
 const T = {
-    ALL_ACTIVE: ["ADMIN", "ANALYST"],
+    // The dashboard, review and reports: ADMIN (an ANALYST works only on their candidates).
+    ALL_ACTIVE: ["ADMIN"],
     // The Candidates area: not REGISTRATION_DESK (the registration workflow only).
     CANDIDATE_STAFF: ["ADMIN", "ANALYST"],
     // The routes the Add Candidate form uses: REGISTRATION_DESK too (an empty body is a 400).
     REGISTRATION_WORKFLOW: ["ADMIN", "ANALYST", "REGISTRATION_DESK"],
-    ANALYSTS_UP: ["ADMIN", "ANALYST"],
+    ANALYSTS_UP: ["ADMIN"],
     ADMINS_ONLY: ["ADMIN"],
     REGISTRATION_STAFF: ["ADMIN", "REGISTRATION_DESK"],
 };

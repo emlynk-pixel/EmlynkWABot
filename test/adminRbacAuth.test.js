@@ -35,10 +35,11 @@ const admits = (allowed, role) => allowed.includes(role) || (role === "OWNER" &&
 
 // [method, path, body, roles allowed]
 const MATRIX = [
-    ["GET", "/overview", undefined, ["ADMIN", "ANALYST"]],
-    ["GET", "/documents", undefined, ["ADMIN", "ANALYST"]],
-    // The Daily Report: the dashboard roles plus TEAM_LEAD.
-    ["GET", "/reports/daily", undefined, ["ADMIN", "TEAM_LEAD", "ANALYST"]],
+    // The dashboard, documents and review queue: ADMIN (an ANALYST works only on their candidates).
+    ["GET", "/overview", undefined, ["ADMIN"]],
+    ["GET", "/documents", undefined, ["ADMIN"]],
+    // The Daily Report: ADMIN and TEAM_LEAD.
+    ["GET", "/reports/daily", undefined, ["ADMIN", "TEAM_LEAD"]],
     ["GET", "/candidates", undefined, CANDIDATE_READERS],
     // The job candidate picker: the job managers.
     ["GET", "/job-candidate-options", undefined, ["ADMIN", "TEAM_LEAD", "JOB_HANDLER"]],
@@ -63,8 +64,8 @@ const MATRIX = [
     ["DELETE", "/follow-ups/11111111-1111-4111-8111-111111111111", undefined, ["ADMIN"]],
     ["GET", "/candidates/N1023757/additional-details", undefined, CANDIDATE_READERS],
     ["PUT", "/candidates/N1023757/additional-details", {}, CANDIDATE_STAFF],
-    ["GET", "/review", undefined, ["ADMIN", "ANALYST"]],
-    ["POST", "/review/pending-11111111-1111-4111-8111-111111111111/keep-pending", {}, ["ADMIN", "ANALYST"]],
+    ["GET", "/review", undefined, ["ADMIN"]],
+    ["POST", "/review/pending-11111111-1111-4111-8111-111111111111/keep-pending", {}, ["ADMIN"]],
     ["POST", `/documents/${DOCUMENT_ID}/police-date`, {}, ["ADMIN"]],
     ["GET", "/users", undefined, ["ADMIN"]],
     ["POST", "/users/invite", {}, ["ADMIN"]],
@@ -173,7 +174,7 @@ describe("role matrix (backend is the boundary)", () => {
     test("a role change in the database applies to the very next request", async () => {
         const row = fixture.adminRows.find((r) => r.adminId === "user-REGISTRATION_DESK-ACTIVE");
         assert.equal((await call("GET", "/overview", row.adminId)).status, 403);
-        row.role = "ANALYST";
+        row.role = "ADMIN";
         assert.equal((await call("GET", "/overview", row.adminId)).status, 200);
         row.role = "REGISTRATION_DESK";
         assert.equal((await call("GET", "/overview", row.adminId)).status, 403);

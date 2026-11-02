@@ -23,7 +23,7 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/follow-ups", label: "Need Attention", icon: "flag", roles: FOLLOW_UP_VIEW_ROLES },
     // Assigning candidates to Analysts (ADMIN and TEAM_LEAD).
     { to: "/work-allocation", label: "Work Allocation", icon: "assignment_ind", roles: ALLOCATION_ROLES },
-    // Jobs and the candidates assigned to them (ADMIN, TEAM_LEAD and JOB_HANDLER manage; ANALYST reads their own).
+    // Jobs and the candidates assigned to them (ADMIN, TEAM_LEAD and JOB_HANDLER).
     { to: "/jobs", label: "Jobs", icon: "work", roles: JOB_VIEW_ROLES },
     // The recruiting partners and the employer clients they manage (ADMIN, TEAM_LEAD, JOB_HANDLER). The
     // technical route is /client-management: /clients is the candidate-documents area.
@@ -33,7 +33,7 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/missing-documents", label: "Missing Documents", icon: "assignment_late", roles: DASHBOARD_ROLES },
     { to: "/review", label: "Review Queue", icon: "fact_check", roles: DASHBOARD_ROLES },
     { to: "/police", label: "Police Workflow", icon: "local_police", roles: DASHBOARD_ROLES },
-    // The dashboard roles plus TEAM_LEAD.
+    // ADMIN and TEAM_LEAD.
     { to: "/reports/daily", label: "Daily Report", icon: "summarize", roles: REPORT_VIEW_ROLES },
     { to: "/audit-logs", label: "Audit Logs", icon: "history", roles: ADMIN_ONLY, group: "Configuration" },
     { to: "/settings", label: "Settings", icon: "settings", roles: ADMIN_ONLY, group: "Configuration" },

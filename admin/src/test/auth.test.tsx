@@ -225,9 +225,9 @@ describe("dashboard shell", () => {
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });
 
-    test("ANALYST: the dashboard sections and Jobs; no user management, Settings, Agents, Client Management or Work Allocation", async () => {
+    test("ANALYST: Candidates (their allocated ones) and Need Attention only", async () => {
         await signedIn("/", userWithRole("ANALYST"));
-        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention", "Jobs", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report"]);
+        expect(navLinks()).toEqual(["Candidates", "Need Attention"]);
     });
 
     test("REGISTRATION_DESK: Add Candidate and Need Attention only, and lands on Add Candidate instead of the Overview", async () => {

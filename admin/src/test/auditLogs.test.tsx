@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import type { AuditLogItem, AuditLogList } from "../api/admin";
-import { ADMIN, OVERVIEW, RENDER_STEP, SESSION_TOKEN, fakeAuth, renderApp, stubBackend, type FetchRoutes } from "./helpers";
+import { ADMIN, OVERVIEW, RENDER_STEP, SESSION_TOKEN, fakeAuth, renderApp, stubBackend, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
 // Admin > Audit Logs (ADMIN only, view only). Synthetic entries only; the
 // backend is stubbed.
@@ -110,7 +110,7 @@ describe("Audit Logs navigation and access", () => {
             renderApp("/audit-logs");
             await screen.findByTestId("admin-name");
             expect(navLinks()).not.toContain("Audit Logs");
-            expect(await screen.findByRole("heading", { name: "Access Restricted" })).toBeInTheDocument();
+            await expectRedirectedHome(role);
             expect(screen.queryByTestId("audit-row")).toBeNull();
             expect(auditCalls(calls)).toHaveLength(0);
         });

@@ -1,6 +1,9 @@
-import { Navigate, Outlet, Route, Routes } from "react-router";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import { useAuth } from "./auth/AuthProvider";
-import { CANDIDATE_LIST_ROLES, CANDIDATE_VIEW_ROLES, DASHBOARD_ROLES, FOLLOW_UP_VIEW_ROLES, REPORT_VIEW_ROLES, hasRole, landingPath, type Role } from "./auth/roles";
+import {
+    ADMIN_ONLY, ALLOCATION_ROLES, CANDIDATE_LIST_ROLES, CANDIDATE_VIEW_ROLES, DASHBOARD_ROLES, FOLLOW_UP_VIEW_ROLES, JOB_VIEW_ROLES, MASTER_DATA_ROLES,
+    REGISTRATION_ROLES, REPORT_VIEW_ROLES, hasRole, landingPath, type Role,
+} from "./auth/roles";
 import { RequireAuth } from "./auth/RequireAuth";
 import { AdminLayout } from "./layout/AdminLayout";
 import { CandidateDeploymentPage } from "./pages/CandidateDeploymentPage";
@@ -30,7 +33,6 @@ import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { SettingsIndex, SettingsPage, SettingsTab, SheetSyncSettings } from "./pages/SettingsPage";
-import { ADMIN_ONLY } from "./auth/roles";
 import { FormBrandingSettings } from "./pages/FormBrandingSettings";
 import { JobTypesSettings } from "./pages/JobTypesSettings";
 import { SetupPasswordPage } from "./pages/SetupPasswordPage";
@@ -38,20 +40,26 @@ import { WorkAllocationPage } from "./pages/WorkAllocationPage";
 
 // The landing page: the Overview, or for a role without dashboard access (which
 // the API would otherwise refuse) its own first area (roles.ts landingPath):
-// Jobs for JOB_HANDLER, Add Candidate for REGISTRATION_DESK, Candidates for TEAM_LEAD.
+// Jobs for JOB_HANDLER, Add Candidate for REGISTRATION_DESK, Candidates for
+// TEAM_LEAD and ANALYST.
 function HomePage() {
     const { user } = useAuth();
     const to = landingPath(user);
     return to ? <Navigate to={to} replace /> : <OverviewPage />;
 }
 
-// Pages whose own component has no role check open only to the listed roles (the same
-// lists as the sidebar, layout/navigation.ts). Anyone else opening one by URL sees
-// "Access Restricted" and nothing is requested (the API refuses them either way). An
-// allow-list: a role not named, a new one included, is refused by default.
+// Every page opens only to the listed roles (the same lists as the sidebar,
+// layout/navigation.ts). Anyone else (a URL typed in, a bookmark, the page they were
+// on before signing in) is taken to their own home page instead: no warning, and
+// nothing of the page is rendered or requested (the API refuses them either way). An
+// allow-list: a role not named, a new one included, is refused by default. A role with
+// no page at all (an unsupported one) sees "Access Restricted" on its home page.
 function AllowRoles({ roles }: { roles: readonly Role[] }) {
     const { user } = useAuth();
+    const { pathname } = useLocation();
     if (hasRole(user, roles)) return <Outlet />;
+    const home = landingPath(user) ?? "/";
+    if (pathname !== home) return <Navigate to={home} replace />;
     return (
         <div className="mx-auto max-w-4xl p-6">
             <div role="alert" className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
@@ -97,8 +105,9 @@ export function AppRoutes() {
                 <Route element={<AllowRoles roles={CANDIDATE_LIST_ROLES} />}>
                     <Route path="candidates" element={<CandidatesPage />} />
                 </Route>
-                {/* The page checks the registration roles itself (with its own explanation). */}
-                <Route path="candidates/new" element={<CandidateRegistrationPage />} />
+                <Route element={<AllowRoles roles={REGISTRATION_ROLES} />}>
+                    <Route path="candidates/new" element={<CandidateRegistrationPage />} />
+                </Route>
                 {/* JOB_HANDLER opens it read only (canManageCandidates decides every change); not REGISTRATION_DESK. */}
                 <Route element={<AllowRoles roles={CANDIDATE_VIEW_ROLES} />}>
                     <Route path="candidates/:passportId" element={<CandidateDeploymentPage />} />
@@ -106,20 +115,27 @@ export function AppRoutes() {
                 <Route element={<AllowRoles roles={FOLLOW_UP_VIEW_ROLES} />}>
                     <Route path="follow-ups" element={<PriorityFollowUpsPage />} />
                 </Route>
-                {/* These pages check their own roles (the same lists as the sidebar). */}
-                <Route path="jobs" element={<JobsPage />} />
-                <Route path="jobs/:jobId" element={<JobDetailsPage />} />
-                <Route path="agents" element={<AgentsPage />} />
-                <Route path="agents/:agentId" element={<AgentDetailsPage />} />
-                <Route path="client-management" element={<ClientManagementPage />} />
-                <Route path="client-management/:clientId" element={<ClientManagementDetailsPage />} />
-                <Route path="work-allocation" element={<WorkAllocationPage />} />
-                {/* Invite User and Change Roles are Settings tabs; the old URLs
-                    (bookmarks, links) open the matching tab (ADMIN only, like Settings). */}
-                <Route path="invitations" element={<Navigate to="/settings/invite" replace />} />
-                <Route path="roles" element={<Navigate to="/settings/roles" replace />} />
-                <Route path="audit-logs" element={<AuditLogsPage />} />
-                <Route path="settings" element={<SettingsPage />}>
+                {/* These pages also check their own roles (the same lists), as a second line. */}
+                <Route element={<AllowRoles roles={JOB_VIEW_ROLES} />}>
+                    <Route path="jobs" element={<JobsPage />} />
+                    <Route path="jobs/:jobId" element={<JobDetailsPage />} />
+                </Route>
+                <Route element={<AllowRoles roles={MASTER_DATA_ROLES} />}>
+                    <Route path="agents" element={<AgentsPage />} />
+                    <Route path="agents/:agentId" element={<AgentDetailsPage />} />
+                    <Route path="client-management" element={<ClientManagementPage />} />
+                    <Route path="client-management/:clientId" element={<ClientManagementDetailsPage />} />
+                </Route>
+                <Route element={<AllowRoles roles={ALLOCATION_ROLES} />}>
+                    <Route path="work-allocation" element={<WorkAllocationPage />} />
+                </Route>
+                <Route element={<AllowRoles roles={ADMIN_ONLY} />}>
+                    {/* Invite User and Change Roles are Settings tabs; the old URLs
+                        (bookmarks, links) open the matching tab (ADMIN only, like Settings). */}
+                    <Route path="invitations" element={<Navigate to="/settings/invite" replace />} />
+                    <Route path="roles" element={<Navigate to="/settings/roles" replace />} />
+                    <Route path="audit-logs" element={<AuditLogsPage />} />
+                    <Route path="settings" element={<SettingsPage />}>
                     {/* Settings opens the first tab the user may open (layout/navigation.ts SETTINGS_TABS). */}
                     <Route index element={<SettingsIndex />} />
                     <Route path="roles" element={<SettingsTab roles={ADMIN_ONLY}><AdminRolesPage embedded /></SettingsTab>} />
@@ -127,6 +143,7 @@ export function AppRoutes() {
                     <Route path="sheet-sync" element={<SheetSyncSettings />} />
                     <Route path="job-types" element={<SettingsTab roles={ADMIN_ONLY}><JobTypesSettings /></SettingsTab>} />
                     <Route path="candidate-form" element={<SettingsTab roles={ADMIN_ONLY}><FormBrandingSettings /></SettingsTab>} />
+                    </Route>
                 </Route>
                 <Route path="*" element={<NotFoundPage />} />
             </Route>

@@ -273,14 +273,13 @@ describe("Summary by Roles", () => {
 });
 
 describe("API and permissions", () => {
-    test("25-27. Summary: ADMIN, OWNER, ANALYST (as the daily report); REGISTRATION_DESK 403", async () => {
-        for (const role of ["ADMIN", "OWNER", "ANALYST"]) {
+    test("25-27. Summary: ADMIN and OWNER (as the daily report); ANALYST and REGISTRATION_DESK 403", async () => {
+        for (const role of ["ADMIN", "OWNER"]) {
             const { status, body } = await withApi(role, (get) => get(`/reports/daily/summary?date=${DAY}`));
             assert.equal(status, 200, role);
-            // An ANALYST sees their own candidates only (none are allocated to this one); see workAllocation.test.js.
-            assert.equal(body.summary.callsTaken, role === "ANALYST" ? 0 : 4, role);
+            assert.equal(body.summary.callsTaken, 4, role);
         }
-        assert.equal((await withApi("REGISTRATION_DESK", (get) => get(`/reports/daily/summary?date=${DAY}`))).status, 403);
+        for (const role of ["ANALYST", "REGISTRATION_DESK"]) assert.equal((await withApi(role, (get) => get(`/reports/daily/summary?date=${DAY}`))).status, 403, role);
         assert.equal((await withApi("ADMIN", (get) => get("/reports/daily/summary?date=2999-01-01"))).status, 400);
     });
 
@@ -298,12 +297,10 @@ describe("API and permissions", () => {
         }
     });
 
-    test("incomplete details: ADMIN, OWNER, ANALYST; an unknown stage is 400", async () => {
-        const ok = await withApi("ANALYST", (get) => get("/reports/daily/incomplete?stage=VISA_APPROVAL"));
-        assert.equal(ok.status, 200);
-        assert.equal(ok.body.pagination.total, 0);
+    test("incomplete details: ADMIN, OWNER; ANALYST and REGISTRATION_DESK 403; an unknown stage is 400", async () => {
+        for (const role of ["ADMIN", "OWNER"]) assert.equal((await withApi(role, (get) => get("/reports/daily/incomplete?stage=VISA_APPROVAL"))).status, 200, role);
         assert.equal((await withApi("ADMIN", (get) => get("/reports/daily/incomplete?stage=NOPE"))).status, 400);
-        assert.equal((await withApi("REGISTRATION_DESK", (get) => get("/reports/daily/incomplete?stage=VISA_APPROVAL"))).status, 403);
+        for (const role of ["ANALYST", "REGISTRATION_DESK"]) assert.equal((await withApi(role, (get) => get("/reports/daily/incomplete?stage=VISA_APPROVAL"))).status, 403, role);
     });
 
     test("an empty day returns zeros and empty lists", async () => {

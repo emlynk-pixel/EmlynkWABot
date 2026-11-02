@@ -154,6 +154,8 @@ import {
     parseUploadTargetBody,
     updateCandidateDetails,
     updateStage,
+    registrationView,
+    REGISTRATION_DOCUMENT_TYPES,
 } from "../services/candidateService.js";
 
 
@@ -164,7 +166,9 @@ function contentDisposition(fileName) {
 }
 
 // Phase 12 RBAC: role shorthand constants for this router.
-// ANALYST: reads + review actions.
+// ANALYST: only the candidates allocated to them: their workflow (the candidate's page and its
+// changes) and Need Attention. No dashboard, documents, review queue, police workflow, reports
+// or jobs.
 // ADMIN: full access, including user management, Settings, Work Allocation,
 // verification, police-date corrections and confirming Candidate Form values
 // (an OWNER holds every ADMIN permission: requireRole.js hasRole).
@@ -191,10 +195,10 @@ function contentDisposition(fileName) {
 // dashboard or review tiers.
 const { ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK, JOB_HANDLER } = ROLES;
 // The set of roles allowed for each endpoint tier.
-const ALL_ACTIVE = [ADMIN, ANALYST];                                    // overview, documents, review, police, monthly
-const REPORT_READERS = [ADMIN, TEAM_LEAD, ANALYST];                     // the Daily Report
+const DASHBOARD_READERS = [ADMIN];                                      // overview, documents, review, police, monthly
+const REPORT_READERS = [ADMIN, TEAM_LEAD];                              // the Daily Report
 const CANDIDATE_STAFF = [ADMIN, TEAM_LEAD, ANALYST];                    // the Candidates area and Need Attention
-const ANALYSTS_UP = [ADMIN, ANALYST];                                   // review actions
+const REVIEWERS = [ADMIN];                                              // review actions
 const ADMINS_ONLY = [ADMIN];                                            // administrators only
 // A 256 KB logo as base64 in JSON, with the title and colours.
 const FORM_BRANDING_BODY_LIMIT = "512kb";
@@ -205,7 +209,7 @@ const CANDIDATE_READERS = [...CANDIDATE_STAFF, JOB_HANDLER];            // candi
 // for exactly what the form does (registrationOnly below).
 const REGISTRATION_WORKFLOW = [...CANDIDATE_STAFF, REGISTRATION_DESK];
 const FOLLOW_UP_READERS = [...CANDIDATE_STAFF, REGISTRATION_DESK];      // Need Attention list (REGISTRATION_DESK: read only)
-const JOB_READERS = [ADMIN, TEAM_LEAD, ANALYST, JOB_HANDLER];           // job lists and details
+const JOB_READERS = [ADMIN, TEAM_LEAD, JOB_HANDLER];                    // job lists and details
 const JOB_MANAGERS = [ADMIN, TEAM_LEAD, JOB_HANDLER];                   // job writes (create, edit, members, close)
 const MASTER_DATA_STAFF = [ADMIN, TEAM_LEAD, JOB_HANDLER];              // Agents and Client Management
 // (an ANALYST works only on candidates allocated to them, and a new
@@ -245,14 +249,14 @@ export function createAdminRouter({
 
     // ---------------------------------------------------------------- read-only (VIEWER and above)
 
-    router.get("/overview", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/overview", requireRole(DASHBOARD_READERS), async (req, res) => {
         const client = await resolveDb(db);
         res.json(await getOverview({ db: client, scope: candidateScope(req.user) }));
     });
 
     // Incomplete clients and their missing required documents. Registered
     // before /documents so "missing" is never read as a parameter.
-    router.get("/documents/missing", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/documents/missing", requireRole(DASHBOARD_READERS), async (req, res) => {
         const parsed = parseMissingDocumentsQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -261,7 +265,7 @@ export function createAdminRouter({
         return res.json(await listMissingDocuments({ db: client, params: parsed.params, scope: candidateScope(req.user) }));
     });
 
-    router.get("/documents", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/documents", requireRole(DASHBOARD_READERS), async (req, res) => {
         const parsed = parseDocumentListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -271,7 +275,7 @@ export function createAdminRouter({
     });
 
     // Clients directory: search, complete/incomplete, missing type.
-    router.get("/clients", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/clients", requireRole(DASHBOARD_READERS), async (req, res) => {
         const parsed = parseClientListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -322,7 +326,7 @@ export function createAdminRouter({
     });
 
     // Monthly overview for one business month (Sri Lanka), default this month.
-    router.get("/reports/monthly", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/reports/monthly", requireRole(DASHBOARD_READERS), async (req, res) => {
         const parsed = parseMonthlyOverviewQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -331,7 +335,7 @@ export function createAdminRouter({
         return res.json(await getMonthlyOverview({ db: client, month: parsed.params.month, scope: candidateScope(req.user) }));
     });
 
-    router.get("/clients/:passportId", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/clients/:passportId", requireRole(DASHBOARD_READERS), async (req, res) => {
         const { passportId } = req.params;
         if (!isValidPassportIdParam(passportId)) {
             return res.status(400).json({
@@ -351,7 +355,7 @@ export function createAdminRouter({
         return res.json(details);
     });
 
-    router.get("/review", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/review", requireRole(DASHBOARD_READERS), async (req, res) => {
         const parsed = parseReviewQueueQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -361,7 +365,7 @@ export function createAdminRouter({
     });
 
     // Police Workflow: every client's 21-day status, calculated (read-only).
-    router.get("/police", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/police", requireRole(DASHBOARD_READERS), async (req, res) => {
         const parsed = parsePoliceListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
@@ -380,8 +384,9 @@ export function createAdminRouter({
     // anything is shown or changed. A waiting file not linked to any candidate
     // yet stays open to every Analyst (that is the review work).
     router.param("reviewId", async (req, res, next, reviewId) => {
-        // Only a scoped user (an Analyst) needs the lookup; the route's own role check answers everyone else.
-        if (!isCandidateScoped(req.user)) return next();
+        // Only a candidate-scoped user the review tier admits needs the lookup; the route's own role
+        // check answers everyone else (an ANALYST: 403, before anything about the item is looked up).
+        if (!isCandidateScoped(req.user) || !hasRole(req.user.role, DASHBOARD_READERS)) return next();
         try {
             const client = await resolveDb(db);
             const passportId = await getReviewItemPassportId({ db: client, reviewId });
@@ -394,7 +399,7 @@ export function createAdminRouter({
         }
     });
 
-    router.get("/review/:reviewId", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/review/:reviewId", requireRole(DASHBOARD_READERS), async (req, res) => {
         if (!parseReviewId(req.params.reviewId)) return invalidReviewId(res);
         const client = await resolveDb(db);
         const item = await getReviewItemWithActions({ db: client, reviewId: req.params.reviewId });
@@ -406,7 +411,7 @@ export function createAdminRouter({
     // The storage path comes from the database record, never the request, and
     // no storage URL or credential reaches the browser. The response is
     // sandboxed so a file opened directly can't run anything.
-    router.get("/review/:reviewId/file", requireRole(ALL_ACTIVE), async (req, res) => {
+    router.get("/review/:reviewId/file", requireRole(DASHBOARD_READERS), async (req, res) => {
         if (!parseReviewId(req.params.reviewId)) return invalidReviewId(res);
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
         const file = await getReviewFile({ db: client, bucket: storage, reviewId: req.params.reviewId });
@@ -423,7 +428,7 @@ export function createAdminRouter({
         return res.send(file.buffer);
     });
 
-    // ---------------------------------------------------------------- review actions (ANALYST and above)
+    // ---------------------------------------------------------------- review actions (ADMIN)
 
     // Review actions. The acting user is the authenticated one (req.user), never the body.
     // `parse` validates the body and returns the action's arguments or { errors }.
@@ -441,8 +446,14 @@ export function createAdminRouter({
             throw error;
         }
     };
-    const reviewAction = (action, { reasonRequired, needsBucket, acceptsPoliceDate = false, parse }) => async (req, res) => {
+    // Entering a police slip's submitted date is ADMIN only, like correcting it (POST
+    // /documents/:id/police-date). Another role approves a slip whose date OCR read: the stored
+    // date is used and no date is sent; a request that sends one is refused before anything runs.
+    const sendsPoliceDate = (body) => Boolean(body) && body.policeSubmittedDate !== undefined && body.policeSubmittedDate !== null && body.policeSubmittedDate !== "";
+    const POLICE_DATE_ADMIN_ONLY = Object.freeze({ message: "Only an Administrator can enter a police slip's submitted date.", code: "POLICE_DATE_ADMIN_ONLY" });
+    const reviewAction = (action, { reasonRequired, needsBucket, acceptsPoliceDate = false, policeDateAdminOnly = acceptsPoliceDate, parse }) => async (req, res) => {
         if (!parseReviewId(req.params.reviewId)) return invalidReviewId(res);
+        if (policeDateAdminOnly && sendsPoliceDate(req.body) && !hasRole(req.user.role, ADMINS_ONLY)) return res.status(403).json(POLICE_DATE_ADMIN_ONLY);
         const parsed = parse ? parse(req.body) : parseReviewActionBody(req.body, { reasonRequired, acceptsPoliceDate });
         return runAction(res, parsed, needsBucket, ({ client, storage }) => {
             const { errors, ...values } = parsed;
@@ -451,41 +462,42 @@ export function createAdminRouter({
     };
 
     // PENDING: pending/ -> client folder, VERIFIED. DOCUMENT: REVIEW_REQUIRED -> VERIFIED.
-    // A police slip is approved with its submitted date (entered, or confirmed if OCR read it).
-    router.post("/review/:reviewId/approve", requireRole(ANALYSTS_UP), reviewAction(approveReviewItem, { reasonRequired: false, needsBucket: true, acceptsPoliceDate: true }));
+    // A police slip is approved with its submitted date: confirmed if OCR read it (every review
+    // role), or entered (ADMIN only: POLICE_DATE_ADMIN_ONLY).
+    router.post("/review/:reviewId/approve", requireRole(REVIEWERS), reviewAction(approveReviewItem, { reasonRequired: false, needsBucket: true, acceptsPoliceDate: true }));
     // Stays pending and in the queue; the reason is required.
-    router.post("/review/:reviewId/keep-pending", requireRole(ANALYSTS_UP), reviewAction(keepReviewItemPending, { reasonRequired: true, needsBucket: false }));
+    router.post("/review/:reviewId/keep-pending", requireRole(REVIEWERS), reviewAction(keepReviewItemPending, { reasonRequired: true, needsBucket: false }));
     // Permanently deletes one waiting file and its record after an admin's
     // inspection; the reason is required. Only files in pending/.
-    router.post("/review/:reviewId/remove", requireRole(ANALYSTS_UP), reviewAction(removeFromReview, { reasonRequired: true, needsBucket: true }));
+    router.post("/review/:reviewId/remove", requireRole(REVIEWERS), reviewAction(removeFromReview, { reasonRequired: true, needsBucket: true }));
     // H3: a failed submission (failed-<id>) is processed again by the
     // background worker; the reason is optional. Audited.
-    router.post("/review/:reviewId/retry", requireRole(ANALYSTS_UP), reviewAction(retryFailedSubmission, { reasonRequired: false, needsBucket: true }));
+    router.post("/review/:reviewId/retry", requireRole(REVIEWERS), reviewAction(retryFailedSubmission, { reasonRequired: false, needsBucket: true }));
 
     // M4 Policy B: a waiting file of a type the client already has VERIFIED
     // (pending-<id> only). Replace names the existing document explicitly
     // (documentId in the body) and supersedes it; Keep as Version stores the
     // new file as a second, REVIEW_REQUIRED document. Both are audited and
     // never remove or overwrite the existing VERIFIED document.
-    router.post("/review/:reviewId/replace-verified", requireRole(ANALYSTS_UP), reviewAction(replaceVerifiedDocument, { needsBucket: true, parse: parseReplaceVerifiedBody }));
-    router.post("/review/:reviewId/keep-as-version", requireRole(ANALYSTS_UP), reviewAction(keepDocumentAsVersion, { reasonRequired: false, needsBucket: true }));
+    router.post("/review/:reviewId/replace-verified", requireRole(REVIEWERS), reviewAction(replaceVerifiedDocument, { needsBucket: true, policeDateAdminOnly: true, parse: parseReplaceVerifiedBody }));
+    router.post("/review/:reviewId/keep-as-version", requireRole(REVIEWERS), reviewAction(keepDocumentAsVersion, { reasonRequired: false, needsBucket: true }));
 
     // Corrections of a waiting file; it stays pending and in the queue.
-    router.post("/review/:reviewId/document-type", requireRole(ANALYSTS_UP), reviewAction(setDocumentType, { needsBucket: false, parse: parseSetDocumentTypeBody }));
-    // A scoped user (ANALYST) may only link a file to a candidate allocated to
-    // them; any other passport ID gets the same answer as one that does not exist.
+    router.post("/review/:reviewId/document-type", requireRole(REVIEWERS), reviewAction(setDocumentType, { needsBucket: false, parse: parseSetDocumentTypeBody }));
+    // A candidate-scoped user may only link a file to a candidate in their scope (defensive: the
+    // review tier is ADMIN today); any other passport ID gets the same answer as one that does not exist.
     const assignClientInScope = async ({ db: client, admin, passportId, ...rest }) => {
         if (passportId && !(await canAccessCandidate(client, admin, passportId))) {
             throw new ReviewActionError(409, "CLIENT_NOT_FOUND", "No client has this passport ID. Choose an existing client; nothing was changed.");
         }
         return assignClient({ db: client, admin, passportId, ...rest });
     };
-    router.post("/review/:reviewId/assign-client", requireRole(ANALYSTS_UP), reviewAction(assignClientInScope, { needsBucket: false, parse: parseAssignClientBody }));
+    router.post("/review/:reviewId/assign-client", requireRole(REVIEWERS), reviewAction(assignClientInScope, { needsBucket: false, parse: parseAssignClientBody }));
 
-    // ---------------------------------------------------------------- temporary documents deletion (ANALYSTS_UP)
+    // ---------------------------------------------------------------- temporary documents deletion (REVIEWERS)
     
     // Manually delete a temporary document (e.g. from the Review Queue or Missing Documents).
-    router.delete("/temporary-documents/:temporaryId", requireRole(ANALYSTS_UP), async (req, res) => {
+    router.delete("/temporary-documents/:temporaryId", requireRole(REVIEWERS), async (req, res) => {
         const { temporaryId } = req.params;
         if (!temporaryId || typeof temporaryId !== "string" || !/^[0-9a-fA-F-]+$/.test(temporaryId)) {
             return res.status(400).json({ message: "Invalid temporary document ID" });
@@ -515,8 +527,7 @@ export function createAdminRouter({
 
     // Sets or corrects a stored police slip's submitted date (audited).
     // This modifies a stored document (not just a pending item) so it is
-    // reserved for ADMIN; a ANALYST can approve slips with a date but cannot
-    // change a date after the fact.
+    // reserved for ADMIN, like entering a date when approving (POLICE_DATE_ADMIN_ONLY).
     router.post("/documents/:documentId/police-date", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!isValidDocumentIdParam(req.params.documentId)) {
             return res.status(400).json({ message: "Invalid document ID", errors: [{ field: "documentId", message: "must be a document ID" }] });
@@ -561,8 +572,10 @@ export function createAdminRouter({
     // REGISTRATION_DESK on a REGISTRATION_WORKFLOW route: only what the Add Candidate form does,
     // the Candidate Details stage (its note) and the registration documents.
     const REGISTRATION_STAGE = "CANDIDATE_DETAILS";
-    const REGISTRATION_DOCUMENTS = ["PASSPORT", "NIC", "SKILL_VIDEO"];
-    const registrationOnly = (req) => !hasRole(req.user.role, CANDIDATE_STAFF);
+    const REGISTRATION_DOCUMENTS = REGISTRATION_DOCUMENT_TYPES;
+    const registrationOnly = (req) => hasRole(req.user.role, [REGISTRATION_DESK]);
+    // A candidate as the user may see it: REGISTRATION_DESK gets the registration view only.
+    const candidateFor = (req, details) => (registrationOnly(req) ? registrationView(details) : details);
     const forbidden = (res) => res.status(403).json({ message: "Insufficient permissions" });
 
     router.get("/candidates", requireRole(CANDIDATE_READERS), async (req, res) => {
@@ -608,7 +621,7 @@ export function createAdminRouter({
         const passportId = await resolveCandidatePassportId({ db: client, passportId: req.params.passportId, scope: candidateScope(req.user) });
         const candidate = passportId && await getCandidate({ db: client, passportId });
         if (!candidate) return res.status(404).json({ message: "Candidate not found" });
-        return res.json(candidate);
+        return res.json(candidateFor(req, candidate));
     });
 
     router.put("/candidates/:passportId", requireRole(REGISTRATION_WORKFLOW), async (req, res) => {
@@ -623,7 +636,7 @@ export function createAdminRouter({
             const stored = await client.candidate.findUnique({ where: { passportId }, select: { job: true } });
             const values = await resolveJobTypes(res, client, parsed.values, parseJobTypes(stored?.job));
             if (!values) return undefined;
-            return res.json(await updateCandidateDetails({ db: client, actor: req.user, passportId, values }));
+            return res.json(candidateFor(req, await updateCandidateDetails({ db: client, actor: req.user, passportId, values })));
         });
     });
 
@@ -636,9 +649,9 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.json(await updateStage({
+        return candidateAction(res, async () => res.json(candidateFor(req, await updateStage({
             db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user), stage: req.params.stage, values: parsed.values, actor: req.user,
-        })));
+        }))));
     });
 
     // Manual verification of a candidate's details or documents (candidateVerificationService.js):
@@ -683,13 +696,13 @@ export function createAdminRouter({
         }
         if (registrationOnly(req) && !REGISTRATION_DOCUMENTS.includes(parsed.values.documentType)) return forbidden(res);
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
-        return candidateAction(res, async () => res.json(await finalizeUpload({
+        return candidateAction(res, async () => res.json(candidateFor(req, await finalizeUpload({
             db: client,
             bucket: storage,
             admin: req.user,
             passportId: await storedCandidateId(client, req.params.passportId, req.user),
             ...parsed.values,
-        })));
+        }))));
     });
 
     // Removes the candidate's current document of a type: record and file,
@@ -904,9 +917,8 @@ export function createAdminRouter({
     });
 
     // ---------------------------------------------------------------- Jobs (jobService.js)
-    // ADMIN, TEAM_LEAD and JOB_HANDLER manage jobs; an ANALYST reads only the jobs that
-    // hold a candidate allocated to them (and sees only those candidates);
-    // REGISTRATION_DESK has no access. Creating a job type and the job-group Candidate
+    // ADMIN, TEAM_LEAD and JOB_HANDLER manage jobs; ANALYST and REGISTRATION_DESK have no
+    // access (the service still scopes a candidate-scoped user, defensively). Creating a job type and the job-group Candidate
     // Form link stay ADMIN only. Membership rules (one PROCESSING job per
     // candidate) and the Client/Agent rules are enforced in the service and by the database.
     const jobParam = (req, res) => {

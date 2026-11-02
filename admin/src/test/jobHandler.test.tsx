@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import { CANDIDATE_STAGES, type CandidateDetails, type CandidateList } from "../api/candidates";
 import type { JobDetails, JobList, JobOptions } from "../api/jobs";
-import { ADMIN, RENDER_STEP, renderApp, signedInBackend, userWithRole, type FetchRoutes } from "./helpers";
+import { ADMIN, RENDER_STEP, renderApp, signedInBackend, userWithRole, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
 // The JOB_HANDLER role in the Admin (UI-JH-001 to UI-JH-015): Jobs, Agents, Client Management
 // and Candidates (read only) in the sidebar, nothing else; candidate pages without a single
@@ -81,7 +81,7 @@ describe("navigation", () => {
         for (const path of ["/settings", "/settings/job-types", "/settings/invite", "/invitations", "/audit-logs", "/work-allocation", "/documents", "/review", "/police", "/missing-documents", "/reports/daily", "/clients", "/follow-ups", "/candidates/new"]) {
             const { calls } = backend();
             const { unmount } = renderApp(path);
-            expect(await screen.findByText(/Access Restricted|Candidate registration is done by/, {}, RENDER_STEP), path).toBeInTheDocument();
+            await expectRedirectedHome("JOB_HANDLER");
             expect(calls.some((c) => /\/api\/admin\/(users|settings|audit-logs|work-allocation|documents|review|police|reports|clients|follow-ups)/.test(c.path)), path).toBe(false);
             unmount();
         }
@@ -190,7 +190,7 @@ describe("existing roles", () => {
     test("UI-JH-015: ADMIN and ANALYST keep their sidebars; REGISTRATION_DESK has Add Candidate and Need Attention", { timeout: 30_000 }, async () => {
         const expected: Record<string, string[]> = {
             ADMIN: ["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report", "Audit Logs", "Settings"],
-            ANALYST: ["Overview", "Candidates", "Need Attention", "Jobs", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report"],
+            ANALYST: ["Candidates", "Need Attention"],
             REGISTRATION_DESK: ["Add Candidate", "Need Attention"],
         };
         for (const [role, links] of Object.entries(expected)) {

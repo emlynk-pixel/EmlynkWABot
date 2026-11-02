@@ -4,7 +4,7 @@ import { MemoryRouter, useNavigate } from "react-router";
 import { describe, expect, test } from "vitest";
 import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth/AuthProvider";
-import { ADMIN, renderApp, signedInBackend, userWithRole } from "./helpers";
+import { ADMIN, renderApp, signedInBackend, userWithRole, expectRedirectedHome } from "./helpers";
 
 // Settings tabs: Change Roles | Invite User | Google Sheet Sync (no
 // Configurations tab; /settings opens Change Roles). Invite User and Change Roles moved here from the sidebar; their
@@ -211,7 +211,7 @@ describe("Settings tabs", () => {
             for (const path of paths) {
                 const { calls } = signedInBackend({ ...routes, "GET /auth/me": { status: 200, body: { user: userWithRole(role) } } });
                 const { unmount } = renderApp(path);
-                expect(await screen.findByRole("heading", { name: "Access Restricted" })).toBeInTheDocument();
+                await expectRedirectedHome(role);
                 for (const name of ["Settings", "Change Roles"]) expect(sidebar().queryByRole("link", { name })).toBeNull();
                 expect(sidebar().queryByRole("link", { name: "Invite User" })).toBeNull();
                 expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();

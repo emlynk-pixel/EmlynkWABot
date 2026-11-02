@@ -1,7 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
-import { ADMIN, SESSION_TOKEN, renderApp, signedInBackend, userWithRole } from "./helpers";
+import { ADMIN, SESSION_TOKEN, renderApp, signedInBackend, userWithRole, expectRedirectedHome } from "./helpers";
 
 const USERS = [
     { userId: "admin-1", name: "Test Admin", email: ADMIN.email, role: "ADMIN", status: "ACTIVE", createdDate: "2026-10-01T00:00:00.000Z" },
@@ -29,7 +29,7 @@ describe("Invite User page", () => {
         for (const role of ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } } });
             const { unmount } = renderApp("/invitations");
-            expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
+            await expectRedirectedHome(role);
             expect(calls.some((c) => c.path.startsWith("/api/admin/users"))).toBe(false);
             unmount();
         }

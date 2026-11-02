@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import type { CandidateList } from "../api/candidates";
 import type { JobDetails, JobList, JobListItem, JobOptions, JobStatus } from "../api/jobs";
-import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from "./helpers";
+import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
 // Admin > Jobs: the Processing / Completed / Cancelled views, Job details,
 // Add to Job and the active-job conflict, and who sees what. Synthetic data;
@@ -118,7 +118,7 @@ describe("Jobs list", () => {
 });
 
 describe("who sees what", () => {
-    test("ADMIN and OWNER get New job; an ANALYST gets the list without it; the sidebar shows Jobs", async () => {
+    test("ADMIN and OWNER get New job and the Jobs entry; an ANALYST has no Jobs area (taken to Candidates, nothing requested)", async () => {
         for (const role of ["ADMIN", "OWNER"]) {
             backend(role);
             const view = renderApp("/jobs");
@@ -127,18 +127,17 @@ describe("who sees what", () => {
             expect(screen.getByRole("link", { name: "Jobs" })).toBeInTheDocument();
             view.unmount();
         }
-        backend("ANALYST");
+        const { calls } = backend("ANALYST");
         renderApp("/jobs");
-        await table();
-        expect(screen.queryByRole("button", { name: "New job" })).not.toBeInTheDocument();
-        expect(screen.getByRole("link", { name: "Jobs" })).toBeInTheDocument();
-        expect(screen.getByText("Jobs that include candidates allocated to you.")).toBeInTheDocument();
+        await expectRedirectedHome("ANALYST");
+        expect(screen.queryByRole("link", { name: "Jobs" })).not.toBeInTheDocument();
+        expect(calls.some((c) => c.path.startsWith("/api/admin/jobs"))).toBe(false);
     });
 
     test("REGISTRATION_DESK has no Jobs entry and the page is restricted (no request is made)", async () => {
         const { calls } = backend("REGISTRATION_DESK");
         renderApp("/jobs");
-        expect(await screen.findByRole("heading", { name: "Access Restricted" }, RENDER_STEP)).toBeInTheDocument();
+        await expectRedirectedHome("REGISTRATION_DESK");
         expect(screen.queryByRole("link", { name: "Jobs" })).not.toBeInTheDocument();
         expect(calls.some((c) => c.path.startsWith("/api/admin/jobs"))).toBe(false);
     });
@@ -225,14 +224,11 @@ describe("Job details", () => {
         expect(within(list).getByText("Cancel reason")).toBeInTheDocument();
     });
 
-    test("an ANALYST sees the job read-only", async () => {
-        backend("ANALYST", getJob(details(base, [CAND])));
+    test("an ANALYST cannot open a job (taken to Candidates, nothing requested)", async () => {
+        const { calls } = backend("ANALYST", getJob(details(base, [CAND])));
         renderApp(path);
-        await screen.findByLabelText("Job details", undefined, RENDER_STEP);
-        for (const name of ["Add to job", "Complete job", "Cancel job"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
-        await openCandidatesTab(userEvent.setup());
-        expect(screen.queryByRole("button", { name: /^Remove / })).not.toBeInTheDocument();
-        expect(screen.getByRole("link", { name: "KAMAL PERERA" })).toBeInTheDocument();
+        await expectRedirectedHome("ANALYST");
+        expect(calls.some((c) => c.path.startsWith("/api/admin/jobs"))).toBe(false);
     });
 
     test("JOB-PASS-007: the Add candidate search asks the server for candidates who passed the test only, and says so", async () => {
@@ -412,12 +408,12 @@ describe("Client Job ID", () => {
         expect(await within(dialog).findByRole("alert")).toHaveTextContent("already has this Client Job ID");
     });
 
-    test("an Analyst can see it but not change it", async () => {
-        backend("ANALYST", { [`GET /api/admin/jobs/${base.jobId}`]: { status: 200, body: details(base, [CAND]) } });
+    test("an Analyst cannot open the job, so neither sees nor changes it", async () => {
+        const { calls } = backend("ANALYST", { [`GET /api/admin/jobs/${base.jobId}`]: { status: 200, body: details(base, [CAND]) } });
         renderApp(path);
-        const list = await screen.findByLabelText("Job details", undefined, RENDER_STEP);
-        expect(within(list).getByText("Y26S01")).toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: /Client Job ID/ })).not.toBeInTheDocument();
+        await expectRedirectedHome("ANALYST");
+        expect(screen.queryByText("Y26S01")).not.toBeInTheDocument();
+        expect(calls.some((c) => c.path.startsWith("/api/admin/jobs"))).toBe(false);
     });
 
     test("New job accepts an optional Client Job ID", async () => {
@@ -500,12 +496,12 @@ describe("Multiple Job Types UI", () => {
         });
     });
 
-    test("Job Details does not show Edit Job Types to Analyst", async () => {
+    test("Job Details is not the Analyst's (taken to Candidates): no Edit Job types", async () => {
         backend("ANALYST", {
             [`GET /api/admin/jobs/${multiTypeJob.jobId}`]: { status: 200, body: details(multiTypeJob) },
         });
         renderApp(`/jobs/${multiTypeJob.jobId}`);
-        await screen.findByRole("tab", { name: "Job Details" }, RENDER_STEP);
+        await expectRedirectedHome("ANALYST");
         expect(screen.queryByRole("button", { name: "Edit Job types" })).not.toBeInTheDocument();
     });
 

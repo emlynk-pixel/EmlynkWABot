@@ -140,12 +140,10 @@ describe("flexible vacancies (VACANCY-001 to VACANCY-005)", () => {
         assert.equal(isJobFilled(20, 23), true);
     });
 
-    test("an Analyst's Filled counts every candidate of the job, not only their own", async () => {
+    test("Filled counts every candidate of the job; an Analyst has no Jobs area (403)", async () => {
         const job = await createOk({ vacancies: 2, candidateIds: [pid(1), pid(2)] });
-        const asAnalyst = await api(USERS.ANN, "GET", `/jobs/${job.jobId}`);
-        assert.equal(asAnalyst.status, 200);
-        assert.deepEqual([asAnalyst.body.candidateCount, asAnalyst.body.filled], [1, true], "sees only their candidate, the job is still Filled");
-        assert.equal((await api(USERS.ANN, "GET", "/jobs")).body.items[0].filled, true);
+        for (const urlPath of [`/jobs/${job.jobId}`, "/jobs"]) assert.equal((await api(USERS.ANN, "GET", urlPath)).status, 403, urlPath);
+        assert.equal((await api(USERS.OWNER, "GET", "/jobs")).body.items[0].filled, true);
     });
 });
 
