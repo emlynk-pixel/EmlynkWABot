@@ -46,6 +46,7 @@ New to the project? Read `01` → `02` → `03`, then [`11-development-guide.md`
 | [ROLES_AND_PERMISSIONS.md](ROLES_AND_PERMISSIONS.md) | **What every role can and cannot do:** full comparison table of OWNER, ADMIN, ANALYST, REGISTRATION_DESK and JOB_HANDLER; the retired MANAGER role and how to convert existing MANAGER accounts |
 | [OWNER_ROLE.md](OWNER_ROLE.md) | **The OWNER role in detail:** permission model, ADMIN restrictions, making the first OWNER and changing it (SQL) |
 | [AGENT_CLIENT_MANAGEMENT.md](AGENT_CLIENT_MANAGEMENT.md) | Agents and Client Management: data model, many-to-many migration, API, lifecycle, locking, RBAC, UI, audit |
+| [NOTIFICATION_SYSTEM_AUDIT.md](NOTIFICATION_SYSTEM_AUDIT.md) | Research only (not implemented): proposed Crucial / Optional notifications, recipients, dedup rules, Need Attention badge, detection gaps |
 | [JOB_MANAGEMENT_IMPLEMENTATION.md](JOB_MANAGEMENT_IMPLEMENTATION.md) | Jobs: job codes, client/agent on a job, candidate assignment (one PROCESSING job at a time), lifecycle, API |
 
 ## Candidate Features
