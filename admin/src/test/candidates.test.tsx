@@ -292,8 +292,8 @@ describe("Candidates list", () => {
             expect(header.getAllByRole("link", { name: "Register Candidate" })).toHaveLength(1);
             expect(header.getByRole("link", { name: "Register Candidate" })).toHaveAttribute("href", "/candidates/new");
             for (const name of ["Sync", "Dark mode"]) expect(header.getByRole("button", { name })).toBeInTheDocument();
-            // The one breadcrumb tops the content, not the header.
-            expect(header.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
+            // The one breadcrumb is in the header, not a row of the content.
+            expect(header.getByRole("navigation", { name: "Breadcrumb" })).toBeInTheDocument();
             expect(screen.getAllByRole("navigation", { name: "Breadcrumb" })).toHaveLength(1);
             expect(screen.getAllByRole("link", { name: "Register Candidate" })).toHaveLength(1);
         });

@@ -4,8 +4,9 @@ import { useAuth } from "../auth/AuthProvider";
 import { DASHBOARD_ROLES, hasRole, type Role } from "../auth/roles";
 import { NAV_ITEMS, SETTINGS_TABS } from "../layout/navigation";
 
-// The one breadcrumb of the admin shell: AdminLayout renders it above every
-// page (so above any page's horizontal tabs); pages never render their own.
+// The one breadcrumb of the admin shell: the header (layout/Header.tsx)
+// renders it on every page, so it takes no row of the content area; pages
+// never render their own. It stays on one line and the last item truncates.
 // The trail comes from the URL: Admin > the section (a sidebar entry, or
 // Clients, which has no entry) > the page inside it. A details page names
 // its record (useBreadcrumbLabel); until it does, the last item says "Details".
@@ -68,12 +69,12 @@ export function Breadcrumbs() {
     const { user } = useAuth();
     const trail = breadcrumbTrail(pathname, useContext(LabelContext), user);
     return (
-        <nav aria-label="Breadcrumb" className="mb-4 min-w-0" data-testid="breadcrumb">
-            <ol className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-body-sm text-ink-subtle">
+        <nav aria-label="Breadcrumb" className="min-w-0" data-testid="breadcrumb">
+            <ol className="flex min-w-0 items-center gap-2 overflow-hidden text-body-sm text-ink-subtle">
                 {trail.map((crumb, index) => {
                     const last = index === trail.length - 1;
                     return (
-                        <li key={`${index}:${crumb.label}`} className={`flex min-w-0 items-center gap-2 ${last ? "flex-1" : ""}`}>
+                        <li key={`${index}:${crumb.label}`} className={`flex items-center gap-2 ${last ? "min-w-0 flex-1" : "shrink-0"}`}>
                             {index > 0 && <span aria-hidden="true">/</span>}
                             {last || !crumb.to ? (
                                 <span className="truncate font-medium text-ink" aria-current={last ? "page" : undefined}>{crumb.label}</span>
