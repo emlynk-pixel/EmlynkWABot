@@ -10,7 +10,6 @@ import { AdditionalDetailsPanel } from "../components/candidate/AdditionalDetail
 import { CallLogDialog } from "../components/candidate/CallLogDialog";
 import { CandidateStepper, type StepperStep } from "../components/candidate/CandidateStepper";
 import { SubmittedChangesProvider } from "../components/candidate/submittedChanges";
-import { SubmittedPersonalDetails } from "../components/candidate/SubmittedPersonalDetails";
 import { JobAssignmentPanel } from "../components/candidate/JobAssignmentPanel";
 import { CandidateDetailsStage, DocumentSubmissionStage, NotesStage } from "../components/candidate/StagePanels";
 import { secondaryButton } from "../components/Dialog";
@@ -156,8 +155,8 @@ export function CandidateDeploymentPage() {
                         currentJob={details.jobAssignments.current}
                         activeJobs={activeJobsOf(details.jobAssignments)}
                         onSaved={setSavedAdditional}
+                        distanceToBucharestKm={submittedAt ? submission.data?.submitted?.["contact.distanceToBucharestKm"] ?? null : null}
                     />
-                    {submittedAt && <SubmittedPersonalDetails submitted={submission.data?.submitted} />}
                 </Card>
             )}
 

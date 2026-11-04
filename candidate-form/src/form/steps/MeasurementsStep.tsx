@@ -4,13 +4,12 @@ import { SizeField } from "../../components/SizeField";
 import { SizeGuide } from "../../components/SizeGuide";
 import { useLanguage } from "../../i18n/useLanguage";
 import { bind, type StepProps } from "../binding";
-import { SHIRT_SIZES, SHOE_SIZE_GUIDE, SHOE_SIZE_PRESETS, WAIST_SIZE_PRESETS } from "../options";
+import { SHIRT_SIZES, SHIRT_SIZE_CHART, SHIRT_SIZE_CHART_COLUMNS, SHOE_SIZE_PRESETS, WAIST_SIZE_PRESETS } from "../options";
 
-// Physical Measurements: shirt, hip / waist (inches) and shoe size (UK list,
-// or Other for any size such as "EU 43"). All three are required and none
-// takes "N/A" (a real size is needed). The size guides are reference only:
-// the shoe size is still answered and stored as before (a UK size from the
-// list, or what is typed under Other); the EU column never changes it.
+// Physical Measurements: shirt, hip / waist (inches) and shoe size (EU sizes
+// only: the list, or Other for an EU size not in it). All three are required and
+// none takes "N/A" (a real size is needed). The size guides are reference only
+// and never change the answer.
 export function MeasurementsStep(props: StepProps) {
     const { t } = useLanguage();
     const [other, setOther] = useState({ waist: false, shoe: false });
@@ -22,14 +21,24 @@ export function MeasurementsStep(props: StepProps) {
             <div>
                 <SelectInput {...shirt} label={t("f.shirtSize")} options={SHIRT_SIZES.map((size) => ({ value: size, label: size }))} />
                 <SizeGuide id="guide-shirt" title={t("guide.shirt.title")}>
-                    <dl className="size-guide-list">
-                        {SHIRT_SIZES.map((size) => (
-                            <div key={size}>
-                                <dt>{size}</dt>
-                                <dd>{t(`shirt.${size}`)}</dd>
-                            </div>
-                        ))}
-                    </dl>
+                    <div className="size-chart-scroll">
+                        <table className="size-chart">
+                            <thead>
+                                <tr>
+                                    <th scope="col"><span className="visually-hidden">{t("f.shirtSize")}</span></th>
+                                    {SHIRT_SIZE_CHART_COLUMNS.map((column) => <th key={column} scope="col">{t(`guide.shirt.${column}`)}</th>)}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {SHIRT_SIZE_CHART.map((row) => (
+                                    <tr key={row.size}>
+                                        <th scope="row">{row.size}</th>
+                                        {row.values.map((value, index) => <td key={SHIRT_SIZE_CHART_COLUMNS[index]}>{value}</td>)}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                     <p className="size-guide-note">{t("guide.shirt.note")}</p>
                 </SizeGuide>
             </div>
@@ -61,23 +70,11 @@ export function MeasurementsStep(props: StepProps) {
                     required={shoe.required}
                 />
                 <SizeGuide id="guide-shoe" title={t("guide.shoe.title")}>
-                    <table className="size-guide-table">
-                        <thead>
-                            <tr>
-                                <th scope="col">{t("guide.shoe.uk")}</th>
-                                <th scope="col">{t("guide.shoe.eu")}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {SHOE_SIZE_GUIDE.map((row) => (
-                                <tr key={row.uk}>
-                                    <td>{row.uk}</td>
-                                    <td>{row.eu}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                    <p className="size-guide-note">{t("guide.shoe.note")}</p>
+                    <ul className="size-guide-tips">
+                        <li>{t("guide.shoe.tip1")}</li>
+                        <li>{t("guide.shoe.tip2")}</li>
+                    </ul>
+                    <p className="size-guide-note">{t("guide.shoe.note", { from: SHOE_SIZE_PRESETS[0], to: SHOE_SIZE_PRESETS[SHOE_SIZE_PRESETS.length - 1] })}</p>
                 </SizeGuide>
             </div>
         </div>

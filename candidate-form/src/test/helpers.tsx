@@ -163,7 +163,7 @@ export async function fillPassport(user: User, job = "WELDER TIG") {
 export function fillMeasurements() {
     setField("f.shirtSize", "M");
     setField("f.waistSize", "32");
-    setField("f.shoeSize", "9");
+    setField("f.shoeSize", "42");
 }
 // Father does not apply ("N/A": his other answers are then not needed); mother in full; no children.
 export function fillFamily({ spouse = false }: { spouse?: boolean } = {}) {

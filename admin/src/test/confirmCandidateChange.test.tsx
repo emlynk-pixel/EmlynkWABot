@@ -80,7 +80,7 @@ describe("Candidate submitted hints", () => {
         expect(screen.getByLabelText("Address")).toHaveValue("1 Main Street");
         // No change submitted for these (or no home in the record): no hint, no button.
         for (const field of ["basic.surname", "basic.sex", "passport.expiryDate", "contact.email", "guardian.name", "contact.district"]) expect(screen.queryByTestId(`submitted-hint-${field}`), field).toBeNull();
-        expect(screen.getAllByRole("button", { name: /^Confirm / })).toHaveLength(2);
+        expect(screen.getAllByRole("button", { name: /^Confirm (?!All$)/ })).toHaveLength(2);
     });
 
     test("additional-details fields get the hint too", async () => {
@@ -210,7 +210,7 @@ describe("the full submission panel is gone; only inline hints remain (CLEAN-001
         expect(address).toHaveTextContent("Candidate submitted: 12 GALLE ROAD");
         expect(within(address).getByRole("button", { name: "Confirm Address" })).toBeInTheDocument();
         expect(screen.queryByTestId("submitted-hint-basic.birthDate")).toBeNull();
-        expect(screen.getAllByRole("button", { name: /^Confirm / })).toHaveLength(1);
+        expect(screen.getAllByRole("button", { name: /^Confirm (?!All$)/ })).toHaveLength(1);
     });
 
     test("CLEAN-006 / 007 / 008 / 009 confirming updates the current field and removes only that hint; the others stay; only a GET and the one POST are sent", async () => {

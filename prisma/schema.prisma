@@ -818,8 +818,9 @@ model CandidateAdditionalDetails {
   updatedDate      DateTime  @updatedAt @map("updated_date")
 
   // Candidate Form answers confirmed by an Admin (candidateFormFieldConfirmService.js),
-  // migration 20261102120000_candidate_form_finalized_details. NULL until confirmed. Never
-  // written by the public form, and not part of the Additional Details form (its save leaves them).
+  // migration 20261102120000_candidate_form_finalized_details. NULL until confirmed or entered by
+  // staff on the Additional Details form (a save that leaves one out keeps it). Never written by the
+  // public form.
   // A+ | A- | B+ | B- | AB+ | AB- | O+ | O-
   bloodGroup           String?   @map("blood_group")
   // In the candidate's own unit, tidied ("175 cm", "5'9\"").

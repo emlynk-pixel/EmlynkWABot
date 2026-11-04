@@ -96,7 +96,7 @@ import {
 } from "../services/jobService.js";
 import { getFormSubmission, pendingConflictsByCandidate } from "../services/candidateFormSubmissionService.js";
 import { activeJobTypeNames, NO_PREFERRED_JOB_TYPE, resolveCandidateJobTypes } from "../services/jobTypeCatalog.js";
-import { confirmFormField, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
+import { CONFIRMABLE_FIELDS, confirmAllFormFields, confirmFormField, isConfirmableField, rejectAllFormFields, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
 import { parseCandidateFormOrigin } from "../config/candidateForm.js";
@@ -839,6 +839,30 @@ export function createAdminRouter({
             return candidateAction(res, async () => {
                 const passportId = await storedCandidateId(client, req.params.passportId, req.user);
                 await review({ db: client, actor: req.user, passportId, field: body.field, expectedCurrentValue: body.expectedCurrentValue ?? null, expectedSubmittedValue: body.expectedSubmittedValue ?? null });
+                return res.json(await getFormSubmission({ db: client, passportId }));
+            });
+        });
+    }
+
+    // Confirm All / Reject All: every pending candidate-submitted change at once, in one transaction
+    // (ADMIN only, like the per-field actions). The body lists the changes the Admin saw; the server
+    // refuses the whole request unless they are exactly the pending set (candidateFormFieldConfirmService.js).
+    for (const [action, review] of [["confirm-all", confirmAllFormFields], ["reject-all", rejectAllFormFields]]) {
+        router.post(`/candidates/:passportId/form-submission/${action}`, requireRole(ADMINS_ONLY), async (req, res) => {
+            if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+            const body = req.body;
+            const allowed = new Set(["field", "expectedCurrentValue", "expectedSubmittedValue"]);
+            const textOrNull = (value) => value === null || value === undefined || typeof value === "string";
+            const validChange = (change) => change && typeof change === "object" && !Array.isArray(change) && Object.keys(change).every((key) => allowed.has(key))
+                && isConfirmableField(change.field) && textOrNull(change.expectedCurrentValue) && textOrNull(change.expectedSubmittedValue);
+            if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => key !== "changes")
+                || !Array.isArray(body.changes) || !body.changes.length || body.changes.length > Object.keys(CONFIRMABLE_FIELDS).length || !body.changes.every(validChange)) {
+                return res.status(400).json({ message: "Invalid request body", errors: [{ field: "changes", message: "must be a list of { field, expectedCurrentValue, expectedSubmittedValue }" }] });
+            }
+            const client = await resolveDb(db);
+            return candidateAction(res, async () => {
+                const passportId = await storedCandidateId(client, req.params.passportId, req.user);
+                await review({ db: client, actor: req.user, passportId, changes: body.changes });
                 return res.json(await getFormSubmission({ db: client, passportId }));
             });
         });

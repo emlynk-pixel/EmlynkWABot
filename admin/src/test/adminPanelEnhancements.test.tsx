@@ -37,14 +37,14 @@ describe("CONFLICT-UI: the red ! in the Candidates list", () => {
         expect(within(table).queryByTestId("form-conflict-N0000003")).toBeNull(); // older server: no field at all
         const badge = within(table).getByTestId("form-conflict-N0000002");
         expect(badge).toHaveTextContent("!");
-        expect(badge).toHaveAccessibleName("2 Candidate Form changes to review: Place of birth, Shoe size");
-        expect(badge).toHaveAttribute("title", "2 Candidate Form changes to review: Place of birth, Shoe size");
+        expect(badge).toHaveAccessibleName("2 Candidate Form changes to review: Place of birth, Shoe size (EU)");
+        expect(badge).toHaveAttribute("title", "2 Candidate Form changes to review: Place of birth, Shoe size (EU)");
         expect(badge).toHaveAttribute("href", "/candidates/N0000002?stage=CANDIDATE_DETAILS&field=basic.birthPlace");
         expect(badge.className).toMatch(/rounded-full/);
         expect(badge.className).toMatch(/bg-critical/);
         // An Additional details field opens that tab.
         expect(within(table).getByTestId("form-conflict-N0000004")).toHaveAttribute("href", "/candidates/N0000004?tab=additional&field=measurements.shoeSize");
-        expect(within(table).getByTestId("form-conflict-N0000004")).toHaveAccessibleName("Candidate Form change to review: Shoe size");
+        expect(within(table).getByTestId("form-conflict-N0000004")).toHaveAccessibleName("Candidate Form change to review: Shoe size (EU)");
     });
 
     test("the link targets: Candidate details stage or Additional details tab", () => {

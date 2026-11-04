@@ -22,7 +22,7 @@ import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { CandidateFields, completionGaps, detailsFrom, Field, fieldControl, textAreaControl, validateDetails } from "./CandidateFields";
 import { DocumentRow, VIDEO_ACCEPT } from "./DocumentRow";
 import { exportDocumentSubmissionPdf } from "./exportPdf";
-import { mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
+import { FormChangesButtons, mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
 
 type PanelProps = { details: CandidateDetails; canEdit: boolean; onChange: (details: CandidateDetails) => void };
 
@@ -50,24 +50,30 @@ function PanelHeading({ title, description, action }: { title: string; descripti
 }
 
 // Completion (a checkbox, or the automatic status), error, and Cancel / Save changes.
-function PanelFooter({ status, canEdit, busy, dirty, error, onCancel }: {
+// actions: more buttons left of Cancel (Candidate details: Confirm All / Reject All), shown even when
+// the form itself is read-only.
+function PanelFooter({ status, canEdit, busy, dirty, error, onCancel, actions }: {
     status: ReactNode;
     canEdit: boolean;
     busy: boolean;
     dirty: boolean;
     error: string | null;
     onCancel?: () => void;
+    actions?: ReactNode;
 }) {
     return (
         <div className="mt-6 border-t border-border pt-4">
             {status}
             <DialogError message={error} />
-            {canEdit && onCancel && (
-                <div className="mt-4 flex justify-end gap-2">
-                    <button type="button" onClick={onCancel} disabled={busy || !dirty} className={secondaryButton}>Cancel</button>
-                    <button type="submit" disabled={busy || !dirty} className={primaryButton}>{busy ? "Saving…" : "Save changes"}</button>
-                </div>
-            )}
+            <div className="mt-4 flex flex-wrap justify-end gap-2 empty:hidden">
+                {actions}
+                {canEdit && onCancel && (
+                    <>
+                        <button type="button" onClick={onCancel} disabled={busy || !dirty} className={secondaryButton}>Cancel</button>
+                        <button type="submit" disabled={busy || !dirty} className={primaryButton}>{busy ? "Saving…" : "Save changes"}</button>
+                    </>
+                )}
+            </div>
         </div>
     );
 }
@@ -351,6 +357,7 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
                     dirty={dirty}
                     error={error}
                     onCancel={() => { setForm(detailsFrom(details.candidate)); setComment(saved.notes ?? ""); setFieldErrors({}); setError(null); }}
+                    actions={<FormChangesButtons />}
                 />
             </form>
             <VerifyBar details={details} kind="DETAILS" onChange={onChange} />

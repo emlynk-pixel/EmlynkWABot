@@ -1,6 +1,8 @@
 // Candidate additional details (Admin > Candidates > Additional Details):
 // passport name, permanent address, birthday, clothing sizes, parents,
-// marital and family details, other job skills. One optional row per
+// marital and family details, other job skills, and the Candidate Form's other
+// answers (personal details, contact & location, languages and skills, family
+// passport numbers, guardian). One optional row per
 // candidate in candidate_additional_details (passport_id is its primary key
 // and its foreign key to candidate).
 //
@@ -27,12 +29,15 @@ import crypto from "node:crypto";
 import { businessDateOf } from "../utils/businessDay.js";
 import { clientName } from "../utils/clientName.js";
 import { CandidateError } from "./candidateService.js";
+import { BLOOD_GROUPS, ENGLISH_LEVELS } from "./candidateFormDataService.js";
+import { canonicalPhoneNumber } from "../utils/phoneNumber.js";
 
 export const TSHIRT_SIZES = Object.freeze(["XS", "S", "M", "L", "XL", "XXL"]);
 // Waist sizes in inches.
 export const PANT_SIZE_PRESETS = Object.freeze(["28", "30", "32", "34", "36", "38", "40", "42", "44", "46"]);
-// UK sizes.
-export const SHOE_SIZE_PRESETS = Object.freeze(["5", "6", "7", "8", "9", "10", "11", "12", "13"]);
+// European (EU) sizes only, as the Candidate Form asks for them. Any short custom size is still
+// accepted, so nothing already stored is refused or converted.
+export const SHOE_SIZE_PRESETS = Object.freeze(["38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48"]);
 export const MARITAL_STATUSES = Object.freeze(["SINGLE", "MARRIED", "DIVORCED", "WIDOWED", "SEPARATED"]);
 
 export const ADDITIONAL_DETAILS_AUDIT_ACTION = Object.freeze({
@@ -62,10 +67,44 @@ const FIELDS = Object.freeze({
     child2Name: "name",
     child3Name: "name",
     otherJobSkills: "skills",
+    // The Candidate Form's other answers (migration 20261102120000_candidate_form_finalized_details),
+    // with the same rules as their Confirm (candidateFormFieldConfirmService.js CONFIRMABLE_FIELDS).
+    bloodGroup: "bloodGroup",
+    height: "height",
+    weightKg: "weight",
+    drivingLicence: "boolean",
+    canReadDrawings: "boolean",
+    teamLeadingSkills: "boolean",
+    otherLanguages: "name",
+    email: "email",
+    city: "name",
+    district: "name",
+    dsDivision: "name",
+    gnDivision: "name",
+    cityInRomania: "romania",
+    englishKnowledge: "english",
+    otherJobCategory: "name",
+    otherJobSkills2: "name",
+    fatherPassportNumber: "passport",
+    motherPassportNumber: "passport",
+    spousePassportNumber: "passport",
+    guardianName: "name",
+    guardianRelationship: "name",
+    guardianNic: "nic",
+    guardianBirthday: "date",
+    guardianPhone: "phone",
+    guardianAddress: "address",
 });
 export const ADDITIONAL_DETAILS_FIELDS = Object.freeze(Object.keys(FIELDS));
+// Added with the Candidate Form answers: a request that leaves one out (an Admin page loaded before
+// they were on the form) keeps its stored value instead of clearing it, so a Confirmed value is never
+// lost to an older page. Sent as null or "", it is cleared like any other field.
+const KEPT_WHEN_LEFT_OUT = new Set(ADDITIONAL_DETAILS_FIELDS.slice(ADDITIONAL_DETAILS_FIELDS.indexOf("bloodGroup")));
 
-const MAX_LENGTH = { name: 150, address: 500, skills: 1000 };
+const MAX_LENGTH = { name: 150, address: 500, skills: 1000, height: 30, romania: 100, email: 254 };
+const PASSPORT_NUMBER = /^[A-Z0-9]{1,20}$/;
+const NIC = /^(\d{9}[VX]|\d{12})$/;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // A custom pant or shoe size: short, letters, digits, spaces and . / -
 const CUSTOM_SIZE = /^[A-Za-z0-9][A-Za-z0-9 ./-]{0,9}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -92,6 +131,7 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
     const values = {};
     for (const [field, kind] of Object.entries(FIELDS)) {
         const raw = body[field];
+        if (raw === undefined && KEPT_WHEN_LEFT_OUT.has(field)) continue;
         const blank = raw === undefined || raw === null || (typeof raw === "string" && raw.trim() === "");
         if (blank) {
             values[field] = null;
@@ -127,6 +167,32 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
                 // A preset, or a short custom value (e.g. "31", "9.5", "EU 43").
                 values[field] = CUSTOM_SIZE.test(value) ? value : fail(field, "must be a size of at most 10 letters, digits, spaces, dots, slashes or dashes");
                 break;
+            case "bloodGroup":
+                values[field] = BLOOD_GROUPS.includes(value.toUpperCase()) ? value.toUpperCase() : fail(field, `must be one of: ${BLOOD_GROUPS.join(", ")}`);
+                break;
+            case "english":
+                values[field] = ENGLISH_LEVELS.includes(value.toUpperCase()) ? value.toUpperCase() : fail(field, `must be one of: ${ENGLISH_LEVELS.join(", ")}`);
+                break;
+            case "weight": {
+                // kg, as the record keeps it (DECIMAL(5,2)).
+                const kg = Number(value);
+                values[field] = /^\d{1,3}(\.\d{1,2})?$/.test(value) && kg >= 20 && kg <= 300 ? String(kg) : fail(field, "must be a weight from 20 to 300 kg");
+                break;
+            }
+            case "passport":
+                values[field] = PASSPORT_NUMBER.test(value.toUpperCase()) ? value.toUpperCase() : fail(field, "must be letters and digits (at most 20)");
+                break;
+            case "nic":
+                values[field] = NIC.test(value.toUpperCase()) ? value.toUpperCase() : fail(field, "must be a Sri Lankan NIC");
+                break;
+            case "email":
+                values[field] = value.length <= MAX_LENGTH.email && EMAIL.test(value) ? value : fail(field, "must be an email address");
+                break;
+            case "phone": {
+                const canonical = canonicalPhoneNumber(value);
+                values[field] = canonical ?? fail(field, "must be a phone number");
+                break;
+            }
             default: {
                 const max = MAX_LENGTH[kind];
                 values[field] = value.length > max ? fail(field, `must be at most ${max} characters`) : value;
@@ -149,8 +215,9 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
     if (values.maritalStatus === "MARRIED") {
         if (values.wifeFullName === null && !errors.some((e) => e.field === "wifeFullName")) errors.push({ field: "wifeFullName", message: "is required when married" });
     } else {
-        for (const field of ["wifeFullName", "wifeBirthday"]) {
-            if (values[field] !== null) errors.push({ field, message: "is only recorded when married" });
+        // (the spouse's passport number only when it was sent: left out, it is kept as stored)
+        for (const field of ["wifeFullName", "wifeBirthday", "spousePassportNumber"]) {
+            if (values[field] !== null && values[field] !== undefined && !errors.some((e) => e.field === field)) errors.push({ field, message: "is only recorded when married" });
         }
     }
     // A single candidate has no child names.
@@ -181,7 +248,10 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
 function toResponse(row) {
     if (!row) return null;
     const details = {};
-    for (const [field, kind] of Object.entries(FIELDS)) details[field] = kind === "date" ? isoDate(row[field]) : row[field] ?? null;
+    for (const [field, kind] of Object.entries(FIELDS)) {
+        const value = row[field] ?? null;
+        details[field] = kind === "date" ? isoDate(value) : kind === "weight" && value !== null ? String(Number(value)) : value;
+    }
     return details;
 }
 
@@ -254,6 +324,8 @@ export async function saveAdditionalDetails({ db, passportId, values, actor, exp
         row = await db.$transaction(async (tx) => {
             await setAuditActor(tx, actor);
             const existing = await tx.candidateAdditionalDetails.findUnique({ where: { passportId }, select: selectAll });
+            // A field left out of the request (KEPT_WHEN_LEFT_OUT) keeps what is stored.
+            values = { ...Object.fromEntries([...KEPT_WHEN_LEFT_OUT].filter((field) => !(field in values)).map((field) => [field, existing?.[field] ?? null])), ...values };
             const changes = changedFields(existing, values);
             // Nothing changed (including an empty form with nothing saved): no write, no audit.
             if (!changes) return existing;

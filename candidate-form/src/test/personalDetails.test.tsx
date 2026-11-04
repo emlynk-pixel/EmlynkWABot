@@ -25,7 +25,7 @@ function validData(): CandidateFormData {
     data.contact = { address: "12 MAIN STREET", city: "COLOMBO", district: "COLOMBO", dsDivision: "KOLONNAWA", gnDivision: "NORTH", alternativePhone: "N/A", email: "a@example.com", cityInRomania: "Cluj-Napoca" };
     data.passport = { issueDate: "2020-01-15", expiryDate: "2030-01-14" };
     data.qualifications = { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "N/A", otherSkills1: "N/A", otherSkills2: "N/A", englishKnowledge: "GOOD" };
-    data.measurements = { shirtSize: "M", waistSize: "32", shoeSize: "9" };
+    data.measurements = { shirtSize: "M", waistSize: "32", shoeSize: "42" };
     data.family.father = { name: "N/A", surname: "", passportNumber: "", birthDate: "" };
     data.family.mother = { name: "KUMARI", surname: "PERERA", passportNumber: "N/A", birthDate: "1965-02-03" };
     data.family.child1 = "N/A";

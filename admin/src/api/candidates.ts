@@ -323,7 +323,8 @@ export function flagCallLog(token: string, passportId: string, callLogId: string
 // The same lists the server accepts (candidateAdditionalDetailsService.js).
 export const TSHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL"] as const;
 export const PANT_SIZE_PRESETS = ["28", "30", "32", "34", "36", "38", "40", "42", "44", "46"] as const;
-export const SHOE_SIZE_PRESETS = ["5", "6", "7", "8", "9", "10", "11", "12", "13"] as const;
+// European (EU) sizes only, as the Candidate Form asks for them.
+export const SHOE_SIZE_PRESETS = ["38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48"] as const;
 export const MARITAL_STATUS_OPTIONS = [
     { value: "SINGLE", label: "Single" },
     { value: "MARRIED", label: "Married" },
@@ -331,6 +332,9 @@ export const MARITAL_STATUS_OPTIONS = [
     { value: "WIDOWED", label: "Widowed" },
     { value: "SEPARATED", label: "Separated" },
 ] as const;
+// The Candidate Form's choices (candidateFormDataService.js), stored as these codes.
+export const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"] as const;
+export const ENGLISH_LEVELS = ["NO KNOWLEDGE", "BASIC", "FAIR", "GOOD", "VERY GOOD", "FLUENT"] as const;
 
 // Dates as YYYY-MM-DD; every field may be null (collected over time).
 export type AdditionalDetails = {
@@ -353,6 +357,37 @@ export type AdditionalDetails = {
     child2Name: string | null;
     child3Name: string | null;
     otherJobSkills: string | null;
+} & Partial<CandidateFormAnswerDetails>;
+
+// The Candidate Form's other answers, kept in the same row (a Confirm writes them; Admin edits them
+// here too). Optional: a server from before they were on this form does not send them, and a save
+// that leaves one out keeps its stored value. weightKg: kg as text ("70.5"); guardianPhone: "+94…".
+export type CandidateFormAnswerDetails = {
+    bloodGroup: string | null;
+    height: string | null;
+    weightKg: string | null;
+    drivingLicence: boolean | null;
+    canReadDrawings: boolean | null;
+    teamLeadingSkills: boolean | null;
+    otherLanguages: string | null;
+    email: string | null;
+    city: string | null;
+    district: string | null;
+    dsDivision: string | null;
+    gnDivision: string | null;
+    cityInRomania: string | null;
+    englishKnowledge: string | null;
+    otherJobCategory: string | null;
+    otherJobSkills2: string | null;
+    fatherPassportNumber: string | null;
+    motherPassportNumber: string | null;
+    spousePassportNumber: string | null;
+    guardianName: string | null;
+    guardianRelationship: string | null;
+    guardianNic: string | null;
+    guardianBirthday: string | null;
+    guardianPhone: string | null;
+    guardianAddress: string | null;
 };
 
 // details: null until saved. suggested: from the candidate's own record, to
@@ -416,6 +451,9 @@ export type FormSubmission = {
     pending: PendingChange[];
     // Staff decisions already taken on this submission (a field with one is no longer pending).
     reviews?: { field: string; status: "CONFIRMED" | "REJECTED" }[];
+    // The record's value of every reviewable field, keyed like `pending` (null: not recorded; the
+    // whole map is null when nothing was submitted).
+    current?: Record<string, string | null> | null;
 };
 
 // A candidate-submitted value that differs from the record, for a field the record has a place for.
@@ -444,4 +482,17 @@ export function rejectFormField(
     body: { field: string; expectedCurrentValue: string | null; expectedSubmittedValue: string | null },
 ): Promise<FormSubmission> {
     return apiRequest<FormSubmission>(`${base(passportId)}/form-submission/reject-field`, { method: "POST", token, body });
+}
+
+// Confirm All / Reject All (ADMIN only): every pending change at once, in one server transaction.
+// `changes` is the pending list the Admin saw; the server refuses the whole request (409, nothing
+// decided) when it is no longer exactly the pending set, or when one Confirm breaks a field rule.
+export type ReviewAllBody = { changes: { field: string; expectedCurrentValue: string | null; expectedSubmittedValue: string | null }[] };
+
+export function confirmAllFormFields(token: string, passportId: string, body: ReviewAllBody): Promise<FormSubmission> {
+    return apiRequest<FormSubmission>(`${base(passportId)}/form-submission/confirm-all`, { method: "POST", token, body });
+}
+
+export function rejectAllFormFields(token: string, passportId: string, body: ReviewAllBody): Promise<FormSubmission> {
+    return apiRequest<FormSubmission>(`${base(passportId)}/form-submission/reject-all`, { method: "POST", token, body });
 }

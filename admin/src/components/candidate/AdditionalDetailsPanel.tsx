@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import {
+    BLOOD_GROUPS,
+    ENGLISH_LEVELS,
     MARITAL_STATUS_OPTIONS,
     PANT_SIZE_PRESETS,
     SHOE_SIZE_PRESETS,
@@ -10,17 +12,19 @@ import {
     type AdditionalDetails,
     type AdditionalDetailsView,
 } from "../../api/candidates";
-import { todayInSriLanka } from "../format";
+import { humanize, todayInSriLanka } from "../format";
 import { DatePicker } from "../DatePicker";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { ErrorState, LoadingState } from "../States";
 import { Field, fieldControl, textAreaControl } from "./CandidateFields";
 import type { CandidateJobAssignment } from "../../api/jobs";
 import { ShareFormButton } from "./ShareFormButton";
-import { mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
+import { FormChangesButtons, mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
 
 // Additional Details tab of a candidate: passport and personal details,
-// clothing sizes, parents, marital and family details, other job skills.
+// physical details and skills, contact and location, clothing sizes, parents,
+// marital and family details, other job skills and the guardian: every
+// Candidate Form answer that has a home here, each with its "Candidate submitted" hint.
 // Saved separately from the candidate's own record, which is never changed
 // here: a new form is filled in from it (name, address, birthday) as a
 // starting point only. The server checks everything again.
@@ -33,8 +37,13 @@ const KEYS: Key[] = [
     "nameAsInPassport", "permanentAddress", "birthday", "tshirtSize", "pantSize", "shoeSize",
     "fatherAlive", "fatherFullName", "fatherBirthday", "motherAlive", "motherFullName", "motherBirthday",
     "maritalStatus", "wifeFullName", "wifeBirthday", "child1Name", "child2Name", "child3Name", "otherJobSkills",
+    // The Candidate Form's other answers.
+    "bloodGroup", "height", "weightKg", "drivingLicence", "canReadDrawings", "teamLeadingSkills", "otherLanguages",
+    "email", "city", "district", "dsDivision", "gnDivision", "cityInRomania", "englishKnowledge", "otherJobCategory", "otherJobSkills2",
+    "fatherPassportNumber", "motherPassportNumber", "spousePassportNumber",
+    "guardianName", "guardianRelationship", "guardianNic", "guardianBirthday", "guardianPhone", "guardianAddress",
 ];
-const BOOLEAN_KEYS: Key[] = ["fatherAlive", "motherAlive"];
+const BOOLEAN_KEYS: Key[] = ["fatherAlive", "motherAlive", "drivingLicence", "canReadDrawings", "teamLeadingSkills"];
 const SUGGESTED_LABELS: Record<string, string> = { nameAsInPassport: "name according to passport", permanentAddress: "permanent address", birthday: "birthday" };
 const CUSTOM_SIZE = /^[A-Za-z0-9][A-Za-z0-9 ./-]{0,9}$/;
 
@@ -56,7 +65,7 @@ function payloadOf(form: Form): AdditionalDetails {
     const payload = Object.fromEntries(KEYS.map((key) => [key, BOOLEAN_KEYS.includes(key) ? (form[key] ? form[key] === "yes" : null) : value(key)])) as AdditionalDetails;
     // A parent's name and birthday are kept whatever the alive answer.
     if (form.maritalStatus === "SINGLE") Object.assign(payload, { child1Name: null, child2Name: null, child3Name: null });
-    if (form.maritalStatus !== "MARRIED") Object.assign(payload, { wifeFullName: null, wifeBirthday: null });
+    if (form.maritalStatus !== "MARRIED") Object.assign(payload, { wifeFullName: null, wifeBirthday: null, spousePassportNumber: null });
     return payload;
 }
 
@@ -73,14 +82,21 @@ export function validateAdditionalDetails(form: Form, today = todayInSriLanka())
     for (const key of ["pantSize", "shoeSize"] as const) {
         if (form[key].trim() && !CUSTOM_SIZE.test(form[key].trim())) errors[key] = "Up to 10 letters, digits, spaces, dots, slashes or dashes.";
     }
-    for (const key of ["birthday", "fatherBirthday", "motherBirthday", "wifeBirthday"] as const) {
+    for (const key of ["birthday", "fatherBirthday", "motherBirthday", "wifeBirthday", "guardianBirthday"] as const) {
         if (form[key] && form[key] > today) errors[key] = "This date is in the future.";
         else if (form[key] && form[key] < "1900-01-01") errors[key] = "This date is before 1900.";
+    }
+    const weight = form.weightKg.trim();
+    if (weight && !(/^\d{1,3}(\.\d{1,2})?$/.test(weight) && Number(weight) >= 20 && Number(weight) <= 300)) errors.weightKg = "Enter the weight in kg, from 20 to 300.";
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) errors.email = "Enter an email address.";
+    if (form.guardianNic.trim() && !/^(\d{9}[VX]|\d{12})$/i.test(form.guardianNic.trim())) errors.guardianNic = "Enter a Sri Lankan NIC (9 digits and V or X, or 12 digits).";
+    for (const key of ["fatherPassportNumber", "motherPassportNumber", "spousePassportNumber"] as const) {
+        if (form[key].trim() && !/^[A-Z0-9]{1,20}$/i.test(form[key].trim())) errors[key] = "Letters and digits only (at most 20).";
     }
     return errors;
 }
 
-const SERVER_MESSAGES: Record<string, string> = { "must not be in the future": "This date is in the future." };
+const SERVER_MESSAGES: Record<string, string> = { "must not be in the future": "This date is in the future.", "must be a phone number": "Enter a phone number with its country code (e.g. +94771234567)." };
 const serverMessage = (message: string) => SERVER_MESSAGES[message] ?? `This value ${message}.`;
 
 // What the page loaded for this candidate (it also needs it for the stepper,
@@ -95,7 +111,8 @@ export type AdditionalDetailsLoad = {
 // onSaved: told after each save (the page's Additional details step).
 // currentJob: the candidate's newest PROCESSING job; activeJobs: all of them (a candidate may hold several),
 // for the Share Form's job-group link (from the Job relation).
-export function AdditionalDetailsPanel({ resource, canEdit, onSaved, currentJob = null, activeJobs }: { resource: AdditionalDetailsLoad; canEdit: boolean; onSaved?: (view: AdditionalDetailsView) => void; currentJob?: CandidateJobAssignment | null; activeJobs?: CandidateJobAssignment[] }) {
+// distanceToBucharestKm: derived by the server from the submitted City in Romania (never stored, never edited).
+export function AdditionalDetailsPanel({ resource, canEdit, onSaved, currentJob = null, activeJobs, distanceToBucharestKm = null }: { resource: AdditionalDetailsLoad; canEdit: boolean; onSaved?: (view: AdditionalDetailsView) => void; currentJob?: CandidateJobAssignment | null; activeJobs?: CandidateJobAssignment[]; distanceToBucharestKm?: string | null }) {
     // The version this panel saved last: "Saved" is shown only while that is still the one on screen.
     const [savedVersion, setSavedVersion] = useState<string | null | undefined>(undefined);
     // A save rebuilds the form from what was saved; any other refresh (a confirmed Candidate Form value, Sync) is
@@ -115,17 +132,19 @@ export function AdditionalDetailsPanel({ resource, canEdit, onSaved, currentJob 
             canEdit={canEdit}
             currentJob={currentJob}
             activeJobs={activeJobs}
+            distanceToBucharestKm={distanceToBucharestKm}
             notice={savedVersion !== undefined && savedVersion === data.updatedDate}
             onSaved={(view) => { setSavedVersion(view.updatedDate); setSaves((n) => n + 1); onSaved?.(view); }}
         />
     );
 }
 
-function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, activeJobs }: {
+function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, activeJobs, distanceToBucharestKm }: {
     view: AdditionalDetailsView;
     canEdit: boolean;
     currentJob: CandidateJobAssignment | null;
     activeJobs?: CandidateJobAssignment[];
+    distanceToBucharestKm: string | null;
     notice: boolean;
     onSaved: (view: AdditionalDetailsView) => void;
 }) {
@@ -204,6 +223,16 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
             </select>
         </Field>
     );
+    const choice = (key: Key, label: string, options: readonly { value: string; label: string }[], submitted?: string) => (
+        <Field label={label} htmlFor={`ad-${key}`} error={errors[key]} submitted={submitted}>
+            <select id={`ad-${key}`} value={form[key]} onChange={(e) => set(key)(e.target.value)} disabled={disabled} className={fieldControl}>
+                <option value="">Not recorded</option>
+                {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                {/* A stored value that is not one of the choices stays visible (and is kept unless changed). */}
+                {form[key] && !options.some((option) => option.value === form[key]) && <option value={form[key]}>{form[key]}</option>}
+            </select>
+        </Field>
+    );
 
     return (
         <form onSubmit={submit} noValidate aria-labelledby="additional-details-title" className="space-y-6">
@@ -236,6 +265,29 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
                 {dateField("birthday", "Birthday")}
             </Section>
 
+            <Section title="Physical details & skills">
+                {choice("bloodGroup", "Blood Group", BLOOD_GROUPS.map((group) => ({ value: group, label: group })), "basic.bloodGroup")}
+                {text("height", "Height", { maxLength: 30, placeholder: "For example: 175 cm or 5'9\"", submitted: "basic.height" })}
+                {text("weightKg", "Weight (kg)", { maxLength: 6, placeholder: "For example: 70.5", submitted: "basic.weight" })}
+                {yesNo("drivingLicence", "Driving Licence", "basic.drivingLicence")}
+                {yesNo("canReadDrawings", "Can Read Drawings", "basic.canReadDrawings")}
+                {yesNo("teamLeadingSkills", "Team Leading Skills", "basic.teamLeadingSkills")}
+                {text("otherLanguages", "Other Languages", { submitted: "basic.otherLanguages" })}
+                {choice("englishKnowledge", "English Knowledge", ENGLISH_LEVELS.map((level) => ({ value: level, label: humanize(level) })), "qualifications.englishKnowledge")}
+            </Section>
+
+            <Section title="Contact & location">
+                {text("email", "Email", { maxLength: 254, submitted: "contact.email" })}
+                {text("city", "City", { submitted: "contact.city" })}
+                {text("district", "District", { submitted: "contact.district" })}
+                {text("dsDivision", "DS Division", { submitted: "contact.dsDivision" })}
+                {text("gnDivision", "GN Division", { submitted: "contact.gnDivision" })}
+                <div>
+                    {text("cityInRomania", "City in Romania", { maxLength: 100, submitted: "contact.cityInRomania" })}
+                    {distanceToBucharestKm && <p data-testid="distance-to-bucharest" className="mt-1 text-label-sm text-ink-subtle">Submitted city: approx. {distanceToBucharestKm} km to Bucharest (straight line, not by road).</p>}
+                </div>
+            </Section>
+
             <Section title="Clothing & sizes">
                 <Field label="T-shirt size" htmlFor="ad-tshirtSize" error={errors.tshirtSize} submitted="measurements.shirtSize">
                     <select id="ad-tshirtSize" value={form.tshirtSize} onChange={(e) => set("tshirtSize")(e.target.value)} disabled={disabled} className={fieldControl}>
@@ -244,19 +296,21 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
                     </select>
                 </Field>
                 <SizeField key={`pant-${resets}`} id="pantSize" label="Pant size" submitted="measurements.waistSize" presets={PANT_SIZE_PRESETS} value={form.pantSize} onChange={set("pantSize")} error={errors.pantSize} disabled={disabled} />
-                <SizeField key={`shoe-${resets}`} id="shoeSize" label="Shoe size (UK)" submitted="measurements.shoeSize" presets={SHOE_SIZE_PRESETS} value={form.shoeSize} onChange={set("shoeSize")} error={errors.shoeSize} disabled={disabled} />
+                <SizeField key={`shoe-${resets}`} id="shoeSize" label="Shoe size (EU)" help="European (EU) size, as the Candidate Form asks for it." submitted="measurements.shoeSize" presets={SHOE_SIZE_PRESETS} value={form.shoeSize} onChange={set("shoeSize")} error={errors.shoeSize} disabled={disabled} />
             </Section>
 
             <Section title="Father details">
                 {yesNo("fatherAlive", "Is father alive?", "family.fatherAlive")}
                 {text("fatherFullName", "Father full name", { required: form.fatherAlive === "yes", submitted: "family.father.fullName" })}
                 {dateField("fatherBirthday", "Father birthday", "family.father.birthDate")}
+                {text("fatherPassportNumber", "Father Passport Number", { maxLength: 20, submitted: "family.father.passportNumber" })}
             </Section>
 
             <Section title="Mother details">
                 {yesNo("motherAlive", "Is mother alive?", "family.motherAlive")}
                 {text("motherFullName", "Mother full name", { required: form.motherAlive === "yes", submitted: "family.mother.fullName" })}
                 {dateField("motherBirthday", "Mother birthday", "family.mother.birthDate")}
+                {text("motherPassportNumber", "Mother Passport Number", { maxLength: 20, submitted: "family.mother.passportNumber" })}
             </Section>
 
             <Section title="Marital & family details">
@@ -270,6 +324,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
                     <>
                         {text("wifeFullName", "Wife full name", { required: true, submitted: "family.spouse.fullName" })}
                         {dateField("wifeBirthday", "Wife birthday", "family.spouse.birthDate")}
+                        {text("spousePassportNumber", "Spouse Passport Number", { maxLength: 20, submitted: "family.spouse.passportNumber" })}
                     </>
                 )}
                 {form.maritalStatus === "SINGLE" ? (
@@ -293,17 +348,35 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
                         <textarea id="ad-otherJobSkills" rows={3} maxLength={1000} value={form.otherJobSkills} onChange={(e) => set("otherJobSkills")(e.target.value)} disabled={disabled} placeholder="For example: forklift licence, basic welding" className={textAreaControl} />
                     </Field>
                 </div>
+                {text("otherJobSkills2", "Other Skills 2", { submitted: "qualifications.otherSkills2" })}
+                {text("otherJobCategory", "Other Job Category", { submitted: "qualifications.jobCategoryOther" })}
+            </Section>
+
+            <Section title="Guardian details">
+                {text("guardianName", "Guardian Name", { submitted: "guardian.name" })}
+                {text("guardianRelationship", "Guardian Relationship", { submitted: "guardian.relationship" })}
+                {text("guardianNic", "Guardian NIC", { maxLength: 12, submitted: "guardian.nic" })}
+                {dateField("guardianBirthday", "Guardian Birth Date", "guardian.birthDate")}
+                {text("guardianPhone", "Guardian Phone", { maxLength: 30, placeholder: "For example: +94771234567", submitted: "guardian.phone" })}
+                <div className="sm:col-span-2">
+                    <Field label="Guardian Address" htmlFor="ad-guardianAddress" error={errors.guardianAddress} submitted="guardian.address">
+                        <textarea id="ad-guardianAddress" rows={2} maxLength={500} value={form.guardianAddress} onChange={(e) => set("guardianAddress")(e.target.value)} disabled={disabled} className={textAreaControl} />
+                    </Field>
+                </div>
             </Section>
 
             <div className="border-t border-border pt-4">
                 {notice && !changed && <p role="status" className="text-body-sm text-verified">Additional details saved.</p>}
                 <DialogError message={error} />
-                {canEdit && (
-                    <div className="mt-4 flex justify-end gap-2">
-                        <button type="button" onClick={() => { setForm(initial); setErrors({}); setError(null); setResets((n) => n + 1); }} disabled={busy || !changed} className={secondaryButton}>Cancel</button>
-                        <button type="submit" disabled={busy || !canSave} className={primaryButton}>{busy ? "Saving…" : "Save additional details"}</button>
-                    </div>
-                )}
+                <div className="mt-4 flex flex-wrap justify-end gap-2 empty:hidden">
+                    <FormChangesButtons />
+                    {canEdit && (
+                        <>
+                            <button type="button" onClick={() => { setForm(initial); setErrors({}); setError(null); setResets((n) => n + 1); }} disabled={busy || !changed} className={secondaryButton}>Cancel</button>
+                            <button type="submit" disabled={busy || !canSave} className={primaryButton}>{busy ? "Saving…" : "Save additional details"}</button>
+                        </>
+                    )}
+                </div>
             </div>
         </form>
     );
@@ -329,13 +402,13 @@ function TextField({ id, label, required, error, value, onChange, disabled, maxL
 }
 
 // A preset from the list, or "Other" with a typed value (e.g. 31, 9.5, EU 43).
-function SizeField({ id, label, presets, value, onChange, error, disabled, submitted }: {
-    id: string; label: string; presets: readonly string[]; value: string; onChange: (value: string) => void; error?: string; disabled: boolean; submitted?: string;
+function SizeField({ id, label, presets, value, onChange, error, disabled, submitted, help }: {
+    id: string; label: string; presets: readonly string[]; value: string; onChange: (value: string) => void; error?: string; disabled: boolean; submitted?: string; help?: string;
 }) {
     const customId = useId();
     const [custom, setCustom] = useState(Boolean(value) && !presets.includes(value));
     return (
-        <Field label={label} htmlFor={`ad-${id}`} error={error} submitted={submitted}>
+        <Field label={label} htmlFor={`ad-${id}`} error={error} submitted={submitted} help={help}>
             <select
                 id={`ad-${id}`}
                 value={custom ? "__custom" : value}

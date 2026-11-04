@@ -650,8 +650,8 @@ button.secondary:hover:not(:disabled) {
 }
 button:disabled { opacity: 0.6; cursor: default; }
 
-/* Size guides (shirt, shoe): a link under the field and a compact panel below it. */
-.size-guide { margin-top: 4px; }
+/* Size guides (shirt, shoe): a compact panel, always shown under the field. */
+.size-guide { margin-top: 8px; }
 .size-guide-panel {
     margin-top: 6px;
     padding: 12px 14px;
@@ -665,11 +665,15 @@ button:disabled { opacity: 0.6; cursor: default; }
 .size-guide-title { margin: 0 0 8px; font-weight: 700; }
 .size-guide-note { margin: 8px 0 4px; color: var(--muted); font-size: 0.875rem; }
 .size-guide-table { width: 100%; max-width: 320px; border-collapse: collapse; }
+.size-guide-tips { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
 .size-guide-table th, .size-guide-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; }
-.size-guide-list { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; }
-.size-guide-list div { display: flex; gap: 8px; }
-.size-guide-list dt { font-weight: 700; min-width: 36px; }
-.size-guide-list dd { margin: 0; }
+/* The shirt size chart: one row per size; scrolls sideways on a narrow phone. */
+.size-chart-scroll { overflow-x: auto; }
+.size-chart { width: 100%; border-collapse: collapse; text-align: center; font-variant-numeric: tabular-nums; }
+.size-chart th, .size-chart td { padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.size-chart thead th { vertical-align: bottom; font-size: 0.8125rem; font-weight: 600; }
+.size-chart tbody th { font-weight: 700; text-align: center; }
+.size-chart tbody tr:last-child th, .size-chart tbody tr:last-child td { border-bottom: 0; }
 
 .link-button {
     min-height: 32px;
