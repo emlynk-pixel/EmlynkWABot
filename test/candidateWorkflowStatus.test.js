@@ -105,7 +105,7 @@ const completeStage = (passportId, stage) => api(USERS.ADMIN, "PUT", `/candidate
 
 describe("the central derivation (STATUS-013 and the ladder)", () => {
     test("labels and codes are stable and complete", () => {
-        assert.deepEqual(Object.values(WORKFLOW_STATUS_LABELS), ["Registered", "Stopped with Test", "Job Assigned", "Form Submitted", "Details Verified", "Documents Verified", "Visa Document Ready"]);
+        assert.deepEqual(Object.values(WORKFLOW_STATUS_LABELS), ["Registered", "Stopped with Test", "Job Assigned", "Form Submitted", "Details Verified", "Documents Verified", "Visa Document Ready", "Visa Submitted", "Departed"]);
         assert.deepEqual(Object.keys(WORKFLOW_STATUS), Object.keys(WORKFLOW_STATUS_LABELS));
     });
 
@@ -123,6 +123,10 @@ describe("the central derivation (STATUS-013 and the ladder)", () => {
         assert.equal(d({ ...everything, testResult: "FAIL" }), "STOPPED_WITH_TEST");
         for (const testResult of ["PASS", null, undefined]) assert.equal(d({ ...everything, testResult }), "VISA_DOCUMENT_READY");
         assert.deepEqual(deriveCandidateWorkflowStatus({ testResult: "FAIL" }), { code: "STOPPED_WITH_TEST", label: "Stopped with Test" });
+        assert.equal(d({ ...everything, visaSubmitted: true }), "VISA_SUBMITTED");
+        assert.equal(d({ ...everything, visaSubmitted: true, departed: true }), "DEPARTED");
+        assert.equal(d({ departed: true }), "DEPARTED");
+        assert.equal(d({ visaSubmitted: true, departed: true, testResult: "FAIL" }), "STOPPED_WITH_TEST");
         // The old signal names mean nothing any more.
         assert.equal(d({ visaDocumentReady: true }), "REGISTERED");
     });
@@ -308,15 +312,32 @@ describe("details and documents need an explicit manual verification; Visa Docum
         assert.equal(stages.find((s) => s.stage === "DOCUMENT_SUBMISSION").completed, true);
         assert.equal(stages.find((s) => s.stage === "VISA_SUBMISSION").completed, false, "Visa submission is not completed");
         assert.deepEqual(await statusOf(), { code: "VISA_DOCUMENT_READY", label: "Visa Document Ready" });
-        // Completing the Visa submission stage changes nothing, and is not required.
-        await completeStage(P, "VISA_SUBMISSION");
-        assert.equal(await code(), "VISA_DOCUMENT_READY");
-        // Only Visa submission (without Document submission) is not Visa Document Ready.
-        await completeStage(Q, "VISA_SUBMISSION");
-        assert.equal(await code(Q), "REGISTERED");
         // A document missing again steps back down.
         await prisma.document.updateMany({ where: { passportId: P, documentType: "SCAN" }, data: { verificationStatus: "SUPERSEDED" } });
         assert.equal(await code(), "REGISTERED");
+    });
+
+    test("completing the Visa submission stage (the existing stage flow) = Visa Submitted; completing Finalizing job is NOT Departed", async () => {
+        await addDocument(P, "PASSPORT");
+        await completeDocumentSubmission(P, "REVIEW_REQUIRED");
+        assert.equal((await completeStage(P, "VISA_SUBMISSION")).status, 200);
+        assert.deepEqual(await statusOf(), { code: "VISA_SUBMITTED", label: "Visa Submitted" });
+        // Without Document submission too: the stage is the signal.
+        await completeStage(Q, "VISA_SUBMISSION");
+        assert.equal(await code(Q), "VISA_SUBMITTED");
+        // Finalizing job keeps its meaning: it never makes a candidate Departed.
+        await completeStage(P, "FINALIZING_JOB");
+        assert.equal(await code(), "VISA_SUBMITTED");
+        // Departed is its own recorded fact (candidate.departed_at, set by the import's VISA STATUS "Departed").
+        await prisma.candidate.update({ where: { passportId: P }, data: { departedAt: new Date() } });
+        assert.deepEqual(await statusOf(), { code: "DEPARTED", label: "Departed" });
+        await setResult(P, "FAIL");
+        assert.equal(await code(), "STOPPED_WITH_TEST");
+        await setResult(P, "PASS");
+        await prisma.candidate.update({ where: { passportId: P }, data: { departedAt: null } });
+        // Reopening the stage steps back down.
+        await api(USERS.ADMIN, "PUT", `/candidates/${P}/stages/VISA_SUBMISSION`, { completed: false });
+        assert.equal(await code(), "VISA_DOCUMENT_READY");
     });
 
     test("Visa Document Ready outranks Documents Verified, Details Verified, Form Submitted and Job Assigned (the specified ladder)", async () => {

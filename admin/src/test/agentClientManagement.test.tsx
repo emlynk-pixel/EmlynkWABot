@@ -243,6 +243,7 @@ describe("Client Management list", () => {
         await user.click(within(dialog).getByRole("button", { name: "Add client" }));
         await waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({
             name: "Acme Builders", agentIds: [AGENT_ID], contactPerson: null, contactNumber: null, whatsappNumber: null, email: null, address: null,
+            registrationNumber: null,
         }));
     });
 

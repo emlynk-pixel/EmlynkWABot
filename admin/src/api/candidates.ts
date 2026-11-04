@@ -71,7 +71,7 @@ export type StageState = StageProgress & {
 
 // The derived workflow status of the candidate list (src/services/candidateWorkflowStatus.js): never edited, never stored.
 export type WorkflowStatus = {
-    code: "REGISTERED" | "STOPPED_WITH_TEST" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED" | "VISA_DOCUMENT_READY";
+    code: "REGISTERED" | "STOPPED_WITH_TEST" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED" | "VISA_DOCUMENT_READY" | "VISA_SUBMITTED" | "DEPARTED";
     label: string;
 };
 

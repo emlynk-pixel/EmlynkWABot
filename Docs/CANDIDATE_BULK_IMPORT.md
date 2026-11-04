@@ -20,11 +20,14 @@ The database is the source of truth. A legacy row is never copied into the mirro
 | Legacy column classification (the only place legacy headers are named) | [candidateImportSourceMapping.js](../src/services/candidateImportSourceMapping.js) |
 | Legacy value normalizers | [candidateImportNormalizers.js](../src/services/candidateImportNormalizers.js) |
 | Row validation, field → column targets | [candidateImportRowValidator.js](../src/services/candidateImportRowValidator.js) |
-| Database snapshot, duplicates and conflicts, fill-blanks merge | [candidateImportClassifier.js](../src/services/candidateImportClassifier.js) |
-| Preview, chunk commit, unique IDs, finish | [candidateImportService.js](../src/services/candidateImportService.js) |
+| Database snapshot, duplicates and conflicts, fill-blanks merge, officer / Test / visa / Client / Agent plans | [candidateImportClassifier.js](../src/services/candidateImportClassifier.js) |
+| Error / warning severity and messages (one catalog) | [candidateImportIssues.js](../src/services/candidateImportIssues.js) |
+| Preview, chunk commit, unique IDs, Client / Agent / allocation / stage writes, finish | [candidateImportService.js](../src/services/candidateImportService.js) |
+| Officer allocation | [workAllocationService.js](../src/services/workAllocationService.js) `allocateImportedCandidates` |
+| Test ID (`T` + YYMMDD) | [testId.js](../src/services/testId.js) |
 | API (`/api/admin/settings/sheet-sync/import`) | [routes/candidateImport.js](../src/routes/candidateImport.js) |
-| Import tracking table | migration `20261103120000_candidate_import` |
-| UI | [SettingsPage.tsx](../admin/src/pages/SettingsPage.tsx), [CandidateImportDialog.tsx](../admin/src/components/CandidateImportDialog.tsx), [importWorkbook.ts](../admin/src/components/importWorkbook.ts) |
+| Import tracking table; Company Number, country-less Agents | migrations `20261103120000_candidate_import`, `20261106120000_sheet_import_org_fields` |
+| UI | [SettingsPage.tsx](../admin/src/pages/SettingsPage.tsx), [CandidateImportDialog.tsx](../admin/src/components/CandidateImportDialog.tsx), [importWorkbook.ts](../admin/src/components/importWorkbook.ts), [validationWorkbook.ts](../admin/src/components/validationWorkbook.ts) |
 
 ## 2. Name semantics
 
@@ -119,7 +122,7 @@ Row 1 of the live Operational Mirror must carry the approved headers **when the 
 
 ## 5. Legacy sheet → database
 
-Headers match after trimming, collapsing spaces and upper-casing. **Required headings:** PASSPORT NUMBER, SURNAME, OTHER NAME.
+Headers match after trimming, collapsing spaces and upper-casing. **Required headings:** PASSPORT NUMBER, SURNAME, OTHER NAME, JOB ROLE.
 
 **IMPORT / TRANSFORM (45)**
 
@@ -135,7 +138,7 @@ Headers match after trimming, collapsing spaces and upper-casing. **Required hea
 | ADDRESS / BIRTH PLACE / EXPERIENCE | | `address` / `place_of_birth` / `job_experience` | IMPORT | ≤ 500 / 100 / 2000 |
 | BIRTH DATE / PASSPORT ISSUE DATE / PASSPORT EXPIRE DATE | | candidate dates | TRANSFORM | §6 dates; birth and issue dates not in the future; issue before expiry |
 | SEX | | `sex` | TRANSFORM | M, MALE → M; F, FEMALE → F |
-| JOB ROLE | preferred job types | `candidate.job` | TRANSFORM | active job type by name, or a confirmed alias; else left unset, `UNKNOWN_JOB_TYPE` |
+| JOB ROLE | preferred job types | `candidate.job` | TRANSFORM | required on every row (blank → ERROR `MISSING_JOB_ROLE`); active job type by name, or a confirmed alias; else left unset, `UNKNOWN_JOB_TYPE` |
 | MARITAL STATUS, CIVIL STATUS | civil status | `marital_status` | TRANSFORM | English answer (also `<text> (Married)`); both given and different → dropped |
 | BLOOD GROUP | | `blood_group` | TRANSFORM | `B Positive (B+)` → `B+` |
 | HEIGHT / WEIGHT | | `height` / `weight_kg` | TRANSFORM | the Candidate Form parsers |
@@ -146,21 +149,31 @@ Headers match after trimming, collapsing spaces and upper-casing. **Required hea
 | SPOUSE DOB, SPOUSE PASSPORT | | `wife_birthday`, `spouse_passport_number` | TRANSFORM | kept only when the record is Married |
 | GUARDIAN NAME, RELATION, NIC, DOB, PHONE, ADDRESS | | `guardian_*` | IMPORT / TRANSFORM | |
 
-**UNRESOLVED: not imported until the business confirms their meaning (15)**
+**Process columns (TRANSFORM, 7).** Not candidate fields: the classifier acts on them (§5a). Checked against the legacy workbook's real header row: OFFICER (A), VISA STATUS (B), AGENT (G), COMPANY (H), INTERVIEW DATE (I), INTERVIEW PASS FAIL (AR), COMPANY NUMBER (BE). There is no separate INTERVIEW column: Interview = these two columns.
+
+| Legacy header | Target | Rule |
+|---|---|---|
+| OFFICER | `candidate_allocation` | the user who handles the candidate, matched by **first name** (§5a) |
+| VISA STATUS | `candidate_stages`, `candidate.departed_at` | `Submit` → Visa submission completed; `Got Visa` → Visa approval completed; `Departed` → recorded departed (`departed_at`; the Finalizing job stage is not touched); `Cancelled` / `Canceled` → ERROR `VISA_CANCELLED`, `Reject` → ERROR `VISA_REJECTED` (not imported); `Got Visa Not Going` → WARNING `VISA_NOT_GOING` (imported, no stage or status changed); `Not Submit` and blank → nothing (no visa step yet; no warning); anything else → WARNING `UNKNOWN_VISA_STATUS`, ignored |
+| INTERVIEW DATE | `candidate_stages.test_date` (TEST_DETAILS) | Interview = Test; §6 dates; also gives the Test ID |
+| INTERVIEW PASS FAIL | `candidate_stages.test_result` | `PASS` → PASS, `FAIL` → FAIL, empty (blank, spaces, or the word `EMPTY`) → PASS; anything else → WARNING `INVALID_TEST_RESULT` |
+| COMPANY | `client.name` | the Client: reused by name, or created with the sheet's spelling |
+| COMPANY NUMBER | `client.registration_number` | filled when the Client's number is blank; never overwritten |
+| AGENT | `agent.name` | the Client's Agent: reused by name, or created with no country |
+
+**UNRESOLVED: not imported until the business confirms their meaning (14)**
 - **FATHER / MOTHER / SPOUSE NAME and SURNAME.** In about three of every four legacy rows the NAME column already contains the surname, so NAME + SURNAME would repeat it, and NAME alone is sometimes incomplete.
 - **CHILD1–3 NAME and SURNAME.** The record keeps each child as one name, and how the two legacy columns combine isn't confirmed.
 - **REMARK.** Not confirmed to be the Candidate Details note.
 - **OTHER SKILLS DESCRIPTION.**
-- **INTERVIEW DATE.** Not confirmed to be the Test date.
 
-**SYSTEM_GENERATED: never accepted from a file (20)**
+**SYSTEM_GENERATED: never accepted from a file (18)**
 - UNIQUE NUMBER, REGISTER NUMBER, REGISTER DATE, ACTIVE STATUS
-- VISA STATUS, INTERVIEW PASS FAIL
 - DOCUMENT CREATED STATUS, and the 13 document columns (PASSPORT, MEDICAL, SCAN, NIC COPY, POLICE REPORT, POLICE REPORT FM CERTIFIED, ROMANIA POLICE REPORT, ROMANIA POLICE REPORT CERTIFIED, DRIVING LICENSE, DRIVING LICENSE FM CERTIFIED, VIDEO, VISA COPY, ROMANIA ID)
 
-No document rows are created, and no stage is completed. Imported candidates therefore show `Not Submitted` documents and incomplete stages until the work is done in Emlynk.
+No document rows are created. The only stages the import completes are Visa submission (VISA STATUS `Submit`) and the Test details (Interview); every other stage stays incomplete until the work is done in Emlynk.
 
-**IGNORE (73).** These are operational, payment, loan, cheque, travel, company, agent and affidavit columns: OFFICER, JOB SECTOR, COMPANY, MERGED, AIR TICKET, ARRIVAL CONFIRMATION (×2), DEPARTURE PHOTO, CV, OTHER/REPEAT COUNT/DETAILS, APPLY COUNTRY, REGISTRATION CATEGORY, CONTACT PERSON, BRANCH, APPLIED FROM, PREVIOUS COMPANY (1/2) and their affidavit dates, CONTRACT RECEIVED, COMPANY NUMBER, AGENT, VISA PROCESSING CATEGORY, DOCUMENTS LAWYER PAYMENT, AFFIDAVITS CONTRACTS SIGNED DATE, CHILD1–3 DOB/PASSPORT, CASH PAYMENT 1–4 DATE, BUREAU READY, CLIENT SUBMIT DATE, VISA RECIVED DATE, AIR TICKET BOOKED DATE, LOAN ×4, CHEQUE ×3, the departure/arrival/ticket/airline columns, ISRAEL PROBLEMS, PASSPORT WITH DOCUMENTS HAND OVER, FINAL AFFIDAVIT BOND, CHECKED DATE, DEPATURE CONFIRMATION CHECKED OFFICER NAME, OFFICER UPDATE, CLIENT UPDATED COMPANY, SUBMITTED COMPANY, AGGREEMENT CREATED FOR, AGENT ASKED FOR A COMPANY, VISA FILE CREATION, REMAINING DOCUMENTS, DOCUMENTS UPDATE, SUBMITTED GROUP, WITHDRAW DATE, REASON TO REJECT, REASON FOR CANCELED.
+**IGNORE.** These are operational, payment, loan, cheque, travel and affidavit columns, plus ERRORS and WARNINGS (the columns of a validation sheet, §6a, so a corrected sheet uploads cleanly): JOB SECTOR, MERGED, AIR TICKET, ARRIVAL CONFIRMATION (×2), DEPARTURE PHOTO, CV, OTHER/REPEAT COUNT/DETAILS, APPLY COUNTRY, REGISTRATION CATEGORY, CONTACT PERSON, BRANCH, APPLIED FROM, PREVIOUS COMPANY (1/2) and their affidavit dates, CONTRACT RECEIVED, VISA PROCESSING CATEGORY, DOCUMENTS LAWYER PAYMENT, AFFIDAVITS CONTRACTS SIGNED DATE, CHILD1–3 DOB/PASSPORT, CASH PAYMENT 1–4 DATE, BUREAU READY, CLIENT SUBMIT DATE, VISA RECIVED DATE, AIR TICKET BOOKED DATE, LOAN ×4, CHEQUE ×3, the departure/arrival/ticket/airline columns, ISRAEL PROBLEMS, PASSPORT WITH DOCUMENTS HAND OVER, FINAL AFFIDAVIT BOND, CHECKED DATE, DEPATURE CONFIRMATION CHECKED OFFICER NAME, OFFICER UPDATE, CLIENT UPDATED COMPANY, SUBMITTED COMPANY, AGGREEMENT CREATED FOR, AGENT ASKED FOR A COMPANY, VISA FILE CREATION, REMAINING DOCUMENTS, DOCUMENTS UPDATE, SUBMITTED GROUP, WITHDRAW DATE, REASON TO REJECT, REASON FOR CANCELED.
 
 Ignored, unresolved and system columns never leave the browser. The server also drops any such column it does receive.
 
@@ -178,6 +191,33 @@ A generic `Welder` is never mapped to TIG / MIG / ARC. Job types are never creat
 
 **Known limitation.** Until aliases are approved, unmatched legacy roles import with `job` left blank and WARNING `UNKNOWN_JOB_TYPE`. In the current legacy file that is about 600 rows. `candidate.job` is nullable, so this does not block an import. Staff add the job type later in Candidate Details.
 
+## 5a. Officer, visa, Test, Client and Agent (`candidateImportClassifier.js`)
+
+All of these are **fill-only** for an existing candidate, and none is written for a candidate whose details are verified (`SKIPPED_VERIFIED`). The preview lists them under **Automatic actions** before anything is confirmed.
+
+**OFFICER → allocation.**
+- The cell's first word and each user's first name are compared trimmed and case-insensitively (`firstNameKey`). Any role can be the officer (Admin, Owner, Team Lead, Analyst, Registration Desk, Job Handler); the retired MANAGER role never matches.
+- Exactly one ACTIVE match → the candidate is allocated to that user (`candidate_allocation`, through `workAllocationService.allocateImportedCandidates`, audited `ASSIGN_CANDIDATE` like a manual allocation; the user is re-checked ACTIVE under `FOR SHARE` at commit).
+- No user → ERROR `OFFICER_NOT_FOUND`. Several ACTIVE users → ERROR `OFFICER_AMBIGUOUS`. Only inactive / invited users → ERROR `OFFICER_NOT_ACTIVE`. An ERROR row is not imported; nobody is guessed.
+- Blank cell → WARNING `OFFICER_MISSING`, imported unassigned. No OFFICER column at all → nothing reported.
+- Already allocated: to the same user → nothing; to another user → WARNING `OFFICER_DIFFERS`, never reassigned.
+- Analyst visibility is unchanged (an Analyst sees only their own candidates). In Work Allocation a non-Analyst holder is listed with the unavailable Analysts, so the candidates can be moved.
+
+**VISA STATUS.** `Got Visa` completes the existing **Visa approval** stage (when not completed yet; no new status). `Reject` and `Cancelled` are ERRORS; `Got Visa Not Going` is a WARNING and changes nothing; `Not Submit` does nothing and reports nothing. `Submit` completes **Visa submission** when it is not completed yet; completing it by hand in the candidate's stages gives the same Status (`VISA_SUBMITTED`); there is no second workflow. `Departed` records the candidate as departed (`candidate.departed_at`, set once, audited `CANDIDATE_DEPARTED`), giving `DEPARTED` (`20-candidate-management.md` §4.0). The **Finalizing job** stage is never touched, and completing it by hand does not mean departure.
+
+**Interview → Test details (TEST_DETAILS stage).** There is no separate Interview entity.
+- A row has a test when it has an Interview Date or says PASS / FAIL. An empty result is PASS only for a test held on or before today: a row with neither invents no test, and a test scheduled for later gets no result.
+- Test date, result and Test ID are each written only when the stage has none; a different stored value → WARNING `TEST_DETAILS_DIFFER`. A new Test details row is completed when it has a result.
+- **Test ID** = `T` + YY + MM + DD of the Test date (`src/services/testId.js`, the one generator), e.g. 2026-11-04 → `T261104`. It names the day's test **session**: every candidate tested that day shares it, by design, so it is not unique and has no unique index. The Test details stage generates it too when saved with a date and no ID; a typed ID is kept.
+
+**COMPANY / AGENT / COMPANY NUMBER → Client and Agent.** For every row that is not an ERROR row (not candidate data). Genuinely different names are never fuzzy-matched or merged (`TKUMAT` / `TUHUMAT`, `JAMINO` / `JAMINO (TAL)` stay separate Clients until the sheet is corrected). Names are matched by a key that ignores case, leading / trailing spaces and repeated internal spaces (`ABC Ltd` = `ABC  Ltd` = ` abc ltd `), compared with the stored name normalized the same way (`findClientsByKeys` / `findAgentsByKeys`, in the preview and again in the commit transaction), so an older record saved with extra spaces is found too and never rewritten. A new record takes the sheet's spelling, trimmed with spaces collapsed (the first row's). The ids are the database's own (`gen_random_uuid()`); Clients and Agents have no other code.
+- Existing Client → reused. New Client → created only together with an Agent (every Client has one); a new Company without an Agent → WARNING `CLIENT_NEEDS_AGENT`.
+- Existing Agent → reused and linked to the Client if not yet. New Agent → created with **no country** (the legacy sheet has none: "Not set" in Admin > Agents, where an admin sets it). A Job can't be created with a country-less responsible Agent (409 `AGENT_COUNTRY_MISSING`). Same name in two countries → WARNING `AGENT_AMBIGUOUS`; inactive Agent → WARNING `AGENT_INACTIVE` (not linked). An Agent without a Company → WARNING `AGENT_NEEDS_COMPANY`, not created.
+- Company Number → `client.registration_number` (migration `20261106120000_sheet_import_org_fields`): saved for a new Client, fills a blank one, never overwrites. A different stored number, or two different numbers for one Company in the file → WARNING `COMPANY_NUMBER_CONFLICT`.
+- Audited `AGENT_CREATED`, `CLIENT_CREATED`, `CLIENT_AGENT_CHANGED`, `CLIENT_UPDATED`, like Admin > Clients / Agents. Two imports creating the same name at once: the unique indexes refuse the second (`client_name_lower_key`, `agent_name_country_lower_key`, and `agent_name_no_country_lower_key` for country-less Agents); its chunk is retried row by row and finds the record.
+
+**Re-import (idempotency).** The same sheet again writes nothing: every candidate is `NO_CHANGE`, Clients and Agents are reused, allocations, Test details and stages are already there, and no audit row is added.
+
 ## 6. Validation (import only; registration unchanged)
 
 Normal registration keeps `^[PN]\d{7}$`, a required NIC and a required WhatsApp number.
@@ -188,9 +228,25 @@ Normal registration keeps `^[PN]\d{7}$`, a required NIC and a required WhatsApp 
 | Phones | The same canonical form as registration (§12). `07XXXXXXXX`, `0XXXXXXXXX`, `7XXXXXXXX`, `947…`, `+947…`, `0094…` → `+94…`. Romanian `407…` → `+407…`. `+`/`00` numbers keep their own code. Another 10–15 digit number gets `+` with WARNING `FOREIGN_PHONE_UNVERIFIED`. Junk and scientific notation are dropped. Several numbers in one cell: all are kept in order, with `MULTIPLE_PHONE_NUMBERS`. |
 | N/A | `N/A`, `NA`, `n/a`, `N.A`, `-` (any case) mean "not given". |
 
-**Row status.** INVALID (identity unusable: passport, surname or other names), WARNING (a value dropped or in a legacy format), VALID, CONFLICT, DUPLICATE.
+**Row status.** INVALID (identity unusable: passport, surname or other names; no Job Role; Cancelled visa; an unmatched officer), WARNING (a value dropped or in a legacy format), VALID, CONFLICT, DUPLICATE.
 
-**Warning and failure codes.** All are safe to show; none carries a value:
+**Errors and warnings (one catalog: `src/services/candidateImportIssues.js`).** Every code has one severity and one readable message (no cell value in it). The preview's "Rows to review" table and the validation sheet's ERRORS / WARNINGS columns show the **same** messages, from the same preview response (`problems[].errors / warnings` and `rowIssues`). A message is listed once per row.
+
+| Field | ERROR (row not imported) | WARNING (imported) |
+|---|---|---|
+| Passport | missing; not P/N + 7 or 8 digits (it is the identity key, so a bad format stays an error) | old format P/N + 8 digits |
+| Names | surname / other name missing or too long | other name N/A |
+| Job Role | missing | not a known job type; more than 10 |
+| NIC | — (NIC conflict: CONFLICT, not imported) | missing; invalid format; changed by Excel |
+| Officer | no matching user; several active users; only inactive users | blank; already assigned to someone else |
+| Visa status | Cancelled, Reject | Got Visa Not Going; a value Emlynk doesn't map |
+| Interview | — | invalid date; result not PASS / FAIL / empty; different test details on record |
+| Company / Agent / Number | — | new Company without an Agent; Agent without a Company; ambiguous or inactive Agent; number conflict or without a Company |
+
+**Codes.** All are safe to show; none carries a value:
+- `MISSING_JOB_ROLE`, `VISA_CANCELLED`, `VISA_REJECTED`, `VISA_NOT_GOING`, `UNKNOWN_VISA_STATUS`, `INVALID_TEST_RESULT`, `TEST_DETAILS_DIFFER`
+- `OFFICER_MISSING`, `OFFICER_NOT_FOUND`, `OFFICER_AMBIGUOUS`, `OFFICER_NOT_ACTIVE`, `OFFICER_DIFFERS`
+- `CLIENT_NEEDS_AGENT`, `AGENT_NEEDS_COMPANY`, `AGENT_AMBIGUOUS`, `AGENT_INACTIVE`, `COMPANY_NUMBER_CONFLICT`, `COMPANY_NUMBER_WITHOUT_COMPANY`
 - `LEGACY_PASSPORT_FORMAT`, `MISSING_NIC`, `INVALID_NIC`, `NIC_CORRUPTED`
 - `MISSING_WHATSAPP`, `INVALID_PHONE`, `MULTIPLE_PHONE_NUMBERS`, `FOREIGN_PHONE_UNVERIFIED`
 - `INVALID_DATE`, `PASSPORT_DATES_INCONSISTENT`
@@ -201,6 +257,15 @@ Normal registration keeps `^[PN]\d{7}$`, a required NIC and a required WhatsApp 
 - `MISSING_PASSPORT`, `INVALID_PASSPORT`, `MISSING_SURNAME`, `MISSING_OTHER_NAMES`, `NAME_TOO_LONG`
 - `DUPLICATE_SOURCE_ROW`, `NIC_CONFLICT`, `WHATSAPP_CONFLICT`, `SKIPPED_VERIFIED`
 - `PASSPORT_EXISTS`, `UNIQUE_ID_COLLISION`, `DB_ERROR`
+
+## 6a. Validation sheet (ERRORS / WARNINGS)
+
+When the preview finds any error or warning, the dialog offers **Download validation sheet**. It is a copy of the uploaded workbook with two columns added to its first sheet (the one the import reads), `ERRORS` and `WARNINGS`, each holding that row's messages, one per line in the cell. A clean row leaves both blank. The admin fixes the rows and uploads the sheet again; the import ignores the two columns.
+
+- **Built in the browser** (`admin/src/components/validationWorkbook.ts`, ExcelJS, loaded only on the click) from the file the admin chose and the preview's `rowIssues`. The file still never leaves the computer: there is no download endpoint, no stored copy, no URL beyond the click (the object URL is revoked at once). The data behind it is the preview response, which only ADMIN / OWNER get.
+- **Kept as it was:** every other sheet, every column in its place, every value and formula, the sheet names. The original file is not modified (a copy is written).
+- An `ERRORS` / `WARNINGS` column already there (any case, e.g. an earlier validation sheet) is **reused**: its old messages are cleared and replaced; no `ERRORS_2`. Otherwise both are added after the last used column.
+- Row numbers are Excel's own (the reader keeps leading blank rows), so each message lands on its row.
 
 ## 7. Identity, duplicates and conflicts
 
@@ -218,9 +283,9 @@ A name is never used as an identity key.
 **Existing candidates: fill blanks only.**
 - A field is written only when the record's value is empty and the imported value is valid.
 - A non-empty field is never overwritten. A differing value is only counted (`fieldsDiffering`) and never shown.
-- Never touched: passport, unique ID, stages, documents, verification, job assignments, work allocation, Candidate Form data.
+- Never touched: passport, unique ID, documents, verification, job assignments, Candidate Form data. Allocation, Test details and the visa stages are only filled when empty (§5a).
 
-**Verified candidates.** If the record's details are verified and the import would change anything, the row is `SKIPPED_VERIFIED`. The verification-reset trigger is neither bypassed nor fired.
+**Verified candidates.** If the record's details are verified and the import would change anything (including an allocation, Test or stage), the row is `SKIPPED_VERIFIED`. The verification-reset trigger is neither bypassed nor fired.
 
 ## 8. Commit architecture
 
@@ -229,7 +294,8 @@ A name is never used as an identity key.
   - Each chunk runs in **one short transaction** (30 s timeout). The transaction locks the `candidate_import` row (`FOR UPDATE`), re-reads the chunk's DB state (snapshot), allocates unique IDs, runs `createMany` for candidates, details and audit rows, and fills blanks for existing candidates.
   - The commit uses 14 operations per chunk. On Vercel, each request stays far below the 60 s limit and uses one pooled connection (pool max 3).
 - **Integrity.** A chunk must hash (SHA-256) to what was previewed, so a commit writes exactly the previewed rows. Only the user who previewed may commit, and a preview expires after 24 h.
-- **Failure.** A failed chunk rolls back alone; earlier chunks stay. It is then retried row by row, so only the bad row fails, with a safe code.
+- **Process writes.** Clients / Agents, allocations, Test details and visa stages are written in the **same** chunk transaction as the candidates (a new candidate's stage rows in one `createMany`). Users, Clients and Agents are read once per preview / chunk in batched queries (no query per row).
+- **Failure.** A failed chunk rolls back alone; earlier chunks stay. It is then retried row by row, each row in its own transaction, so only the bad row fails, with a safe code, and leaves no Client, Agent, allocation or stage behind.
 - **Idempotency.** A committed chunk is never written twice. A retry keeps earlier CREATED / FILLED outcomes, and a re-imported row finds its own record with nothing to fill.
 
 **Unique IDs.**
@@ -256,7 +322,8 @@ Tooltip on **Update Sheet**: "Upload an existing candidate sheet to validate and
 
 - The workbook is read in the browser and is never uploaded or stored.
 - Only allow-listed columns are sent.
-- The UI shows masked passports (`N9*****12`) and reason codes only.
+- The UI shows masked passports (`N9*****12`) and readable reasons only. The preview's automatic actions name users, Clients and Agents, never a candidate.
+- The validation sheet is built and saved in the browser only (§6a).
 - `candidate_import` holds counts, row numbers, reason codes and chunk hashes; it holds no values.
 - `BULK_IMPORT_STARTED` / `COMPLETED` / `FAILED` audit entries hold counts only.
 - Per-candidate audit entries (`CREATE_CANDIDATE`, `UPDATE_CANDIDATE`, `*_ADDITIONAL_DETAILS`) name the fields, never their values. Like every candidate audit entry, they keep the passport number as the record key.

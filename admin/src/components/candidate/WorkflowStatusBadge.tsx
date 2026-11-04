@@ -11,6 +11,8 @@ const TONES: Record<WorkflowStatus["code"], Tone> = {
     DETAILS_VERIFIED: "verified",
     DOCUMENTS_VERIFIED: "verified",
     VISA_DOCUMENT_READY: "verified",
+    VISA_SUBMITTED: "verified",
+    DEPARTED: "verified",
 };
 
 export function WorkflowStatusBadge({ status }: { status: WorkflowStatus }) {

@@ -26,6 +26,9 @@ import { businessDayRange, isValidBusinessDate } from "../utils/businessDay.js";
 //   REASSIGN_CANDIDATE   Analyst A -> Analyst B
 //   UNASSIGN_CANDIDATE   Analyst -> unallocated
 // The Analyst's access follows the row on every request (candidateAccess.js).
+// The bulk import also allocates, to the sheet's OFFICER, who may hold any role
+// (allocateImportedCandidates). Such a holder is listed with the unavailable
+// Analysts here, so their candidates can still be found and moved.
 
 export const ALLOCATION_AUDIT_ACTION = Object.freeze({
     ASSIGN: "ASSIGN_CANDIDATE",
@@ -475,6 +478,34 @@ export async function assignCandidates({ db, actor, candidateIds, allocations, r
             byAnalyst: allocations.map(({ analystId, count }) => ({ analystId, name: analysts.get(analystId).name, count })),
         };
     });
+}
+
+// Bulk candidate import (candidateImportService.js): each row's OFFICER, already matched to ONE user
+// in the preview. Inside the caller's transaction. The officer can hold any role (the sheet's officer
+// is whoever handles the candidate), but must still be ACTIVE: checked here under FOR SHARE, so a
+// deactivation can't slip in (the chunk then fails and is retried row by row). Fill-only: a candidate
+// that is already allocated (to anyone) keeps its allocation. ASSIGN_CANDIDATE is audited as for a
+// manual allocation. entries: [{ passportId, analystId }]. Returns the passport IDs allocated.
+export async function allocateImportedCandidates(tx, { actor, entries }) {
+    if (!entries.length) return [];
+    const officerIds = [...new Set(entries.map((entry) => entry.analystId))];
+    const rows = await tx.$queryRaw`
+        SELECT "admin_id" AS "adminId", "name", "status" FROM "user"
+        WHERE "admin_id" = ANY(${officerIds}) FOR SHARE`;
+    const officers = new Map(rows.map((row) => [row.adminId, row]));
+    for (const id of officerIds) {
+        const user = officers.get(id);
+        if (!user) throw new CandidateError(409, "OFFICER_NOT_FOUND", "An officer no longer exists. Nothing was changed.");
+        if (user.status !== USER_STATUS.ACTIVE) throw new CandidateError(409, "OFFICER_NOT_ACTIVE", `${user.name} is not an active user. Nothing was changed.`);
+    }
+    const taken = new Set((await tx.candidateAllocation.findMany({
+        where: { passportId: { in: entries.map((entry) => entry.passportId) } }, select: { passportId: true },
+    })).map((row) => row.passportId));
+    const fresh = entries.filter((entry) => !taken.has(entry.passportId));
+    if (!fresh.length) return [];
+    await tx.candidateAllocation.createMany({ data: fresh.map((entry) => ({ passportId: entry.passportId, analystId: entry.analystId, assignedDate: new Date() })), skipDuplicates: true });
+    await audit(tx, fresh.map((entry) => auditRow({ actor, action: ALLOCATION_AUDIT_ACTION.ASSIGN, passportId: entry.passportId, from: null, to: officers.get(entry.analystId) })));
+    return fresh.map((entry) => entry.passportId);
 }
 
 // Returns the candidates to Unallocated, all or nothing. Candidates that are

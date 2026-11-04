@@ -67,7 +67,9 @@ export type JobOptions = {
     // job's responsible agent; with several, one must be chosen). The To Country is the chosen
     // agent's country (agents[].countryCode).
     clients: { id: string; name: string; agentIds: string[] }[];
-    agents: { id: string; name: string; countryCode: string }[];
+    // countryCode is absent for an Agent created by the bulk import until its country is set: such an
+    // Agent can't be a job's responsible agent (the server refuses, AGENT_COUNTRY_MISSING).
+    agents: { id: string; name: string; countryCode?: string }[];
 };
 
 // responsibleAgentId must be one of the client's agents (optional only when it has exactly one).

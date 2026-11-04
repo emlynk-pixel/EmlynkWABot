@@ -36,6 +36,7 @@ import { openFollowUp } from "./callLogFollowUpService.js";
 import { candidateJobAssignments, displayJob } from "./jobAssignmentReader.js";
 import { deriveCandidateWorkflowStatus } from "./candidateWorkflowStatus.js";
 import { setAuditActor } from "./auditActor.js";
+import { formatTestId } from "./testId.js";
 
 // ---------------------------------------------------------------- definitions
 
@@ -690,6 +691,7 @@ export async function listCandidates({ db, params, scope = {} }) {
 // loaded for every row in one batched query each (never per candidate).
 export const WORKFLOW_STATUS_SELECT = Object.freeze({
     ...listSelect,
+    departedAt: true,
     stages: { select: { stage: true, completed: true, testResult: true } },
     documents: {
         where: { documentType: { in: REQUIRED_SUBMISSION_DOCUMENTS } },
@@ -698,6 +700,8 @@ export const WORKFLOW_STATUS_SELECT = Object.freeze({
     jobAssignments: { where: { isActive: true }, select: { jobId: true }, take: 1 },
     verification: { select: { detailsVerifiedAt: true, documentsVerifiedAt: true } },
 });
+
+const stageCompleted = (user, stage) => Boolean(user.stages.find((row) => row.stage === stage)?.completed);
 
 function workflowStatusOf(user, formSubmitted, missing = automaticStageMissing(user, user.documents)) {
     return deriveCandidateWorkflowStatus({
@@ -709,6 +713,9 @@ function workflowStatusOf(user, formSubmitted, missing = automaticStageMissing(u
         documentsVerified: Boolean(user.verification?.documentsVerifiedAt),
         // Document submission complete (every required document on record): the Visa-document point.
         documentSubmissionCompleted: missing.DOCUMENT_SUBMISSION.length === 0,
+        visaSubmitted: stageCompleted(user, "VISA_SUBMISSION"),
+        // Recorded as Departed (candidate.departed_at); completing Finalizing job is not departure.
+        departed: Boolean(user.departedAt),
     });
 }
 
@@ -1031,6 +1038,12 @@ export async function updateStage({ db, passportId, stage, values, actor = null,
     const current = candidate.stages.find((s) => s.stage === stage);
     if (current.automatic && values.completed !== undefined) {
         throw new CandidateError(409, "AUTOMATIC_STAGE", "This stage is completed automatically when its details and documents are on record.");
+    }
+    // Test details saved with a Test date and no Test ID: the generated one (testId.js). A typed one is kept.
+    if (stage === "TEST_DETAILS" && (values.testDate !== undefined || values.testId !== undefined)) {
+        const testDate = values.testDate !== undefined ? values.testDate : current.testDate;
+        const testId = values.testId !== undefined ? values.testId : current.testId;
+        if (testDate && !testId) values = { ...values, testId: formatTestId(testDate) };
     }
 
     const data = {};

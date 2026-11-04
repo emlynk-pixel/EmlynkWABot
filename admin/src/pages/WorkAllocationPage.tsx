@@ -47,6 +47,8 @@ const STATUS_OPTIONS: { code: WorkflowStatus["code"]; label: string }[] = [
     { code: "DETAILS_VERIFIED", label: "Details Verified" },
     { code: "DOCUMENTS_VERIFIED", label: "Documents Verified" },
     { code: "VISA_DOCUMENT_READY", label: "Visa Document Ready" },
+    { code: "VISA_SUBMITTED", label: "Visa Submitted" },
+    { code: "DEPARTED", label: "Departed" },
 ];
 const filterSelect = "h-8 w-full rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
 

@@ -614,6 +614,8 @@ async function requireClientWithAgent(tx, clientId, agentId) {
     await tx.$queryRaw`SELECT "id" FROM "agent" WHERE "id" = ${chosen}::uuid FOR SHARE`;
     const agent = await tx.agent.findUnique({ where: { id: chosen }, select: { id: true, isActive: true, countryCode: true } });
     if (!agent.isActive) throw new CandidateError(409, "AGENT_INACTIVE", "The responsible agent is inactive. Choose an active agent of this client, or activate it first.");
+    // An Agent created by the bulk import has no country yet: the job's To Country would be a guess.
+    if (!agent.countryCode) throw new CandidateError(409, "AGENT_COUNTRY_MISSING", "The responsible agent has no country. Set the agent's country in Agents first.");
     return { client, agent };
 }
 

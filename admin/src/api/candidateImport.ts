@@ -26,10 +26,33 @@ export type ImportSummary = {
     whatsappConflicts: number;
     fieldsDiffering: number;
     ignoredSourceColumns: number;
+    // Automatic actions (older servers may not send them).
+    allocations?: number;
+    testsToSet?: number;
+    visaSubmitted?: number;
+    departed?: number;
+    clientsToCreate?: number;
+    agentsToCreate?: number;
+    companyNumbersToFill?: number;
 };
 
-// A row that is not plainly valid: the passport number is masked, the reasons are codes.
-export type ImportProblem = { rowNumber: number; passport: string; status: string; action: string; codes: string[] };
+// A row that is not plainly valid: the passport number is masked, the reasons are codes, and
+// errors / warnings are their readable messages (the same ones as in rowIssues).
+export type ImportProblem = { rowNumber: number; passport: string; status: string; action: string; codes: string[]; errors?: string[]; warnings?: string[] };
+
+// Every row with an issue (no cell values): what the ERRORS / WARNINGS columns of the validation sheet hold.
+export type ImportRowIssues = { rowNumber: number; errors: string[]; warnings: string[] };
+
+// What the import will do on its own, shown before anything is confirmed (no candidate data).
+export type ImportActions = {
+    officers: { sheetName: string; userName: string; rows: number }[];
+    officerAssignments: { userName: string; rows: number }[];
+    clients: { name: string; action: "CREATE" | "REUSE"; rows: number }[];
+    agents: { name: string; action: "CREATE" | "REUSE"; rows: number }[];
+    visa: { VISA_SUBMITTED: number; VISA_APPROVED?: number; DEPARTED: number };
+    tests: number;
+    testsBlankResultAsPass: number;
+};
 
 export type ImportPreview = {
     importId: string;
@@ -40,18 +63,21 @@ export type ImportPreview = {
     columns: { missingRequired: string[]; supported: string[]; ignored: string[]; systemGenerated: string[]; unresolved: string[]; unknown: string[] };
     problems: ImportProblem[];
     problemsTruncated: boolean;
+    rowIssues?: ImportRowIssues[];
+    actions?: ImportActions;
 };
 
 export type ImportCounts = {
     rows?: number; created?: number; filled?: number; noChange?: number; skippedVerified?: number; invalid?: number;
     duplicates?: number; conflicts?: number; failed?: number; warnings?: number; uncommittedChunks?: number; uncommittedRows?: number;
+    allocated?: number; testsSet?: number; stagesCompleted?: number; departed?: number; clientsCreated?: number; agentsCreated?: number;
 };
 
 export type ImportChunkResult = {
     chunkIndex: number;
     status: "COMMITTED" | "PARTIAL";
     counts: ImportCounts;
-    failures: { rowNumber: number; passport: string; codes: string[] }[];
+    failures: { rowNumber: number; passport: string; codes: string[]; errors?: string[] }[];
     alreadyCommitted?: boolean;
 };
 

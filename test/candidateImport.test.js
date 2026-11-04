@@ -332,7 +332,9 @@ describe("chunked commit", () => {
         const results = await commitAll(p, rows, { db: poisoned });
         assert.equal(results[0].status, "COMMITTED");
         assert.equal(results[1].status, "PARTIAL");
-        assert.deepEqual(results[1].failures, [{ rowNumber: IMPORT_CHUNK_SIZE + 3, passport: "N9****02", codes: ["NIC_CONFLICT"] }]);
+        assert.deepEqual(results[1].failures, [{
+            rowNumber: IMPORT_CHUNK_SIZE + 3, passport: "N9****02", codes: ["NIC_CONFLICT"], errors: ["NIC number belongs to another candidate, or differs from this candidate's NIC"],
+        }]);
         assert.equal(await prisma.candidate.count(), IMPORT_CHUNK_SIZE + 2, "chunk 1 kept; chunk 2 imported all but the bad row");
         // Retrying the partial chunk later (the problem fixed) writes only the missing row, once.
         const retry = await commitChunk({ db: prisma, actor: ADMIN, importId: p.importId, chunkIndex: 1, rows: rows.slice(IMPORT_CHUNK_SIZE) });

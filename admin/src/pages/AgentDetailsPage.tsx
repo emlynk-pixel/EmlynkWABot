@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
-import { getAgent, setAgentStatus, type AgentJobRow } from "../api/agents";
+import { AGENT_COUNTRY_NOT_SET, getAgent, setAgentStatus, type AgentJobRow } from "../api/agents";
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageMasterData, useAuth } from "../auth/AuthProvider";
 import { useBreadcrumbLabel } from "../components/Breadcrumbs";
@@ -130,7 +130,7 @@ function AgentDetailsView() {
                 <div role="tabpanel" id="agent-panel-details" aria-labelledby="agent-tab-details">
                     <Card className="p-4">
                         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                            <Detail label="Country">{countryName(agent.countryCode)}</Detail>
+                            <Detail label="Country">{agent.countryCode ? countryName(agent.countryCode) : AGENT_COUNTRY_NOT_SET}</Detail>
                             <Detail label="Contact number">{agent.contactNumber ?? "—"}</Detail>
                             <Detail label="WhatsApp number">{agent.whatsappNumber ?? "—"}</Detail>
                             <Detail label="Email">{agent.email ?? "—"}</Detail>

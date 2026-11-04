@@ -142,6 +142,9 @@ model Candidate {
   // Job types: a comma-separated list ("Construction Worker, Caregiver").
   // Older records hold a single value, which reads as a list of one.
   job                String?
+  // Recorded as Departed (bulk import VISA STATUS "Departed"; migration 20261106120000). Its own fact:
+  // the Finalizing job stage does not set it. Drives the derived Status DEPARTED.
+  departedAt         DateTime?       @map("departed_at")
   createdDate        DateTime        @default(now()) @map("created_date")
   updatedDate        DateTime        @updatedAt @map("updated_date")
   documents          Document[]
@@ -520,6 +523,8 @@ model Client {
   whatsappNumber String?  @map("whatsapp_number")
   email          String?
   address        String?
+  // Company registration number (legacy sheet COMPANY NUMBER; migration 20261106120000).
+  registrationNumber String? @map("registration_number")
   isActive       Boolean  @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
@@ -548,11 +553,13 @@ model AgentClient {
 }
 
 // The agent responsible for a job; country_code (ISO 3166-1 alpha-2) is the
-// agent's country and is copied onto each new job.
+// agent's country and is copied onto each new job. NULL only for an Agent created
+// by the bulk import (the legacy sheet has no country): it can't be a Job's
+// responsible Agent until a country is set.
 model Agent {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name           String
-  countryCode    String   @map("country_code") @db.Char(2)
+  countryCode    String?  @map("country_code") @db.Char(2)
   isActive       Boolean  @default(true) @map("is_active")
   contactNumber  String?  @map("contact_number")
   whatsappNumber String?  @map("whatsapp_number")

@@ -317,7 +317,7 @@ export async function listAgents({ db, params }) {
         items: rows.map((row) => ({ ...agentView(row), ...counts(row.id) })),
         pagination: listPagination(params, total),
         filters: { search: params.search ?? null, country: params.country ?? null, status: params.status ?? null },
-        countries: countries.map((row) => row.countryCode),
+        countries: countries.map((row) => row.countryCode).filter(Boolean),
     };
 }
 

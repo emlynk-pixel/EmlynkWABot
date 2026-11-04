@@ -11,7 +11,8 @@ export type EntityStatus = "ACTIVE" | "INACTIVE";
 export type AgentRecord = {
     agentId: string;
     name: string;
-    countryCode: string;
+    // null: an Agent created by the bulk import (the legacy sheet has no country) until one is set.
+    countryCode: string | null;
     status: EntityStatus;
     contactNumber: string | null;
     whatsappNumber: string | null;
@@ -54,7 +55,10 @@ export type AgentDetails = AgentListItem & {
     jobsShownLimit: number;
 };
 
-export type AgentOption = { agentId: string; name: string; countryCode: string; status: EntityStatus };
+export type AgentOption = { agentId: string; name: string; countryCode: string | null; status: EntityStatus };
+
+// An Agent's country for display: "Not set" for an imported Agent without one.
+export const AGENT_COUNTRY_NOT_SET = "Not set";
 
 export type AgentInput = {
     name: string;

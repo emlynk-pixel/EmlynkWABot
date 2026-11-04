@@ -276,6 +276,53 @@ export function normalizeJobRoles(raw, { activeJobTypes, aliases = {} }) {
     return unknown ? { value, warning: "UNKNOWN_JOB_TYPE" } : { value };
 }
 
+// ---------------------------------------------------------------- process columns
+
+// VISA STATUS (the legacy sheet's values, confirmed from the sample workbook and by the business),
+// case-insensitive:
+//   Submit             -> "VISA_SUBMITTED" (completes the Visa submission stage)
+//   Got Visa           -> "VISA_APPROVED"  (completes the Visa approval stage)
+//   Departed           -> "DEPARTED"       (candidate.departed_at)
+//   Cancelled / Canceled -> error VISA_CANCELLED: not imported
+//   Reject             -> error VISA_REJECTED: not imported
+//   Got Visa Not Going -> warning VISA_NOT_GOING: imported, no stage or status changed
+//   Not Submit, blank  -> nothing: no visa step yet (the sheet's default, not a problem)
+// Any other value is reported and ignored: no stage is guessed from it.
+const VISA_STATUSES = Object.freeze({ SUBMIT: "VISA_SUBMITTED", "GOT VISA": "VISA_APPROVED", DEPARTED: "DEPARTED" });
+const VISA_ERRORS = Object.freeze({ CANCELLED: "VISA_CANCELLED", CANCELED: "VISA_CANCELLED", REJECT: "VISA_REJECTED" });
+const VISA_WARNINGS = Object.freeze({ "GOT VISA NOT GOING": "VISA_NOT_GOING" });
+const VISA_NO_ACTION = new Set(["NOT SUBMIT"]);
+export function normalizeVisaStatus(raw) {
+    if (blank(raw)) return none();
+    const key = clean(raw).toUpperCase();
+    if (VISA_NO_ACTION.has(key)) return none();
+    if (VISA_ERRORS[key]) return { value: null, error: VISA_ERRORS[key] };
+    if (VISA_WARNINGS[key]) return drop(VISA_WARNINGS[key]);
+    return VISA_STATUSES[key] ? { value: VISA_STATUSES[key] } : drop("UNKNOWN_VISA_STATUS");
+}
+
+// INTERVIEW PASS FAIL -> the Test result. An empty cell (blank, only spaces, or the word EMPTY) is a
+// PASS, as the business confirmed; the caller applies it only to a row that has a Test (an Interview
+// Date or an explicit result), so an empty cell never invents a test. `explicit`: the cell said
+// PASS or FAIL itself.
+export function normalizeTestResult(raw) {
+    const key = clean(raw).toUpperCase();
+    if (key === "" || key === "EMPTY") return { value: "PASS", explicit: false };
+    if (key === "PASS" || key === "FAIL") return { value: key, explicit: true };
+    return drop("INVALID_TEST_RESULT");
+}
+
+// A Client / Agent name: trimmed, spaces collapsed, stored with the sheet's spelling. Its lookup key
+// (orgKey) ignores case, so "ABC Ltd" and "abc  LTD" are the same organisation.
+export function normalizeOrgName(raw, { max = 120 } = {}) {
+    return normalizeText(raw, { max });
+}
+export const orgKey = (name) => clean(name).toLowerCase();
+
+// The first name of a person's name ("  john  Silva " -> "john"): how the sheet's OFFICER is
+// matched to a user (the user table has one name field).
+export const firstNameKey = (name) => clean(name).split(" ")[0].toLowerCase();
+
 // ---------------------------------------------------------------- masking
 
 // A passport-like identifier shown only masked: "N12345678" -> "N1*****78".
