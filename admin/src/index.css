@@ -208,6 +208,16 @@
         cursor: pointer;
     }
 
+    /* The open list of a native <select>: some browsers (Chrome on Windows)
+       draw it with the select's text colour on their own white background, so a
+       transparent select (the job-type picker) showed white-on-white options in
+       dark mode. The options take the theme's colours instead. */
+    option,
+    optgroup {
+        background-color: var(--color-surface);
+        color: var(--color-ink);
+    }
+
     :focus-visible {
         outline: 2px solid var(--color-primary);
         outline-offset: 2px;

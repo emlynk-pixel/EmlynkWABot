@@ -71,6 +71,11 @@
 
 * { box-sizing: border-box; }
 
+/* The open list of a native <select> takes the theme's colours: some browsers
+   (Chrome on Windows) otherwise draw the options in the field's text colour on
+   their own white background, unreadable in the dark theme. */
+option, optgroup { background-color: var(--surface); color: var(--ink); }
+
 body { margin: 0; background: var(--bg); color: var(--ink); }
 
 /* Long words wrap instead of widening the page. Text wraps between words
