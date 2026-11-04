@@ -338,7 +338,7 @@ describe("progress steps: one shared step UI", () => {
     // new step, or Additional details, can't get its own styling.
     const BUTTON = "group relative z-10 flex flex-col items-center gap-2 px-1 focus:outline-none";
     const CIRCLE_BASE = "flex size-8 items-center justify-center rounded-full text-label-md tabular-nums";
-    const INCOMPLETE = "border-2 border-critical bg-stepper-white text-critical";
+    const INCOMPLETE = "border-2 border-critical bg-stepper-warn-fill text-critical";
     const INCOMPLETE_CURRENT = "border-2 border-critical bg-critical text-stepper-white";
 
     test("Visa submission and Visa approval are visible; IVS interview and Finalizing the job are not", async () => {
