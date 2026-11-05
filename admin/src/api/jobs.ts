@@ -21,6 +21,13 @@ export const jobViewCount = (counts: Record<JobStatusView, number>, view: JobVie
 
 export type JobTypeRef = { id: string; code: string; name: string };
 
+// Job Sector: a fixed list (the server keeps the same codes, jobService.js JOB_SECTORS).
+export type JobSector = "CONSTRUCTION" | "INDUSTRIAL";
+export const JOB_SECTOR_OPTIONS: { value: JobSector; label: string }[] = [
+    { value: "CONSTRUCTION", label: "Construction" },
+    { value: "INDUSTRIAL", label: "Industrial" },
+];
+
 export type JobSummary = {
     jobId: string;
     jobCode: string;
@@ -29,6 +36,8 @@ export type JobSummary = {
     status: JobStatus;
     jobType: JobTypeRef;
     jobTypes?: JobTypeRef[];
+    // Job Sector (optional): null when not set, or from an older server.
+    jobSector?: JobSector | null;
     client: { id: string; name: string };
     responsibleAgent: { id: string; name: string; countryCode: string };
     // To Country: the client's country (its agent's) when the job was created.
@@ -75,7 +84,7 @@ export type JobOptions = {
 // responsibleAgentId must be one of the client's agents (optional only when it has exactly one).
 // The To Country is never sent (the responsible agent's). candidateIds are assigned with the job in one
 // transaction (none, one or many; the vacancies never limit them).
-export type CreateJobInput = { jobTypeId?: string; jobTypeIds?: string[]; clientId: string; responsibleAgentId?: string; vacancies: number | null; companyJobId?: string | null; fromCountryCode?: string; candidateIds?: string[] };
+export type CreateJobInput = { jobTypeId?: string; jobTypeIds?: string[]; jobSector?: JobSector | null; clientId: string; responsibleAgentId?: string; vacancies: number | null; companyJobId?: string | null; fromCountryCode?: string; candidateIds?: string[] };
 export type UpdateJobInput = { vacancies?: number | null; jobTypeId?: string; jobTypeIds?: string[]; clientId?: string; companyJobId?: string | null; fromCountryCode?: string };
 
 // A new job's From Country unless changed (src/services/jobService.js DEFAULT_FROM_COUNTRY).

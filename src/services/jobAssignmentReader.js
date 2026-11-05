@@ -7,7 +7,7 @@
 export const JOB_STATUS = Object.freeze({ PROCESSING: "PROCESSING", COMPLETED: "COMPLETED", CANCELLED: "CANCELLED" });
 
 export const JOB_SELECT = Object.freeze({
-    id: true, jobCode: true, companyJobId: true, status: true, countryCode: true, fromCountryCode: true, vacancies: true,
+    id: true, jobCode: true, companyJobId: true, jobSector: true, status: true, countryCode: true, fromCountryCode: true, vacancies: true,
     createdAt: true, completedAt: true, cancelledAt: true, cancelReason: true,
     jobType: { select: { id: true, code: true, name: true } },
     jobTypes: {
@@ -33,6 +33,8 @@ export function jobSummaryView(job) {
         status: job.status,
         jobType: primary,
         jobTypes: types,
+        // CONSTRUCTION | INDUSTRIAL, or null when not set.
+        jobSector: job.jobSector ?? null,
         client: { id: job.client.id, name: job.client.name },
         responsibleAgent: { id: job.responsibleAgent.id, name: job.responsibleAgent.name, countryCode: job.responsibleAgent.countryCode },
         // To Country: the Client's country when the job was created. From Country: null when not recorded.

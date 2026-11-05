@@ -52,6 +52,8 @@ const COMPANY_JOB_ID_PATTERN = /^[A-Z0-9][A-Z0-9 ._/#-]{0,39}$/;
 const PASSPORT_ID_PATTERN = /^[A-Za-z0-9-]{1,20}$/;
 // A new job's From Country unless the request names another (Romania).
 export const DEFAULT_FROM_COUNTRY = "RO";
+// Job Sector (migration 20261108120000_job_sector): optional, one of a fixed list (CHECK in the database).
+export const JOB_SECTORS = Object.freeze(["CONSTRUCTION", "INDUSTRIAL"]);
 // The most candidates one New job request may assign (the vacancies never limit it).
 export const MAX_CREATE_CANDIDATES = 500;
 
@@ -92,6 +94,17 @@ function parseVacancies(value, errors) {
         return undefined;
     }
     return value;
+}
+
+// jobSector: a code from JOB_SECTORS, or null / "" for none.
+function parseJobSector(value, errors) {
+    if (value === null || value === "") return null;
+    const code = typeof value === "string" ? value.trim().toUpperCase() : "";
+    if (!JOB_SECTORS.includes(code)) {
+        errors.push({ field: "jobSector", message: `must be one of: ${JOB_SECTORS.join(", ")}, or empty` });
+        return undefined;
+    }
+    return code;
 }
 
 function parseFromCountry(value, errors) {
@@ -190,7 +203,7 @@ function parseJobTypeIds(body, errors) {
     return undefined;
 }
 
-// POST /api/admin/jobs { jobTypeIds? | jobTypeId, clientId, responsibleAgentId?, vacancies?, companyJobId?, fromCountryCode?, candidateIds? }
+// POST /api/admin/jobs { jobTypeIds? | jobTypeId, jobSector?, clientId, responsibleAgentId?, vacancies?, companyJobId?, fromCountryCode?, candidateIds? }
 // responsibleAgentId must be one of the Client's Agents; it may be omitted only when the
 // Client has exactly one (requireClientWithAgent). The To Country is never sent: it is
 // the responsible Agent's country. fromCountryCode defaults to RO.
@@ -201,6 +214,7 @@ export function parseCreateJobBody(body) {
     const values = {
         jobTypeIds,
         jobTypeId: jobTypeIds?.[0],
+        jobSector: body.jobSector === undefined ? null : parseJobSector(body.jobSector, errors),
         clientId: requiredId(body, "clientId", errors),
         responsibleAgentId: body.responsibleAgentId === undefined || body.responsibleAgentId === null ? undefined : requiredId(body, "responsibleAgentId", errors),
         vacancies: body.vacancies === undefined ? null : parseVacancies(body.vacancies, errors),
@@ -656,6 +670,7 @@ async function createJobInTransaction({ db, actor, values, passportIds, now }) {
                 jobCode,
                 companyJobId: values.companyJobId,
                 jobTypeId: typeIds[0],
+                jobSector: values.jobSector ?? null,
                 clientId: values.clientId,
                 responsibleAgentId: agent.id,
                 countryCode: agent.countryCode,

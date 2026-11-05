@@ -218,7 +218,7 @@ describe("New job in two steps", () => {
         await user.click(within(dialog).getByRole("checkbox", { name: /ELIGIBLE 3/ }));
         await user.click(within(dialog).getByRole("button", { name: "Create job" }));
         await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({
-            jobTypeId: "t1", jobTypeIds: ["t1"], clientId: "c1", responsibleAgentId: "a1", vacancies: 2, companyJobId: null, fromCountryCode: "LK",
+            jobTypeId: "t1", jobTypeIds: ["t1"], jobSector: null, clientId: "c1", responsibleAgentId: "a1", vacancies: 2, companyJobId: null, fromCountryCode: "LK",
             candidateIds: ["P0000001", "P0000002", "P0000003"],
         }));
         expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);

@@ -6,10 +6,12 @@ import {
     createJobType,
     DEFAULT_FROM_COUNTRY,
     getJobOptions,
+    JOB_SECTOR_OPTIONS,
     JOB_VIEWS,
     jobViewCount,
     listJobCandidateOptions,
     listJobs,
+    type JobSector,
     type JobCandidateOption,
     type JobCandidateOptions,
     type JobOptions,
@@ -375,6 +377,8 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     const [step, setStep] = useState<Step>(1);
     const [created, setCreated] = useState<Partial<JobOptions>>({});
     const [jobTypeIds, setJobTypeIds] = useState<string[]>([]);
+    const [jobSector, setJobSector] = useState<JobSector | "">("");
+    const jobSectorField = useId();
     const [clientId, setClientId] = useState("");
     const [fromCountryCode, setFromCountryCode] = useState(DEFAULT_FROM_COUNTRY);
     const [vacancies, setVacancies] = useState("");
@@ -425,6 +429,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
             const job = await createJob(token, {
                 jobTypeId: jobTypeIds[0],
                 jobTypeIds,
+                jobSector: jobSector || null,
                 clientId,
                 responsibleAgentId: agent?.id,
                 vacancies: vacanciesNumber,
@@ -466,6 +471,13 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
                             setJobTypeIds((prev) => [...prev, row.id]);
                         }}
                     />
+                    <div>
+                        <label htmlFor={jobSectorField} className="text-label-md text-ink">Job sector <span className="text-ink-muted">(optional)</span></label>
+                        <select id={jobSectorField} value={jobSector} disabled={busy} onChange={(event) => setJobSector(event.target.value as JobSector | "")} className={`${inputClass()} mt-1`}>
+                            <option value="">Select a sector…</option>
+                            {JOB_SECTOR_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                    </div>
                     <div>
                         <label htmlFor={clientField} className="text-label-md text-ink">Client</label>
                         <select id={clientField} value={clientId} disabled={busy} onChange={(event) => { setClientId(event.target.value); setChosenAgentId(""); }} className={`${inputClass()} mt-1`}>

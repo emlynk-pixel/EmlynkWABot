@@ -608,6 +608,9 @@ model Job {
   // new job, editable; NULL for a job created before it was recorded.
   fromCountryCode    String?   @map("from_country_code") @db.Char(2)
   vacancies          Int?
+  // "Job Sector" (migration 20261108120000_job_sector): CONSTRUCTION | INDUSTRIAL (CHECK in the
+  // SQL migration). Optional; NULL for a job created without one.
+  jobSector          String?   @map("job_sector")
   status             String    @default("PROCESSING")
   createdById        String    @map("created_by")
   createdAt          DateTime  @default(now()) @map("created_at")

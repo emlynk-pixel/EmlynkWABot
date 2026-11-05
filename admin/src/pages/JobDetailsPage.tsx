@@ -1,7 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError } from "../api/client";
-import { addCandidateToJob, cancelJob, completeJob, createJobType, getJob, getJobOptions, listJobCandidateOptions, removeCandidateFromJob, updateJob, type JobCandidateOption, type JobDetails, type JobOptions } from "../api/jobs";
+import { addCandidateToJob, cancelJob, completeJob, createJobType, getJob, getJobOptions, listJobCandidateOptions, removeCandidateFromJob, updateJob, type JobCandidateOption, type JobCandidateOptions, type JobDetails, type JobOptions } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
 import { canCreateJobTypes, canManageJobs, canViewCandidates, canViewJobs, useAuth } from "../auth/AuthProvider";
 import { ActionDialog, ConfirmDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
@@ -324,31 +324,53 @@ function CancelDialog({ token, job, onDone, onClose }: { token: string; job: Job
     );
 }
 
-// Search the candidates and add them one at a time. The dialog stays open so
-// several can be added; a refusal (already on this job, test not passed) is shown
-// next to the search.
+// The candidates who can be added (the server's list: test PASS, newest registered first), shown as
+// soon as the dialog opens, paged and searchable (name, passport ID or NIC) on the server. Added one
+// at a time; the dialog stays open so several can be added. A refusal (already on this job, test not
+// passed) is shown under the list. The list follows the search box while typing (a short pause after
+// the last key, on the server); Search or Enter runs it at once.
+const ADD_PAGE_SIZE = 20;
+const ADD_SEARCH_DEBOUNCE_MS = 300;
 function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string; job: JobDetails; onChanged: (job: JobDetails) => void; onClose: () => void }) {
     const [text, setText] = useState("");
-    const [results, setResults] = useState<JobCandidateOption[] | null>(null);
+    const [query, setQuery] = useState({ search: "", page: 1 });
+    const [list, setList] = useState<JobCandidateOptions | null>(null);
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const [attempt, setAttempt] = useState(0);
     const [added, setAdded] = useState<Set<string>>(() => new Set(job.candidates.map((c) => c.passportId)));
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
 
-    const search = async (event: FormEvent) => {
-        event.preventDefault();
+    useEffect(() => {
+        const controller = new AbortController();
+        setLoadError(null);
+        listJobCandidateOptions(token, { page: query.page, pageSize: ADD_PAGE_SIZE, search: query.search || undefined }, controller.signal)
+            .then(setList)
+            .catch((caught) => {
+                if (!controller.signal.aborted) setLoadError(message(caught));
+            });
+        return () => controller.abort();
+    }, [token, query, attempt]);
+    // While typing: the list (page 1) follows the text after a short pause. The rows shown stay until
+    // the new ones arrive (no flashing); the previous request is aborted by the list effect.
+    useEffect(() => {
         const term = text.trim();
-        if (!term) return;
-        setBusy(true);
+        if (term === query.search) return;
+        const timer = setTimeout(() => setQuery({ search: term, page: 1 }), ADD_SEARCH_DEBOUNCE_MS);
+        return () => clearTimeout(timer);
+    }, [text, query.search]);
+    const search = (event: FormEvent) => {
+        event.preventDefault();
         setError(null);
         setNotice(null);
-        try {
-            setResults((await listJobCandidateOptions(token, { page: 1, pageSize: 20, search: term })).items);
-        } catch (caught) {
-            setError(message(caught));
-        } finally {
-            setBusy(false);
-        }
+        if (text.trim() === query.search) return;
+        setList(null);
+        setQuery({ search: text.trim(), page: 1 });
+    };
+    const goTo = (page: number) => {
+        setList(null);
+        setQuery((q) => ({ ...q, page }));
     };
     const add = async (candidate: JobCandidateOption) => {
         setBusy(true);
@@ -371,13 +393,15 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
             <form onSubmit={search} role="search" className="flex gap-2">
                 <label htmlFor="add-candidate-search" className="sr-only">Search candidates</label>
                 <input id="add-candidate-search" type="search" value={text} maxLength={100} placeholder="Name, passport ID or NIC" onChange={(event) => setText(event.target.value)} className={filterControl} />
-                <button type="submit" disabled={busy || !text.trim()} className={secondaryButton}>Search</button>
+                <button type="submit" disabled={busy} className={secondaryButton}>Search</button>
             </form>
             <p className="mt-2 text-label-sm text-ink-muted">Only candidates who passed the test can be added to a job.</p>
-            {results && results.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">No eligible candidates found.</p>}
-            {results && results.length > 0 && (
-                <ul aria-label="Candidates found" className="mt-3 divide-y divide-border rounded-lg border border-border">
-                    {results.map((candidate) => (
+            {loadError && <ErrorState message={loadError} onRetry={() => setAttempt((n) => n + 1)} />}
+            {!loadError && !list && <LoadingState label="Loading candidates…" />}
+            {!loadError && list && list.items.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">{query.search ? "No eligible candidates found." : "No candidates can be added right now."}</p>}
+            {!loadError && list && list.items.length > 0 && (
+                <ul aria-label="Candidates found" className="mt-3 max-h-80 divide-y divide-border overflow-y-auto rounded-lg border border-border">
+                    {list.items.map((candidate) => (
                         <li key={candidate.passportId} className="flex items-center justify-between gap-3 px-3 py-2">
                             <div className="min-w-0">
                                 <p className="truncate text-body-sm text-ink">{candidate.name ?? candidate.passportId}</p>
@@ -389,6 +413,13 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
                         </li>
                     ))}
                 </ul>
+            )}
+            {list && list.pagination.totalPages > 1 && (
+                <nav aria-label="Candidate pages" className="mt-2 flex items-center justify-between text-label-sm text-ink-muted">
+                    <button type="button" disabled={busy || query.page <= 1} onClick={() => goTo(query.page - 1)} className="text-primary hover:underline disabled:text-ink-muted disabled:no-underline">Previous</button>
+                    <span>Page {query.page} of {list.pagination.totalPages}</span>
+                    <button type="button" disabled={busy || query.page >= list.pagination.totalPages} onClick={() => goTo(query.page + 1)} className="text-primary hover:underline disabled:text-ink-muted disabled:no-underline">Next page</button>
+                </nav>
             )}
             {notice && <p role="status" className="mt-3 rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</p>}
             <DialogError message={error} />
