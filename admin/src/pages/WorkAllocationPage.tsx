@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { ApiError } from "../api/client";
-import { STAGE_LABELS } from "../api/candidates";
 import { cleanFilters, FILTER_KEYS, getCandidateFilterOptions, listOf, type CandidateFilters, type FilterKey } from "../api/candidateFilters";
 import { useAdminResource } from "../api/useAdminResource";
 import {
@@ -16,13 +15,13 @@ import {
 } from "../api/workAllocation";
 import { canManageAllocations, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
-import { ActiveFilterChips, AdvancedFiltersButton } from "../components/AdvancedFilters";
+import { FilterBar, FiltersButton, useFilterFields } from "../components/AdvancedFilters";
 import { CandidateSearchBox } from "../components/CandidateSearchBox";
 import { ActionDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
 import { formatDate, formatNumber } from "../components/format";
+import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 import { Icon } from "../components/Icon";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
-import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 
 // Admin > Work Allocation (ADMIN only): assign candidates to
 // Analysts. The list is paged on the server (100 a page, newest registered
@@ -30,7 +29,7 @@ import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge
 // on this page only, and changing page, view, search or a filter clears it, so a
 // selection can never silently grow beyond what is on screen. One request
 // assigns the whole selection (all or nothing on the server).
-// Filters (Advanced filters: the Candidates list's, components/AdvancedFilters.tsx) are URL
+// Filters (the Candidates list's, components/AdvancedFilters.tsx) are URL
 // parameters sent to the server, which applies them BEFORE paging and always together with the
 // view (Unallocated / Allocated): the count and every page are those of the whole filtered list,
 // never a filter over the rows already loaded.
@@ -72,7 +71,9 @@ function WorkAllocationView() {
     const { token } = useAuth();
     const [searchParams, setSearchParams] = useSearchParams();
     const status: AllocationStatus = searchParams.get("view") === "allocated" ? "ALLOCATED" : "UNALLOCATED";
-    // One Analyst (the header's select) or several (Advanced filters), comma-separated.
+    // Status is the candidate's workflow status (not the allocation state, which the tab already says); Unallocated rows have no Analyst column.
+    const allocatedView = status === "ALLOCATED";
+    // One Analyst (the header's select) or several (Filters), comma-separated.
     const analystFilter = status === "ALLOCATED" ? searchParams.get("analyst") || undefined : undefined;
     const search = searchParams.get("search") || undefined;
     const pageNumber = Number(searchParams.get("page"));
@@ -127,6 +128,7 @@ function WorkAllocationView() {
         const clean = cleanFilters(next);
         go(Object.fromEntries(FILTER_PARAMS.map(([key, param]) => [param, clean[key] ?? null])));
     };
+    const filterFields = useFilterFields({ value: panelFilters, options: filterOptions.data, hidden: status === "ALLOCATED" ? HIDDEN_ALLOCATED : HIDDEN_UNALLOCATED, onChange: applyFilters });
     const clearFilters = () => applyFilters({});
 
     const items = list.status === "error" ? [] : list.data?.items ?? [];
@@ -330,19 +332,13 @@ function WorkAllocationView() {
                     />
                     <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                 </form>
-                <AdvancedFiltersButton
-                    idPrefix="allocation-filter"
-                    value={panelFilters}
-                    options={filterOptions.data}
-                    hidden={status === "ALLOCATED" ? HIDDEN_ALLOCATED : HIDDEN_UNALLOCATED}
-                    onApply={applyFilters}
-                />
+                <FiltersButton filters={filterFields} />
             </div>
 
-            {(filtered || Object.keys(panelFilters).length > 0) && (
+            {(filtered || filterFields.active.length > 0) && (
                 <section aria-label="Filters" className="space-y-2 rounded-xl border border-border bg-surface p-3">
-                    <ActiveFilterChips value={panelFilters} options={filterOptions.data} onChange={applyFilters} />
-                    {data && (
+                    <FilterBar filters={filterFields} value={panelFilters} options={filterOptions.data} onChange={applyFilters} idPrefix="allocation-filter" />
+                    {filtered && data && (
                         <p className="text-label-sm text-ink-muted" aria-live="polite">
                             {formatNumber(data.pagination.total)} {data.pagination.total === 1 ? "candidate matches" : "candidates match"} the filters (all pages).
                         </p>
@@ -367,7 +363,7 @@ function WorkAllocationView() {
                                     className="h-8 rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink"
                                 >
                                     <option value="">All Analysts</option>
-                                    {analystCount > 1 && <option value="__several" disabled>{formatNumber(analystCount)} Analysts (Advanced filters)</option>}
+                                    {analystCount > 1 && <option value="__several" disabled>{formatNumber(analystCount)} Analysts (Filters)</option>}
                                     {filterAnalysts.map((analyst) => <option key={analyst.analystId} value={analyst.analystId}>{analyst.name}</option>)}
                                 </select>
                             </label>
@@ -392,7 +388,7 @@ function WorkAllocationView() {
                         <>
                             {changingPage && <p role="status" className="px-3 pt-3 text-label-sm text-ink-muted">Loading page…</p>}
                             <div aria-busy={changingPage} className={`overflow-x-auto ${changingPage ? "opacity-60" : ""}`}>
-                                <table className="w-full min-w-[56rem] border-separate border-spacing-0">
+                                <table className={`w-full ${allocatedView ? "min-w-[40rem]" : "min-w-[32rem]"} border-separate border-spacing-0`}>
                                     <caption className="sr-only">Candidates to allocate</caption>
                                     <thead>
                                         <tr>
@@ -401,11 +397,9 @@ function WorkAllocationView() {
                                             </th>
                                             <th scope="col" className={th}>Passport number</th>
                                             <th scope="col" className={th}>Candidate</th>
-                                            <th scope="col" className={th}>Contact / WhatsApp</th>
                                             <th scope="col" className={th}>Registered</th>
-                                            <th scope="col" className={th}>Current stage</th>
-                                            <th scope="col" className={th}>Analyst</th>
                                             <th scope="col" className={th}>Status</th>
+                                            {allocatedView && <th scope="col" className={th}>Analyst</th>}
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -420,29 +414,18 @@ function WorkAllocationView() {
                                                         <Link to={`/candidates/${encodeURIComponent(item.passportId)}`} className="text-ink hover:text-primary hover:underline">{item.passportId}</Link>
                                                     </td>
                                                     <td className={`${td} text-ink`}>{item.name ?? "—"}</td>
-                                                    <td className={`${td} whitespace-nowrap text-ink-muted`}>
-                                                        <span className="block">{item.contactNumber ?? "—"}</span>
-                                                        {item.whatsappNumber && <span className="block text-label-sm text-ink-subtle">WA {item.whatsappNumber}</span>}
-                                                    </td>
                                                     <td className={`${td} whitespace-nowrap text-ink-muted`}>{formatDate(item.registeredDate)}</td>
-                                                    <td className={`${td} text-ink-muted`}>
-                                                        <span className="block">{item.currentStage ? STAGE_LABELS[item.currentStage] : "All stages completed"}</span>
-                                                        <span className="block text-label-sm tabular-nums text-ink-subtle">{item.stagesCompleted}/{item.stagesTotal}</span>
-                                                        {item.workflowStatus && <span className="mt-1 block"><WorkflowStatusBadge status={item.workflowStatus} /></span>}
-                                                    </td>
-                                                    <td className={`${td} text-ink-muted`}>
-                                                        {item.analyst ? (
-                                                            <>
-                                                                {item.analyst.name}
-                                                                {!item.analyst.active && <span className="ml-1 text-label-sm text-critical">(inactive)</span>}
-                                                            </>
-                                                        ) : "—"}
-                                                    </td>
-                                                    <td className={td}>
-                                                        <span className={`rounded-lg px-2 py-0.5 text-label-sm ${item.analyst ? "bg-verified-bg text-verified" : "bg-pending-bg text-pending"}`}>
-                                                            {item.analyst ? "Allocated" : "Unallocated"}
-                                                        </span>
-                                                    </td>
+                                                    <td className={td}>{item.workflowStatus ? <WorkflowStatusBadge status={item.workflowStatus} /> : "—"}</td>
+                                                    {allocatedView && (
+                                                        <td className={`${td} text-ink-muted`}>
+                                                            {item.analyst ? (
+                                                                <>
+                                                                    {item.analyst.name}
+                                                                    {!item.analyst.active && <span className="ml-1 text-label-sm text-critical">(inactive)</span>}
+                                                                </>
+                                                            ) : "—"}
+                                                        </td>
+                                                    )}
                                                 </tr>
                                             );
                                         })}

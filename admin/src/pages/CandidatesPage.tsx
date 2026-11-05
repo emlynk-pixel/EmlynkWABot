@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { listCandidates } from "../api/candidates";
 import { cleanFilters, FILTER_KEYS, getCandidateFilterOptions, type CandidateFilters } from "../api/candidateFilters";
 import { jobTypeLabel } from "../api/jobs";
-import { ActiveFilterChips, AdvancedFiltersButton } from "../components/AdvancedFilters";
+import { FilterBar, FiltersButton, useFilterFields } from "../components/AdvancedFilters";
 import { CandidateSearchBox } from "../components/CandidateSearchBox";
 import { formatNumber } from "../components/format";
 import { useAdminResource } from "../api/useAdminResource";
@@ -65,6 +65,7 @@ export function CandidatesPage() {
         next.delete("page");
         setSearchParams(next);
     };
+    const filterFields = useFilterFields({ value: filters, options: filterOptions.data, onChange: applyFilters });
     const open = (passportId: string) => navigate(`/candidates/${encodeURIComponent(passportId)}`);
     const listRef = useRef<HTMLDivElement>(null);
     const wasErrorRef = useRef(false);
@@ -112,9 +113,9 @@ export function CandidatesPage() {
                         />
                         <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                     </form>
-                    <AdvancedFiltersButton idPrefix="candidate-filter" value={filters} options={filterOptions.data} onApply={applyFilters} />
+                    <FiltersButton filters={filterFields} />
                 </div>
-                <ActiveFilterChips value={filters} options={filterOptions.data} onChange={applyFilters} />
+                <FilterBar filters={filterFields} value={filters} options={filterOptions.data} onChange={applyFilters} idPrefix="candidate-filter" />
                 {filtered && data && (
                     <p className="text-label-sm text-ink-muted" aria-live="polite">
                         {formatNumber(data.pagination.total)} {data.pagination.total === 1 ? "candidate matches" : "candidates match"} the filters (all pages).

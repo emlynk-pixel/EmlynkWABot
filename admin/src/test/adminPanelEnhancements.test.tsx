@@ -173,22 +173,28 @@ describe("WA-UI: Work Allocation filters are sent to the server and combine", ()
         await screen.findByText("KAMAL PERERA", undefined, RENDER_STEP);
         expect(screen.queryByRole("region", { name: "Filters" })).toBeNull();
         const user = userEvent.setup();
-        await user.click(screen.getByRole("button", { name: "Advanced filters" }));
-        const dialog = screen.getByRole("dialog", { name: "Advanced filters" });
-        await waitFor(() => expect(within(dialog).getByRole("checkbox", { name: "PLUMBER" })).toBeInTheDocument(), RENDER_STEP);
+        await user.click(screen.getByRole("button", { name: "Filters" }));
+        const box = within(screen.getByRole("group", { name: "Add filters" }));
         const before = calls.length;
-        await user.click(within(dialog).getByRole("checkbox", { name: "PLUMBER" }));
-        await user.click(within(within(dialog).getByRole("group", { name: /^Status/ })).getByRole("checkbox", { name: "Registered" }));
-        await user.click(within(within(dialog).getByRole("group", { name: /^Current stage/ })).getByRole("checkbox", { name: "Job details" }));
+        for (const name of ["Job type", "Status", "Current stage"]) await user.click(box.getByRole("checkbox", { name }));
+        await user.keyboard("{Escape}");
+        // Choosing which filters to use asks the server for nothing; each pick in a dropdown applies at once.
         expect(calls.length).toBe(before);
-        await user.click(within(dialog).getByRole("button", { name: "Apply filters" }));
+        const pick = async (filter: string, choice: string) => {
+            await user.click(within(screen.getByRole("group", { name: "Active filters" })).getByRole("button", { name: new RegExp(`^${filter}`) }));
+            await user.click(within(screen.getByRole("group", { name: filter })).getByRole("checkbox", { name: choice }));
+            await user.keyboard("{Escape}");
+        };
+        await pick("Job type", "PLUMBER");
+        await pick("Status", "Registered");
+        await pick("Current stage", "Job details");
         await waitFor(() => {
             const query = lastListQuery(calls);
             expect([query.get("jobType"), query.get("workflowStatus"), query.get("stage"), query.get("page")]).toEqual(["PLUMBER", "REGISTERED", "JOB_DETAILS", "1"]);
         });
         const filters = await screen.findByRole("region", { name: "Filters" });
         expect(await within(filters).findByText("115 candidates match the filters (all pages).")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Advanced filters (3 active)" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Filters (3 active)" })).toBeInTheDocument();
         await user.click(within(filters).getByRole("button", { name: "Clear all filters" }));
         await waitFor(() => {
             const query = lastListQuery(calls);
@@ -197,13 +203,17 @@ describe("WA-UI: Work Allocation filters are sent to the server and combine", ()
         expect(screen.queryByRole("region", { name: "Filters" })).toBeNull();
     });
 
-    test("filters from the URL (registration date range) reach the server, and the row shows the candidate's Status", async () => {
+    test("filters from the URL (registration date range, Status) reach the server; the row shows the Status, not the stage", async () => {
         const { calls } = allocationBackend();
         renderApp("/work-allocation?from=2026-10-01&to=2026-10-10&wstatus=REGISTERED");
         await screen.findByText("KAMAL PERERA", undefined, RENDER_STEP);
         const query = lastListQuery(calls);
         expect([query.get("registeredFrom"), query.get("registeredTo"), query.get("workflowStatus")]).toEqual(["2026-10-01", "2026-10-10", "REGISTERED"]);
-        expect(screen.getAllByText("Registered").length).toBeGreaterThan(0);
+        // The Status filter has its chip, and the row's Status cell is the candidate's workflow status.
+        expect(within(screen.getByRole("group", { name: "Active filters" })).getByText("Status: Registered")).toBeInTheDocument();
+        const row = within(screen.getByText("KAMAL PERERA").closest("tr")!);
+        expect(row.getByText("Registered")).toBeInTheDocument();
+        expect(row.queryByText("Job details")).toBeNull();
     });
 });
 

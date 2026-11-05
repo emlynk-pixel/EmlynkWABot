@@ -6,8 +6,9 @@ import type { CandidateFilterOptions } from "../api/candidateFilters";
 import type { AllocationCandidateList } from "../api/workAllocation";
 import { ADMIN, RENDER_STEP, expectRedirectedHome, renderApp, signedInBackend } from "./helpers";
 
-// Advanced filters on Admin > Candidates and Work Allocation: the panel, the chips, and exactly what
-// is sent to the server (which applies every filter before paging; test/advancedCandidateFilters.test.js).
+// Filters on Admin > Candidates and Work Allocation: the Filters box (which filters to use), each
+// chosen filter's dropdown under the search bar, and exactly what is sent to the server (which applies
+// every filter before paging; test/advancedCandidateFilters.test.js).
 // Synthetic data; the backend is a stub that records every request.
 
 const asRole = (role: string) => ({ "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role } } } });
@@ -40,116 +41,177 @@ function candidatesBackend({ role = "ADMIN", options = OPTIONS, respond }: { rol
 }
 const listQueries = (calls: { path: string; url: URL }[]) => calls.filter((c) => c.path.startsWith("/api/admin/candidates?")).map((c) => c.url.searchParams);
 const lastQuery = (calls: { path: string; url: URL }[]) => listQueries(calls).at(-1)!;
-const openPanel = async (user: ReturnType<typeof userEvent.setup>, name: RegExp = /^Advanced filters/) => {
-    await user.click(await screen.findByRole("button", { name }, RENDER_STEP));
-    return screen.getByRole("dialog", { name: "Advanced filters" });
-};
-const group = (dialog: HTMLElement, name: string) => within(within(dialog).getByRole("group", { name: new RegExp(`^${name}`) }));
-const chips = () => within(screen.getByRole("group", { name: "Active filters" }));
 
-describe("Candidates: Advanced filters", () => {
-    test("UI-1..4 the button is there; the panel opens with the first field focused, shows the controls, and closes (Cancel, Escape) without a request", async () => {
+type User = ReturnType<typeof userEvent.setup>;
+// Typed text applies after a short pause (no Apply button).
+const TEXT_APPLIED = { timeout: 3000 };
+const filtersButton = () => screen.findByRole("button", { name: /^Filters/ }, RENDER_STEP);
+// The Filters box: tick (or untick) the filters to use. It stays open for several.
+const openBox = async (user: User) => {
+    await user.click(await filtersButton());
+    return within(screen.getByRole("group", { name: "Add filters" }));
+};
+const addFilter = async (user: User, ...labels: string[]) => {
+    const box = await openBox(user);
+    for (const label of labels) await user.click(box.getByRole("checkbox", { name: label }));
+    await user.keyboard("{Escape}");
+};
+const bar = () => within(screen.getByRole("group", { name: "Active filters" }));
+// A filter's dropdown (its button under the search bar), opened.
+const openFilter = async (user: User, label: string) => {
+    await user.click(bar().getByRole("button", { name: new RegExp(`^${label}`) }));
+    return within(screen.getByRole("group", { name: label }));
+};
+
+describe("Candidates: Filters", () => {
+    test("UI-1..3 the Filters box lists the filters to add, closes with Escape (focus back on the button), and sends nothing", async () => {
         const { calls } = candidatesBackend();
         renderApp("/candidates");
         await screen.findByRole("link", { name: "CANDIDATE 1" }, RENDER_STEP);
         const user = userEvent.setup();
-        let dialog = await openPanel(user);
-        expect(screen.getByRole("button", { name: "Advanced filters" })).toHaveAttribute("aria-expanded", "true");
-        await waitFor(() => expect(within(dialog).getByLabelText("Full name")).toHaveFocus());
-        for (const label of ["Surname", "Other names", "Passport number", "NIC", "WhatsApp number", "Nationality", "Current job code"]) {
-            expect(within(dialog).getByLabelText(label)).toBeInTheDocument();
-        }
-        expect(within(dialog).getByRole("combobox", { name: "Passport number match" })).toHaveValue("contains");
-        for (const name of ["Job type", "Status", "Current stage", "Sex", "Officer", "Client", "Agent", "Registered date", "Test date"]) {
-            expect(within(dialog).getByRole("group", { name: new RegExp(`^${name}`) })).toBeInTheDocument();
-        }
-        expect(group(dialog, "Job type").getByRole("checkbox", { name: "Steel Fixer" })).toBeInTheDocument();
-        expect(group(dialog, "Officer").getByRole("checkbox", { name: "Former (inactive)" })).toBeInTheDocument();
-        expect(within(dialog).getByRole("combobox", { name: "Allocation" })).toBeInTheDocument();
         const before = listQueries(calls).length;
-        await user.type(within(dialog).getByLabelText("Surname"), "PERERA");
-        await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-        expect(screen.queryByRole("dialog")).toBeNull();
-        expect(screen.getByRole("button", { name: "Advanced filters" })).toHaveFocus();
-        dialog = await openPanel(user);
-        expect(within(dialog).getByLabelText("Surname")).toHaveValue("");
+        const box = await openBox(user);
+        expect(screen.getByRole("button", { name: "Filters" })).toHaveAttribute("aria-expanded", "true");
+        for (const name of ["Job type", "Status", "Current stage", "Sex", "Nationality", "Registered date", "Test date", "Allocation", "Officer", "Current job code", "Client", "Agent"]) {
+            expect(box.getByRole("checkbox", { name })).not.toBeChecked();
+        }
+        // The identity lookups are the search box's job: not offered here.
+        for (const name of ["Full name", "Surname", "Other names", "Passport number", "NIC", "WhatsApp number"]) expect(box.queryByRole("checkbox", { name })).toBeNull();
+        expect(box.queryByText("Identity")).toBeNull();
+        expect(screen.queryByRole("group", { name: "Active filters" })).toBeNull();
         await user.keyboard("{Escape}");
-        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(screen.queryByRole("group", { name: "Add filters" })).toBeNull();
+        expect(screen.getByRole("button", { name: "Filters" })).toHaveFocus();
         expect(listQueries(calls).length).toBe(before);
     });
 
-    test("UI-5..7 Apply sends every filter together in ONE request, on page 1; the chips show them", async () => {
+    test("UI-4 a chosen filter appears under the search bar as a button; its dropdown applies each pick at once, on page 1", async () => {
         const { calls } = candidatesBackend();
         renderApp("/candidates?page=2");
         await screen.findAllByRole("link", { name: /^CANDIDATE/ }, RENDER_STEP);
         const user = userEvent.setup();
-        const dialog = await openPanel(user);
-        await user.type(within(dialog).getByLabelText("Surname"), "Perera");
-        await user.selectOptions(within(dialog).getByRole("combobox", { name: "Passport number match" }), "startsWith");
-        await user.type(within(dialog).getByLabelText("Passport number"), "PN");
-        await user.click(group(dialog, "Job type").getByRole("checkbox", { name: "Steel Fixer" }));
-        await user.click(group(dialog, "Job type").getByRole("checkbox", { name: "Welder" }));
-        await user.click(group(dialog, "Status").getByRole("checkbox", { name: "Visa Submitted" }));
-        await user.click(group(dialog, "Officer").getByRole("checkbox", { name: "Anjana" }));
-        await user.type(group(dialog, "Registered date").getByLabelText(/^From/), "2026-11-01");
-        await user.type(group(dialog, "Registered date").getByLabelText(/^To/), "2026-11-30");
         const before = listQueries(calls).length;
-        await user.click(within(dialog).getByRole("button", { name: "Apply filters" }));
-        await waitFor(() => expect(listQueries(calls).length).toBe(before + 1));
-        const query = lastQuery(calls);
-        expect(Object.fromEntries(query)).toEqual({
-            page: "1", pageSize: "100", surname: "Perera", passport: "PN", passportMatch: "startsWith", jobType: "Steel Fixer,Welder",
-            workflowStatus: "VISA_SUBMITTED", analystId: "u-anjana", registeredFrom: "2026-11-01", registeredTo: "2026-11-30",
-        });
-        expect(screen.queryByRole("dialog")).toBeNull();
-        expect(chips().getByText('Surname contains "Perera"')).toBeInTheDocument();
-        expect(chips().getByText('Passport number starts with "PN"')).toBeInTheDocument();
-        expect(chips().getByText("Job type: Steel Fixer, Welder")).toBeInTheDocument();
-        expect(chips().getByText("Status: Visa Submitted")).toBeInTheDocument();
-        expect(chips().getByText("Officer: Anjana")).toBeInTheDocument();
-        expect(chips().getByText("Registered: 1 Nov 2026 – 30 Nov 2026")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Advanced filters (6 active)" })).toBeInTheDocument();
+        await addFilter(user, "Job type");
+        expect(bar().getByRole("button", { name: "Job type" })).toBeInTheDocument();
+        expect(listQueries(calls).length).toBe(before);
+        const dropdown = await openFilter(user, "Job type");
+        expect(dropdown.getByRole("checkbox", { name: "Steel Fixer" })).toBeInTheDocument();
+        await user.click(dropdown.getByRole("checkbox", { name: "Steel Fixer" }));
+        await waitFor(() => expect(Object.fromEntries(lastQuery(calls))).toEqual({ page: "1", pageSize: "100", jobType: "Steel Fixer" }));
+        await user.click(dropdown.getByRole("checkbox", { name: "Welder" }));
+        await waitFor(() => expect(lastQuery(calls).get("jobType")).toBe("Steel Fixer,Welder"));
+        expect(bar().getByRole("button", { name: "Job type: Steel Fixer, Welder" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Filters (1 active)" })).toBeInTheDocument();
+        // Escape closes the dropdown, focus back on its button.
+        await user.keyboard("{Escape}");
+        expect(screen.queryByRole("group", { name: "Job type" })).toBeNull();
+        expect(bar().getByRole("button", { name: "Job type: Steel Fixer, Welder" })).toHaveFocus();
     });
 
-    test("UI-3b reopening shows the applied filters for editing", async () => {
+    test("UI-5..7 filters stack: text (after a pause, or Enter), match type, status, officer and a date range all reach the server together", async () => {
+        const { calls } = candidatesBackend();
+        renderApp("/candidates");
+        await screen.findAllByRole("link", { name: /^CANDIDATE/ }, RENDER_STEP);
+        const user = userEvent.setup();
+        await addFilter(user, "Nationality", "Current job code", "Status", "Officer", "Registered date");
+        // Text: applied after the pause in typing.
+        let dropdown = await openFilter(user, "Nationality");
+        await user.type(dropdown.getByLabelText("Nationality"), "Sri Lankan");
+        await waitFor(() => expect(lastQuery(calls).get("nationality")).toBe("Sri Lankan"), TEXT_APPLIED);
+        // The match type is remembered before there is text, and applies with it; Enter applies at once.
+        await user.keyboard("{Escape}");
+        dropdown = await openFilter(user, "Current job code");
+        await user.selectOptions(dropdown.getByRole("combobox", { name: "Current job code match" }), "equals");
+        expect(lastQuery(calls).has("jobCode")).toBe(false);
+        expect(dropdown.getByRole("combobox", { name: "Current job code match" })).toHaveValue("equals");
+        await user.type(dropdown.getByLabelText("Current job code"), "J-001{Enter}");
+        await waitFor(() => expect([lastQuery(calls).get("jobCode"), lastQuery(calls).get("jobCodeMatch")]).toEqual(["J-001", "equals"]));
+        await user.keyboard("{Escape}");
+        dropdown = await openFilter(user, "Status");
+        await user.click(dropdown.getByRole("checkbox", { name: "Visa Submitted" }));
+        await user.keyboard("{Escape}");
+        dropdown = await openFilter(user, "Officer");
+        await user.click(dropdown.getByRole("checkbox", { name: "Anjana" }));
+        await user.keyboard("{Escape}");
+        dropdown = await openFilter(user, "Registered date");
+        await user.type(dropdown.getByLabelText("From"), "2026-11-01");
+        await user.type(dropdown.getByLabelText("To"), "2026-11-30");
+        await waitFor(() => expect(Object.fromEntries(lastQuery(calls))).toEqual({
+            page: "1", pageSize: "100", nationality: "Sri Lankan", jobCode: "J-001", jobCodeMatch: "equals",
+            workflowStatus: "VISA_SUBMITTED", analystId: "u-anjana", registeredFrom: "2026-11-01", registeredTo: "2026-11-30",
+        }));
+        await user.keyboard("{Escape}");
+        for (const label of ['Nationality contains "Sri Lankan"', 'Current job code is exactly "J-001"', "Status: Visa Submitted", "Officer: Anjana", "Registered: 1 Nov 2026 – 30 Nov 2026"]) {
+            expect(bar().getByRole("button", { name: label })).toBeInTheDocument();
+        }
+        expect(screen.getByRole("button", { name: "Filters (5 active)" })).toBeInTheDocument();
+    });
+
+    test("UI-3b filters in the URL come back as buttons, with their values in the dropdowns", async () => {
         candidatesBackend();
         renderApp("/candidates?nic=1990&nicMatch=startsWith&sex=F");
+        await screen.findByRole("group", { name: "Active filters" }, RENDER_STEP);
         const user = userEvent.setup();
-        const dialog = await openPanel(user, /^Advanced filters \(2 active\)/);
-        expect(within(dialog).getByLabelText("NIC")).toHaveValue("1990");
-        expect(within(dialog).getByRole("combobox", { name: "NIC match" })).toHaveValue("startsWith");
-        expect(group(dialog, "Sex").getByRole("checkbox", { name: "Female" })).toBeChecked();
+        expect(screen.getByRole("button", { name: "Filters (2 active)" })).toBeInTheDocument();
+        let dropdown = await openFilter(user, "NIC");
+        expect(dropdown.getByLabelText("NIC")).toHaveValue("1990");
+        expect(dropdown.getByRole("combobox", { name: "NIC match" })).toHaveValue("startsWith");
+        await user.keyboard("{Escape}");
+        dropdown = await openFilter(user, "Sex");
+        expect(dropdown.getByRole("checkbox", { name: "Female" })).toBeChecked();
+        await user.keyboard("{Escape}");
+        // An older link's identity filter is shown (and can be removed) though the box does not offer it.
+        const box = await openBox(user);
+        expect(box.queryByRole("checkbox", { name: "NIC" })).toBeNull();
     });
 
-    test("UI-8 removing one chip removes only that filter (and goes back to page 1)", async () => {
+    test("UI-3c an identity filter from an older link can be removed with its x", async () => {
+        const { calls } = candidatesBackend();
+        renderApp("/candidates?page=2&surname=perera&jobType=Welder");
+        await screen.findByRole("group", { name: "Active filters" }, RENDER_STEP);
+        const user = userEvent.setup();
+        await user.click(bar().getByRole("button", { name: 'Remove filter: Surname contains "perera"' }));
+        await waitFor(() => expect(Object.fromEntries(lastQuery(calls))).toEqual({ page: "1", pageSize: "100", jobType: "Welder" }));
+        expect(bar().queryByRole("button", { name: /^Surname/ })).toBeNull();
+    });
+
+    test("UI-8 the x on a filter removes only that filter (and goes back to page 1)", async () => {
         const { calls } = candidatesBackend();
         renderApp("/candidates?page=2&search=perera&jobType=Welder&registeredFrom=2026-11-01&registeredTo=2026-11-30&workflowStatus=VISA_SUBMITTED");
         await screen.findByRole("group", { name: "Active filters" }, RENDER_STEP);
         const user = userEvent.setup();
-        await user.click(chips().getByRole("button", { name: "Remove filter: Registered: 1 Nov 2026 – 30 Nov 2026" }));
+        await user.click(bar().getByRole("button", { name: "Remove filter: Registered: 1 Nov 2026 – 30 Nov 2026" }));
         await waitFor(() => expect(lastQuery(calls).has("registeredFrom")).toBe(false));
         expect(Object.fromEntries(lastQuery(calls))).toEqual({ page: "1", pageSize: "100", search: "perera", jobType: "Welder", workflowStatus: "VISA_SUBMITTED" });
-        expect(chips().queryByText(/^Registered/)).toBeNull();
-        expect(chips().getByText("Job type: Welder")).toBeInTheDocument();
+        expect(bar().queryByRole("button", { name: /^Registered/ })).toBeNull();
+        expect(bar().getByRole("button", { name: "Job type: Welder" })).toBeInTheDocument();
     });
 
-    test("UI-9 Clear all removes every advanced filter, keeps the quick search, page 1", async () => {
+    test("UI-8b unticking a filter in the Filters box removes it and its value; an empty one is removed without a request", async () => {
+        const { calls } = candidatesBackend();
+        renderApp("/candidates?jobType=Welder&sex=M");
+        await screen.findByRole("group", { name: "Active filters" }, RENDER_STEP);
+        const user = userEvent.setup();
+        await addFilter(user, "Nationality");
+        const before = listQueries(calls).length;
+        const box = await openBox(user);
+        await user.click(box.getByRole("checkbox", { name: "Nationality" }));
+        expect(bar().queryByRole("button", { name: "Nationality" })).toBeNull();
+        expect(listQueries(calls).length).toBe(before);
+        await user.click(box.getByRole("checkbox", { name: "Sex" }));
+        await waitFor(() => expect(lastQuery(calls).has("sex")).toBe(false));
+        expect(lastQuery(calls).get("jobType")).toBe("Welder");
+    });
+
+    test("UI-9 Clear all filters removes every filter, keeps the quick search, page 1", async () => {
         const { calls } = candidatesBackend();
         renderApp("/candidates?page=3&search=perera&jobType=Welder&sex=M&name=kamal");
         await screen.findByRole("group", { name: "Active filters" }, RENDER_STEP);
         const user = userEvent.setup();
-        await user.click(chips().getByRole("button", { name: "Clear all filters" }));
+        await user.click(bar().getByRole("button", { name: "Clear all filters" }));
         await waitFor(() => expect(Object.fromEntries(lastQuery(calls))).toEqual({ page: "1", pageSize: "100", search: "perera" }));
         expect(screen.queryByRole("group", { name: "Active filters" })).toBeNull();
-        expect(screen.getByRole("button", { name: "Advanced filters" })).toBeInTheDocument();
-        // The panel's own Clear all does the same.
-        await user.click(screen.getByRole("button", { name: "Advanced filters" }));
-        await user.click(group(screen.getByRole("dialog"), "Sex").getByRole("checkbox", { name: "Male" }));
-        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Apply filters" }));
-        await waitFor(() => expect(lastQuery(calls).get("sex")).toBe("M"));
-        await user.click(screen.getByRole("button", { name: "Advanced filters (1 active)" }));
-        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Clear all" }));
-        await waitFor(() => expect(lastQuery(calls).has("sex")).toBe(false));
+        expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
     });
 
     test("UI-10, 11 a filter change resets the page; the quick search keeps the filters (and the filters keep the search)", async () => {
@@ -157,15 +219,15 @@ describe("Candidates: Advanced filters", () => {
         renderApp("/candidates?page=2&search=perera");
         await screen.findAllByRole("link", { name: /^CANDIDATE/ }, RENDER_STEP);
         const user = userEvent.setup();
-        const dialog = await openPanel(user);
-        await user.click(group(dialog, "Job type").getByRole("checkbox", { name: "Welder" }));
-        await user.click(within(dialog).getByRole("button", { name: "Apply filters" }));
+        await addFilter(user, "Job type");
+        const dropdown = await openFilter(user, "Job type");
+        await user.click(dropdown.getByRole("checkbox", { name: "Welder" }));
         await waitFor(() => expect(Object.fromEntries(lastQuery(calls))).toEqual({ page: "1", pageSize: "100", search: "perera", jobType: "Welder" }));
         const search = screen.getByRole("combobox", { name: "Search candidates" });
         await user.clear(search);
         await user.type(search, "silva{Enter}");
         await waitFor(() => expect(Object.fromEntries(lastQuery(calls))).toEqual({ page: "1", pageSize: "100", search: "silva", jobType: "Welder" }));
-        expect(chips().getByText("Job type: Welder")).toBeInTheDocument();
+        expect(bar().getByRole("button", { name: "Job type: Welder" })).toBeInTheDocument();
     });
 
     test("UI-16 moving between pages keeps the filters", async () => {
@@ -177,7 +239,7 @@ describe("Candidates: Advanced filters", () => {
         await user.click(within(screen.getByRole("navigation", { name: "Pagination" })).getByRole("button", { name: "Next" }));
         await waitFor(() => expect(Object.fromEntries(lastQuery(calls))).toEqual({ page: "2", pageSize: "100", jobType: "Welder", surname: "perera" }));
         expect(await screen.findByRole("link", { name: "CANDIDATE 101" }, RENDER_STEP)).toBeInTheDocument();
-        expect(chips().getByText('Surname contains "perera"')).toBeInTheDocument();
+        expect(bar().getByRole("button", { name: 'Surname contains "perera"' })).toBeInTheDocument();
     });
 
     test("UI-12 loading: the current rows stay, dimmed, while the filtered list loads", async () => {
@@ -190,9 +252,9 @@ describe("Candidates: Advanced filters", () => {
         renderApp("/candidates");
         await screen.findByRole("link", { name: "CANDIDATE 3" }, RENDER_STEP);
         const user = userEvent.setup();
-        const dialog = await openPanel(user);
-        await user.click(group(dialog, "Job type").getByRole("checkbox", { name: "Welder" }));
-        await user.click(within(dialog).getByRole("button", { name: "Apply filters" }));
+        await addFilter(user, "Job type");
+        const dropdown = await openFilter(user, "Job type");
+        await user.click(dropdown.getByRole("checkbox", { name: "Welder" }));
         expect(await screen.findByText("Loading page…")).toBeInTheDocument();
         expect(screen.getByRole("link", { name: "CANDIDATE 3" })).toBeInTheDocument();
         await waitFor(() => expect(release).not.toBeNull());
@@ -218,33 +280,32 @@ describe("RBAC: what each role is offered (the server checks it too)", () => {
         candidatesBackend({ role: "ANALYST", options: ANALYST_OPTIONS });
         renderApp("/candidates");
         const user = userEvent.setup();
-        const dialog = await openPanel(user);
-        expect(within(dialog).getByRole("group", { name: /^Job type/ })).toBeInTheDocument();
-        for (const name of [/^Officer/, /^Client/, /^Agent/]) expect(within(dialog).queryByRole("group", { name })).toBeNull();
-        expect(within(dialog).queryByRole("combobox", { name: "Allocation" })).toBeNull();
-        expect(within(dialog).queryByRole("region", { name: "Allocation" })).toBeNull();
+        const box = await openBox(user);
+        expect(box.getByRole("checkbox", { name: "Job type" })).toBeInTheDocument();
+        for (const name of ["Allocation", "Officer", "Client", "Agent"]) expect(box.queryByRole("checkbox", { name })).toBeNull();
     });
 
     test("UI-17 JOB_HANDLER: Client and Agent, no Officer; TEAM_LEAD: everything", async () => {
         candidatesBackend({ role: "JOB_HANDLER", options: HANDLER_OPTIONS });
         const { unmount } = renderApp("/candidates");
         const user = userEvent.setup();
-        let dialog = await openPanel(user);
-        expect(group(dialog, "Client").getByRole("checkbox", { name: "ACME" })).toBeInTheDocument();
-        expect(within(dialog).queryByRole("group", { name: /^Officer/ })).toBeNull();
+        let box = await openBox(user);
+        expect(box.getByRole("checkbox", { name: "Client" })).toBeInTheDocument();
+        expect(box.getByRole("checkbox", { name: "Agent" })).toBeInTheDocument();
+        expect(box.queryByRole("checkbox", { name: "Officer" })).toBeNull();
         unmount();
         candidatesBackend({ role: "TEAM_LEAD" });
         renderApp("/candidates");
-        dialog = await openPanel(user);
-        expect(within(dialog).getByRole("group", { name: /^Officer/ })).toBeInTheDocument();
-        expect(within(dialog).getByRole("combobox", { name: "Allocation" })).toBeInTheDocument();
+        box = await openBox(user);
+        expect(box.getByRole("checkbox", { name: "Officer" })).toBeInTheDocument();
+        expect(box.getByRole("checkbox", { name: "Allocation" })).toBeInTheDocument();
     });
 
     test("UI-17 REGISTRATION_DESK still has no Candidates list (nor its filters)", async () => {
         const { calls } = candidatesBackend({ role: "REGISTRATION_DESK" });
         renderApp("/candidates?jobType=Welder");
         await expectRedirectedHome("REGISTRATION_DESK");
-        expect(screen.queryByRole("button", { name: /^Advanced filters/ })).toBeNull();
+        expect(screen.queryByRole("button", { name: /^Filters/ })).toBeNull();
         expect(listQueries(calls)).toEqual([]);
     });
 });
@@ -277,20 +338,26 @@ function allocationBackend() {
 }
 const waQueries = (calls: { path: string; url: URL }[]) => calls.filter((c) => c.path.startsWith("/api/admin/work-allocation/candidates")).map((c) => c.url.searchParams);
 
-describe("Work Allocation: Advanced filters per view", () => {
-    test("UI-15 Unallocated: the view's own filters (no Officer, no Allocation); Apply sends them with status=UNALLOCATED", async () => {
+describe("Work Allocation: Filters per view", () => {
+    test("UI-15 Unallocated: the view's own filters (no Officer, no Allocation); each is sent with status=UNALLOCATED", async () => {
         const { calls } = allocationBackend();
         renderApp("/work-allocation");
         await screen.findByText("ALLOC 1", undefined, RENDER_STEP);
         const user = userEvent.setup();
-        const dialog = await openPanel(user);
-        expect(within(dialog).queryByRole("group", { name: /^Officer/ })).toBeNull();
-        expect(within(dialog).queryByRole("combobox", { name: "Allocation" })).toBeNull();
-        await user.type(within(dialog).getByLabelText("NIC"), "1990");
-        await user.click(group(dialog, "Job type").getByRole("checkbox", { name: "Steel Fixer" }));
-        await user.type(group(dialog, "Registered date").getByLabelText(/^From/), "2026-11-01");
-        await user.click(within(dialog).getByRole("button", { name: "Apply filters" }));
-        await waitFor(() => expect(Object.fromEntries(waQueries(calls).at(-1)!)).toEqual({ status: "UNALLOCATED", page: "1", nic: "1990", jobType: "Steel Fixer", registeredFrom: "2026-11-01" }));
+        const box = await openBox(user);
+        expect(box.queryByRole("checkbox", { name: "Officer" })).toBeNull();
+        expect(box.queryByRole("checkbox", { name: "Allocation" })).toBeNull();
+        await user.keyboard("{Escape}");
+        await addFilter(user, "Nationality", "Job type", "Registered date");
+        let dropdown = await openFilter(user, "Nationality");
+        await user.type(dropdown.getByLabelText("Nationality"), "Sri Lankan{Enter}");
+        await user.keyboard("{Escape}");
+        dropdown = await openFilter(user, "Job type");
+        await user.click(dropdown.getByRole("checkbox", { name: "Steel Fixer" }));
+        await user.keyboard("{Escape}");
+        dropdown = await openFilter(user, "Registered date");
+        await user.type(dropdown.getByLabelText("From"), "2026-11-01");
+        await waitFor(() => expect(Object.fromEntries(waQueries(calls).at(-1)!)).toEqual({ status: "UNALLOCATED", page: "1", nationality: "Sri Lankan", jobType: "Steel Fixer", registeredFrom: "2026-11-01" }));
         expect(within(screen.getByRole("region", { name: "Filters" })).getByText("150 candidates match the filters (all pages).")).toBeInTheDocument();
     });
 
@@ -299,13 +366,13 @@ describe("Work Allocation: Advanced filters per view", () => {
         renderApp("/work-allocation?view=allocated&jobType=Welder");
         await screen.findByText("ALLOC 1", undefined, RENDER_STEP);
         const user = userEvent.setup();
-        const dialog = await openPanel(user);
-        await user.click(group(dialog, "Officer").getByRole("checkbox", { name: "Anjana" }));
-        await user.click(group(dialog, "Officer").getByRole("checkbox", { name: "Former (inactive)" }));
-        await user.click(within(dialog).getByRole("button", { name: "Apply filters" }));
+        await addFilter(user, "Officer");
+        const dropdown = await openFilter(user, "Officer");
+        await user.click(dropdown.getByRole("checkbox", { name: "Anjana" }));
+        await user.click(dropdown.getByRole("checkbox", { name: "Former (inactive)" }));
         await waitFor(() => expect(Object.fromEntries(waQueries(calls).at(-1)!)).toEqual({ status: "ALLOCATED", page: "1", analystId: "u-anjana,u-old", jobType: "Welder" }));
-        expect(chips().getByText("Officer: Anjana, Former (inactive)")).toBeInTheDocument();
-        expect(screen.getByRole("combobox", { name: "Analyst" })).toHaveDisplayValue("2 Analysts (Advanced filters)");
+        expect(bar().getByRole("button", { name: "Officer: Anjana, Former (inactive)" })).toBeInTheDocument();
+        expect(screen.getByRole("combobox", { name: "Analyst" })).toHaveDisplayValue("2 Analysts (Filters)");
         await user.click(within(screen.getByRole("navigation", { name: "Pagination" })).getByRole("button", { name: "Next" }));
         await waitFor(() => expect(Object.fromEntries(waQueries(calls).at(-1)!)).toEqual({ status: "ALLOCATED", page: "2", analystId: "u-anjana,u-old", jobType: "Welder" }));
         // Back to Unallocated: the Officer filter no longer applies; the others stay.

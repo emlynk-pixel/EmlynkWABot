@@ -1,6 +1,6 @@
 # Candidate Advanced Filters & Search
 
-**Feature:** Admin > Candidates and Admin > Work Allocation (Unallocated / Allocated): an **Advanced filters** panel (many filters combined), active-filter chips, improved full-name search and live search suggestions.
+**Feature:** Admin > Candidates and Admin > Work Allocation (Unallocated / Allocated): a **Filters** button (choose which filters to use) with each chosen filter as a dropdown under the search bar (many filters combined), improved full-name search and live search suggestions.
 **Scope:** candidate lists only. Filtering is done **on the server, before paging**, always inside the user's candidate scope. One additive index migration; no column, RBAC tier or stored data changes.
 
 ---
@@ -12,7 +12,7 @@
 | Quick search (name, passport, NIC, WhatsApp / contact number) | Backend (database `WHERE`) |
 | Advanced filters (identity, job type, Status, stage, dates, officer, allocation, client, agent, job code) | Backend (database `WHERE`; Status / stage / exact job type derived on the server, see §5.3) |
 | Search suggestions while typing | Backend (`GET /api/admin/candidate-suggestions`) |
-| Filter panel, chips, URL state, debounce | Frontend (UI only; it never filters rows) |
+| Filters box, filter dropdowns, URL state, debounce | Frontend (UI only; it never filters rows) |
 
 Order of work on every list request:
 
@@ -208,23 +208,32 @@ No fuzzy-search library is used.
 
 | Piece | File |
 |---|---|
-| Filter definitions, chips, options API | `admin/src/api/candidateFilters.ts` |
-| Advanced filters button, dialog, chips | `admin/src/components/AdvancedFilters.tsx` |
+| Filter definitions, the list of addable filters, chip text, options API | `admin/src/api/candidateFilters.ts` |
+| Filters button, filter bar and dropdowns | `admin/src/components/AdvancedFilters.tsx` |
 | Search box with suggestions (ARIA combobox) | `admin/src/components/CandidateSearchBox.tsx` |
 | Pages | `admin/src/pages/CandidatesPage.tsx`, `admin/src/pages/WorkAllocationPage.tsx` |
 
-### 9.1 Advanced filters panel
+### 9.1 Filters: choose, then use
 
-- **Advanced filters** button next to the search box. It shows the number of active filters ("Advanced filters (3 active)").
-- A modal dialog grouped into Identity / Candidate / Allocation / Current job. Text filters have an operator select; lists are checkbox lists (scrollable); dates are From / To pickers.
-- The panel edits a **copy**: nothing is sent until **Apply filters** (one request). Cancel or Escape closes it without changes.
-- **Clear all** (in the panel and next to the chips) removes every advanced filter.
-- Sections appear only when the role has the choices: Officer / Allocation for ADMIN and TEAM_LEAD, Client / Agent for ADMIN, TEAM_LEAD and JOB_HANDLER.
-- Work Allocation: no Allocation filter (the view is the allocation). The Officer filter appears on **Allocated** only. The header's Analyst select still works and shows "N Analysts (Advanced filters)" when several are chosen.
+1. The **Filters** button (next to the search box) opens a small box listing the filters that can be added, grouped Candidate (Job type, Status, Current stage, Sex, Nationality, Registered date, Test date) / Allocation (Allocation, Officer) / Current job (Current job code, Client, Agent). Name, passport, NIC and WhatsApp lookups are not offered: the **search box** does them. Ticking one adds it to the page; unticking removes it and clears its value. Nothing is sent to the server while choosing.
+2. Each added filter is a button **under the search bar** (e.g. `Job type ▾`). Clicking it opens a dropdown with only that filter's control:
+   - lists (Job type, Status, Current stage, Sex, Officer, Client, Agent): checkboxes;
+   - text (Nationality, Current job code): a match type (Contains / Starts with / Is exactly) and the text;
+   - dates (Registered, Test): From / To pickers;
+   - Allocation (Candidates page only): a select.
+3. There is **no Apply button**. A pick applies at once (one request, page 1). Typed text applies after a short pause (500 ms) or on Enter; the match type applies as soon as there is text.
+4. The button shows the selection (`Job type: Steel Fixer, Welder`, `Registered: 1 Nov 2026 – 30 Nov 2026`); its × removes only that filter. **Clear all filters** removes them all (the quick search stays).
+5. The identity parameters (`name`, `surname`, `otherNames`, `passport`, `nic`, `whatsapp`) are still accepted by the server and in the URL, so an older link keeps working: such a filter is shown as a button with a x (and Clear all removes it), it is just not in the box.
+6. Added filters stack and wrap. A filter with a value is always shown, so a reload or a shared link restores the stack; an added filter with no value yet is only on screen (not in the URL).
 
-### 9.2 Chips and states
+Escape closes a box or dropdown (focus back on its button); so does a click outside (a click in a date picker's calendar does not).
 
-- Each applied filter shows a chip, e.g. `Job type: Steel Fixer, Welder`, `Registered: 1 Nov 2026 – 30 Nov 2026`, `Officer: Anjana`. The × removes only that filter.
+- The Filters button shows the number of filters with a value ("Filters (3 active)").
+- The box lists only what the role may use: Officer / Allocation for ADMIN and TEAM_LEAD, Client / Agent for ADMIN, TEAM_LEAD and JOB_HANDLER.
+- Work Allocation: no Allocation filter (the view is the allocation). The Officer filter appears on **Allocated** only. The header's Analyst select still works and shows "N Analysts (Filters)" when several are chosen.
+
+### 9.2 States
+
 - "N candidates match the filters (all pages)" uses the server's total.
 - With filters and no rows: **"No candidates match the selected filters."**, with a Clear filters action (not "No candidates yet").
 - Loading: the current rows stay, dimmed, with "Loading page…".
@@ -242,9 +251,9 @@ Search, filters and page live in the URL, so a refresh, Back and Forward keep th
 
 ### 9.5 Accessibility
 
-- The button has an accessible label with the active count.
-- The dialog has `aria-modal`, a labelled title, focus on the first field on open, focus kept inside the dialog (Tab), Escape to close, and focus returned to the button.
-- Chip remove buttons are labelled "Remove filter: …".
+- The Filters button has an accessible label with the active count and `aria-expanded`.
+- The box and each dropdown are labelled groups of native checkboxes, selects and inputs (keyboard operable); Escape closes and returns focus to the button.
+- A filter's remove button is labelled "Remove filter: …".
 - The search box is a combobox with `aria-expanded` and `aria-activedescendant`.
 
 ## 10. Performance
@@ -274,9 +283,9 @@ Search, filters and page live in the URL, so a refresh, Back and Forward keep th
 |---|---|
 | `test/advancedCandidateFilters.test.js` | 30 tests, real PostgreSQL (PGlite) + real router: each filter, AND combinations, search + filters, pagination and totals, no results, validation and unknown parameters, case, inclusive date boundary, multi-select, RBAC (Analyst scope, TEAM_LEAD, ADMIN/OWNER, REGISTRATION_DESK, JOB_HANDLER), filter options per role, Work Allocation views and officer filter |
 | `test/candidateNameSearch.test.js` | 18 tests: normalisation; name parts (first, surname, middle, two, three, across columns, any order); case and spacing; no match; with filters; pagination; passport / NIC / phone still found; Work Allocation; Analyst scope; suggestions (minimum length, partial names, case, limit, ranking, scope, views) |
-| `admin/src/test/advancedFilters.test.tsx` | 14 tests: button, panel open/close and focus, controls, one request on Apply with the exact parameters, chips, remove one, Clear all, page reset, search + filters, paging keeps filters, loading, no results, Work Allocation views, controls per role |
+| `admin/src/test/advancedFilters.test.tsx` | 16 tests: the Filters box and focus, adding a filter, each pick applied at once with the exact parameters, stacked filters (text pause / Enter, match type, dates), URL restore, remove one, untick, Clear all, page reset, search + filters, paging keeps filters, loading, no results, Work Allocation views, filters offered per role |
 | `admin/src/test/candidateSearchSuggestions.test.tsx` | 6 tests: minimum length and debounce, dropdown content, click, keyboard, Escape, filters kept and page 1, Work Allocation view |
-| `admin/src/test/adminPanelEnhancements.test.tsx` | the Work Allocation filter test, updated for the panel |
+| `admin/src/test/adminPanelEnhancements.test.tsx` | the Work Allocation filter test, updated for the Filters box and dropdowns |
 
 Commands: `npx prisma validate`, `npm test`, `npm --prefix admin run typecheck`, `npm run admin:test`, `npm run admin:build`.
 

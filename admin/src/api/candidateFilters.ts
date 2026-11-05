@@ -160,3 +160,51 @@ export function filterChips(filters: CandidateFilters, options: CandidateFilterO
     }
     return chips;
 }
+
+// ---------------------------------------------------------------- the filters a user can add
+
+// What the Filters box offers: one entry per filter the user can add to the page (a date range is one
+// entry, both ends). `keys` are the query keys it owns (what removing it clears); `id` is also the id of
+// its chip in filterChips().
+export type FilterFieldKind = "text" | "list" | "date" | "allocation";
+export type FilterField = {
+    id: string;
+    label: string;
+    kind: FilterFieldKind;
+    group: "Identity" | "Candidate" | "Allocation" | "Current job";
+    keys: FilterKey[];
+    // Offered in the Filters box. The identity lookups (name, passport, NIC, WhatsApp) are the search
+    // box's job; they stay here only so a link that already carries one still shows it (and its x).
+    pickable: boolean;
+};
+
+const textField = (key: TextFilterKey, group: FilterField["group"]): FilterField => ({
+    id: key, label: TEXT_FILTERS.find((field) => field.key === key)!.label, kind: "text", group, keys: [key, `${key}Match`], pickable: group !== "Identity",
+});
+const listField = (key: ListFilterKey, group: FilterField["group"]): FilterField => ({ id: key, label: LIST_LABELS[key], kind: "list", group, keys: [key], pickable: true });
+const dateField = (index: number): FilterField => ({
+    id: DATE_FILTERS[index].from, label: DATE_FILTERS[index].label, kind: "date", group: "Candidate", keys: [DATE_FILTERS[index].from, DATE_FILTERS[index].to], pickable: true,
+});
+
+export const FILTER_FIELDS: readonly FilterField[] = [
+    textField("name", "Identity"), textField("surname", "Identity"), textField("otherNames", "Identity"),
+    textField("passport", "Identity"), textField("nic", "Identity"), textField("whatsapp", "Identity"),
+    listField("jobType", "Candidate"), listField("workflowStatus", "Candidate"), listField("stage", "Candidate"), listField("sex", "Candidate"),
+    textField("nationality", "Candidate"), dateField(0), dateField(1),
+    { id: "allocation", label: "Allocation", kind: "allocation", group: "Allocation", keys: ["allocation"], pickable: true },
+    listField("analystId", "Allocation"),
+    textField("jobCode", "Current job"), listField("clientId", "Current job"), listField("agentId", "Current job"),
+];
+
+// The fields this user can use on this list: officers (and the allocation) only with the officer
+// choices (ADMIN / TEAM_LEAD), clients and agents only with theirs, and not the keys the list hides
+// (Work Allocation: the view is the allocation). The server refuses the others for the role anyway.
+export function availableFilterFields(options: CandidateFilterOptions | null, hidden: readonly FilterKey[] = []): FilterField[] {
+    return FILTER_FIELDS.filter((field) => {
+        if (hidden.includes(field.keys[0])) return false;
+        if (field.id === "analystId" || field.id === "allocation") return Boolean(options?.officers);
+        if (field.id === "clientId") return Boolean(options?.clients);
+        if (field.id === "agentId") return Boolean(options?.agents);
+        return true;
+    });
+}
