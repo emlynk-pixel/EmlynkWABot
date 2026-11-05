@@ -32,14 +32,15 @@ export type AllocationCandidateList = {
     filters: AllocationFilters & { status: AllocationStatus; analystId: string | null; search: string | null };
 };
 
-// The list's filters, all applied on the server before paging (totals are those of the whole
-// filtered list). stage: the current stage (first not completed) or COMPLETE.
-export type AllocationFilters = {
+// The list's filters: the Candidates list's advanced filters (candidateFilters.ts), all applied on
+// the server before paging (totals are those of the whole filtered list). Lists are
+// comma-separated; stage is the current stage (first not completed) or COMPLETE.
+export type AllocationFilters = Partial<Record<string, string | null>> & {
     registeredFrom?: string | null;
     registeredTo?: string | null;
     jobType?: string | null;
-    workflowStatus?: WorkflowStatus["code"] | null;
-    stage?: CandidateStageKey | "COMPLETE" | null;
+    workflowStatus?: WorkflowStatus["code"] | string | null;
+    stage?: CandidateStageKey | "COMPLETE" | string | null;
 };
 
 export type AllocationAnalyst = { analystId: string; name: string; email?: string; assignedCount: number };

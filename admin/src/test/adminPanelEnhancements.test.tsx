@@ -161,34 +161,40 @@ function allocationBackend() {
         ...asRole("OWNER"),
         "GET /api/admin/work-allocation/candidates": (url) => ({ status: 200, body: allocationList(url.searchParams.has("jobType") ? 115 : 230, [ROW]) }),
         "GET /api/admin/work-allocation/analysts": { status: 200, body: { analysts: [], unavailableAnalysts: [], unallocatedCount: 230 } },
-        "GET /api/admin/job-type-choices": { status: 200, body: { jobTypes: ["PLUMBER", "WELDER TIG"], noPreference: { code: "NO_PREFERENCE", label: "No Preferred Type" } } },
+        "GET /api/admin/candidate-filter-options": { status: 200, body: { jobTypes: ["PLUMBER", "WELDER TIG"], noPreference: { code: "NO_PREFERENCE", label: "No Preferred Type" }, officers: [], clients: [], agents: [] } },
     });
 }
 const lastListQuery = (calls: { path: string }[]) => new URL(calls.filter((c) => c.path.startsWith("/api/admin/work-allocation/candidates")).at(-1)!.path, "http://x").searchParams;
 
 describe("WA-UI: Work Allocation filters are sent to the server and combine", () => {
-    test("job type, status and stage are sent to the server; the count is the server's (all pages); Clear resets everything", async () => {
+    test("job type, status and stage are sent to the server together; the count is the server's (all pages); Clear all resets everything", async () => {
         const { calls } = allocationBackend();
         renderApp("/work-allocation");
-        const filters = await screen.findByRole("region", { name: "Filters" }, RENDER_STEP);
+        await screen.findByText("KAMAL PERERA", undefined, RENDER_STEP);
+        expect(screen.queryByRole("region", { name: "Filters" })).toBeNull();
         const user = userEvent.setup();
-        expect(within(filters).getByRole("button", { name: "Clear filters" })).toBeDisabled();
-        await waitFor(() => expect(within(filters).getByRole("option", { name: "PLUMBER" })).toBeInTheDocument(), RENDER_STEP);
-        await user.selectOptions(within(filters).getByLabelText("Job type"), "PLUMBER");
-        await waitFor(() => expect(lastListQuery(calls).get("jobType")).toBe("PLUMBER"));
-        await user.selectOptions(within(filters).getByLabelText("Status"), "REGISTERED");
-        await user.selectOptions(within(filters).getByLabelText("Current stage"), "JOB_DETAILS");
+        await user.click(screen.getByRole("button", { name: "Advanced filters" }));
+        const dialog = screen.getByRole("dialog", { name: "Advanced filters" });
+        await waitFor(() => expect(within(dialog).getByRole("checkbox", { name: "PLUMBER" })).toBeInTheDocument(), RENDER_STEP);
+        const before = calls.length;
+        await user.click(within(dialog).getByRole("checkbox", { name: "PLUMBER" }));
+        await user.click(within(within(dialog).getByRole("group", { name: /^Status/ })).getByRole("checkbox", { name: "Registered" }));
+        await user.click(within(within(dialog).getByRole("group", { name: /^Current stage/ })).getByRole("checkbox", { name: "Job details" }));
+        expect(calls.length).toBe(before);
+        await user.click(within(dialog).getByRole("button", { name: "Apply filters" }));
         await waitFor(() => {
             const query = lastListQuery(calls);
             expect([query.get("jobType"), query.get("workflowStatus"), query.get("stage"), query.get("page")]).toEqual(["PLUMBER", "REGISTERED", "JOB_DETAILS", "1"]);
         });
+        const filters = await screen.findByRole("region", { name: "Filters" });
         expect(await within(filters).findByText("115 candidates match the filters (all pages).")).toBeInTheDocument();
-        await user.click(within(filters).getByRole("button", { name: "Clear filters" }));
+        expect(screen.getByRole("button", { name: "Advanced filters (3 active)" })).toBeInTheDocument();
+        await user.click(within(filters).getByRole("button", { name: "Clear all filters" }));
         await waitFor(() => {
             const query = lastListQuery(calls);
             expect(["jobType", "workflowStatus", "stage", "registeredFrom", "registeredTo"].some((key) => query.has(key))).toBe(false);
         });
-        expect(within(filters).getByRole("button", { name: "Clear filters" })).toBeDisabled();
+        expect(screen.queryByRole("region", { name: "Filters" })).toBeNull();
     });
 
     test("filters from the URL (registration date range) reach the server, and the row shows the candidate's Status", async () => {

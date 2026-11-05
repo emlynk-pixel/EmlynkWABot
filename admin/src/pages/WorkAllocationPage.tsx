@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { ApiError } from "../api/client";
-import { CANDIDATE_STAGES, STAGE_LABELS, type CandidateStageKey, type WorkflowStatus } from "../api/candidates";
-import { getJobTypeChoices } from "../api/jobs";
+import { STAGE_LABELS } from "../api/candidates";
+import { cleanFilters, FILTER_KEYS, getCandidateFilterOptions, listOf, type CandidateFilters, type FilterKey } from "../api/candidateFilters";
 import { useAdminResource } from "../api/useAdminResource";
 import {
     assignCandidates,
@@ -16,11 +16,12 @@ import {
 } from "../api/workAllocation";
 import { canManageAllocations, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
+import { ActiveFilterChips, AdvancedFiltersButton } from "../components/AdvancedFilters";
+import { CandidateSearchBox } from "../components/CandidateSearchBox";
 import { ActionDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
 import { formatDate, formatNumber } from "../components/format";
 import { Icon } from "../components/Icon";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
-import { DatePicker } from "../components/DatePicker";
 import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 
 // Admin > Work Allocation (ADMIN only): assign candidates to
@@ -29,28 +30,22 @@ import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge
 // on this page only, and changing page, view, search or a filter clears it, so a
 // selection can never silently grow beyond what is on screen. One request
 // assigns the whole selection (all or nothing on the server).
-// Filters (registration date range, job type, Status, current stage) are URL parameters sent to
-// the server, which applies them BEFORE paging: the count and every page are those of the whole
-// filtered list, never a filter over the rows already loaded.
+// Filters (Advanced filters: the Candidates list's, components/AdvancedFilters.tsx) are URL
+// parameters sent to the server, which applies them BEFORE paging and always together with the
+// view (Unallocated / Allocated): the count and every page are those of the whole filtered list,
+// never a filter over the rows already loaded.
 
 const th = "h-10 whitespace-nowrap border-b border-border px-3 text-left text-label-md text-ink";
 const td = "h-10 border-b border-border px-3 py-2 text-body-sm align-middle";
 const countInput = "h-8 w-16 rounded-lg border border-border-strong bg-surface px-2 text-right text-body-sm tabular-nums text-ink focus:border-primary focus:shadow-focus focus:outline-none";
 
-// The filters (all applied on the server, before paging): URL parameter -> API filter.
-const FILTER_PARAMS = { from: "registeredFrom", to: "registeredTo", jobType: "jobType", wstatus: "workflowStatus", stage: "stage" } as const;
-const STATUS_OPTIONS: { code: WorkflowStatus["code"]; label: string }[] = [
-    { code: "REGISTERED", label: "Registered" },
-    { code: "STOPPED_WITH_TEST", label: "Stopped with Test" },
-    { code: "JOB_ASSIGNED", label: "Job Assigned" },
-    { code: "FORM_SUBMITTED", label: "Form Submitted" },
-    { code: "DETAILS_VERIFIED", label: "Details Verified" },
-    { code: "DOCUMENTS_VERIFIED", label: "Documents Verified" },
-    { code: "VISA_DOCUMENT_READY", label: "Visa Document Ready" },
-    { code: "VISA_SUBMITTED", label: "Visa Submitted" },
-    { code: "DEPARTED", label: "Departed" },
-];
-const filterSelect = "h-8 w-full rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
+// The filters' URL parameters: the API names, except the ones this page used before the advanced
+// filters (kept, so existing links still work). The view is the allocation, so there is no
+// allocation filter; the Analyst ("analyst") is the Officer filter, on Allocated only.
+const LEGACY_PARAMS: Partial<Record<FilterKey, string>> = { registeredFrom: "from", registeredTo: "to", workflowStatus: "wstatus", analystId: "analyst" };
+const FILTER_PARAMS = FILTER_KEYS.filter((key) => key !== "allocation").map((key) => [key, LEGACY_PARAMS[key] ?? key] as const);
+const HIDDEN_UNALLOCATED: FilterKey[] = ["allocation", "analystId"];
+const HIDDEN_ALLOCATED: FilterKey[] = ["allocation"];
 
 const VIEWS: { status: AllocationStatus; label: string }[] = [
     { status: "UNALLOCATED", label: "Unallocated" },
@@ -77,15 +72,21 @@ function WorkAllocationView() {
     const { token } = useAuth();
     const [searchParams, setSearchParams] = useSearchParams();
     const status: AllocationStatus = searchParams.get("view") === "allocated" ? "ALLOCATED" : "UNALLOCATED";
+    // One Analyst (the header's select) or several (Advanced filters), comma-separated.
     const analystFilter = status === "ALLOCATED" ? searchParams.get("analyst") || undefined : undefined;
     const search = searchParams.get("search") || undefined;
     const pageNumber = Number(searchParams.get("page"));
     const page = Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber : 1;
 
-    const filters: AllocationFilters = Object.fromEntries(Object.entries(FILTER_PARAMS).map(([param, key]) => [key, searchParams.get(param) || null]));
-    const filtered = Object.values(filters).some(Boolean);
-    const list = useAdminResource(`work-allocation?${searchParams.toString()}`, (t, signal) => listAllocationCandidates(t, { status, analystId: analystFilter, search, page, filters }, signal));
-    const jobTypeChoices = useAdminResource("job-type-choices", (t, signal) => getJobTypeChoices(t, signal));
+    const panelFilters = cleanFilters(Object.fromEntries(FILTER_PARAMS.map(([key, param]) => [key, searchParams.get(param) ?? ""])));
+    if (status !== "ALLOCATED") delete panelFilters.analystId;
+    // The Analyst goes to the server as analystId (as the header's select always sent it).
+    const filters: CandidateFilters = { ...panelFilters };
+    delete filters.analystId;
+    const analystCount = listOf(analystFilter).length;
+    const filtered = Object.keys(filters).length > 0 || analystCount > 1;
+    const list = useAdminResource(`work-allocation?${searchParams.toString()}`, (t, signal) => listAllocationCandidates(t, { status, analystId: analystFilter, search, page, filters: filters as AllocationFilters }, signal));
+    const filterOptions = useAdminResource("candidate-filter-options", (t, signal) => getCandidateFilterOptions(t, signal));
     const analysts = useAdminResource("work-allocation-analysts", (t, signal) => listAllocationAnalysts(t, signal));
 
     const [searchText, setSearchText] = useState(search ?? "");
@@ -121,7 +122,12 @@ function WorkAllocationView() {
         event.preventDefault();
         go({ search: searchText.trim() || null });
     };
-    const clearFilters = () => go(Object.fromEntries(Object.keys(FILTER_PARAMS).map((param) => [param, null])));
+    // Every advanced filter is replaced at once (the panel's Apply, a chip, Clear all), back to page 1.
+    const applyFilters = (next: CandidateFilters) => {
+        const clean = cleanFilters(next);
+        go(Object.fromEntries(FILTER_PARAMS.map(([key, param]) => [param, clean[key] ?? null])));
+    };
+    const clearFilters = () => applyFilters({});
 
     const items = list.status === "error" ? [] : list.data?.items ?? [];
     const allOnPage = items.length > 0 && items.every((item) => selected.has(item.passportId));
@@ -278,7 +284,7 @@ function WorkAllocationView() {
         // searchParams is read once per recovery; the list key changes with it.
     }, [pastLastPage, lastPage]);
     const emptyTitle = filtered
-        ? "No candidates match these filters."
+        ? "No candidates match the selected filters."
         : search
         ? "No candidates match this search."
         : page > 1
@@ -314,64 +320,35 @@ function WorkAllocationView() {
                 </div>
                 <form role="search" onSubmit={submitSearch} className="flex w-full gap-2 sm:w-auto sm:min-w-[22rem]">
                     <label htmlFor="allocation-search" className="sr-only">Search candidates</label>
-                    <input
+                    <CandidateSearchBox
                         id="allocation-search"
-                        type="search"
                         value={searchText}
-                        maxLength={100}
-                        onChange={(event) => setSearchText(event.target.value)}
+                        onChange={setSearchText}
+                        onPick={(text) => go({ search: text.trim() || null })}
                         placeholder="Name, passport ID, contact or WhatsApp number…"
-                        className="h-8 w-full rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
+                        allocation={status}
                     />
                     <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                 </form>
+                <AdvancedFiltersButton
+                    idPrefix="allocation-filter"
+                    value={panelFilters}
+                    options={filterOptions.data}
+                    hidden={status === "ALLOCATED" ? HIDDEN_ALLOCATED : HIDDEN_UNALLOCATED}
+                    onApply={applyFilters}
+                />
             </div>
 
-            <section aria-label="Filters" className="rounded-xl border border-border bg-surface p-3">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto] lg:items-end">
-                    <label className="block text-label-sm text-ink-muted" htmlFor="allocation-from">
-                        Registered from
-                        <DatePicker id="allocation-from" value={searchParams.get("from") ?? ""} max={searchParams.get("to") ?? undefined} clearable onChange={(date) => go({ from: date || null })} className={`${filterSelect} mt-1`} />
-                    </label>
-                    <label className="block text-label-sm text-ink-muted" htmlFor="allocation-to">
-                        Registered to
-                        <DatePicker id="allocation-to" value={searchParams.get("to") ?? ""} min={searchParams.get("from") ?? undefined} clearable onChange={(date) => go({ to: date || null })} className={`${filterSelect} mt-1`} />
-                    </label>
-                    <label className="block text-label-sm text-ink-muted">
-                        Job type
-                        <select aria-label="Job type" value={searchParams.get("jobType") ?? ""} onChange={(event) => go({ jobType: event.target.value || null })} className={`${filterSelect} mt-1`}>
-                            <option value="">All job types</option>
-                            {(() => {
-                                const names = [...(jobTypeChoices.data?.jobTypes ?? []), ...(jobTypeChoices.data ? [jobTypeChoices.data.noPreference.code] : [])];
-                                const chosen = searchParams.get("jobType");
-                                if (chosen && !names.includes(chosen)) names.push(chosen);
-                                return names.map((name) => <option key={name} value={name}>{name === jobTypeChoices.data?.noPreference.code ? jobTypeChoices.data.noPreference.label : name}</option>);
-                            })()}
-                        </select>
-                    </label>
-                    <label className="block text-label-sm text-ink-muted">
-                        Status
-                        <select aria-label="Status" value={searchParams.get("wstatus") ?? ""} onChange={(event) => go({ wstatus: event.target.value || null })} className={`${filterSelect} mt-1`}>
-                            <option value="">All statuses</option>
-                            {STATUS_OPTIONS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
-                        </select>
-                    </label>
-                    <label className="block text-label-sm text-ink-muted">
-                        Current stage
-                        <select aria-label="Current stage" value={searchParams.get("stage") ?? ""} onChange={(event) => go({ stage: event.target.value || null })} className={`${filterSelect} mt-1`}>
-                            <option value="">All stages</option>
-                            {CANDIDATE_STAGES.map((stage: CandidateStageKey) => <option key={stage} value={stage}>{STAGE_LABELS[stage]}</option>)}
-                            <option value="COMPLETE">All stages completed</option>
-                        </select>
-                    </label>
-                    <button type="button" onClick={clearFilters} disabled={!filtered} className={`${secondaryButton} w-full lg:w-auto`}>Clear filters</button>
-                </div>
-                {filtered && data && (
-                    <p className="mt-2 text-label-sm text-ink-muted" aria-live="polite">
-                        {formatNumber(data.pagination.total)} {data.pagination.total === 1 ? "candidate matches" : "candidates match"} the filters (all pages).
-                    </p>
-                )}
-            </section>
+            {(filtered || Object.keys(panelFilters).length > 0) && (
+                <section aria-label="Filters" className="space-y-2 rounded-xl border border-border bg-surface p-3">
+                    <ActiveFilterChips value={panelFilters} options={filterOptions.data} onChange={applyFilters} />
+                    {data && (
+                        <p className="text-label-sm text-ink-muted" aria-live="polite">
+                            {formatNumber(data.pagination.total)} {data.pagination.total === 1 ? "candidate matches" : "candidates match"} the filters (all pages).
+                        </p>
+                    )}
+                </section>
+            )}
 
             {notice && <div role="status" className="rounded-xl border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
             {actionError && !confirm && <p role="alert" className="rounded-lg border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">{actionError}</p>}
@@ -385,11 +362,12 @@ function WorkAllocationView() {
                             <label className="ml-auto flex items-center gap-2 text-label-md text-ink-soft">
                                 Analyst
                                 <select
-                                    value={analystFilter ?? ""}
+                                    value={analystCount > 1 ? "__several" : analystFilter ?? ""}
                                     onChange={(event) => go({ analyst: event.target.value || null })}
                                     className="h-8 rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink"
                                 >
                                     <option value="">All Analysts</option>
+                                    {analystCount > 1 && <option value="__several" disabled>{formatNumber(analystCount)} Analysts (Advanced filters)</option>}
                                     {filterAnalysts.map((analyst) => <option key={analyst.analystId} value={analyst.analystId}>{analyst.name}</option>)}
                                 </select>
                             </label>

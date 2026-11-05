@@ -183,6 +183,9 @@ model Candidate {
   // Explicit details / documents verification (a relation only).
   verification      CandidateVerification?
 
+  // The candidate lists' order (newest registered first, passport ID for ties) and the
+  // Registered date filter (migration 20261107120000_candidate_created_date_index).
+  @@index([createdDate(sort: Desc), passportId], map: "candidate_created_date_passport_id_idx")
   @@map("candidate")
 }
 

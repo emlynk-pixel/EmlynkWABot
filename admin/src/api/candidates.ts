@@ -92,7 +92,8 @@ export type CandidateList = {
     items: CandidateListItem[];
     // Server-side paging (100 a page). total and totalItems are the same count.
     pagination: { page: number; pageSize: number; total: number; totalPages: number; totalItems?: number; hasNextPage?: boolean; hasPreviousPage?: boolean };
-    filters: { search: string | null };
+    // The search and the advanced filters applied (candidateFilters.ts), echoed back.
+    filters: { search: string | null } & Record<string, string | boolean | null>;
 };
 
 export type CandidateDocument = {
@@ -247,12 +248,24 @@ export type CallLogList = { items: CallLogEntry[]; documentStatus?: DocumentStat
 const base = (passportId: string) => `/api/admin/candidates/${encodeURIComponent(passportId)}`;
 
 // available: only candidates not on any PROCESSING job (no longer used by the Job pages: a candidate may hold several jobs).
-export function listCandidates(token: string, params: { page: number; pageSize: number; search?: string; testResult?: "PASS"; available?: boolean }, signal?: AbortSignal): Promise<CandidateList> {
+// filters: the advanced filters (candidateFilters.ts CandidateFilters), sent as they are.
+export function listCandidates(token: string, params: { page: number; pageSize: number; search?: string; testResult?: "PASS"; available?: boolean; filters?: Partial<Record<string, string>> }, signal?: AbortSignal): Promise<CandidateList> {
     const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
     if (params.search) query.set("search", params.search);
+    for (const [key, value] of Object.entries(params.filters ?? {})) if (value) query.set(key, value);
     if (params.testResult) query.set("testResult", params.testResult);
     if (params.available) query.set("available", "true");
     return apiRequest<CandidateList>(`/api/admin/candidates?${query.toString()}`, { token, signal });
+}
+
+// Search-box suggestions (GET /api/admin/candidate-suggestions): the list's own search and scope,
+// a few candidates, best match first. allocation: Work Allocation's view.
+export type CandidateSuggestion = { passportId: string; name: string | null; nic: string | null };
+export const SUGGESTION_MIN_LENGTH = 2;
+export function getCandidateSuggestions(token: string, q: string, options: { allocation?: "ALLOCATED" | "UNALLOCATED" } = {}, signal?: AbortSignal): Promise<{ items: CandidateSuggestion[] }> {
+    const query = new URLSearchParams({ q });
+    if (options.allocation) query.set("allocation", options.allocation);
+    return apiRequest<{ items: CandidateSuggestion[] }>(`/api/admin/candidate-suggestions?${query.toString()}`, { token, signal });
 }
 
 export function getCandidate(token: string, passportId: string, signal?: AbortSignal): Promise<CandidateDetails> {

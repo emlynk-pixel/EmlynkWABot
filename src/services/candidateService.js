@@ -35,6 +35,9 @@ import { findUsersByWhatsappNumber } from "./userLookupService.js";
 import { openFollowUp } from "./callLogFollowUpService.js";
 import { candidateJobAssignments, displayJob } from "./jobAssignmentReader.js";
 import { deriveCandidateWorkflowStatus } from "./candidateWorkflowStatus.js";
+import { candidateFilterWhere, derivedFilterMatch, needsDerivedFilter, parseCandidateFilters, queryValue } from "./candidateListFilters.js";
+import { andWhere } from "./candidateAccess.js";
+import { normalizeSearchText, searchTokens } from "../utils/searchText.js";
 import { setAuditActor } from "./auditActor.js";
 import { formatTestId } from "./testId.js";
 
@@ -564,7 +567,9 @@ export function candidateSummary(user) {
 export const CANDIDATE_LIST_PAGE_SIZE = 100;
 export const CANDIDATE_LIST_DEFAULTS = Object.freeze({ page: 1, pageSize: CANDIDATE_LIST_PAGE_SIZE });
 
-export function parseCandidateListQuery(query = {}) {
+// filterAccess (candidateListFilters.js filterAccess(user)): also read the advanced filters
+// (GET /candidates). Without it they are ignored, as before (the Job candidate picker).
+export function parseCandidateListQuery(query = {}, { filterAccess = null } = {}) {
     const errors = [];
     const params = { ...CANDIDATE_LIST_DEFAULTS };
     const single = (field) => {
@@ -604,6 +609,11 @@ export function parseCandidateListQuery(query = {}) {
         if (available === "true") params.available = true;
         else errors.push({ field: "available", message: "must be true" });
     }
+    if (filterAccess) {
+        const advanced = parseCandidateFilters(query, { access: filterAccess });
+        errors.push(...advanced.errors);
+        params.filters = advanced.filters;
+    }
     return errors.length ? { errors } : { params };
 }
 
@@ -614,13 +624,75 @@ export function parseCandidateListQuery(query = {}) {
 export function candidateSearchWhere(search) {
     const where = clientSearchWhere(search);
     if (!where.AND) return where;
+    const terms = searchTokens(search);
     return {
         AND: where.AND.map((word, index) => {
-            const term = search.trim().split(/\s+/).filter(Boolean)[index];
             const contact = word.OR.filter((condition) => condition.whatsappNumber).map((condition) => ({ contactNumber: condition.whatsappNumber }));
-            return { OR: [...word.OR, ...contact, { nic: { contains: term, mode: "insensitive" } }] };
+            return { OR: [...word.OR, ...contact, { nic: { contains: terms[index], mode: "insensitive" } }] };
         }),
     };
+}
+
+// ---------------------------------------------------------------- suggestions
+
+// GET /api/admin/candidate-suggestions?q=&allocation= : a few candidates for the search box while the
+// user types. The same search as the list (candidateSearchWhere: every word somewhere in the names,
+// passport, NIC or phone numbers), AND-ed with the user's scope and, for Work Allocation, its view,
+// so a suggestion is always a candidate the list itself would show. Shorter than
+// SUGGESTION_MIN_LENGTH: no suggestions (nothing is read).
+export const SUGGESTION_MIN_LENGTH = 2;
+export const SUGGESTION_LIMIT = 8;
+// Each of the two bounded reads below; ranking picks the best SUGGESTION_LIMIT of them.
+const SUGGESTION_POOL = 50;
+
+export function parseSuggestionQuery(query = {}, { filterAccess }) {
+    const errors = [];
+    const params = {};
+    const q = queryValue(query, "q", errors);
+    if (q !== undefined) {
+        if (q.trim().length > 100) errors.push({ field: "q", message: "must be at most 100 characters" });
+        else params.q = normalizeSearchText(q);
+    }
+    const allocation = queryValue(query, "allocation", errors);
+    if (allocation !== undefined) {
+        if (!filterAccess.allocation) errors.push({ field: "allocation", message: "is not available for your role" });
+        else if (["ALLOCATED", "UNALLOCATED"].includes(allocation)) params.allocation = allocation;
+        else errors.push({ field: "allocation", message: "must be one of: ALLOCATED, UNALLOCATED" });
+    }
+    return errors.length ? { errors } : { params };
+}
+
+// Lower is better: 0 the full name starts with the text, 1 every word starts a word of the name,
+// 2 the passport or NIC starts with it, 3 anything else the search matched (a substring).
+export function suggestionRank(row, q) {
+    const name = normalizeSearchText(clientName(row) ?? "");
+    if (name.startsWith(q)) return 0;
+    const words = name.split(" ");
+    if (searchTokens(q).every((token) => words.some((word) => word.startsWith(token)))) return 1;
+    if (row.passportId.toLowerCase().startsWith(q) || (row.nic ?? "").toLowerCase().startsWith(q)) return 2;
+    return 3;
+}
+
+export async function listCandidateSuggestions({ db, params, scope = {} }) {
+    const q = params.q ?? "";
+    if (q.length < SUGGESTION_MIN_LENGTH) return { items: [] };
+    const view = params.allocation === "UNALLOCATED" ? { allocation: { is: null } } : params.allocation === "ALLOCATED" ? { allocation: { isNot: null } } : {};
+    const where = andWhere(scope, view, candidateSearchWhere(q));
+    // The candidates whose name (or passport, NIC) STARTS with the first word are read first, so a
+    // strong match is never pushed out by many newer substring matches; then the newest of the rest.
+    const [first] = searchTokens(q);
+    const startsWith = (column) => [{ [column]: { startsWith: first, mode: "insensitive" } }, { [column]: { contains: ` ${first}`, mode: "insensitive" } }];
+    const prefix = { OR: [...startsWith("firstName"), ...startsWith("otherName"), { passportId: { startsWith: first, mode: "insensitive" } }, { nic: { startsWith: first, mode: "insensitive" } }] };
+    const select = { passportId: true, firstName: true, otherName: true, nic: true };
+    const [strong, recent] = await Promise.all([
+        db.candidate.findMany({ where: andWhere(where, prefix), select, orderBy: CANDIDATE_LIST_ORDER, take: SUGGESTION_POOL }),
+        db.candidate.findMany({ where, select, orderBy: CANDIDATE_LIST_ORDER, take: SUGGESTION_POOL }),
+    ]);
+    const rows = [...new Map([...strong, ...recent].map((row) => [row.passportId, row])).values()];
+    const ranked = rows
+        .map((row) => ({ row, rank: suggestionRank(row, q), name: clientName(row) ?? "" }))
+        .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name) || a.row.passportId.localeCompare(b.row.passportId));
+    return { items: ranked.slice(0, SUGGESTION_LIMIT).map(({ row, name }) => ({ passportId: row.passportId, name: name || null, nic: row.nic ?? null })) };
 }
 
 // What a list row needs: its summary (candidateSummary) and what
@@ -657,23 +729,17 @@ async function submittedFormPassportIds(db, passportIds) {
 // scope: the signed-in user's candidates (candidateAccess.js candidateScope),
 // applied in the database before paging, so search and totals only ever
 // cover the candidates the user may see.
+// params.filters (candidateListFilters.js): the advanced filters, AND-ed with the
+// scope, the search and each other, all before paging (pageCandidates).
 export async function listCandidates({ db, params, scope = {} }) {
     const search = params.search ? candidateSearchWhere(params.search) : {};
     // Filtered on the database, from the saved Test details row (never from stage completion).
     const passed = params.testResult === TEST_RESULT_PASS ? { stages: { some: { stage: "TEST_DETAILS", testResult: TEST_RESULT_PASS } } } : {};
     const available = params.available ? { jobAssignments: { none: { isActive: true } } } : {};
-    const parts = [search, scope, passed, available].filter((part) => Object.keys(part).length);
+    const filters = params.filters ?? {};
+    const parts = [search, scope, passed, available, candidateFilterWhere(filters)].filter((part) => Object.keys(part).length);
     const where = parts.length > 1 ? { AND: parts } : parts[0] ?? {};
-    const [total, users] = await Promise.all([
-        db.candidate.count({ where }),
-        db.candidate.findMany({
-            where,
-            select: WORKFLOW_STATUS_SELECT,
-            orderBy: [{ createdDate: "desc" }, { passportId: "asc" }],
-            skip: (params.page - 1) * params.pageSize,
-            take: params.pageSize,
-        }),
-    ]);
+    const { total, rows: users } = await pageCandidates({ db, where, filters, select: WORKFLOW_STATUS_SELECT, page: params.page, pageSize: params.pageSize });
     const submitted = await submittedFormPassportIds(db, users.map((user) => user.passportId));
     return {
         items: users.map((user) => {
@@ -683,8 +749,52 @@ export async function listCandidates({ db, params, scope = {} }) {
             return { ...candidateSummary(user), workflowStatus, stages: stages.map(({ stage, completed }) => ({ stage, completed })) };
         }),
         pagination: listPagination(params, total),
-        filters: { search: params.search ?? null, ...(params.testResult ? { testResult: params.testResult } : {}), ...(params.available ? { available: true } : {}) },
+        filters: { search: params.search ?? null, ...(params.testResult ? { testResult: params.testResult } : {}), ...(params.available ? { available: true } : {}), ...filters },
     };
+}
+
+export const CANDIDATE_LIST_ORDER = Object.freeze([{ createdDate: "desc" }, { passportId: "asc" }]);
+
+// The most candidates one filtered request may evaluate in memory (the exact job type, the
+// Status and the current stage are derived values: they are computed for every candidate the
+// database pre-filter returns, then paged). Far above today's candidate count; past it the
+// request is refused with a clear message instead of getting slow.
+export const MAX_DERIVED_FILTER_CANDIDATES = 20_000;
+
+// One page of the candidates matching `where` (the caller's scope, base condition, search and
+// the database part of `filters`, already AND-ed), newest registered first, passport ID for
+// ties. Without a derived filter: one COUNT and one bounded query. With one: the database
+// pre-filter read with only what the derived filters need, the derived filters over all its
+// rows, then the page read with `select`. Either way the total is the whole filtered list's.
+export async function pageCandidates({ db, where, filters = {}, select, page, pageSize }) {
+    if (!needsDerivedFilter(filters)) {
+        const [total, rows] = await Promise.all([
+            db.candidate.count({ where }),
+            db.candidate.findMany({ where, select, orderBy: CANDIDATE_LIST_ORDER, skip: (page - 1) * pageSize, take: pageSize }),
+        ]);
+        return { total, rows };
+    }
+    const candidates = await db.candidate.count({ where });
+    if (candidates > MAX_DERIVED_FILTER_CANDIDATES) {
+        throw new CandidateError(422, "TOO_MANY_TO_FILTER", "Too many candidates match. Add a registration date range or a search to narrow the list.");
+    }
+    const progress = Boolean(filters.workflowStatus || filters.stage);
+    const all = await db.candidate.findMany({ where, select: progress ? WORKFLOW_STATUS_SELECT : { passportId: true, job: true }, orderBy: CANDIDATE_LIST_ORDER });
+    const statuses = filters.workflowStatus ? await candidateWorkflowStatuses(db, all) : new Map();
+    const matching = all.filter((row) => derivedFilterMatch({
+        jobTypes: parseJobTypes(row.job),
+        status: statuses.get(row.passportId)?.code,
+        currentStage: progress ? currentStageOf(row) : null,
+    }, filters));
+    const pageIds = matching.slice((page - 1) * pageSize, page * pageSize).map((row) => row.passportId);
+    const loaded = pageIds.length ? await db.candidate.findMany({ where: { passportId: { in: pageIds } }, select }) : [];
+    const byId = new Map(loaded.map((row) => [row.passportId, row]));
+    return { total: matching.length, rows: pageIds.map((id) => byId.get(id)).filter(Boolean) };
+}
+
+// The first stage not completed (null when all are), of a row read with WORKFLOW_STATUS_SELECT.
+export function currentStageOf(row) {
+    return stageList(row.stages, automaticStageMissing(row, row.documents)).find((stage) => !stage.completed)?.stage ?? null;
 }
 
 // What the workflow Status of a candidate row needs (the list row's summary fields too). The signals are

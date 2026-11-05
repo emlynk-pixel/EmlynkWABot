@@ -60,6 +60,7 @@ import {
     parseFollowUpListQuery,
 } from "../services/callLogFollowUpService.js";
 import { accessiblePassportIds, canAccessCandidate, candidateScope, isCandidateScoped } from "../services/candidateAccess.js";
+import { filterAccess, listCandidateFilterOptions } from "../services/candidateListFilters.js";
 import {
     assignCandidates,
     autoAllocateCandidates,
@@ -142,6 +143,8 @@ import {
     isValidCandidateIdParam,
     listCallLogs,
     listCandidates,
+    listCandidateSuggestions,
+    parseSuggestionQuery,
     removeCandidateDocument,
     parseCallLogBody,
     formatJobTypes,
@@ -578,17 +581,39 @@ export function createAdminRouter({
     const candidateFor = (req, details) => (registrationOnly(req) ? registrationView(details) : details);
     const forbidden = (res) => res.status(403).json({ message: "Insufficient permissions" });
 
+    // The advanced filters (candidateListFilters.js) only ever narrow the user's own candidates: the
+    // scope is AND-ed with them in the database. A filter the role may not use is refused (400).
     router.get("/candidates", requireRole(CANDIDATE_READERS), async (req, res) => {
-        const parsed = parseCandidateListQuery(req.query);
+        const parsed = parseCandidateListQuery(req.query, { filterAccess: filterAccess(req.user) });
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        const list = await listCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) });
-        // formConflicts: the Candidate Form fields still waiting for review ([] = none), for the list's
-        // "!" indicator. Same rule as the candidate page's pending changes; derived, never stored.
-        const conflicts = await pendingConflictsByCandidate(client, list.items.map((item) => item.passportId));
-        return res.json({ ...list, items: list.items.map((item) => ({ ...item, formConflicts: conflicts.get(item.passportId) ?? [] })) });
+        return candidateAction(res, async () => {
+            const list = await listCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) });
+            // formConflicts: the Candidate Form fields still waiting for review ([] = none), for the list's
+            // "!" indicator. Same rule as the candidate page's pending changes; derived, never stored.
+            const conflicts = await pendingConflictsByCandidate(client, list.items.map((item) => item.passportId));
+            return res.json({ ...list, items: list.items.map((item) => ({ ...item, formConflicts: conflicts.get(item.passportId) ?? [] })) });
+        });
+    });
+
+    // The choices of the advanced filters' dropdowns, limited to the filters the role may use.
+    router.get("/candidate-filter-options", requireRole(CANDIDATE_READERS), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json(await listCandidateFilterOptions({ db: client, user: req.user }));
+    });
+
+    // Search-box suggestions: the list's own roles, search and scope (never a wider set), at most a
+    // few rows with only the name, passport number and NIC the list already shows. allocation
+    // (Work Allocation's view) only for the roles that may filter by it.
+    router.get("/candidate-suggestions", requireRole(CANDIDATE_READERS), async (req, res) => {
+        const parsed = parseSuggestionQuery(req.query, { filterAccess: filterAccess(req.user) });
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await listCandidateSuggestions({ db: client, params: parsed.params, scope: candidateScope(req.user) }));
     });
 
     // The job type preferences must come from the active list (Settings > Job Types) or be
@@ -902,7 +927,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.json(await listAllocationCandidates({ db: client, params: parsed.params })));
+        return candidateAction(res, async () => res.json(await listAllocationCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) })));
     });
 
     router.get("/work-allocation/analysts", requireRole(ALLOCATION_MANAGERS), async (req, res) => {

@@ -5,18 +5,19 @@ import { USER_STATUS } from "../middleware/requireActiveUser.js";
 import {
     automaticStageMissing,
     CandidateError,
-    CANDIDATE_STAGES,
     candidateSearchWhere,
     candidateSummary,
     candidateWorkflowStatuses,
     CANDIDATE_LIST_PAGE_SIZE,
     listPagination,
-    parseJobTypes,
+    pageCandidates,
     stageList,
     WORKFLOW_STATUS_SELECT,
 } from "./candidateService.js";
-import { WORKFLOW_STATUS } from "./candidateWorkflowStatus.js";
-import { businessDayRange, isValidBusinessDate } from "../utils/businessDay.js";
+import { andWhere } from "./candidateAccess.js";
+import { candidateFilterWhere, parseCandidateFilters, queryValue, STAGE_FILTERS } from "./candidateListFilters.js";
+
+export { MAX_DERIVED_FILTER_CANDIDATES } from "./candidateService.js";
 
 // Work Allocation (Admin > Work Allocation; ADMIN only, checked
 // by the routes). Which Analyst each candidate is assigned to:
@@ -50,42 +51,28 @@ const isObject = (value) => Boolean(value) && typeof value === "object" && !Arra
 // ---------------------------------------------------------------- list
 
 // GET /api/admin/work-allocation/candidates?status=&analystId=&search=&page=
-//      &registeredFrom=&registeredTo=&jobType=&workflowStatus=&stage=
+//      &<the advanced filters>
 //   status          UNALLOCATED (default) | ALLOCATED: allocation to an Analyst
 //                   (candidate_allocation), never job assignment. A candidate's jobs
-//                   (one, several or none) do not change it.
-//   analystId       with ALLOCATED: only that Analyst's candidates
+//                   (one, several or none) do not change it. The view's condition is always
+//                   AND-ed with everything else, so no filter can bring in the other view's rows.
+//   analystId       with ALLOCATED: only those Analysts' candidates (comma-separated);
+//                   ignored on UNALLOCATED
 //   search          the Candidates list's search (candidateSearchWhere)
-//   registeredFrom / registeredTo   YYYY-MM-DD, inclusive Sri Lanka calendar days of the
-//                   registration (candidate.created_date)
-//   jobType         one of the candidate's job types (exact name, any letter case)
-//   workflowStatus  the Candidates list's Status code (candidateWorkflowStatus.js)
-//   stage           the current stage (the first one not completed), or COMPLETE
+//   the advanced filters: the Candidates list's own (candidateListFilters.js), all but
+//                   `allocation` (the view is the allocation): registeredFrom / registeredTo,
+//                   jobType, workflowStatus, stage, name, passport, nic and the others.
 // Every filter is applied on the server BEFORE paging, so the totals and the pages are
 // those of the whole filtered list, never of one loaded page.
-export const ALLOCATION_STAGE_FILTERS = Object.freeze([...CANDIDATE_STAGES, "COMPLETE"]);
-const MAX_JOB_TYPE_FILTER_LENGTH = 120;
+export const ALLOCATION_STAGE_FILTERS = STAGE_FILTERS;
 export function parseAllocationListQuery(query = {}) {
     const errors = [];
     const params = { status: ALLOCATION_STATUS.UNALLOCATED, page: 1, pageSize: CANDIDATE_LIST_PAGE_SIZE };
-    const single = (field) => {
-        const value = query[field];
-        if (value === undefined || value === "") return undefined;
-        if (typeof value !== "string") {
-            errors.push({ field, message: "must be given once" });
-            return undefined;
-        }
-        return value;
-    };
+    const single = (field) => queryValue(query, field, errors);
     const status = single("status");
     if (status !== undefined) {
         if (Object.values(ALLOCATION_STATUS).includes(status)) params.status = status;
         else errors.push({ field: "status", message: `must be one of: ${Object.values(ALLOCATION_STATUS).join(", ")}` });
-    }
-    const analystId = single("analystId");
-    if (analystId !== undefined) {
-        if (ID_PATTERN.test(analystId)) params.analystId = analystId;
-        else errors.push({ field: "analystId", message: "must be a user ID" });
     }
     const page = single("page");
     if (page !== undefined) {
@@ -98,50 +85,24 @@ export function parseAllocationListQuery(query = {}) {
         if (trimmed.length > 100) errors.push({ field: "search", message: "must be at most 100 characters" });
         else if (trimmed) params.search = trimmed;
     }
-    for (const field of ["registeredFrom", "registeredTo"]) {
-        const value = single(field);
-        if (value === undefined) continue;
-        if (isValidBusinessDate(value)) params[field] = value;
-        else errors.push({ field, message: "must be a date as YYYY-MM-DD" });
-    }
-    if (params.registeredFrom && params.registeredTo && params.registeredFrom > params.registeredTo) {
-        errors.push({ field: "registeredTo", message: "must not be before registeredFrom" });
-    }
-    const jobType = single("jobType");
-    if (jobType !== undefined) {
-        const trimmed = jobType.trim();
-        if (trimmed.length > MAX_JOB_TYPE_FILTER_LENGTH) errors.push({ field: "jobType", message: `must be at most ${MAX_JOB_TYPE_FILTER_LENGTH} characters` });
-        else if (trimmed) params.jobType = trimmed;
-    }
-    const workflowStatus = single("workflowStatus");
-    if (workflowStatus !== undefined) {
-        if (Object.values(WORKFLOW_STATUS).includes(workflowStatus)) params.workflowStatus = workflowStatus;
-        else errors.push({ field: "workflowStatus", message: `must be one of: ${Object.values(WORKFLOW_STATUS).join(", ")}` });
-    }
-    const stage = single("stage");
-    if (stage !== undefined) {
-        if (ALLOCATION_STAGE_FILTERS.includes(stage)) params.stage = stage;
-        else errors.push({ field: "stage", message: `must be one of: ${ALLOCATION_STAGE_FILTERS.join(", ")}` });
-    }
+    // The page's roles (ADMIN, TEAM_LEAD) may use every filter.
+    const advanced = parseCandidateFilters(query, { exclude: ["allocation"] });
+    errors.push(...advanced.errors);
+    Object.assign(params, advanced.filters);
     return errors.length ? { errors } : { params };
 }
 
-function allocationWhere(params) {
-    const parts = [];
-    if (params.search) parts.push(candidateSearchWhere(params.search));
-    if (params.registeredFrom || params.registeredTo) {
-        parts.push({
-            createdDate: {
-                ...(params.registeredFrom ? { gte: businessDayRange(params.registeredFrom).start } : {}),
-                ...(params.registeredTo ? { lt: businessDayRange(params.registeredTo).end } : {}),
-            },
-        });
-    }
-    // A database pre-filter (substring); the exact job type match is applied after (derivedFilter).
-    if (params.jobType) parts.push({ job: { contains: params.jobType, mode: "insensitive" } });
-    if (params.status === ALLOCATION_STATUS.UNALLOCATED) parts.push({ allocation: { is: null } });
-    else parts.push({ allocation: params.analystId ? { is: { analystId: params.analystId } } : { isNot: null } });
-    return parts.length > 1 ? { AND: parts } : parts[0];
+// The advanced filters of the parsed params (everything but the view, the page and the search).
+function filtersOf(params) {
+    const { status, page, pageSize, search, ...filters } = params;
+    // An Analyst filter means nothing on the Unallocated view.
+    if (status === ALLOCATION_STATUS.UNALLOCATED) delete filters.analystId;
+    return filters;
+}
+
+function allocationWhere(params, filters, scope) {
+    const view = params.status === ALLOCATION_STATUS.UNALLOCATED ? { allocation: { is: null } } : { allocation: { isNot: null } };
+    return andWhere(scope, view, params.search ? candidateSearchWhere(params.search) : {}, candidateFilterWhere(filters));
 }
 
 const analystView = (user) => (user ? { analystId: user.adminId, name: user.name, active: user.status === USER_STATUS.ACTIVE && user.role === ROLES.ANALYST } : null);
@@ -153,15 +114,6 @@ const ALLOCATION_SELECT = Object.freeze({
     contactNumber: true, createdDate: true,
     allocation: { select: { assignedDate: true, analyst: { select: { adminId: true, name: true, role: true, status: true } } } },
 });
-const ORDER = [{ createdDate: "desc" }, { passportId: "asc" }];
-
-// The most candidates one filtered request may evaluate in memory (Status, stage and the
-// exact job type are derived values: they are computed for every candidate the database
-// pre-filters return, then paged). Far above today's candidate count; past it the request is
-// refused with a clear message instead of getting slow.
-export const MAX_DERIVED_FILTER_CANDIDATES = 20_000;
-
-const needsDerivedFilter = (params) => Boolean(params.jobType || params.workflowStatus || params.stage);
 
 // Stages (with their completion) and the current stage of a row.
 function progressOf(row) {
@@ -169,46 +121,14 @@ function progressOf(row) {
     return { stages, currentStage: stages.find((stage) => !stage.completed)?.stage ?? null };
 }
 
-// Whether a row matches the derived filters. status: its workflow Status code.
-function derivedMatch(row, status, params) {
-    if (params.jobType) {
-        const wanted = params.jobType.toLowerCase();
-        if (!parseJobTypes(row.job).some((type) => type.toLowerCase() === wanted)) return false;
-    }
-    if (params.workflowStatus && status !== params.workflowStatus) return false;
-    if (params.stage) {
-        const { currentStage } = progressOf(row);
-        if (params.stage === "COMPLETE" ? currentStage !== null : currentStage !== params.stage) return false;
-    }
-    return true;
-}
-
-// Same order and paging as the Candidates list: newest registered first, passport ID for
-// ties, 100 a page. Without a derived filter: one COUNT and one bounded query. With one:
-// the database pre-filter, then the derived filter over all its rows, then the page.
-export async function listAllocationCandidates({ db, params }) {
-    const where = allocationWhere(params);
-    let total;
-    let rows;
-    if (!needsDerivedFilter(params)) {
-        [total, rows] = await Promise.all([
-            db.candidate.count({ where }),
-            db.candidate.findMany({ where, select: ALLOCATION_SELECT, orderBy: ORDER, skip: (params.page - 1) * params.pageSize, take: params.pageSize }),
-        ]);
-    } else {
-        const candidates = await db.candidate.count({ where });
-        if (candidates > MAX_DERIVED_FILTER_CANDIDATES) {
-            throw new CandidateError(422, "TOO_MANY_TO_FILTER", "Too many candidates match. Add a registration date range or a search to narrow the list.");
-        }
-        const all = await db.candidate.findMany({ where, select: WORKFLOW_STATUS_SELECT, orderBy: ORDER });
-        const statuses = await candidateWorkflowStatuses(db, all);
-        const matching = all.filter((row) => derivedMatch(row, statuses.get(row.passportId)?.code, params));
-        total = matching.length;
-        const pageIds = matching.slice((params.page - 1) * params.pageSize, params.page * params.pageSize).map((row) => row.passportId);
-        const loaded = pageIds.length ? await db.candidate.findMany({ where: { passportId: { in: pageIds } }, select: ALLOCATION_SELECT }) : [];
-        const byId = new Map(loaded.map((row) => [row.passportId, row]));
-        rows = pageIds.map((id) => byId.get(id)).filter(Boolean);
-    }
+// Same order and paging as the Candidates list (pageCandidates): newest registered first,
+// passport ID for ties, 100 a page, every filter applied before paging.
+// scope: the signed-in user's candidates (candidateAccess.js). The page's roles see every
+// candidate (scope {}), but it is AND-ed all the same.
+export async function listAllocationCandidates({ db, params, scope = {} }) {
+    const filters = filtersOf(params);
+    const where = allocationWhere(params, filters, scope);
+    const { total, rows } = await pageCandidates({ db, where, filters, select: ALLOCATION_SELECT, page: params.page, pageSize: params.pageSize });
     const statuses = await candidateWorkflowStatuses(db, rows);
     return {
         items: rows.map((row) => {
@@ -228,9 +148,9 @@ export async function listAllocationCandidates({ db, params }) {
         }),
         pagination: listPagination(params, total),
         filters: {
-            status: params.status, analystId: params.analystId ?? null, search: params.search ?? null,
-            registeredFrom: params.registeredFrom ?? null, registeredTo: params.registeredTo ?? null, jobType: params.jobType ?? null,
-            workflowStatus: params.workflowStatus ?? null, stage: params.stage ?? null,
+            status: params.status, analystId: null, search: params.search ?? null,
+            registeredFrom: null, registeredTo: null, jobType: null, workflowStatus: null, stage: null,
+            ...filters,
         },
     };
 }
