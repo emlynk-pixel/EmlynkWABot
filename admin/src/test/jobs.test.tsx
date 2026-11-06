@@ -346,7 +346,7 @@ describe("Job details", () => {
         expect(optionCalls().length).toBe(count);
     });
 
-    test("Y26S01 Add to job: a candidate already on this job shows On this job (no Add)", async () => {
+    test("Y26S01 Add to job: a candidate already on this job shows On this job and cannot be ticked", async () => {
         backend("OWNER", {
             ...getJob(details(base, [CAND])),
             "GET /api/admin/job-candidate-options": { status: 200, body: { items: [{ passportId: CAND.passportId, uniqueId: "1", name: CAND.name, nic: null, workflowStatus: { code: "REGISTERED", label: "Registered" } }], pagination: { page: 1, pageSize: 20, total: 1, totalPages: 1 }, filters: { search: null } } },
@@ -356,7 +356,7 @@ describe("Job details", () => {
         await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
         const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
         expect(await within(dialog).findByText("On this job")).toBeInTheDocument();
-        expect(within(dialog).queryByRole("button", { name: new RegExp(`^Add ${CAND.name}`) })).toBeNull();
+        expect(within(dialog).getByRole("checkbox", { name: `Select ${CAND.name}` })).toBeDisabled();
         expect(within(dialog).queryByRole("navigation", { name: "Candidate pages" })).toBeNull();
     });
 
@@ -372,7 +372,8 @@ describe("Job details", () => {
         const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
         await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "saman");
         await user.click(within(dialog).getByRole("button", { name: "Search" }));
-        await user.click(await within(dialog).findByRole("button", { name: "Add SAMAN SILVA" }));
+        await user.click(await within(dialog).findByRole("checkbox", { name: "Select SAMAN SILVA" }));
+        await user.click(within(dialog).getByRole("button", { name: "Add selected (1)" }));
         expect(await within(dialog).findByRole("alert")).toHaveTextContent("Candidate must pass the test before being assigned to a job.");
         expect(screen.getByRole("tab", { name: "Assigned Candidates (1)" })).toBeInTheDocument();
         expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
@@ -394,15 +395,78 @@ describe("Job details", () => {
         const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
         await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "saman");
         await user.click(within(dialog).getByRole("button", { name: "Search" }));
-        await user.click(await within(dialog).findByRole("button", { name: "Add SAMAN SILVA" }));
+        await user.click(await within(dialog).findByRole("checkbox", { name: "Select SAMAN SILVA" }));
+        await user.click(within(dialog).getByRole("button", { name: "Add selected (1)" }));
         expect(await within(dialog).findByRole("alert")).toHaveTextContent("already on the PROCESSING job JOB-2026-000007");
         expect(screen.getByRole("tab", { name: "Assigned Candidates (1)" })).toBeInTheDocument();
 
-        await user.click(within(dialog).getByRole("button", { name: "Add SAMAN SILVA" }));
+        // The refused candidate stays ticked: Add selected tries again.
+        await user.click(within(dialog).getByRole("button", { name: "Add selected (1)" }));
         expect(await within(dialog).findByRole("status")).toHaveTextContent("SAMAN SILVA was added.");
         expect(within(dialog).getByText("On this job")).toBeInTheDocument();
         expect(await screen.findByRole("tab", { name: "Assigned Candidates (2)" })).toBeInTheDocument();
         expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([{ passportId: "N0000002" }, { passportId: "N0000002" }]);
+    });
+
+    test("Add to job: tick several candidates (across pages) and add them together; a refusal is listed and the rest are still added", async () => {
+        const option = (n: number) => ({ passportId: `N00000${String(n).padStart(2, "0")}`, uniqueId: String(n), name: `CANDIDATE ${n}`, nic: null, workflowStatus: { code: "REGISTERED" as const, label: "Registered" } });
+        let assigned = [CAND];
+        const { calls } = backend("OWNER", {
+            ...getJob(details(base, [CAND])),
+            "GET /api/admin/job-candidate-options": (url) => {
+                const page = Number(url.searchParams.get("page"));
+                const ns = page === 1 ? [30, 29, 28] : [10];
+                return { status: 200, body: { items: ns.map(option), pagination: { page, pageSize: 20, total: 4, totalPages: 2 }, filters: { search: null } } };
+            },
+            // The request just recorded is this one (the stub records each call before answering it).
+            [`POST /api/admin/jobs/${base.jobId}/candidates`]: () => {
+                const { passportId } = calls.at(-1)!.body as { passportId: string };
+                if (passportId === "N0000029") return { status: 409, body: { message: "Candidate must pass the test before being assigned to a job.", code: "CANDIDATE_TEST_NOT_PASSED" } };
+                assigned = [...assigned, { ...CAND, passportId, name: `CANDIDATE ${Number(passportId.slice(-2))}` }];
+                return { status: 201, body: details(base, assigned) };
+            },
+        });
+        renderApp(path);
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
+        expect(within(dialog).getByRole("button", { name: "Add selected" })).toBeDisabled();
+        await user.click(await within(dialog).findByRole("checkbox", { name: "Select CANDIDATE 30" }));
+        await user.click(within(dialog).getByRole("checkbox", { name: "Select CANDIDATE 29" }));
+        // The selection is kept on another page.
+        await user.click(within(dialog).getByRole("button", { name: "Next page" }));
+        await user.click(await within(dialog).findByRole("checkbox", { name: "Select CANDIDATE 10" }));
+        expect(within(dialog).getByText("3 selected")).toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: "Add selected (3)" }));
+
+        expect(await within(dialog).findByText("2 of 3 candidates were added.")).toBeInTheDocument();
+        const alert = within(dialog).getByRole("alert");
+        expect(alert).toHaveTextContent("1 candidate could not be added:");
+        expect(alert).toHaveTextContent("CANDIDATE 29: Candidate must pass the test before being assigned to a job.");
+        expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([{ passportId: "N0000030" }, { passportId: "N0000029" }, { passportId: "N0000010" }]);
+        expect(await screen.findByRole("tab", { name: "Assigned Candidates (3)" })).toBeInTheDocument();
+        // The added ones leave the selection; the refused one stays ticked.
+        expect(within(dialog).getByRole("button", { name: "Add selected (1)" })).toBeEnabled();
+        expect(within(dialog).getByText("On this job")).toBeInTheDocument();
+    });
+
+    test("Add to job: Select all on this page ticks every candidate on the page who is not on the job yet", async () => {
+        const option = (passportId: string, name: string) => ({ passportId, uniqueId: passportId.slice(-2), name, nic: null, workflowStatus: { code: "REGISTERED" as const, label: "Registered" } });
+        backend("OWNER", {
+            ...getJob(details(base, [CAND])),
+            "GET /api/admin/job-candidate-options": { status: 200, body: { items: [option(CAND.passportId, CAND.name!), option("N0000041", "ONE"), option("N0000042", "TWO")], pagination: { page: 1, pageSize: 20, total: 3, totalPages: 1 }, filters: { search: null } } },
+        });
+        renderApp(path);
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
+        await user.click(await within(dialog).findByRole("checkbox", { name: "Select all on this page" }));
+        expect(within(dialog).getByRole("checkbox", { name: "Select ONE" })).toBeChecked();
+        expect(within(dialog).getByRole("checkbox", { name: "Select TWO" })).toBeChecked();
+        expect(within(dialog).getByRole("checkbox", { name: `Select ${CAND.name}` })).toBeDisabled();
+        expect(within(dialog).getByRole("button", { name: "Add selected (2)" })).toBeEnabled();
+        await user.click(within(dialog).getByRole("checkbox", { name: "Select all on this page" }));
+        expect(within(dialog).getByRole("button", { name: "Add selected" })).toBeDisabled();
     });
 
     test("Cancel job needs a reason; Complete asks first", async () => {

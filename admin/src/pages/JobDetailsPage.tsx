@@ -325,10 +325,12 @@ function CancelDialog({ token, job, onDone, onClose }: { token: string; job: Job
 }
 
 // The candidates who can be added (the server's list: test PASS, newest registered first), shown as
-// soon as the dialog opens, paged and searchable (name, passport ID or NIC) on the server. Added one
-// at a time; the dialog stays open so several can be added. A refusal (already on this job, test not
-// passed) is shown under the list. The list follows the search box while typing (a short pause after
-// the last key, on the server); Search or Enter runs it at once.
+// soon as the dialog opens, paged and searchable (name, passport ID or NIC) on the server. Candidates
+// are ticked (kept across pages and searches; "Select all on this page" ticks the page) and added
+// together with "Add selected", one or many. The dialog stays open. A refusal
+// (already on this job, test not passed) is shown under the list, per candidate for a bulk add. The
+// list follows the search box while typing (a short pause after the last key, on the server); Search
+// or Enter runs it at once.
 const ADD_PAGE_SIZE = 20;
 const ADD_SEARCH_DEBOUNCE_MS = 300;
 function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string; job: JobDetails; onChanged: (job: JobDetails) => void; onClose: () => void }) {
@@ -372,24 +374,75 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
         setList(null);
         setQuery((q) => ({ ...q, page }));
     };
-    const add = async (candidate: JobCandidateOption) => {
+    // Ticked candidates, kept across pages and searches until they are added or unticked.
+    const [selected, setSelected] = useState<Map<string, JobCandidateOption>>(() => new Map());
+    const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+    const [failures, setFailures] = useState<{ name: string; reason: string }[]>([]);
+    const label = (candidate: JobCandidateOption) => candidate.name ?? candidate.passportId;
+    const toggle = (candidate: JobCandidateOption) => setSelected((previous) => {
+        const next = new Map(previous);
+        if (next.has(candidate.passportId)) next.delete(candidate.passportId);
+        else next.set(candidate.passportId, candidate);
+        return next;
+    });
+    const selectable = (list?.items ?? []).filter((candidate) => !added.has(candidate.passportId));
+    const pageSelected = selectable.filter((candidate) => selected.has(candidate.passportId)).length;
+    const allPageSelected = selectable.length > 0 && pageSelected === selectable.length;
+    const togglePage = () => setSelected((previous) => {
+        const next = new Map(previous);
+        for (const candidate of selectable) {
+            if (allPageSelected) next.delete(candidate.passportId);
+            else next.set(candidate.passportId, candidate);
+        }
+        return next;
+    });
+
+    // One request per candidate, one after the other, so the server checks each one under its own
+    // locks (test result, already on the job) exactly as a single Add does. A refusal for one
+    // candidate never stops the others; every refusal is listed with the server's reason.
+    const addMany = async (candidates: JobCandidateOption[]) => {
         setBusy(true);
         setError(null);
         setNotice(null);
+        setFailures([]);
+        const refused: { name: string; reason: string }[] = [];
+        const done: string[] = [];
+        let latest: JobDetails | null = null;
         try {
-            const next = await addCandidateToJob(token, job.jobId, candidate.passportId);
-            setAdded((previous) => new Set(previous).add(candidate.passportId));
-            setNotice(`${candidate.name ?? candidate.passportId} was added.`);
-            onChanged(next);
-        } catch (caught) {
-            setError(message(caught));
+            for (const [index, candidate] of candidates.entries()) {
+                if (candidates.length > 1) setProgress({ done: index, total: candidates.length });
+                try {
+                    latest = await addCandidateToJob(token, job.jobId, candidate.passportId);
+                    done.push(candidate.passportId);
+                } catch (caught) {
+                    refused.push({ name: label(candidate), reason: message(caught) });
+                }
+            }
         } finally {
+            if (done.length) {
+                setAdded((previous) => new Set([...previous, ...done]));
+                setSelected((previous) => {
+                    const next = new Map(previous);
+                    for (const passportId of done) next.delete(passportId);
+                    return next;
+                });
+            }
+            if (latest) onChanged(latest);
+            if (candidates.length === 1) {
+                if (done.length) setNotice(`${label(candidates[0])} was added.`);
+                else setError(refused[0]?.reason ?? null);
+            } else {
+                if (done.length) setNotice(`${done.length} of ${candidates.length} candidates were added.`);
+                setFailures(refused);
+            }
+            setProgress(null);
             setBusy(false);
         }
     };
+    const addSelected = () => addMany([...selected.values()]);
 
     return (
-        <ActionDialog title={`Add candidates to ${job.jobCode}`} busy={busy} onClose={onClose}>
+        <ActionDialog title={`Add candidates to ${job.jobCode}`} busy={busy} onClose={onClose} size="lg">
             <form onSubmit={search} role="search" className="flex gap-2">
                 <label htmlFor="add-candidate-search" className="sr-only">Search candidates</label>
                 <input id="add-candidate-search" type="search" value={text} maxLength={100} placeholder="Name, passport ID or NIC" onChange={(event) => setText(event.target.value)} className={filterControl} />
@@ -400,19 +453,44 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
             {!loadError && !list && <LoadingState label="Loading candidates…" />}
             {!loadError && list && list.items.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">{query.search ? "No eligible candidates found." : "No candidates can be added right now."}</p>}
             {!loadError && list && list.items.length > 0 && (
-                <ul aria-label="Candidates found" className="mt-3 max-h-80 divide-y divide-border overflow-y-auto rounded-lg border border-border">
-                    {list.items.map((candidate) => (
-                        <li key={candidate.passportId} className="flex items-center justify-between gap-3 px-3 py-2">
-                            <div className="min-w-0">
-                                <p className="truncate text-body-sm text-ink">{candidate.name ?? candidate.passportId}</p>
-                                <p className="text-label-sm text-ink-muted">{[candidate.passportId, candidate.nic].filter(Boolean).join(" • ")}</p>
-                            </div>
-                            {added.has(candidate.passportId)
-                                ? <span className="text-label-sm text-ink-muted">On this job</span>
-                                : <button type="button" disabled={busy} onClick={() => add(candidate)} className={primaryButton} aria-label={`Add ${candidate.name ?? candidate.passportId}`}>Add</button>}
-                        </li>
-                    ))}
-                </ul>
+                <div className="mt-3 overflow-hidden rounded-lg border border-border">
+                    <div className="flex items-center justify-between gap-3 border-b border-border bg-canvas px-3 py-2">
+                        <label className="flex cursor-pointer items-center gap-3 text-label-sm text-ink">
+                            <input
+                                type="checkbox"
+                                checked={allPageSelected}
+                                ref={(box) => { if (box) box.indeterminate = pageSelected > 0 && !allPageSelected; }}
+                                disabled={busy || selectable.length === 0}
+                                onChange={togglePage}
+                                className="size-4 shrink-0 accent-primary"
+                            />
+                            Select all on this page
+                        </label>
+                        {selected.size > 0 && (
+                            <span className="flex items-center gap-3 text-label-sm text-ink-muted">
+                                {selected.size} selected
+                                <button type="button" disabled={busy} onClick={() => setSelected(new Map())} className="text-primary hover:underline disabled:text-ink-muted disabled:no-underline">Clear</button>
+                            </span>
+                        )}
+                    </div>
+                    <ul aria-label="Candidates found" className="max-h-[min(55vh,32rem)] divide-y divide-border overflow-y-auto">
+                        {list.items.map((candidate) => {
+                            const onJob = added.has(candidate.passportId);
+                            const id = `add-pick-${candidate.passportId}`;
+                            return (
+                                <li key={candidate.passportId} className="flex items-center gap-3 px-3 py-2.5">
+                                    <input id={id} type="checkbox" checked={!onJob && selected.has(candidate.passportId)} disabled={busy || onJob} onChange={() => toggle(candidate)} aria-label={`Select ${label(candidate)}`} className="size-4 shrink-0 accent-primary" />
+                                    <label htmlFor={id} className={`min-w-0 flex-1 ${onJob ? "" : "cursor-pointer"}`}>
+                                        <p className="truncate text-body-sm text-ink">{label(candidate)}</p>
+                                        <p className="text-label-sm text-ink-muted">{[candidate.passportId, candidate.nic].filter(Boolean).join(" • ")}</p>
+                                    </label>
+                                    {candidate.workflowStatus && <span className="hidden sm:block"><WorkflowStatusBadge status={candidate.workflowStatus} /></span>}
+                                    {onJob && <span className="shrink-0 text-label-sm text-ink-muted">On this job</span>}
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </div>
             )}
             {list && list.pagination.totalPages > 1 && (
                 <nav aria-label="Candidate pages" className="mt-2 flex items-center justify-between text-label-sm text-ink-muted">
@@ -421,10 +499,22 @@ function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string;
                     <button type="button" disabled={busy || query.page >= list.pagination.totalPages} onClick={() => goTo(query.page + 1)} className="text-primary hover:underline disabled:text-ink-muted disabled:no-underline">Next page</button>
                 </nav>
             )}
+            {progress && <p role="status" className="mt-3 text-body-sm text-ink-muted">Adding {progress.done + 1} of {progress.total}…</p>}
             {notice && <p role="status" className="mt-3 rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</p>}
+            {failures.length > 0 && (
+                <div role="alert" className="mt-3 rounded-lg border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">
+                    <p>{failures.length === 1 ? "1 candidate could not be added:" : `${failures.length} candidates could not be added:`}</p>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                        {failures.map((failure, index) => <li key={index}><span className="font-medium">{failure.name}</span>: {failure.reason}</li>)}
+                    </ul>
+                </div>
+            )}
             <DialogError message={error} />
-            <div className="mt-4 flex justify-end">
+            <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
                 <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Done</button>
+                <button type="button" disabled={busy || selected.size === 0} onClick={addSelected} className={primaryButton}>
+                    {selected.size > 0 ? `Add selected (${selected.size})` : "Add selected"}
+                </button>
             </div>
         </ActionDialog>
     );
