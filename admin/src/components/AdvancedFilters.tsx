@@ -32,7 +32,10 @@ import { Icon } from "./Icon";
 
 const control = "h-8 w-full min-w-0 rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none";
 const labelText = "block text-label-sm text-ink-muted";
-const popoverClass = "absolute left-0 top-full z-30 mt-1 max-h-[70vh] overflow-y-auto rounded-xl border border-border bg-surface p-3 shadow-modal";
+const popoverBase = "absolute top-full z-30 mt-1 max-h-[70vh] overflow-y-auto rounded-xl border border-border bg-surface p-3 shadow-modal";
+const popoverClass = `${popoverBase} left-0`;
+// For a Filters button at the right edge of the page (Work Allocation): the panel opens leftward.
+const popoverRightClass = `${popoverBase} right-0`;
 const TEXT_DEBOUNCE_MS = 500;
 
 type FieldsInput = {
@@ -106,7 +109,7 @@ function useDismiss(open: boolean, onClose: () => void, ref: { current: HTMLElem
 }
 
 // The Filters button: opens the box of filters that can be added.
-export function FiltersButton({ filters }: { filters: FilterFields }) {
+export function FiltersButton({ filters, align = "left" }: { filters: FilterFields; align?: "left" | "right" }) {
     const [open, setOpen] = useState(false);
     const wrapper = useRef<HTMLDivElement>(null);
     const button = useRef<HTMLButtonElement>(null);
@@ -135,7 +138,7 @@ export function FiltersButton({ filters }: { filters: FilterFields }) {
                 {count > 0 && <span aria-hidden="true" className="rounded-full bg-primary px-1.5 text-label-sm tabular-nums text-on-primary">{count}</span>}
             </button>
             {open && (
-                <div id={panelId} role="group" aria-label="Add filters" className={`${popoverClass} w-[min(20rem,calc(100vw-2rem))] space-y-3`}>
+                <div id={panelId} role="group" aria-label="Add filters" className={`${align === "right" ? popoverRightClass : popoverClass} w-[min(20rem,calc(100vw-2rem))] space-y-3`}>
                     <p className="text-label-sm text-ink-muted">Choose the filters to use. Each one appears under the search bar.</p>
                     {groups.map((group) => (
                         <fieldset key={group} className="min-w-0">

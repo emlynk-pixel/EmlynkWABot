@@ -320,7 +320,8 @@ function WorkAllocationView() {
                         </button>
                     ))}
                 </div>
-                <form role="search" onSubmit={submitSearch} className="flex w-full gap-2 sm:w-auto sm:min-w-[22rem]">
+                <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                <form role="search" onSubmit={submitSearch} className="flex min-w-0 flex-1 gap-2 sm:min-w-[22rem]">
                     <label htmlFor="allocation-search" className="sr-only">Search candidates</label>
                     <CandidateSearchBox
                         id="allocation-search"
@@ -332,7 +333,8 @@ function WorkAllocationView() {
                     />
                     <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                 </form>
-                <FiltersButton filters={filterFields} />
+                <FiltersButton filters={filterFields} align="right" />
+                </div>
             </div>
 
             {(filtered || filterFields.active.length > 0) && (
