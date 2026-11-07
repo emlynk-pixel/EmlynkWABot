@@ -52,7 +52,7 @@ const MATRIX = [
     ["GET", "/candidates/N1023757", undefined, [...CANDIDATE_READERS, "REGISTRATION_DESK"]],
     ["PUT", "/candidates/N1023757", {}, REGISTRATION_WORKFLOW],
     // REGISTRATION_DESK: the Candidate Details stage (its note) only.
-    ["PUT", "/candidates/N1023757/stages/IVS_INTERVIEW", {}, CANDIDATE_STAFF],
+    ["PUT", "/candidates/N1023757/stages/VISA_APPROVAL", {}, CANDIDATE_STAFF],
     ["POST", "/candidates/N1023757/documents/upload-target", {}, REGISTRATION_WORKFLOW],
     ["POST", "/candidates/N1023757/documents/finalize", {}, REGISTRATION_WORKFLOW],
     ["POST", `/candidates/N1023757/documents/${DOCUMENT_ID}/remove`, {}, CANDIDATE_STAFF],

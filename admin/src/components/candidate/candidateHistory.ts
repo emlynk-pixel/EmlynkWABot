@@ -1,4 +1,4 @@
-import { STAGE_LABELS, variantLabel, type CallLogEntry, type CandidateActivity } from "../../api/candidates";
+import { stageLabel as labelOfStage, variantLabel, type CallLogEntry, type CandidateActivity } from "../../api/candidates";
 import { documentTypeLabel } from "../format";
 
 // Candidate History: the calls and the candidate's activity as one timeline,
@@ -54,7 +54,7 @@ function documentLabel(activity: CandidateActivity): string {
     return variant ? `${type} - ${variant}` : type;
 }
 
-const stageLabel = (activity: CandidateActivity) => (activity.stage ? STAGE_LABELS[activity.stage] ?? activity.stage : "Stage");
+const stageLabel = (activity: CandidateActivity) => (activity.stage ? labelOfStage(activity.stage) : "Stage");
 
 // A short line for the activity, an optional detail, and who or what did it
 // ("by …", "via WhatsApp"); null when that is not on record (never guessed).

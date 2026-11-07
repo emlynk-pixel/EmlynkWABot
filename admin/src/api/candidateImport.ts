@@ -49,7 +49,8 @@ export type ImportActions = {
     officerAssignments: { userName: string; rows: number }[];
     clients: { name: string; action: "CREATE" | "REUSE"; rows: number }[];
     agents: { name: string; action: "CREATE" | "REUSE"; rows: number }[];
-    visa: { VISA_SUBMITTED: number; VISA_APPROVED?: number; DEPARTED: number };
+    // Every VISA STATUS becomes the candidate's Status. The outcomes are absent from an older server.
+    visa: { VISA_SUBMITTED: number; VISA_APPROVED?: number; DEPARTED: number; VISA_NOT_GOING?: number; CANCELLED?: number; REJECTED?: number };
     tests: number;
     testsBlankResultAsPass: number;
 };
@@ -70,7 +71,7 @@ export type ImportPreview = {
 export type ImportCounts = {
     rows?: number; created?: number; filled?: number; noChange?: number; skippedVerified?: number; invalid?: number;
     duplicates?: number; conflicts?: number; failed?: number; warnings?: number; uncommittedChunks?: number; uncommittedRows?: number;
-    allocated?: number; testsSet?: number; stagesCompleted?: number; departed?: number; clientsCreated?: number; agentsCreated?: number;
+    allocated?: number; testsSet?: number; stagesCompleted?: number; departed?: number; outcomes?: number; clientsCreated?: number; agentsCreated?: number;
 };
 
 export type ImportChunkResult = {

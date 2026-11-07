@@ -22,7 +22,7 @@ import { JOB_ROLE_ALIASES, SUPPORTED_SOURCE_COLUMNS, analyzeSourceHeaders, sourc
 import { ROW_STATUS, sourceCells, validateLegacyRow } from "./candidateImportRowValidator.js";
 import { maskIdentifier, normalizePassport, unknownJobRoles } from "./candidateImportNormalizers.js";
 import {
-    ROW_ACTION, findAgentsByKeys, findClientsByKeys, findSourceFlags, importActions, loadImportSnapshot, planRows, summarizePlans,
+    ROW_ACTION, VISA_OUTCOMES, findAgentsByKeys, findClientsByKeys, findSourceFlags, importActions, loadImportSnapshot, planRows, summarizePlans,
 } from "./candidateImportClassifier.js";
 import { describeIssues } from "./candidateImportIssues.js";
 import { activeJobTypeNames } from "./jobTypeCatalog.js";
@@ -320,16 +320,31 @@ async function executeExtras(tx, plans, { importId, actor, audits, effects, now 
     }
     if (inserts.length) await tx.candidateStage.createMany({ data: inserts });
 
-    // VISA STATUS "Departed": candidate.departed_at, once (fill-only), in one statement.
+    // VISA STATUS "Departed": candidate.departed_at, once (fill-only: only a candidate with no final
+    // status at all), in one statement.
     const departing = writing.filter((plan) => plan.write.extras.departed);
     if (departing.length) {
         const passportIds = departing.map(passportOfPlan);
-        await tx.candidate.updateMany({ where: { passportId: { in: passportIds }, departedAt: null }, data: { departedAt: now } });
+        await tx.candidate.updateMany({ where: { passportId: { in: passportIds }, departedAt: null, outcome: null }, data: { departedAt: now } });
         for (const plan of departing) {
             effects.get(plan.rowNumber).departed = 1;
             audits.push(auditEntry(actor, {
                 action: "CANDIDATE_DEPARTED", passportId: passportOfPlan(plan), previousStatus: "NOT_DEPARTED", newStatus: "DEPARTED",
                 reason: `Visa status Departed in a legacy sheet (bulk import ${importId})`, newValue: JSON.stringify({ importId }),
+            }));
+        }
+    }
+
+    // VISA STATUS "Got Visa Not Going" / "Cancelled" / "Reject": candidate.outcome, once (fill-only, as above).
+    for (const outcome of VISA_OUTCOMES) {
+        const recording = writing.filter((plan) => plan.write.extras.outcome === outcome);
+        if (!recording.length) continue;
+        await tx.candidate.updateMany({ where: { passportId: { in: recording.map(passportOfPlan) }, departedAt: null, outcome: null }, data: { outcome, outcomeAt: now } });
+        for (const plan of recording) {
+            effects.get(plan.rowNumber).outcome = 1;
+            audits.push(auditEntry(actor, {
+                action: "SET_FINAL_STATUS", passportId: passportOfPlan(plan), previousStatus: "NONE", newStatus: outcome,
+                reason: `Visa status in a legacy sheet (bulk import ${importId})`, newValue: JSON.stringify({ importId }),
             }));
         }
     }
@@ -407,7 +422,7 @@ const OUTCOME_BY_ACTION = { [ROW_ACTION.CREATE]: ROW_OUTCOME.CREATED, [ROW_ACTIO
 const OUTCOME_BY_STATUS = { [ROW_STATUS.INVALID]: ROW_OUTCOME.INVALID, [ROW_STATUS.DUPLICATE]: ROW_OUTCOME.DUPLICATE, [ROW_STATUS.CONFLICT]: ROW_OUTCOME.CONFLICT };
 
 // { r: row number, o: outcome, c: reason codes, w: had a warning, e?: what else was written }
-// e: { allocated, testSet, stagesCompleted, departed, clientCreated, agentCreated } (only the non-zero ones)
+// e: { allocated, testSet, stagesCompleted, departed, outcome, clientCreated, agentCreated } (only the non-zero ones)
 function outcomeOf(plan, effect = {}) {
     const outcome = { r: plan.rowNumber, o: OUTCOME_BY_ACTION[plan.action] ?? OUTCOME_BY_STATUS[plan.status] ?? ROW_OUTCOME.FAILED, c: plan.codes, w: plan.status === ROW_STATUS.WARNING };
     return Object.keys(effect).length ? { ...outcome, e: effect } : outcome;
@@ -432,7 +447,7 @@ export function countOutcomes(rows) {
 
 // Result count -> the per-row effect it adds up (outcomeOf).
 const EFFECT_COUNTS = Object.freeze({
-    allocated: "allocated", testsSet: "testSet", stagesCompleted: "stagesCompleted", departed: "departed", clientsCreated: "clientCreated", agentsCreated: "agentCreated",
+    allocated: "allocated", testsSet: "testSet", stagesCompleted: "stagesCompleted", departed: "departed", outcomes: "outcome", clientsCreated: "clientCreated", agentsCreated: "agentCreated",
 });
 
 const chunkResult = (rows) => {

@@ -12,7 +12,12 @@ const TONES: Record<WorkflowStatus["code"], Tone> = {
     DOCUMENTS_VERIFIED: "verified",
     VISA_DOCUMENT_READY: "verified",
     VISA_SUBMITTED: "verified",
+    VISA_APPROVED: "verified",
     DEPARTED: "verified",
+    // Recorded final outcomes: the candidate is not going ahead.
+    VISA_NOT_GOING: "critical",
+    CANCELLED: "critical",
+    REJECTED: "critical",
 };
 
 export function WorkflowStatusBadge({ status }: { status: WorkflowStatus }) {

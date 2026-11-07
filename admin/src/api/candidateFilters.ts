@@ -55,7 +55,11 @@ export const WORKFLOW_STATUS_CHOICES: { value: WorkflowStatus["code"]; label: st
     { value: "DOCUMENTS_VERIFIED", label: "Documents Verified" },
     { value: "VISA_DOCUMENT_READY", label: "Visa Document Ready" },
     { value: "VISA_SUBMITTED", label: "Visa Submitted" },
+    { value: "VISA_APPROVED", label: "Visa Approved" },
     { value: "DEPARTED", label: "Departed" },
+    { value: "VISA_NOT_GOING", label: "Visa Not Going" },
+    { value: "CANCELLED", label: "Cancelled" },
+    { value: "REJECTED", label: "Rejected" },
 ];
 export const STAGE_CHOICES: Choice[] = [
     ...CANDIDATE_STAGES.map((stage) => ({ value: stage, label: STAGE_LABELS[stage] })),

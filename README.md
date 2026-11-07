@@ -96,7 +96,7 @@ Roles are read from the database on every request. The dashboard hides what a ro
 
 ## Candidate Workflow
 
-Each candidate has eight stage records (`candidate_stages`). The dashboard's progress stepper shows six of them; **IVS interview** and **Finalizing the job** remain stored stages but are hidden from the stepper, and **Additional details** sits beside Candidate details.
+Each candidate has six stages (`candidate_stages`; the database refuses any other value), all shown on the dashboard's progress stepper, with **Additional details** beside Candidate details. The retired IVS interview and Finalizing the job stages were removed by migration `20261109120000_candidate_status_cleanup`.
 
 ```mermaid
 flowchart LR
@@ -105,15 +105,14 @@ flowchart LR
     T -->|"result FAIL"| S["Stopped with Test"]
     J --> C["Candidate details"]
     C --> D["Document submission"]
-    D --> I["IVS interview"]
-    I --> V["Visa submission"]
+    D --> V["Visa submission"]
     V --> A["Visa approval"]
-    A --> F["Finalizing the job"]
+    A --> P["Departed (final status)"]
 ```
 
-The stages are **not strictly linear** in the code: staff can open and update any stage, and a stage's completion is independent of the others. The list **Status** column is a single value derived from existing data (nothing stores or edits it):
+The stages are **not strictly linear** in the code: staff can open and update any stage, and a stage's completion is independent of the others. The **Status** (every candidate list and the candidate page) is a single value derived from existing data on every read, so it changes as soon as a stage, verification, Candidate Form submission or import changes the data (nothing stores or edits it):
 
-`Registered` < `Job Assigned` < `Form Submitted` < `Details Verified` < `Documents Verified` < `Visa Document Ready`, with `Stopped with Test` overriding all of them while the Test result is FAIL.
+`Registered` < `Job Assigned` < `Form Submitted` < `Details Verified` < `Documents Verified` < `Visa Document Ready` < `Visa Submitted` < `Visa Approved` < `Departed`, with `Stopped with Test` overriding them while the Test result is FAIL, and a recorded final outcome (`Visa Not Going`, `Cancelled`, `Rejected`: from the uploaded sheet's VISA STATUS or an Admin) overriding everything.
 
 Details: [Docs/20-candidate-management.md](Docs/20-candidate-management.md).
 

@@ -29,8 +29,9 @@ import { activeJobTypeNames, NO_PREFERRED_JOB_TYPE } from "./jobTypeCatalog.js";
 // bad value is refused with 400 before anything is read. Field names never reach Prisma: every
 // condition below is written out against a fixed column.
 
+// Same list as candidateService.CANDIDATE_STAGES (not imported: candidateService imports this module).
 export const CANDIDATE_STAGE_KEYS = Object.freeze([
-    "TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB",
+    "TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "VISA_SUBMISSION", "VISA_APPROVAL",
 ]);
 export const STAGE_FILTERS = Object.freeze([...CANDIDATE_STAGE_KEYS, "COMPLETE"]);
 export const TEXT_MATCHES = Object.freeze(["contains", "startsWith", "equals"]);

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { getDailyRoleSummary, getDailySummary, getIncompleteCandidates, type DailyRoleSummary, type DailySummary, type IncompleteStage } from "../api/admin";
-import { STAGE_LABELS, type CandidateStageKey } from "../api/candidates";
+import { stageLabel } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
 import { ROLES, canViewDashboard, canViewRoleReport, roleLabel as labelOfRole, type Role } from "../auth/roles";
@@ -31,7 +31,6 @@ const th = "border-b border-border px-3 py-2 text-left text-label-sm text-ink-mu
 const thRight = `${th} text-right`;
 const td = "border-b border-border px-3 py-2 text-body-sm text-ink";
 const tdRight = `${td} text-right tabular-nums`;
-const stageLabel = (stage: string) => STAGE_LABELS[stage as CandidateStageKey] ?? stage;
 const roleLabel = (role: string | null) => (role ? labelOfRole(role) : "—");
 
 // ---------------------------------------------------------------- building blocks
@@ -139,11 +138,11 @@ function CompletedPanel({ report }: { report: DailySummary }) {
     const { completedCandidates: c } = report;
     const { shown, toggle } = useExpandable(c.items);
     return (
-        <Panel title="Completed candidates" description="Candidates whose final stage, Finalizing the job, was completed on this day." aside={toggle}>
+        <Panel title="Completed candidates" description="Candidates recorded as Departed on this day (the bulk import or an Admin on the candidate page)." aside={toggle}>
             {c.items.length === 0 ? <Empty>No candidate completed on this day.</Empty> : (
                 <div className="overflow-x-auto">
                     <table aria-label="Completed candidates" className="w-full border-collapse">
-                        <thead><tr><th className={th}>Passport number</th><th className={th}>Name</th><th className={th}>Completed</th><th className={th}>All stages now</th></tr></thead>
+                        <thead><tr><th className={th}>Passport number</th><th className={th}>Name</th><th className={th}>Departed</th><th className={th}>All stages now</th></tr></thead>
                         <tbody>
                             {shown.map((row) => (
                                 <tr key={row.passportId}>
@@ -298,7 +297,7 @@ function SummaryView({ report }: { report: DailySummary }) {
         <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
                 <Kpi label="Candidates registered" value={summary.candidatesRegistered} hint="New candidate records" />
-                <Kpi label="Candidates completed" value={summary.candidatesCompleted} hint="Final stage completed" />
+                <Kpi label="Candidates completed" value={summary.candidatesCompleted} hint="Recorded as Departed" />
                 <Kpi label="Visa completed" value={summary.visaCompleted} hint="Visa approval completed" />
                 <Kpi label="Calls taken" value={summary.callsTaken} />
                 <Kpi label="Documents submitted" value={summary.documentsSubmitted} hint={`${formatNumber(documents.whatsapp)} WhatsApp · ${formatNumber(documents.manual)} manual`} />

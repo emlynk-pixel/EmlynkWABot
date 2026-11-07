@@ -17,6 +17,7 @@
     "user:create": "node scripts/createUser.js",
     "user:migrate-manager": "node scripts/migrateManagerRole.js",
     "db:check": "node scripts/checkDatabaseConnection.js",
+    "db:audit-stages": "node scripts/auditCandidateStages.js",
     "admin:install": "npm --prefix admin install",
     "admin:dev": "npm --prefix admin run dev",
     "admin:build": "npm --prefix admin run build",

@@ -145,6 +145,11 @@ model Candidate {
   // Recorded as Departed (bulk import VISA STATUS "Departed"; migration 20261106120000). Its own fact:
   // the Finalizing job stage does not set it. Drives the derived Status DEPARTED.
   departedAt         DateTime?       @map("departed_at")
+  // A recorded final outcome: VISA_NOT_GOING | CANCELLED | REJECTED (bulk import VISA STATUS, or an Admin
+  // on the candidate page; candidateFinalStatusService.js). Never together with departedAt (CHECK,
+  // migration 20261109120000_candidate_status_cleanup). Drives the derived Status, outranking everything.
+  outcome            String?
+  outcomeAt          DateTime?       @map("outcome_at")
   createdDate        DateTime        @default(now()) @map("created_date")
   updatedDate        DateTime        @updatedAt @map("updated_date")
   documents          Document[]
@@ -872,7 +877,7 @@ model CandidateAdditionalDetails {
 model CandidateStage {
   passportId     String    @map("passport_id")
   // TEST_DETAILS | JOB_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION
-  // | IVS_INTERVIEW | VISA_SUBMISSION | VISA_APPROVAL | FINALIZING_JOB
+  // | VISA_SUBMISSION | VISA_APPROVAL (CHECK candidate_stages_stage_check)
   stage          String
   completed      Boolean   @default(false)
   completedAt    DateTime? @map("completed_at")

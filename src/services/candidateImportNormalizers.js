@@ -300,25 +300,24 @@ export function normalizeJobRoles(raw, { activeJobTypes, aliases = {} }) {
 // ---------------------------------------------------------------- process columns
 
 // VISA STATUS (the legacy sheet's values, confirmed from the sample workbook and by the business),
-// case-insensitive:
-//   Submit             -> "VISA_SUBMITTED" (completes the Visa submission stage)
-//   Got Visa           -> "VISA_APPROVED"  (completes the Visa approval stage)
-//   Departed           -> "DEPARTED"       (candidate.departed_at)
-//   Cancelled / Canceled -> error VISA_CANCELLED: not imported
-//   Reject             -> error VISA_REJECTED: not imported
-//   Got Visa Not Going -> warning VISA_NOT_GOING: imported, no stage or status changed
+// case-insensitive. Every value becomes the candidate's Status (candidateWorkflowStatus.js):
+//   Submit             -> "VISA_SUBMITTED" (completes the Visa submission stage)        Visa Submitted
+//   Got Visa           -> "VISA_APPROVED"  (completes the Visa approval stage)          Visa Approved
+//   Departed           -> "DEPARTED"       (candidate.departed_at)                      Departed
+//   Got Visa Not Going -> "VISA_NOT_GOING" (candidate.outcome)                          Visa Not Going
+//   Cancelled / Canceled -> "CANCELLED"    (candidate.outcome)                          Cancelled
+//   Reject / Rejected  -> "REJECTED"       (candidate.outcome)                          Rejected
 //   Not Submit, blank  -> nothing: no visa step yet (the sheet's default, not a problem)
-// Any other value is reported and ignored: no stage is guessed from it.
-const VISA_STATUSES = Object.freeze({ SUBMIT: "VISA_SUBMITTED", "GOT VISA": "VISA_APPROVED", DEPARTED: "DEPARTED" });
-const VISA_ERRORS = Object.freeze({ CANCELLED: "VISA_CANCELLED", CANCELED: "VISA_CANCELLED", REJECT: "VISA_REJECTED" });
-const VISA_WARNINGS = Object.freeze({ "GOT VISA NOT GOING": "VISA_NOT_GOING" });
+// Any other value is reported and ignored: no status is guessed from it.
+const VISA_STATUSES = Object.freeze({
+    SUBMIT: "VISA_SUBMITTED", "GOT VISA": "VISA_APPROVED", DEPARTED: "DEPARTED",
+    "GOT VISA NOT GOING": "VISA_NOT_GOING", CANCELLED: "CANCELLED", CANCELED: "CANCELLED", REJECT: "REJECTED", REJECTED: "REJECTED",
+});
 const VISA_NO_ACTION = new Set(["NOT SUBMIT"]);
 export function normalizeVisaStatus(raw) {
     if (blank(raw)) return none();
-    const key = clean(raw).toUpperCase();
+    const key = clean(raw).toUpperCase().replace(/\s+/g, " ");
     if (VISA_NO_ACTION.has(key)) return none();
-    if (VISA_ERRORS[key]) return { value: null, error: VISA_ERRORS[key] };
-    if (VISA_WARNINGS[key]) return drop(VISA_WARNINGS[key]);
     return VISA_STATUSES[key] ? { value: VISA_STATUSES[key] } : drop("UNKNOWN_VISA_STATUS");
 }
 

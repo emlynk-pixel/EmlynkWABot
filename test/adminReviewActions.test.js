@@ -587,6 +587,7 @@ describe("security and error handling", () => {
             "POST /candidates/:passportId/documents/:documentId/remove", // reason required, audited
             "POST /candidates/:passportId/documents/finalize", // JSON only: the file goes browser -> storage
             "POST /candidates/:passportId/documents/upload-target",
+            "POST /candidates/:passportId/final-status", // Departed / Visa Not Going / Cancelled / Rejected: ADMIN only, audited (candidateWorkflowStatus.test.js)
             "POST /candidates/:passportId/form-share", // Candidate Form share link: create (replaces the old one), audited (candidateFormShare.test.js)
             "POST /candidates/:passportId/form-share/revoke",
             "POST /candidates/:passportId/form-submission/confirm-all", // ADMIN only: every pending field in one transaction, audited per field (candidateFormBulkReview.test.js)

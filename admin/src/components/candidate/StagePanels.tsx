@@ -139,8 +139,8 @@ function VerifyBar({ details, kind, onChange }: { details: CandidateDetails; kin
 
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "The changes could not be saved.");
 
-// The stages completed by an admin (Test details, IVS interview, Visa
-// approval, Finalizing the job): notes and completion. Test details also
+// The stages completed by an admin (Test details, Job details, Visa submission, Visa
+// approval): notes and completion. Test details also
 // shows the candidate's job (from the Job assignment, read-only) and records the
 // test's result and the date it was sat; the client name shown with them comes
 // from the candidate's record.

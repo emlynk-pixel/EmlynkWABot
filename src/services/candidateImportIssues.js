@@ -6,7 +6,7 @@
 //
 // Severity:
 //   ERROR    the row is NOT imported (the candidate can't be identified or registered safely, or
-//            the business said so: Cancelled visa, unknown officer)
+//            the business said so: unknown officer)
 //   WARNING  the row is imported; the value named was dropped, ignored or needs a look
 // Messages hold no cell value: only the column's header and the reason. "{column}" is the header of
 // the field the issue is about.
@@ -59,7 +59,7 @@ export const ISSUE_CATALOG = Object.freeze({
     // The file and the database
     DUPLICATE_SOURCE_ROW: { severity: E, message: "Passport number appears on more than one row" },
     NIC_CONFLICT: { severity: E, message: "NIC number belongs to another candidate, or differs from this candidate's NIC" },
-    SKIPPED_VERIFIED: { severity: W, message: "Candidate details are verified in Emlynk: nothing changed" },
+    SKIPPED_VERIFIED: { severity: W, message: "Candidate details are verified in Emlynk: details not changed (a visa status is still applied)" },
     // Officer
     OFFICER_MISSING: { severity: W, message: "Officer is missing: the candidate is not assigned" },
     OFFICER_NOT_FOUND: { severity: E, message: "Officer does not match a system user" },
@@ -67,9 +67,7 @@ export const ISSUE_CATALOG = Object.freeze({
     OFFICER_NOT_ACTIVE: { severity: E, message: "Officer matches a user who is not active" },
     OFFICER_DIFFERS: { severity: W, message: "Candidate is already assigned to another user: not reassigned" },
     // Visa and Test
-    VISA_CANCELLED: { severity: E, message: "Visa status is Cancelled" },
-    VISA_REJECTED: { severity: E, message: "Visa status is Reject" },
-    VISA_NOT_GOING: { severity: W, message: "Visa status is Got Visa Not Going: no stage or status is changed" },
+    FINAL_STATUS_KEPT: { severity: W, message: "Emlynk already has a different final status (Departed, Visa Not Going, Cancelled or Rejected): not changed" },
     UNKNOWN_VISA_STATUS: { severity: W, message: "Visa status is not one Emlynk maps (Not Submit, Submit, Got Visa, Got Visa Not Going, Departed, Cancelled, Reject): ignored" },
     INVALID_TEST_RESULT: { severity: W, message: "Interview pass/fail is not PASS, FAIL or empty: ignored" },
     TEST_DETAILS_DIFFER: { severity: W, message: "Emlynk already has different test details: not changed" },

@@ -172,7 +172,7 @@ describe("OFFICER -> automatic allocation", () => {
 // ---------------------------------------------------------------- validation
 
 describe("errors and warnings", () => {
-    test("9-14. missing passport / job role and Cancelled visa are errors; passport format, missing and invalid NIC are reported", async () => {
+    test("9-14. missing passport / job role are errors (a Cancelled visa is a status, not an error); passport format, missing and invalid NIC are reported", async () => {
         const rows = renumber([
             row(1, { "PASSPORT NUMBER": "" }), row(2, { "JOB ROLE": "" }), row(3, { "VISA STATUS": " cancelled " }),
             row(4, { "PASSPORT NUMBER": "N80000044" }), row(5, { "NIC NUMBER": "" }), row(6, { "NIC NUMBER": "12345" }),
@@ -180,11 +180,11 @@ describe("errors and warnings", () => {
         const p = await preview(rows);
         assert.deepEqual(issuesOf(p, 2).errors, ["Passport number is missing"]);
         assert.deepEqual(issuesOf(p, 3).errors, ["Job role is missing"]);
-        assert.deepEqual(issuesOf(p, 4).errors, ["Visa status is Cancelled"]);
+        assert.deepEqual(issuesOf(p, 4).errors, [], "a Cancelled row is imported with the Cancelled status");
         assert.deepEqual(issuesOf(p, 5), { rowNumber: 5, errors: [], warnings: ["Passport number is in the old format (8 digits)"] });
         assert.deepEqual(issuesOf(p, 6).warnings, ["NIC number is missing"]);
         assert.deepEqual(issuesOf(p, 7).warnings, ["NIC NUMBER format is invalid"]);
-        assert.equal(p.summary.invalid, 3);
+        assert.equal(p.summary.invalid, 2);
         // A passport in no known format stays an ERROR (it is the identity key).
         assert.deepEqual(issuesOf(await preview(renumber([row(1, { "PASSPORT NUMBER": "X12" })])), 2).errors, ["Passport number format is invalid (P or N followed by 7 digits)"]);
     });
@@ -216,27 +216,27 @@ describe("errors and warnings", () => {
 // ---------------------------------------------------------------- visa
 
 describe("VISA STATUS", () => {
-    test("29/30. Submit -> Visa submission completed (VISA SUBMITTED), Departed -> recorded departed (DEPARTED), Finalizing job untouched", async () => {
+    test("29/30. Submit -> Visa submission completed (VISA SUBMITTED), Departed -> recorded departed (DEPARTED)", async () => {
         assert.deepEqual(normalizeVisaStatus("  submit "), { value: "VISA_SUBMITTED" });
         assert.deepEqual(normalizeVisaStatus("DEPARTED"), { value: "DEPARTED" });
         assert.deepEqual(normalizeVisaStatus("Approved"), { value: null, warning: "UNKNOWN_VISA_STATUS" });
-        // Every VISA STATUS value of the sample workbook, as written there.
+        // Every VISA STATUS value of the sample workbook, as written there: each one is a Status.
         assert.deepEqual(normalizeVisaStatus("NOT SUBMIT"), { value: null }, "no visa step yet: nothing to do, nothing to report");
         assert.deepEqual(normalizeVisaStatus(" not submit "), { value: null });
         assert.deepEqual(normalizeVisaStatus("SUBMIT"), { value: "VISA_SUBMITTED" });
-        assert.deepEqual(normalizeVisaStatus("CANCELED"), { value: null, error: "VISA_CANCELLED" });
-        assert.deepEqual(normalizeVisaStatus("Cancelled"), { value: null, error: "VISA_CANCELLED" });
+        assert.deepEqual(normalizeVisaStatus("CANCELED"), { value: "CANCELLED" });
+        assert.deepEqual(normalizeVisaStatus("Cancelled"), { value: "CANCELLED" });
         assert.deepEqual(normalizeVisaStatus("GOT VISA"), { value: "VISA_APPROVED" });
-        assert.deepEqual(normalizeVisaStatus(" reject "), { value: null, error: "VISA_REJECTED" });
-        assert.deepEqual(normalizeVisaStatus("GOT VISA NOT GOING"), { value: null, warning: "VISA_NOT_GOING" });
+        assert.deepEqual(normalizeVisaStatus(" reject "), { value: "REJECTED" });
+        assert.deepEqual(normalizeVisaStatus("Rejected"), { value: "REJECTED" });
+        assert.deepEqual(normalizeVisaStatus("GOT  VISA NOT GOING"), { value: "VISA_NOT_GOING" });
         const { preview: p } = await importRows(renumber([
             row(1, { "VISA STATUS": "Submit" }), row(2, { "VISA STATUS": "departed" }), row(3, { "VISA STATUS": "Pending" }), row(4, { "VISA STATUS": "NOT SUBMIT" }),
         ]));
         assert.ok(!p.rowIssues.some((r) => r.rowNumber === 5), "NOT SUBMIT: no issue at all");
         assert.equal(await stageOf(4, "VISA_SUBMISSION"), null);
-        assert.deepEqual(p.actions.visa, { VISA_SUBMITTED: 1, VISA_APPROVED: 0, DEPARTED: 1 });
+        assert.deepEqual(p.actions.visa, { VISA_SUBMITTED: 1, VISA_APPROVED: 0, DEPARTED: 1, VISA_NOT_GOING: 0, CANCELLED: 0, REJECTED: 0 });
         assert.equal((await stageOf(1, "VISA_SUBMISSION")).completed, true);
-        assert.equal(await stageOf(2, "FINALIZING_JOB"), null, "the Finalizing job stage is not touched");
         assert.ok((await prisma.candidate.findUnique({ where: { passportId: passportOf(2) } })).departedAt instanceof Date);
         assert.equal(await prisma.auditLog.count({ where: { action: "CANDIDATE_DEPARTED", passportId: passportOf(2) } }), 1);
         assert.equal(await stageOf(3, "VISA_SUBMISSION"), null);
@@ -245,22 +245,30 @@ describe("VISA STATUS", () => {
         assert.equal(await statusOf(2), "DEPARTED");
     });
 
-    test("Got Visa completes Visa approval; Reject is an error; Got Visa Not Going is a warning and changes nothing", async () => {
+    test("Got Visa -> Visa Approved; Got Visa Not Going / Cancelled / Reject are imported with that final status", async () => {
         const { preview: p, chunks } = await importRows(renumber([
-            row(41, { "VISA STATUS": "GOT VISA" }), row(42, { "VISA STATUS": "REJECT" }), row(43, { "VISA STATUS": "GOT VISA NOT GOING" }),
+            row(41, { "VISA STATUS": "GOT VISA" }), row(42, { "VISA STATUS": "REJECT" }), row(43, { "VISA STATUS": "GOT VISA NOT GOING" }), row(44, { "VISA STATUS": "Cancelled" }),
         ]));
-        assert.equal(p.actions.visa.VISA_APPROVED, 1);
+        assert.deepEqual(p.actions.visa, { VISA_SUBMITTED: 0, VISA_APPROVED: 2, DEPARTED: 0, VISA_NOT_GOING: 1, CANCELLED: 1, REJECTED: 1 });
+        assert.equal(p.rowIssues.length, 0, "every one is a known status");
         assert.equal((await stageOf(41, "VISA_APPROVAL")).completed, true);
         assert.equal(await stageOf(41, "VISA_SUBMISSION"), null, "only the approval stage");
-        assert.deepEqual(issuesOf(p, 3).errors, ["Visa status is Reject"]);
-        assert.equal(await prisma.candidate.count({ where: { passportId: passportOf(42) } }), 0, "a Reject row is not imported");
-        assert.deepEqual(issuesOf(p, 4), { rowNumber: 4, errors: [], warnings: ["Visa status is Got Visa Not Going: no stage or status is changed"] });
-        assert.equal(await prisma.candidateStage.count({ where: { passportId: passportOf(43) } }), 0);
-        assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(43) } })).departedAt, null);
-        assert.equal(chunks[0].counts.created, 2);
-        // Re-import: the approval stage is already completed, nothing is written again.
-        const again = await importRows(renumber([row(41, { "VISA STATUS": "GOT VISA" })]));
-        assert.equal(again.preview.summary.noChange, 1);
+        assert.equal((await stageOf(43, "VISA_APPROVAL")).completed, true, "Got Visa Not Going also got the visa");
+        assert.equal(chunks[0].counts.created, 4);
+        assert.equal(chunks[0].counts.outcomes, 3);
+        assert.deepEqual([await statusOf(41), await statusOf(42), await statusOf(43), await statusOf(44)], ["VISA_APPROVED", "REJECTED", "VISA_NOT_GOING", "CANCELLED"]);
+        assert.equal(await prisma.auditLog.count({ where: { action: "SET_FINAL_STATUS", passportId: passportOf(44), newStatus: "CANCELLED" } }), 1);
+        // Re-import: the approval stage and the outcomes are already recorded, nothing is written again.
+        const again = await importRows(renumber([row(41, { "VISA STATUS": "GOT VISA" }), row(44, { "VISA STATUS": "Cancelled" })]));
+        assert.equal(again.preview.summary.noChange, 2);
+    });
+
+    test("a final status already recorded is kept: a different one in the sheet is reported (FINAL_STATUS_KEPT), never overwritten", async () => {
+        await importRows(renumber([row(51, { "VISA STATUS": "Departed" }), row(52, { "VISA STATUS": "Cancelled" })]));
+        const { preview: p } = await importRows(renumber([row(51, { "VISA STATUS": "Cancelled" }), row(52, { "VISA STATUS": "Departed" })]));
+        const kept = "Emlynk already has a different final status (Departed, Visa Not Going, Cancelled or Rejected): not changed";
+        assert.deepEqual([issuesOf(p, 2).warnings, issuesOf(p, 3).warnings], [[kept], [kept]]);
+        assert.deepEqual([await statusOf(51), await statusOf(52)], ["DEPARTED", "CANCELLED"]);
     });
 
     test("a completed stage and a recorded departure are never touched again; a re-import changes nothing", async () => {
@@ -491,13 +499,18 @@ describe("re-import and row atomicity", () => {
         assert.equal(await prisma.agent.count(), 0);
     });
 
-    test("verified details: no allocation, Test or stage is written either (SKIPPED_VERIFIED)", async () => {
+    test("verified details: no detail, allocation or Test is written (SKIPPED_VERIFIED), but the visa status still becomes the Status", async () => {
         await importRows(renumber([row(1, { OFFICER: "" })]));
         await prisma.candidateVerification.create({ data: { passportId: passportOf(1), detailsVerifiedAt: new Date(), detailsVerifiedById: "admin-ADMIN" } });
         const { preview: p } = await importRows(renumber([row(1, { OFFICER: "John", "VISA STATUS": "Submit", "INTERVIEW DATE": "01.11.2026" })]));
-        assert.equal(p.summary.skippedVerified, 1);
+        assert.ok(issuesOf(p, 2).warnings.includes("Candidate details are verified in Emlynk: details not changed (a visa status is still applied)"));
         assert.equal(await allocationOf(1), null);
-        assert.equal(await prisma.candidateStage.count(), 0);
+        assert.deepEqual((await prisma.candidateStage.findMany({ select: { stage: true, completed: true } })), [{ stage: "VISA_SUBMISSION", completed: true }]);
+        assert.equal(await statusOf(1), "VISA_SUBMITTED");
+        assert.ok((await prisma.candidateVerification.findUnique({ where: { passportId: passportOf(1) } })).detailsVerifiedAt, "the verification is kept");
+        // No visa status at all: nothing is written (SKIPPED_VERIFIED as before).
+        const { preview: plain } = await importRows(renumber([row(1, { OFFICER: "John", "INTERVIEW DATE": "01.11.2026" })]));
+        assert.equal(plain.summary.skippedVerified, 1);
     });
 });
 

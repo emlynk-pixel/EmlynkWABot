@@ -4,7 +4,7 @@
 // everywhere else); registration creates that row, it never makes a second
 // record for the same person (passport ID and NIC are both unique).
 //
-// The deployment process has seven stages. They are independent: any stage can
+// The deployment process has six stages. They are independent: any stage can
 // be opened, edited and completed at any time, in any order. Two stages are
 // completed by their data (CANDIDATE_DETAILS: the required details and a
 // passport; DOCUMENT_SUBMISSION: the five required documents); the others by
@@ -43,7 +43,9 @@ import { formatTestId } from "./testId.js";
 
 // ---------------------------------------------------------------- definitions
 
-// In display order.
+// In display order. The only stages: the database refuses any other value
+// (candidate_stages_stage_check, migration 20261109120000_candidate_status_cleanup,
+// which also removed the retired IVS interview and Finalizing the job stages).
 export const CANDIDATE_STAGES = Object.freeze([
     "TEST_DETAILS",
     // Job Details: the candidate's current Job and its Client, read from the Job
@@ -51,11 +53,10 @@ export const CANDIDATE_STAGES = Object.freeze([
     "JOB_DETAILS",
     "CANDIDATE_DETAILS",
     "DOCUMENT_SUBMISSION",
-    "IVS_INTERVIEW",
-    // Completed by an admin, like VISA_APPROVAL (notes + completion).
+    // Completed by an admin, like VISA_APPROVAL (notes + completion). Status Visa Submitted.
     "VISA_SUBMISSION",
+    // Completed by an admin (or the import's "Got Visa"). Status Visa Approved.
     "VISA_APPROVAL",
-    "FINALIZING_JOB",
 ]);
 
 export const POLICE_REPORT_VARIANTS = Object.freeze(["SL_VERIFIED", "ROMANIA", "SL_NORMAL"]);
@@ -802,6 +803,8 @@ export function currentStageOf(row) {
 export const WORKFLOW_STATUS_SELECT = Object.freeze({
     ...listSelect,
     departedAt: true,
+    outcome: true,
+    outcomeAt: true,
     stages: { select: { stage: true, completed: true, testResult: true } },
     documents: {
         where: { documentType: { in: REQUIRED_SUBMISSION_DOCUMENTS } },
@@ -815,6 +818,8 @@ const stageCompleted = (user, stage) => Boolean(user.stages.find((row) => row.st
 
 function workflowStatusOf(user, formSubmitted, missing = automaticStageMissing(user, user.documents)) {
     return deriveCandidateWorkflowStatus({
+        // A recorded final outcome (Visa Not Going, Cancelled, Rejected) outranks everything.
+        outcome: user.outcome ?? null,
         testResult: user.stages.find((row) => row.stage === "TEST_DETAILS")?.testResult ?? null,
         hasCurrentJob: (user.jobAssignments?.length ?? 0) > 0,
         formSubmitted,
@@ -824,7 +829,8 @@ function workflowStatusOf(user, formSubmitted, missing = automaticStageMissing(u
         // Document submission complete (every required document on record): the Visa-document point.
         documentSubmissionCompleted: missing.DOCUMENT_SUBMISSION.length === 0,
         visaSubmitted: stageCompleted(user, "VISA_SUBMISSION"),
-        // Recorded as Departed (candidate.departed_at); completing Finalizing job is not departure.
+        visaApproved: stageCompleted(user, "VISA_APPROVAL"),
+        // Recorded as Departed (candidate.departed_at: the import's "Departed" or an Admin's Mark departed).
         departed: Boolean(user.departedAt),
     });
 }
@@ -834,6 +840,17 @@ function workflowStatusOf(user, formSubmitted, missing = automaticStageMissing(u
 export async function candidateWorkflowStatuses(db, users) {
     const submitted = await submittedFormPassportIds(db, users.map((user) => user.passportId));
     return new Map(users.map((user) => [user.passportId, workflowStatusOf(user, submitted.has(user.passportId))]));
+}
+
+const isoOrNull = (value) => (value ? new Date(value).toISOString() : null);
+
+// The candidate's recorded final status, of a row read with WORKFLOW_STATUS_SELECT:
+// { code: DEPARTED or the outcome (candidateWorkflowStatus.js CANDIDATE_OUTCOME), at } or null. The database
+// allows only one of the two (candidate_departed_or_outcome_check).
+export function finalStatusOf(row) {
+    if (row?.outcome) return { code: row.outcome, at: isoOrNull(row.outcomeAt) };
+    if (row?.departedAt) return { code: "DEPARTED", at: isoOrNull(row.departedAt) };
+    return null;
 }
 
 // total (kept for existing callers) and totalItems are the same count.
@@ -884,9 +901,17 @@ export async function getCandidate({ db, passportId }) {
     if (!user) return null;
 
     const documents = currentDocuments(user.documents);
-    const jobAssignments = await candidateJobAssignments(db, passportId);
+    const [jobAssignments, statusRow] = await Promise.all([
+        candidateJobAssignments(db, passportId),
+        db.candidate.findUnique({ where: { passportId }, select: WORKFLOW_STATUS_SELECT }),
+    ]);
+    // The same derived Status the lists show, so the candidate page shows it changing as stages are saved.
+    const workflowStatus = statusRow ? (await candidateWorkflowStatuses(db, [statusRow])).get(passportId) : null;
     return {
         jobAssignments,
+        workflowStatus,
+        // The recorded final status (Departed, or an outcome), for the Final status control.
+        finalStatus: finalStatusOf(statusRow),
         // Manual verification state (null when not verified), for the Verify buttons.
         verification: {
             details: user.verification?.detailsVerifiedAt ? { at: user.verification.detailsVerifiedAt.toISOString(), by: user.verification.detailsVerifiedBy?.name ?? null } : null,
@@ -1142,6 +1167,7 @@ export async function updateCandidateDetails({ db, passportId, values, actor = n
 // PUT /api/admin/candidates/:passportId/stages/:stage. Automatic stages take
 // notes only; their completion follows their data.
 export async function updateStage({ db, passportId, stage, values, actor = null, now = new Date() }) {
+    if (!isCandidateStage(stage)) throw new CandidateError(404, "STAGE_NOT_FOUND", "Stage not found");
     const candidate = await getCandidate({ db, passportId });
     if (!candidate) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
 

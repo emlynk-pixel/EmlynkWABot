@@ -154,7 +154,7 @@ Headers match after trimming, collapsing spaces and upper-casing. **Required hea
 | Legacy header | Target | Rule |
 |---|---|---|
 | OFFICER | `candidate_allocation` | the user who handles the candidate, matched by **first name** (§5a) |
-| VISA STATUS | `candidate_stages`, `candidate.departed_at` | `Submit` → Visa submission completed; `Got Visa` → Visa approval completed; `Departed` → recorded departed (`departed_at`; the Finalizing job stage is not touched); `Cancelled` / `Canceled` → ERROR `VISA_CANCELLED`, `Reject` → ERROR `VISA_REJECTED` (not imported); `Got Visa Not Going` → WARNING `VISA_NOT_GOING` (imported, no stage or status changed); `Not Submit` and blank → nothing (no visa step yet; no warning); anything else → WARNING `UNKNOWN_VISA_STATUS`, ignored |
+| VISA STATUS | `candidate_stages`, `candidate.departed_at`, `candidate.outcome` | Every value becomes the candidate's Status: `Submit` → Visa submission completed (Visa Submitted); `Got Visa` → Visa approval completed (Visa Approved); `Departed` → recorded departed (`departed_at`); `Got Visa Not Going` → Visa approval completed + outcome `VISA_NOT_GOING`; `Cancelled` / `Canceled` → outcome `CANCELLED`; `Reject` / `Rejected` → outcome `REJECTED`. A final status (departed or an outcome) is set only when the candidate has none; a different one is kept (WARNING `FINAL_STATUS_KEPT`). `Not Submit` and blank → nothing (no warning); anything else → WARNING `UNKNOWN_VISA_STATUS`, ignored |
 | INTERVIEW DATE | `candidate_stages.test_date` (TEST_DETAILS) | Interview = Test; §6 dates; also gives the Test ID |
 | INTERVIEW PASS FAIL | `candidate_stages.test_result` | `PASS` → PASS, `FAIL` → FAIL, empty (blank, spaces, or the word `EMPTY`) → PASS; anything else → WARNING `INVALID_TEST_RESULT` |
 | COMPANY | `client.name` | the Client: reused by name, or created with the sheet's spelling |
@@ -171,7 +171,7 @@ Headers match after trimming, collapsing spaces and upper-casing. **Required hea
 - UNIQUE NUMBER, REGISTER NUMBER, REGISTER DATE, ACTIVE STATUS
 - DOCUMENT CREATED STATUS, and the 13 document columns (PASSPORT, MEDICAL, SCAN, NIC COPY, POLICE REPORT, POLICE REPORT FM CERTIFIED, ROMANIA POLICE REPORT, ROMANIA POLICE REPORT CERTIFIED, DRIVING LICENSE, DRIVING LICENSE FM CERTIFIED, VIDEO, VISA COPY, ROMANIA ID)
 
-No document rows are created. The only stages the import completes are Visa submission (VISA STATUS `Submit`) and the Test details (Interview); every other stage stays incomplete until the work is done in Emlynk.
+No document rows are created. The only stages the import completes are Visa submission (VISA STATUS `Submit`), Visa approval (`Got Visa`, `Got Visa Not Going`) and the Test details (Interview); every other stage stays incomplete until the work is done in Emlynk.
 
 **IGNORE.** These are operational, payment, loan, cheque, travel and affidavit columns, plus ERRORS and WARNINGS (the columns of a validation sheet, §6a, so a corrected sheet uploads cleanly): JOB SECTOR, MERGED, AIR TICKET, ARRIVAL CONFIRMATION (×2), DEPARTURE PHOTO, CV, OTHER/REPEAT COUNT/DETAILS, APPLY COUNTRY, REGISTRATION CATEGORY, CONTACT PERSON, BRANCH, APPLIED FROM, PREVIOUS COMPANY (1/2) and their affidavit dates, CONTRACT RECEIVED, VISA PROCESSING CATEGORY, DOCUMENTS LAWYER PAYMENT, AFFIDAVITS CONTRACTS SIGNED DATE, CHILD1–3 DOB/PASSPORT, CASH PAYMENT 1–4 DATE, BUREAU READY, CLIENT SUBMIT DATE, VISA RECIVED DATE, AIR TICKET BOOKED DATE, LOAN ×4, CHEQUE ×3, the departure/arrival/ticket/airline columns, ISRAEL PROBLEMS, PASSPORT WITH DOCUMENTS HAND OVER, FINAL AFFIDAVIT BOND, CHECKED DATE, DEPATURE CONFIRMATION CHECKED OFFICER NAME, OFFICER UPDATE, CLIENT UPDATED COMPANY, SUBMITTED COMPANY, AGGREEMENT CREATED FOR, AGENT ASKED FOR A COMPANY, VISA FILE CREATION, REMAINING DOCUMENTS, DOCUMENTS UPDATE, SUBMITTED GROUP, WITHDRAW DATE, REASON TO REJECT, REASON FOR CANCELED.
 
@@ -203,7 +203,7 @@ All of these are **fill-only** for an existing candidate, and none is written fo
 - Already allocated: to the same user → nothing; to another user → WARNING `OFFICER_DIFFERS`, never reassigned.
 - Analyst visibility is unchanged (an Analyst sees only their own candidates). In Work Allocation a non-Analyst holder is listed with the unavailable Analysts, so the candidates can be moved.
 
-**VISA STATUS.** `Got Visa` completes the existing **Visa approval** stage (when not completed yet; no new status). `Reject` and `Cancelled` are ERRORS; `Got Visa Not Going` is a WARNING and changes nothing; `Not Submit` does nothing and reports nothing. `Submit` completes **Visa submission** when it is not completed yet; completing it by hand in the candidate's stages gives the same Status (`VISA_SUBMITTED`); there is no second workflow. `Departed` records the candidate as departed (`candidate.departed_at`, set once, audited `CANDIDATE_DEPARTED`), giving `DEPARTED` (`20-candidate-management.md` §4.0). The **Finalizing job** stage is never touched, and completing it by hand does not mean departure.
+**VISA STATUS.** Every value is the candidate's Status (`20-candidate-management.md` §4.0). `Got Visa` completes the existing **Visa approval** stage (when not completed yet), giving `VISA_APPROVED`. `Got Visa Not Going`, `Cancelled` and `Reject` are imported and record the final outcome (`candidate.outcome`, audited `SET_FINAL_STATUS`): `VISA_NOT_GOING`, `CANCELLED`, `REJECTED`, which outrank every other status. `Not Submit` does nothing and reports nothing. Status columns are applied to a candidate whose details are verified too (they never clear a verification); only the details are left alone (`SKIPPED_VERIFIED`). `Submit` completes **Visa submission** when it is not completed yet; completing it by hand in the candidate's stages gives the same Status (`VISA_SUBMITTED`); there is no second workflow. `Departed` records the candidate as departed (`candidate.departed_at`, set once, audited `CANDIDATE_DEPARTED`), giving `DEPARTED` (`20-candidate-management.md` §4.0). The Finalizing job and IVS interview stages were retired (migration `20261109120000_candidate_status_cleanup`).
 
 **Interview → Test details (TEST_DETAILS stage).** There is no separate Interview entity.
 - A row has a test when it has an Interview Date or says PASS / FAIL. An empty result is PASS only for a test held on or before today: a row with neither invents no test, and a test scheduled for later gets no result.
@@ -228,7 +228,7 @@ Normal registration keeps `^[PN]\d{7}$`, a required NIC and a required WhatsApp 
 | Phones | The same canonical form as registration (§12). `07XXXXXXXX`, `0XXXXXXXXX`, `7XXXXXXXX`, `947…`, `+947…`, `0094…` → `+94…`. Romanian `407…` → `+407…`. `+`/`00` numbers keep their own code. Another 10–15 digit number gets `+` with WARNING `FOREIGN_PHONE_UNVERIFIED`. Junk and scientific notation are dropped. Several numbers in one cell: all are kept in order, with `MULTIPLE_PHONE_NUMBERS`. |
 | N/A | `N/A`, `NA`, `n/a`, `N.A`, `-` (any case) mean "not given". |
 
-**Row status.** INVALID (identity unusable: passport, surname or other names; no Job Role; Cancelled visa; an unmatched officer), WARNING (a value dropped or in a legacy format), VALID, CONFLICT, DUPLICATE.
+**Row status.** INVALID (identity unusable: passport, surname or other names; no Job Role; an unmatched officer), WARNING (a value dropped or in a legacy format), VALID, CONFLICT, DUPLICATE.
 
 **Errors and warnings (one catalog: `src/services/candidateImportIssues.js`).** Every code has one severity and one readable message (no cell value in it). The preview's "Rows to review" table and the validation sheet's ERRORS / WARNINGS columns show the **same** messages, from the same preview response (`problems[].errors / warnings` and `rowIssues`). A message is listed once per row.
 
@@ -239,12 +239,12 @@ Normal registration keeps `^[PN]\d{7}$`, a required NIC and a required WhatsApp 
 | Job Role | missing | not a known job type; more than 10 |
 | NIC | — (NIC conflict: CONFLICT, not imported) | missing; invalid format; changed by Excel |
 | Officer | no matching user; several active users; only inactive users | blank; already assigned to someone else |
-| Visa status | Cancelled, Reject | Got Visa Not Going; a value Emlynk doesn't map |
+| Visa status | — | a final status already recorded differs (`FINAL_STATUS_KEPT`); a value Emlynk doesn't map |
 | Interview | — | invalid date; result not PASS / FAIL / empty; different test details on record |
 | Company / Agent / Number | — | new Company without an Agent; Agent without a Company; ambiguous or inactive Agent; number conflict or without a Company |
 
 **Codes.** All are safe to show; none carries a value:
-- `MISSING_JOB_ROLE`, `VISA_CANCELLED`, `VISA_REJECTED`, `VISA_NOT_GOING`, `UNKNOWN_VISA_STATUS`, `INVALID_TEST_RESULT`, `TEST_DETAILS_DIFFER`
+- `MISSING_JOB_ROLE`, `FINAL_STATUS_KEPT`, `UNKNOWN_VISA_STATUS`, `INVALID_TEST_RESULT`, `TEST_DETAILS_DIFFER`
 - `OFFICER_MISSING`, `OFFICER_NOT_FOUND`, `OFFICER_AMBIGUOUS`, `OFFICER_NOT_ACTIVE`, `OFFICER_DIFFERS`
 - `CLIENT_NEEDS_AGENT`, `AGENT_NEEDS_COMPANY`, `AGENT_AMBIGUOUS`, `AGENT_INACTIVE`, `COMPANY_NUMBER_CONFLICT`, `COMPANY_NUMBER_WITHOUT_COMPANY`
 - `LEGACY_PASSPORT_FORMAT`, `MISSING_NIC`, `INVALID_NIC`, `NIC_CORRUPTED`

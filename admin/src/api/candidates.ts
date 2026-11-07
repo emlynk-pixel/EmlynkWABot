@@ -9,10 +9,8 @@ export const CANDIDATE_STAGES = [
     "JOB_DETAILS",
     "CANDIDATE_DETAILS",
     "DOCUMENT_SUBMISSION",
-    "IVS_INTERVIEW",
     "VISA_SUBMISSION",
     "VISA_APPROVAL",
-    "FINALIZING_JOB",
 ] as const;
 export type CandidateStageKey = (typeof CANDIDATE_STAGES)[number];
 
@@ -21,11 +19,19 @@ export const STAGE_LABELS: Record<CandidateStageKey, string> = {
     JOB_DETAILS: "Job details",
     CANDIDATE_DETAILS: "Candidate details",
     DOCUMENT_SUBMISSION: "Document submission",
-    IVS_INTERVIEW: "IVS interview",
     VISA_SUBMISSION: "Visa submission",
     VISA_APPROVAL: "Visa approval",
+};
+
+// Stages retired with migration 20261109120000_candidate_status_cleanup: they are no longer
+// stages, but the audit log keeps who completed them, so past entries still read properly.
+const RETIRED_STAGE_LABELS: Record<string, string> = {
+    IVS_INTERVIEW: "IVS interview",
     FINALIZING_JOB: "Finalizing the job",
 };
+
+// Any stage code a screen may meet (a current stage, a retired one in history) -> its label.
+export const stageLabel = (stage: string): string => STAGE_LABELS[stage as CandidateStageKey] ?? RETIRED_STAGE_LABELS[stage] ?? stage;
 
 export type CandidateDocumentType = "PASSPORT" | "NIC" | "SKILL_VIDEO" | "MEDICAL" | "POLICE_SLIP" | "POLICE_REPORT" | "SCAN" | "VISA_SUBMISSION";
 
@@ -69,11 +75,23 @@ export type StageState = StageProgress & {
     jobStatus: "PROCESSING" | "COMPLETED" | "CANCELLED" | "REMOVED" | null;
 };
 
-// The derived workflow status of the candidate list (src/services/candidateWorkflowStatus.js): never edited, never stored.
-export type WorkflowStatus = {
-    code: "REGISTERED" | "STOPPED_WITH_TEST" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED" | "VISA_DOCUMENT_READY" | "VISA_SUBMITTED" | "DEPARTED";
-    label: string;
-};
+// The derived workflow status (src/services/candidateWorkflowStatus.js): computed on every read from the
+// candidate data, never edited, never stored. VISA_NOT_GOING, CANCELLED and REJECTED are recorded final
+// outcomes (the import's VISA STATUS, or an Admin's final status) and outrank everything.
+export type WorkflowStatusCode =
+    | "REGISTERED" | "STOPPED_WITH_TEST" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED"
+    | "VISA_DOCUMENT_READY" | "VISA_SUBMITTED" | "VISA_APPROVED" | "DEPARTED" | "VISA_NOT_GOING" | "CANCELLED" | "REJECTED";
+export type WorkflowStatus = { code: WorkflowStatusCode; label: string };
+
+// A recorded final status (src/services/candidateFinalStatusService.js): Departed, or an outcome. ADMIN only.
+export const FINAL_STATUS_OPTIONS = [
+    { value: "DEPARTED", label: "Departed" },
+    { value: "VISA_NOT_GOING", label: "Visa Not Going" },
+    { value: "CANCELLED", label: "Cancelled" },
+    { value: "REJECTED", label: "Rejected" },
+] as const;
+export type FinalStatusCode = (typeof FINAL_STATUS_OPTIONS)[number]["value"];
+export type FinalStatus = { code: FinalStatusCode; at: string | null };
 
 export type CandidateListItem = {
     passportId: string;
@@ -113,6 +131,9 @@ export type VerificationState = { at: string; by: string | null } | null;
 export type CandidateDetails = {
     // Manual verification (Verify details / Verify documents); null = not verified.
     verification: { details: VerificationState; documents: VerificationState };
+    // The same derived Status the lists show (absent from an older server), and the recorded final status (null: none).
+    workflowStatus?: WorkflowStatus | null;
+    finalStatus?: FinalStatus | null;
     candidate: {
         passportId: string;
         uniqueId: string;
@@ -283,6 +304,11 @@ export function updateCandidate(token: string, passportId: string, body: Candida
 // Explicit manual verification of a candidate's details or documents (ADMIN only; audited).
 export function setCandidateVerification(token: string, passportId: string, kind: "DETAILS" | "DOCUMENTS", verified: boolean): Promise<CandidateDetails> {
     return apiRequest<CandidateDetails>(`${base(passportId)}/verification`, { method: "POST", token, body: { kind, verified } });
+}
+
+// Record (or clear, with null) the candidate's final status: Departed, Visa Not Going, Cancelled, Rejected (ADMIN only; audited).
+export function setCandidateFinalStatus(token: string, passportId: string, status: FinalStatusCode | null): Promise<CandidateDetails> {
+    return apiRequest<CandidateDetails>(`${base(passportId)}/final-status`, { method: "POST", token, body: { status } });
 }
 
 export function updateCandidateStage(

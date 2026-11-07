@@ -18,10 +18,15 @@
 //   OFFICER          matched by first name to ONE active user (any role); the candidate is allocated
 //                    to them when it has no allocation (an allocation to someone else: OFFICER_DIFFERS).
 //                    No match / several / not active: an ERROR, the row is not imported.
-//   VISA STATUS      Submit completes the Visa submission stage, Got Visa the Visa approval stage (a
+//   VISA STATUS      the candidate's Status (candidateWorkflowStatus.js):
+//                    Submit completes the Visa submission stage, Got Visa the Visa approval stage (a
 //                    completed stage stays as it is);
-//                    Departed records the candidate as departed (candidate.departed_at, when not yet set).
-//                    The Finalizing job stage is never touched.
+//                    Departed records the candidate as departed (candidate.departed_at);
+//                    Got Visa Not Going / Cancelled / Reject record the final outcome (candidate.outcome).
+//                    A final status (departed or an outcome) is set only when the candidate has none; a
+//                    different one already recorded is kept (FINAL_STATUS_KEPT).
+//                    These status columns are applied to a candidate whose details are verified too (they
+//                    are not details: they never clear a verification); only its details are left alone.
 //   INTERVIEW ...    the Test details stage: date, result and Test ID (testId.js), each only when blank
 // COMPANY / AGENT / COMPANY NUMBER (`org`): the Client and its Agent, found by name (case and spaces
 // ignored) or created; a Client's registration number filled when blank. Not candidate data: done
@@ -61,6 +66,7 @@ export const EXISTING_CANDIDATE_SELECT = Object.freeze({
     additionalDetails: { select: Object.fromEntries(DETAIL_COLUMNS.map((c) => [c, true])) },
     verification: { select: { detailsVerifiedAt: true } },
     departedAt: true,
+    outcome: true,
     allocation: { select: { analystId: true } },
     stages: {
         where: { stage: { in: ["TEST_DETAILS", "VISA_SUBMISSION", "VISA_APPROVAL"] } },
@@ -69,8 +75,10 @@ export const EXISTING_CANDIDATE_SELECT = Object.freeze({
 });
 
 // VISA STATUS -> the stage it completes: Submit -> Visa submission, Got Visa -> Visa approval. "Departed"
-// is not a stage: it sets candidate.departed_at.
+// is not a stage: it sets candidate.departed_at; the outcomes set candidate.outcome.
 export const VISA_STAGE = Object.freeze({ VISA_SUBMITTED: "VISA_SUBMISSION", VISA_APPROVED: "VISA_APPROVAL" });
+export const VISA_OUTCOMES = Object.freeze(["VISA_NOT_GOING", "CANCELLED", "REJECTED"]);
+const finalStatusOf = (existing) => existing?.outcome ?? (existing?.departedAt ? "DEPARTED" : null);
 const KNOWN_ROLES = new Set(Object.values(ROLES));
 
 const IN_GROUP = 500;
@@ -347,7 +355,8 @@ function planOrg(values, snapshot, numberConflict) {
 // write (internal, never sent to the browser):
 //   CREATE: { candidate: {...}, details: {...}, extras }
 //   FILL:   { passportId, candidate: {...}, details: {...}, detailsExists, extras }
-//   extras: { allocation: { analystId } | null, test: planTest() | null, stages: [stage to complete], departed: boolean }
+//   extras: { allocation: { analystId } | null, test: planTest() | null, stages: [stage to complete], departed: boolean,
+//             outcome: "VISA_NOT_GOING" | "CANCELLED" | "REJECTED" | null }
 // org (internal): planOrg(), for every row that is not an ERROR row. officer: { sheetName, userName }.
 export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
     const duplicates = new Set(flags.duplicateRows ?? []);
@@ -408,7 +417,7 @@ export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
         plan.org = orgPlan.org;
 
         // Allocation, Test and visa stages: fill-only.
-        const extras = { allocation: null, test: planTest(row.values, existing), stages: [], departed: false };
+        const extras = { allocation: null, test: planTest(row.values, existing), stages: [], departed: false, outcome: null };
         if (officer) {
             const holder = existing?.allocation?.analystId ?? null;
             if (!holder) extras.allocation = { analystId: officer.adminId };
@@ -416,10 +425,19 @@ export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
         }
         if (extras.test?.differs) note("TEST_DETAILS_DIFFER", "testDate");
         if (extras.test && !Object.keys(extras.test.fill).length) extras.test = null;
-        const visaStage = VISA_STAGE[row.values.visaStatus];
+        // VISA STATUS: a stage (Submit, Got Visa; Got Visa Not Going also got the visa), or a final status
+        // (Departed, an outcome) set only when the candidate has none; a different one is kept.
+        const visaStatus = row.values.visaStatus ?? null;
+        const visaStage = VISA_STAGE[visaStatus] ?? (visaStatus === "VISA_NOT_GOING" ? VISA_STAGE.VISA_APPROVED : null);
         if (visaStage && !stageOf(existing, visaStage)?.completed) extras.stages.push(visaStage);
-        if (row.values.visaStatus === "DEPARTED" && !existing?.departedAt) extras.departed = true;
-        const hasExtras = Boolean(extras.allocation || extras.test || extras.stages.length || extras.departed);
+        const wantedFinal = visaStatus === "DEPARTED" || VISA_OUTCOMES.includes(visaStatus) ? visaStatus : null;
+        const currentFinal = finalStatusOf(existing);
+        if (wantedFinal && !currentFinal) {
+            if (wantedFinal === "DEPARTED") extras.departed = true;
+            else extras.outcome = wantedFinal;
+        } else if (wantedFinal && currentFinal !== wantedFinal) note("FINAL_STATUS_KEPT", "visaStatus");
+        const hasExtras = Boolean(extras.allocation || extras.test || extras.stages.length || extras.departed || extras.outcome);
+        const hasStatusExtras = Boolean(extras.stages.length || extras.departed || extras.outcome);
 
         if (!existing) {
             applyFamilyRules(details, null, note);
@@ -438,7 +456,14 @@ export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
         if (!changes && !hasExtras) return { ...plan, status, differing, action: ROW_ACTION.NO_CHANGE };
         if (existing.verification?.detailsVerifiedAt) {
             note("SKIPPED_VERIFIED");
-            return { ...plan, status, differing, action: ROW_ACTION.SKIP_VERIFIED };
+            // Verified details are never changed, but the sheet's visa status still becomes the Status
+            // (stages and the final status are not details: they never clear a verification).
+            if (!hasStatusExtras) return { ...plan, status, differing, action: ROW_ACTION.SKIP_VERIFIED };
+            const statusOnly = { allocation: null, test: null, stages: extras.stages, departed: extras.departed, outcome: extras.outcome };
+            return {
+                ...plan, status, differing, action: ROW_ACTION.FILL,
+                write: { passportId: existing.passportId, candidate: {}, details: {}, detailsExists: Boolean(storedDetails), extras: statusOnly },
+            };
         }
         return {
             ...plan, status, differing, action: ROW_ACTION.FILL,
@@ -471,6 +496,7 @@ export function summarizePlans(plans) {
         visaSubmitted: count((p) => p.write?.extras?.stages.includes(VISA_STAGE.VISA_SUBMITTED)),
         visaApproved: count((p) => p.write?.extras?.stages.includes(VISA_STAGE.VISA_APPROVED)),
         departed: count((p) => p.write?.extras?.departed),
+        outcomes: count((p) => p.write?.extras?.outcome),
         clientsToCreate: new Set(plans.filter((p) => p.org && !p.org.company.clientId).map((p) => p.org.company.key)).size,
         agentsToCreate: new Set(plans.filter((p) => p.org?.agent && !p.org.agent.agentId).map((p) => p.org.agent.key)).size,
         companyNumbersToFill: new Set(plans.filter((p) => p.org?.companyNumber).map((p) => p.org.company.key)).size,
@@ -501,6 +527,7 @@ export function importActions(plans) {
             VISA_SUBMITTED: plans.filter((p) => p.write?.extras?.stages.includes(VISA_STAGE.VISA_SUBMITTED)).length,
             VISA_APPROVED: plans.filter((p) => p.write?.extras?.stages.includes(VISA_STAGE.VISA_APPROVED)).length,
             DEPARTED: plans.filter((p) => p.write?.extras?.departed).length,
+            ...Object.fromEntries(VISA_OUTCOMES.map((outcome) => [outcome, plans.filter((p) => p.write?.extras?.outcome === outcome).length])),
         },
         tests: plans.filter((p) => p.write?.extras?.test).length,
         testsBlankResultAsPass: plans.filter((p) => p.write?.extras?.test?.fill.testResult === "PASS" && p.blankResult).length,

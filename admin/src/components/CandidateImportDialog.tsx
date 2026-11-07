@@ -62,8 +62,11 @@ function AutomaticActions({ actions }: { actions: ImportActions }) {
     for (const c of actions.clients) lines.push(`Company "${c.name}" → ${c.action === "CREATE" ? "new Client will be created" : "existing Client"}`);
     for (const a of actions.agents) lines.push(`Agent "${a.name}" → ${a.action === "CREATE" ? "new Agent will be created (country not set)" : "existing Agent matched"}`);
     if (actions.visa.VISA_SUBMITTED) lines.push(`VISA STATUS "Submit" → Visa Submitted (${plural(actions.visa.VISA_SUBMITTED, "candidate")})`);
-    if (actions.visa.VISA_APPROVED) lines.push(`VISA STATUS "Got Visa" → Visa approval stage completed (${plural(actions.visa.VISA_APPROVED, "candidate")})`);
+    if (actions.visa.VISA_APPROVED) lines.push(`VISA STATUS "Got Visa" → Visa Approved (${plural(actions.visa.VISA_APPROVED, "candidate")})`);
     if (actions.visa.DEPARTED) lines.push(`VISA STATUS "Departed" → Departed (${plural(actions.visa.DEPARTED, "candidate")})`);
+    if (actions.visa.VISA_NOT_GOING) lines.push(`VISA STATUS "Got Visa Not Going" → Visa Not Going (${plural(actions.visa.VISA_NOT_GOING, "candidate")})`);
+    if (actions.visa.CANCELLED) lines.push(`VISA STATUS "Cancelled" → Cancelled (${plural(actions.visa.CANCELLED, "candidate")})`);
+    if (actions.visa.REJECTED) lines.push(`VISA STATUS "Reject" → Rejected (${plural(actions.visa.REJECTED, "candidate")})`);
     if (actions.tests) lines.push(`Interview → Test details for ${plural(actions.tests, "candidate")} (Interview Date → Test date, Test ID from the date)`);
     if (actions.testsBlankResultAsPass) lines.push(`Interview result blank → PASS (${plural(actions.testsBlankResultAsPass, "candidate")})`);
     if (!lines.length) return null;
@@ -278,6 +281,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                 <Tile label="Tests set" value={c.testsSet ?? 0} />
                 <Tile label="Visa stages completed" value={c.stagesCompleted ?? 0} />
                 <Tile label="Departed" value={c.departed ?? 0} />
+                <Tile label="Not going / cancelled / rejected" value={c.outcomes ?? 0} />
                 <Tile label="Clients created" value={c.clientsCreated ?? 0} />
                 <Tile label="Agents created" value={c.agentsCreated ?? 0} />
             </dl>

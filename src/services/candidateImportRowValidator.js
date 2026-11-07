@@ -5,8 +5,8 @@
 //
 // Row status (before the database is looked at, candidateImportClassifier.js):
 //   INVALID  the candidate can't be identified or registered safely: no usable passport
-//            number, no surname, no other names (the record requires both names), no Job Role,
-//            or a Cancelled VISA STATUS (the classifier adds an unmatched OFFICER)
+//            number, no surname, no other names (the record requires both names) or no Job Role
+//            (the classifier adds an unmatched OFFICER)
 //   WARNING  usable, but a value was in a legacy format, dropped or not recognized
 //   VALID    everything given was usable
 // A dropped field never invents a value: it is simply not stored.

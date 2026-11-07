@@ -127,6 +127,7 @@ import {
     updateClient,
 } from "../services/clientService.js";
 import { parseVerificationBody, setCandidateVerification } from "../services/candidateVerificationService.js";
+import { parseFinalStatusBody, setCandidateFinalStatus } from "../services/candidateFinalStatusService.js";
 import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
@@ -687,6 +688,18 @@ export function createAdminRouter({
         if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await setCandidateVerification({
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), ...parsed.values,
+        })));
+    });
+
+    // A candidate's final status (candidateFinalStatusService.js): Departed, Visa Not Going,
+    // Cancelled or Rejected, or none. ADMIN only, explicit, audited. The derived Status reads it.
+    router.post("/candidates/:passportId/final-status", requireRole(ADMINS_ONLY), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseFinalStatusBody(req.body);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await setCandidateFinalStatus({
             db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), ...parsed.values,
         })));
     });

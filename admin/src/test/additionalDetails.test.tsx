@@ -410,11 +410,11 @@ describe("progress stepper", () => {
         await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName(/\(completed/));
     });
 
-    test("IVS interview and Finalizing the job stay reachable by link", async () => {
+    test("a link to a retired stage (IVS interview, Finalizing the job) opens the first open step instead", async () => {
         backend(NEW_VIEW);
         renderApp("/candidates/N0000002?stage=FINALIZING_JOB");
-        expect(await screen.findByRole("heading", { name: "Finalizing the job" }, RENDER_STEP)).toBeInTheDocument();
-        expect(stepper().queryByRole("button", { current: "step" })).toBeNull();
+        expect(await screen.findByRole("heading", { name: "Test details" }, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: "Finalizing the job" })).toBeNull();
     });
 });
 

@@ -78,7 +78,7 @@ const save = (passportId, key, body, who = USERS.ADMIN) => api(who, "PUT", `/can
 
 describe("stage order (STAGE-JOB-001)", () => {
     test("Job details sits immediately after Test details; no other stage moved", async () => {
-        assert.deepEqual([...CANDIDATE_STAGES], ["TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"]);
+        assert.deepEqual([...CANDIDATE_STAGES], ["TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "VISA_SUBMISSION", "VISA_APPROVAL"]);
         const response = await api(USERS.ADMIN, "GET", `/candidates/${P1}`);
         assert.deepEqual(response.body.stages.map((s) => s.stage), [...CANDIDATE_STAGES]);
         const list = await api(USERS.ADMIN, "GET", "/candidates");
@@ -346,7 +346,7 @@ describe("what can be saved (STAGE-JOB-010 to 015)", () => {
 
 describe("other stages are unchanged (STAGE-JOB-016 to 020)", () => {
     test("every other stage still saves notes and completion; Candidate details and Document submission stay automatic", async () => {
-        for (const key of ["IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"]) {
+        for (const key of ["VISA_SUBMISSION", "VISA_APPROVAL"]) {
             const response = await save(P1, key, { completed: true, notes: `${key} note` });
             assert.equal(response.status, 200, key);
             const shown = await stage(P1, key);

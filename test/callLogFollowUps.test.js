@@ -597,15 +597,15 @@ describe("candidate history (activity with the call logs)", () => {
     });
 
     test("13, 15. stage completion by an admin shows with who did it, once; a completion saved before stages were audited shows without one; automatic stages are not invented", async () => {
-        await updateStage({ db: prisma, passportId: A, stage: "IVS_INTERVIEW", values: { completed: true }, actor: USERS.ADMIN });
+        await updateStage({ db: prisma, passportId: A, stage: "VISA_SUBMISSION", values: { completed: true }, actor: USERS.ADMIN });
         await updateStage({ db: prisma, passportId: A, stage: "VISA_APPROVAL", values: { notes: "Waiting for the embassy" }, actor: USERS.ADMIN });
-        await prisma.candidateStage.create({ data: { passportId: A, stage: "FINALIZING_JOB", completed: true, completedAt: new Date("2026-09-01T05:00:00Z") } });
+        await prisma.candidateStage.create({ data: { passportId: A, stage: "JOB_DETAILS", completed: true, completedAt: new Date("2026-09-01T05:00:00Z") } });
 
         const stages = (await history()).activity.filter((a) => a.stage);
         assert.deepEqual(stages.map((a) => [a.kind, a.stage, a.actorName]), [
             ["STAGE_UPDATED", "VISA_APPROVAL", USERS.ADMIN.name],
-            ["STAGE_COMPLETED", "IVS_INTERVIEW", USERS.ADMIN.name],
-            ["STAGE_COMPLETED", "FINALIZING_JOB", null],
+            ["STAGE_COMPLETED", "VISA_SUBMISSION", USERS.ADMIN.name],
+            ["STAGE_COMPLETED", "JOB_DETAILS", null],
         ]);
         assert.doesNotMatch(JSON.stringify(stages), /embassy/, "stage notes are not repeated here");
         assert.ok(!stages.some((a) => ["CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION"].includes(a.stage)));
@@ -613,7 +613,7 @@ describe("candidate history (activity with the call logs)", () => {
 
     test("6. newest first across every source, call logs stay separate items", async () => {
         await staffUpload(A, "PASSPORT", { receivedDate: new Date("2020-01-01T05:00:00Z") });
-        await updateStage({ db: prisma, passportId: A, stage: "IVS_INTERVIEW", values: { completed: true }, actor: USERS.ADMIN });
+        await updateStage({ db: prisma, passportId: A, stage: "VISA_SUBMISSION", values: { completed: true }, actor: USERS.ADMIN });
         await logCall(A, "Called");
         const body = await history();
         const times = body.activity.map((a) => new Date(a.occurredAt).getTime());
@@ -625,7 +625,7 @@ describe("candidate history (activity with the call logs)", () => {
 
     test("8, 19. never another candidate's events", async () => {
         await staffUpload(B, "PASSPORT");
-        await updateStage({ db: prisma, passportId: B, stage: "IVS_INTERVIEW", values: { completed: true }, actor: USERS.ADMIN });
+        await updateStage({ db: prisma, passportId: B, stage: "VISA_SUBMISSION", values: { completed: true }, actor: USERS.ADMIN });
         await logCall(B, "B only");
         const body = await history(A);
         assert.deepEqual(body.activity, []);

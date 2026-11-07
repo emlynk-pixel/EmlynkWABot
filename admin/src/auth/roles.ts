@@ -95,6 +95,8 @@ export const canCorrectPoliceDates = (user: WithRole) => hasRole(user, ADMIN_ONL
 export const canDeleteFollowUps = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 // Verifying a candidate's details or documents (Candidate details / Document submission): ADMIN only.
 export const canVerifyCandidate = (user: WithRole) => hasRole(user, ADMIN_ONLY);
+// Recording a candidate's final status (Departed, Visa Not Going, Cancelled, Rejected) on the candidate page: ADMIN only.
+export const canSetFinalStatus = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 // Work Allocation (the page and its API): ADMIN and TEAM_LEAD.
 export const canManageAllocations = (user: WithRole) => hasRole(user, ALLOCATION_ROLES);
 // The standard Daily Report (ADMIN, TEAM_LEAD), and its Summary by Roles view (ADMIN only).
