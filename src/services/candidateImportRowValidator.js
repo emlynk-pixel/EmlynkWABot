@@ -5,7 +5,8 @@
 //
 // Row status (before the database is looked at, candidateImportClassifier.js):
 //   INVALID  the candidate can't be identified or registered safely: no usable passport
-//            number, no surname, no other names (the record requires both names)
+//            number, no surname, no other names (the record requires both names) or no Job Role
+//            (the classifier adds an unmatched OFFICER)
 //   WARNING  usable, but a value was in a legacy format, dropped or not recognized
 //   VALID    everything given was usable
 // A dropped field never invents a value: it is simply not stored.
@@ -13,14 +14,16 @@
 import { JOB_ROLE_ALIASES, sourceColumnFor } from "./candidateImportSourceMapping.js";
 import {
     clean, isNotApplicable, maskIdentifier, normalizeBloodGroup, normalizeDate, normalizeEmail, normalizeEnglishKnowledge,
-    normalizeFamilyPassport, normalizeHeight, normalizeJobRoles, normalizeMaritalStatus, normalizeNic, normalizePassport,
-    normalizePhones, normalizeSex, normalizeShirtSize, normalizeShoeSize, normalizeText, normalizeWaistSize, normalizeWeight, normalizeYesNo,
+    normalizeFamilyPassport, normalizeHeight, normalizeJobRoles, normalizeMaritalStatus, normalizeNic, normalizeOrgName, normalizePassport,
+    normalizePhones, normalizeSex, normalizeShirtSize, normalizeShoeSize, normalizeTestResult, normalizeText, normalizeUniqueNumber, normalizeVisaStatus,
+    normalizeWaistSize, normalizeWeight, normalizeYesNo,
 } from "./candidateImportNormalizers.js";
 
 export const ROW_STATUS = Object.freeze({ VALID: "VALID", WARNING: "WARNING", INVALID: "INVALID", CONFLICT: "CONFLICT", DUPLICATE: "DUPLICATE" });
 
-// The record's limits (candidateService.js, candidateFormFieldConfirmService.js).
+// The record's limits (candidateService.js, candidateFormFieldConfirmService.js, clientService.js).
 const MAX_NAME = 100;
+const MAX_COMPANY_NUMBER = 50;
 const TEXT_LIMITS = Object.freeze({
     address: 500, placeOfBirth: 100, jobExperience: 2000, fullName: 200, city: 150, district: 150, dsDivision: 150, gnDivision: 150,
     otherSkills1: 1000, otherSkills2: 150, guardianName: 150, guardianRelationship: 150, guardianAddress: 500,
@@ -162,9 +165,40 @@ export function validateLegacyRow({ rowNumber, values }, { activeJobTypes, alias
     guardianPhone.warnings.forEach((code) => note("guardianPhone", code));
     if (guardianPhone.numbers[0]) out.guardianPhone = guardianPhone.numbers[0];
 
+    // Job Role: required on every row (an unknown role is only a warning: the row goes on without it).
+    if (clean(cells.jobRole) === "" || isNotApplicable(cells.jobRole)) take("jobRole", { value: null, error: "MISSING_JOB_ROLE" });
     const jobs = normalizeJobRoles(cells.jobRole, { activeJobTypes, aliases });
     if (jobs.warning) note("jobRole", jobs.warning);
     if (jobs.value) out.jobRole = jobs.value.join(", ");
+
+    // Process columns (not candidate fields: candidateImportClassifier.js acts on them).
+    // OFFICER: matched to a user later (the users are in the database). A blank cell is only reported,
+    // and only when the sheet has the column (a sheet without it is not about allocation).
+    if (cells.officer === undefined) { /* no OFFICER column */ }
+    else if (clean(cells.officer) === "" || isNotApplicable(cells.officer)) note("officer", "OFFICER_MISSING");
+    else if (clean(cells.officer).length > MAX_NAME) note("officer", "TEXT_TOO_LONG");
+    else out.officer = clean(cells.officer);
+    take("visaStatus", normalizeVisaStatus(cells.visaStatus));
+    // Interview = Test. A row has a Test when it has an Interview Date or says PASS / FAIL. An empty
+    // result means PASS only for a test that has taken place (a date up to today): an empty cell
+    // never invents a test, and a test scheduled for later has no result yet.
+    take("testDate", normalizeDate(cells.testDate));
+    const result = normalizeTestResult(cells.testResult);
+    const heldTest = out.testDate && out.testDate.toISOString().slice(0, 10) <= today.toISOString().slice(0, 10);
+    if (result.warning) note("testResult", result.warning);
+    else if (result.explicit || heldTest) {
+        out.testResult = result.value;
+        if (!result.explicit) out.testResultDefaulted = true;
+    }
+    take("company", normalizeOrgName(cells.company));
+    take("companyNumber", normalizeText(cells.companyNumber, { max: MAX_COMPANY_NUMBER }));
+    take("agent", normalizeOrgName(cells.agent));
+    // With the Interview Date: the candidate's Job group (candidateImportClassifier.js, importJobGroups.js).
+    // Only reported when the sheet HAS the column (a sheet without it is not about Jobs), like OFFICER.
+    if (cells.uniqueNumber !== undefined) {
+        take("uniqueNumber", normalizeUniqueNumber(cells.uniqueNumber));
+        if (out.testDate && out.uniqueNumber === undefined && !issues.some((i) => i.code === "INVALID_UNIQUE_NUMBER")) note("uniqueNumber", "JOB_GROUP_INCOMPLETE");
+    }
 
     const status = errors.length ? ROW_STATUS.INVALID : issues.length ? ROW_STATUS.WARNING : ROW_STATUS.VALID;
     return {

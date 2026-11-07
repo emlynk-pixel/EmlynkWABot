@@ -8,7 +8,7 @@ import { VERIFICATION_STATUS } from "./clientDocumentService.js";
 // Status "Details Verified" and "Documents Verified" (candidateWorkflowStatus.js): completing or
 // saving data, an OCR-accepted document, or an upload never verifies anything.
 //
-// Who: ADMIN and MANAGER (the route). What it needs, so there is something to verify: DETAILS needs
+// Who: ADMIN only (the route). What it needs, so there is something to verify: DETAILS needs
 // the Candidate details stage complete; DOCUMENTS needs at least one current required document on
 // record (the whole set is NOT required: complete Document submission is a later Status, Visa
 // Document Ready, which outranks Documents Verified). Both are audited, in the same transaction.

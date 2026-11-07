@@ -16,10 +16,10 @@ function KpiCard({ label, value, hint, icon }: { label: string; value: number; h
         <Card className="flex flex-col justify-between p-5">
             <div className="flex items-start justify-between">
                 <div>
-                    <p className="text-label-caps uppercase text-ink-subtle">{label}</p>
+                    <p className="text-label-sm text-ink-muted">{label}</p>
                     <p className="mt-1 text-headline-xl tabular-nums text-ink">{formatNumber(value)}</p>
                 </div>
-                <span className="flex size-9 items-center justify-center rounded bg-primary-soft text-primary">
+                <span className="flex size-9 items-center justify-center rounded-lg bg-primary-soft text-primary">
                     <Icon name={icon} className="size-5" />
                 </span>
             </div>
@@ -28,7 +28,7 @@ function KpiCard({ label, value, hint, icon }: { label: string; value: number; h
     );
 }
 
-// Horizontal bars with count and share (Stitch "Document Processing Statuses").
+// Horizontal bars with count and share (Document Processing Statuses).
 function Breakdown({ counts, label, dotClass }: { counts: Record<string, number>; label: (key: string) => string; dotClass: (key: string) => string }) {
     const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
     const total = entries.reduce((sum, [, n]) => sum + n, 0);
@@ -79,7 +79,7 @@ function PoliceDue({ police }: { police: Overview["police"] }) {
             <ul className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Police reports by status">
                 {items.map((item) => (
                     <li key={item.status}>
-                        <Link to={`/police?status=${item.status}`} className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2 hover:bg-canvas-muted">
+                        <Link to={`/police?status=${item.status}`} className="flex items-center justify-between rounded-xl bg-canvas px-3 py-2 hover:bg-canvas-muted">
                             <span className="text-body-sm text-ink">{item.label}</span>
                             <span className={`text-headline-md tabular-nums ${item.critical && item.value > 0 ? "text-critical" : "text-ink"}`}>{formatNumber(item.value)}</span>
                         </Link>
@@ -108,7 +108,7 @@ function ClientCompleteness({ clients, requiredTypes }: { clients: Overview["cli
             <ul className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Clients by completeness">
                 {items.map((item) => (
                     <li key={item.label}>
-                        <Link to={item.to} className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2 hover:bg-canvas-muted">
+                        <Link to={item.to} className="flex items-center justify-between rounded-xl bg-canvas px-3 py-2 hover:bg-canvas-muted">
                             <span className="text-body-sm text-ink">{item.label}</span>
                             <span className={`text-headline-md tabular-nums ${item.critical && item.value > 0 ? "text-critical" : "text-ink"}`}>{formatNumber(item.value)}</span>
                         </Link>
@@ -127,7 +127,6 @@ function ClientCompleteness({ clients, requiredTypes }: { clients: Overview["cli
 // Monthly overview: shown or hidden with the header toggle, remembered per
 // browser (off when storage is unavailable).
 export const MONTHLY_OVERVIEW_KEY = "emlynk.admin.monthlyOverview";
-const MONTH_OPTIONS = 24;
 
 function readMonthlyPreference(): boolean {
     try {
@@ -149,19 +148,38 @@ function monthLabel(month: string): string {
     return new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00Z`));
 }
 
-// "YYYY-MM" of `thisMonth` and the months before it, newest first.
-function recentMonths(thisMonth: string, count: number): string[] {
-    const [year, month] = thisMonth.split("-").map(Number);
-    return Array.from({ length: count }, (_, i) => {
-        const date = new Date(Date.UTC(year, month - 1 - i, 1));
-        return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
-    });
+// "YYYY-MM" `delta` months from `month` (negative = earlier); crosses years.
+export function shiftMonth(month: string, delta: number): string {
+    const [year, monthNumber] = month.split("-").map(Number);
+    const date = new Date(Date.UTC(year, monthNumber - 1 + delta, 1));
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+// Previous / next month around the shown one. Next stops at the server's
+// current business month (`thisMonth`, Sri Lanka time): the report refuses
+// future months, so they can't be reached from here.
+function MonthNavigation({ month, thisMonth, onChange }: { month: string; thisMonth: string; onChange: (month: string) => void }) {
+    const atCurrentMonth = month >= thisMonth;
+    const arrow = "flex size-8 items-center justify-center rounded-lg text-ink-muted transition-colors hover:bg-canvas-muted hover:text-ink focus-visible:shadow-focus focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-muted";
+    return (
+        <div role="group" aria-label="Month" className="flex items-center gap-1">
+            <button type="button" className={arrow} aria-label="Previous month" onClick={() => onChange(shiftMonth(month, -1))}>
+                <Icon name="chevron_left" />
+            </button>
+            <span aria-live="polite" data-testid="selected-month" className="min-w-32 text-center text-label-md tabular-nums text-ink">{monthLabel(month)}</span>
+            <button type="button" className={arrow} aria-label="Next month" disabled={atCurrentMonth} onClick={() => !atCurrentMonth && onChange(shiftMonth(month, 1))}>
+                <Icon name="chevron_right" />
+            </button>
+        </div>
+    );
 }
 
 function MonthlyOverview() {
     const [month, setMonth] = useState<string | undefined>(undefined);
     const report = useAdminResource(`monthly:${month ?? ""}`, (token, signal) => getMonthlyOverview(token, month, signal));
     const data = report.data;
+    // The requested month shows at once; the figures below follow when loaded.
+    const shownMonth = month ?? data?.month;
     const items = data
         ? [
               { label: "Candidates registered", value: data.candidatesRegistered, tone: "text-ink" },
@@ -177,27 +195,14 @@ function MonthlyOverview() {
         <Card className="space-y-3 p-5">
             <SectionHeading
                 title="Monthly overview"
-                action={
-                    data && (
-                        <select
-                            aria-label="Month"
-                            value={month ?? data.month}
-                            onChange={(event) => setMonth(event.target.value)}
-                            className="h-8 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
-                        >
-                            {recentMonths(data.thisMonth, MONTH_OPTIONS).map((option) => (
-                                <option key={option} value={option}>{monthLabel(option)}</option>
-                            ))}
-                        </select>
-                    )
-                }
+                action={data && shownMonth && <MonthNavigation month={shownMonth} thisMonth={data.thisMonth} onChange={setMonth} />}
             />
             {report.status === "error" && !data && <ErrorState message={report.error.message} onRetry={report.reload} />}
             {report.status === "loading" && !data && <LoadingState label="Loading monthly overview…" />}
             {data && (
                 <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label={`Monthly overview for ${monthLabel(data.month)}`} aria-busy={report.status === "loading"}>
                     {items.map((item) => (
-                        <li key={item.label} className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2">
+                        <li key={item.label} className="flex items-center justify-between rounded-xl bg-canvas px-3 py-2">
                             <span className="text-body-sm text-ink">{item.label}</span>
                             <span className={`text-headline-md tabular-nums ${item.value > 0 ? item.tone : "text-ink"}`}>{formatNumber(item.value)}</span>
                         </li>
@@ -345,7 +350,7 @@ export function OverviewPage() {
                         type="button"
                         onClick={toggleMonthly}
                         aria-pressed={showMonthly}
-                        className={`h-8 rounded border px-3 text-label-md shadow-surface ${showMonthly ? "border-primary bg-primary-soft text-primary" : "border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"}`}
+                        className={`h-8 rounded-lg border px-3 text-label-md shadow-surface ${showMonthly ? "border-primary bg-primary-soft text-primary" : "border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"}`}
                     >
                         Monthly overview
                     </button>
@@ -353,7 +358,7 @@ export function OverviewPage() {
                         type="button"
                         onClick={overview.reload}
                         disabled={overview.status === "loading" || syncing}
-                        className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft shadow-surface hover:border-border-focus hover:bg-canvas disabled:opacity-60"
+                        className="h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft shadow-surface hover:border-border-focus hover:bg-canvas disabled:opacity-60"
                     >
                         Refresh
                     </button>

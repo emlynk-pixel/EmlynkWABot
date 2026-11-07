@@ -1,5 +1,7 @@
 # Candidate Extra Details Form — Issues and Solutions Log
 
+> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md).
+
 Branch: `version/candidate-extra-details-form`
 Last updated: 2026-10-17 (job management and job-group links, four-step form, Admin review workflow, modern date picker; documentation update, not committed)
 

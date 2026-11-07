@@ -16,7 +16,7 @@ import { issueCandidateFormToken, readCandidateFormToken } from "../src/services
 const SECRET = "test-candidate-form-secret-0123456789-abcdefghijklmnop";
 const ORIGIN = "https://candidate-form.example.test";
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4) };
 // Four candidates (all with a NIC) and one stranger.
 const C = (i) => ({ passportId: `N900000${i}`, uniqueId: `900${i}`, firstName: `First${i}`, otherName: `Last${i}`, nic: `90000000${i}V`, sex: "M", whatsappNumber: `+9477000000${i}` });
 const [A, B, C3, D] = [C(1), C(2), C(3), C(4)];
@@ -82,19 +82,19 @@ const admin = (who, method, path, options) => call(app(who), method, `/api/admin
 const pub = (path, options) => call(app(USERS.ADMIN), "POST", `${PUBLIC_CANDIDATE_DETAILS_PATH}${path}`, options);
 
 const newJob = async (extra = {}) => {
-    const r = await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent, ...extra } });
+    const r = await admin(USERS.OWNER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent, ...extra } });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     return r.body;
 };
 const assign = async (job, ...candidates) => {
-    for (const c of candidates) assert.equal((await admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { body: { passportId: c.passportId } })).status, 201);
+    for (const c of candidates) assert.equal((await admin(USERS.OWNER, "POST", `/jobs/${job.jobId}/candidates`, { body: { passportId: c.passportId } })).status, 201);
 };
-const groupLink = async (job, who = USERS.MANAGER) => {
+const groupLink = async (job, who = USERS.OWNER) => {
     const r = await admin(who, "POST", `/jobs/${job.jobId}/form-share`);
     assert.equal(r.status, 201, JSON.stringify(r.body));
     return r.body.url.split("#k=")[1];
 };
-const singleLink = async (c) => (await admin(USERS.MANAGER, "POST", `/candidates/${c.passportId}/form-share`)).body.url.split("#k=")[1];
+const singleLink = async (c) => (await admin(USERS.OWNER, "POST", `/candidates/${c.passportId}/form-share`)).body.url.split("#k=")[1];
 const verify = (secret, c, overrides = {}) => pub("/verify", { body: { linkSecret: secret, passportNumber: c.passportId, nic: c.nic, ...overrides } });
 const GENERIC = { code: "VERIFICATION_FAILED" };
 const expectGeneric = (r, label) => {
@@ -131,42 +131,42 @@ describe("Client Job ID (JOB-ID-001 to JOB-ID-007)", () => {
         assert.match(named.jobCode, /^JOB-\d{4}-\d{6}$/, "the internal code is unaffected");
     });
 
-    test("JOB-ID-002 / 003: added later and changed by Admin or Manager; null clears it; any job status", async () => {
+    test("JOB-ID-002 / 003: added later and changed by Admin or Owner; null clears it; any job status", async () => {
         const job = await newJob();
-        const added = await admin(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: "il-2026-44" } });
+        const added = await admin(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: "il-2026-44" } });
         assert.deepEqual([added.status, added.body.companyJobId], [200, "IL-2026-44"]);
         const changed = await admin(USERS.ADMIN, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: "Y26S01" } });
         assert.equal(changed.body.companyJobId, "Y26S01");
         const audit = (await prisma.auditLog.findMany({ where: { action: "UPDATE_JOB" }, orderBy: { createdDate: "asc" } })).at(-1);
         assert.deepEqual([JSON.parse(audit.previousValue).companyJobId, JSON.parse(audit.newValue).companyJobId], ["IL-2026-44", "Y26S01"]);
-        assert.equal((await admin(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: null } })).body.companyJobId, null);
+        assert.equal((await admin(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: null } })).body.companyJobId, null);
         // A finished job can still get its employer's ID; other fields cannot change.
-        await admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/complete`, { body: {} });
-        assert.equal((await admin(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: "Z1" } })).body.companyJobId, "Z1");
-        assert.equal((await admin(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { body: { vacancies: 3 } })).status, 409);
+        await admin(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, { body: {} });
+        assert.equal((await admin(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: "Z1" } })).body.companyJobId, "Z1");
+        assert.equal((await admin(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { body: { vacancies: 3 } })).status, 409);
     });
 
     test("validation: control characters, symbols, too long and non-strings are refused; unique per client only", async () => {
         const job = await newJob();
         for (const bad of ["ab\ncd", "a\u0000b", "<script>", "Y26;DROP", "x".repeat(41), 12, "සිංහල", "ID€"]) {
-            assert.equal((await admin(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: bad } })).status, 400, JSON.stringify(bad));
+            assert.equal((await admin(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: bad } })).status, 400, JSON.stringify(bad));
         }
         await pg.exec(`UPDATE "job" SET "company_job_id" = NULL`);
         await assert.rejects(pg.exec(`UPDATE "job" SET "company_job_id" = 'bad value!' WHERE "id" = '${job.jobId}'`), /check/i, "the database refuses it too");
-        await admin(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: "Y26S01" } });
+        await admin(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: "Y26S01" } });
         const second = await newJob();
-        const clash = await admin(USERS.MANAGER, "PUT", `/jobs/${second.jobId}`, { body: { companyJobId: "y26s01" } });
+        const clash = await admin(USERS.OWNER, "PUT", `/jobs/${second.jobId}`, { body: { companyJobId: "y26s01" } });
         assert.deepEqual([clash.status, clash.body.code], [409, "COMPANY_JOB_ID_EXISTS"]);
-        assert.equal((await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent, companyJobId: "Y26S01" } })).status, 409);
+        assert.equal((await admin(USERS.OWNER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent, companyJobId: "Y26S01" } })).status, 409);
         // Another client may use the same identifier.
         const other = await prisma.client.create({ data: { name: "Other Co", agentLinks: { create: { agentId: ids.agent } } } });
-        const r = await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: other.id, responsibleAgentId: ids.agent, companyJobId: "Y26S01" } });
+        const r = await admin(USERS.OWNER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: other.id, responsibleAgentId: ids.agent, companyJobId: "Y26S01" } });
         assert.equal(r.status, 201);
         // Several jobs without one are fine.
         assert.equal((await prisma.job.count({ where: { companyJobId: null } })), 1);
     });
 
-    test("JOB-ID-007: only ADMIN and MANAGER may change it", async () => {
+    test("JOB-ID-007: only ADMIN and OWNER may change it", async () => {
         const job = await newJob({ companyJobId: "Y26S01" });
         for (const who of [USERS.ANN, USERS.DESK]) {
             assert.equal((await admin(who, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: "HACK" } })).status, 403, who.role);
@@ -182,7 +182,7 @@ describe("Client Job ID (JOB-ID-001 to JOB-ID-007)", () => {
         const members = JSON.stringify(await prisma.jobCandidate.findMany({ orderBy: { passportId: "asc" } }));
         const accessBefore = JSON.stringify(await prisma.candidateFormAccess.findMany({ orderBy: { passportId: "asc" } }));
 
-        const changed = await admin(USERS.MANAGER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: "NEW-2" } });
+        const changed = await admin(USERS.OWNER, "PUT", `/jobs/${job.jobId}`, { body: { companyJobId: "NEW-2" } });
         assert.equal(changed.status, 200);
         const after = await prisma.job.findUnique({ where: { id: job.jobId } });
         assert.deepEqual([after.id, after.jobCode, after.companyJobId], [job.jobId, job.jobCode, "NEW-2"]);
@@ -200,7 +200,7 @@ describe("Client Job ID (JOB-ID-001 to JOB-ID-007)", () => {
 });
 
 describe("creating group links (GROUP-001 to GROUP-003, 023)", () => {
-    test("GROUP-001: ADMIN and MANAGER create one for a PROCESSING job; the URL is a fragment link shown once; only a hash is stored; audited", async () => {
+    test("GROUP-001: ADMIN and OWNER create one for a PROCESSING job; the URL is a fragment link shown once; only a hash is stored; audited", async () => {
         const job = await newJob({ companyJobId: "Y26S01" });
         await assign(job, A, B);
         const r = await admin(USERS.ADMIN, "POST", `/jobs/${job.jobId}/form-share`);
@@ -218,22 +218,22 @@ describe("creating group links (GROUP-001 to GROUP-003, 023)", () => {
         const audit = await prisma.auditLog.findMany({ where: { action: "CREATE_JOB_FORM_LINK" } });
         assert.equal(audit.length, 1);
         assert.equal(await prisma.candidateFormAccess.count({ where: { status: "UNLOCKED" } }), 2, "each member got their own unlocked form");
-        assert.equal((await admin(USERS.MANAGER, "POST", `/jobs/${(await newJob()).jobId}/form-share`)).status, 201);
+        assert.equal((await admin(USERS.OWNER, "POST", `/jobs/${(await newJob()).jobId}/form-share`)).status, 201);
         for (const who of [USERS.ANN, USERS.DESK]) {
             assert.equal((await admin(who, "POST", `/jobs/${job.jobId}/form-share`)).status, 403, who.role);
             assert.equal((await admin(who, "GET", `/jobs/${job.jobId}/form-share`)).status, 403, who.role);
             assert.equal((await admin(who, "POST", `/jobs/${job.jobId}/form-share/revoke`)).status, 403, who.role);
         }
-        assert.equal((await admin(USERS.MANAGER, "POST", "/jobs/not-a-uuid/form-share")).status, 404);
+        assert.equal((await admin(USERS.OWNER, "POST", "/jobs/not-a-uuid/form-share")).status, 404);
     });
 
     test("GROUP-002 / 003: not for a COMPLETED or CANCELLED job", async () => {
         const done = await newJob();
         const cancelled = await newJob();
-        await admin(USERS.MANAGER, "POST", `/jobs/${done.jobId}/complete`, { body: {} });
-        await admin(USERS.MANAGER, "POST", `/jobs/${cancelled.jobId}/cancel`, { body: { reason: "No demand" } });
+        await admin(USERS.OWNER, "POST", `/jobs/${done.jobId}/complete`, { body: {} });
+        await admin(USERS.OWNER, "POST", `/jobs/${cancelled.jobId}/cancel`, { body: { reason: "No demand" } });
         for (const job of [done, cancelled]) {
-            const r = await admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/form-share`);
+            const r = await admin(USERS.OWNER, "POST", `/jobs/${job.jobId}/form-share`);
             assert.deepEqual([r.status, r.body.code], [409, "JOB_NOT_PROCESSING"]);
         }
         assert.equal(await prisma.candidateFormLink.count(), 0);
@@ -302,7 +302,7 @@ describe("verification through a group link (GROUP-004 to GROUP-012, 021, 022)",
         expectGeneric(await verify(secret, A), "expired");
         await pg.exec(`UPDATE "candidate_form_link" SET "expires_at" = now() + interval '1 day'`);
         assert.equal((await verify(secret, A)).status, 200);
-        assert.equal((await admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/form-share/revoke`)).status, 200);
+        assert.equal((await admin(USERS.OWNER, "POST", `/jobs/${job.jobId}/form-share/revoke`)).status, 200);
         expectGeneric(await verify(secret, A), "revoked");
     });
 
@@ -319,7 +319,7 @@ describe("verification through a group link (GROUP-004 to GROUP-012, 021, 022)",
 
         const tokenA = await groupSession(secret, A);
         assert.equal((await formOf(tokenA)).status, 200);
-        assert.equal((await admin(USERS.MANAGER, "DELETE", `/jobs/${job.jobId}/candidates/${A.passportId}`)).status, 200);
+        assert.equal((await admin(USERS.OWNER, "DELETE", `/jobs/${job.jobId}/candidates/${A.passportId}`)).status, 200);
         expectGeneric(await verify(secret, A), "removed member");
         const stale = await formOf(tokenA);
         assert.deepEqual([stale.status, stale.body.code], [401, "VERIFICATION_REQUIRED"], "the existing session stops too");
@@ -383,7 +383,7 @@ describe("per-candidate locks and the SINGLE / GROUP interaction (GROUP-013 to G
         assert.equal((await submit(tokenA, "key-other-0000000001")).status, 409);
         assert.equal((await formOf(tokenA)).status, 409);
         assert.equal((await access(C3)).status, "UNLOCKED");
-        assert.equal((await admin(USERS.MANAGER, "GET", `/jobs/${job.jobId}/form-share`)).body.counts.submitted, 2);
+        assert.equal((await admin(USERS.OWNER, "GET", `/jobs/${job.jobId}/form-share`)).body.counts.submitted, 2);
         // Regenerating never reopens anyone.
         await groupLink(job);
         assert.deepEqual([(await access(A)).status, (await access(B)).status], ["SUBMITTED", "SUBMITTED"]);
@@ -400,7 +400,7 @@ describe("per-candidate locks and the SINGLE / GROUP interaction (GROUP-013 to G
         const r = await verify(secret, A);
         assert.deepEqual([r.status, r.body.code], [409, "ALREADY_SUBMITTED"]);
         assert.equal((await access(A)).status, "SUBMITTED");
-        assert.equal((await admin(USERS.MANAGER, "GET", `/jobs/${job.jobId}/form-share`)).body.counts.submitted, 1);
+        assert.equal((await admin(USERS.OWNER, "GET", `/jobs/${job.jobId}/form-share`)).body.counts.submitted, 1);
     });
 
     test("GROUP-016: submitted through a GROUP link, the candidate cannot reopen through a SINGLE link", async () => {
@@ -408,7 +408,7 @@ describe("per-candidate locks and the SINGLE / GROUP interaction (GROUP-013 to G
         await assign(job, A);
         const secret = await groupLink(job);
         assert.equal((await submit(await groupSession(secret, A))).status, 200);
-        const r = await admin(USERS.MANAGER, "POST", `/candidates/${A.passportId}/form-share`);
+        const r = await admin(USERS.OWNER, "POST", `/candidates/${A.passportId}/form-share`);
         assert.deepEqual([r.status, r.body.code], [409, "FORM_SUBMITTED"]);
         assert.equal((await access(A)).status, "SUBMITTED");
     });
@@ -427,8 +427,8 @@ describe("per-candidate locks and the SINGLE / GROUP interaction (GROUP-013 to G
 
 describe("job completion, cancellation and revoking (GROUP-017 to GROUP-020)", () => {
     for (const [label, close] of [
-        ["GROUP-017/019: completing", (job) => admin(USERS.MANAGER, "POST", `/jobs/${(job).jobId}/complete`, { body: {} })],
-        ["GROUP-018/019: cancelling", (job) => admin(USERS.MANAGER, "POST", `/jobs/${(job).jobId}/cancel`, { body: { reason: "Client withdrew" } })],
+        ["GROUP-017/019: completing", (job) => admin(USERS.OWNER, "POST", `/jobs/${(job).jobId}/complete`, { body: {} })],
+        ["GROUP-018/019: cancelling", (job) => admin(USERS.OWNER, "POST", `/jobs/${(job).jobId}/cancel`, { body: { reason: "Client withdrew" } })],
     ]) {
         test(`${label} the job stops new verification and ends open sessions on their next request; submissions and links are kept`, async () => {
             const job = await newJob();
@@ -448,7 +448,7 @@ describe("job completion, cancellation and revoking (GROUP-017 to GROUP-020)", (
             assert.equal((await access(A)).status, "SUBMITTED", "already submitted stays submitted");
             assert.equal(await prisma.candidateFormResponse.count(), 1, "responses intact");
             assert.equal(await prisma.candidateFormLink.count({ where: { jobId: job.jobId, revokedAt: null } }), 1, "the link is not deleted or revoked, just unusable");
-            assert.equal((await admin(USERS.MANAGER, "GET", `/jobs/${job.jobId}/form-share`)).body.state, "NONE");
+            assert.equal((await admin(USERS.OWNER, "GET", `/jobs/${job.jobId}/form-share`)).body.state, "NONE");
         });
     }
 
@@ -456,7 +456,7 @@ describe("job completion, cancellation and revoking (GROUP-017 to GROUP-020)", (
         const job = await newJob();
         await assign(job, A);
         const single = await singleLink(A);
-        await admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/complete`, { body: {} });
+        await admin(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, { body: {} });
         assert.equal((await verify(single, A)).status, 200);
     });
 
@@ -491,7 +491,7 @@ describe("legacy and isolation", () => {
     test("the legacy candidate_stages.job_id, the job code and the Client Job ID never authorise anything", async () => {
         const job = await newJob({ companyJobId: "Y26S01" });
         await prisma.candidateStage.update({ where: { passportId_stage: { passportId: D.passportId, stage: "TEST_DETAILS" } }, data: { jobId: job.jobCode } });
-        await prisma.candidateStage.create({ data: { passportId: D.passportId, stage: "FINALIZING_JOB", jobId: "Y26S01" } }).catch(() => null);
+        await prisma.candidateStage.create({ data: { passportId: D.passportId, stage: "VISA_APPROVAL", jobId: "Y26S01" } }).catch(() => null);
         const secret = await groupLink(job);
         expectGeneric(await verify(secret, D), "legacy text is not membership");
         assert.equal(await prisma.candidateFormLink.count({ where: { OR: [{ tokenHash: job.jobCode }, { tokenHash: "Y26S01" }] } }), 0);

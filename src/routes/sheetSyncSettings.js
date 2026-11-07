@@ -14,9 +14,7 @@
 // for every request by requireActiveUser), on top of the admin router's
 // Supabase-session authentication and rate limiting (no cookie authenticates a
 // request, so CSRF does not apply; Docs/SUPABASE_AUTH.md):
-//   ADMIN    everything
-//   MANAGER  reads the status and runs, and uses Update Sheet; Test Connection,
-//            Sync Now and the destination switch stay ADMIN only
+//   ADMIN    everything (an OWNER too); no other role opens this area
 // Hiding the sidebar item is not the security boundary; this is.
 //
 // This runs on Vercel and never calls Google: POST only records a request
@@ -32,15 +30,14 @@ import { DestinationSwitchError, getSheetSyncRun, getSheetSyncStatus, isValidRun
 import { isValidDestinationKey } from "../config/sheetSync.js";
 import { createCandidateImportRouter } from "./candidateImport.js";
 
+// Who opens Settings -> Google Sheet Sync at all, and every action in it.
 const ADMINS_ONLY = [ROLES.ADMIN];
-// Who opens Settings -> Google Sheet Sync at all.
-export const SHEET_SYNC_AREA_ROLES = Object.freeze([ROLES.ADMIN, ROLES.MANAGER]);
 
 export function createSheetSyncSettingsRouter({ db, log = console } = {}) {
     const router = express.Router();
-    router.use(requireRole(SHEET_SYNC_AREA_ROLES));
+    router.use(requireRole(ADMINS_ONLY));
 
-    // Update Sheet (ADMIN and MANAGER; its own router checks the roles again).
+    // Upload (the bulk import; its own router checks the role again).
     router.use("/import", createCandidateImportRouter({ db, log }));
 
     router.get("/status", async (req, res) => {
@@ -53,10 +50,10 @@ export function createSheetSyncSettingsRouter({ db, log = console } = {}) {
         log.log(JSON.stringify({ event: "sheet_sync.run_requested", kind, runId: run.runId, created, adminId: req.user.adminId }));
         res.status(202).json({ run, alreadyActive: !created });
     };
-    router.post("/test", requireRole(ADMINS_ONLY), request(RUN_KIND.TEST_CONNECTION));
-    router.post("/run", requireRole(ADMINS_ONLY), request(RUN_KIND.RECONCILE));
+    router.post("/test", request(RUN_KIND.TEST_CONNECTION));
+    router.post("/run", request(RUN_KIND.RECONCILE));
 
-    router.put("/destination", requireRole(ADMINS_ONLY), async (req, res) => {
+    router.put("/destination", async (req, res) => {
         const key = req.body?.key;
         if (!isValidDestinationKey(key)) {
             return res.status(400).json({ message: "Invalid request body", errors: [{ field: "key", message: "must be a configured destination key" }] });

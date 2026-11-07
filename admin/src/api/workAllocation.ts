@@ -2,7 +2,7 @@ import { apiRequest } from "./client";
 import type { CandidateStageKey, WorkflowStatus } from "./candidates";
 
 // Work Allocation (src/services/workAllocationService.js): which Analyst each
-// candidate is assigned to. ADMIN and MANAGER only; the server checks it.
+// candidate is assigned to. ADMIN only; the server checks it.
 
 export type AllocationStatus = "UNALLOCATED" | "ALLOCATED";
 
@@ -32,14 +32,15 @@ export type AllocationCandidateList = {
     filters: AllocationFilters & { status: AllocationStatus; analystId: string | null; search: string | null };
 };
 
-// The list's filters, all applied on the server before paging (totals are those of the whole
-// filtered list). stage: the current stage (first not completed) or COMPLETE.
-export type AllocationFilters = {
+// The list's filters: the Candidates list's advanced filters (candidateFilters.ts), all applied on
+// the server before paging (totals are those of the whole filtered list). Lists are
+// comma-separated; stage is the current stage (first not completed) or COMPLETE.
+export type AllocationFilters = Partial<Record<string, string | null>> & {
     registeredFrom?: string | null;
     registeredTo?: string | null;
     jobType?: string | null;
-    workflowStatus?: WorkflowStatus["code"] | null;
-    stage?: CandidateStageKey | "COMPLETE" | null;
+    workflowStatus?: WorkflowStatus["code"] | string | null;
+    stage?: CandidateStageKey | "COMPLETE" | string | null;
 };
 
 export type AllocationAnalyst = { analystId: string; name: string; email?: string; assignedCount: number };

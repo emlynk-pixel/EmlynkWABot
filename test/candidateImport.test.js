@@ -23,9 +23,10 @@ import { createSheetSyncWorker } from "../src/services/sheetSyncWorker.js";
 import { readSheetSyncConfig, readSheetSyncTuning } from "../src/config/sheetSync.js";
 import { SHEET_COLUMNS, SHEET_HEADERS, SYSTEM_CANDIDATE_ID_INDEX } from "../src/services/sheetSchema.js";
 
-const ROLES = ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"];
+// MANAGER: an account still holding the retired role (it gets nothing).
+const ROLES = ["ADMIN", "OWNER", "ANALYST", "REGISTRATION_DESK", "MANAGER"];
 const ADMIN = { adminId: "admin-ADMIN", role: "ADMIN" };
-const MANAGER = { adminId: "admin-MANAGER", role: "MANAGER" };
+const OWNER = { adminId: "admin-OWNER", role: "OWNER" };
 const HEADERS = ["PASSPORT NUMBER", "SURNAME", "OTHER NAME", "FULL NAME", "NIC NUMBER", "WHATSAPP NUMBER", "CONTACT NUMBER", "Job Role", "BIRTH DATE",
     "PASSPORT EXPIRE DATE", "ADDRESS", "Marital Status", "SHIRT SIZE", "LOAN APPLY AMOUNT", "ACTIVE STATUS", "UNIQUE NUMBER", "FATHER NAME"];
 
@@ -135,7 +136,7 @@ describe("preview", () => {
         assert.equal(result.summary.new, 3);
         assert.equal(result.summary.existing, 1);
         assert.equal(result.summary.willFill, 1);
-        assert.equal(result.summary.ignoredSourceColumns, 4, "LOAN APPLY AMOUNT, ACTIVE STATUS, UNIQUE NUMBER, FATHER NAME");
+        assert.equal(result.summary.ignoredSourceColumns, 3, "LOAN APPLY AMOUNT, ACTIVE STATUS, FATHER NAME (UNIQUE NUMBER is read: it groups Jobs)");
     });
 
     test("the import record holds no candidate data", async () => {
@@ -220,13 +221,17 @@ describe("existing, duplicate and conflicting candidates", () => {
         assert.equal(await prisma.candidate.count(), 0);
     });
 
-    test("29. an unknown job role leaves the job unset with UNKNOWN_JOB_TYPE; no job type is created", async () => {
+    test("29. a job role that is not a job type is added as one (preview creates nothing); aliases map to existing types", async () => {
         const typesBefore = await prisma.jobType.count();
-        const { preview: p } = await importRows(renumber([legacyRow(1, { "Job Role": "Welder" }), legacyRow(2, { "Job Role": "plaster" })]));
-        assert.equal(p.summary.unknownJobRoles, 1);
-        assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(1) } })).job, null);
+        const rows = renumber([legacyRow(1, { "Job Role": "Welder" }), legacyRow(2, { "Job Role": "plaster" }), legacyRow(3, { "Job Role": "Formwork Carpenter" })]);
+        const previewOnly = await preview(rows);
+        assert.equal(previewOnly.summary.unknownJobRoles, 0);
+        assert.equal(await prisma.jobType.count(), typesBefore, "preview creates nothing");
+        await importRows(rows);
+        assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(1) } })).job, "WELDER");
         assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(2) } })).job, "PLASTER");
-        assert.equal(await prisma.jobType.count(), typesBefore);
+        assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(3) } })).job, "SHUTTERING CARPENTER");
+        assert.equal(await prisma.jobType.count(), typesBefore + 1, "only WELDER is new");
     });
 });
 
@@ -307,7 +312,7 @@ describe("chunked commit", () => {
         const p = await preview(rows);
         const tampered = [{ ...rows[0], values: { ...rows[0].values, SURNAME: "CHANGED" } }, rows[1]];
         await assert.rejects(commitChunk({ db: prisma, actor: ADMIN, importId: p.importId, chunkIndex: 0, rows: tampered }), (e) => e.code === "CHUNK_MISMATCH");
-        await assert.rejects(commitChunk({ db: prisma, actor: MANAGER, importId: p.importId, chunkIndex: 0, rows }), (e) => e.code === "NOT_YOUR_IMPORT");
+        await assert.rejects(commitChunk({ db: prisma, actor: OWNER, importId: p.importId, chunkIndex: 0, rows }), (e) => e.code === "NOT_YOUR_IMPORT");
         assert.equal(await prisma.candidate.count(), 0);
     });
 
@@ -332,7 +337,9 @@ describe("chunked commit", () => {
         const results = await commitAll(p, rows, { db: poisoned });
         assert.equal(results[0].status, "COMMITTED");
         assert.equal(results[1].status, "PARTIAL");
-        assert.deepEqual(results[1].failures, [{ rowNumber: IMPORT_CHUNK_SIZE + 3, passport: "N9****02", codes: ["NIC_CONFLICT"] }]);
+        assert.deepEqual(results[1].failures, [{
+            rowNumber: IMPORT_CHUNK_SIZE + 3, passport: "N9****02", codes: ["NIC_CONFLICT"], errors: ["NIC number belongs to another candidate, or differs from this candidate's NIC"],
+        }]);
         assert.equal(await prisma.candidate.count(), IMPORT_CHUNK_SIZE + 2, "chunk 1 kept; chunk 2 imported all but the bad row");
         // Retrying the partial chunk later (the problem fixed) writes only the missing row, once.
         const retry = await commitChunk({ db: prisma, actor: ADMIN, importId: p.importId, chunkIndex: 1, rows: rows.slice(IMPORT_CHUNK_SIZE) });
@@ -583,7 +590,7 @@ describe("API: roles (the backend is the boundary)", () => {
     const body = () => ({ fileName: "legacy.xlsx", headers: HEADERS, rows: rowsFor(2) });
 
     for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
-        test(`4/5/34. ${role}: 403 on every Update Sheet endpoint and on the sync settings; nothing recorded`, async () => {
+        test(`4/5/34. ${role}: 403 on every Upload endpoint and on the sync settings; nothing recorded`, async () => {
             for (const [method, path, payload] of [["GET", "/import/source-columns"], ["POST", "/import/preview", body()], ["GET", "/status"], ["POST", "/run", {}]]) {
                 assert.equal((await call(method, path, `admin-${role}`, payload)).status, 403, `${method} ${path}`);
             }
@@ -591,8 +598,8 @@ describe("API: roles (the backend is the boundary)", () => {
         });
     }
 
-    test("1/2/3. ADMIN and MANAGER use Update Sheet over HTTP: preview, commit, finish", async () => {
-        for (const [actor, start] of [["admin-ADMIN", 1], ["admin-MANAGER", 10]]) {
+    test("1/2/3. ADMIN and OWNER use Upload over HTTP: preview, commit, finish", async () => {
+        for (const [actor, start] of [["admin-ADMIN", 1], ["admin-OWNER", 10]]) {
             const rows = rowsFor(2, start);
             const columns = await call("GET", "/import/source-columns", actor);
             assert.equal(columns.status, 200);
@@ -609,11 +616,12 @@ describe("API: roles (the backend is the boundary)", () => {
         assert.equal(await prisma.candidate.count(), 4);
     });
 
-    test("MANAGER reads the sync status but cannot Test Connection, Sync Now or switch the destination", async () => {
-        assert.equal((await call("GET", "/status", "admin-MANAGER")).status, 200);
-        assert.equal((await call("POST", "/test", "admin-MANAGER", {})).status, 403);
-        assert.equal((await call("POST", "/run", "admin-MANAGER", {})).status, 403);
-        assert.equal((await call("PUT", "/destination", "admin-MANAGER", { key: "default" })).status, 403);
+    test("an account still holding the retired MANAGER role gets nothing: Upload, the status, runs and the destination are refused", async () => {
+        for (const [method, path, payload] of [["GET", "/import/source-columns"], ["POST", "/import/preview", body()], ["GET", "/status"], ["POST", "/test", {}], ["POST", "/run", {}], ["PUT", "/destination", { key: "default" }]]) {
+            const result = await call(method, path, "admin-MANAGER", payload);
+            assert.deepEqual([result.status, result.body?.code], [403, "ROLE_NOT_SUPPORTED"], `${method} ${path}`);
+        }
+        assert.equal(await prisma.candidateImport.count(), 0);
         assert.equal(await prisma.sheetSyncRun.count(), 0);
     });
 
@@ -634,8 +642,8 @@ describe("API: roles (the backend is the boundary)", () => {
     test("another user's import is not theirs to commit or read", async () => {
         const rows = rowsFor(1);
         const p = await call("POST", "/import/preview", "admin-ADMIN", { fileName: "legacy.xlsx", headers: HEADERS, rows });
-        assert.equal((await call("POST", `/import/${p.body.importId}/chunks/0`, "admin-MANAGER", { rows })).status, 403);
-        assert.equal((await call("GET", `/import/${p.body.importId}`, "admin-MANAGER")).status, 404);
+        assert.equal((await call("POST", `/import/${p.body.importId}/chunks/0`, "admin-OWNER", { rows })).status, 403);
+        assert.equal((await call("GET", `/import/${p.body.importId}`, "admin-OWNER")).status, 404);
         assert.equal(await prisma.candidate.count(), 0);
     });
 });

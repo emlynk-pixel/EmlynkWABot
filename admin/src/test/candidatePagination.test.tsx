@@ -213,16 +213,17 @@ describe("Candidates page: server-side paging", { timeout: PAGING_TEST_TIMEOUT }
         expect(screen.queryByRole("table", { name: "Candidates" })).toBeNull();
     });
 
-    test("13. roles unchanged: Add candidate for a candidate role, not for the retired VIEWER; paging works for both", async () => {
+    test("13. Add candidate and paging for a candidate list role; the retired VIEWER can't open the list", async () => {
         pagedBackend(247);
         const { unmount } = renderApp("/candidates?page=2");
         await screen.findByRole("link", { name: "CANDIDATE 147" }, RENDER_STEP);
         expect(screen.getByRole("link", { name: "Add candidate" })).toHaveAttribute("href", "/candidates/new");
         unmount();
 
-        pagedBackend(247, { "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "VIEWER" } } } });
+        const { calls } = pagedBackend(247, { "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "VIEWER" } } } });
         renderApp("/candidates?page=2");
-        await screen.findByRole("link", { name: "CANDIDATE 147" }, RENDER_STEP);
+        expect(await screen.findByText("Access Restricted", {}, RENDER_STEP)).toBeInTheDocument();
         expect(screen.queryByRole("link", { name: "Add candidate" })).toBeNull();
+        expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(false);
     });
 });

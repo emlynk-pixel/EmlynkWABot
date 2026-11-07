@@ -482,8 +482,8 @@ describe("optional passport and contact details", () => {
 });
 
 describe("independent stages", () => {
-    test("eight stages in business order: Job details follows Test details; Visa submission sits between IVS interview and Visa approval", () => {
-        assert.deepEqual([...CANDIDATE_STAGES], ["TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"]);
+    test("six stages in business order: Job details follows Test details; Visa submission comes before Visa approval", () => {
+        assert.deepEqual([...CANDIDATE_STAGES], ["TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "VISA_SUBMISSION", "VISA_APPROVAL"]);
     });
 
     test("Visa submission is completed by an admin like Visa approval: notes and completion, no test fields, audited", async () => {
@@ -502,12 +502,12 @@ describe("independent stages", () => {
     test("every stage can be completed in any order; completed stages are reported in display order", async () => {
         const db = createFakeDb();
         await registered(db);
-        for (const stage of ["FINALIZING_JOB", "VISA_APPROVAL", "VISA_SUBMISSION", "IVS_INTERVIEW"]) {
+        for (const stage of ["VISA_APPROVAL", "VISA_SUBMISSION"]) {
             await updateStage({ db, passportId: "N1023757", stage, values: { completed: true } });
         }
         const { stages } = await getCandidate({ db, passportId: "N1023757" });
         assert.deepEqual(stages.map((s) => s.stage), [...CANDIDATE_STAGES]);
-        assert.deepEqual(stages.map((s) => s.completed), [false, false, false, false, true, true, true, true]);
+        assert.deepEqual(stages.map((s) => s.completed), [false, false, false, false, true, true]);
     });
 
     test("Candidate Details and Document Submission complete automatically from the record; the list agrees", async () => {
@@ -528,7 +528,7 @@ describe("independent stages", () => {
         result = await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "PASSPORT", variant: null, mimeType: "application/pdf", buffer: PDF });
         assert.equal(stageOf(result, "CANDIDATE_DETAILS").completed, true);
         assert.deepEqual(stageOf(result, "CANDIDATE_DETAILS").missing, []);
-        assert.deepEqual(await listed(), [false, false, true, false, false, false, false, false]);
+        assert.deepEqual(await listed(), [false, false, true, false, false, false]);
 
         const uploads = [["MEDICAL", null], ["POLICE_REPORT", "SL_VERIFIED"], ["POLICE_REPORT", "ROMANIA"], ["SCAN", null]];
         for (const [index, [documentType, variant]] of uploads.entries()) {
@@ -536,7 +536,7 @@ describe("independent stages", () => {
             result = await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType, variant, mimeType: "application/pdf", buffer });
         }
         assert.equal(stageOf(result, "DOCUMENT_SUBMISSION").completed, true);
-        assert.deepEqual(await listed(), [false, false, true, true, false, false, false, false]);
+        assert.deepEqual(await listed(), [false, false, true, true, false, false]);
         assert.deepEqual(result.requiredDocuments.map((r) => r.documentType), [...REQUIRED_SUBMISSION_DOCUMENTS]);
         assert.ok(result.documents.SCAN);
 
@@ -655,9 +655,9 @@ describe("independent stages", () => {
             assert.deepEqual(fields({ testId: "x".repeat(51) }), ["testId"]);
             assert.deepEqual(fields({ testId: 14 }), ["testId"]);
             assert.deepEqual(fields({ testAgentName: "x".repeat(121) }), ["testAgentName"]);
-            assert.deepEqual(fields({ testId: "T-1" }, "FINALIZING_JOB"), ["testId"]);
+            assert.deepEqual(fields({ testId: "T-1" }, "VISA_APPROVAL"), ["testId"]);
             assert.deepEqual(fields({ testAgentName: "A" }, "JOB_DETAILS"), ["testAgentName"]);
-            assert.deepEqual(fields({ testResult: "PASS" }, "IVS_INTERVIEW"), ["testResult"]);
+            assert.deepEqual(fields({ testResult: "PASS" }, "VISA_SUBMISSION"), ["testResult"]);
             assert.deepEqual(fields({ testDate: "2026-09-28" }, "VISA_APPROVAL"), ["testDate"]);
         });
 
@@ -729,8 +729,8 @@ describe("independent stages", () => {
                 assert.equal(saved.status, 200);
                 const body = await saved.json();
                 assert.deepEqual([body.stages[0].testAgentName, body.stages[0].testId, body.stages[0].testResult, body.stages[0].testDate], ["Nimal Perera", "T-2026-014", "PASS", "2026-09-28"]);
-                assert.equal((await put("IVS_INTERVIEW", { testResult: "PASS" })).status, 400);
-                assert.equal((await put("IVS_INTERVIEW", { testId: "T-1" })).status, 400);
+                assert.equal((await put("VISA_APPROVAL", { testResult: "PASS" })).status, 400);
+                assert.equal((await put("VISA_APPROVAL", { testId: "T-1" })).status, 400);
                 assert.equal((await put("TEST_DETAILS", { jobId: "JOB-1" })).status, 400, "the old jobId is refused");
             } finally {
                 server.close();
@@ -773,7 +773,7 @@ describe("independent stages", () => {
             const { stages } = await getCandidate({ db, passportId: "N1023757" });
             assert.deepEqual(stages.map((s) => [s.stage, s.completed]), [
                 ["TEST_DETAILS", false], ["JOB_DETAILS", true], ["CANDIDATE_DETAILS", false], ["DOCUMENT_SUBMISSION", false],
-                ["IVS_INTERVIEW", false], ["VISA_SUBMISSION", false], ["VISA_APPROVAL", false], ["FINALIZING_JOB", false],
+                ["VISA_SUBMISSION", false], ["VISA_APPROVAL", false],
             ]);
         });
     });
@@ -945,7 +945,7 @@ describe("candidate list and call log", () => {
         assert.equal(all.pagination.total, 2);
         const anusha = all.items.find((c) => c.passportId === "N1023757");
         assert.deepEqual(anusha.jobTypes, ["Construction Worker", "Caregiver", "Electrician"]);
-        assert.equal(anusha.stages.length, 8);
+        assert.equal(anusha.stages.length, 6);
         assert.equal(anusha.stages.find((s) => s.stage === "VISA_APPROVAL").completed, true);
 
         const byNic = await listCandidates({ db, params: { page: 1, pageSize: 25, search: "965404378" } });
@@ -1030,16 +1030,14 @@ describe("candidate routes: roles", () => {
         assert.equal((await call("UNKNOWN", "POST", "/api/admin/candidates/N1023757/call-logs", { note: "x" })).status, 403);
     });
 
-    test("REGISTRATION_DESK runs the whole candidate workflow: list, search, register, view, edit, documents, stages, call logs", async () => {
+    test("REGISTRATION_DESK runs the registration workflow only: register, look up, save details, the note, the registration documents", async () => {
         const db = createFakeDb();
         const bucket = createFakeBucket();
         const desk = (method, path, body) => call("REGISTRATION_DESK", method, `/api/admin/candidates${path}`, body, db, { bucket });
 
         assert.equal((await desk("POST", "", VALID_BODY)).status, 201, "register");
-        const listed = await desk("GET", "?search=Anusha");
-        assert.equal(listed.status, 200, "list and search");
-        assert.deepEqual(listed.body.items.map((c) => c.passportId), ["N1023757"]);
-        assert.equal((await desk("GET", "/N1023757")).status, 200, "view");
+        assert.equal((await desk("GET", "?search=Anusha")).status, 403, "no list or search: it looks a candidate up by passport ID");
+        assert.equal((await desk("GET", "/N1023757")).status, 200, "the registration lookup");
 
         const { passportId: _id, comment: _comment, ...details } = VALID_BODY;
         const edited = await desk("PUT", "/N1023757", { ...details, address: "12 Galle Road, Colombo" });
@@ -1051,18 +1049,17 @@ describe("candidate routes: roles", () => {
         const replaced = await directUpload("REGISTRATION_DESK", "N1023757", db, bucket, { type: "PASSPORT", buffer: Buffer.concat([PDF, Buffer.from("rescan")]) });
         assert.equal(replaced.status, 200, "replace");
         assert.notEqual(replaced.body.documents.PASSPORT.documentId, first.body.documents.PASSPORT.documentId);
+        assert.equal((await directUpload("REGISTRATION_DESK", "N1023757", db, bucket, { type: "MEDICAL" })).status, 403, "not a registration document");
+        assert.equal((await desk("PUT", "/N1023757/stages/CANDIDATE_DETAILS", { notes: "Walk-in" })).status, 200, "the registration note");
+
+        // Nothing beyond registration: removing documents, other stages, call logs.
         const removed = await desk("POST", `/N1023757/documents/${replaced.body.documents.PASSPORT.documentId}/remove`, { reason: "Wrong passport scanned" });
-        assert.equal(removed.status, 200, "remove");
-
-        const stage = await desk("PUT", "/N1023757/stages/IVS_INTERVIEW", { completed: true, notes: "Interview booked" });
-        assert.equal(stage.status, 200, "stage update");
-        assert.equal(stage.body.stages.find((s) => s.stage === "IVS_INTERVIEW").completed, true);
-        assert.equal((await desk("PUT", "/N1023757/stages/TEST_DETAILS", { testId: "T-1", testResult: "PASS" })).status, 200, "test details");
-
-        assert.equal((await desk("POST", "/N1023757/call-logs", { note: "Will bring the medical" })).status, 201, "add a call");
-        const calls = await desk("GET", "/N1023757/call-logs");
-        assert.equal(calls.status, 200, "view calls");
-        assert.deepEqual(calls.body.items.map((c) => c.note), ["Will bring the medical"]);
+        assert.equal(removed.status, 403, "remove");
+        assert.equal((await desk("PUT", "/N1023757/stages/VISA_APPROVAL", { completed: true, notes: "Interview booked" })).status, 403, "stage update");
+        assert.equal((await desk("PUT", "/N1023757/stages/TEST_DETAILS", { testId: "T-1", testResult: "PASS" })).status, 403, "test details");
+        assert.equal((await desk("POST", "/N1023757/call-logs", { note: "Will bring the medical" })).status, 403, "add a call");
+        assert.equal((await desk("GET", "/N1023757/call-logs")).status, 403, "view calls");
+        assert.equal(db.state.stages.find((row) => row.stage === "VISA_APPROVAL")?.completed ?? false, false);
     });
 
     test("REGISTRATION_DESK gets nothing outside the Candidates area", async () => {
@@ -1095,23 +1092,24 @@ describe("candidate routes: roles", () => {
 
         test("every candidate role can upload; a new file replaces the current one; stored under its own folder; audited", async () => {
             const { db, bucket } = await setup();
+            assert.equal((await directUpload("REGISTRATION_DESK", "N1023757", db, bucket, { type: "VISA_SUBMISSION" })).status, 403, "not a registration document");
             const uploads = [];
-            for (const [index, role] of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"].entries()) {
+            for (const [index, role] of ["OWNER", "ADMIN", "ANALYST"].entries()) {
                 const result = await directUpload(role, "N1023757", db, bucket, { type: "VISA_SUBMISSION", buffer: Buffer.concat([PDF, Buffer.from([index])]) });
                 assert.equal(result.status, 200, role);
                 uploads.push(result.body.documents.VISA_SUBMISSION);
             }
             assert.deepEqual([...bucket.objects.keys()].filter((k) => k.includes("visa")), [
                 "clients/N1023757/visa-submission/visa_submission.pdf", "clients/N1023757/visa-submission/visa_submission_v2.pdf",
-                "clients/N1023757/visa-submission/visa_submission_v3.pdf", "clients/N1023757/visa-submission/visa_submission_v4.pdf",
+                "clients/N1023757/visa-submission/visa_submission_v3.pdf",
             ]);
             const rows = db.state.documents.filter((d) => d.documentType === "VISA_SUBMISSION");
-            assert.deepEqual(rows.map((d) => d.verificationStatus), ["SUPERSEDED", "SUPERSEDED", "SUPERSEDED", "VERIFIED"], "one current visa submission document");
+            assert.deepEqual(rows.map((d) => d.verificationStatus), ["SUPERSEDED", "SUPERSEDED", "VERIFIED"], "one current visa submission document");
             assert.equal(uploads.at(-1).documentId, rows.at(-1).documentId);
 
             const audits = db.state.auditLogs.filter((a) => a.documentType === "VISA_SUBMISSION");
             assert.deepEqual(audits.map((a) => [a.action, a.previousStatus, a.newStatus]), [
-                ["UPLOAD_DOCUMENT", "NONE", "VERIFIED"], ["UPLOAD_DOCUMENT", "VERIFIED", "VERIFIED"], ["UPLOAD_DOCUMENT", "VERIFIED", "VERIFIED"], ["UPLOAD_DOCUMENT", "VERIFIED", "VERIFIED"],
+                ["UPLOAD_DOCUMENT", "NONE", "VERIFIED"], ["UPLOAD_DOCUMENT", "VERIFIED", "VERIFIED"], ["UPLOAD_DOCUMENT", "VERIFIED", "VERIFIED"],
             ]);
             const logged = JSON.stringify(db.state.auditLogs);
             assert.doesNotMatch(logged, /token=|signedUrl|uploadUrl|storage\/v1|%PDF/, "no signed URL or file content in the audit log");
@@ -1126,11 +1124,12 @@ describe("candidate routes: roles", () => {
 
         test("the current file can be removed with a reason, audited like any candidate document", async () => {
             const { db, bucket } = await setup();
-            const uploaded = await directUpload("REGISTRATION_DESK", "N1023757", db, bucket, { type: "VISA_SUBMISSION" });
+            const uploaded = await directUpload("ADMIN", "N1023757", db, bucket, { type: "VISA_SUBMISSION" });
             const { documentId } = uploaded.body.documents.VISA_SUBMISSION;
             const removePath = `/api/admin/candidates/N1023757/documents/${documentId}/remove`;
-            assert.equal((await call("REGISTRATION_DESK", "POST", removePath, {}, db, { bucket })).status, 400, "a reason is required");
-            const removed = await call("REGISTRATION_DESK", "POST", removePath, { reason: "Wrong embassy form" }, db, { bucket });
+            assert.equal((await call("REGISTRATION_DESK", "POST", removePath, { reason: "x" }, db, { bucket })).status, 403, "not the Registration Desk's");
+            assert.equal((await call("ADMIN", "POST", removePath, {}, db, { bucket })).status, 400, "a reason is required");
+            const removed = await call("ADMIN", "POST", removePath, { reason: "Wrong embassy form" }, db, { bucket });
             assert.equal(removed.status, 200);
             assert.equal(removed.body.documents.VISA_SUBMISSION, null);
             assert.equal(bucket.objects.size, 0, "the file is deleted too");
@@ -1676,7 +1675,7 @@ describe("registration lookup of an existing passport ID", () => {
         const bucket = createFakeBucket();
         await registered(db, { nationality: "Sri Lankan", sex: "F", whatsappNumber: "0771234567" });
         await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "PASSPORT", variant: null, mimeType: "application/pdf", buffer: PDF, originalFileName: "passport.pdf" });
-        await updateStage({ db, passportId: "N1023757", stage: "IVS_INTERVIEW", values: { completed: true, notes: "Passed" } });
+        await updateStage({ db, passportId: "N1023757", stage: "VISA_APPROVAL", values: { completed: true, notes: "Passed" } });
 
         const loaded = await getCandidate({ db, passportId: await resolveCandidatePassportId({ db, passportId: "N1023757" }) });
         assert.equal(loaded.candidate.nationality, "Sri Lankan");
@@ -1694,7 +1693,7 @@ describe("registration lookup of an existing passport ID", () => {
         assert.equal(db.state.documents.length, before.documents, "no duplicate document");
         assert.equal(bucket.objects.size, before.objects, "no file copied");
         assert.deepEqual(db.state.stages, before.stages, "stage progress preserved");
-        assert.equal(saved.stages.find((s) => s.stage === "IVS_INTERVIEW").completed, true);
+        assert.equal(saved.stages.find((s) => s.stage === "VISA_APPROVAL").completed, true);
         assert.equal(saved.documents.PASSPORT.documentId, loaded.documents.PASSPORT.documentId, "same document reference");
     });
 });

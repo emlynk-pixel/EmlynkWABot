@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { DailyRoleSummary, DailySummary } from "../api/admin";
 import { todayInSriLanka } from "../components/format";
-import { ADMIN, RENDER_STEP, renderApp, renderAppSignedIn, signedInBackend } from "./helpers";
+import { ADMIN, RENDER_STEP, renderApp, renderAppSignedIn, signedInBackend, expectRedirectedHome } from "./helpers";
 
 // Daily Report page: Summary and Summary by Roles. Synthetic data; the
 // backend is a stub (the figures themselves are tested in
@@ -35,7 +35,7 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------- fixtures
 
-const STAGES = ["TEST_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"];
+const STAGES = ["TEST_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "VISA_SUBMISSION", "VISA_APPROVAL"];
 const DATE = "2026-10-10";
 
 const summary = (date = DATE, overrides: Partial<DailySummary> = {}): DailySummary => ({
@@ -262,15 +262,14 @@ describe("Daily Report: date", () => {
 // ---------------------------------------------------------------- Summary by Roles
 
 describe("Daily Report: Summary by Roles", () => {
-    test("25. ANALYST sees the Summary only (no role view)", async () => {
+    test("25. ANALYST has no Daily Report: taken to Candidates, nothing requested", async () => {
         const { calls } = signedInBackend({ ...asRole("ANALYST"), ...summaryRoute() });
         renderApp("/reports/daily?view=roles");
-        expect(await screen.findByText("Candidates completed", {}, RENDER_STEP)).toBeInTheDocument();
-        expect(screen.queryByRole("tab", { name: "Summary by Roles" })).toBeNull();
-        expect(requests(calls, "/api/admin/reports/daily/roles")).toEqual([]);
+        await expectRedirectedHome("ANALYST");
+        expect(requests(calls, "/api/admin/reports")).toEqual([]);
     });
 
-    for (const role of ["ADMIN", "MANAGER"]) {
+    for (const role of ["ADMIN", "OWNER"]) {
         test(`21-23, 26-27. ${role}: the role view, role selector in order, figures for the chosen role`, async () => {
             const { calls } = signedInBackend({
                 ...asRole(role), ...summaryRoute(),
@@ -280,7 +279,7 @@ describe("Daily Report: Summary by Roles", () => {
             const user = userEvent.setup();
             await user.click(await screen.findByRole("tab", { name: "Summary by Roles" }, RENDER_STEP));
             const select = await screen.findByRole("combobox", { name: "Role" });
-            expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Analyst", "Manager", "Admin", "Registration Desk"]);
+            expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Analyst", "Team Lead", "Admin", "Owner", "Registration Desk"]);
             expect(requests(calls, "/api/admin/reports/daily/roles").at(-1)).toBe(`/api/admin/reports/daily/roles?date=${DATE}&role=ANALYST`);
             expect(await screen.findByText("Documents uploaded", { selector: "p" })).toBeInTheDocument();
             expect(kpi("Calls taken")).toHaveTextContent("2");
@@ -307,7 +306,7 @@ describe("Daily Report: PDF", () => {
         expect(text).toContain("Daily Report — Summary");
         expect(text).toContain("10 Oct 2026");
         expect(text).toContain("Asia/Colombo");
-        for (const label of ["Candidates registered", "Registered candidates", "R0000001", "Nimal Perera", "No documents", "Ann Analyst", "Candidates completed (final stage completed)", "Visa completed (visa approval completed)", "Calls taken", "Documents submitted", "Passport", "Unclassified", "N1000001", "Anil Silva", "Incomplete candidates (current state)", "Police reports (current state)"]) {
+        for (const label of ["Candidates registered", "Registered candidates", "R0000001", "Nimal Perera", "No documents", "Ann Analyst", "Candidates completed (recorded as Departed)", "Visa completed (visa approval completed)", "Calls taken", "Documents submitted", "Passport", "Unclassified", "N1000001", "Anil Silva", "Incomplete candidates (current state)", "Police reports (current state)"]) {
             expect(text).toContain(label);
         }
         expect(text).not.toMatch(/client/i);

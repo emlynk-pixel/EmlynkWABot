@@ -7,7 +7,7 @@
 export const JOB_STATUS = Object.freeze({ PROCESSING: "PROCESSING", COMPLETED: "COMPLETED", CANCELLED: "CANCELLED" });
 
 export const JOB_SELECT = Object.freeze({
-    id: true, jobCode: true, companyJobId: true, status: true, countryCode: true, fromCountryCode: true, vacancies: true,
+    id: true, jobCode: true, companyJobId: true, jobSector: true, status: true, countryCode: true, fromCountryCode: true, vacancies: true,
     createdAt: true, completedAt: true, cancelledAt: true, cancelReason: true,
     jobType: { select: { id: true, code: true, name: true } },
     jobTypes: {
@@ -16,6 +16,8 @@ export const JOB_SELECT = Object.freeze({
     },
     client: { select: { id: true, name: true } },
     responsibleAgent: { select: { id: true, name: true, countryCode: true } },
+    // A Job created by the Google Sheet upload (importJobGroups.js): its date and Unique Number range.
+    importGroup: { select: { interviewDate: true, hundredsBlock: true, suffix: true } },
 });
 
 const iso = (value) => (value ? value.toISOString() : null);
@@ -33,6 +35,8 @@ export function jobSummaryView(job) {
         status: job.status,
         jobType: primary,
         jobTypes: types,
+        // CONSTRUCTION | INDUSTRIAL, or null when not set.
+        jobSector: job.jobSector ?? null,
         client: { id: job.client.id, name: job.client.name },
         responsibleAgent: { id: job.responsibleAgent.id, name: job.responsibleAgent.name, countryCode: job.responsibleAgent.countryCode },
         // To Country: the Client's country when the job was created. From Country: null when not recorded.
@@ -43,6 +47,16 @@ export function jobSummaryView(job) {
         completedAt: iso(job.completedAt),
         cancelledAt: iso(job.cancelledAt),
         cancelReason: job.cancelReason ?? null,
+        // Set for a Job created by the sheet upload: only its last two digits (suffix) can be edited.
+        importGroup: job.importGroup
+            ? {
+                interviewDate: iso(job.importGroup.interviewDate)?.slice(0, 10) ?? null,
+                from: job.importGroup.hundredsBlock * 100,
+                to: job.importGroup.hundredsBlock * 100 + 99,
+                prefix: job.jobCode.slice(0, -2),
+                suffix: job.importGroup.suffix,
+            }
+            : null,
     };
 }
 

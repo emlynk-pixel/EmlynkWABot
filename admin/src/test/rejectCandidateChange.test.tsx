@@ -29,7 +29,7 @@ const VIEW: AdditionalDetailsView = { passportId: "N0000002", details: null, sug
 const BIRTH: PendingChange = { field: "basic.birthDate", current: "2003-06-05", submitted: "2003-05-06" };
 const ADDRESS: PendingChange = { field: "contact.address", current: "1 Main Street", submitted: "12 GALLE ROAD" };
 
-function backend(role = "MANAGER", pending: PendingChange[] = [BIRTH, ADDRESS], extra: FetchRoutes = {}) {
+function backend(role = "OWNER", pending: PendingChange[] = [BIRTH, ADDRESS], extra: FetchRoutes = {}) {
     let record = baseDetails();
     let open = [...pending];
     let reviews: { field: string; status: "CONFIRMED" | "REJECTED" }[] = [];
@@ -143,7 +143,7 @@ describe("Revoke next to Confirm", () => {
     });
 
     test("REJECT-010 a stale Revoke (someone else decided first) shows the server's message and changes nothing on screen", async () => {
-        const ctl = backend("MANAGER", [ADDRESS], {
+        const ctl = backend("OWNER", [ADDRESS], {
             [`POST ${PATH}/form-submission/reject-field`]: { status: 409, body: { message: "This change was already confirmed. Refresh and review again.", code: "FORM_FIELD_REVIEW_STALE" } },
         });
         const user = userEvent.setup();
@@ -160,8 +160,8 @@ describe("Revoke next to Confirm", () => {
 });
 
 describe("who can revoke (REJECT-011 / 012)", () => {
-    test("ADMIN and MANAGER get Revoke; an Analyst and the Registration Desk see the hint and no buttons", async () => {
-        for (const [role, can] of [["ADMIN", true], ["MANAGER", true], ["ANALYST", false], ["REGISTRATION_DESK", false]] as const) {
+    test("ADMIN and OWNER get Revoke; an Analyst and a Team Lead see the hint and no buttons", async () => {
+        for (const [role, can] of [["ADMIN", true], ["OWNER", true], ["ANALYST", false], ["TEAM_LEAD", false]] as const) {
             backend(role, [ADDRESS]);
             const view = open();
             const address = await hint("contact.address");
@@ -175,7 +175,7 @@ describe("who can revoke (REJECT-011 / 012)", () => {
 
 describe("unsaved Admin typing (REJECT-016)", () => {
     test("rejecting one field does not discard what the Admin is typing in another", async () => {
-        const ctl = backend("MANAGER", [BIRTH, ADDRESS]);
+        const ctl = backend("OWNER", [BIRTH, ADDRESS]);
         const user = userEvent.setup();
         open();
         await hint("basic.birthDate");

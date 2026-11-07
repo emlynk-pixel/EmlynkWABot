@@ -16,12 +16,16 @@ foreign key to `auth.users` on Supabase, `ON DELETE RESTRICT`).
 
 ## Roles
 
+Hierarchy: `OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER` (TEAM_LEAD inherits no ADMIN permission). The former `MANAGER` role was retired on 2026-10-30 (ADMIN holds everything it could do); see `ROLES_AND_PERMISSIONS.md` §6.
+
 | Role | Access (enforced by `src/routes/admin.js`) |
 |---|---|
-| `ADMIN` | everything, including users (`/api/admin/users`) and Settings |
-| `MANAGER` | everything except users and Settings |
+| `OWNER` | everything ADMIN has, plus managing ADMIN accounts; the single OWNER is set in the database only (`OWNER_ROLE.md`) |
+| `ADMIN` | everything, including users (`/api/admin/users`: the roles below ADMIN only) and Settings |
+| `TEAM_LEAD` | Candidates (every candidate), Need Attention, Work Allocation, Jobs, Agents, Clients, the standard Daily Report; no ADMIN-only action, Settings, users, Audit Logs, dashboards or review (`ROLES_AND_PERMISSIONS.md`) |
 | `ANALYST` | dashboard reads, review actions, corrections, candidate work; not police-date corrections |
 | `REGISTRATION_DESK` | candidate list, lookup, registration and details only |
+| `JOB_HANDLER` | Jobs, Agents and Clients; reads Candidates (list, details), changes no candidate record |
 
 The role is read from `public."user"` on **every** request; nothing in the
 token is trusted for authorization. A role change or deactivation applies to
@@ -35,13 +39,14 @@ the user's next request.
 3. The backend calls `supabase.auth.getUser(token)` (server-side, service-role
    client): this checks signature and expiry **and that the session still
    exists**, so a signed-out or revoked session is refused immediately.
-4. `public."user"` is loaded by `auth_user_id`; it must exist and be `ACTIVE`.
+4. `public."user"` is loaded by `auth_user_id`; it must exist, be `ACTIVE` and hold a supported role.
 5. `req.user` = that row; `requireRole()` checks `req.user.role`.
 
 | Situation | Response |
 |---|---|
 | no / malformed / expired / signed-out token | 401 |
 | valid session, no `public."user"` row, or not `ACTIVE` | 403 `ACCOUNT_NOT_ACTIVE` |
+| `ACTIVE`, but the role is not supported (the retired `MANAGER`) | 403 `ROLE_NOT_SUPPORTED` |
 | role not allowed for the route | 403 `Insufficient permissions` |
 | Supabase or the database unreachable | 500 (fails closed) |
 
@@ -50,19 +55,44 @@ Code: `src/auth/supabaseIdentity.js`, `src/middleware/requireActiveUser.js`,
 
 ## Flows
 
-**Invite User** (ADMIN only): `POST /api/admin/users/invite {email, name, role}`
+**Invite User** (OWNER: ADMIN and below; ADMIN: below ADMIN; never OWNER or the
+retired MANAGER; see `OWNER_ROLE.md`): `POST /api/admin/users/invite {email, name, role}`
 → role validated server-side → `auth.admin.inviteUserByEmail()` (Supabase sends
 the email; no role or metadata is sent) → `public."user"` upserted by email,
-linked by `auth_user_id`, status `INVITED`. Re-inviting: a pending invitee gets
-the invite again; a deactivated user who had set up their account, or a
-confirmed Supabase identity without a row, is linked/reactivated (`ACTIVE`); an
-`ACTIVE` email is refused (409). One row per email and per identity, so
-concurrent invites converge.
+linked by `auth_user_id`, status `INVITED`, `invited_at` set. Re-inviting
+("set up" = `user.activated_at` is set: the person accepted an invitation with a
+password, or was provisioned):
+
+| Account | Supabase identity | Result |
+|---|---|---|
+| none / `INVITED` / `INACTIVE` | not confirmed | the invite is sent again; `INVITED` |
+| none / `INVITED` / `INACTIVE`, never set up | confirmed (Supabase refuses a new invite: `email_exists`) | a **password-setup email** (Supabase recovery email to the same setup page); `INVITED` |
+| `INACTIVE`, set up before | confirmed | reactivated: `ACTIVE` (they have a password) |
+| `ACTIVE` | — | refused (409) |
+
+A confirmed identity is **not** proof that a password exists: opening the invite
+link (or an email scanner pre-fetching it) confirms the address. One row per email
+and per identity, so concurrent invites converge.
 
 **Invitation setup**: the invite link opens `/admin/setup-password` with a
-Supabase session → the invitee sets a password (`auth.updateUser`) →
-`POST /auth/complete-invite` turns `INVITED` into `ACTIVE`. Deactivating an
-`INVITED` user revokes the invitation.
+Supabase session → `GET /auth/invitation` (must be `INVITED`; a revoked invitation
+is refused here, before any password is set) → the invitee sets a password
+(`auth.updateUser`) → `POST /auth/complete-invite` turns `INVITED` into `ACTIVE`
+and sets `activated_at`. If that call fails, the page offers **Retry activation**
+(the password is not asked again). If it never arrives (closed tab, network), or the
+password was set through *Forgot password*, the **first password sign-in** completes
+the invitation (`GET /auth/me`, only for an `INVITED` account and only when the
+session's `amr` says `password`; audited `COMPLETE_INVITATION`). Deactivating an
+`INVITED` user revokes the invitation; a revoked account is never activated by a
+sign-in. Supabase invitation links expire (24 h by default): the users page shows
+when each invitation was sent and flags expired ones.
+
+**Invitation bugs fixed (migration `20261110120000_user_activation_tracking`)**:
+(1) re-inviting a never-set-up account whose invite link had been opened made it
+`ACTIVE` without a password; (2) a password set from a revoked link, or an
+activation call that never arrived, left the person with a password and a
+non-active account. `npm run auth:audit-users` (read-only) lists the accounts these
+affected.
 
 **Password recovery**: `/admin/forgot-password` → `auth.resetPasswordForEmail()`
 (same confirmation whether or not the email exists) → recovery link opens
@@ -73,7 +103,7 @@ Supabase session → the invitee sets a password (`auth.updateUser`) →
 token stops being accepted by `getUser` because its session is gone). The local
 session is cleared even if Supabase can't be reached.
 
-**Bootstrap**: `npm run user:create -- --name "…" --email … [--role ADMIN]`
+**Bootstrap**: `npm run user:create -- --name "…" --email … [--role ADMIN]` (`--role OWNER` creates the environment's OWNER; see `OWNER_ROLE.md`)
 creates the Supabase identity (password at a hidden prompt, or
 `BOOTSTRAP_PASSWORD`) and its `ACTIVE` row. `--link` creates the application
 row for an existing Supabase Auth identity that does not yet have a
@@ -151,7 +181,8 @@ Two migrations make the restructure:
 
 1. `npx prisma migrate deploy` (with no staff rows the cutover's check passes).
 2. `npm run user:create -- --name "…" --email … --role ADMIN` for the first
-   ADMIN (password at the hidden prompt).
+   ADMIN (password at the hidden prompt). For the environment's OWNER use
+   `--role OWNER`, or promote an existing ADMIN by SQL (`OWNER_ROLE.md`).
 3. Everyone else is invited from the app (*Invite User*).
 
 ### B. Existing database from before the restructure

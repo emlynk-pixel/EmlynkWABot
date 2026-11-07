@@ -46,7 +46,7 @@ Files: `src/services/candidateService.js` (`parseCandidateListQuery`, `listCandi
 router.get("/candidates", requireRole(CANDIDATE_STAFF), ...)
 ```
 
-`CANDIDATE_STAFF` = ADMIN, MANAGER, ANALYST, REGISTRATION_DESK. Any other role gets `403 { "message": "Insufficient permissions" }`. The role is the signed-in user's, read from the database by the existing middleware.
+`CANDIDATE_STAFF` = ADMIN, ANALYST, REGISTRATION_DESK (JOB_HANDLER reads the list). Any other role gets `403 { "message": "Insufficient permissions" }`. The role is the signed-in user's, read from the database by the existing middleware.
 
 ### 3.2 Query parameters
 
@@ -171,7 +171,7 @@ Files: `admin/src/pages/CandidatesPage.tsx`, `admin/src/api/candidates.ts` (type
 | Empty | the existing `EmptyState`: "No candidates yet", or "No candidates match this search" with *Clear search* |
 | Page past the last one | when the server returns no rows for a page greater than `totalPages` while candidates exist (a stale link, or the last page emptied by a removal), the page replaces the URL with the last existing page (`replace: true`, so Back doesn't return to the empty page) and shows the loading state meanwhile, never "No candidates yet" |
 | Rows | link and row click still open `/admin/candidates/:passportId` from any page |
-| Roles | unchanged: *Add candidate* for ADMIN, MANAGER, ANALYST, REGISTRATION_DESK; the backend remains the authority |
+| Roles | unchanged: *Add candidate* for ADMIN and REGISTRATION_DESK (the roles that may register); the backend remains the authority |
 
 The page holds only the current page's rows; no part of it assumes the whole list is loaded.
 

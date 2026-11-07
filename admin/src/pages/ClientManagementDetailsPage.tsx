@@ -59,7 +59,7 @@ function ClientDetailsView() {
     const rows: ClientJobRow[] = tab === "all" ? [...client.jobs.processing, ...client.jobs.completed, ...client.jobs.cancelled].sort(newestFirst) : client.jobs[tab];
 
     return (
-        <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
+        <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                     <h1 id="page-title" className="text-headline-lg text-ink">{client.name}</h1>
@@ -88,7 +88,7 @@ function ClientDetailsView() {
                             <div role="tablist" aria-label="Job status" className="flex flex-wrap gap-1">
                                 {JOB_TABS.map((t) => (
                                     <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
-                                        className={`h-8 rounded px-3 text-label-md ${tab === t.key ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}>
+                                        className={`h-8 rounded-lg px-3 text-label-md ${tab === t.key ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}>
                                         {t.label} ({counts[t.key]})
                                     </button>
                                 ))}
@@ -139,6 +139,7 @@ function ClientDetailsView() {
                             <Detail label="WhatsApp number">{client.whatsappNumber ?? "—"}</Detail>
                             <Detail label="Email">{client.email ?? "—"}</Detail>
                             <Detail label="Address">{client.address ?? "—"}</Detail>
+                            <Detail label="Company number">{client.registrationNumber ?? "—"}</Detail>
                             <Detail label="Created">{formatDate(client.createdAt)}</Detail>
                         </dl>
                     </Card>

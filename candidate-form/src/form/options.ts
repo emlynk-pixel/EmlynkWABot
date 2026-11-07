@@ -43,29 +43,27 @@ export const JOB_CATEGORIES = [
 export type JobCategoryCode = (typeof JOB_CATEGORIES)[number];
 
 export const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL"] as const;
+// The "Size chart" under Shirt Size, in inches: the shirt's width and length, and the chest it fits, for
+// every size the form offers (XXL carries the supplier chart's 2XL row). Reference only: it never
+// changes the answer. chest is a range ("31–34").
+export const SHIRT_SIZE_CHART_COLUMNS = ["width", "length", "chest"] as const;
+export const SHIRT_SIZE_CHART: readonly { size: (typeof SHIRT_SIZES)[number]; values: readonly [string, string, string] }[] = [
+    { size: "XS", values: ["17", "27", "31–34"] },
+    { size: "S", values: ["18", "28", "36–39"] },
+    { size: "M", values: ["20", "29", "39–42"] },
+    { size: "L", values: ["22", "30", "42–45"] },
+    { size: "XL", values: ["24", "31", "46–49"] },
+    { size: "XXL", values: ["26", "32", "50–53"] },
+];
 
 export const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"] as const;
 // A Yes / No answer (the server stores it as true / false).
 export const YES_NO = ["YES", "NO"] as const;
 // Waist in inches.
 export const WAIST_SIZE_PRESETS = ["28", "30", "32", "34", "36", "38", "40", "42", "44", "46"] as const;
-// UK sizes; "Other" takes any other size, e.g. "EU 43".
-export const SHOE_SIZE_PRESETS = ["5", "6", "7", "8", "9", "10", "11", "12", "13"] as const;
-// The "Size guide" next to Shoe Size: each listed UK size with the usual
-// European (EU) size. A general reference only (brands differ); it never
-// changes the answer, which stays a UK size from the list (or what the
-// candidate types under Other, e.g. "EU 42").
-export const SHOE_SIZE_GUIDE: readonly { uk: (typeof SHOE_SIZE_PRESETS)[number]; eu: string }[] = [
-    { uk: "5", eu: "38" },
-    { uk: "6", eu: "39" },
-    { uk: "7", eu: "40–41" },
-    { uk: "8", eu: "42" },
-    { uk: "9", eu: "43" },
-    { uk: "10", eu: "44" },
-    { uk: "11", eu: "45–46" },
-    { uk: "12", eu: "47" },
-    { uk: "13", eu: "48" },
-];
+// European (EU) sizes: the answer is the EU size as listed ("42"). "Other" takes any other size.
+// EU sizing only: the "Size guide" under it gives tips for finding the EU size, no other system.
+export const SHOE_SIZE_PRESETS = ["38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48"] as const;
 
 // "No Preferred Type": the candidate has no job type restriction (stored as this code).
 export const NO_PREFERENCE = "NO_PREFERENCE";

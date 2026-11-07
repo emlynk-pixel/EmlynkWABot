@@ -57,7 +57,7 @@ export function MissingDocumentsPage() {
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <Card className="p-5">
-                    <p className="text-label-caps uppercase text-ink-subtle">Incomplete clients</p>
+                    <p className="text-label-sm text-ink-muted">Incomplete clients</p>
                     <p className="mt-1 text-headline-xl tabular-nums text-ink">{summary ? formatNumber(summary.incomplete) : "—"}</p>
                     <p className="mt-1 text-label-sm text-ink-muted">{summary ? `${formatNumber(summary.complete)} complete of ${formatNumber(summary.total)}` : " "}</p>
                 </Card>
@@ -70,9 +70,9 @@ export function MissingDocumentsPage() {
                             type="button"
                             aria-pressed={active}
                             onClick={() => update({ documentType: active ? undefined : type })}
-                            className={`rounded-lg border bg-surface p-4 text-left shadow-surface hover:border-border-focus ${active ? "border-primary" : "border-border"}`}
+                            className={`rounded-xl border bg-surface p-4 text-left shadow-surface hover:border-border-focus ${active ? "border-primary" : "border-border"}`}
                         >
-                            <span className="block text-label-caps uppercase text-ink-subtle">Missing {documentTypeLabel(type).toLowerCase()}</span>
+                            <span className="block text-label-sm text-ink-muted">Missing {documentTypeLabel(type).toLowerCase()}</span>
                             <span className={`mt-1 block text-headline-xl tabular-nums ${count ? "text-critical" : "text-ink"}`}>{formatNumber(count)}</span>
                         </button>
                     );
@@ -92,7 +92,7 @@ export function MissingDocumentsPage() {
                             placeholder="Search by passport ID, unique ID, name or WhatsApp number…"
                             className={`${control} w-full`}
                         />
-                        <button type="submit" className="h-9 rounded bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
+                        <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                     </form>
                     <label className="md:col-span-4">
                         <span className="sr-only">Missing document type</span>

@@ -19,7 +19,7 @@ import { normalizePhoneNumber } from "../utils/phoneNumber.js";
 // one transaction. Lock order everywhere: client rows first, then agent rows (Job
 // creation share-locks them in the same order), so no two writers deadlock.
 //
-// Roles (the routes check them): ADMIN, MANAGER manage; the other roles have no
+// Roles (the routes check them): ADMIN, TEAM_LEAD and JOB_HANDLER manage; the other roles have no
 // access to the Agents API.
 
 export const ENTITY_STATUS = Object.freeze({ ACTIVE: "ACTIVE", INACTIVE: "INACTIVE" });
@@ -317,7 +317,7 @@ export async function listAgents({ db, params }) {
         items: rows.map((row) => ({ ...agentView(row), ...counts(row.id) })),
         pagination: listPagination(params, total),
         filters: { search: params.search ?? null, country: params.country ?? null, status: params.status ?? null },
-        countries: countries.map((row) => row.countryCode),
+        countries: countries.map((row) => row.countryCode).filter(Boolean),
     };
 }
 

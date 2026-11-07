@@ -7,7 +7,7 @@ import {
     LEGACY_SOURCE_COLUMNS, REQUIRED_SOURCE_HEADERS, SOURCE_CLASSIFICATION, analyzeSourceHeaders, sourceColumnFor, sourceColumnsForClient,
 } from "../src/services/candidateImportSourceMapping.js";
 import {
-    isNotApplicable, maskIdentifier, normalizeBloodGroup, normalizeDate, normalizeEmail, normalizeFamilyPassport, normalizeHeight, normalizeJobRoles,
+    isNotApplicable, maskIdentifier, normalizeBloodGroup, normalizeDate, normalizeEmail, normalizeFamilyPassport, normalizeHeight, normalizeJobRoles, unknownJobRoles,
     normalizeMaritalStatus, normalizeNic, normalizePassport, normalizePhones, normalizeSex, normalizeShirtSize, normalizeShoeSize,
     normalizeWaistSize, normalizeWeight, normalizeYesNo, parseLegacyDate,
 } from "../src/services/candidateImportNormalizers.js";
@@ -18,28 +18,67 @@ const ACTIVE = ["PLASTER", "PLUMBER", "ELECTRICIAN", "TILER", "WELDER TIG", "WEL
 const TODAY = new Date("2026-10-28T00:00:00.000Z");
 const day = (date) => date.toISOString().slice(0, 10);
 const validate = (values, rowNumber = 2) => validateLegacyRow({ rowNumber, values }, { activeJobTypes: ACTIVE, today: TODAY });
-const BASE = { "PASSPORT NUMBER": "N9000001", SURNAME: "SYNTHSURNAME", "OTHER NAME": "SYNTH GIVEN", "NIC NUMBER": "900000001V", "WHATSAPP NUMBER": "0770000001" };
+const BASE = { "PASSPORT NUMBER": "N9000001", SURNAME: "SYNTHSURNAME", "OTHER NAME": "SYNTH GIVEN", "NIC NUMBER": "900000001V", "WHATSAPP NUMBER": "0770000001", "JOB ROLE": "Plaster" };
 const codes = (row) => row.issues.map((i) => i.code);
 
 describe("legacy source mapping (centralized)", () => {
-    test("every column has one classification; required headings are passport, surname and other name", () => {
+    test("every column has one classification; required headings are passport, surname, other name and job role", () => {
         const allowed = new Set(Object.values(SOURCE_CLASSIFICATION));
         assert.ok(LEGACY_SOURCE_COLUMNS.every((c) => allowed.has(c.classification)));
         assert.equal(new Set(LEGACY_SOURCE_COLUMNS.map((c) => c.header)).size, LEGACY_SOURCE_COLUMNS.length, "no header is listed twice");
-        assert.deepEqual([...REQUIRED_SOURCE_HEADERS].sort(), ["OTHER NAME", "PASSPORT NUMBER", "SURNAME"]);
+        assert.deepEqual([...REQUIRED_SOURCE_HEADERS].sort(), ["JOB ROLE", "OTHER NAME", "PASSPORT NUMBER", "SURNAME"]);
     });
 
     test("system-owned columns (statuses, documents, legacy IDs) are never accepted from a file", () => {
-        for (const header of ["UNIQUE NUMBER", "ACTIVE STATUS", "VISA STATUS", "REGISTER DATE", "PASSPORT", "MEDICAL", "SCAN", "POLICE REPORT", "VIDEO", "INTERVIEW PASS FAIL"]) {
+        for (const header of ["ACTIVE STATUS", "REGISTER DATE", "PASSPORT", "MEDICAL", "SCAN", "POLICE REPORT", "VIDEO"]) {
             assert.equal(sourceColumnFor(header).classification, SOURCE_CLASSIFICATION.SYSTEM_GENERATED, header);
             assert.equal(sourceColumnFor(header).field, undefined);
         }
         const { allowed } = sourceColumnsForClient();
-        assert.ok(!allowed.includes("ACTIVE STATUS") && !allowed.includes("UNIQUE NUMBER") && !allowed.includes("VISA STATUS"));
+        assert.ok(!allowed.includes("ACTIVE STATUS"));
     });
 
-    test("ambiguous columns are unresolved, not guessed (family / child names, remark, interview date)", () => {
-        for (const header of ["FATHER NAME", "FATHER SURNAME", "SPOUSE NAME", "CHILD1 NAME", "REMARK", "INTERVIEW DATE", "OTHER SKILLS DESCRIPTION"]) {
+    test("UNIQUE NUMBER is read for the Job group only (never the candidate's Emlynk ID)", () => {
+        assert.deepEqual([sourceColumnFor("UNIQUE NUMBER").classification, sourceColumnFor("UNIQUE NUMBER").field], [SOURCE_CLASSIFICATION.TRANSFORM, "uniqueNumber"]);
+        assert.ok(sourceColumnsForClient().allowed.includes("UNIQUE NUMBER"));
+        assert.equal(toColumns({ uniqueNumber: 3100 }).candidate.uniqueId, undefined, "never a candidate column");
+    });
+
+    test("the process columns are imported: OFFICER, VISA STATUS, INTERVIEW DATE / PASS FAIL, COMPANY, COMPANY NUMBER, AGENT; ERRORS / WARNINGS ignored", () => {
+        const fields = { OFFICER: "officer", "VISA STATUS": "visaStatus", "INTERVIEW DATE": "testDate", "INTERVIEW PASS FAIL": "testResult", COMPANY: "company", "COMPANY NUMBER": "companyNumber", AGENT: "agent" };
+        const { allowed } = sourceColumnsForClient();
+        for (const [header, field] of Object.entries(fields)) {
+            assert.equal(sourceColumnFor(header).field, field, header);
+            assert.ok(allowed.includes(header), header);
+        }
+        for (const header of ["ERRORS", "WARNINGS"]) {
+            assert.equal(sourceColumnFor(header).classification, SOURCE_CLASSIFICATION.IGNORE, header);
+            assert.ok(!allowed.includes(header));
+        }
+    });
+
+    test("the real legacy header row (sample workbook, headers only): every process column found, nothing required missing", () => {
+        const SAMPLE_HEADERS = [
+            "OFFICER", "VISA STATUS", "UNIQUE NUMBER", "PASSPORT NUMBER", "FULL NAME", "Job Role", "AGENT", "COMPANY", "INTERVIEW DATE", "WHATSAPP NUMBER",
+            "REMARK", "VISA FILE CREATION", "DRIVING LICENSE FM CERTIFIED", "DRIVING LICENSE", "MEDICAL", "POLICE REPORT FM CERTIFIED", "POLICE REPORT",
+            "PASSPORT", "ROMANIA POLICE REPORT", "ROMANIA POLICE REPORT CERTIFIED", "SCAN", "NIC COPY", "ROMANIA ID", "MERGED", "AIR TICKET", "VISA COPY",
+            "ARRIVAL CONFIRMATION", "DEPARTURE PHOTO", "CV", "VIDEO", "OTHER COUNT", "OTHER DETAILS", "REPEAT COUNT", "REPEAT DETAILS", "REGISTER NUMBER",
+            "APPLY COUNTRY", "REGISTRATION CATEGORY", "REGISTER DATE", "CONTACT PERSON", "BRANCH", "APPLIED FROM", "VISA PROCESSING CATEGORY", "Job Sector",
+            "INTERVIEW PASS FAIL", "NIC NUMBER", "OTHER NAME", "SURNAME", "ADDRESS", "CONTACT NUMBER", "PASSPORT EXPIRE DATE", "PASSPORT ISSUE DATE",
+            "BIRTH PLACE", "SEX", "BIRTH DATE", "CONTRACT RECEIVED", "AFFIDAVITS CONTRACTS SIGNED DATE", "COMPANY NUMBER",
+        ];
+        const result = analyzeSourceHeaders(SAMPLE_HEADERS);
+        assert.deepEqual(result.missingRequired, []);
+        for (const header of ["OFFICER", "VISA STATUS", "PASSPORT NUMBER", "JOB ROLE", "AGENT", "COMPANY", "INTERVIEW DATE", "INTERVIEW PASS FAIL", "NIC NUMBER", "COMPANY NUMBER"]) {
+            assert.ok(result.supported.includes(header), header);
+        }
+        // The bare PASSPORT column is the document status, never the passport number.
+        assert.ok(result.systemGenerated.includes("PASSPORT"));
+        assert.deepEqual(result.unknown, []);
+    });
+
+    test("ambiguous columns are unresolved, not guessed (family / child names, remark)", () => {
+        for (const header of ["FATHER NAME", "FATHER SURNAME", "SPOUSE NAME", "CHILD1 NAME", "REMARK", "OTHER SKILLS DESCRIPTION"]) {
             const column = sourceColumnFor(header);
             assert.equal(column.classification, SOURCE_CLASSIFICATION.IGNORE, header);
             assert.ok(column.unresolved, header);
@@ -59,13 +98,13 @@ describe("legacy source mapping (centralized)", () => {
 
     test("missing required headings are named; extra and unknown columns are reported, not imported", () => {
         const result = analyzeSourceHeaders(["PASSPORT NUMBER", "OTHER NAME", "LOAN APPLY AMOUNT", "Some Operator Column", "ACTIVE STATUS", "FATHER NAME"]);
-        assert.deepEqual(result.missingRequired, ["SURNAME"]);
+        assert.deepEqual(result.missingRequired, ["SURNAME", "JOB ROLE"]);
         assert.deepEqual(result.ignored, ["LOAN APPLY AMOUNT"]);
         assert.deepEqual(result.unknown, ["SOME OPERATOR COLUMN"]);
         assert.deepEqual(result.systemGenerated, ["ACTIVE STATUS"]);
         assert.deepEqual(result.unresolved, ["FATHER NAME"]);
         // A cell of an ignored column is dropped before validation, whatever the browser sent.
-        assert.deepEqual(Object.keys(sourceCells({ ...BASE, "LOAN APPLY AMOUNT": "1", "ACTIVE STATUS": "INACTIVE", "UNIQUE NUMBER": "12" })).sort(), ["nic", "otherNames", "passport", "surname", "whatsapp"]);
+        assert.deepEqual(Object.keys(sourceCells({ ...BASE, "LOAN APPLY AMOUNT": "1", "ACTIVE STATUS": "INACTIVE" })).sort(), ["jobRole", "nic", "otherNames", "passport", "surname", "whatsapp"]);
     });
 });
 
@@ -191,6 +230,10 @@ describe("normalizers", () => {
         // A confirmed alias maps to an active type.
         assert.deepEqual(normalizeJobRoles("Excavator", { activeJobTypes: ACTIVE, aliases: { EXCAVATOR: "EXCAVATOR OPERATOR" } }), { value: ["EXCAVATOR OPERATOR"] });
         assert.deepEqual(normalizeJobRoles("Plaster, Foreman", { activeJobTypes: ACTIVE }), { value: ["PLASTER"], warning: "UNKNOWN_JOB_TYPE" });
+        // Roles split on , / ; & + and odd spaces.
+        assert.deepEqual(normalizeJobRoles("Plaster / Plumber;Electrician  ", { activeJobTypes: ACTIVE }), { value: ["PLASTER", "PLUMBER", "ELECTRICIAN"] });
+        // What the import adds as new job types.
+        assert.deepEqual(unknownJobRoles("plaster, Welder / steel  fixer", { activeJobTypes: ACTIVE, aliases: { "STEEL FIXER": "PLASTER" } }), ["WELDER"]);
     });
 
     test("masking shows only the first and last two characters", () => {

@@ -7,6 +7,7 @@ import { issueCandidateFormToken, passportReference } from "../services/candidat
 import { ALREADY_SUBMITTED_MESSAGE, parseVerifyBody, VERIFY_FAILED_MESSAGE, verifyFormLinkAccess } from "../services/candidateFormVerificationService.js";
 import { loadCandidateForm, parseDraftBody, parseSubmission, saveCandidateFormDraft, submitCandidateForm } from "../services/candidateFormDataService.js";
 import { CandidateError } from "../services/candidateService.js";
+import { getPublicFormBranding, publicDefaultBranding } from "../services/candidateFormBrandingService.js";
 import { activeJobTypeNames } from "../services/jobTypeCatalog.js";
 import { createRequireCandidateFormToken } from "../middleware/requireCandidateFormToken.js";
 import { resolveDb } from "../utils/resolveClients.js";
@@ -16,6 +17,9 @@ import { resolveDb } from "../utils/resolveClients.js";
 // JSON parser, and completely separate from /api/admin and /auth: no staff
 // middleware, no Supabase session, no req.user.
 //
+//   POST /branding the form's title, logo and colours (Settings > Candidate Form).
+//                  Not candidate data, so it needs no token, and it never fails:
+//                  on any error the form gets the EMLYNK defaults
 //   POST /verify   share-link secret + Passport + NIC -> short-lived candidate
 //                  token (Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md)
 //   POST /form     the candidate's identity (read-only) and the prefill
@@ -48,6 +52,10 @@ export const PUBLIC_VERIFY_LIMITS = Object.freeze({
     // Failed verify requests per passport number, whatever the IP.
     perPassport: { windowMs: 60 * 60 * 1000, limit: 5 },
 });
+
+// Every request to POST /branding, per client IP: one per page load, with room for
+// many candidates behind one mobile network address.
+export const PUBLIC_BRANDING_LIMIT = Object.freeze({ windowMs: 15 * 60 * 1000, limit: 300 });
 
 const RATE_LIMITED = Object.freeze({ message: "Too many attempts. Please wait a while and try again." });
 const NOT_AVAILABLE = Object.freeze({ message: "Verification is not available right now." });
@@ -103,6 +111,14 @@ export function createPublicCandidateDetailsRouter({
         ...limits.perPassport,
         keyGenerator: (req) => req.candidateFormVerify.passportRef,
     }),
+    brandingLimiter = rateLimit({
+        ...PUBLIC_BRANDING_LIMIT,
+        store: createPostgresRateLimitStore({ prefix: "public-branding-ip:", db }),
+        standardHeaders: "draft-8",
+        legacyHeaders: false,
+        identifier: "public-branding-ip:",
+        handler: (req, res) => res.status(429).json(RATE_LIMITED),
+    }),
     log = console,
     now = () => new Date(),
 } = {}) {
@@ -128,6 +144,15 @@ export function createPublicCandidateDetailsRouter({
             throw error;
         }
     };
+
+    router.post("/branding", brandingLimiter, async (req, res) => {
+        try {
+            return res.json(await getPublicFormBranding({ db: await resolveDb(db) }));
+        } catch {
+            log.error(JSON.stringify({ event: "candidate_form.branding_unavailable" }));
+            return res.json(publicDefaultBranding());
+        }
+    });
 
     router.post(
         "/verify",

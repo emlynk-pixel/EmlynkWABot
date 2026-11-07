@@ -1,66 +1,82 @@
 // Role-based authorization on the real admin router. The role is
 // public."user".role, read on every request; the Supabase session only says
 // who the caller is. Matrix (routes/admin.js tiers):
-//   ALL_ACTIVE      ADMIN, MANAGER, ANALYST                     reads (overview, documents, reports, …)
-//   CANDIDATE_STAFF ADMIN, MANAGER, ANALYST, REGISTRATION_DESK  the Candidates area: list, registration,
-//                                                               details, stages, documents, call logs,
-//                                                               additional details
-//   ANALYSTS_UP     ADMIN, MANAGER, ANALYST                     review actions, corrections
-//   MANAGERS_UP     ADMIN, MANAGER                              police-date correction
-//   ADMINS_ONLY     ADMIN                                       users, Audit Logs, Settings
+//   ALL_ACTIVE      ADMIN, ANALYST                              reads (overview, documents, reports, …)
+//   CANDIDATE_STAFF ADMIN, TEAM_LEAD, ANALYST                   the Candidates area and Need Attention
+//   CANDIDATE_READERS  … plus JOB_HANDLER                       candidate reads (list, page)
+//   REGISTRATION_WORKFLOW  … plus REGISTRATION_DESK             the Add Candidate form's routes
+//   ANALYSTS_UP     ADMIN, ANALYST                              review actions, corrections
+//   ADMINS_ONLY     ADMIN                                       users, Audit Logs, Settings, Work Allocation,
+//                                                               police-date correction (the former MANAGER tier)
+// OWNER gets every route ADMIN gets (requireRole.js hasRole), and nothing more. The retired MANAGER
+// role gets nothing: requireActiveUser refuses it (403 ROLE_NOT_SUPPORTED) before any role check.
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 
 import { createAdminRouter } from "../src/routes/admin.js";
-import { ALL_ROLES, ROLES, isValidRole, requireRole } from "../src/middleware/requireRole.js";
+import { ALL_ROLES, RETIRED_ROLES, ROLES, isValidRole, requireRole } from "../src/middleware/requireRole.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { createFakeAuthAdmin, fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 const user = (role, status = "ACTIVE") => ({ adminId: `user-${role}-${status}`, name: role, email: `${role}-${status}@example.invalid`.toLowerCase(), role, status });
-const USERS = [...ALL_ROLES.map((role) => user(role)), user("VIEWER"), user("ADMIN", "INACTIVE"), user("ANALYST", "INVITED")];
+const USERS = [...ALL_ROLES.map((role) => user(role)), user("VIEWER"), user("MANAGER"), user("ADMIN", "INACTIVE"), user("ANALYST", "INVITED")];
 const DOCUMENT_ID = "00000000-0000-4000-8000-000000000001";
-const CANDIDATE_STAFF = ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"];
+// The Candidates area and Need Attention: not REGISTRATION_DESK (registration only), not JOB_HANDLER.
+const CANDIDATE_STAFF = ["ADMIN", "TEAM_LEAD", "ANALYST"];
 // JOB_HANDLER reads candidates (never writes them).
 const CANDIDATE_READERS = [...CANDIDATE_STAFF, "JOB_HANDLER"];
+// The routes the Add Candidate form uses (the lookup, saving details, registration documents).
+const REGISTRATION_WORKFLOW = [...CANDIDATE_STAFF, "REGISTRATION_DESK"];
+
+// OWNER holds every ADMIN permission, so a tier naming ADMIN admits OWNER too.
+const admits = (allowed, role) => allowed.includes(role) || (role === "OWNER" && allowed.includes("ADMIN"));
 
 // [method, path, body, roles allowed]
 const MATRIX = [
-    ["GET", "/overview", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
-    ["GET", "/documents", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
-    ["GET", "/reports/daily", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
+    // The dashboard, documents and review queue: ADMIN (an ANALYST works only on their candidates).
+    ["GET", "/overview", undefined, ["ADMIN"]],
+    ["GET", "/documents", undefined, ["ADMIN"]],
+    // The Daily Report: ADMIN and TEAM_LEAD.
+    ["GET", "/reports/daily", undefined, ["ADMIN", "TEAM_LEAD"]],
     ["GET", "/candidates", undefined, CANDIDATE_READERS],
+    // The job candidate picker: the job managers.
+    ["GET", "/job-candidate-options", undefined, ["ADMIN", "TEAM_LEAD", "JOB_HANDLER"]],
     // Registering is not an Analyst action: a new candidate is unallocated (Work Allocation).
-    ["POST", "/candidates", {}, ["ADMIN", "MANAGER", "REGISTRATION_DESK"]],
-    // Work Allocation: ADMIN and MANAGER only (an invalid request, so the allowed roles get 400).
-    ["GET", "/work-allocation/candidates?status=NOPE", undefined, ["ADMIN", "MANAGER"]],
-    ["POST", "/work-allocation/assign", {}, ["ADMIN", "MANAGER"]],
-    ["POST", "/work-allocation/unassign", {}, ["ADMIN", "MANAGER"]],
-    ["GET", "/candidates/N1023757", undefined, CANDIDATE_READERS],
-    ["PUT", "/candidates/N1023757", {}, CANDIDATE_STAFF],
-    ["PUT", "/candidates/N1023757/stages/IVS_INTERVIEW", {}, CANDIDATE_STAFF],
-    ["POST", "/candidates/N1023757/documents/upload-target", {}, CANDIDATE_STAFF],
-    ["POST", "/candidates/N1023757/documents/finalize", {}, CANDIDATE_STAFF],
+    ["POST", "/candidates", {}, ["ADMIN", "TEAM_LEAD", "REGISTRATION_DESK"]],
+    // Work Allocation: ADMIN and TEAM_LEAD (an invalid request, so the allowed roles get 400).
+    ["GET", "/work-allocation/candidates?status=NOPE", undefined, ["ADMIN", "TEAM_LEAD"]],
+    ["POST", "/work-allocation/assign", {}, ["ADMIN", "TEAM_LEAD"]],
+    ["POST", "/work-allocation/unassign", {}, ["ADMIN", "TEAM_LEAD"]],
+    ["GET", "/candidates/N1023757", undefined, [...CANDIDATE_READERS, "REGISTRATION_DESK"]],
+    ["PUT", "/candidates/N1023757", {}, REGISTRATION_WORKFLOW],
+    // REGISTRATION_DESK: the Candidate Details stage (its note) only.
+    ["PUT", "/candidates/N1023757/stages/VISA_APPROVAL", {}, CANDIDATE_STAFF],
+    ["POST", "/candidates/N1023757/documents/upload-target", {}, REGISTRATION_WORKFLOW],
+    ["POST", "/candidates/N1023757/documents/finalize", {}, REGISTRATION_WORKFLOW],
     ["POST", `/candidates/N1023757/documents/${DOCUMENT_ID}/remove`, {}, CANDIDATE_STAFF],
     ["GET", "/candidates/N1023757/call-logs", undefined, CANDIDATE_READERS],
     ["POST", "/candidates/N1023757/call-logs", {}, CANDIDATE_STAFF],
+    // Need Attention: REGISTRATION_DESK reads it (no flag, complete or delete).
+    ["GET", "/follow-ups", undefined, [...CANDIDATE_STAFF, "REGISTRATION_DESK"]],
+    ["POST", "/follow-ups/11111111-1111-4111-8111-111111111111/complete", {}, CANDIDATE_STAFF],
+    ["DELETE", "/follow-ups/11111111-1111-4111-8111-111111111111", undefined, ["ADMIN"]],
     ["GET", "/candidates/N1023757/additional-details", undefined, CANDIDATE_READERS],
     ["PUT", "/candidates/N1023757/additional-details", {}, CANDIDATE_STAFF],
-    ["GET", "/review", undefined, ["ADMIN", "MANAGER", "ANALYST"]],
-    ["POST", "/review/pending-11111111-1111-4111-8111-111111111111/keep-pending", {}, ["ADMIN", "MANAGER", "ANALYST"]],
-    ["POST", `/documents/${DOCUMENT_ID}/police-date`, {}, ["ADMIN", "MANAGER"]],
+    ["GET", "/review", undefined, ["ADMIN"]],
+    ["POST", "/review/pending-11111111-1111-4111-8111-111111111111/keep-pending", {}, ["ADMIN"]],
+    ["POST", `/documents/${DOCUMENT_ID}/police-date`, {}, ["ADMIN"]],
     ["GET", "/users", undefined, ["ADMIN"]],
-    // MANAGER may invite (a Job Handler only: an empty body is a 400 for both).
-    ["POST", "/users/invite", {}, ["ADMIN", "MANAGER"]],
+    ["POST", "/users/invite", {}, ["ADMIN"]],
     ["PUT", "/users/someone/role", { role: "ANALYST" }, ["ADMIN"]],
     ["POST", "/users/someone/deactivate", {}, ["ADMIN"]],
     ["GET", "/audit-logs", undefined, ["ADMIN"]],
-    // Google Sheet Sync: MANAGER reads the status and uses Update Sheet; Sync Now stays ADMIN only.
-    ["GET", "/settings/sheet-sync/status", undefined, ["ADMIN", "MANAGER"]],
+    // Google Sheet Sync and Upload (the bulk import): ADMIN only, like every Settings tab.
+    ["GET", "/settings/sheet-sync/status", undefined, ["ADMIN"]],
     ["POST", "/settings/sheet-sync/run", {}, ["ADMIN"]],
-    ["GET", "/settings/sheet-sync/import/source-columns", undefined, ["ADMIN", "MANAGER"]],
-    ["POST", "/settings/sheet-sync/import/preview", {}, ["ADMIN", "MANAGER"]],
+    ["GET", "/settings/sheet-sync/import/source-columns", undefined, ["ADMIN"]],
+    ["POST", "/settings/sheet-sync/import/preview", {}, ["ADMIN"]],
 ];
 
 let server;
@@ -89,10 +105,11 @@ async function call(method, path, adminId, body) {
 }
 
 describe("role constants", () => {
-    test("exactly the five application roles; legacy VIEWER/REVIEWER are not roles", () => {
-        assert.deepEqual(ALL_ROLES, ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+    test("exactly the six application roles; the retired MANAGER and legacy VIEWER/REVIEWER are not roles", () => {
+        assert.deepEqual(ALL_ROLES, ["OWNER", "ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         assert.deepEqual(Object.values(ROLES), ALL_ROLES);
-        for (const legacy of ["VIEWER", "REVIEWER", "admin", "", null]) assert.equal(isValidRole(legacy), false);
+        assert.deepEqual(RETIRED_ROLES, { MANAGER: "MANAGER" });
+        for (const legacy of ["MANAGER", "manager", "VIEWER", "REVIEWER", "admin", "owner", "SUPERADMIN", "", null]) assert.equal(isValidRole(legacy), false);
     });
 
     test("requireRole reads req.user only: no user -> 401, other role -> 403", () => {
@@ -107,6 +124,11 @@ describe("role constants", () => {
         assert.equal(run({ admin: { role: "ADMIN" } }), 401, "the legacy req.admin is never trusted");
         assert.equal(run({ user: { role: "MANAGER" } }), 403);
         assert.equal(run({ user: { role: "ADMIN" } }), "next");
+        assert.equal(run({ user: { role: "OWNER" } }), "next", "OWNER passes an ADMIN tier");
+        const analysts = requireRole([ROLES.ANALYST]);
+        let status = null;
+        analysts({ user: { role: "OWNER" } }, { status: (code) => { status = code; return { json: () => {} }; } }, () => { status = "next"; });
+        assert.equal(status, 403, "OWNER only inherits ADMIN, not a tier without ADMIN");
     });
 });
 
@@ -115,7 +137,7 @@ describe("role matrix (backend is the boundary)", () => {
         test(`${role}`, async () => {
             for (const [method, path, body, allowed] of MATRIX) {
                 const { status, body: response } = await call(method, path, `user-${role}-ACTIVE`, body);
-                if (allowed.includes(role)) {
+                if (admits(allowed, role)) {
                     assert.notEqual(status, 403, `${role} ${method} ${path} should be allowed`);
                     assert.notEqual(status, 401, `${role} ${method} ${path}`);
                 } else {
@@ -128,6 +150,14 @@ describe("role matrix (backend is the boundary)", () => {
 
     test("an unknown role (legacy VIEWER) is refused everywhere", async () => {
         for (const [method, path, body] of MATRIX) assert.equal((await call(method, path, "user-VIEWER-ACTIVE", body)).status, 403, `${method} ${path}`);
+    });
+
+    test("an ACTIVE account still holding the retired MANAGER role is refused everywhere, the former MANAGER routes included", async () => {
+        for (const [method, path, body] of MATRIX) {
+            const result = await call(method, path, "user-MANAGER-ACTIVE", body);
+            assert.deepEqual([result.status, result.body?.code], [403, "ROLE_NOT_SUPPORTED"], `${method} ${path}`);
+        }
+        assert.equal(authAdmin.calls.length, 0, "nothing sent to Supabase");
     });
 
     test("no session -> 401; INACTIVE or INVITED user -> 403 before any role check", async () => {
@@ -144,7 +174,7 @@ describe("role matrix (backend is the boundary)", () => {
     test("a role change in the database applies to the very next request", async () => {
         const row = fixture.adminRows.find((r) => r.adminId === "user-REGISTRATION_DESK-ACTIVE");
         assert.equal((await call("GET", "/overview", row.adminId)).status, 403);
-        row.role = "ANALYST";
+        row.role = "ADMIN";
         assert.equal((await call("GET", "/overview", row.adminId)).status, 200);
         row.role = "REGISTRATION_DESK";
         assert.equal((await call("GET", "/overview", row.adminId)).status, 403);

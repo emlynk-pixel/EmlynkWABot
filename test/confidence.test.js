@@ -77,8 +77,8 @@ describe("getClassificationConfidence", () => {
     test("strong content evidence", () => {
         assert.equal(getClassificationConfidence(classify("x.pdf", loadDocumentText("passport-mrz"))), 100);
     });
-    test("MRZ-only passport (score 4)", () => {
-        assert.equal(getClassificationConfidence(classify("x.pdf", loadDocumentText("passport-mrz-only-noisy"))), 90);
+    test("MRZ-only passport (score 10)", () => {
+        assert.equal(getClassificationConfidence(classify("x.pdf", loadDocumentText("passport-mrz-only-noisy"))), 100);
     });
     test("borderline police slip (score 3)", () => {
         assert.equal(getClassificationConfidence(classify("x.pdf", loadDocumentText("police-slip"))), 80);

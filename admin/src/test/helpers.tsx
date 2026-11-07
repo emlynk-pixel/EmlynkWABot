@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
 import type { ClientDetails, DocumentItem, DocumentList, Overview } from "../api/admin";
 import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth/AuthProvider";
@@ -57,6 +57,18 @@ export async function renderAppSignedIn(path: string) {
     const result = renderApp(path);
     await screen.findByTestId("admin-name", {}, RENDER_STEP);
     return result;
+}
+
+// The heading of the home page each role lands on (roles.ts landingPath). A page a role can't open
+// takes it there (App.tsx AllowRoles) instead of showing a warning.
+export const HOME_HEADING: Record<string, string> = {
+    OWNER: "Overview", ADMIN: "Overview", TEAM_LEAD: "Candidates", ANALYST: "Candidates", JOB_HANDLER: "Jobs", REGISTRATION_DESK: "Add candidate",
+};
+
+// The role was taken to its own home page: no "Access Restricted" warning.
+export async function expectRedirectedHome(role: string) {
+    expect(await screen.findByRole("heading", { name: HOME_HEADING[role], level: 1 }, RENDER_STEP)).toBeInTheDocument();
+    expect(screen.queryByText("Access Restricted")).toBeNull();
 }
 
 export function renderApp(initialPath = "/") {

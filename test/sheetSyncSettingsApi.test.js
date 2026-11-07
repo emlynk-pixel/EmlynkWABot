@@ -12,7 +12,8 @@ import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js"
 import { authIdFor, fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
 const BASE = "/api/admin/settings/sheet-sync";
-const ROLES = ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"];
+// MANAGER: an account still holding the retired role (not converted yet).
+const ROLES = ["ADMIN", "OWNER", "ANALYST", "REGISTRATION_DESK", "MANAGER"];
 
 let database;
 let prisma;
@@ -27,7 +28,7 @@ before(async () => {
     }
     await prisma.user.create({ data: { adminId: "admin-inactive", authUserId: authIdFor("admin-inactive"), name: "x", email: "inactive@example.invalid", role: "ADMIN", status: "INACTIVE" } });
     // Its role is changed in the database during a test: the next request uses it.
-    await prisma.user.create({ data: { adminId: "admin-demoted", authUserId: authIdFor("admin-demoted"), name: "y", email: "demoted@example.invalid", role: "MANAGER", status: "ACTIVE" } });
+    await prisma.user.create({ data: { adminId: "admin-demoted", authUserId: authIdFor("admin-demoted"), name: "y", email: "demoted@example.invalid", role: "ADMIN", status: "ACTIVE" } });
 
     const app = express();
     app.use(express.json());
@@ -68,15 +69,18 @@ describe("authorization (backend is the boundary)", () => {
         });
     }
 
-    // MANAGER opens the Google Sheet Sync area (status, runs, Update Sheet); every action on the
-    // integration itself (Test Connection, Sync Now, destination) stays ADMIN only.
-    test("MANAGER: reads the status and runs; 403 on Test Connection, Sync Now and the destination; no run is recorded", async () => {
-        assert.equal((await call("GET", "/status", "admin-MANAGER")).status, 200);
-        assert.equal((await call("GET", "/runs/00000000-0000-4000-8000-000000000000", "admin-MANAGER")).status, 404, "allowed; the run doesn't exist");
-        for (const [method, path] of [["POST", "/test"], ["POST", "/run"], ["PUT", "/destination"]]) {
+    // The whole Google Sheet Sync area (status, runs, Upload, Test Connection, Sync Now, destination)
+    // is ADMIN only; an OWNER holds every ADMIN permission. An account still holding the retired
+    // MANAGER role gets nothing, not even the status it used to read.
+    test("OWNER: reads the status and runs (an ADMIN permission)", async () => {
+        assert.equal((await call("GET", "/status", "admin-OWNER")).status, 200);
+        assert.equal((await call("GET", "/runs/00000000-0000-4000-8000-000000000000", "admin-OWNER")).status, 404, "allowed; the run doesn't exist");
+    });
+
+    test("retired MANAGER: 403 ROLE_NOT_SUPPORTED on every Settings endpoint (the status and runs too); no run is recorded", async () => {
+        for (const [method, path] of endpoints) {
             const { status, body } = await call(method, path, "admin-MANAGER");
-            assert.equal(status, 403, `${method} ${path}`);
-            assert.deepEqual(body, { message: "Insufficient permissions" });
+            assert.deepEqual([status, body.code], [403, "ROLE_NOT_SUPPORTED"], `${method} ${path}`);
         }
         assert.equal(await prisma.sheetSyncRun.count(), 0);
     });
@@ -91,7 +95,7 @@ describe("authorization (backend is the boundary)", () => {
         assert.equal((await call("GET", "/status", "admin-demoted")).status, 403);
         await prisma.user.update({ where: { adminId: "admin-demoted" }, data: { role: "ADMIN" } });
         assert.equal((await call("GET", "/status", "admin-demoted")).status, 200);
-        await prisma.user.update({ where: { adminId: "admin-demoted" }, data: { role: "MANAGER" } });
+        await prisma.user.update({ where: { adminId: "admin-demoted" }, data: { role: "REGISTRATION_DESK" } });
         assert.equal((await call("POST", "/run", "admin-demoted")).status, 403);
         assert.equal(await prisma.sheetSyncRun.count(), 0);
     });
@@ -156,8 +160,8 @@ describe("ADMIN", () => {
 });
 
 describe("existing routes are unchanged", () => {
-    test("Candidate Pool list still answers for every role it allowed before", async () => {
-        for (const role of ROLES) {
+    test("Candidate Pool list still answers for every Candidates list role (not REGISTRATION_DESK, which has none)", async () => {
+        for (const role of ROLES.filter((r) => !["MANAGER", "REGISTRATION_DESK"].includes(r))) {
             const response = await fetch(`${baseUrl}/api/admin/candidates`, { headers: { Authorization: `Bearer ${token(`admin-${role}`)}` } });
             assert.equal(response.status, 200, role);
         }

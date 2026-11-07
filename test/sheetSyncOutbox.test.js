@@ -119,7 +119,7 @@ describe("change capture through the real candidate service (Section 4.4 writers
     test("details edit and stage saves (single statements, no transaction of their own) coalesce into that one row", async () => {
         const { passportId, uniqueId } = await register();
         await updateCandidateDetails({ db: prisma, passportId, values: parseCandidateBody({ ...REGISTRATION, address: "12 Galle Road" }, { creating: false }).values });
-        await updateStage({ db: prisma, passportId, stage: "IVS_INTERVIEW", values: parseStageBody({ completed: true }, "IVS_INTERVIEW").values });
+        await updateStage({ db: prisma, passportId, stage: "VISA_APPROVAL", values: parseStageBody({ completed: true }, "VISA_APPROVAL").values });
         await updateStage({ db: prisma, passportId, stage: "TEST_DETAILS", values: parseStageBody({ notes: "Sat the test" }, "TEST_DETAILS").values });
         const rows = await queue();
         assert.equal(rows.length, 1, "rapid changes to one candidate leave one pending row");
@@ -155,7 +155,7 @@ describe("change capture through the real candidate service (Section 4.4 writers
         const { passportId } = await register();
         const later = new Date(Date.now() + 10 * 60_000);
         await prisma.sheetSyncQueue.updateMany({ data: { nextAttemptAt: later, attempts: 2 } });
-        await updateStage({ db: prisma, passportId, stage: "IVS_INTERVIEW", values: parseStageBody({ completed: true }, "IVS_INTERVIEW").values });
+        await updateStage({ db: prisma, passportId, stage: "VISA_APPROVAL", values: parseStageBody({ completed: true }, "VISA_APPROVAL").values });
         const [row] = await queue();
         assert.equal(row.nextAttemptAt.getTime(), later.getTime());
         assert.equal(row.attempts, 2);
@@ -171,7 +171,7 @@ describe("change capture through the real candidate service (Section 4.4 writers
         const { passportId } = await register();
         await prisma.sheetSyncQueue.deleteMany();
         await assert.rejects(prisma.$transaction(async (tx) => {
-            await tx.candidateStage.create({ data: { passportId, stage: "FINALIZING_JOB", completed: true } });
+            await tx.candidateStage.create({ data: { passportId, stage: "VISA_SUBMISSION", completed: true } });
             throw new Error("rollback");
         }));
         assert.deepEqual(await queue(), []);

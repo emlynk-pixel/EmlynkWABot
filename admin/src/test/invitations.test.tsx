@@ -1,33 +1,51 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
-import { ADMIN, SESSION_TOKEN, renderApp, signedInBackend, userWithRole } from "./helpers";
+import { ADMIN, SESSION_TOKEN, renderApp, signedInBackend, userWithRole, expectRedirectedHome } from "./helpers";
 
 const USERS = [
     { userId: "admin-1", name: "Test Admin", email: ADMIN.email, role: "ADMIN", status: "ACTIVE", createdDate: "2026-10-01T00:00:00.000Z" },
     { userId: "u-2", name: "Pending Person", email: "pending@example.invalid", role: "ANALYST", status: "INVITED", createdDate: "2026-10-02T00:00:00.000Z" },
-    { userId: "u-3", name: "Former Staff", email: "former@example.invalid", role: "MANAGER", status: "INACTIVE", createdDate: "2026-10-03T00:00:00.000Z" },
+    { userId: "u-3", name: "Former Staff", email: "former@example.invalid", role: "JOB_HANDLER", status: "INACTIVE", createdDate: "2026-10-03T00:00:00.000Z" },
 ];
+// An account still holding the retired MANAGER role (not converted yet): the OWNER changes it.
+const RETIRED = { userId: "u-4", name: "Old Manager", email: "old.manager@example.invalid", role: "MANAGER", status: "ACTIVE", createdDate: "2026-09-01T00:00:00.000Z" };
 const list = { status: 200, body: { users: USERS } };
 
 describe("Invite User page", () => {
-    test("ADMIN: invite form with all five roles, and the user list with statuses", async () => {
+    test("ADMIN: invite form with the roles below Admin, and the user list with statuses", async () => {
         signedInBackend({ "GET /api/admin/users": list });
         renderApp("/invitations");
         expect(await screen.findByRole("heading", { name: "Invite User" })).toBeInTheDocument();
         const roleOptions = within(screen.getByRole("combobox", { name: /^Role/ })).getAllByRole("option").map((o) => o.getAttribute("value"));
-        expect(roleOptions).toEqual(["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        expect(roleOptions).toEqual(["TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
         expect(await screen.findByText("Pending Person")).toBeInTheDocument();
         expect(screen.getByText("Invitation sent")).toBeInTheDocument();
         expect(screen.getByText("Inactive")).toBeInTheDocument();
         expect(screen.queryByText(/VIEWER/i)).not.toBeInTheDocument();
     });
 
+    test("a pending invitation shows when it was sent, and says to resend once its link has expired (24 h)", async () => {
+        const fresh = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        const stale = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+        signedInBackend({ "GET /api/admin/users": { status: 200, body: { users: [
+            USERS[0],
+            { ...USERS[1], invitedAt: fresh },
+            { userId: "u-5", name: "Stale Invite", email: "stale@example.invalid", role: "ANALYST", status: "INVITED", createdDate: stale, invitedAt: stale },
+        ] } } });
+        renderApp("/invitations");
+        const pending = (await screen.findByText("Pending Person")).closest("tr") as HTMLElement;
+        expect(within(pending).getByText(/^Sent /)).toBeInTheDocument();
+        expect(within(pending).queryByText(/link expired/)).not.toBeInTheDocument();
+        const staleRow = screen.getByText("Stale Invite").closest("tr") as HTMLElement;
+        expect(within(staleRow).getByText(/link expired, resend/)).toBeInTheDocument();
+    });
+
     test("ANALYST, REGISTRATION_DESK and JOB_HANDLER see Access Restricted and request nothing", async () => {
         for (const role of ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } } });
             const { unmount } = renderApp("/invitations");
-            expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
+            await expectRedirectedHome(role);
             expect(calls.some((c) => c.path.startsWith("/api/admin/users"))).toBe(false);
             unmount();
         }
@@ -59,7 +77,7 @@ describe("Invite User page", () => {
         });
         renderApp("/invitations");
         await userEvent.setup().click(await screen.findByRole("button", { name: "Re-invite" }));
-        expect(await screen.findByText(/already had an account; it is active again as Manager/)).toBeInTheDocument();
+        expect(await screen.findByText(/already had an account; it is active again as Job Handler/)).toBeInTheDocument();
     });
 
     test("the backend's refusal (e.g. already active) is shown", async () => {
@@ -90,5 +108,18 @@ describe("Invite User page", () => {
 
         const selfRow = screen.getByText(ADMIN.email).closest("tr") as HTMLElement;
         expect(within(selfRow).queryByRole("button", { name: "Deactivate" })).not.toBeInTheDocument();
+    });
+
+    test("MANAGER is never offered (Owner or Admin); a retired Manager account reads as such and an ADMIN gets no action on it", async () => {
+        for (const who of [userWithRole("OWNER"), ADMIN]) {
+            signedInBackend({ "GET /auth/me": { status: 200, body: { user: who } }, "GET /api/admin/users": { status: 200, body: { users: [...USERS, RETIRED] } } });
+            const { unmount } = renderApp("/settings/invite");
+            const options = within(await screen.findByRole("combobox", { name: /^Role/ })).getAllByRole("option").map((o) => o.getAttribute("value"));
+            expect(options).not.toContain("MANAGER");
+            const row = (await screen.findByText("Old Manager")).closest("tr") as HTMLElement;
+            expect(within(row).getByText("Manager (retired)")).toBeInTheDocument();
+            if (who === ADMIN) expect(within(row).queryAllByRole("button")).toEqual([]);
+            unmount();
+        }
     });
 });

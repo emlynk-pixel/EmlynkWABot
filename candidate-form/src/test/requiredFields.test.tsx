@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { buildMetaContentSecurityPolicy } from "../../csp";
 import { setAt } from "../form/binding";
 import { emptyForm, toPayload, type CandidateFormData } from "../form/model";
-import { SHOE_SIZE_GUIDE, SHOE_SIZE_PRESETS, SHIRT_SIZES } from "../form/options";
+import { SHIRT_SIZES, SHIRT_SIZE_CHART_COLUMNS, SHOE_SIZE_PRESETS } from "../form/options";
 import { NOT_APPLICABLE_FIELDS, requiredPaths, validateForm, visiblePaths } from "../form/validation";
 import { TRANSLATIONS } from "../i18n/translations";
 import styles from "../styles.css?raw";
@@ -24,7 +24,7 @@ function validData(): CandidateFormData {
     data.contact = { address: "12 MAIN STREET", city: "COLOMBO", district: "COLOMBO", dsDivision: "KOLONNAWA", gnDivision: "KOLONNAWA NORTH", alternativePhone: "n/a", email: "a@example.com", cityInRomania: "N/A" };
     data.passport = { issueDate: "2020-01-15", expiryDate: "2030-01-14" };
     data.qualifications = { jobCategory: "WELDER TIG", jobCategoryOther: "", experience: "N/A", otherSkills1: "N/A", otherSkills2: "N/A", englishKnowledge: "GOOD" };
-    data.measurements = { shirtSize: "M", waistSize: "32", shoeSize: "9" };
+    data.measurements = { shirtSize: "M", waistSize: "32", shoeSize: "42" };
     data.family.father = { name: "N/A", surname: "", passportNumber: "", birthDate: "" };
     data.family.mother = { name: "KUMARI", surname: "PERERA", passportNumber: "N/A", birthDate: "1965-02-03" };
     data.family.child1 = "N/A";
@@ -247,54 +247,74 @@ describe("size guides", () => {
         return user;
     };
 
-    test("SHOE-GUIDE-001 a Size guide link under Shoe Size opens a compact UK / EU table; Escape or Close closes it and returns to the link", async () => {
-        const user = await openWork();
-        const toggles = screen.getAllByRole("button", { name: en("guide.open") });
-        expect(toggles).toHaveLength(2); // shirt and shoe
-        const shoeToggle = toggles[1];
-        expect(shoeToggle).toHaveAttribute("aria-expanded", "false");
-        await user.click(shoeToggle);
-        expect(shoeToggle).toHaveAttribute("aria-expanded", "true");
-        const panel = screen.getByRole("region", { name: en("guide.shoe.title") });
-        const rows = within(panel).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
-        expect(rows).toEqual(SHOE_SIZE_GUIDE.map((row) => [row.uk, row.eu]));
-        expect(within(panel).getByRole("columnheader", { name: en("guide.shoe.eu") })).toBeInTheDocument();
-        expect(within(panel).getByText(en("guide.shoe.note"))).toBeInTheDocument();
-        // Keyboard: Escape closes and puts focus back on the link.
-        within(panel).getByRole("button", { name: en("guide.close") }).focus();
-        await user.keyboard("{Escape}");
-        expect(screen.queryByRole("region", { name: en("guide.shoe.title") })).toBeNull();
-        expect(shoeToggle).toHaveFocus();
-        await user.keyboard("{Enter}");
-        await user.click(screen.getByRole("button", { name: en("guide.close") }));
-        expect(screen.queryByRole("region", { name: en("guide.shoe.title") })).toBeNull();
+    test("SHOE-EU-001 Shoe Size is labelled EU and lists EU sizes; its help names EU sizing", async () => {
+        await openWork();
+        expect(en("f.shoeSize")).toBe("Shoe Size (EU)");
+        const select = field("f.shoeSize");
+        const options = within(select).getAllByRole("option").map((option) => option.getAttribute("value")).filter((value) => value && value !== "__other");
+        expect(options).toEqual([...SHOE_SIZE_PRESETS]);
+        expect(SHOE_SIZE_PRESETS).toEqual(["38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48"]);
+        expect(si("f.shoeSize")).toContain("(EU)");
     });
 
-    test("SHOE-GUIDE-002 the stored shoe size keeps its meaning: the list is UK sizes, the guide never changes the answer, Other still takes any size", async () => {
-        expect(SHOE_SIZE_GUIDE.map((row) => row.uk)).toEqual([...SHOE_SIZE_PRESETS]);
-        expect(SHOE_SIZE_PRESETS).toEqual(["5", "6", "7", "8", "9", "10", "11", "12", "13"]);
-        const user = await openWork();
-        setField("f.shoeSize", "9");
-        await user.click(screen.getAllByRole("button", { name: en("guide.open") })[1]);
-        expect(field("f.shoeSize")).toHaveValue("9");
+    test("SHOE-EU-002 EU only: no other sizing system is named anywhere in the shoe size field, its help or its guide, in either language", async () => {
+        await openWork();
+        const shoe = field("f.shoeSize").closest(".field-grid > div") as HTMLElement;
+        expect(shoe.textContent).not.toMatch(/\bUK\b|\bUS\b/);
+        const keys = ["f.shoeSize", "f.shoeSizeOther", "help.shoeSize", "guide.shoe.title", "guide.shoe.tip1", "guide.shoe.tip2", "guide.shoe.note"] as const;
+        for (const key of keys) {
+            expect(en(key), key).not.toMatch(/\bUK\b|\bUS\b/);
+            expect(si(key), key).not.toMatch(/\bUK\b|\bUS\b/);
+        }
+    });
+
+    test("SHOE-GUIDE-001 the shoe size guide is always shown under Shoe Size (EU), with no link or button to open it", async () => {
+        await openWork();
+        // Neither guide has a toggle any more: both are on screen as soon as the step opens.
+        expect(screen.queryByRole("button", { name: /size guide/i })).toBeNull();
+        const panel = screen.getByRole("region", { name: en("guide.shoe.title") });
+        expect(panel).toBeVisible();
+        expect(field("f.shoeSize").closest(".field-grid > div")).toContainElement(panel);
+        expect(within(panel).getAllByRole("listitem").map((item) => item.textContent)).toEqual([en("guide.shoe.tip1"), en("guide.shoe.tip2")]);
+        expect(within(panel).queryByRole("table")).toBeNull();
+        expect(within(panel).getByText(en("guide.shoe.note").replace("{from}", "38").replace("{to}", "48"))).toBeInTheDocument();
+    });
+
+    test("SHOE-GUIDE-002 the answer is the EU size chosen: the guide never changes it, it is sent as chosen, Other still takes any size", async () => {
+        await openWork();
+        setField("f.shoeSize", "42");
+        expect(screen.getByRole("region", { name: en("guide.shoe.title") })).toBeVisible();
+        expect(field("f.shoeSize")).toHaveValue("42");
         const data = validData();
-        expect(toPayload(data).measurements.shoeSize).toBe("9");
+        expect(toPayload(data).measurements.shoeSize).toBe("42");
         data.measurements.shoeSize = "EU 43";
         expect(errorsOf(data)).toEqual({});
         expect(toPayload(data).measurements.shoeSize).toBe("EU 43");
     });
 
-    test("SHIRT-GUIDE-001 a Size guide under Shirt Size names every size (XS to XXL), in the current language, with no invented measurements", async () => {
+    test("SHIRT-GUIDE-001 the shirt size chart is always shown under Shirt Size: width, length and chest to fit in inches, one row per size the form offers, in the current language", async () => {
         const user = await openWork();
-        await user.click(screen.getAllByRole("button", { name: en("guide.open") })[0]);
         const panel = screen.getByRole("region", { name: en("guide.shirt.title") });
-        for (const size of SHIRT_SIZES) {
-            expect(within(panel).getByText(size)).toBeInTheDocument();
-            expect(within(panel).getByText(en(`shirt.${size}`))).toBeInTheDocument();
-        }
-        expect(panel.textContent).not.toMatch(/\d+\s*(cm|in|inch)/i);
+        expect(panel).toBeVisible();
+        expect(en("guide.shirt.title")).toContain("(inches)");
+        const table = within(panel).getByRole("table");
+        expect(within(table).getAllByRole("columnheader").slice(1).map((head) => head.textContent)).toEqual(["Width", "Length", "Chest to fit"]);
+        const rows = within(table).getAllByRole("row").slice(1).map((row) => [within(row).getByRole("rowheader").textContent, ...within(row).getAllByRole("cell").map((cell) => cell.textContent)]);
+        // Every size the dropdown offers, in its order; XXL carries the supplier chart's 2XL row.
+        expect(rows.map((row) => row[0])).toEqual([...SHIRT_SIZES]);
+        expect(rows).toEqual([
+            ["XS", "17", "27", "31–34"],
+            ["S", "18", "28", "36–39"],
+            ["M", "20", "29", "39–42"],
+            ["L", "22", "30", "42–45"],
+            ["XL", "24", "31", "46–49"],
+            ["XXL", "26", "32", "50–53"],
+        ]);
+        // No button to open it.
+        expect(screen.queryByRole("button", { name: /size (guide|chart)/i })).toBeNull();
         await switchLanguage(user, "සිංහල");
-        expect(within(screen.getByRole("region", { name: si("guide.shirt.title") })).getByText(si("shirt.XXL"))).toBeInTheDocument();
+        const sinhala = within(screen.getByRole("region", { name: si("guide.shirt.title") })).getByRole("table");
+        expect(within(sinhala).getAllByRole("columnheader").slice(1).map((head) => head.textContent)).toEqual(SHIRT_SIZE_CHART_COLUMNS.map((column) => si(`guide.shirt.${column}`)));
     });
 });
 
@@ -309,32 +329,35 @@ describe("Fonts", () => {
         expect(face).toMatch(/unicode-range:[^;]*U\+200C-200D/); // ZWJ / ZWNJ for conjuncts
         expect(face).toMatch(/font-display:\s*swap/);
         expect(face).toMatch(/font-weight:\s*400 700/);
-        expect(styles).toMatch(/font-family:\s*Roboto, "Noto Sans Sinhala", system-ui, -apple-system, "Segoe UI", Arial, "Nirmala UI", "Iskoola Pota", "Sinhala Sangam MN", sans-serif;/);
+        expect(styles).toMatch(/--font-body:\s*Inter, "Noto Sans Sinhala", system-ui, -apple-system, "Segoe UI", Arial, "Nirmala UI", "Iskoola Pota", "Sinhala Sangam MN", sans-serif;/);
         expect(styles).not.toMatch(/fonts\.googleapis|fonts\.gstatic|@import/);
         expect(faces.every((f) => /src:\s*url\("\/fonts\/[\w-]+\.woff2"\) format\("woff2"\);/.test(f))).toBe(true);
         // The font files and their licences ship with the app (static/ is copied as-is).
         const shipped = Object.keys(import.meta.glob("../../static/fonts/*", { query: "?url", eager: true }));
         expect(shipped.sort()).toEqual([
+            "../../static/fonts/OFL-inter.txt",
+            "../../static/fonts/OFL-montserrat.txt",
             "../../static/fonts/OFL-noto-sans-sinhala.txt",
-            "../../static/fonts/OFL-roboto.txt",
+            "../../static/fonts/inter-latin-ext.woff2",
+            "../../static/fonts/inter-latin.woff2",
+            "../../static/fonts/montserrat-latin-ext.woff2",
+            "../../static/fonts/montserrat-latin.woff2",
             "../../static/fonts/noto-sans-sinhala-sinhala-400-700.woff2",
-            "../../static/fonts/roboto-latin-400-700.woff2",
-            "../../static/fonts/roboto-latin-ext-400-700.woff2",
         ]);
         // The page policy still allows fonts only from the app itself.
         expect(buildMetaContentSecurityPolicy("https://api.example.test")).toContain("font-src 'self'");
     });
 
-    test("FONT-003 Roboto is self-hosted for Latin text (latin + latin-ext), weights 400-700, swap; it never claims Sinhala or the joiners", () => {
-        const roboto = faces.filter((f) => /font-family:\s*Roboto;/.test(f));
-        expect(roboto.map((f) => f.match(/url\("([^"]+)"\)/)?.[1])).toEqual(["/fonts/roboto-latin-400-700.woff2", "/fonts/roboto-latin-ext-400-700.woff2"]);
-        for (const face of roboto) {
+    test.each(["Inter", "Montserrat"])("FONT-003 %s is self-hosted for Latin text (latin + latin-ext), swap; it never claims Sinhala or the joiners", (family) => {
+        const latin = faces.filter((f) => new RegExp(`font-family:\\s*${family};`).test(f));
+        const slug = family.toLowerCase();
+        expect(latin.map((f) => f.match(/url\("([^"]+)"\)/)?.[1])).toEqual([`/fonts/${slug}-latin.woff2`, `/fonts/${slug}-latin-ext.woff2`]);
+        for (const face of latin) {
             expect(face).toMatch(/font-display:\s*swap/);
-            expect(face).toMatch(/font-weight:\s*400 700/);
             expect(range(face)).not.toMatch(/U\+0D|U\+200C|U\+200D|U\+2000-206F|U\+0964|U\+25CC/);
         }
-        expect(range(roboto[0])).toMatch(/U\+0000-00FF/);
-        expect(range(roboto[0])).toMatch(/U\+2000-200B, U\+200E-206F/);
+        expect(range(latin[0])).toMatch(/U\+0000-00FF/);
+        expect(range(latin[0])).toMatch(/U\+2000-200B, U\+200E-206F/);
     });
 
     test("FONT-002 Sinhala texts render as Sinhala (conjuncts keep their zero-width joiner) and the required-field messages switch with the language", async () => {
@@ -365,6 +388,6 @@ describe("unchanged flows", () => {
         const answers = (sent.body as { answers: ReturnType<typeof toPayload> }).answers;
         expect(answers.contact.alternativePhone).toBe("N/A");
         expect(answers.family.father.name).toBe("N/A");
-        expect(answers.measurements).toEqual({ shirtSize: "M", waistSize: "32", shoeSize: "9" });
+        expect(answers.measurements).toEqual({ shirtSize: "M", waistSize: "32", shoeSize: "42" });
     });
 });

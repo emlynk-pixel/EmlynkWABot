@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../../api/client";
-import { confirmFormField, rejectFormField, type PendingChange } from "../../api/candidates";
-import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../Dialog";
+import { confirmAllFormFields, confirmFormField, rejectAllFormFields, rejectFormField, type PendingChange } from "../../api/candidates";
+import { ActionDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../Dialog";
 import { formatDay, humanize } from "../format";
 
 // Per-field "Candidate submitted: <value> [Confirm]" under the fields of the
@@ -11,6 +11,8 @@ import { formatDay, humanize } from "../format";
 // Confirm applies that ONE field after a confirmation; Revoke dismisses the proposal and leaves the record as it
 // is (it is not an undo of a Confirm). Both are final for that field and share one review state on the server.
 // Roles that cannot confirm still see the hint, without the button.
+// FormChangesButtons offers Confirm All / Reject All (one server transaction each) in the forms' footers;
+// they are shown only to the roles that can confirm, while something is pending.
 
 type Kind = "text" | "date" | "code";
 export const CONFIRMABLE_LABELS: Record<string, { label: string; kind: Kind }> = {
@@ -27,7 +29,7 @@ export const CONFIRMABLE_LABELS: Record<string, { label: string; kind: Kind }> =
     "basic.fullName": { label: "Name according to passport", kind: "text" },
     "measurements.shirtSize": { label: "T-shirt size", kind: "text" },
     "measurements.waistSize": { label: "Pant size", kind: "text" },
-    "measurements.shoeSize": { label: "Shoe size", kind: "text" },
+    "measurements.shoeSize": { label: "Shoe size (EU)", kind: "text" },
     "family.father.birthDate": { label: "Father birthday", kind: "date" },
     "family.mother.birthDate": { label: "Mother birthday", kind: "date" },
     "family.fatherAlive": { label: "Father alive", kind: "code" },
@@ -42,7 +44,7 @@ export const CONFIRMABLE_LABELS: Record<string, { label: string; kind: Kind }> =
     "family.child2": { label: "2nd child name", kind: "text" },
     "family.child3": { label: "3rd child name", kind: "text" },
     "qualifications.otherSkills1": { label: "Other job skills", kind: "text" },
-    // No field of their own in Admin: confirmed from the "Submitted on the Candidate Form" card.
+    // The Candidate Form's other answers (their own fields on the Additional details tab).
     "basic.bloodGroup": { label: "Blood Group", kind: "text" },
     "basic.height": { label: "Height", kind: "text" },
     "basic.weight": { label: "Weight (kg)", kind: "text" },
@@ -81,6 +83,13 @@ const RECORD_KEY: Record<string, string> = {
     "basic.civilStatus": "maritalStatus", "family.father.fullName": "fatherFullName", "family.mother.fullName": "motherFullName",
     "family.spouse.fullName": "wifeFullName", "family.spouse.birthDate": "wifeBirthday",
     "family.child1": "child1Name", "family.child2": "child2Name", "family.child3": "child3Name", "qualifications.otherSkills1": "otherJobSkills",
+    "basic.bloodGroup": "bloodGroup", "basic.height": "height", "basic.weight": "weightKg", "basic.drivingLicence": "drivingLicence",
+    "basic.canReadDrawings": "canReadDrawings", "basic.teamLeadingSkills": "teamLeadingSkills", "basic.otherLanguages": "otherLanguages",
+    "contact.email": "email", "contact.city": "city", "contact.district": "district", "contact.dsDivision": "dsDivision", "contact.gnDivision": "gnDivision",
+    "contact.cityInRomania": "cityInRomania", "qualifications.jobCategoryOther": "otherJobCategory", "qualifications.otherSkills2": "otherJobSkills2",
+    "qualifications.englishKnowledge": "englishKnowledge", "family.father.passportNumber": "fatherPassportNumber", "family.mother.passportNumber": "motherPassportNumber",
+    "family.spouse.passportNumber": "spousePassportNumber", "guardian.name": "guardianName", "guardian.relationship": "guardianRelationship", "guardian.nic": "guardianNic",
+    "guardian.birthDate": "guardianBirthday", "guardian.phone": "guardianPhone", "guardian.address": "guardianAddress",
 };
 
 // Folds a refreshed record into a form that may hold unsaved typing. A field the record changed takes the new
@@ -96,7 +105,7 @@ export function mergeRefreshed<T extends Record<string, unknown>>(current: T, pr
     return merged;
 }
 
-function display(field: string, value: string | null): string {
+export function display(field: string, value: string | null): string {
     if (value === null || value === "") return "Not recorded";
     const kind = CONFIRMABLE_LABELS[field]?.kind ?? "text";
     return kind === "date" ? formatDay(value) : kind === "code" ? humanize(value) : value;
@@ -108,6 +117,8 @@ type Context = {
     rejected: ReadonlySet<string>;
     canConfirm: boolean;
     ask: (change: PendingChange, action: Action) => void;
+    // Confirm All / Reject All: every pending change at once (one server transaction).
+    askAll: (action: Action) => void;
     takeConfirmed: (keys: readonly string[]) => string[];
     // The field the page was opened for (the Candidates list's "!", ?field=), highlighted more strongly.
     focusField: string | null;
@@ -127,6 +138,8 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
     children: ReactNode;
 }) {
     const [asking, setAsking] = useState<{ change: PendingChange; action: Action } | null>(null);
+    // Confirm All / Reject All: the changes listed when the dialog opened are exactly what is sent.
+    const [askingAll, setAskingAll] = useState<{ changes: readonly PendingChange[]; action: Action } | null>(null);
     // Form keys the Admin just confirmed: the forms take them once the refreshed record arrives.
     const confirmedKeys = useRef(new Set<string>());
     const takeConfirmed = useCallback((keys: readonly string[]) => {
@@ -141,11 +154,33 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
         rejected: new Set(rejected),
         canConfirm: canConfirm && Boolean(token),
         ask: (change, action) => { setError(null); setAsking({ change, action }); },
+        askAll: (action) => { setError(null); setAskingAll({ changes: pending, action }); },
         takeConfirmed,
         focusField,
     }), [pending, rejected, canConfirm, token, takeConfirmed, focusField]);
 
-    const close = () => { if (!busy) { setAsking(null); setError(null); } };
+    const close = () => { if (!busy) { setAsking(null); setAskingAll(null); setError(null); } };
+    const reviewAll = async () => {
+        // busy also guards a second click before the button re-renders disabled.
+        if (!askingAll || !token || busy) return;
+        setBusy(true);
+        setError(null);
+        try {
+            const { changes, action } = askingAll;
+            const body = { changes: changes.map((change) => ({ field: change.field, expectedCurrentValue: change.current, expectedSubmittedValue: change.submitted })) };
+            if (action === "confirm") await confirmAllFormFields(token, passportId, body);
+            else await rejectAllFormFields(token, passportId, body);
+            setAskingAll(null);
+            if (action === "confirm") for (const change of changes) if (RECORD_KEY[change.field]) confirmedKeys.current.add(RECORD_KEY[change.field]);
+            onConfirmed();
+        } catch (caught) {
+            setError(caught instanceof ApiError ? caught.message : "The changes could not be saved. Please try again.");
+            // Nothing was decided (the server rolls the whole request back): show the current state behind the dialog.
+            if (caught instanceof ApiError && caught.status === 409) onConfirmed();
+        } finally {
+            setBusy(false);
+        }
+    };
     const confirm = async () => {
         if (!asking || !token) return;
         setBusy(true);
@@ -187,7 +222,67 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
                     </div>
                 </ActionDialog>
             )}
+            {askingAll && (
+                <ActionDialog title={askingAll.action === "confirm" ? `Confirm all ${askingAll.changes.length} Candidate Form changes?` : `Reject all ${askingAll.changes.length} Candidate Form changes?`} busy={busy} onClose={close}>
+                    <ChangesTable changes={askingAll.changes} />
+                    <p className="mt-3 text-label-sm text-ink-muted">{askingAll.action === "confirm"
+                        ? "Every change listed is applied to the candidate's record, with the same checks as confirming each one. If any one cannot be applied, nothing is changed. The submitted form is kept as it is."
+                        : "The current values are kept. Every submitted value listed is dismissed and will not be offered again; the submitted form itself is kept as it is."}</p>
+                    <DialogError message={error} />
+                    <div className="mt-4 flex justify-end gap-2">
+                        <button type="button" className={secondaryButton} disabled={busy} onClick={close}>{error ? "Close" : "Cancel"}</button>
+                        {!error && (
+                            <button type="button" className={askingAll.action === "confirm" ? primaryButton : dangerSolidButton} disabled={busy} onClick={reviewAll}>
+                                {busy ? (askingAll.action === "confirm" ? "Confirming…" : "Rejecting…") : askingAll.action === "confirm" ? "Confirm all" : "Reject all"}
+                            </button>
+                        )}
+                    </div>
+                </ActionDialog>
+            )}
         </SubmittedChanges.Provider>
+    );
+}
+
+// Field / Current / Submitted for the changes a Confirm All / Reject All will decide.
+function ChangesTable({ changes }: { changes: readonly PendingChange[] }) {
+    return (
+        <div className="max-h-80 overflow-auto rounded-lg border border-border">
+            <table className="w-full text-left text-body-sm">
+                <thead className="sticky top-0 bg-canvas text-label-sm text-ink-muted">
+                    <tr>
+                        <th scope="col" className="px-3 py-2 font-medium">Field</th>
+                        <th scope="col" className="px-3 py-2 font-medium">Current</th>
+                        <th scope="col" className="px-3 py-2 font-medium">Submitted</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {changes.map((change) => (
+                        <tr key={change.field} data-testid={`change-row-${change.field}`} className="border-t border-border align-top">
+                            <th scope="row" className="px-3 py-2 font-medium text-ink">{CONFIRMABLE_LABELS[change.field]?.label ?? change.field}</th>
+                            <td className="break-words px-3 py-2 text-ink-muted">{display(change.field, change.current)}</td>
+                            <td className="break-words px-3 py-2 font-medium text-ink">{display(change.field, change.submitted)}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+// [Confirm All] [Reject All] in the footer of the Candidate details and Additional details forms, left of
+// Cancel. Only for the roles that may review Candidate Form changes, and only while the submission still
+// has a pending change: they go away with the last decision. The values themselves stay in the inline
+// hints; the dialog lists every change it will decide (Field / Current / Submitted).
+export function FormChangesButtons() {
+    const context = useContext(SubmittedChanges);
+    if (!context?.canConfirm || context.pending.size === 0) return null;
+    const count = context.pending.size;
+    const summary = count === 1 ? "1 Candidate Form change to review" : `${count} Candidate Form changes to review`;
+    return (
+        <span data-testid="candidate-form-changes" role="group" aria-label={summary} title={summary} className="flex gap-2">
+            <button type="button" className={primaryButton} onClick={() => context.askAll("confirm")}>Confirm All</button>
+            <button type="button" className={secondaryButton} onClick={() => context.askAll("reject")}>Reject All</button>
+        </span>
     );
 }
 
@@ -205,10 +300,10 @@ export function SubmittedHint({ field }: { field: string }) {
             <span>Candidate submitted: <strong className="font-semibold">{display(field, change.submitted)}</strong></span>
             {context.canConfirm && (
                 <>
-                    <button type="button" aria-label={`Confirm ${label}`} onClick={() => context.ask(change, "confirm")} className="rounded border border-review-border bg-review-bg px-2 py-0.5 text-label-sm font-medium text-review hover:opacity-80">
+                    <button type="button" aria-label={`Confirm ${label}`} onClick={() => context.ask(change, "confirm")} className="rounded-lg border border-review-border bg-review-bg px-2 py-0.5 text-label-sm font-medium text-review hover:opacity-80">
                         Confirm
                     </button>
-                    <button type="button" aria-label={`Revoke ${label}`} onClick={() => context.ask(change, "reject")} className="rounded border border-border-strong bg-surface px-2 py-0.5 text-label-sm font-medium text-ink-soft hover:bg-canvas">
+                    <button type="button" aria-label={`Revoke ${label}`} onClick={() => context.ask(change, "reject")} className="rounded-lg border border-border-strong bg-surface px-2 py-0.5 text-label-sm font-medium text-ink-soft hover:bg-canvas">
                         Revoke
                     </button>
                 </>

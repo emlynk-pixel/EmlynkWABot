@@ -1,9 +1,9 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import { CANDIDATE_STAGES, type CandidateList } from "../api/candidates";
 import type { AllocationAnalysts, AllocationCandidate, AllocationCandidateList } from "../api/workAllocation";
-import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from "./helpers";
+import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
 // Work Allocation page and the Analyst's candidate list. Synthetic candidates
 // only; the backend is a stub (the API's own rules, and the Analyst scoping,
@@ -42,7 +42,7 @@ const ANALYSTS: AllocationAnalysts = {
 };
 const UNALLOCATED = [candidate(3), candidate(2), candidate(1)];
 
-function backend(role = "MANAGER", extra: FetchRoutes = {}) {
+function backend(role = "OWNER", extra: FetchRoutes = {}) {
     return signedInBackend({
         ...asRole(role),
         "GET /api/admin/work-allocation/candidates": (url) => ({
@@ -60,7 +60,7 @@ const posts = (calls: { method: string; path: string; body: unknown }[]) => call
 const assignButton = () => screen.getByRole("button", { name: /^(Assign|Reassign) \d+ candidates$/ });
 
 describe("Work Allocation: who sees it", () => {
-    for (const role of ["ADMIN", "MANAGER"]) {
+    for (const role of ["ADMIN", "OWNER"]) {
         test(`${role}: in the sidebar, and the page loads`, async () => {
             backend(role);
             renderApp("/work-allocation");
@@ -72,7 +72,7 @@ describe("Work Allocation: who sees it", () => {
         test(`${role}: not in the sidebar; the URL shows Access Restricted and requests nothing`, async () => {
             const { calls } = backend(role);
             renderApp("/work-allocation");
-            expect(await screen.findByText("Access Restricted", {}, RENDER_STEP)).toBeInTheDocument();
+            await expectRedirectedHome(role);
             expect(screen.queryByRole("link", { name: "Work Allocation" })).toBeNull();
             expect(calls.some((c) => c.path.startsWith("/api/admin/work-allocation"))).toBe(false);
         });
@@ -143,7 +143,7 @@ describe("Work Allocation: selecting and assigning", () => {
     });
 
     test("a server error is shown and nothing is reported as done", async () => {
-        backend("MANAGER", { "POST /api/admin/work-allocation/assign": { status: 409, body: { message: "Ann Analyst is not an active user. Nothing was changed.", code: "ANALYST_INACTIVE" } } });
+        backend("OWNER", { "POST /api/admin/work-allocation/assign": { status: 409, body: { message: "Ann Analyst is not an active user. Nothing was changed.", code: "ANALYST_INACTIVE" } } });
         renderApp("/work-allocation");
         await table();
         const user = userEvent.setup();
@@ -154,11 +154,11 @@ describe("Work Allocation: selecting and assigning", () => {
         expect(screen.queryByText(/^Allocated \d/)).toBeNull();
     });
 
-    test("a 409 conflict keeps its message, refreshes the list and Analysts, and the stale row shows its new state", async () => {
+    test("a 409 conflict keeps its message, refreshes the list and Analysts, and the stale row leaves the Unallocated list", async () => {
         // Another manager allocated CANDIDATE 1 while this page was open.
         let allocatedElsewhere = false;
-        const { calls } = backend("MANAGER", {
-            "GET /api/admin/work-allocation/candidates": () => ({ status: 200, body: page([candidate(2), allocatedElsewhere ? candidate(1, ANN) : candidate(1)]) }),
+        const { calls } = backend("OWNER", {
+            "GET /api/admin/work-allocation/candidates": () => ({ status: 200, body: page(allocatedElsewhere ? [candidate(2)] : [candidate(2), candidate(1)]) }),
             "POST /api/admin/work-allocation/assign": () => {
                 allocatedElsewhere = true;
                 return { status: 409, body: { message: "1 selected candidate is already allocated. Nothing was changed; confirm a reassignment to move them.", code: "ALREADY_ALLOCATED" } };
@@ -167,8 +167,7 @@ describe("Work Allocation: selecting and assigning", () => {
         renderApp("/work-allocation");
         await table();
         const user = userEvent.setup();
-        const row = (name: string) => within(screen.getByText(name).closest("tr")!);
-        expect(row("CANDIDATE 1").getByText("Unallocated")).toBeInTheDocument();
+        expect(screen.getByText("CANDIDATE 1")).toBeInTheDocument();
         const listCalls = () => calls.filter((c) => c.method === "GET" && c.path.startsWith("/api/admin/work-allocation/candidates")).length;
         const analystCalls = () => calls.filter((c) => c.method === "GET" && c.path.startsWith("/api/admin/work-allocation/analysts")).length;
         const [listBefore, analystsBefore] = [listCalls(), analystCalls()];
@@ -179,9 +178,8 @@ describe("Work Allocation: selecting and assigning", () => {
 
         // The message stays, the data is fetched again, and the row is current.
         expect(await screen.findByText(/already allocated\. Nothing was changed/, {}, RENDER_STEP)).toBeInTheDocument();
-        await screen.findByText("Allocated", { selector: "span" }, RENDER_STEP);
-        expect(row("CANDIDATE 1").getByText("Allocated")).toBeInTheDocument();
-        expect(row("CANDIDATE 1").getByText("Ann Analyst")).toBeInTheDocument();
+        await waitFor(() => expect(screen.queryByText("CANDIDATE 1")).toBeNull(), RENDER_STEP);
+        expect(screen.getByText("CANDIDATE 2")).toBeInTheDocument();
         expect(listCalls()).toBeGreaterThan(listBefore);
         expect(analystCalls()).toBeGreaterThan(analystsBefore);
         // The selection made from the old state is dropped; the message is still there.
@@ -190,7 +188,7 @@ describe("Work Allocation: selecting and assigning", () => {
     });
 
     test("a 409 from the reassign dialog closes it, keeps the message on the page and refreshes", async () => {
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             "POST /api/admin/work-allocation/assign": { status: 409, body: { message: "Ben Analyst is not an active user. Nothing was changed.", code: "ANALYST_INACTIVE" } },
         });
         renderApp("/work-allocation?view=allocated");
@@ -215,7 +213,7 @@ describe("Work Allocation: pages and empty messages", () => {
     });
 
     test("a page past the last one moves to the last page, without claiming nothing is allocated", async () => {
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             "GET /api/admin/work-allocation/candidates": (url) => {
                 const requested = Number(url.searchParams.get("page"));
                 return { status: 200, body: requested === 2 ? paged([candidate(5, ANN)], 2, 2, 101) : paged([], requested, 2, 101) };
@@ -230,7 +228,7 @@ describe("Work Allocation: pages and empty messages", () => {
     });
 
     test("when every allocation was removed, a page past the end falls back to page 1 and shows the real empty state", async () => {
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             "GET /api/admin/work-allocation/candidates": (url) => ({ status: 200, body: paged([], Number(url.searchParams.get("page")), 1, 0) }),
         });
         renderApp("/work-allocation?view=allocated&page=4");
@@ -239,7 +237,7 @@ describe("Work Allocation: pages and empty messages", () => {
     });
 
     test("an empty page inside the range says so, and offers the first page", async () => {
-        backend("MANAGER", {
+        backend("OWNER", {
             "GET /api/admin/work-allocation/candidates": (url) => {
                 const requested = Number(url.searchParams.get("page"));
                 return { status: 200, body: requested === 1 ? paged([candidate(5, ANN)], 1, 3, 250) : paged([], requested, 3, 250) };
@@ -253,7 +251,7 @@ describe("Work Allocation: pages and empty messages", () => {
     });
 
     test("the empty message follows the view, the Analyst filter and the search", async () => {
-        backend("MANAGER", { "GET /api/admin/work-allocation/candidates": (url) => ({ status: 200, body: paged([], Number(url.searchParams.get("page")), 1, 0) }) });
+        backend("OWNER", { "GET /api/admin/work-allocation/candidates": (url) => ({ status: 200, body: paged([], Number(url.searchParams.get("page")), 1, 0) }) });
         const first = renderApp("/work-allocation?view=allocated&analyst=u-ann");
         expect(await screen.findByText("No candidates are allocated to this Analyst.", {}, RENDER_STEP)).toBeInTheDocument();
         first.unmount();

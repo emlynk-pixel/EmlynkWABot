@@ -10,6 +10,8 @@ Public web form where an **existing** candidate opens the personal link staff se
 ## UI flow
 
 0. **Link:** staff create the link in Admin (**Share Form**): `https://<form>/#k=<secret>`, valid 3 days. The form reads the secret from the fragment once, keeps it in memory and removes it from the address bar. Without a well-formed link it shows *Open your link* and offers no verification.
+Before anything else, the page asks for its title, logo and colours (`POST /api/public/candidate-details/branding`, no token, set in the admin under Settings > Candidate Form). If that fails or takes over 2.5 seconds, the form carries on with the EMLYNK defaults.
+
 1. **Verify:** Passport Number + NIC Number, then **Verify** (`POST /api/public/candidate-details/verify` with `{ linkSecret, passportNumber, nic }`). Failures show one fixed message per case (details don't match, too many attempts, service unavailable, no connection, invalid input, anything else), never the server's own text. If the form was already submitted (and the details are right): a neutral *already submitted* screen.
 2. **Candidate Form** (loaded with `POST /form`): answers already on the candidate's record are filled in and marked *From your record*. One section at a time, with **Next** / **Previous**, a progress bar (*Step 2 of 7*, *12 of 17 required answers completed*) and a section list (numbers on phones, names beside the form from 1024 px). **Next** checks the section first; sections already reached can be reopened from the list.
 3. **Review:** every answer by section, with **Edit** to go back, then **Submit**, which asks *Submit your details?* (*You can submit only once*). **Yes, submit** sends `POST /submit` once (the button is locked while sending).
@@ -85,5 +87,7 @@ npm test           # component tests (Vitest + Testing Library, jsdom; no networ
 npm run typecheck
 npm run build      # dist/, no source maps, CSP meta pinned to VITE_API_BASE_URL
 ```
+
+In development no `.env` is needed: the dev server forwards `/api/public` to the backend (`FORM_API_PROXY_TARGET`, default `http://localhost:3000`), and the backend's `CANDIDATE_FORM_ORIGIN` must be `http://localhost:5174`. The variable only affects the dev server and never reaches the bundle.
 
 Security headers for the deployed site are in `vercel.json` (CSP, frame denial, no referrer, HSTS, `noindex`).

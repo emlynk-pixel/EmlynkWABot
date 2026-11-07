@@ -1,4 +1,4 @@
-import { ROLES } from "../middleware/requireRole.js";
+import { ROLES, hasRole } from "../middleware/requireRole.js";
 
 // Which candidates a signed-in user may see and change (Work Allocation).
 // The one place the rule lives; every candidate route and every list that
@@ -6,19 +6,21 @@ import { ROLES } from "../middleware/requireRole.js";
 // read from the database by requireActiveUser, and the allocation here), so
 // a reassignment or role change applies to the very next request.
 //
-//   ADMIN, MANAGER, REGISTRATION_DESK   every candidate
-//   JOB_HANDLER                         every candidate, to READ (routes/admin.js gives it
-//                                       no candidate write route) and to staff its jobs
+//   OWNER, ADMIN, TEAM_LEAD,            every candidate
+//   REGISTRATION_DESK
+//   JOB_HANDLER                         every candidate a job may take, through the Jobs
+//                                       workflow only (routes/admin.js gives it no
+//                                       Candidates route), to staff its jobs
 //   ANALYST                             only the candidates allocated to them
 //                                       (candidate_allocation.analyst_id)
-//   anything else                       none (fails closed)
+//   anything else                       none (fails closed; a retired MANAGER too)
 
-const UNRESTRICTED_ROLES = Object.freeze([ROLES.ADMIN, ROLES.MANAGER, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER]);
+const UNRESTRICTED_ROLES = Object.freeze([ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER]);
 
 // Matches no candidate: a passport ID is never empty.
 const NO_CANDIDATE = Object.freeze({ passportId: { in: [] } });
 
-export const isCandidateScoped = (user) => !UNRESTRICTED_ROLES.includes(user?.role);
+export const isCandidateScoped = (user) => !hasRole(user?.role, UNRESTRICTED_ROLES);
 
 // A Prisma `where` for public.candidate: {} for unrestricted roles, the
 // Analyst's own allocations otherwise. Combine with other conditions under
@@ -85,6 +87,3 @@ export async function canAccessCandidate(db, user, passportId) {
     const row = await db.candidate.findFirst({ where: { AND: [{ passportId }, candidateScope(user)] }, select: { passportId: true } });
     return Boolean(row);
 }
-
-// Work Allocation itself (the page and its API): ADMIN and MANAGER only.
-export const ALLOCATION_MANAGER_ROLES = Object.freeze([ROLES.ADMIN, ROLES.MANAGER]);

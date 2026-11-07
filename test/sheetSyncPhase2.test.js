@@ -281,7 +281,7 @@ describe("sync planner (read-only)", () => {
         ]);
         assert.equal(nextCursor, null);
         assert.equal(blankSheetRows, 1);
-        assert.deepEqual(client.calls.map((c) => c.range.split("!")[1]), ["1:1", "A2:CE"]);
+        assert.deepEqual(client.calls.map((c) => c.range.split("!")[1]), ["1:1", "A2:CC"]);
     });
 
     test("the planner cannot write, even when handed a write-enabled adapter", async () => {

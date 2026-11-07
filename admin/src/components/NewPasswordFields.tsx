@@ -52,7 +52,7 @@ export function NewPasswordFields({
                 error={errors.password}
             >
                 <div className="relative">
-                    <Icon name="lock" className="pointer-events-none absolute left-3 top-3 size-4 text-ink-subtle" />
+                    <Icon name="lock" className="pointer-events-none absolute left-3 top-2 size-4 text-ink-subtle" />
                     <input
                         {...fieldA11y(passwordId, errors.password)}
                         type={type}
@@ -68,7 +68,7 @@ export function NewPasswordFields({
                     <button
                         type="button"
                         onClick={() => setShow((value) => !value)}
-                        className="absolute right-1.5 top-1.5 flex size-7 items-center justify-center rounded text-ink-subtle hover:bg-canvas-muted hover:text-ink"
+                        className="absolute right-0.5 top-0.5 flex size-7 items-center justify-center rounded-lg text-ink-subtle hover:bg-canvas-muted hover:text-ink"
                         tabIndex={-1}
                     >
                         <Icon name={show ? "visibility_off" : "visibility"} className="size-4" />
@@ -79,7 +79,7 @@ export function NewPasswordFields({
 
             <FormField id="confirm-password" label="Confirm Password" required error={errors.confirm}>
                 <div className="relative">
-                    <Icon name="lock" className="pointer-events-none absolute left-3 top-3 size-4 text-ink-subtle" />
+                    <Icon name="lock" className="pointer-events-none absolute left-3 top-2 size-4 text-ink-subtle" />
                     <input
                         {...fieldA11y("confirm-password", errors.confirm)}
                         type={type}

@@ -147,7 +147,7 @@ describe("theme", () => {
         const light = tokens(":root {");
         const dark = tokens(':root[data-theme="dark"]');
         for (const [name, palette] of [["light", light], ["dark", dark]] as const) {
-            for (const [text, background] of [["ink", "surface"], ["muted", "surface"], ["ink", "bg"], ["primary-ink", "primary"], ["error", "surface"], ["error", "error-soft"], ["success", "success-soft"], ["primary", "surface"]]) {
+            for (const [text, background] of [["ink", "surface"], ["muted", "surface"], ["ink", "bg"], ["primary-ink", "primary"], ["error", "surface"], ["error", "error-soft"], ["success", "success-soft"], ["primary-text", "surface"]]) {
                 expect(contrast(palette[text], palette[background]), `${name}: ${text} on ${background}`).toBeGreaterThanOrEqual(4.5);
             }
         }

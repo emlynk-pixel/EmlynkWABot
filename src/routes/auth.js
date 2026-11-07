@@ -2,7 +2,7 @@ import express from "express";
 
 import { createApiRateLimiter } from "../middleware/apiRateLimiter.js";
 import { createAuthenticateIdentity, createRequireActiveUser } from "../middleware/requireActiveUser.js";
-import { completeInvitation, UserAccountError } from "../services/userAccountService.js";
+import { activateOnPasswordSignIn, completeInvitation, invitationStatus, UserAccountError } from "../services/userAccountService.js";
 import { resolveDb } from "../utils/resolveClients.js";
 
 // Session endpoints. Sign-in, sign-out, password recovery and the invitation
@@ -25,8 +25,25 @@ export function createAuthRouter({ db, verifyAccessToken, apiLimiter = createApi
 
     // The signed-in user's application profile. 401 without a valid Supabase
     // session; 403 when the session has no ACTIVE application user.
-    router.get("/me", apiLimiter, createRequireActiveUser({ db, verifyAccessToken }), (req, res) => {
+    // A PASSWORD sign-in of a still-INVITED account first completes its invitation
+    // (activateOnPasswordSignIn): the setup page's activation call may never have
+    // arrived, or the password was set through "Forgot password". A revoked
+    // (INACTIVE) account is never activated here.
+    const [authenticate, loadActiveUser] = createRequireActiveUser({ db, verifyAccessToken });
+    const completeOnPasswordSignIn = async (req, res, next) => {
+        if (req.identity.amr?.includes("password")) {
+            await activateOnPasswordSignIn({ db: await resolveDb(db), authUserId: req.identity.authUserId });
+        }
+        return next();
+    };
+    router.get("/me", apiLimiter, authenticate, completeOnPasswordSignIn, loadActiveUser, (req, res) => {
         res.json({ user: toProfile(req.user) });
+    });
+
+    // The setup page asks, BEFORE setting a password, whether this identity's
+    // invitation is still valid: { status: "INVITED" | "ACTIVE" | "INACTIVE" | null }.
+    router.get("/invitation", apiLimiter, createAuthenticateIdentity({ verifyAccessToken }), async (req, res) => {
+        res.json({ status: await invitationStatus({ db: await resolveDb(db), authUserId: req.identity.authUserId }) });
     });
 
     // The invitee, signed in through their Supabase invite link (and with

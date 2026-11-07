@@ -19,7 +19,7 @@
 // local demo bearer tokens instead (printed at start-up), standing in for
 // Supabase sessions of the two seeded users:
 //   Authorization: Bearer local-demo-admin     (ADMIN: Settings allowed)
-//   Authorization: Bearer local-demo-manager   (MANAGER: Settings refused)
+//   Authorization: Bearer local-demo-analyst   (ANALYST: Settings refused)
 // The fake Sheet can be inspected and poked at http://localhost:3101 (menu);
 // it queues runs directly, so the whole sync can be tried without signing in.
 
@@ -53,7 +53,7 @@ const prisma = database.prisma;
 // ---- seed: two users and three candidates (synthetic)
 const DEMO_USERS = {
     "local-demo-admin": { adminId: "local-admin", authUserId: "00000000-0000-4000-8000-00000000a001", name: "Local Admin", email: "admin@example.invalid", role: "ADMIN" },
-    "local-demo-manager": { adminId: "local-manager", authUserId: "00000000-0000-4000-8000-00000000a002", name: "Local Manager", email: "manager@example.invalid", role: "MANAGER" },
+    "local-demo-analyst": { adminId: "local-analyst", authUserId: "00000000-0000-4000-8000-00000000a002", name: "Local Analyst", email: "analyst@example.invalid", role: "ANALYST" },
 };
 for (const user of Object.values(DEMO_USERS)) await prisma.user.create({ data: { ...user, status: "ACTIVE" } });
 // Stands in for Supabase's token verification: only the two demo tokens.
@@ -109,7 +109,7 @@ const api = app.listen(API_PORT, "127.0.0.1");
 
 // ---- a tiny inspector for the fake Sheet: http://localhost:3101
 const col = (field) => SHEET_COLUMNS.findIndex((c) => c.field === field);
-const SHOW = ["systemCandidateId", "passportNumber", "surname", "otherNames", "job", "ivsInterviewStatus", "passportCopy", "recordStatus", "lastMirroredAt"];
+const SHOW = ["systemCandidateId", "passportNumber", "surname", "otherNames", "job", "visaSubmissionStatus", "passportCopy", "recordStatus", "lastMirroredAt"];
 const page = (body) => `<!doctype html><meta charset="utf-8"><title>Fake Sheet (local demo)</title>
 <style>body{font:14px system-ui;margin:24px;max-width:1100px}table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:4px 8px}th{background:#eee}
 code{background:#eee;padding:1px 4px}.warn{background:#fff3cd;padding:8px 12px;border:1px solid #e0c36c}</style>${body}`;
@@ -169,7 +169,7 @@ console.log(`
  1. Fake Sheet inspector:  http://localhost:${SHEET_PORT}  (queue runs, break things)
  2. API (local demo tokens instead of Supabase sessions):
       curl -H "Authorization: Bearer local-demo-admin" http://127.0.0.1:${API_PORT}/api/admin/settings/sheet-sync
-      curl -H "Authorization: Bearer local-demo-manager" http://127.0.0.1:${API_PORT}/api/admin/settings/sheet-sync   (403)
+      curl -H "Authorization: Bearer local-demo-analyst" http://127.0.0.1:${API_PORT}/api/admin/settings/sheet-sync   (403)
  Stop with Ctrl+C. All data is discarded.
 =====================================================================`);
 

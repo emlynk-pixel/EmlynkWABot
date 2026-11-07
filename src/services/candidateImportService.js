@@ -18,15 +18,22 @@
 
 import crypto from "node:crypto";
 
-import { SUPPORTED_SOURCE_COLUMNS, analyzeSourceHeaders, sourceColumnFor, sourceColumnsForClient, sourceHeaderKey } from "./candidateImportSourceMapping.js";
-import { ROW_STATUS, validateLegacyRow } from "./candidateImportRowValidator.js";
-import { maskIdentifier, normalizePassport } from "./candidateImportNormalizers.js";
-import { ROW_ACTION, findSourceFlags, loadImportSnapshot, planRows, summarizePlans } from "./candidateImportClassifier.js";
+import { JOB_ROLE_ALIASES, SUPPORTED_SOURCE_COLUMNS, analyzeSourceHeaders, sourceColumnFor, sourceColumnsForClient, sourceHeaderKey } from "./candidateImportSourceMapping.js";
+import { ROW_STATUS, sourceCells, validateLegacyRow } from "./candidateImportRowValidator.js";
+import { maskIdentifier, normalizePassport, unknownJobRoles } from "./candidateImportNormalizers.js";
+import {
+    ROW_ACTION, VISA_OUTCOMES, findAgentsByKeys, findClientsByKeys, findSourceFlags, importActions, loadImportSnapshot, planRows, summarizePlans,
+} from "./candidateImportClassifier.js";
+import { describeIssues } from "./candidateImportIssues.js";
+import { applySuffixEdits, buildJobGroupPlan, executeJobGroups, GROUP_STATE, jobGroupView, loadJobGroupContext, noteGroupOutcomes, plannedJobMembers } from "./importJobGroups.js";
 import { activeJobTypeNames } from "./jobTypeCatalog.js";
 import { setAuditActor } from "./auditActor.js";
 import { catchUpUniqueIdSequence, formatUniqueId } from "./candidateService.js";
 import { RUN_KIND, RUN_TRIGGER } from "./sheetSyncStore.js";
 import { requestSheetSyncRun } from "./sheetSyncStatusService.js";
+import { allocateImportedCandidates } from "./workAllocationService.js";
+import { AGENT_AUDIT_ACTION, ENTITY_STATUS, auditRow as entityAuditRow } from "./agentService.js";
+import { CLIENT_AUDIT_ACTION } from "./clientService.js";
 
 export const IMPORT_CHUNK_SIZE = 100;
 export const MAX_IMPORT_ROWS = 3000;
@@ -144,8 +151,31 @@ export function chunkRows(rows, size = IMPORT_CHUNK_SIZE) {
 
 // ---------------------------------------------------------------- preview
 
-const problemOf = (plan) => ({ rowNumber: plan.rowNumber, passport: plan.maskedPassport, status: plan.status, action: plan.action, codes: plan.codes });
+const problemOf = (plan) => ({ rowNumber: plan.rowNumber, passport: plan.maskedPassport, status: plan.status, action: plan.action, codes: plan.codes, ...describeIssues(plan.issues) });
 const isProblem = (plan) => plan.status !== ROW_STATUS.VALID || plan.action === ROW_ACTION.SKIP_VERIFIED;
+
+// Every row with an issue, as readable messages (candidateImportIssues.js): the SAME messages as the
+// problems table, for the ERRORS / WARNINGS columns of the validation sheet the browser builds.
+// Row numbers and messages only: no cell value.
+const rowIssuesOf = (plans) => plans.filter((plan) => plan.issues.length).map((plan) => ({ rowNumber: plan.rowNumber, ...describeIssues(plan.issues) }));
+
+// A Job Role in the sheet that is not a job type (and has no alias) becomes a new job type, so no
+// role is lost. Preview (create = false) only counts them as if they existed; the commit creates them.
+// Returns the active job type names to validate with.
+async function jobTypesWithSheetRoles(db, canonical, { create }) {
+    const activeJobTypes = await activeJobTypeNames(db);
+    const fresh = new Set();
+    for (const row of canonical) {
+        for (const name of unknownJobRoles(sourceCells(row.values).jobRole, { activeJobTypes, aliases: JOB_ROLE_ALIASES })) fresh.add(name);
+    }
+    if (!fresh.size) return activeJobTypes;
+    const added = [...fresh].map((name) => ({ name, code: name.replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") })).filter((type) => type.code);
+    if (!create) return [...activeJobTypes, ...added.map((type) => type.name)];
+    // One statement; only the rows actually created come back (a code that already exists, e.g. an
+    // inactive type, is skipped and its role stays unmatched, as an inactive type should).
+    const created = await db.jobType.createManyAndReturn({ data: added.map((type) => ({ ...type, isActive: true })), skipDuplicates: true, select: { name: true } });
+    return [...activeJobTypes, ...created.map((row) => row.name)];
+}
 
 // The allow-list for the browser.
 export const importSourceColumns = () => sourceColumnsForClient();
@@ -158,13 +188,18 @@ export async function previewImport({ db, actor, fileName, headers, rows, now = 
         throw new CandidateImportError(422, "MISSING_REQUIRED_HEADINGS", `The sheet is missing required headings: ${columns.missingRequired.join(", ")}.`, { missing: columns.missingRequired });
     }
     const canonical = canonicalRows(rows);
-    const activeJobTypes = await activeJobTypeNames(db);
+    const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: false });
     const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
     const sourceFlags = findSourceFlags(validated);
     const snapshot = await loadImportSnapshot(db, validated, { activeJobTypes });
     const plans = planRows(validated, snapshot, sourceFlags);
+    // Jobs (Interview Date + UNIQUE NUMBER hundreds block): planned for the whole file, stored for the commit.
+    const jobGroups = buildJobGroupPlan(plans, await loadJobGroupContext(db, [...new Set(plans.filter((p) => p.job).map((p) => p.job.interviewDate))]));
+    noteGroupOutcomes(plans, jobGroups);
     const summary = {
         ...summarizePlans(plans),
+        ...jobGroupCounts(jobGroups),
+        jobMembers: plannedJobMembers(plans, jobGroups),
         ignoredSourceColumns: columns.ignored.length + columns.systemGenerated.length + columns.unresolved.length + columns.unknown.length,
     };
     const chunks = chunkRows(canonical);
@@ -172,14 +207,36 @@ export async function previewImport({ db, actor, fileName, headers, rows, now = 
     await db.candidateImport.create({
         data: {
             importId, adminId: actor.adminId, fileName, status: IMPORT_STATUS.PREVIEWED, totalRows: canonical.length, chunkSize: IMPORT_CHUNK_SIZE,
-            chunkHashes: chunks.map(hashChunk), sourceFlags, previewCounts: summary, chunkResults: {}, createdAt: now, updatedAt: now,
+            chunkHashes: chunks.map(hashChunk), sourceFlags, previewCounts: summary, chunkResults: {}, jobGroups, createdAt: now, updatedAt: now,
         },
     });
     const problems = plans.filter(isProblem);
     return {
         importId, chunkSize: IMPORT_CHUNK_SIZE, chunkCount: chunks.length, expiresAt: new Date(now.getTime() + IMPORT_PREVIEW_TTL_MS).toISOString(),
         summary, columns, problems: problems.slice(0, MAX_PROBLEM_ROWS).map(problemOf), problemsTruncated: problems.length > MAX_PROBLEM_ROWS,
+        rowIssues: rowIssuesOf(plans), actions: importActions(plans), jobGroups: jobGroups.map(jobGroupView),
     };
+}
+
+const jobGroupCounts = (groups) => ({
+    jobsToCreate: groups.filter((g) => g.state === GROUP_STATE.NEW).length,
+    jobsReused: groups.filter((g) => g.state === GROUP_STATE.EXISTING).length,
+    jobGroupProblems: groups.filter((g) => g.state === GROUP_STATE.ERROR).length,
+});
+
+// PUT /import/:importId/job-groups { suffixes: { [group key]: "05" } }: the user chooses the last two
+// digits of a NEW Job before the import (only before any chunk is committed). Checked again here against
+// the database (codes and suffixes taken since the preview); nothing is saved on an error (409).
+export async function updateImportJobGroups({ db, actor, importId, suffixes, now = new Date() }) {
+    const record = await requireImport(db, { importId, actor, now });
+    if (record.status !== IMPORT_STATUS.PREVIEWED) throw new CandidateImportError(409, "IMPORT_STARTED", "The import has started: Job IDs can no longer be chosen here.");
+    if (!suffixes || typeof suffixes !== "object" || Array.isArray(suffixes)) throw new CandidateImportError(400, "INVALID_BODY", "suffixes must be an object of group -> two digits.");
+    const groups = Array.isArray(record.jobGroups) ? record.jobGroups : [];
+    const context = await loadJobGroupContext(db, [...new Set(groups.map((g) => g.interviewDate))]);
+    const result = applySuffixEdits(groups, suffixes, context);
+    if (result.errors) throw new CandidateImportError(409, "JOB_GROUP_SUFFIX_INVALID", result.errors[0].message, { errors: result.errors });
+    await db.candidateImport.update({ where: { importId }, data: { jobGroups: result.groups, updatedAt: now } });
+    return { jobGroups: result.groups.map(jobGroupView) };
 }
 
 // ---------------------------------------------------------------- unique IDs
@@ -200,7 +257,7 @@ export async function allocateUniqueIds(tx, count) {
 const auditEntry = (actor, data) => ({ auditId: crypto.randomUUID(), adminId: actor.adminId, ...data });
 
 // The plans' writes, inside the caller's transaction. Returns the plans' outcomes.
-async function executePlans(tx, plans, { importId, actor }) {
+async function executePlans(tx, plans, { importId, actor, now = new Date(), jobGroups = [] }) {
     const audits = [];
     const creates = plans.filter((p) => p.action === ROW_ACTION.CREATE);
     if (creates.length) {
@@ -237,16 +294,164 @@ async function executePlans(tx, plans, { importId, actor }) {
             }));
         }
     }
+    const effects = new Map(plans.map((plan) => [plan.rowNumber, {}]));
+    await executeOrg(tx, plans, { importId, actor, audits, effects });
+    await executeExtras(tx, plans, { importId, actor, audits, effects, now });
+    // After the Test details (this chunk may have just saved the PASS) and the Clients / Agents.
+    await executeJobGroups(tx, plans, jobGroups, { actor, importId, audits, effects });
     if (audits.length) await tx.auditLog.createMany({ data: audits });
-    return plans.map(outcomeOf);
+    return plans.map((plan) => outcomeOf(plan, effects.get(plan.rowNumber)));
+}
+
+const passportOfPlan = (plan) => plan.write.passportId ?? plan.write.candidate.passportId;
+const isoDayOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 10) : value ?? null);
+
+// Allocation (to the OFFICER), the Test details, the visa stage and Departed of the CREATE / FILL rows, all
+// fill-only (planned in candidateImportClassifier.js against this transaction's own snapshot).
+async function executeExtras(tx, plans, { importId, actor, audits, effects, now }) {
+    const writing = plans.filter((plan) => plan.write?.extras && (plan.action === ROW_ACTION.CREATE || plan.action === ROW_ACTION.FILL));
+    const entries = writing.filter((plan) => plan.write.extras.allocation).map((plan) => ({ passportId: passportOfPlan(plan), analystId: plan.write.extras.allocation.analystId }));
+    const allocated = new Set(await allocateImportedCandidates(tx, { actor, entries }));
+    const stageAudit = (passportId, stage, { from, to, before, after }) => audits.push(auditEntry(actor, {
+        action: "UPDATE_STAGE", passportId, previousStatus: from ? "COMPLETED" : "NOT_COMPLETED", newStatus: to ? "COMPLETED" : "NOT_COMPLETED",
+        reason: `Set from a legacy sheet (bulk import ${importId})`,
+        previousValue: JSON.stringify({ stage, ...before }), newValue: JSON.stringify({ stage, ...after }),
+    }));
+    // A new candidate has no stage rows: its rows are inserted together. An existing one's are upserted.
+    const inserts = [];
+    const write = (plan, stage, create, update) => {
+        if (plan.action === ROW_ACTION.CREATE) inserts.push(create);
+        else return tx.candidateStage.upsert({ where: { passportId_stage: { passportId: create.passportId, stage } }, create, update });
+        return null;
+    };
+    for (const plan of writing) {
+        const passportId = passportOfPlan(plan);
+        const { test, stages } = plan.write.extras;
+        const effect = effects.get(plan.rowNumber);
+        if (allocated.has(passportId)) effect.allocated = 1;
+        if (test) {
+            // A new Test details row is completed when it has a result (a test held).
+            const completed = test.create && Boolean(test.fill.testResult);
+            await write(plan, "TEST_DETAILS", { passportId, stage: "TEST_DETAILS", ...test.fill, completed, completedAt: completed ? now : null }, test.fill);
+            const after = Object.fromEntries(Object.entries(test.fill).map(([field, value]) => [field, isoDayOf(value)]));
+            const before = Object.fromEntries(Object.keys(test.fill).map((field) => [field, null]));
+            stageAudit(passportId, "TEST_DETAILS", { from: false, to: completed, before, after: completed ? { ...after, completed: true } : after });
+            effect.testSet = 1;
+        }
+        for (const stage of stages) {
+            await write(plan, stage, { passportId, stage, completed: true, completedAt: now }, { completed: true, completedAt: now });
+            stageAudit(passportId, stage, { from: false, to: true, before: { completed: false }, after: { completed: true } });
+            effect.stagesCompleted = (effect.stagesCompleted ?? 0) + 1;
+        }
+    }
+    if (inserts.length) await tx.candidateStage.createMany({ data: inserts });
+
+    // VISA STATUS "Departed": candidate.departed_at, once (fill-only: only a candidate with no final
+    // status at all), in one statement.
+    const departing = writing.filter((plan) => plan.write.extras.departed);
+    if (departing.length) {
+        const passportIds = departing.map(passportOfPlan);
+        await tx.candidate.updateMany({ where: { passportId: { in: passportIds }, departedAt: null, outcome: null }, data: { departedAt: now } });
+        for (const plan of departing) {
+            effects.get(plan.rowNumber).departed = 1;
+            audits.push(auditEntry(actor, {
+                action: "CANDIDATE_DEPARTED", passportId: passportOfPlan(plan), previousStatus: "NOT_DEPARTED", newStatus: "DEPARTED",
+                reason: `Visa status Departed in a legacy sheet (bulk import ${importId})`, newValue: JSON.stringify({ importId }),
+            }));
+        }
+    }
+
+    // VISA STATUS "Got Visa Not Going" / "Cancelled" / "Reject": candidate.outcome, once (fill-only, as above).
+    for (const outcome of VISA_OUTCOMES) {
+        const recording = writing.filter((plan) => plan.write.extras.outcome === outcome);
+        if (!recording.length) continue;
+        await tx.candidate.updateMany({ where: { passportId: { in: recording.map(passportOfPlan) }, departedAt: null, outcome: null }, data: { outcome, outcomeAt: now } });
+        for (const plan of recording) {
+            effects.get(plan.rowNumber).outcome = 1;
+            audits.push(auditEntry(actor, {
+                action: "SET_FINAL_STATUS", passportId: passportOfPlan(plan), previousStatus: "NONE", newStatus: outcome,
+                reason: `Visa status in a legacy sheet (bulk import ${importId})`, newValue: JSON.stringify({ importId }),
+            }));
+        }
+    }
+}
+
+// The Clients and Agents the rows name: found again by name key (case and spacing ignored,
+// findClientsByKeys / findAgentsByKeys) inside this transaction (an earlier
+// chunk may have created one since the preview), else created, then linked; a blank registration
+// number filled. Through the same audit actions as Admin > Clients / Agents. A name created twice at
+// the same time fails on the unique indexes and the chunk is retried row by row (it then finds it).
+async function executeOrg(tx, plans, { importId, actor, audits, effects }) {
+    const agentIds = new Map();
+    const clientIds = new Map();
+    const reason = (what) => `${what} by a legacy sheet (bulk import ${importId})`;
+    for (const plan of plans.filter((p) => p.org)) {
+        const { company, agent, companyNumber } = plan.org;
+        const effect = effects.get(plan.rowNumber);
+        let agentId = null;
+        if (agent) {
+            agentId = agent.agentId ?? agentIds.get(agent.key) ?? null;
+            if (!agentId) {
+                const found = await findAgentsByKeys(tx, [agent.key]);
+                if (found.length === 1 && found[0].isActive) agentId = found[0].id;
+                else if (!found.length) {
+                    const row = await tx.agent.create({ data: { name: agent.name, countryCode: null }, select: { id: true } });
+                    agentId = row.id;
+                    effect.agentCreated = 1;
+                    audits.push(entityAuditRow({
+                        actor, action: AGENT_AUDIT_ACTION.CREATED, previousStatus: "NONE", newStatus: ENTITY_STATUS.ACTIVE, reason: reason("Agent created"),
+                        newValue: JSON.stringify({ agentId, name: agent.name, countryCode: null, clientIds: [] }),
+                    }));
+                }
+                agentIds.set(agent.key, agentId);
+            }
+        }
+        let clientId = company.clientId ?? clientIds.get(company.key) ?? null;
+        let created = false;
+        if (!clientId) {
+            clientId = (await findClientsByKeys(tx, [company.key]))[0]?.id ?? null;
+            if (!clientId) {
+                if (!agentId) continue; // every Client has an Agent: none usable, no Client
+                clientId = (await tx.client.create({ data: { name: company.name, registrationNumber: companyNumber }, select: { id: true } })).id;
+                created = true;
+                effect.clientCreated = 1;
+                audits.push(entityAuditRow({
+                    actor, action: CLIENT_AUDIT_ACTION.CREATED, previousStatus: "NONE", newStatus: ENTITY_STATUS.ACTIVE, reason: reason("Client created"),
+                    newValue: JSON.stringify({ clientId, name: company.name, agentIds: [agentId] }),
+                }));
+            }
+            clientIds.set(company.key, clientId);
+        }
+        if (agentId) {
+            const { count } = await tx.agentClient.createMany({ data: [{ agentId, clientId }], skipDuplicates: true });
+            if (count && !created) {
+                audits.push(entityAuditRow({
+                    actor, action: CLIENT_AUDIT_ACTION.AGENT_CHANGED, previousStatus: ENTITY_STATUS.ACTIVE, newStatus: ENTITY_STATUS.ACTIVE,
+                    reason: reason("Client's agents changed: 1 added, 0 removed"), newValue: JSON.stringify({ clientId, added: [agentId], removed: [] }),
+                }));
+            }
+        }
+        if (companyNumber && !created) {
+            const { count } = await tx.client.updateMany({ where: { id: clientId, OR: [{ registrationNumber: null }, { registrationNumber: "" }] }, data: { registrationNumber: companyNumber } });
+            if (count) {
+                audits.push(entityAuditRow({
+                    actor, action: CLIENT_AUDIT_ACTION.UPDATED, previousStatus: ENTITY_STATUS.ACTIVE, newStatus: ENTITY_STATUS.ACTIVE,
+                    reason: reason("Client updated: registrationNumber"), previousValue: JSON.stringify({ clientId, registrationNumber: null }),
+                    newValue: JSON.stringify({ clientId, registrationNumber: companyNumber }),
+                }));
+            }
+        }
+    }
 }
 
 const OUTCOME_BY_ACTION = { [ROW_ACTION.CREATE]: ROW_OUTCOME.CREATED, [ROW_ACTION.FILL]: ROW_OUTCOME.FILLED, [ROW_ACTION.NO_CHANGE]: ROW_OUTCOME.NO_CHANGE, [ROW_ACTION.SKIP_VERIFIED]: ROW_OUTCOME.SKIPPED_VERIFIED };
 const OUTCOME_BY_STATUS = { [ROW_STATUS.INVALID]: ROW_OUTCOME.INVALID, [ROW_STATUS.DUPLICATE]: ROW_OUTCOME.DUPLICATE, [ROW_STATUS.CONFLICT]: ROW_OUTCOME.CONFLICT };
 
-// { r: row number, o: outcome, c: reason codes, w: had a warning }
-function outcomeOf(plan) {
-    return { r: plan.rowNumber, o: OUTCOME_BY_ACTION[plan.action] ?? OUTCOME_BY_STATUS[plan.status] ?? ROW_OUTCOME.FAILED, c: plan.codes, w: plan.status === ROW_STATUS.WARNING };
+// { r: row number, o: outcome, c: reason codes, w: had a warning, e?: what else was written }
+// e: { allocated, testSet, stagesCompleted, departed, outcome, clientCreated, agentCreated } (only the non-zero ones)
+function outcomeOf(plan, effect = {}) {
+    const outcome = { r: plan.rowNumber, o: OUTCOME_BY_ACTION[plan.action] ?? OUTCOME_BY_STATUS[plan.status] ?? ROW_OUTCOME.FAILED, c: plan.codes, w: plan.status === ROW_STATUS.WARNING };
+    return Object.keys(effect).length ? { ...outcome, e: effect } : outcome;
 }
 
 // A retry never loses an earlier attempt's write: a row CREATED / FILLED before keeps that outcome.
@@ -262,8 +467,14 @@ export function countOutcomes(rows) {
         skippedVerified: count(ROW_OUTCOME.SKIPPED_VERIFIED), invalid: count(ROW_OUTCOME.INVALID), duplicates: count(ROW_OUTCOME.DUPLICATE),
         conflicts: count(ROW_OUTCOME.CONFLICT), failed: count(ROW_OUTCOME.FAILED),
         warnings: rows.filter((row) => row.w && WRITTEN.has(row.o)).length,
+        ...Object.fromEntries(Object.entries(EFFECT_COUNTS).map(([name, key]) => [name, rows.reduce((sum, row) => sum + (row.e?.[key] ?? 0), 0)])),
     };
 }
+
+// Result count -> the per-row effect it adds up (outcomeOf).
+const EFFECT_COUNTS = Object.freeze({
+    allocated: "allocated", testsSet: "testSet", stagesCompleted: "stagesCompleted", departed: "departed", outcomes: "outcome", jobsCreated: "jobCreated", jobAssignments: "jobAssigned", clientsCreated: "clientCreated", agentsCreated: "agentCreated",
+});
 
 const chunkResult = (rows) => {
     const counts = countOutcomes(rows);
@@ -290,11 +501,14 @@ const uniqueTarget = (error) => {
     return Array.isArray(target) ? target.join(",") : String(target ?? "");
 };
 const failureCode = (error) => {
+    // The officer was deactivated after the preview (allocateImportedCandidates).
+    if (/^OFFICER_/.test(error?.code ?? "")) return error.code;
     if (!isUniqueViolation(error)) return "DB_ERROR";
     const target = uniqueTarget(error);
     if (/nic/i.test(target)) return "NIC_CONFLICT";
     if (/whatsapp/i.test(target)) return "WHATSAPP_CONFLICT";
     if (/unique_id|uniqueId/i.test(target)) return "UNIQUE_ID_COLLISION";
+    if (/name/i.test(target)) return "DB_ERROR"; // a Client / Agent name taken at the same time
     return "PASSPORT_EXISTS";
 };
 
@@ -332,9 +546,9 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
     const previous = record.chunkResults?.[chunkIndex];
     if (previous?.status === "COMMITTED") return present(chunkIndex, previous, canonical, { alreadyCommitted: true });
 
-    const activeJobTypes = await activeJobTypeNames(db);
+    const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: true });
     const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
-    const context = { importId, actor };
+    const context = { importId, actor, now, jobGroups: Array.isArray(record.jobGroups) ? record.jobGroups : [] };
 
     // The whole chunk in one transaction; a unique-ID race is retried with fresh numbers.
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -382,7 +596,9 @@ function present(chunkIndex, result, canonical, extra = {}) {
     const masked = new Map(canonical.map((row) => [row.rowNumber, maskIdentifier(normalizePassport(passportOf(row)).value ?? passportOf(row))]));
     return {
         chunkIndex, status: result.status, counts: result.counts, ...extra,
-        failures: result.rows.filter((row) => row.o === ROW_OUTCOME.FAILED).map((row) => ({ rowNumber: row.r, passport: masked.get(row.r) ?? "***", codes: row.c })),
+        failures: result.rows.filter((row) => row.o === ROW_OUTCOME.FAILED).map((row) => ({
+            rowNumber: row.r, passport: masked.get(row.r) ?? "***", codes: row.c, errors: describeIssues(row.c.map((code) => ({ code }))).errors,
+        })),
     };
 }
 

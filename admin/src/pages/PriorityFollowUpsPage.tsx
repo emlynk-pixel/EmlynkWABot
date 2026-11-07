@@ -5,7 +5,7 @@ import { completeFollowUp, deleteFollowUp, listFollowUps, type FollowUpGroup, ty
 import type { FollowUpStatus } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
-import { canDeleteFollowUps } from "../auth/roles";
+import { canDeleteFollowUps, canViewCandidates, canWorkFollowUps } from "../auth/roles";
 import { ActionDialog, DialogError, dangerSolidButton, secondaryButton } from "../components/Dialog";
 import { formatDate, formatDateTime, formatNumber, formatTime } from "../components/format";
 import { NoAnswerBadge } from "../components/candidate/NoAnswerBadge";
@@ -15,14 +15,14 @@ import { Card, EmptyState, ErrorState, LoadingState } from "../components/States
 // Need Attention (internally still the Priority Follow-Ups feature: same
 // route, API and audit names): call logs marked as needing attention, one
 // card per candidate with their follow-ups (newest first). Open by default;
-// Completed shows the history. Every Candidates role can mark one complete;
-// ADMIN and MANAGER can delete one. Completing or deleting a follow-up never
+// Completed shows the history. ADMIN, TEAM_LEAD and ANALYST can mark one
+// complete (the Registration Desk sees the page read only); ADMIN can delete one. Completing or deleting a follow-up never
 // changes the call log: it stays in the candidate's Candidate History.
 
 // Row actions, a size smaller than the dialog buttons.
-const compactButton = "h-8 rounded px-3 text-label-md disabled:cursor-not-allowed disabled:opacity-60";
+const compactButton = "h-8 rounded-lg px-3 text-label-md disabled:cursor-not-allowed disabled:opacity-60";
 const compactSecondary = `${compactButton} border border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas`;
-const compactDanger = "flex h-8 items-center rounded border border-critical-border bg-surface px-2 text-critical hover:bg-critical-bg disabled:cursor-not-allowed disabled:opacity-60";
+const compactDanger = "flex h-8 items-center rounded-lg border border-critical-border bg-surface px-2 text-critical hover:bg-critical-bg disabled:cursor-not-allowed disabled:opacity-60";
 
 const FILTERS: { status: FollowUpStatus; label: string }[] = [
     { status: "OPEN", label: "Open" },
@@ -35,6 +35,9 @@ export function PriorityFollowUpsPage() {
     const status: FollowUpStatus = searchParams.get("status") === "completed" ? "COMPLETED" : "OPEN";
     const list = useAdminResource(`follow-ups:${status}`, (t, signal) => listFollowUps(t, status, signal));
     const canDelete = canDeleteFollowUps(user);
+    const canComplete = canWorkFollowUps(user);
+    // The candidate's name links to their page only for a role that opens it (not the Registration Desk).
+    const canOpen = canViewCandidates(user);
 
     // Follow-ups completed or deleted here leave this view at once.
     const [removed, setRemoved] = useState<Set<string>>(() => new Set());
@@ -107,16 +110,16 @@ export function PriorityFollowUpsPage() {
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Need Attention</h1>
-                    <p className="mt-1 text-body-sm text-ink-muted">Calls and candidate follow-ups that require action.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">{canComplete ? "Calls and candidate follow-ups that require action." : "Calls and candidate follow-ups that require action (view only)."}</p>
                 </div>
-                <div role="group" aria-label="Follow-up status" className="inline-flex rounded border border-border-strong bg-surface p-0.5">
+                <div role="group" aria-label="Follow-up status" className="inline-flex rounded-lg border border-border-strong bg-surface p-0.5">
                     {FILTERS.map((filter) => (
                         <button
                             key={filter.status}
                             type="button"
                             aria-pressed={status === filter.status}
                             onClick={() => selectFilter(filter.status)}
-                            className={`h-8 rounded-sm px-3 text-label-md ${status === filter.status ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
+                            className={`h-8 rounded-md px-3 text-label-md ${status === filter.status ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
                         >
                             {filter.label}
                         </button>
@@ -124,7 +127,7 @@ export function PriorityFollowUpsPage() {
                 </div>
             </div>
 
-            {notice && <div role="status" className="rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
+            {notice && <div role="status" className="rounded-xl border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
 
             {list.status === "loading" && !list.data && <Card><LoadingState label="Loading follow-ups…" /></Card>}
             {list.status === "error" && !list.data && <Card><ErrorState message={list.error.message} onRetry={list.reload} /></Card>}
@@ -150,6 +153,8 @@ export function PriorityFollowUpsPage() {
                                         key={group.candidate.passportId}
                                         group={group}
                                         canDelete={canDelete}
+                                        canComplete={canComplete}
+                                        canOpen={canOpen}
                                         working={working}
                                         actionError={actionError}
                                         onComplete={markComplete}
@@ -166,7 +171,7 @@ export function PriorityFollowUpsPage() {
                     <p className="text-body-sm text-ink-soft">
                         The follow-up is removed from Need Attention permanently. The original call log, the candidate and their documents are kept.
                     </p>
-                    <blockquote className="mt-3 rounded border border-border bg-canvas px-3 py-2 text-body-sm text-ink-soft [overflow-wrap:anywhere]">
+                    <blockquote className="mt-3 rounded-lg border border-border bg-canvas px-3 py-2 text-body-sm text-ink-soft [overflow-wrap:anywhere]">
                         {confirmDelete.callLog.note}
                     </blockquote>
                     <DialogError message={deleteError} />
@@ -182,9 +187,11 @@ export function PriorityFollowUpsPage() {
     );
 }
 
-function CandidateGroup({ group, canDelete, working, actionError, onComplete, onDelete }: {
+function CandidateGroup({ group, canDelete, canComplete, canOpen, working, actionError, onComplete, onDelete }: {
     group: FollowUpGroup;
     canDelete: boolean;
+    canComplete: boolean;
+    canOpen: boolean;
     working: string | null;
     actionError: { followUpId: string; message: string } | null;
     onComplete: (item: FollowUpItem) => void;
@@ -200,7 +207,7 @@ function CandidateGroup({ group, canDelete, working, actionError, onComplete, on
                 <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 px-4 pt-3.5 sm:px-5">
                     <div className="min-w-0">
                         <h2 className="truncate text-headline-sm text-ink">
-                            <Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="hover:underline">{name}</Link>
+                            {canOpen ? <Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="hover:underline">{name}</Link> : name}
                         </h2>
                         <p className="mt-0.5 flex flex-wrap gap-x-3 text-body-sm text-ink-muted tabular-nums">
                             <span><span className="sr-only">Passport ID </span>{candidate.passportId}</span>
@@ -217,6 +224,7 @@ function CandidateGroup({ group, canDelete, working, actionError, onComplete, on
                             key={item.followUpId}
                             item={item}
                             canDelete={canDelete}
+                            canComplete={canComplete}
                             busy={working === item.followUpId}
                             disabled={working !== null}
                             error={actionError?.followUpId === item.followUpId ? actionError.message : null}
@@ -233,10 +241,11 @@ function CandidateGroup({ group, canDelete, working, actionError, onComplete, on
 // One follow-up, laid out like a call in Candidate History: when and who
 // called, with the state as a compact flag at the top right; the note (or a
 // No Answer badge); then who flagged it and the actions.
-function FollowUpRow({ item, canDelete, busy, disabled, error, onComplete, onDelete }: {
-    item: FollowUpItem; canDelete: boolean; busy: boolean; disabled: boolean; error: string | null; onComplete: () => void; onDelete: () => void;
+function FollowUpRow({ item, canDelete, canComplete, busy, disabled, error, onComplete, onDelete }: {
+    item: FollowUpItem; canDelete: boolean; canComplete: boolean; busy: boolean; disabled: boolean; error: string | null; onComplete: () => void; onDelete: () => void;
 }) {
     const open = item.status === "OPEN";
+    const completable = open && canComplete;
     return (
         // A completed follow-up reads as resolved: the same layout, one step quieter (muted note, muted check).
         <li data-state={open ? "open" : "completed"} className={`px-4 py-3 sm:px-5 ${open ? "" : "bg-canvas/50"}`}>
@@ -257,9 +266,9 @@ function FollowUpRow({ item, canDelete, busy, disabled, error, onComplete, onDel
                     Flagged {formatDateTime(item.flaggedAt)}{item.flaggedByName ? ` by ${item.flaggedByName}` : ""}
                     {item.completedAt && <> · Completed {formatDateTime(item.completedAt)}{item.completedByName ? ` by ${item.completedByName}` : ""}</>}
                 </p>
-                {(open || canDelete) && (
+                {(completable || canDelete) && (
                     <div className="flex shrink-0 items-center gap-2">
-                        {open && (
+                        {completable && (
                             <button type="button" onClick={onComplete} disabled={disabled} className={compactSecondary}>
                                 {busy ? "Saving…" : "Mark complete"}
                             </button>
@@ -285,7 +294,7 @@ function FollowUpRow({ item, canDelete, busy, disabled, error, onComplete, onDel
 function FollowUpFlag({ open }: { open: boolean }) {
     const label = open ? "Needs attention" : "Follow-up completed";
     return (
-        <span role="img" aria-label={label} title={label} className={`flex size-7 shrink-0 items-center justify-center rounded ${open ? "text-review" : "text-ink-subtle"}`}>
+        <span role="img" aria-label={label} title={label} className={`flex size-7 shrink-0 items-center justify-center rounded-lg ${open ? "text-review" : "text-ink-subtle"}`}>
             <Icon name={open ? "flag_fill" : "task_alt"} className="size-4" />
         </span>
     );

@@ -27,15 +27,15 @@ function StatCard({ label, value, icon }: { label: string; value: number | undef
     return (
         <Card className="flex items-start justify-between p-5">
             <div>
-                <p className="text-label-caps uppercase text-ink-subtle">{label}</p>
+                <p className="text-label-sm text-ink-muted">{label}</p>
                 <p className="mt-1 text-headline-xl tabular-nums text-ink">{value === undefined ? "—" : formatNumber(value)}</p>
             </div>
-            <span className="flex size-9 items-center justify-center rounded bg-primary-soft text-primary"><Icon name={icon} className="size-5" /></span>
+            <span className="flex size-9 items-center justify-center rounded-lg bg-primary-soft text-primary"><Icon name={icon} className="size-5" /></span>
         </Card>
     );
 }
 
-// Review Queue (Stitch "Review Queue"): the list of items waiting for a
+// Review Queue: the list of items waiting for a
 // person. The actions are on the Review Detail page.
 export function ReviewQueuePage() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -72,7 +72,7 @@ export function ReviewQueuePage() {
             </div>
 
             {!showingFailed && Boolean(summary?.failed) && (
-                <div role="note" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-critical-border bg-critical-bg px-3 py-2 text-body-sm">
+                <div role="note" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-critical-border bg-critical-bg px-3 py-2 text-body-sm">
                     <span className="text-ink">
                         <span className="font-medium text-critical">{formatNumber(summary!.failed!)} {summary!.failed === 1 ? "submission" : "submissions"} failed processing</span> and {summary!.failed === 1 ? "is" : "are"} not in this queue.
                     </span>
@@ -164,9 +164,9 @@ export function ReviewQueuePage() {
                         <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body-sm text-ink-muted">
                             <p>{formatNumber(data.pagination.total)} {data.pagination.total === 1 ? "item" : "items"}</p>
                             <div className="flex items-center gap-2">
-                                <button type="button" disabled={data.pagination.page <= 1} onClick={() => update({ page: String(data.pagination.page - 1) }, { keepPage: true })} className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Previous</button>
+                                <button type="button" disabled={data.pagination.page <= 1} onClick={() => update({ page: String(data.pagination.page - 1) }, { keepPage: true })} className="h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Previous</button>
                                 <span aria-current="page">Page {data.pagination.page} of {data.pagination.totalPages}</span>
-                                <button type="button" disabled={data.pagination.page >= data.pagination.totalPages} onClick={() => update({ page: String(data.pagination.page + 1) }, { keepPage: true })} className="h-8 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Next</button>
+                                <button type="button" disabled={data.pagination.page >= data.pagination.totalPages} onClick={() => update({ page: String(data.pagination.page + 1) }, { keepPage: true })} className="h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft disabled:opacity-50">Next</button>
                             </div>
                         </nav>
                     </>

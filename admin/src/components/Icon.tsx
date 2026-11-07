@@ -1,123 +1,73 @@
-// Material Symbols (outlined, weight 400), the icon set used in the Stitch
-// design. Imported one SVG at a time so the bundle only carries the icons in
-// use, instead of a 1-1.5 MB icon font. The markup is a build-time constant
-// from the package, never user data.
-import assignmentLate from "@material-symbols/svg-400/outlined/assignment_late.svg?raw";
-import assignmentInd from "@material-symbols/svg-400/outlined/assignment_ind.svg?raw";
-import checkCircle from "@material-symbols/svg-400/outlined/check_circle.svg?raw";
-import darkMode from "@material-symbols/svg-400/outlined/dark_mode.svg?raw";
-import edit from "@material-symbols/svg-400/outlined/edit.svg?raw";
-import event from "@material-symbols/svg-400/outlined/event.svg?raw";
-import flag from "@material-symbols/svg-400/outlined/flag.svg?raw";
-import flagFill from "@material-symbols/svg-400/outlined/flag-fill.svg?raw";
-import phoneMissed from "@material-symbols/svg-400/outlined/phone_missed.svg?raw";
-import editNote from "@material-symbols/svg-400/outlined/edit_note.svg?raw";
-import taskAlt from "@material-symbols/svg-400/outlined/task_alt.svg?raw";
-import uploadFile from "@material-symbols/svg-400/outlined/upload_file.svg?raw";
-import lightMode from "@material-symbols/svg-400/outlined/light_mode.svg?raw";
-import personSearch from "@material-symbols/svg-400/outlined/person_search.svg?raw";
-import search from "@material-symbols/svg-400/outlined/search.svg?raw";
-import summarize from "@material-symbols/svg-400/outlined/summarize.svg?raw";
-import sync from "@material-symbols/svg-400/outlined/sync.svg?raw";
-import chevronLeft from "@material-symbols/svg-400/outlined/chevron_left.svg?raw";
-import dashboard from "@material-symbols/svg-400/outlined/dashboard.svg?raw";
-import deleteIcon from "@material-symbols/svg-400/outlined/delete.svg?raw";
-import description from "@material-symbols/svg-400/outlined/description.svg?raw";
-import error from "@material-symbols/svg-400/outlined/error.svg?raw";
-import factCheck from "@material-symbols/svg-400/outlined/fact_check.svg?raw";
-import group from "@material-symbols/svg-400/outlined/group.svg?raw";
-import localPolice from "@material-symbols/svg-400/outlined/local_police.svg?raw";
-import lock from "@material-symbols/svg-400/outlined/lock.svg?raw";
-import logout from "@material-symbols/svg-400/outlined/logout.svg?raw";
-import mail from "@material-symbols/svg-400/outlined/mail.svg?raw";
-import menu from "@material-symbols/svg-400/outlined/menu.svg?raw";
-import personAdd from "@material-symbols/svg-400/outlined/person_add.svg?raw";
-import progressActivity from "@material-symbols/svg-400/outlined/progress_activity.svg?raw";
-import refresh from "@material-symbols/svg-400/outlined/refresh.svg?raw";
-import schedule from "@material-symbols/svg-400/outlined/schedule.svg?raw";
-import send from "@material-symbols/svg-400/outlined/send.svg?raw";
-import cancel from "@material-symbols/svg-400/outlined/cancel.svg?raw";
-import work from "@material-symbols/svg-400/outlined/work.svg?raw";
-import supportAgent from "@material-symbols/svg-400/outlined/support_agent.svg?raw";
-import apartment from "@material-symbols/svg-400/outlined/apartment.svg?raw";
-import visibility from "@material-symbols/svg-400/outlined/visibility.svg?raw";
-import visibilityOff from "@material-symbols/svg-400/outlined/visibility_off.svg?raw";
-import call from "@material-symbols/svg-400/outlined/call.svg?raw";
-import check from "@material-symbols/svg-400/outlined/check.svg?raw";
-import close from "@material-symbols/svg-400/outlined/close.svg?raw";
-import pictureAsPdf from "@material-symbols/svg-400/outlined/picture_as_pdf.svg?raw";
-import upload from "@material-symbols/svg-400/outlined/upload.svg?raw";
-import manageAccounts from "@material-symbols/svg-400/outlined/manage_accounts.svg?raw";
-import notifications from "@material-symbols/svg-400/outlined/notifications.svg?raw";
-import notificationsActive from "@material-symbols/svg-400/outlined/notifications_active.svg?raw";
-import history from "@material-symbols/svg-400/outlined/history.svg?raw";
-import settings from "@material-symbols/svg-400/outlined/settings.svg?raw";
-import keyboardArrowUp from "@material-symbols/svg-400/outlined/keyboard_arrow_up.svg?raw";
-import keyboardArrowDown from "@material-symbols/svg-400/outlined/keyboard_arrow_down.svg?raw";
+// Lucide, the EMLYNK design system's only icon set. Screens name an icon by
+// what it means here, so changing a glyph touches this file alone.
+import {
+    ArrowUpFromLine, Bell, BellRing, Briefcase, Building2, Calendar, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, CircleAlert, CircleCheck, CircleCheckBig, CircleX,
+    ClipboardCheck, ClipboardList, ClipboardX, Clock, Eye, EyeOff, FileDown, FileText, FileUp, Flag, Headset, History, LayoutDashboard, LoaderCircle, Lock, LogOut,
+    Mail, Moon, NotebookPen, PanelLeft, Pencil, Phone, PhoneMissed, RefreshCw, RotateCcw, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Sun, Trash2, UserCheck, UserCog, UserPlus,
+    Users, UserSearch, X, type LucideIcon,
+} from "lucide-react";
 
 const ICONS = {
-    assignment_late: assignmentLate,
-    call,
-    cancel,
-    check,
-    close,
-    picture_as_pdf: pictureAsPdf,
-    upload,
-    check_circle: checkCircle,
-    dark_mode: darkMode,
-    delete: deleteIcon,
-    edit,
-    event,
-    flag,
-    flag_fill: flagFill,
-    edit_note: editNote,
-    phone_missed: phoneMissed,
-    task_alt: taskAlt,
-    upload_file: uploadFile,
-    light_mode: lightMode,
-    person_add: personAdd,
-    person_search: personSearch,
-    assignment_ind: assignmentInd,
-    work,
-    support_agent: supportAgent,
-    apartment,
-    refresh,
-    schedule,
-    search,
-    send,
-    summarize,
-    sync,
-    chevron_left: chevronLeft,
-    dashboard,
-    description,
-    error,
-    fact_check: factCheck,
-    group,
-    manage_accounts: manageAccounts,
-    history,
-    local_police: localPolice,
-    lock,
-    logout,
-    mail,
-    menu,
-    progress_activity: progressActivity,
-    settings,
-    visibility,
-    visibility_off: visibilityOff,
-    notifications,
-    notifications_active: notificationsActive,
-    keyboard_arrow_up: keyboardArrowUp,
-    keyboard_arrow_down: keyboardArrowDown,
-} as const;
+    assignment_late: ClipboardX,
+    call: Phone,
+    cancel: CircleX,
+    check: Check,
+    close: X,
+    filter: SlidersHorizontal,
+    picture_as_pdf: FileDown,
+    upload: ArrowUpFromLine,
+    check_circle: CircleCheck,
+    dark_mode: Moon,
+    delete: Trash2,
+    edit: Pencil,
+    event: Calendar,
+    flag: Flag,
+    flag_fill: Flag,
+    edit_note: NotebookPen,
+    phone_missed: PhoneMissed,
+    task_alt: CircleCheckBig,
+    upload_file: FileUp,
+    light_mode: Sun,
+    person_add: UserPlus,
+    person_search: UserSearch,
+    assignment_ind: UserCheck,
+    work: Briefcase,
+    support_agent: Headset,
+    apartment: Building2,
+    refresh: RotateCcw,
+    schedule: Clock,
+    search: Search,
+    send: Send,
+    summarize: ClipboardList,
+    sync: RefreshCw,
+    chevron_left: ChevronLeft,
+    chevron_right: ChevronRight,
+    dashboard: LayoutDashboard,
+    description: FileText,
+    error: CircleAlert,
+    fact_check: ClipboardCheck,
+    group: Users,
+    manage_accounts: UserCog,
+    history: History,
+    local_police: ShieldCheck,
+    lock: Lock,
+    logout: LogOut,
+    mail: Mail,
+    panel_left: PanelLeft,
+    progress_activity: LoaderCircle,
+    settings: Settings,
+    visibility: Eye,
+    visibility_off: EyeOff,
+    notifications: Bell,
+    notifications_active: BellRing,
+    keyboard_arrow_up: ChevronUp,
+    keyboard_arrow_down: ChevronDown,
+    unfold_more: ChevronsUpDown,
+} as const satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;
 
-export function Icon({ name, className = "size-5" }: { name: IconName; className?: string }) {
-    return (
-        <span
-            aria-hidden="true"
-            className={`icon inline-block shrink-0 ${className}`}
-            dangerouslySetInnerHTML={{ __html: ICONS[name] }}
-        />
-    );
+export function Icon({ name, className = "size-4" }: { name: IconName; className?: string }) {
+    const Glyph = ICONS[name];
+    return <Glyph aria-hidden="true" className={`icon inline-block shrink-0 ${name === "flag_fill" ? "fill-current" : ""} ${className}`} />;
 }

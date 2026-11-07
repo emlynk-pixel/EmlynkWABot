@@ -1,10 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { getDailyRoleSummary, getDailySummary, getIncompleteCandidates, type DailyRoleSummary, type DailySummary, type IncompleteStage } from "../api/admin";
-import { STAGE_LABELS, type CandidateStageKey } from "../api/candidates";
+import { stageLabel } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
-import { ROLE_LABELS, ROLES, hasRole, type Role } from "../auth/roles";
+import { ROLES, canViewDashboard, canViewRoleReport, roleLabel as labelOfRole, type Role } from "../auth/roles";
 import { activityLabel, exportRolePdf, exportSummaryPdf, reportTypeLabel } from "../components/dailyReportPdf";
 import { formatDateTime, formatDay, formatNumber, formatTime, todayInSriLanka } from "../components/format";
 import { Icon } from "../components/Icon";
@@ -17,23 +17,21 @@ import { DatePicker } from "../components/DatePicker";
 //   Summary            daily KPIs, documents, completed candidates, calls,
 //                      and the CURRENT state (incomplete candidates, police)
 //   Summary by Roles   calls and staff uploads by the staff of one role
-//                      (ADMIN and MANAGER only, like the API)
+//                      (ADMIN only, like the API)
 // Date, view and role live in the URL. Export PDF exports the open view.
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const shiftDay = (ymd: string, days: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 // The order of the role selector.
-const REPORT_ROLES: Role[] = [ROLES.ANALYST, ROLES.MANAGER, ROLES.ADMIN, ROLES.REGISTRATION_DESK];
-const ROLE_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.MANAGER];
+const REPORT_ROLES: Role[] = [ROLES.ANALYST, ROLES.TEAM_LEAD, ROLES.ADMIN, ROLES.OWNER, ROLES.REGISTRATION_DESK];
 const PREVIEW_ROWS = 10;
 
-const button = "h-9 rounded border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50";
-const th = "border-b border-border px-3 py-2 text-left text-label-caps uppercase text-ink-subtle";
+const button = "h-8 rounded-lg border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50";
+const th = "border-b border-border px-3 py-2 text-left text-label-sm text-ink-muted";
 const thRight = `${th} text-right`;
 const td = "border-b border-border px-3 py-2 text-body-sm text-ink";
 const tdRight = `${td} text-right tabular-nums`;
-const stageLabel = (stage: string) => STAGE_LABELS[stage as CandidateStageKey] ?? stage;
-const roleLabel = (role: string | null) => (role ? ROLE_LABELS[role as Role] ?? role : "—");
+const roleLabel = (role: string | null) => (role ? labelOfRole(role) : "—");
 
 // ---------------------------------------------------------------- building blocks
 
@@ -140,11 +138,11 @@ function CompletedPanel({ report }: { report: DailySummary }) {
     const { completedCandidates: c } = report;
     const { shown, toggle } = useExpandable(c.items);
     return (
-        <Panel title="Completed candidates" description="Candidates whose final stage, Finalizing the job, was completed on this day." aside={toggle}>
+        <Panel title="Completed candidates" description="Candidates recorded as Departed on this day (the bulk import or an Admin on the candidate page)." aside={toggle}>
             {c.items.length === 0 ? <Empty>No candidate completed on this day.</Empty> : (
                 <div className="overflow-x-auto">
                     <table aria-label="Completed candidates" className="w-full border-collapse">
-                        <thead><tr><th className={th}>Passport number</th><th className={th}>Name</th><th className={th}>Completed</th><th className={th}>All stages now</th></tr></thead>
+                        <thead><tr><th className={th}>Passport number</th><th className={th}>Name</th><th className={th}>Departed</th><th className={th}>All stages now</th></tr></thead>
                         <tbody>
                             {shown.map((row) => (
                                 <tr key={row.passportId}>
@@ -249,6 +247,8 @@ function IncompleteRow({ row }: { row: IncompleteStage }) {
 }
 
 function CurrentState({ report }: { report: DailySummary }) {
+    // The counts are part of the report; the Police Workflow page is not every report role's (not TEAM_LEAD's).
+    const { user } = useAuth();
     const { incomplete, police } = report.current;
     return (
         <section aria-labelledby="current-heading" className="space-y-3">
@@ -269,7 +269,7 @@ function CurrentState({ report }: { report: DailySummary }) {
             <Panel
                 title="Police reports"
                 description="21-day police report status of every candidate."
-                aside={<Link to="/police" className="text-label-md text-primary hover:underline">Police Workflow</Link>}
+                aside={canViewDashboard(user) ? <Link to="/police" className="text-label-md text-primary hover:underline">Police Workflow</Link> : undefined}
             >
                 <dl aria-label="Police report status" className="grid grid-cols-2 gap-x-4 gap-y-3 px-3 py-3 sm:grid-cols-5">
                     {([
@@ -297,7 +297,7 @@ function SummaryView({ report }: { report: DailySummary }) {
         <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
                 <Kpi label="Candidates registered" value={summary.candidatesRegistered} hint="New candidate records" />
-                <Kpi label="Candidates completed" value={summary.candidatesCompleted} hint="Final stage completed" />
+                <Kpi label="Candidates completed" value={summary.candidatesCompleted} hint="Recorded as Departed" />
                 <Kpi label="Visa completed" value={summary.visaCompleted} hint="Visa approval completed" />
                 <Kpi label="Calls taken" value={summary.callsTaken} />
                 <Kpi label="Documents submitted" value={summary.documentsSubmitted} hint={`${formatNumber(documents.whatsapp)} WhatsApp · ${formatNumber(documents.manual)} manual`} />
@@ -311,7 +311,7 @@ function SummaryView({ report }: { report: DailySummary }) {
                 <CallsPanel report={report} />
             </div>
             {actions.length > 0 && (
-                <details className="rounded-lg border border-border bg-surface px-4 py-3 text-body-sm">
+                <details className="rounded-xl border border-border bg-surface px-4 py-3 text-body-sm">
                     <summary className="cursor-pointer text-label-md text-ink-soft">Review and admin actions this day ({formatNumber(actions.reduce((sum, [, n]) => sum + n, 0))})</summary>
                     <ul className="mt-2 divide-y divide-border">
                         {actions.map(([action, count]) => (
@@ -419,7 +419,8 @@ export function DailyReportPage() {
     const today = todayInSriLanka();
     const requested = searchParams.get("date");
     const date = requested && DATE_PATTERN.test(requested) && requested <= today ? requested : today;
-    const canSeeRoles = hasRole(user, ROLE_VIEW_ROLES);
+    // Summary by Roles is ADMIN only (a TEAM_LEAD and an ANALYST see the Summary).
+    const canSeeRoles = canViewRoleReport(user);
     const view = canSeeRoles && searchParams.get("view") === "roles" ? "roles" : "summary";
     const requestedRole = searchParams.get("role") as Role | null;
     const role: Role = requestedRole && REPORT_ROLES.includes(requestedRole) ? requestedRole : ROLES.ANALYST;
@@ -445,7 +446,7 @@ export function DailyReportPage() {
         }
     };
 
-    const tab = (active: boolean) => `h-8 rounded px-3 text-label-md ${active ? "bg-surface text-ink shadow-surface" : "text-ink-muted hover:text-ink"}`;
+    const tab = (active: boolean) => `h-8 rounded-lg px-3 text-label-md ${active ? "bg-surface text-ink shadow-surface" : "text-ink-muted hover:text-ink"}`;
 
     return (
         <section aria-labelledby="page-title" className="space-y-5">
@@ -466,7 +467,7 @@ export function DailyReportPage() {
                         required
                         value={date}
                         onChange={(next) => next && setDate(next)}
-                        className="h-9 w-40 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
+                        className="h-8 w-40 rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
                     />
                     <button type="button" className={button} disabled={date >= today} onClick={() => setDate(shiftDay(date, 1))}>Next day</button>
                     <button type="button" className={button} disabled={date === today} onClick={() => setDate(today)}>Today</button>
@@ -479,7 +480,7 @@ export function DailyReportPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-3">
                 {canSeeRoles ? (
-                    <div role="tablist" aria-label="Report view" className="inline-flex rounded-md border border-border bg-canvas p-0.5">
+                    <div role="tablist" aria-label="Report view" className="inline-flex rounded-lg border border-border bg-canvas p-0.5">
                         <button type="button" role="tab" aria-selected={view === "summary"} className={tab(view === "summary")} onClick={() => update({ view: null })}>Summary</button>
                         <button type="button" role="tab" aria-selected={view === "roles"} className={tab(view === "roles")} onClick={() => update({ view: "roles" })}>Summary by Roles</button>
                     </div>
@@ -491,9 +492,9 @@ export function DailyReportPage() {
                             aria-label="Role"
                             value={role}
                             onChange={(event) => update({ role: event.target.value })}
-                            className="h-9 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
+                            className="h-8 rounded-lg border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
                         >
-                            {REPORT_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                            {REPORT_ROLES.map((r) => <option key={r} value={r}>{labelOfRole(r)}</option>)}
                         </select>
                     </label>
                 )}

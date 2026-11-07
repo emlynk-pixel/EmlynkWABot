@@ -1,4 +1,6 @@
 # Google Sheets Candidate Operational Mirror
+
+> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md).
 ## Architecture & Project-Scope Specification
 
 - **Feature Name:** Google Sheets Candidate Operational Mirror (operational fallback)
@@ -22,6 +24,8 @@
 > **Synchronization model (current; supersedes the real-time design below).** There is **no real-time synchronization**. A candidate, stage or document change only records a row in `sheet_sync_queue` (the database triggers are unchanged); nothing is written to the Sheet at that moment. The Sheet is written only by a **full reconciliation** of the current database: automatically at **06:00, 12:00 and 18:00 Asia/Colombo** (one Cloud Scheduler job, `0 6,12,18 * * *`, time zone `Asia/Colombo`, calling the worker's OIDC-protected `POST /tasks/reconcile`; `SHEET_SYNC_SCHEDULE` in `src/config/sheetSync.js`), and on demand by an ADMIN's **Sync Now**. A successful write reconciliation settles the queue rows it covered (`RECONCILED`); a change that arrives during a run stays `PENDING` for the next one. Asia/Colombo is the project's operational time zone (`src/utils/businessDay.js`); Cloud Scheduler applies it, so the server's time zone never matters. Sections describing incremental (per-candidate, near-real-time) sync, queue claims, per-item retries and dead letters describe the original design and are kept as history. Commands: Section 24.9.
 
 > **Update (Sync Destination and Settings).** The Sheet Sync Settings UI has three tabs (Change Roles, Invite User, Google Sheet Sync), the Google Sheet Sync tab separates **automatic (scheduled)** from **manual** sync and has a **Sync Destination** section, and the worker can write to any of several configured Sheets, one active at a time. These are described as built in **Section 12.9** (UI), **Section 13** (API) and **Section 25** (Sync Destination). Where Sections 12.1-12.4 and the 13.1 example describe the earlier "single Settings card" design, they are kept as historical design context and are superseded by 12.9 and 24.7. The automatic schedule (06:00, 12:00, 18:00 Asia/Colombo), the one-way database -> Sheet rule and every safeguard in this document are unchanged.
+
+> **Current column layout (documentation cleanup, 2026-10-30).** The live mirror uses the approved **83-column** layout (`A–CE`): `CANDIDATE_BULK_IMPORT.md` §3. The 40/41-column layouts in this specification are earlier revisions. Operations and troubleshooting: `GOOGLE_SHEET_INTEGRATION.md`.
 
 ### How to read this document
 

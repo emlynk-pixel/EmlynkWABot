@@ -15,10 +15,10 @@
 //                          record is created; nothing else, so a candidate
 //                          registered without any document counts too);
 //                          registered by = the CREATE_CANDIDATE audit entry
-//     candidates completed candidate_stages.completed_at of FINALIZING_JOB,
-//                          the final stage (a candidate's own completion has
-//                          no timestamp: two stages complete automatically
-//                          from data), with whether every stage is complete now
+//     candidates completed candidate.departed_at: the candidates recorded as
+//                          Departed that day (the bulk import's "Departed" or
+//                          an Admin's final status), with whether every stage
+//                          is complete now
 // - current (snapshot): incomplete candidates by stage and reason, police
 //   report status. No history of them is kept, so a past date shows today's
 //   state, labelled as such.
@@ -192,14 +192,14 @@ const callView = (row) => ({
 
 // GET /api/admin/reports/daily/summary?date=YYYY-MM-DD
 // scope: the signed-in user's candidates (candidateAccess.js candidateScope), {}
-// for ADMIN, MANAGER and REGISTRATION_DESK. For an Analyst every list and count
+// for ADMIN and REGISTRATION_DESK. For an Analyst every list and count
 // is about their own candidates (calls, uploads, registrations, completions).
 export async function getDailySummary({ db, date, now = new Date(), scope = {} }) {
     const { start, end } = businessDayRange(date);
     const inDay = { gte: start, lt: end };
     const linked = linkedScope(scope);
     const audit = await auditScope(db, scope);
-    const finalWhere = andWhere({ stage: "FINALIZING_JOB", completed: true, completedAt: inDay }, linked);
+    const departedWhere = andWhere({ departedAt: inDay }, scope);
     const callWhere = andWhere({ createdDate: inDay }, linked);
 
     const registeredWhere = andWhere({ createdDate: inDay }, scope);
@@ -215,13 +215,13 @@ export async function getDailySummary({ db, date, now = new Date(), scope = {} }
         }),
         db.candidateCallLog.count({ where: callWhere }),
         db.auditLog.groupBy({ by: ["documentType"], where: andWhere({ action: UPLOAD_ACTION, createdDate: inDay }, audit), _count: { _all: true } }),
-        db.candidateStage.findMany({
-            where: finalWhere,
-            select: { completedAt: true, user: { select: { ...CANDIDATE_FIELDS, ...PROGRESS_FIELDS } } },
-            orderBy: [{ completedAt: "desc" }, { passportId: "asc" }],
+        db.candidate.findMany({
+            where: departedWhere,
+            select: { departedAt: true, ...CANDIDATE_FIELDS, ...PROGRESS_FIELDS },
+            orderBy: [{ departedAt: "desc" }, { passportId: "asc" }],
             take: DAILY_LIST_LIMIT,
         }),
-        db.candidateStage.count({ where: finalWhere }),
+        db.candidate.count({ where: departedWhere }),
         db.candidateStage.count({ where: andWhere({ stage: "VISA_APPROVAL", completed: true, completedAt: inDay }, linked) }),
         readProgress(db, scope),
         // Candidates registered that day (by their record's creation time),
@@ -311,10 +311,10 @@ export async function getDailySummary({ db, date, now = new Date(), scope = {} }
         completedCandidates: {
             total: finalizedTotal,
             items: finalized.map((row) => ({
-                passportId: row.user.passportId,
-                name: clientName(row.user),
-                completedAt: row.completedAt,
-                allStagesComplete: allStagesComplete(row.user),
+                passportId: row.passportId,
+                name: clientName(row),
+                completedAt: row.departedAt,
+                allStagesComplete: allStagesComplete(row),
             })),
             truncated: finalizedTotal > finalized.length,
         },
@@ -328,7 +328,7 @@ export async function getDailySummary({ db, date, now = new Date(), scope = {} }
 
 // ------------------------------------------------------------------ summary by roles
 
-// GET /api/admin/reports/daily/roles?date=YYYY-MM-DD&role=ROLE (ADMIN, MANAGER).
+// GET /api/admin/reports/daily/roles?date=YYYY-MM-DD&role=ROLE (ADMIN only).
 // Calls and staff document uploads that day by staff members whose current
 // role is `role`. WhatsApp files are never attributed to staff.
 export async function getDailyRoleSummary({ db, date, role }) {

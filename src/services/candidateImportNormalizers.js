@@ -259,12 +259,33 @@ const MAX_JOB_TYPES = 10;
 // the list's spelling) or a confirmed alias. Unknown roles are reported, never created.
 // activeJobTypes: the active job type names. aliases: legacy name (upper case) -> job type name.
 // Returns { value: [names] | null, warning? }.
+// The roles in a cell: split on , / ; & (and "+"), whitespace (incl. no-break spaces) collapsed.
+export function splitJobRoles(raw) {
+    return clean(raw).split(/[,/;&+]/).map((r) => r.replace(/[\s ]+/g, " ").trim()).filter(Boolean);
+}
+
+// The roles in a cell that match no active job type and no alias, as upper-case names (what the
+// import adds as new job types). Longer than MAX_JOB_TYPE_NAME characters are left out.
+const MAX_JOB_TYPE_NAME = 100;
+export function unknownJobRoles(raw, { activeJobTypes, aliases = {} }) {
+    if (blank(raw)) return [];
+    const active = new Set(activeJobTypes.map((name) => name.toUpperCase()));
+    const found = [];
+    for (const role of splitJobRoles(raw)) {
+        const key = role.toUpperCase();
+        const alias = aliases[key];
+        if (active.has(key) || (alias && active.has(alias.toUpperCase())) || key.length > MAX_JOB_TYPE_NAME || found.includes(key)) continue;
+        found.push(key);
+    }
+    return found;
+}
+
 export function normalizeJobRoles(raw, { activeJobTypes, aliases = {} }) {
     if (blank(raw)) return none();
     const active = new Map(activeJobTypes.map((name) => [name.toUpperCase(), name]));
     const resolved = [];
     let unknown = false;
-    for (const role of clean(raw).split(",").map((r) => r.trim()).filter(Boolean)) {
+    for (const role of splitJobRoles(raw)) {
         const key = role.toUpperCase();
         const alias = aliases[key];
         const name = active.get(key) ?? (alias ? active.get(alias.toUpperCase()) : undefined);
@@ -275,6 +296,63 @@ export function normalizeJobRoles(raw, { activeJobTypes, aliases = {} }) {
     const value = resolved.length ? resolved : null;
     return unknown ? { value, warning: "UNKNOWN_JOB_TYPE" } : { value };
 }
+
+// ---------------------------------------------------------------- process columns
+
+// UNIQUE NUMBER: a whole number from 0 (a spreadsheet may give "3100", " 3100 " or "3100.0"). Anything
+// else (text, a negative or decimal number) is reported and ignored: no Job is guessed from it.
+const MAX_UNIQUE_NUMBER = 999_999_999;
+export function normalizeUniqueNumber(raw) {
+    if (blank(raw)) return none();
+    const text = clean(raw);
+    if (!/^[0-9]{1,9}(\.0+)?$/.test(text)) return drop("INVALID_UNIQUE_NUMBER");
+    const value = Number(text);
+    return Number.isSafeInteger(value) && value <= MAX_UNIQUE_NUMBER ? { value } : drop("INVALID_UNIQUE_NUMBER");
+}
+
+// VISA STATUS (the legacy sheet's values, confirmed from the sample workbook and by the business),
+// case-insensitive. Every value becomes the candidate's Status (candidateWorkflowStatus.js):
+//   Submit             -> "VISA_SUBMITTED" (completes the Visa submission stage)        Visa Submitted
+//   Got Visa           -> "VISA_APPROVED"  (completes the Visa approval stage)          Visa Approved
+//   Departed           -> "DEPARTED"       (candidate.departed_at)                      Departed
+//   Got Visa Not Going -> "VISA_NOT_GOING" (candidate.outcome)                          Visa Not Going
+//   Cancelled / Canceled -> "CANCELLED"    (candidate.outcome)                          Cancelled
+//   Reject / Rejected  -> "REJECTED"       (candidate.outcome)                          Rejected
+//   Not Submit, blank  -> nothing: no visa step yet (the sheet's default, not a problem)
+// Any other value is reported and ignored: no status is guessed from it.
+const VISA_STATUSES = Object.freeze({
+    SUBMIT: "VISA_SUBMITTED", "GOT VISA": "VISA_APPROVED", DEPARTED: "DEPARTED",
+    "GOT VISA NOT GOING": "VISA_NOT_GOING", CANCELLED: "CANCELLED", CANCELED: "CANCELLED", REJECT: "REJECTED", REJECTED: "REJECTED",
+});
+const VISA_NO_ACTION = new Set(["NOT SUBMIT"]);
+export function normalizeVisaStatus(raw) {
+    if (blank(raw)) return none();
+    const key = clean(raw).toUpperCase().replace(/\s+/g, " ");
+    if (VISA_NO_ACTION.has(key)) return none();
+    return VISA_STATUSES[key] ? { value: VISA_STATUSES[key] } : drop("UNKNOWN_VISA_STATUS");
+}
+
+// INTERVIEW PASS FAIL -> the Test result. An empty cell (blank, only spaces, or the word EMPTY) is a
+// PASS, as the business confirmed; the caller applies it only to a row that has a Test (an Interview
+// Date or an explicit result), so an empty cell never invents a test. `explicit`: the cell said
+// PASS or FAIL itself.
+export function normalizeTestResult(raw) {
+    const key = clean(raw).toUpperCase();
+    if (key === "" || key === "EMPTY") return { value: "PASS", explicit: false };
+    if (key === "PASS" || key === "FAIL") return { value: key, explicit: true };
+    return drop("INVALID_TEST_RESULT");
+}
+
+// A Client / Agent name: trimmed, spaces collapsed, stored with the sheet's spelling. Its lookup key
+// (orgKey) ignores case, so "ABC Ltd" and "abc  LTD" are the same organisation.
+export function normalizeOrgName(raw, { max = 120 } = {}) {
+    return normalizeText(raw, { max });
+}
+export const orgKey = (name) => clean(name).toLowerCase();
+
+// The first name of a person's name ("  john  Silva " -> "john"): how the sheet's OFFICER is
+// matched to a user (the user table has one name field).
+export const firstNameKey = (name) => clean(name).split(" ")[0].toLowerCase();
 
 // ---------------------------------------------------------------- masking
 

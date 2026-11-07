@@ -40,11 +40,11 @@ const ELIGIBLE: CandidateList = { items: [1, 2, 3].map((n) => eligible(n)), pagi
 
 function backend(extra: FetchRoutes = {}) {
     return signedInBackend({
-        "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "MANAGER" } } },
+        "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "OWNER" } } },
         "GET /api/admin/jobs": { status: 200, body: { items: [baseJob], pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 }, counts: { processing: 1, completed: 0, cancelled: 0 }, filters: { view: "processing", search: null } } },
         [`GET /api/admin/jobs/${JOB_ID}`]: { status: 200, body: details() },
         "GET /api/admin/job-options": { status: 200, body: OPTIONS },
-        "GET /api/admin/candidates": { status: 200, body: ELIGIBLE },
+        "GET /api/admin/job-candidate-options": { status: 200, body: ELIGIBLE },
         ...extra,
     });
 }
@@ -188,11 +188,12 @@ describe("New job in two steps", () => {
         await fillStepOne(user, dialog);
         await user.click(within(dialog).getByRole("button", { name: "Next" }));
         const list = await within(dialog).findByRole("list", { name: "Eligible candidates" });
-        const request = calls.find((c) => c.path.startsWith("/api/admin/candidates?"))!;
-        // FAIL candidates are left out by the server (testResult=PASS); candidates on other jobs are listed too
-        // (a candidate may hold several jobs), so `available` is no longer sent.
-        expect(Object.fromEntries(request.url.searchParams)).toMatchObject({ testResult: "PASS" });
+        const request = calls.find((c) => c.path.startsWith("/api/admin/job-candidate-options?"))!;
+        // FAIL candidates are left out by the server (the job-scoped picker lists test PASS only); candidates on
+        // other jobs are listed too (a candidate may hold several jobs), so `available` is no longer sent.
+        expect(request).toBeDefined();
         expect(request.url.searchParams.has("available")).toBe(false);
+        expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(false);
         const items = within(list).getAllByRole("listitem");
         expect(items).toHaveLength(3);
         expect(items[1]).toHaveTextContent("ELIGIBLE 2");
@@ -217,7 +218,7 @@ describe("New job in two steps", () => {
         await user.click(within(dialog).getByRole("checkbox", { name: /ELIGIBLE 3/ }));
         await user.click(within(dialog).getByRole("button", { name: "Create job" }));
         await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({
-            jobTypeId: "t1", jobTypeIds: ["t1"], clientId: "c1", responsibleAgentId: "a1", vacancies: 2, companyJobId: null, fromCountryCode: "LK",
+            jobTypeId: "t1", jobTypeIds: ["t1"], jobSector: null, clientId: "c1", responsibleAgentId: "a1", vacancies: 2, companyJobId: null, fromCountryCode: "LK",
             candidateIds: ["P0000001", "P0000002", "P0000003"],
         }));
         expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);

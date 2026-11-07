@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
-import { createAgent, getAgent, listAgents, setAgentStatus, updateAgent, type AgentDetails, type AgentInput, type AgentListItem, type AgentRecord, type EntityStatus } from "../api/agents";
+import { AGENT_COUNTRY_NOT_SET, createAgent, getAgent, listAgents, setAgentStatus, updateAgent, type AgentDetails, type AgentInput, type AgentListItem, type AgentRecord, type EntityStatus } from "../api/agents";
 import { getClientOptions } from "../api/clientManagement";
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageMasterData, useAuth } from "../auth/AuthProvider";
@@ -12,7 +12,7 @@ import { CountrySelect, EntityStatusBadge, MultiSelect, RestrictedPage, StatusDi
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl, tableCell, tableHead, tableRow, textareaClass } from "../components/ui";
 
-// Admin > Agents (ADMIN and MANAGER). An Agent is a business entity, not a
+// Admin > Agents (ADMIN and JOB_HANDLER). An Agent is a business entity, not a
 // login: a recruiting partner in one country that works with many Clients (and a
 // Client with many Agents). Agents are never deleted; INACTIVE agents keep their
 // history but take no new Client.
@@ -62,7 +62,7 @@ function AgentsView() {
     const filtered = Boolean(search || country || status);
 
     return (
-        <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
+        <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Agents</h1>
@@ -153,7 +153,7 @@ function AgentRow({ agent, onEdit, onStatus }: { agent: AgentListItem; onEdit: (
             <td className={tableCell}>
                 <Link to={`/agents/${agent.agentId}`} className="font-medium text-primary hover:underline">{agent.name}</Link>
             </td>
-            <td className={tableCell}>{countryName(agent.countryCode)}</td>
+            <td className={tableCell}>{agent.countryCode ? countryName(agent.countryCode) : AGENT_COUNTRY_NOT_SET}</td>
             <td className={`${tableCell} text-right tabular-nums`}>{formatNumber(agent.activeClients)}</td>
             <td className={`${tableCell} text-right tabular-nums`}>{formatNumber(agent.processingJobs)}</td>
             <td className={`${tableCell} text-right tabular-nums`}>{formatNumber(agent.completedJobs)}</td>

@@ -3,6 +3,11 @@ import type { CandidateFormPayload, DraftResponse, DraftStep, FormLoadResponse, 
 
 const BASE = "/api/public/candidate-details";
 
+// The title, logo and colours set in Settings > Candidate Form. Needs no token.
+export function loadBranding(signal?: AbortSignal): Promise<unknown> {
+    return postJson<unknown>(`${BASE}/branding`, {}, { signal });
+}
+
 // Share-link secret + Passport Number + NIC -> a short-lived candidate token.
 export function verifyCandidate(input: VerifyRequest, signal?: AbortSignal): Promise<VerifyResponse> {
     return postJson<VerifyResponse>(`${BASE}/verify`, input, { signal });

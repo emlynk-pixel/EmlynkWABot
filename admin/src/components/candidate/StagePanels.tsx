@@ -22,7 +22,7 @@ import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { CandidateFields, completionGaps, detailsFrom, Field, fieldControl, textAreaControl, validateDetails } from "./CandidateFields";
 import { DocumentRow, VIDEO_ACCEPT } from "./DocumentRow";
 import { exportDocumentSubmissionPdf } from "./exportPdf";
-import { mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
+import { FormChangesButtons, mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
 
 type PanelProps = { details: CandidateDetails; canEdit: boolean; onChange: (details: CandidateDetails) => void };
 
@@ -50,24 +50,30 @@ function PanelHeading({ title, description, action }: { title: string; descripti
 }
 
 // Completion (a checkbox, or the automatic status), error, and Cancel / Save changes.
-function PanelFooter({ status, canEdit, busy, dirty, error, onCancel }: {
+// actions: more buttons left of Cancel (Candidate details: Confirm All / Reject All), shown even when
+// the form itself is read-only.
+function PanelFooter({ status, canEdit, busy, dirty, error, onCancel, actions }: {
     status: ReactNode;
     canEdit: boolean;
     busy: boolean;
     dirty: boolean;
     error: string | null;
     onCancel?: () => void;
+    actions?: ReactNode;
 }) {
     return (
         <div className="mt-6 border-t border-border pt-4">
             {status}
             <DialogError message={error} />
-            {canEdit && onCancel && (
-                <div className="mt-4 flex justify-end gap-2">
-                    <button type="button" onClick={onCancel} disabled={busy || !dirty} className={secondaryButton}>Cancel</button>
-                    <button type="submit" disabled={busy || !dirty} className={primaryButton}>{busy ? "Saving…" : "Save changes"}</button>
-                </div>
-            )}
+            <div className="mt-4 flex flex-wrap justify-end gap-2 empty:hidden">
+                {actions}
+                {canEdit && onCancel && (
+                    <>
+                        <button type="button" onClick={onCancel} disabled={busy || !dirty} className={secondaryButton}>Cancel</button>
+                        <button type="submit" disabled={busy || !dirty} className={primaryButton}>{busy ? "Saving…" : "Save changes"}</button>
+                    </>
+                )}
+            </div>
         </div>
     );
 }
@@ -91,7 +97,7 @@ function AutomaticStatus({ stage, completedLabel = "Stage completed" }: { stage:
     );
 }
 
-// "Verify details" / "Verify documents": an explicit manual action (ADMIN and MANAGER) behind the Candidate
+// "Verify details" / "Verify documents": an explicit manual action (ADMIN only) behind the Candidate
 // list Status. Saving or completing the stage never verifies it; the server also refuses to verify an incomplete stage.
 function VerifyBar({ details, kind, onChange }: { details: CandidateDetails; kind: "DETAILS" | "DOCUMENTS"; onChange: (details: CandidateDetails) => void }) {
     const { user, token } = useAuth();
@@ -116,7 +122,7 @@ function VerifyBar({ details, kind, onChange }: { details: CandidateDetails; kin
         }
     };
     return (
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded border border-border px-3 py-2">
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
             <p className={`inline-flex items-center gap-1.5 text-body-sm ${state ? "text-verified" : "text-ink-muted"}`}>
                 {state && <Icon name="check" className="size-4" />}
                 {state ? `Verified${state.by ? ` by ${state.by}` : ""} on ${state.at.slice(0, 10)}` : `Not verified yet`}
@@ -133,8 +139,8 @@ function VerifyBar({ details, kind, onChange }: { details: CandidateDetails; kin
 
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "The changes could not be saved.");
 
-// The stages completed by an admin (Test details, IVS interview, Visa
-// approval, Finalizing the job): notes and completion. Test details also
+// The stages completed by an admin (Test details, Job details, Visa submission, Visa
+// approval): notes and completion. Test details also
 // shows the candidate's job (from the Job assignment, read-only) and records the
 // test's result and the date it was sat; the client name shown with them comes
 // from the candidate's record.
@@ -351,6 +357,7 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
                     dirty={dirty}
                     error={error}
                     onCancel={() => { setForm(detailsFrom(details.candidate)); setComment(saved.notes ?? ""); setFieldErrors({}); setError(null); }}
+                    actions={<FormChangesButtons />}
                 />
             </form>
             <VerifyBar details={details} kind="DETAILS" onChange={onChange} />
@@ -435,9 +442,9 @@ export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelPro
                 )}
             />
             <ul className="mt-4 flex flex-wrap items-center gap-2 border-b border-border pb-4" aria-label="Required documents">
-                <li className="text-label-caps uppercase text-ink-subtle">Required checklist:</li>
+                <li className="text-label-sm text-ink-muted">Required checklist:</li>
                 {details.requiredDocuments.map((r) => (
-                    <li key={r.documentType} className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-label-sm ${r.included ? "border-verified-border bg-verified-bg text-verified" : "border-border text-ink-muted"}`}>
+                    <li key={r.documentType} className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-label-sm ${r.included ? "border-verified-border bg-verified-bg text-verified" : "border-border text-ink-muted"}`}>
                         {r.included && <Icon name="check" className="size-3.5" />}
                         {documentTypeLabel(r.documentType)}
                         <span className="sr-only">{r.included ? "included" : "missing"}</span>

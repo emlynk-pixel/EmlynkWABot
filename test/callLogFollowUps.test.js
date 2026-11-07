@@ -23,11 +23,12 @@ import { FOLLOW_UP_STATUS, listFollowUps } from "../src/services/callLogFollowUp
 const MIGRATION = "20261011120000_call_log_follow_up";
 const USERS = {
     ADMIN: { adminId: "user-admin", authUserId: "00000000-0000-4000-8000-000000000001", name: "Ada Admin", email: "ada@example.invalid", role: "ADMIN" },
-    MANAGER: { adminId: "user-manager", authUserId: "00000000-0000-4000-8000-000000000002", name: "Max Manager", email: "max@example.invalid", role: "MANAGER" },
+    OWNER: { adminId: "user-owner", authUserId: "00000000-0000-4000-8000-000000000002", name: "Olive Owner", email: "olive@example.invalid", role: "OWNER" },
     ANALYST: { adminId: "user-analyst", authUserId: "00000000-0000-4000-8000-000000000003", name: "Ann Analyst", email: "ann@example.invalid", role: "ANALYST" },
     REGISTRATION_DESK: { adminId: "user-desk", authUserId: "00000000-0000-4000-8000-000000000004", name: "Dee Desk", email: "dee@example.invalid", role: "REGISTRATION_DESK" },
 };
-const STAFF_ROLES = ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"];
+// The call log and Need Attention roles. Not REGISTRATION_DESK: it has the registration workflow only.
+const STAFF_ROLES = ["ADMIN", "OWNER", "ANALYST"];
 const BASE = {
     surname: "De Soysa", otherNames: "Anusha", address: "Negombo, Sri Lanka", dateOfBirth: "1996-02-23",
     jobTypes: ["Caregiver"], jobExperience: "2 years", passportIssueDate: "2020-01-15", passportExpiryDate: "2030-01-14",
@@ -161,6 +162,29 @@ describe("migration", () => {
     });
 });
 
+describe("REGISTRATION_DESK (the registration workflow, Need Attention read only)", () => {
+    test("lists Need Attention; reads no call log, adds none, flags, completes and deletes no follow-up (403); nothing is written", async () => {
+        const { callLogId, followUpId } = await flagged(A, "Passport not uploaded");
+        const listed = await as("REGISTRATION_DESK", "/follow-ups?status=OPEN");
+        assert.equal(listed.status, 200);
+        assert.ok(listed.body.groups.flatMap((g) => g.followUps).some((f) => f.followUpId === followUpId));
+        for (const [path, init] of [
+            [`/candidates/${A}/call-logs`, undefined],
+            [`/candidates/${A}/call-logs`, { method: "POST", body: { note: "x" } }],
+            [`/candidates/${A}/call-logs`, { method: "POST", body: { note: "x", needsAttention: true } }],
+            [`/candidates/${A}/call-logs/${callLogId}/follow-up`, { method: "POST" }],
+            [`/follow-ups/${followUpId}/complete`, { method: "POST" }],
+            [`/follow-ups/${followUpId}`, { method: "DELETE" }],
+        ]) {
+            const response = await as("REGISTRATION_DESK", path, init);
+            assert.equal(response.status, 403, `${init?.method ?? "GET"} ${path}`);
+            assert.deepEqual(response.body, { message: "Insufficient permissions" });
+        }
+        assert.equal(await prisma.candidateCallLog.count(), 1);
+        assert.equal((await followUpRow(followUpId)).status, "OPEN");
+    });
+});
+
 describe("flagging a call log", () => {
     test("1-3. every call log role can flag; the follow-up references the original call log, which is unchanged", async () => {
         for (const role of STAFF_ROLES) {
@@ -179,7 +203,7 @@ describe("flagging a call log", () => {
             assert.equal(row.completedDate, null);
             assert.deepEqual(await callLogRow(callLogId), before, "the call log is not changed");
         }
-        assert.equal(await prisma.candidateCallLog.count(), 4, "no call log added or removed");
+        assert.equal(await prisma.candidateCallLog.count(), 3, "no call log added or removed");
     });
 
     test("the follow-up copies none of the call log: no note, call time or candidate column", async () => {
@@ -194,7 +218,7 @@ describe("flagging a call log", () => {
         assert.equal(again.body.code, "FOLLOW_UP_EXISTS");
 
         const other = await logCall(A, "Police report pending");
-        const both = await Promise.all([flag("ADMIN", A, other), flag("MANAGER", A, other)]);
+        const both = await Promise.all([flag("ADMIN", A, other), flag("OWNER", A, other)]);
         assert.deepEqual(both.map((r) => r.status).sort(), [201, 409]);
         assert.equal(await prisma.callLogFollowUp.count({ where: { callLogId: other, status: "OPEN" } }), 1);
         // The database enforces it too, whatever the API checks.
@@ -221,12 +245,12 @@ describe("flagging a call log", () => {
 
     test("the call log shows its follow-up state: none, OPEN, then COMPLETED", async () => {
         const callLogId = await logCall(A, "Will send the police report");
-        const state = async () => (await as("REGISTRATION_DESK", `/candidates/${A}/call-logs`)).body.items.find((i) => i.callLogId === callLogId).followUp;
+        const state = async () => (await as("ANALYST", `/candidates/${A}/call-logs`)).body.items.find((i) => i.callLogId === callLogId).followUp;
         assert.equal(await state(), null);
-        const { body } = await flag("REGISTRATION_DESK", A, callLogId);
+        const { body } = await flag("ANALYST", A, callLogId);
         assert.equal((await state()).status, "OPEN");
         assert.equal((await state()).followUpId, body.followUp.followUpId);
-        await complete("REGISTRATION_DESK", body.followUp.followUpId);
+        await complete("ANALYST", body.followUp.followUpId);
         assert.equal((await state()).status, "COMPLETED");
     });
 });
@@ -294,7 +318,7 @@ describe("listing Priority Follow-Ups", () => {
     });
 
     test("an empty list is an empty list", async () => {
-        assert.deepEqual((await list("REGISTRATION_DESK")).body, { status: "OPEN", total: 0, truncated: false, groups: [] });
+        assert.deepEqual((await list("ANALYST")).body, { status: "OPEN", total: 0, truncated: false, groups: [] });
     });
 
     test("34. a fixed number of queries whatever the number of follow-ups and candidates (no N+1)", async () => {
@@ -374,7 +398,7 @@ describe("deleting a follow-up", () => {
         };
     }
 
-    for (const role of ["ADMIN", "MANAGER"]) {
+    for (const role of ["ADMIN", "OWNER"]) {
         test(`19-20, 23-26. ${role} deletes the follow-up row only: the call log, candidate and documents stay`, async () => {
             await addDocument(A, "PASSPORT");
             const { callLogId, followUpId } = await flagged(A, "Passport not uploaded", "ANALYST");
@@ -394,7 +418,7 @@ describe("deleting a follow-up", () => {
         });
     }
 
-    for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+    for (const role of ["ANALYST"]) {
         test(`21-22. ${role} cannot delete (403), and nothing is removed`, async () => {
             const { followUpId } = await flagged(A, "x", role);
             const response = await remove(role, followUpId);
@@ -414,23 +438,23 @@ describe("deleting a follow-up", () => {
     test("a completed follow-up can be deleted too; an unknown one is 404", async () => {
         const { followUpId } = await flagged(A, "x");
         await complete("ANALYST", followUpId);
-        assert.equal((await remove("MANAGER", followUpId)).status, 200);
+        assert.equal((await remove("OWNER", followUpId)).status, 200);
         assert.equal(await followUpRow(followUpId), null);
-        assert.equal((await remove("MANAGER", followUpId)).status, 404);
-        assert.equal((await remove("MANAGER", "nope")).status, 400);
+        assert.equal((await remove("OWNER", followUpId)).status, 404);
+        assert.equal((await remove("OWNER", "nope")).status, 400);
     });
 });
 
 describe("audit", () => {
     test("flag, complete and delete are each written once, by the signed-in user, with the candidate", async () => {
-        const { followUpId } = await flagged(A, "x", "REGISTRATION_DESK");
-        await complete("ANALYST", followUpId);
-        await remove("MANAGER", followUpId);
+        const { followUpId } = await flagged(A, "x", "ANALYST");
+        await complete("ADMIN", followUpId);
+        await remove("OWNER", followUpId);
         const rows = await followUpAudit();
         assert.deepEqual(rows.map((r) => [r.action, r.adminId, r.passportId, r.previousStatus, r.newStatus]), [
-            ["FLAG_FOLLOW_UP", USERS.REGISTRATION_DESK.adminId, A, "NONE", "OPEN"],
-            ["COMPLETE_FOLLOW_UP", USERS.ANALYST.adminId, A, "OPEN", "COMPLETED"],
-            ["DELETE_FOLLOW_UP", USERS.MANAGER.adminId, A, "COMPLETED", "DELETED"],
+            ["FLAG_FOLLOW_UP", USERS.ANALYST.adminId, A, "NONE", "OPEN"],
+            ["COMPLETE_FOLLOW_UP", USERS.ADMIN.adminId, A, "OPEN", "COMPLETED"],
+            ["DELETE_FOLLOW_UP", USERS.OWNER.adminId, A, "COMPLETED", "DELETED"],
         ]);
     });
 
@@ -564,24 +588,24 @@ describe("candidate history (activity with the call logs)", () => {
     test("14. a details update lists the changed fields' names only, never their values", async () => {
         const { values, errors } = parseCandidateBody({ ...BASE, nic: "965404378V", whatsappNumber: "+94771234567", address: "12 Temple Road, Kandy", contactNumber: "0711111111" }, { creating: false });
         assert.equal(errors, undefined, JSON.stringify(errors));
-        await updateCandidateDetails({ db: prisma, passportId: A, values, actor: USERS.MANAGER });
+        await updateCandidateDetails({ db: prisma, passportId: A, values, actor: USERS.OWNER });
         const body = await history();
         const update = body.activity.find((a) => a.kind === "DETAILS_UPDATED");
-        assert.equal(update.actorName, USERS.MANAGER.name);
+        assert.equal(update.actorName, USERS.OWNER.name);
         assert.deepEqual(update.fields.sort(), ["address", "contactNumber"]);
         assert.doesNotMatch(JSON.stringify(body.activity), /Temple Road|0711111111/);
     });
 
     test("13, 15. stage completion by an admin shows with who did it, once; a completion saved before stages were audited shows without one; automatic stages are not invented", async () => {
-        await updateStage({ db: prisma, passportId: A, stage: "IVS_INTERVIEW", values: { completed: true }, actor: USERS.ADMIN });
+        await updateStage({ db: prisma, passportId: A, stage: "VISA_SUBMISSION", values: { completed: true }, actor: USERS.ADMIN });
         await updateStage({ db: prisma, passportId: A, stage: "VISA_APPROVAL", values: { notes: "Waiting for the embassy" }, actor: USERS.ADMIN });
-        await prisma.candidateStage.create({ data: { passportId: A, stage: "FINALIZING_JOB", completed: true, completedAt: new Date("2026-09-01T05:00:00Z") } });
+        await prisma.candidateStage.create({ data: { passportId: A, stage: "JOB_DETAILS", completed: true, completedAt: new Date("2026-09-01T05:00:00Z") } });
 
         const stages = (await history()).activity.filter((a) => a.stage);
         assert.deepEqual(stages.map((a) => [a.kind, a.stage, a.actorName]), [
             ["STAGE_UPDATED", "VISA_APPROVAL", USERS.ADMIN.name],
-            ["STAGE_COMPLETED", "IVS_INTERVIEW", USERS.ADMIN.name],
-            ["STAGE_COMPLETED", "FINALIZING_JOB", null],
+            ["STAGE_COMPLETED", "VISA_SUBMISSION", USERS.ADMIN.name],
+            ["STAGE_COMPLETED", "JOB_DETAILS", null],
         ]);
         assert.doesNotMatch(JSON.stringify(stages), /embassy/, "stage notes are not repeated here");
         assert.ok(!stages.some((a) => ["CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION"].includes(a.stage)));
@@ -589,7 +613,7 @@ describe("candidate history (activity with the call logs)", () => {
 
     test("6. newest first across every source, call logs stay separate items", async () => {
         await staffUpload(A, "PASSPORT", { receivedDate: new Date("2020-01-01T05:00:00Z") });
-        await updateStage({ db: prisma, passportId: A, stage: "IVS_INTERVIEW", values: { completed: true }, actor: USERS.ADMIN });
+        await updateStage({ db: prisma, passportId: A, stage: "VISA_SUBMISSION", values: { completed: true }, actor: USERS.ADMIN });
         await logCall(A, "Called");
         const body = await history();
         const times = body.activity.map((a) => new Date(a.occurredAt).getTime());
@@ -601,7 +625,7 @@ describe("candidate history (activity with the call logs)", () => {
 
     test("8, 19. never another candidate's events", async () => {
         await staffUpload(B, "PASSPORT");
-        await updateStage({ db: prisma, passportId: B, stage: "IVS_INTERVIEW", values: { completed: true }, actor: USERS.ADMIN });
+        await updateStage({ db: prisma, passportId: B, stage: "VISA_SUBMISSION", values: { completed: true }, actor: USERS.ADMIN });
         await logCall(B, "B only");
         const body = await history(A);
         assert.deepEqual(body.activity, []);
@@ -619,7 +643,7 @@ describe("candidate history (activity with the call logs)", () => {
             prisma.candidateCallLog.findMany({ orderBy: { callLogId: "asc" } }),
         ]);
         const before = await snapshot();
-        await history(A, "REGISTRATION_DESK");
+        await history(A, "ANALYST");
         assert.deepEqual(await snapshot(), before);
     });
 });
@@ -720,12 +744,12 @@ describe("No Answer calls", () => {
     test("13. a No Answer call can be flagged, completed and deleted like any call, and always stays in the history", async () => {
         const created = await add({ outcome: "NO_ANSWER" });
         const { callLogId } = created.body.items[0];
-        const flagged = await flag("REGISTRATION_DESK", A, callLogId);
+        const flagged = await flag("ANALYST", A, callLogId);
         assert.equal(flagged.status, 201, JSON.stringify(flagged.body));
         const group = (await list("ANALYST")).body.groups.find((g) => g.candidate.passportId === A);
         assert.deepEqual([group.followUps[0].callLog.outcome, group.followUps[0].callLog.note], ["NO_ANSWER", ""]);
         assert.equal((await complete("ANALYST", flagged.body.followUp.followUpId)).status, 200);
-        assert.equal((await remove("MANAGER", flagged.body.followUp.followUpId)).status, 200);
+        assert.equal((await remove("OWNER", flagged.body.followUp.followUpId)).status, 200);
         assert.equal((await rows()).length, 1, "the call log is kept");
         assert.equal((await callLogRow(callLogId)).callOutcome, "NO_ANSWER");
     });

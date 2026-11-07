@@ -1,7 +1,7 @@
 import type { WorkflowStatus } from "./candidates";
 import { apiRequest } from "./client";
 
-// Job Management (src/services/jobService.js). ADMIN and MANAGER manage jobs;
+// Job Management (src/services/jobService.js). ADMIN and JOB_HANDLER manage jobs;
 // an ANALYST reads only the jobs holding their own candidates; the server
 // enforces both.
 
@@ -21,6 +21,13 @@ export const jobViewCount = (counts: Record<JobStatusView, number>, view: JobVie
 
 export type JobTypeRef = { id: string; code: string; name: string };
 
+// Job Sector: a fixed list (the server keeps the same codes, jobService.js JOB_SECTORS).
+export type JobSector = "CONSTRUCTION" | "INDUSTRIAL";
+export const JOB_SECTOR_OPTIONS: { value: JobSector; label: string }[] = [
+    { value: "CONSTRUCTION", label: "Construction" },
+    { value: "INDUSTRIAL", label: "Industrial" },
+];
+
 export type JobSummary = {
     jobId: string;
     jobCode: string;
@@ -29,6 +36,8 @@ export type JobSummary = {
     status: JobStatus;
     jobType: JobTypeRef;
     jobTypes?: JobTypeRef[];
+    // Job Sector (optional): null when not set, or from an older server.
+    jobSector?: JobSector | null;
     client: { id: string; name: string };
     responsibleAgent: { id: string; name: string; countryCode: string };
     // To Country: the client's country (its agent's) when the job was created.
@@ -40,7 +49,12 @@ export type JobSummary = {
     completedAt: string | null;
     cancelledAt: string | null;
     cancelReason: string | null;
+    // Set for a Job created by the Google Sheet upload (JOB-YYYY-MMDDNN): its Interview Date, its Unique
+    // Number range, and the code split into the fixed prefix and the editable last two digits.
+    importGroup?: ImportJobGroup | null;
 };
+
+export type ImportJobGroup = { interviewDate: string | null; from: number; to: number; prefix: string; suffix: string };
 
 // filled: at least as many assigned candidates as vacancies (derived on the server; more than the
 // vacancies is allowed and stays filled). Separate from the job's status.
@@ -67,13 +81,15 @@ export type JobOptions = {
     // job's responsible agent; with several, one must be chosen). The To Country is the chosen
     // agent's country (agents[].countryCode).
     clients: { id: string; name: string; agentIds: string[] }[];
-    agents: { id: string; name: string; countryCode: string }[];
+    // countryCode is absent for an Agent created by the bulk import until its country is set: such an
+    // Agent can't be a job's responsible agent (the server refuses, AGENT_COUNTRY_MISSING).
+    agents: { id: string; name: string; countryCode?: string }[];
 };
 
 // responsibleAgentId must be one of the client's agents (optional only when it has exactly one).
 // The To Country is never sent (the responsible agent's). candidateIds are assigned with the job in one
 // transaction (none, one or many; the vacancies never limit them).
-export type CreateJobInput = { jobTypeId?: string; jobTypeIds?: string[]; clientId: string; responsibleAgentId?: string; vacancies: number | null; companyJobId?: string | null; fromCountryCode?: string; candidateIds?: string[] };
+export type CreateJobInput = { jobTypeId?: string; jobTypeIds?: string[]; jobSector?: JobSector | null; clientId: string; responsibleAgentId?: string; vacancies: number | null; companyJobId?: string | null; fromCountryCode?: string; candidateIds?: string[] };
 export type UpdateJobInput = { vacancies?: number | null; jobTypeId?: string; jobTypeIds?: string[]; clientId?: string; companyJobId?: string | null; fromCountryCode?: string };
 
 // A new job's From Country unless changed (src/services/jobService.js DEFAULT_FROM_COUNTRY).
@@ -87,6 +103,18 @@ export function listJobs(token: string, params: { view: JobView; search?: string
     return apiRequest<JobList>(`/api/admin/jobs?${query.toString()}`, { token, signal });
 }
 
+// The job candidate picker (New job, Add candidates): only the candidates a job may take (test
+// PASS), with only what the picker shows. ADMIN, TEAM_LEAD and JOB_HANDLER (the server checks);
+// the JOB_HANDLER's only way to list candidates, as it has no Candidates area.
+export type JobCandidateOption = { passportId: string; uniqueId: string; name: string | null; nic: string | null; workflowStatus: WorkflowStatus };
+export type JobCandidateOptions = { items: JobCandidateOption[]; pagination: JobList["pagination"]; filters: { search: string | null } };
+
+export function listJobCandidateOptions(token: string, params: { page: number; pageSize: number; search?: string }, signal?: AbortSignal): Promise<JobCandidateOptions> {
+    const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
+    if (params.search) query.set("search", params.search);
+    return apiRequest<JobCandidateOptions>(`/api/admin/job-candidate-options?${query.toString()}`, { token, signal });
+}
+
 export const getJob = (token: string, jobId: string, signal?: AbortSignal) => apiRequest<JobDetails>(jobPath(jobId), { token, signal });
 export const getJobOptions = (token: string, signal?: AbortSignal) => apiRequest<JobOptions>("/api/admin/job-options", { token, signal });
 export const createJob = (token: string, body: CreateJobInput) => apiRequest<JobDetails>("/api/admin/jobs", { method: "POST", token, body });
@@ -94,6 +122,10 @@ export const updateJob = (token: string, jobId: string, body: UpdateJobInput) =>
 export const addCandidateToJob = (token: string, jobId: string, passportId: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/candidates`, { method: "POST", token, body: { passportId } });
 export const removeCandidateFromJob = (token: string, jobId: string, passportId: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/candidates/${encodeURIComponent(passportId)}`, { method: "DELETE", token });
 export const completeJob = (token: string, jobId: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/complete`, { method: "POST", token, body: {} });
+// The last two digits of a sheet-upload Job (ADMIN, OWNER, JOB_HANDLER, and an ANALYST for a Job holding
+// one of their candidates; the server checks). Exactly two digits, 01-99; the code must stay unique.
+export const updateImportJobSuffix = (token: string, jobId: string, suffix: string) =>
+    apiRequest<{ jobId: string; jobCode: string }>(`${jobPath(jobId)}/import-suffix`, { method: "PATCH", token, body: { suffix } });
 export const cancelJob = (token: string, jobId: string, reason: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/cancel`, { method: "POST", token, body: { reason } });
 
 // Reference data a job needs (job types are created inline from the New job form;
@@ -116,7 +148,7 @@ export const updateJobType = (token: string, id: string, body: { name?: string; 
 export type JobTypeChoices = { jobTypes: string[]; noPreference: { code: string; label: string } };
 export const getJobTypeChoices = (token: string, signal?: AbortSignal) => apiRequest<JobTypeChoices>("/api/admin/job-type-choices", { token, signal });
 
-// Candidate Form job-group link (src/services/candidateFormJobGroupService.js): ADMIN and MANAGER.
+// Candidate Form job-group link (src/services/candidateFormJobGroupService.js): ADMIN only.
 // Bound to the job's immutable id on the server; the URL carries only an opaque secret.
 export type JobGroupShareStatus = {
     jobId: string;

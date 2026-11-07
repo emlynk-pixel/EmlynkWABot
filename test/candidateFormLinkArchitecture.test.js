@@ -21,7 +21,7 @@ import { canonicalPassport } from "../src/services/candidateFormVerificationServ
 const SECRET = "test-candidate-form-secret-0123456789-abcdefghijklmnop";
 const ORIGIN = "https://candidate-form.example.test";
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4) };
 const C = (i) => ({ passportId: `N800000${i}`, uniqueId: `800${i}`, firstName: `First${i}`, otherName: `Last${i}`, nic: `80000000${i}V`, sex: "M", whatsappNumber: `+9477100000${i}` });
 // A, C3 on Job A; B on Job B; D on no job.
 const [A, B, C3, D] = [C(1), C(2), C(3), C(4)];
@@ -91,20 +91,20 @@ const admin = (who, method, path, options) => call(app(who), method, `/api/admin
 const pub = (path, options, server = app(USERS.ADMIN)) => call(server, "POST", `${PUBLIC_CANDIDATE_DETAILS_PATH}${path}`, options);
 
 const newJob = async () => {
-    const r = await admin(USERS.MANAGER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent } });
+    const r = await admin(USERS.OWNER, "POST", "/jobs", { body: { jobTypeId: ids.jobType, clientId: ids.client, responsibleAgentId: ids.agent } });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     return r.body;
 };
 const assign = async (job, ...candidates) => {
-    for (const c of candidates) assert.equal((await admin(USERS.MANAGER, "POST", `/jobs/${job.jobId}/candidates`, { body: { passportId: c.passportId } })).status, 201);
+    for (const c of candidates) assert.equal((await admin(USERS.OWNER, "POST", `/jobs/${job.jobId}/candidates`, { body: { passportId: c.passportId } })).status, 201);
 };
 const secretOf = (url) => url.split("#k=")[1];
-const createGroup = async (job, who = USERS.MANAGER) => {
+const createGroup = async (job, who = USERS.OWNER) => {
     const r = await admin(who, "POST", `/jobs/${job.jobId}/form-share`);
     assert.equal(r.status, 201, JSON.stringify(r.body));
     return r.body;
 };
-const createSingle = async (c, who = USERS.MANAGER) => {
+const createSingle = async (c, who = USERS.OWNER) => {
     const r = await admin(who, "POST", `/candidates/${c.passportId}/form-share`);
     assert.equal(r.status, 201, JSON.stringify(r.body));
     return r.body;
@@ -215,7 +215,7 @@ describe("GROUP links: bound to ONE job (GROUP-LINK-001 to 010)", () => {
         const { jobA } = await twoJobs();
         const secret = secretOf((await createGroup(jobA)).url);
         const token = await session(secret, C3);
-        assert.equal((await admin(USERS.MANAGER, "DELETE", `/jobs/${jobA.jobId}/candidates/${C3.passportId}`)).status, 200);
+        assert.equal((await admin(USERS.OWNER, "DELETE", `/jobs/${jobA.jobId}/candidates/${C3.passportId}`)).status, 200);
         const row = await prisma.jobCandidate.findFirst({ where: { jobId: jobA.jobId, passportId: C3.passportId } });
         assert.equal(row.isActive, false, "the history row stays, inactive");
         expectGeneric(await verify(secret, C3), "removed member");
@@ -244,7 +244,7 @@ describe("GROUP links: bound to ONE job (GROUP-LINK-001 to 010)", () => {
         expectGeneric(await verify(expired, A), "expired");
         const revoked = secretOf((await createGroup(jobB)).url);
         const token = await session(revoked, B);
-        assert.equal((await admin(USERS.MANAGER, "POST", `/jobs/${jobB.jobId}/form-share/revoke`)).status, 200);
+        assert.equal((await admin(USERS.OWNER, "POST", `/jobs/${jobB.jobId}/form-share/revoke`)).status, 200);
         expectGeneric(await verify(revoked, B), "revoked");
         assert.equal((await formOf(token)).status, 401, "revoking ends open sessions");
     });
@@ -261,7 +261,7 @@ describe("GROUP links: bound to ONE job (GROUP-LINK-001 to 010)", () => {
 
     test("GROUP-LINK-010 concurrent duplicate creation is deterministic: every request succeeds, exactly ONE link stays active", async () => {
         const { jobA } = await twoJobs();
-        const results = await Promise.all([1, 2, 3].map(() => admin(USERS.MANAGER, "POST", `/jobs/${jobA.jobId}/form-share`)));
+        const results = await Promise.all([1, 2, 3].map(() => admin(USERS.OWNER, "POST", `/jobs/${jobA.jobId}/form-share`)));
         assert.deepEqual(results.map((r) => r.status), [201, 201, 201], JSON.stringify(results.map((r) => r.body)));
         const active = await prisma.candidateFormLink.findMany({ where: { jobId: jobA.jobId, revokedAt: null } });
         assert.equal(active.length, 1, "one active group link per job");
@@ -352,7 +352,7 @@ describe("SINGLE links: bound to ONE candidate (SINGLE-LINK-001 to 010)", () => 
         expectGeneric(await verify(second, A), "expired");
         const third = secretOf((await createSingle(A)).url);
         const token = await session(third, A);
-        assert.equal((await admin(USERS.MANAGER, "POST", `/candidates/${A.passportId}/form-share/revoke`)).status, 200);
+        assert.equal((await admin(USERS.OWNER, "POST", `/candidates/${A.passportId}/form-share/revoke`)).status, 200);
         expectGeneric(await verify(third, A), "revoked");
         assert.equal((await formOf(token)).status, 401);
     });
@@ -363,7 +363,7 @@ describe("SINGLE links: bound to ONE candidate (SINGLE-LINK-001 to 010)", () => 
         assert.equal((await submit(token)).status, 200);
         assert.equal((await submit(token, "key-0000000000000005")).status, 409, "a second submission is refused");
         assert.equal((await verify(secret, A)).status, 409, "the link says submitted, neutrally");
-        const again = await admin(USERS.MANAGER, "POST", `/candidates/${A.passportId}/form-share`);
+        const again = await admin(USERS.OWNER, "POST", `/candidates/${A.passportId}/form-share`);
         if (again.status === 201) assert.equal((await verify(secretOf(again.body.url), A)).status, 409);
         assert.equal(await responses(A), 1);
     });
@@ -431,7 +431,7 @@ describe("SECURITY (SECURITY-001 to 010)", () => {
         assert.equal(await prisma.candidateFormLink.count(), 0);
     });
 
-    test("SECURITY-005 roles: only ADMIN and MANAGER create / revoke / read group links; an Analyst cannot share an unallocated candidate", async () => {
+    test("SECURITY-005 roles: only ADMIN and OWNER create / revoke / read group links; an Analyst cannot share an unallocated candidate", async () => {
         const { jobA } = await twoJobs();
         for (const who of [USERS.ANN, USERS.DESK]) {
             assert.equal((await admin(who, "POST", `/jobs/${jobA.jobId}/form-share`)).status, 403);

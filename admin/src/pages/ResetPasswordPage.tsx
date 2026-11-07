@@ -1,3 +1,4 @@
+import { AuthShell } from "../components/AuthShell";
 import { useState, useEffect, type FormEvent } from "react";
 import { useNavigate, Link } from "react-router";
 import { Icon } from "../components/Icon";
@@ -73,20 +74,9 @@ export function ResetPasswordPage() {
     }
 
     return (
-        <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
-            <div className="w-full max-w-sm">
-                {/* Brand / Logo */}
-                <div className="mb-6 flex items-center gap-3">
-                    <span className="flex size-10 items-center justify-center rounded-lg bg-sidebar text-headline-sm text-sidebar-text-active">
-                        E
-                    </span>
-                    <div>
-                        <p className="text-headline-sm text-ink">Data Collector</p>
-                        <p className="text-label-caps uppercase text-ink-subtle">Admin Console</p>
-                    </div>
-                </div>
+        <AuthShell>
 
-                <div className="rounded-lg border border-border bg-surface p-6 shadow-surface">
+                <div className="rounded-xl border border-border bg-surface p-6 shadow-surface">
                     {loading ? (
                         <div className="py-8 text-center text-ink-muted">
                             <Icon name="progress_activity" className="mx-auto size-7 animate-spin text-primary mb-3" />
@@ -102,13 +92,13 @@ export function ResetPasswordPage() {
                             <div className="mt-6 space-y-2">
                                 <Link
                                     to="/forgot-password"
-                                    className="flex h-9 w-full items-center justify-center rounded bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover"
+                                    className="flex h-8 w-full items-center justify-center rounded-lg bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover"
                                 >
                                     Request New Reset Link
                                 </Link>
                                 <Link
                                     to="/login"
-                                    className="flex h-9 w-full items-center justify-center rounded border border-border bg-surface text-label-md font-medium text-ink hover:bg-canvas-muted"
+                                    className="flex h-8 w-full items-center justify-center rounded-lg border border-border bg-surface text-label-md font-medium text-ink hover:bg-canvas-muted"
                                 >
                                     Return to Sign In
                                 </Link>
@@ -127,7 +117,7 @@ export function ResetPasswordPage() {
                                 <button
                                     type="button"
                                     onClick={() => navigate("/login")}
-                                    className="w-full flex h-9 items-center justify-center rounded bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover shadow-sm"
+                                    className="w-full flex h-8 items-center justify-center rounded-lg bg-primary text-label-md font-medium text-on-primary hover:bg-primary-hover shadow-sm"
                                 >
                                     Continue to Sign In
                                 </button>
@@ -145,7 +135,7 @@ export function ResetPasswordPage() {
                             {submitError && (
                                 <div
                                     role="alert"
-                                    className="mb-4 flex items-start gap-2 rounded border border-critical-border bg-critical-bg p-3 text-body-sm text-critical"
+                                    className="mb-4 flex items-start gap-2 rounded-lg border border-critical-border bg-critical-bg p-3 text-body-sm text-critical"
                                 >
                                     <Icon name="error" className="size-4 shrink-0 mt-0.5" />
                                     <span>{submitError}</span>
@@ -168,7 +158,7 @@ export function ResetPasswordPage() {
                                 <button
                                     type="submit"
                                     disabled={submitting}
-                                    className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
+                                    className="flex h-8 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-label-md text-on-primary hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:opacity-70"
                                 >
                                     {submitting && <Icon name="progress_activity" className="size-4 animate-spin" />}
                                     {submitting ? "Resetting password…" : "Reset password"}
@@ -177,7 +167,6 @@ export function ResetPasswordPage() {
                         </div>
                     )}
                 </div>
-            </div>
-        </div>
+        </AuthShell>
     );
 }

@@ -4,10 +4,11 @@ import { ApiError } from "../../api/client";
 import { activeJobsOf, getCandidate, type CandidateDetails, type JobAssignments } from "../../api/candidates";
 import { addCandidateToJob, listJobs, type CandidateJobAssignment, type JobListItem } from "../../api/jobs";
 import { useAdminResource } from "../../api/useAdminResource";
-import { canManageCandidates, canManageJobs, canViewJobs, useAuth } from "../../auth/AuthProvider";
+import { canAssignJobFromCandidatePage, canManageCandidates, canManageJobs, canViewJobs, useAuth } from "../../auth/AuthProvider";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { formatDate } from "../format";
 import { Detail, JobStatusBadge, NO_COMPANY_JOB_ID } from "../job/JobParts";
+import { ImportJobSuffixEditor } from "../job/ImportJobSuffixEditor";
 import { Card, EmptyState, ErrorState, LoadingState } from "../States";
 import { filterControl } from "../ui";
 
@@ -15,13 +16,13 @@ import { filterControl } from "../ui";
 // PROCESSING job they are on now (a candidate may hold several), and the completed /
 // cancelled / removed history. Never from the old free-text candidate_stages.job_id.
 //
-// ADMIN and MANAGER get "Assign to Job" (also when the candidate already has jobs). It uses
+// ADMIN gets "Assign to Job" (also when the candidate already has jobs). It uses
 // the same endpoint as Add to job on the Job page (POST /api/admin/jobs/:jobId/candidates);
 // the server refuses the same job twice (409), and other jobs are never touched.
 // Only a candidate whose Test result is PASS can be assigned (the server also
 // refuses others with CANDIDATE_TEST_NOT_PASSED), so the button stays disabled until then.
 
-function JobLine({ job, historic = false }: { job: CandidateJobAssignment; historic?: boolean }) {
+function JobLine({ job, historic = false, onSuffixSaved }: { job: CandidateJobAssignment; historic?: boolean; onSuffixSaved?: () => void }) {
     const { user } = useAuth();
     const code = canViewJobs(user) ? <Link to={`/jobs/${job.jobId}`} className="font-medium text-primary hover:underline">{job.jobCode}</Link> : <span className="font-medium">{job.jobCode}</span>;
     return (
@@ -35,6 +36,9 @@ function JobLine({ job, historic = false }: { job: CandidateJobAssignment; histo
             {historic && <Detail label="Status">{job.removed ? "Removed" : <JobStatusBadge status={job.status} />}</Detail>}
             {historic && <Detail label="Assigned">{formatDate(job.assignedAt)}</Detail>}
             {historic && job.status === "CANCELLED" && job.cancelReason && <Detail label="Cancel reason">{job.cancelReason}</Detail>}
+            {!historic && job.importGroup && onSuffixSaved && (
+                <div className="col-span-2 sm:col-span-4"><ImportJobSuffixEditor jobId={job.jobId} group={job.importGroup} onSaved={onSuffixSaved} /></div>
+            )}
         </dl>
     );
 }
@@ -50,10 +54,12 @@ export function JobAssignmentPanel({ assignments, candidate, testPassed = false,
 }) {
     const { user, token } = useAuth();
     const [assigning, setAssigning] = useState(false);
-    // A JOB_HANDLER reads this page only (it assigns from the Jobs module): the action is offered
-    // to roles that both manage jobs and change candidates (ADMIN and MANAGER, as before).
-    const canAssign = canManageJobs(user) && canManageCandidates(user) && Boolean(candidate && onChanged && token);
+    // "Assign to Job" here is an ADMIN workflow: a JOB_HANDLER reads this page only, and a TEAM_LEAD
+    // (like a JOB_HANDLER) assigns candidates from the Job's own page (the Jobs feature).
+    const canAssign = canAssignJobFromCandidatePage(user) && canManageJobs(user) && canManageCandidates(user) && Boolean(candidate && onChanged && token);
     const active = activeJobsOf(assignments);
+    // After the last two digits of a sheet-upload Job change: the candidate is read again, so the code updates here.
+    const refresh = candidate && onChanged && token ? async () => onChanged(await getCandidate(token, candidate.passportId)) : undefined;
     return (
         <Card className="p-5">
             <section aria-label="Job assignment" className="space-y-4">
@@ -68,7 +74,7 @@ export function JobAssignmentPanel({ assignments, candidate, testPassed = false,
                         {active.length > 0
                             ? (
                                 <ul aria-label="Current processing jobs" className="divide-y divide-border">
-                                    {active.map((job) => <li key={job.jobId} className="py-3 first:pt-0 last:pb-0"><JobLine job={job} /></li>)}
+                                    {active.map((job) => <li key={job.jobId} className="py-3 first:pt-0 last:pb-0"><JobLine job={job} onSuffixSaved={refresh} /></li>)}
                                 </ul>
                             )
                             : <p className="text-body-sm text-ink-muted">Not assigned to a processing job.{canAssign && !testPassed && " Only a candidate whose Test result is PASS can be assigned."}</p>}
@@ -158,7 +164,7 @@ function AssignToJobDialog({ token, candidate, assignedJobIds = [], onClose, onA
                         <EmptyState title={search ? "No processing jobs match your search" : "There are no processing jobs"} description={search ? undefined : "Create a job in Admin > Jobs first."} />
                     )}
                     {items.length > 0 && (
-                        <ul aria-label="Processing jobs" className="mt-3 max-h-72 divide-y divide-border overflow-y-auto rounded border border-border">
+                        <ul aria-label="Processing jobs" className="mt-3 max-h-72 divide-y divide-border overflow-y-auto rounded-lg border border-border">
                             {items.map((job) => (
                                 <li key={job.jobId} className="flex items-center justify-between gap-3 px-3 py-2">
                                     <div className="min-w-0 text-body-sm">

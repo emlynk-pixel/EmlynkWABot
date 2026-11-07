@@ -45,7 +45,7 @@ const clientList = (items: ClientListItem[]): ClientList => ({ items, pagination
 
 function backend(routes: FetchRoutes = {}) {
     return signedInBackend({
-        "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "MANAGER" } } },
+        "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "OWNER" } } },
         "GET /api/admin/agent-options": { status: 200, body: AGENT_OPTIONS },
         "GET /api/admin/client-options": { status: 200, body: CLIENT_OPTIONS },
         ...routes,
@@ -244,7 +244,7 @@ describe("New job for a client with several agents", () => {
         const { calls } = backend({
             "GET /api/admin/jobs": { status: 200, body: { items: [], pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 }, counts: { processing: 0, completed: 0, cancelled: 0 }, filters: { view: "processing", search: null } } },
             "GET /api/admin/job-options": { status: 200, body: OPTIONS },
-            "GET /api/admin/candidates": { status: 200, body: { items: [], pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 }, filters: { search: null } } },
+            "GET /api/admin/job-candidate-options": { status: 200, body: { items: [], pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 }, filters: { search: null } } },
             "POST /api/admin/jobs": { status: 201, body: created },
             [`GET /api/admin/jobs/${created.jobId}`]: { status: 404, body: { message: "Job not found" } },
         });

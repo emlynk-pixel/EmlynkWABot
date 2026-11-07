@@ -12,7 +12,7 @@ import { EntityStatusBadge, MultiSelect, RestrictedPage, StatusDialog, TextField
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl, tableCell, tableHead, tableRow } from "../components/ui";
 
-// Admin > Client Management (ADMIN and MANAGER): the employer / customer
+// Admin > Client Management (ADMIN and JOB_HANDLER): the employer / customer
 // organisations. A Client works with one or more Agents (and an Agent with many
 // Clients) and has many Jobs. Clients are never deleted; INACTIVE clients keep
 // their jobs but take no new job. The list does not show the agents (Client
@@ -66,7 +66,7 @@ function ClientsView() {
     const agentOptions = agents.data?.agents ?? [];
 
     return (
-        <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
+        <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Client Management</h1>
@@ -194,6 +194,7 @@ export function ClientFormDialog({ token, agents, client, onClose, onSaved }: { 
     const [whatsappNumber, setWhatsappNumber] = useState(client?.whatsappNumber ?? "");
     const [email, setEmail] = useState(client?.email ?? "");
     const [address, setAddress] = useState(client?.address ?? "");
+    const [registrationNumber, setRegistrationNumber] = useState(client?.registrationNumber ?? "");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [errors, setErrors] = useState<Record<string, string>>({});
@@ -202,10 +203,10 @@ export function ClientFormDialog({ token, agents, client, onClose, onSaved }: { 
     const options = known.map((agent) => ({
         id: agent.agentId,
         label: agent.name,
-        hint: `${countryName(agent.countryCode)}${agent.status === "INACTIVE" ? " · inactive" : ""}`,
+        hint: `${agent.countryCode ? countryName(agent.countryCode) : "Country not set"}${agent.status === "INACTIVE" ? " · inactive" : ""}`,
         disabled: agent.status !== "ACTIVE",
     }));
-    const countries = [...new Set(known.filter((agent) => agentIds.includes(agent.agentId)).map((agent) => agent.countryCode))].map(countryName);
+    const countries = [...new Set(known.filter((agent) => agentIds.includes(agent.agentId)).map((agent) => agent.countryCode).filter((code): code is string => Boolean(code)))].map(countryName);
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
@@ -215,6 +216,7 @@ export function ClientFormDialog({ token, agents, client, onClose, onSaved }: { 
         const details = {
             name: name.trim(), agentIds, contactPerson: contactPerson.trim() || null, contactNumber: contactNumber.trim() || null,
             whatsappNumber: whatsappNumber.trim() || null, email: email.trim() || null, address: address.trim() || null,
+            registrationNumber: registrationNumber.trim() || null,
         };
         try {
             if (client) await updateClient(token, client.clientId, details);
@@ -242,6 +244,7 @@ export function ClientFormDialog({ token, agents, client, onClose, onSaved }: { 
                 <TextField label="WhatsApp number" value={whatsappNumber} onChange={setWhatsappNumber} disabled={busy} error={errors.whatsappNumber} maxLength={30} />
                 <TextField label="Email" type="email" value={email} onChange={setEmail} disabled={busy} error={errors.email} maxLength={254} />
                 <TextField label="Address" value={address} onChange={setAddress} disabled={busy} error={errors.address} />
+                <TextField label="Company number" value={registrationNumber} onChange={setRegistrationNumber} disabled={busy} error={errors.registrationNumber} maxLength={50} />
                 {client && <p className="text-label-sm text-ink-muted">Existing jobs keep the agent they were created with; only new jobs use the agents chosen here.</p>}
                 <DialogError message={error} />
                 <div className="flex justify-end gap-2 pt-1">

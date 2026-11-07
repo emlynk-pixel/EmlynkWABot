@@ -176,13 +176,13 @@ describe("paging", () => {
         assert.deepEqual(Object.keys(row).sort(), ["formConflicts", "jobTypes", "name", "nic", "passportId", "stages", "uniqueId", "workflowStatus"]);
         assert.equal(row.name, "Given247 Surname");
         assert.deepEqual(row.jobTypes, ["Driver"]);
-        assert.equal(row.stages.length, 8);
+        assert.equal(row.stages.length, 6);
         assert.deepEqual(body.filters, { search: null });
     });
 
-    test("13. roles are unchanged: every Candidates role can list; any other role can't", async () => {
-        for (const role of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]) assert.equal((await get("?page=1", role)).status, 200, role);
-        for (const role of ["VIEWER", "UNKNOWN"]) assert.equal((await get("?page=1", role)).status, 403, role);
+    test("13. the Candidates list roles can list; REGISTRATION_DESK (no Candidates list) and any other role can't", async () => {
+        for (const role of ["OWNER", "ADMIN", "ANALYST"]) assert.equal((await get("?page=1", role)).status, 200, role);
+        for (const role of ["REGISTRATION_DESK", "VIEWER", "UNKNOWN"]) assert.equal((await get("?page=1", role)).status, 403, role);
     });
 });
 

@@ -15,7 +15,7 @@ import { CONFIRMABLE_FIELDS } from "../src/services/candidateFormFieldConfirmSer
 const SECRET = "test-candidate-form-secret-0123456789-abcdefghijklmnop";
 const ORIGIN = "https://candidate-form.example.test";
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
-const USERS = { ADMIN: user("u-admin", "ADMIN", 1), MANAGER: user("u-manager", "MANAGER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4), BEN: user("u-ben", "ANALYST", 5) };
+const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), DESK: user("u-desk", "REGISTRATION_DESK", 3), ANN: user("u-ann", "ANALYST", 4), BEN: user("u-ben", "ANALYST", 5) };
 const A = {
     passportId: "N6000001", uniqueId: "6001", firstName: "Anusha", otherName: "De Soysa", nic: "600000001V", sex: "F", address: "1 old road", placeOfBirth: "Negombo",
     whatsappNumber: "+94760000001", contactNumber: "0771234567", dateOfBirth: new Date("2003-06-05"), jobExperience: "3 years", passportIssueDate: new Date("2020-01-15"), passportExpiryDate: new Date("2030-01-14"),
@@ -129,7 +129,7 @@ describe("confirming one field (CONFIRM-003, 004, 005, 010, 011, 016)", () => {
         await submitForm();
         const responseBefore = JSON.stringify(await responseRow());
         const candidateBefore = await candidateRow();
-        const r = await confirm(USERS.MANAGER, await body("basic.birthDate"));
+        const r = await confirm(USERS.OWNER, await body("basic.birthDate"));
         assert.equal(r.status, 200, JSON.stringify(r.body));
         // Only date_of_birth changed (CONFIRM-016): compare every other column.
         const after = await candidateRow();
@@ -146,7 +146,7 @@ describe("confirming one field (CONFIRM-003, 004, 005, 010, 011, 016)", () => {
         assert.equal(JSON.stringify(await responseRow()), responseBefore, "candidate_form_response is exactly as submitted");
         // Audit: who, which candidate, the field, old and new value.
         const [audit] = await prisma.auditLog.findMany({ where: { action: "CANDIDATE_FORM_FIELD_CONFIRMED" } });
-        assert.deepEqual([audit.adminId, audit.passportId, audit.previousStatus, audit.newStatus], [USERS.MANAGER.adminId, A.passportId, "PENDING_CONFIRMATION", "CONFIRMED"]);
+        assert.deepEqual([audit.adminId, audit.passportId, audit.previousStatus, audit.newStatus], [USERS.OWNER.adminId, A.passportId, "PENDING_CONFIRMATION", "CONFIRMED"]);
         assert.deepEqual([JSON.parse(audit.previousValue), JSON.parse(audit.newValue)], [{ dateOfBirth: "2003-06-05" }, { dateOfBirth: "2003-05-06" }]);
         assert.match(audit.reason, /basic\.birthDate/);
         assert.ok(audit.createdDate);
@@ -250,24 +250,24 @@ describe("stale screen (CONFIRM-009)", () => {
     test("two Admins confirming the same field at once: one wins, the other is told it is no longer pending", async () => {
         await submitForm();
         const seen = await body("passport.expiryDate");
-        const results = await Promise.all([confirm(USERS.ADMIN, seen), confirm(USERS.MANAGER, seen)]);
+        const results = await Promise.all([confirm(USERS.ADMIN, seen), confirm(USERS.OWNER, seen)]);
         assert.deepEqual(results.map((r) => r.status).sort(), [200, 409]);
         assert.equal(await prisma.auditLog.count({ where: { action: "CANDIDATE_FORM_FIELD_CONFIRMED" } }), 1);
     });
 });
 
 describe("roles and the public API (CONFIRM-013, 014, 015)", () => {
-    test("ADMIN and MANAGER confirm; an Analyst, the Registration Desk and an unrelated Analyst cannot", async () => {
+    test("ADMIN and OWNER confirm; an Analyst, the Registration Desk and an unrelated Analyst cannot", async () => {
         await submitForm();
         const seen = await body("contact.address");
         for (const who of [USERS.ANN, USERS.DESK, USERS.BEN]) {
             assert.equal((await confirm(who, seen)).status, 403, who.role);
         }
         assert.equal((await candidateRow()).address, "1 old road");
-        assert.equal((await confirm(USERS.MANAGER, seen)).status, 200);
+        assert.equal((await confirm(USERS.OWNER, seen)).status, 200);
         // They can still SEE the submitted change (Analyst within their scope).
         assert.ok((await view(USERS.ANN)).body.pending.length > 0);
-        assert.ok((await view(USERS.DESK)).body.pending.length > 0);
+        assert.equal((await view(USERS.DESK)).status, 403, "the Registration Desk has the registration workflow only");
         assert.equal((await confirm(USERS.ADMIN, { field: "basic.birthDate", expectedCurrentValue: null, expectedSubmittedValue: null }, "N9999999")).status, 404, "unknown candidate");
     });
 

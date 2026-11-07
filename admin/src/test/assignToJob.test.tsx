@@ -43,7 +43,7 @@ const COMPLETED = jobItem(3, "COMPLETED");
 const CANCELLED = jobItem(4, "CANCELLED");
 
 // A stateful stub: the candidate's details change once the assignment is made.
-function backend(role = "MANAGER", opts: { current?: CandidateJobAssignment | null; assign?: FetchRoutes[string] } = {}) {
+function backend(role = "OWNER", opts: { current?: CandidateJobAssignment | null; assign?: FetchRoutes[string] } = {}) {
     // The candidate's active jobs, newest first (a candidate may hold several).
     const active: CandidateJobAssignment[] = opts.current ? [opts.current] : [];
     return signedInBackend({
@@ -70,8 +70,8 @@ function backend(role = "MANAGER", opts: { current?: CandidateJobAssignment | nu
 const card = () => screen.findByRole("region", { name: "Job assignment" }, RENDER_STEP);
 
 describe("Assign to Job (Candidate Details)", () => {
-    test("ASSIGN-UI-001 / 002 an unassigned candidate shows Assign to Job to Admin and to Manager", async () => {
-        for (const role of ["ADMIN", "MANAGER"]) {
+    test("ASSIGN-UI-001 / 002 an unassigned candidate shows Assign to Job to Admin and to Owner", async () => {
+        for (const role of ["ADMIN", "OWNER"]) {
             backend(role);
             const view = renderApp(PATH);
             const region = await card();
@@ -81,8 +81,8 @@ describe("Assign to Job (Candidate Details)", () => {
         }
     });
 
-    test("ASSIGN-UI-003 / 004 an Analyst and the Registration Desk see the card but no management action", async () => {
-        for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+    test("ASSIGN-UI-003 / 004 an Analyst and a Team Lead see the card but no management action", async () => {
+        for (const role of ["ANALYST", "TEAM_LEAD"]) {
             backend(role);
             const view = renderApp(PATH);
             const region = await card();
@@ -140,7 +140,7 @@ describe("Assign to Job (Candidate Details)", () => {
     });
 
     test("ASSIGN-UI-008 (multiple jobs) a candidate on one processing job can be assigned to another; the job they are on can't be picked again; both are shown", async () => {
-        backend("MANAGER", { current: asAssignment(PROCESSING[1]) });
+        backend("OWNER", { current: asAssignment(PROCESSING[1]) });
         renderApp(PATH);
         const user = userEvent.setup();
         const region = await card();
@@ -161,7 +161,7 @@ describe("Assign to Job (Candidate Details)", () => {
     });
 
     test("ASSIGN-UI-008b a refusal from the server (already on this job) is shown in the dialog and nothing changes", async () => {
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             assign: { status: 409, body: { message: "This candidate is already assigned to JOB-2026-000002.", code: "CANDIDATE_ALREADY_IN_JOB" } },
         });
         renderApp(PATH);
@@ -220,7 +220,7 @@ describe("Assign to Job (Candidate Details)", () => {
     test("ASSIGN-UI-012 a candidate whose Test result is not PASS cannot be assigned: the button is disabled and says why", async () => {
         for (const testResult of [null, "FAIL"] as const) {
             const { calls } = signedInBackend({
-                "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "MANAGER" } } },
+                "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "OWNER" } } },
                 "GET /api/admin/candidates/N0000002": () => {
                     const details = detailsWith(null);
                     return { status: 200, body: { ...details, stages: details.stages.map((s) => (s.stage === "TEST_DETAILS" ? { ...s, testResult } : s)) } };
@@ -240,7 +240,7 @@ describe("Assign to Job (Candidate Details)", () => {
     test("the Job Details page keeps its own Add to job action (one assignment mechanism)", async () => {
         const job = PROCESSING[0];
         signedInBackend({
-            "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "MANAGER" } } },
+            "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "OWNER" } } },
             [`GET /api/admin/jobs/${job.jobId}`]: { status: 200, body: { ...job, createdBy: "Test Admin", candidates: [] } },
         });
         renderApp(`/jobs/${job.jobId}`);

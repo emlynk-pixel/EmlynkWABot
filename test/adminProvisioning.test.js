@@ -28,12 +28,13 @@ describe("provisionUser: create", () => {
     });
 
     test("any application role may be given; others are refused", async () => {
-        for (const role of ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK"]) {
+        for (const role of ["OWNER", "ADMIN", "TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             const db = createFakeAdminDb([]);
             await provisionUser(input({ role }), { db, authAdmin: createFakeAuthAdmin() });
             assert.equal(db.rows[0].role, role);
         }
-        for (const role of ["VIEWER", "SUPERUSER", "admin; DROP"]) {
+        // MANAGER: retired (ADMIN holds everything it could do), never given again.
+        for (const role of ["MANAGER", "VIEWER", "SUPERUSER", "admin; DROP"]) {
             await rejectsWith(provisionUser(input({ role }), { db: createFakeAdminDb([]), authAdmin: createFakeAuthAdmin() }), "INVALID_ROLE");
         }
     });
@@ -84,12 +85,12 @@ describe("provisionUser: create", () => {
 
 describe("provisionUser: --link", () => {
     test("links a pre-Supabase row to its existing identity, keeping its role", async () => {
-        const db = createFakeAdminDb([{ adminId: "legacy-1", authUserId: null, email: "legacy@example.invalid", name: "Legacy", role: "MANAGER", status: "ACTIVE" }]);
+        const db = createFakeAdminDb([{ adminId: "legacy-1", authUserId: null, email: "legacy@example.invalid", name: "Legacy", role: "ANALYST", status: "ACTIVE" }]);
         const authAdmin = createFakeAuthAdmin({ identities: { "legacy@example.invalid": { authUserId: "22222222-2222-4222-8222-222222222222", confirmed: true } } });
         const result = await provisionUser({ email: "legacy@example.invalid", link: true }, { db, authAdmin });
         assert.deepEqual(result, { userId: "legacy-1", status: "ACTIVE", created: false });
         assert.equal(db.rows[0].authUserId, "22222222-2222-4222-8222-222222222222");
-        assert.equal(db.rows[0].role, "MANAGER");
+        assert.equal(db.rows[0].role, "ANALYST");
         assert.ok(!authAdmin.calls.some((c) => c.method === "createUser"), "no password, no new identity");
     });
 

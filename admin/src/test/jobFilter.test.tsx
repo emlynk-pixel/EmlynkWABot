@@ -20,7 +20,7 @@ const job = (n: number, status: JobStatus): JobListItem => ({
 // A stub of GET /api/admin/jobs over a fixed set of jobs (status filter, search, two pages of one).
 function jobsBackend(jobs: JobListItem[], { pageSize = 50 } = {}, extra: FetchRoutes = {}) {
     return signedInBackend({
-        ...asRole("MANAGER"),
+        ...asRole("OWNER"),
         "GET /api/admin/jobs": (url) => {
             const view = (url.searchParams.get("view") ?? "processing") as JobView;
             const search = url.searchParams.get("search");
@@ -138,7 +138,7 @@ describe("Agent details: the Jobs tab follows the same default", () => {
         clients: [], jobs, jobsShownLimit: 50,
     });
     const open = (body: AgentDetails) => {
-        signedInBackend({ ...asRole("MANAGER"), [`GET /api/admin/agents/${AGENT_ID}`]: { status: 200, body }, "GET /api/admin/agent-options": { status: 200, body: { agents: [] } }, "GET /api/admin/client-options": { status: 200, body: { clients: [] } } });
+        signedInBackend({ ...asRole("OWNER"), [`GET /api/admin/agents/${AGENT_ID}`]: { status: 200, body }, "GET /api/admin/agent-options": { status: 200, body: { agents: [] } }, "GET /api/admin/client-options": { status: 200, body: { clients: [] } } });
         renderApp(`/agents/${AGENT_ID}`);
     };
     const agentCodes = async () => within(await screen.findByRole("table", { name: "Jobs of this agent" }, RENDER_STEP)).getAllByRole("link").map((link) => link.textContent);

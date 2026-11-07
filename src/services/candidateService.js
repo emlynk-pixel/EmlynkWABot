@@ -4,7 +4,7 @@
 // everywhere else); registration creates that row, it never makes a second
 // record for the same person (passport ID and NIC are both unique).
 //
-// The deployment process has seven stages. They are independent: any stage can
+// The deployment process has six stages. They are independent: any stage can
 // be opened, edited and completed at any time, in any order. Two stages are
 // completed by their data (CANDIDATE_DETAILS: the required details and a
 // passport; DOCUMENT_SUBMISSION: the five required documents); the others by
@@ -35,11 +35,17 @@ import { findUsersByWhatsappNumber } from "./userLookupService.js";
 import { openFollowUp } from "./callLogFollowUpService.js";
 import { candidateJobAssignments, displayJob } from "./jobAssignmentReader.js";
 import { deriveCandidateWorkflowStatus } from "./candidateWorkflowStatus.js";
+import { candidateFilterWhere, derivedFilterMatch, needsDerivedFilter, parseCandidateFilters, queryValue } from "./candidateListFilters.js";
+import { andWhere } from "./candidateAccess.js";
+import { normalizeSearchText, searchTokens } from "../utils/searchText.js";
 import { setAuditActor } from "./auditActor.js";
+import { formatTestId } from "./testId.js";
 
 // ---------------------------------------------------------------- definitions
 
-// In display order.
+// In display order. The only stages: the database refuses any other value
+// (candidate_stages_stage_check, migration 20261109120000_candidate_status_cleanup,
+// which also removed the retired IVS interview and Finalizing the job stages).
 export const CANDIDATE_STAGES = Object.freeze([
     "TEST_DETAILS",
     // Job Details: the candidate's current Job and its Client, read from the Job
@@ -47,11 +53,10 @@ export const CANDIDATE_STAGES = Object.freeze([
     "JOB_DETAILS",
     "CANDIDATE_DETAILS",
     "DOCUMENT_SUBMISSION",
-    "IVS_INTERVIEW",
-    // Completed by an admin, like VISA_APPROVAL (notes + completion).
+    // Completed by an admin, like VISA_APPROVAL (notes + completion). Status Visa Submitted.
     "VISA_SUBMISSION",
+    // Completed by an admin (or the import's "Got Visa"). Status Visa Approved.
     "VISA_APPROVAL",
-    "FINALIZING_JOB",
 ]);
 
 export const POLICE_REPORT_VARIANTS = Object.freeze(["SL_VERIFIED", "ROMANIA", "SL_NORMAL"]);
@@ -563,7 +568,9 @@ export function candidateSummary(user) {
 export const CANDIDATE_LIST_PAGE_SIZE = 100;
 export const CANDIDATE_LIST_DEFAULTS = Object.freeze({ page: 1, pageSize: CANDIDATE_LIST_PAGE_SIZE });
 
-export function parseCandidateListQuery(query = {}) {
+// filterAccess (candidateListFilters.js filterAccess(user)): also read the advanced filters
+// (GET /candidates). Without it they are ignored, as before (the Job candidate picker).
+export function parseCandidateListQuery(query = {}, { filterAccess = null } = {}) {
     const errors = [];
     const params = { ...CANDIDATE_LIST_DEFAULTS };
     const single = (field) => {
@@ -603,6 +610,11 @@ export function parseCandidateListQuery(query = {}) {
         if (available === "true") params.available = true;
         else errors.push({ field: "available", message: "must be true" });
     }
+    if (filterAccess) {
+        const advanced = parseCandidateFilters(query, { access: filterAccess });
+        errors.push(...advanced.errors);
+        params.filters = advanced.filters;
+    }
     return errors.length ? { errors } : { params };
 }
 
@@ -613,13 +625,75 @@ export function parseCandidateListQuery(query = {}) {
 export function candidateSearchWhere(search) {
     const where = clientSearchWhere(search);
     if (!where.AND) return where;
+    const terms = searchTokens(search);
     return {
         AND: where.AND.map((word, index) => {
-            const term = search.trim().split(/\s+/).filter(Boolean)[index];
             const contact = word.OR.filter((condition) => condition.whatsappNumber).map((condition) => ({ contactNumber: condition.whatsappNumber }));
-            return { OR: [...word.OR, ...contact, { nic: { contains: term, mode: "insensitive" } }] };
+            return { OR: [...word.OR, ...contact, { nic: { contains: terms[index], mode: "insensitive" } }] };
         }),
     };
+}
+
+// ---------------------------------------------------------------- suggestions
+
+// GET /api/admin/candidate-suggestions?q=&allocation= : a few candidates for the search box while the
+// user types. The same search as the list (candidateSearchWhere: every word somewhere in the names,
+// passport, NIC or phone numbers), AND-ed with the user's scope and, for Work Allocation, its view,
+// so a suggestion is always a candidate the list itself would show. Shorter than
+// SUGGESTION_MIN_LENGTH: no suggestions (nothing is read).
+export const SUGGESTION_MIN_LENGTH = 2;
+export const SUGGESTION_LIMIT = 8;
+// Each of the two bounded reads below; ranking picks the best SUGGESTION_LIMIT of them.
+const SUGGESTION_POOL = 50;
+
+export function parseSuggestionQuery(query = {}, { filterAccess }) {
+    const errors = [];
+    const params = {};
+    const q = queryValue(query, "q", errors);
+    if (q !== undefined) {
+        if (q.trim().length > 100) errors.push({ field: "q", message: "must be at most 100 characters" });
+        else params.q = normalizeSearchText(q);
+    }
+    const allocation = queryValue(query, "allocation", errors);
+    if (allocation !== undefined) {
+        if (!filterAccess.allocation) errors.push({ field: "allocation", message: "is not available for your role" });
+        else if (["ALLOCATED", "UNALLOCATED"].includes(allocation)) params.allocation = allocation;
+        else errors.push({ field: "allocation", message: "must be one of: ALLOCATED, UNALLOCATED" });
+    }
+    return errors.length ? { errors } : { params };
+}
+
+// Lower is better: 0 the full name starts with the text, 1 every word starts a word of the name,
+// 2 the passport or NIC starts with it, 3 anything else the search matched (a substring).
+export function suggestionRank(row, q) {
+    const name = normalizeSearchText(clientName(row) ?? "");
+    if (name.startsWith(q)) return 0;
+    const words = name.split(" ");
+    if (searchTokens(q).every((token) => words.some((word) => word.startsWith(token)))) return 1;
+    if (row.passportId.toLowerCase().startsWith(q) || (row.nic ?? "").toLowerCase().startsWith(q)) return 2;
+    return 3;
+}
+
+export async function listCandidateSuggestions({ db, params, scope = {} }) {
+    const q = params.q ?? "";
+    if (q.length < SUGGESTION_MIN_LENGTH) return { items: [] };
+    const view = params.allocation === "UNALLOCATED" ? { allocation: { is: null } } : params.allocation === "ALLOCATED" ? { allocation: { isNot: null } } : {};
+    const where = andWhere(scope, view, candidateSearchWhere(q));
+    // The candidates whose name (or passport, NIC) STARTS with the first word are read first, so a
+    // strong match is never pushed out by many newer substring matches; then the newest of the rest.
+    const [first] = searchTokens(q);
+    const startsWith = (column) => [{ [column]: { startsWith: first, mode: "insensitive" } }, { [column]: { contains: ` ${first}`, mode: "insensitive" } }];
+    const prefix = { OR: [...startsWith("firstName"), ...startsWith("otherName"), { passportId: { startsWith: first, mode: "insensitive" } }, { nic: { startsWith: first, mode: "insensitive" } }] };
+    const select = { passportId: true, firstName: true, otherName: true, nic: true };
+    const [strong, recent] = await Promise.all([
+        db.candidate.findMany({ where: andWhere(where, prefix), select, orderBy: CANDIDATE_LIST_ORDER, take: SUGGESTION_POOL }),
+        db.candidate.findMany({ where, select, orderBy: CANDIDATE_LIST_ORDER, take: SUGGESTION_POOL }),
+    ]);
+    const rows = [...new Map([...strong, ...recent].map((row) => [row.passportId, row])).values()];
+    const ranked = rows
+        .map((row) => ({ row, rank: suggestionRank(row, q), name: clientName(row) ?? "" }))
+        .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name) || a.row.passportId.localeCompare(b.row.passportId));
+    return { items: ranked.slice(0, SUGGESTION_LIMIT).map(({ row, name }) => ({ passportId: row.passportId, name: name || null, nic: row.nic ?? null })) };
 }
 
 // What a list row needs: its summary (candidateSummary) and what
@@ -751,92 +825,81 @@ export async function fetchFallbackCandidateRelations(db, passportIds, { stagesB
 // scope: the signed-in user's candidates (candidateAccess.js candidateScope),
 // applied in the database before paging, so search and totals only ever
 // cover the candidates the user may see.
-// extraSelect: more candidate columns to load in the SAME query (not part of the items); withRows: also
-// return those loaded rows as `rows`. concurrently(rows): another read-only lookup over the loaded rows
-// (the route's Candidate Form conflicts, so the candidates are not read a second time), run AT THE SAME
-// TIME as the Candidate Form status lookup; its result is returned as `concurrent`. Callers that pass
-// none of these get exactly the result as before.
-export async function listCandidates({ db, params, scope = {}, extraSelect = null, withRows = false, concurrently = null }) {
+// params.filters (candidateListFilters.js): the advanced filters, AND-ed with the
+// scope, the search and each other, all before paging (pageCandidates).
+export async function listCandidates({ db, params, scope = {} }) {
     const search = params.search ? candidateSearchWhere(params.search) : {};
     // Filtered on the database, from the saved Test details row (never from stage completion).
     const passed = params.testResult === TEST_RESULT_PASS ? { stages: { some: { stage: "TEST_DETAILS", testResult: TEST_RESULT_PASS } } } : {};
     const available = params.available ? { jobAssignments: { none: { isActive: true } } } : {};
-    const parts = [search, scope, passed, available].filter((part) => Object.keys(part).length);
+    const filters = params.filters ?? {};
+    const parts = [search, scope, passed, available, candidateFilterWhere(filters)].filter((part) => Object.keys(part).length);
     const where = parts.length > 1 ? { AND: parts } : parts[0] ?? {};
-
-    const [total, baseCandidates] = await Promise.all([
-        db.candidate.count({ where }),
-        db.candidate.findMany({
-            where,
-            select: extraSelect ? { ...extraSelect, ...listSelect } : listSelect,
-            orderBy: [{ createdDate: "desc" }, { passportId: "asc" }],
-            skip: (params.page - 1) * params.pageSize,
-            take: params.pageSize,
+    const { total, rows: users } = await pageCandidates({ db, where, filters, select: WORKFLOW_STATUS_SELECT, page: params.page, pageSize: params.pageSize });
+    const submitted = await submittedFormPassportIds(db, users.map((user) => user.passportId));
+    return {
+        items: users.map((user) => {
+            const missing = automaticStageMissing(user, user.documents);
+            const stages = stageList(user.stages, missing);
+            const workflowStatus = workflowStatusOf(user, submitted.has(user.passportId), missing);
+            return { ...candidateSummary(user), workflowStatus, stages: stages.map(({ stage, completed }) => ({ stage, completed })) };
         }),
-    ]);
-
-    const passportIds = baseCandidates.map((candidate) => candidate.passportId);
-    const stagesByPassport = new Map();
-    const docsByPassport = new Map();
-    const jobsByPassport = new Map();
-    const verifByPassport = new Map();
-    const relations = { stagesByPassport, docsByPassport, jobsByPassport, verifByPassport };
-    if (passportIds.length) {
-        if (typeof db.$queryRaw === "function") {
-            try {
-                for (const row of await fetchConsolidatedCandidateRelations(db, passportIds)) {
-                    if (Array.isArray(row.stages)) stagesByPassport.set(row.passportId, row.stages);
-                    if (Array.isArray(row.documents)) docsByPassport.set(row.passportId, row.documents);
-                    if (Array.isArray(row.jobAssignments)) jobsByPassport.set(row.passportId, row.jobAssignments.slice(0, 1));
-                    if (row.verification) {
-                        verifByPassport.set(row.passportId, {
-                            detailsVerifiedAt: parseDbDate(row.verification.detailsVerifiedAt),
-                            documentsVerifiedAt: parseDbDate(row.verification.documentsVerifiedAt),
-                        });
-                    }
-                }
-            } catch (error) {
-                if (typeof db.candidateStage?.findMany !== "function") throw error;
-                // The same relations through Prisma, so the list still works (and the failure is visible).
-                console.warn("Candidate list relations: consolidated query failed, using the Prisma fallback:", error?.code ?? error?.message);
-                [stagesByPassport, docsByPassport, jobsByPassport, verifByPassport].forEach((map) => map.clear());
-                await fetchFallbackCandidateRelations(db, passportIds, relations);
-            }
-        } else if (typeof db.candidateStage?.findMany === "function") {
-            await fetchFallbackCandidateRelations(db, passportIds, relations);
-        }
-    }
-    const users = baseCandidates.map((candidate) => ({
-        ...candidate,
-        stages: stagesByPassport.get(candidate.passportId) ?? [],
-        documents: docsByPassport.get(candidate.passportId) ?? [],
-        jobAssignments: jobsByPassport.get(candidate.passportId) ?? [],
-        verification: verifByPassport.get(candidate.passportId) ?? null,
-    }));
-
-    // The Candidate Form status and the caller's lookup run concurrently.
-    const [submitted, concurrent] = await Promise.all([
-        submittedFormPassportIds(db, passportIds),
-        concurrently ? concurrently(users) : undefined,
-    ]);
-    const items = users.map((user) => {
-        const missing = automaticStageMissing(user, user.documents);
-        const stages = stageList(user.stages, missing);
-        const workflowStatus = workflowStatusOf(user, submitted.has(user.passportId), missing);
-        return { ...candidateSummary(user), workflowStatus, stages: stages.map(({ stage, completed }) => ({ stage, completed })) };
-    });
-    const result = {
-        items,
         pagination: listPagination(params, total),
-        filters: { search: params.search ?? null, ...(params.testResult ? { testResult: params.testResult } : {}), ...(params.available ? { available: true } : {}) },
+        filters: { search: params.search ?? null, ...(params.testResult ? { testResult: params.testResult } : {}), ...(params.available ? { available: true } : {}), ...filters },
     };
-    return { ...result, ...(withRows ? { rows: users } : {}), ...(concurrently ? { concurrent } : {}) };
+}
+
+export const CANDIDATE_LIST_ORDER = Object.freeze([{ createdDate: "desc" }, { passportId: "asc" }]);
+
+// The most candidates one filtered request may evaluate in memory (the exact job type, the
+// Status and the current stage are derived values: they are computed for every candidate the
+// database pre-filter returns, then paged). Far above today's candidate count; past it the
+// request is refused with a clear message instead of getting slow.
+export const MAX_DERIVED_FILTER_CANDIDATES = 20_000;
+
+// One page of the candidates matching `where` (the caller's scope, base condition, search and
+// the database part of `filters`, already AND-ed), newest registered first, passport ID for
+// ties. Without a derived filter: one COUNT and one bounded query. With one: the database
+// pre-filter read with only what the derived filters need, the derived filters over all its
+// rows, then the page read with `select`. Either way the total is the whole filtered list's.
+export async function pageCandidates({ db, where, filters = {}, select, page, pageSize }) {
+    if (!needsDerivedFilter(filters)) {
+        const [total, rows] = await Promise.all([
+            db.candidate.count({ where }),
+            db.candidate.findMany({ where, select, orderBy: CANDIDATE_LIST_ORDER, skip: (page - 1) * pageSize, take: pageSize }),
+        ]);
+        return { total, rows };
+    }
+    const candidates = await db.candidate.count({ where });
+    if (candidates > MAX_DERIVED_FILTER_CANDIDATES) {
+        throw new CandidateError(422, "TOO_MANY_TO_FILTER", "Too many candidates match. Add a registration date range or a search to narrow the list.");
+    }
+    const progress = Boolean(filters.workflowStatus || filters.stage);
+    const all = await db.candidate.findMany({ where, select: progress ? WORKFLOW_STATUS_SELECT : { passportId: true, job: true }, orderBy: CANDIDATE_LIST_ORDER });
+    const statuses = filters.workflowStatus ? await candidateWorkflowStatuses(db, all) : new Map();
+    const matching = all.filter((row) => derivedFilterMatch({
+        jobTypes: parseJobTypes(row.job),
+        status: statuses.get(row.passportId)?.code,
+        currentStage: progress ? currentStageOf(row) : null,
+    }, filters));
+    const pageIds = matching.slice((page - 1) * pageSize, page * pageSize).map((row) => row.passportId);
+    const loaded = pageIds.length ? await db.candidate.findMany({ where: { passportId: { in: pageIds } }, select }) : [];
+    const byId = new Map(loaded.map((row) => [row.passportId, row]));
+    return { total: matching.length, rows: pageIds.map((id) => byId.get(id)).filter(Boolean) };
+}
+
+// The first stage not completed (null when all are), of a row read with WORKFLOW_STATUS_SELECT.
+export function currentStageOf(row) {
+    return stageList(row.stages, automaticStageMissing(row, row.documents)).find((stage) => !stage.completed)?.stage ?? null;
 }
 
 // What the workflow Status of a candidate row needs (the list row's summary fields too). The signals are
 // loaded for every row in one batched query each (never per candidate).
 export const WORKFLOW_STATUS_SELECT = Object.freeze({
     ...listSelect,
+    departedAt: true,
+    outcome: true,
+    outcomeAt: true,
     stages: { select: { stage: true, completed: true, testResult: true } },
     documents: {
         where: { documentType: { in: REQUIRED_SUBMISSION_DOCUMENTS } },
@@ -846,8 +909,12 @@ export const WORKFLOW_STATUS_SELECT = Object.freeze({
     verification: { select: { detailsVerifiedAt: true, documentsVerifiedAt: true } },
 });
 
+const stageCompleted = (user, stage) => Boolean(user.stages.find((row) => row.stage === stage)?.completed);
+
 function workflowStatusOf(user, formSubmitted, missing = automaticStageMissing(user, user.documents)) {
     return deriveCandidateWorkflowStatus({
+        // A recorded final outcome (Visa Not Going, Cancelled, Rejected) outranks everything.
+        outcome: user.outcome ?? null,
         testResult: user.stages.find((row) => row.stage === "TEST_DETAILS")?.testResult ?? null,
         hasCurrentJob: (user.jobAssignments?.length ?? 0) > 0,
         formSubmitted,
@@ -856,6 +923,10 @@ function workflowStatusOf(user, formSubmitted, missing = automaticStageMissing(u
         documentsVerified: Boolean(user.verification?.documentsVerifiedAt),
         // Document submission complete (every required document on record): the Visa-document point.
         documentSubmissionCompleted: missing.DOCUMENT_SUBMISSION.length === 0,
+        visaSubmitted: stageCompleted(user, "VISA_SUBMISSION"),
+        visaApproved: stageCompleted(user, "VISA_APPROVAL"),
+        // Recorded as Departed (candidate.departed_at: the import's "Departed" or an Admin's Mark departed).
+        departed: Boolean(user.departedAt),
     });
 }
 
@@ -864,6 +935,17 @@ function workflowStatusOf(user, formSubmitted, missing = automaticStageMissing(u
 export async function candidateWorkflowStatuses(db, users) {
     const submitted = await submittedFormPassportIds(db, users.map((user) => user.passportId));
     return new Map(users.map((user) => [user.passportId, workflowStatusOf(user, submitted.has(user.passportId))]));
+}
+
+const isoOrNull = (value) => (value ? new Date(value).toISOString() : null);
+
+// The candidate's recorded final status, of a row read with WORKFLOW_STATUS_SELECT:
+// { code: DEPARTED or the outcome (candidateWorkflowStatus.js CANDIDATE_OUTCOME), at } or null. The database
+// allows only one of the two (candidate_departed_or_outcome_check).
+export function finalStatusOf(row) {
+    if (row?.outcome) return { code: row.outcome, at: isoOrNull(row.outcomeAt) };
+    if (row?.departedAt) return { code: "DEPARTED", at: isoOrNull(row.departedAt) };
+    return null;
 }
 
 // total (kept for existing callers) and totalItems are the same count.
@@ -914,9 +996,17 @@ export async function getCandidate({ db, passportId }) {
     if (!user) return null;
 
     const documents = currentDocuments(user.documents);
-    const jobAssignments = await candidateJobAssignments(db, passportId);
+    const [jobAssignments, statusRow] = await Promise.all([
+        candidateJobAssignments(db, passportId),
+        db.candidate.findUnique({ where: { passportId }, select: WORKFLOW_STATUS_SELECT }),
+    ]);
+    // The same derived Status the lists show, so the candidate page shows it changing as stages are saved.
+    const workflowStatus = statusRow ? (await candidateWorkflowStatuses(db, [statusRow])).get(passportId) : null;
     return {
         jobAssignments,
+        workflowStatus,
+        // The recorded final status (Departed, or an outcome), for the Final status control.
+        finalStatus: finalStatusOf(statusRow),
         // Manual verification state (null when not verified), for the Verify buttons.
         verification: {
             details: user.verification?.detailsVerifiedAt ? { at: user.verification.detailsVerifiedAt.toISOString(), by: user.verification.detailsVerifiedBy?.name ?? null } : null,
@@ -951,6 +1041,27 @@ export async function getCandidate({ db, passportId }) {
                 included: Boolean(documents[documentType]),
             };
         }),
+    };
+}
+
+// The documents the registration form (Add Candidate) collects.
+export const REGISTRATION_DOCUMENT_TYPES = Object.freeze(["PASSPORT", "NIC", "SKILL_VIDEO"]);
+
+// What the registration workflow shows of a candidate (getCandidate's shape, for the
+// Registration Desk): the candidate's details, the Candidate Details stage (its note) and the
+// registration documents. Every other stage, document, job assignment and verification is left
+// out (empty), so the passport-ID lookup reveals no more than registering needs.
+export function registrationView(details) {
+    if (!details) return details;
+    const none = (record) => Object.fromEntries(Object.keys(record).map((key) => [key, null]));
+    return {
+        jobAssignments: { current: null, active: [], history: [] },
+        verification: { details: null, documents: null },
+        candidate: details.candidate,
+        stages: details.stages.filter((stage) => stage.stage === "CANDIDATE_DETAILS"),
+        documents: Object.fromEntries(Object.entries(details.documents).map(([type, document]) => [type, REGISTRATION_DOCUMENT_TYPES.includes(type) ? document : null])),
+        variantDocuments: Object.fromEntries(Object.entries(details.variantDocuments).map(([type, stored]) => [type, { byVariant: none(stored.byVariant), untyped: null }])),
+        requiredDocuments: [],
     };
 }
 
@@ -1170,12 +1281,19 @@ export async function updateCandidateDetails({ db, passportId, values, actor = n
 // PUT /api/admin/candidates/:passportId/stages/:stage. Automatic stages take
 // notes only; their completion follows their data.
 export async function updateStage({ db, passportId, stage, values, actor = null, now = new Date() }) {
+    if (!isCandidateStage(stage)) throw new CandidateError(404, "STAGE_NOT_FOUND", "Stage not found");
     const candidate = await getCandidate({ db, passportId });
     if (!candidate) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
 
     const current = candidate.stages.find((s) => s.stage === stage);
     if (current.automatic && values.completed !== undefined) {
         throw new CandidateError(409, "AUTOMATIC_STAGE", "This stage is completed automatically when its details and documents are on record.");
+    }
+    // Test details saved with a Test date and no Test ID: the generated one (testId.js). A typed one is kept.
+    if (stage === "TEST_DETAILS" && (values.testDate !== undefined || values.testId !== undefined)) {
+        const testDate = values.testDate !== undefined ? values.testDate : current.testDate;
+        const testId = values.testId !== undefined ? values.testId : current.testId;
+        if (testDate && !testId) values = { ...values, testId: formatTestId(testDate) };
     }
 
     const data = {};

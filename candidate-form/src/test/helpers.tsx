@@ -59,6 +59,8 @@ export function backend(routes: Routes = {}) {
     let drafts = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
         const path = new URL(String(url), "http://localhost").pathname;
+        // Loaded on every page; tests that care about it use their own stub (branding.test.tsx).
+        if (path.endsWith("/branding")) return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
         calls.push({ url: String(url), path, init, body: typeof init.body === "string" ? JSON.parse(init.body) : undefined });
         let reply: Reply = { status: 404, body: { message: "Not found" } };
         if (path.endsWith("/verify")) reply = routes.verify ?? OK_VERIFY;
@@ -161,7 +163,7 @@ export async function fillPassport(user: User, job = "WELDER TIG") {
 export function fillMeasurements() {
     setField("f.shirtSize", "M");
     setField("f.waistSize", "32");
-    setField("f.shoeSize", "9");
+    setField("f.shoeSize", "42");
 }
 // Father does not apply ("N/A": his other answers are then not needed); mother in full; no children.
 export function fillFamily({ spouse = false }: { spouse?: boolean } = {}) {

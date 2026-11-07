@@ -3,7 +3,7 @@ import type { CallOutcome, DocumentStatusEntry, FollowUpStatus } from "./candida
 
 // Priority Follow-Ups (src/routes/admin.js, /api/admin/follow-ups): call
 // logs marked as needing attention, grouped by candidate. Listing and
-// completing: every Candidates role; deleting: ADMIN and MANAGER (checked on
+// completing: every Candidates role; deleting: ADMIN only (checked on
 // the server). Deleting removes the follow-up only, never the call log.
 
 export type FollowUpItem = {

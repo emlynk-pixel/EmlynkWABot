@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ApproveResult, AuditEntry, ReviewItem, ReviewQueue, ReviewQueueItem } from "../api/admin";
-import { ADMIN, CLIENT_REF, OVERVIEW as OVERVIEW_FIXTURE, renderApp, signedInBackend, stubBackend, type FetchRoutes, SESSION_TOKEN, renderAppSignedIn, RENDER_STEP } from "./helpers";
+import { ADMIN, CLIENT_REF, OVERVIEW as OVERVIEW_FIXTURE, renderApp, signedInBackend, stubBackend, type FetchRoutes, SESSION_TOKEN, renderAppSignedIn, RENDER_STEP, expectRedirectedHome } from "./helpers";
 
 // Synthetic review data only.
 const TEMP_ID = "11111111-1111-4111-8111-111111111111";
@@ -226,30 +226,29 @@ describe("Review Detail", () => {
         expect(await screen.findByRole("heading", { name: "Review item not found" })).toBeInTheDocument();
     });
 
-    test("MANAGER sees the review actions (the backend allows MANAGER to review)", async () => {
-        signedInBackend({
-            "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "MANAGER" } } },
+    test("an ANALYST has no Review Queue (taken to Candidates, nothing requested)", async () => {
+        const { calls } = signedInBackend({
+            "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "ANALYST" } } },
             [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: ITEM },
             [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse,
         });
         renderApp(`/review/pending-${TEMP_ID}`);
-        expect(await screen.findByRole("heading", { name: "11111111" })).toBeInTheDocument();
-        expect(screen.getByRole("group", { name: "Review actions" })).toBeInTheDocument();
-        expect(screen.queryByText("You have view-only access and cannot review documents.")).not.toBeInTheDocument();
+        await expectRedirectedHome("ANALYST");
+        expect(screen.queryByRole("group", { name: "Review actions" })).not.toBeInTheDocument();
+        expect(calls.some((c) => c.path.startsWith("/api/admin/review"))).toBe(false);
     });
 
-    test("a role without review permission (defensive; no such role exists today) sees details only", async () => {
-        signedInBackend({
+    test("a role without review permission (defensive; no such role exists today) can't open the review item", async () => {
+        const { calls } = signedInBackend({
             "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "UNKNOWN_ROLE" } } },
             [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: ITEM },
             [`GET /api/admin/review/pending-${TEMP_ID}/file`]: fileResponse,
         });
         renderApp(`/review/pending-${TEMP_ID}`);
-        expect(await screen.findByRole("heading", { name: "11111111" })).toBeInTheDocument();
-        expect(screen.queryByRole("group", { name: "Review actions" })).not.toBeInTheDocument();
+        expect(await screen.findByText("Access Restricted")).toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: "11111111" })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: "Keep Pending" })).not.toBeInTheDocument();
-        expect(screen.getByText("You have view-only access and cannot review documents.")).toBeInTheDocument();
+        expect(calls.some((c) => c.path.startsWith("/api/admin/review"))).toBe(false);
     });
 });
 
@@ -276,21 +275,18 @@ describe("Review actions", () => {
         expect(posts(calls)).toHaveLength(0);
     });
 
-    test("ANALYST sees review actions but not the set-police-date block for unreadable slips", async () => {
+    test("ADMIN enters the date of an unreadable slip in the Approve dialog", async () => {
         const slipItem = {
             ...ITEM,
             document: { ...ITEM.document, documentType: "POLICE_SLIP", policeSubmittedDate: null },
             actions: { approve: { available: true, needsPoliceDate: true, code: null, message: null }, keepPending: { available: true, code: null, message: null } }
         };
         const { user, group } = await openDetail({
-            "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role: "ANALYST" } } },
             [`GET /api/admin/review/pending-${TEMP_ID}`]: { status: 200, body: slipItem },
         });
         await user.click(within(group).getByRole("button", { name: "Approve" }));
-        const dialog = await screen.findByRole("dialog");
-        expect(screen.getByText(/Only an Administrator can approve this document by manually entering the date/)).toBeInTheDocument();
-        expect(screen.queryByLabelText(/Submitted date on the police slip/)).not.toBeInTheDocument();
-        expect(within(dialog).getByRole("button", { name: "Approve" })).toBeDisabled();
+        expect(await screen.findByLabelText(/Submitted date on the police slip/)).toBeInTheDocument();
+        expect(screen.queryByText(/Only an Administrator can approve this document/)).not.toBeInTheDocument();
     });
 
     test("successful approval: success message, verified status, audit entry, item leaves the queue", async () => {
@@ -500,7 +496,7 @@ describe("review routes stay protected", () => {
         test(`${path} without a session -> login, no admin API call`, async () => {
             const { calls } = stubBackend({});
             renderApp(path);
-            expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+            expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
             expect(calls.filter((c) => c.path.startsWith("/api/admin"))).toHaveLength(0);
         });
     }

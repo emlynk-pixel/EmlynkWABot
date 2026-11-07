@@ -10,7 +10,7 @@
 //   documents - its documents rows
 //   details   - its candidate_additional_details row, or null
 // The Candidate Form columns come from `details` ONLY: the canonical record,
-// which holds a submitted answer only once an Admin / Manager confirmed it
+// which holds a submitted answer only once an Admin confirmed it
 // (candidateFormFieldConfirmService.js). candidate_form_response (the raw
 // submission) is never read here. No details, or a value never confirmed: "".
 // DISTANCE TO BUCHAREST (KM) is derived from the confirmed City in Romania
@@ -199,10 +199,8 @@ export function mapCandidateToSheetRow(aggregate, { mirroredAt, recordStatus = R
         testDetailsStatus: stageStatus(stages.get("TEST_DETAILS")),
         candidateDetailsStatus: stageStatus(stages.get("CANDIDATE_DETAILS")),
         documentSubmissionStatus: stageStatus(stages.get("DOCUMENT_SUBMISSION")),
-        ivsInterviewStatus: stageStatus(stages.get("IVS_INTERVIEW")),
         visaSubmissionStatus: stageStatus(stages.get("VISA_SUBMISSION")),
         visaApprovalStatus: stageStatus(stages.get("VISA_APPROVAL")),
-        finalizingJobStatus: stageStatus(stages.get("FINALIZING_JOB")),
         recordStatus,
         registeredAt: utcTimestamp(user.createdDate),
         lastMirroredAt: utcTimestamp(mirrored),

@@ -1,10 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError } from "../api/client";
-import { listCandidates, type CandidateListItem } from "../api/candidates";
-import { addCandidateToJob, cancelJob, completeJob, createJobType, getJob, getJobOptions, removeCandidateFromJob, updateJob, type JobDetails, type JobOptions } from "../api/jobs";
+import { addCandidateToJob, cancelJob, completeJob, createJobType, getJob, getJobOptions, listJobCandidateOptions, removeCandidateFromJob, updateJob, type JobCandidateOption, type JobCandidateOptions, type JobDetails, type JobOptions } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
-import { canCreateJobTypes, canManageJobs, canViewJobs, useAuth } from "../auth/AuthProvider";
+import { canCreateJobTypes, canManageJobs, canViewCandidates, canViewJobs, useAuth } from "../auth/AuthProvider";
 import { ActionDialog, ConfirmDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../components/Dialog";
 import { JobTypesMultiSelect } from "./JobsPage";
 import { useBreadcrumbLabel } from "../components/Breadcrumbs";
@@ -15,11 +14,12 @@ import { Detail, JobStatusBadge, NO_COMPANY_JOB_ID, VacancyFill, jobCountry } fr
 import { CountrySelect } from "../components/master/MasterParts";
 import { Card, ErrorState, LoadingState } from "../components/States";
 import { filterControl, inputClass, tableCell, tableHead, tableRow, textareaClass } from "../components/ui";
+import { ImportJobSuffixEditor } from "../components/job/ImportJobSuffixEditor";
 
 // Admin > Jobs > one job, in two tabs: Job Details (the default) and Assigned
 // Candidates. The tab is page state only (no route): switching keeps every open
 // dialog and loaded value, and the actions above the tabs work from either. ADMIN and
-// MANAGER add / remove candidates and complete or cancel a PROCESSING job; an
+// JOB_HANDLER add / remove candidates and complete or cancel a PROCESSING job; an
 // ANALYST sees the job with only their own candidates. A candidate may also be on
 // other PROCESSING jobs (they are never touched); one already on THIS job is refused
 // by the server (409) and the message is shown here.
@@ -31,7 +31,7 @@ export function JobDetailsPage() {
     if (!canViewJobs(user)) {
         return (
             <div className="mx-auto max-w-4xl p-6">
-                <div role="alert" className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+                <div role="alert" className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                     <h1 className="text-headline-sm font-semibold">Access Restricted</h1>
                     <p className="mt-1 text-body-sm text-ink-muted">Your role cannot view jobs.</p>
@@ -54,6 +54,9 @@ function JobDetailsView() {
     const { user, token } = useAuth();
     const { jobId = "" } = useParams();
     const canManage = canManageJobs(user);
+    // A candidate's name links to their page only for a role that can open it: a JOB_HANDLER
+    // sees the job's own read-only rows (name, passport ID, NIC, Status, assigned date).
+    const openCandidates = canViewCandidates(user);
     const resource = useAdminResource(`job:${jobId}`, (t, signal) => getJob(t, jobId, signal));
     const [updated, setUpdated] = useState<JobDetails | null>(null);
     const [dialog, setDialog] = useState<Dialog>(null);
@@ -63,7 +66,7 @@ function JobDetailsView() {
 
     if (!job) {
         return (
-            <div className="mx-auto max-w-5xl space-y-4">
+            <div className="space-y-4">
                 <Card>{resource.status === "error" ? <ErrorState message={resource.error.message} onRetry={resource.reload} /> : <LoadingState label="Loading job…" />}</Card>
             </div>
         );
@@ -76,7 +79,7 @@ function JobDetailsView() {
     };
 
     return (
-        <section aria-labelledby="page-title" className="mx-auto max-w-5xl space-y-4">
+        <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div className="min-w-0">
                     <h1 id="page-title" className="flex flex-wrap items-center gap-3 text-headline-lg text-ink">{job.jobCode}<JobStatusBadge status={job.status} /></h1>
@@ -98,6 +101,11 @@ function JobDetailsView() {
             {tab === "details" && (
                 <div role="tabpanel" id="job-panel-details" aria-labelledby="job-tab-details">
                     <Card className="p-5">
+                        {job.importGroup && (
+                            <div className="mb-4 border-b border-border pb-4">
+                                <ImportJobSuffixEditor jobId={job.jobId} group={job.importGroup} onSaved={() => resource.reload()} />
+                            </div>
+                        )}
                         <dl aria-label="Job details" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                             <Detail label="Internal job code">{job.jobCode}</Detail>
                             <Detail label="Client Job ID">
@@ -107,7 +115,7 @@ function JobDetailsView() {
                             <Detail label={job.jobTypes && job.jobTypes.length > 1 ? "Job types" : "Job type"}>
                                 <div className="flex flex-wrap items-center gap-1.5" data-testid="job-details-types">
                                     {((job.jobTypes && job.jobTypes.length > 0) ? job.jobTypes : (job.jobType ? [job.jobType] : [])).map((t) => (
-                                        <span key={t.id} className="inline-flex items-center rounded border border-border bg-canvas-subtle px-2 py-0.5 text-label-md font-medium text-ink">
+                                        <span key={t.id} className="inline-flex items-center rounded-lg border border-border bg-canvas-muted px-2 py-0.5 text-label-md font-medium text-ink">
                                             {t.name}
                                         </span>
                                     ))}
@@ -162,7 +170,9 @@ function JobDetailsView() {
                                     <tbody>
                                         {job.candidates.map((candidate) => (
                                             <tr key={candidate.passportId} className={tableRow}>
-                                                <td className={tableCell}><Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="font-medium text-primary hover:underline">{candidate.name ?? candidate.passportId}</Link></td>
+                                                <td className={tableCell}>{openCandidates
+                                                    ? <Link to={`/candidates/${encodeURIComponent(candidate.passportId)}`} className="font-medium text-primary hover:underline">{candidate.name ?? candidate.passportId}</Link>
+                                                    : <span className="font-medium text-ink">{candidate.name ?? candidate.passportId}</span>}</td>
                                                 <td className={tableCell}>
                                                     <span className="block">{candidate.passportId}</span>
                                                     {candidate.nic && <span className="block text-label-sm text-ink-muted">NIC: {candidate.nic}</span>}
@@ -320,76 +330,197 @@ function CancelDialog({ token, job, onDone, onClose }: { token: string; job: Job
     );
 }
 
-// Search the candidates and add them one at a time. The dialog stays open so
-// several can be added; a refusal (already on this job, test not passed) is shown
-// next to the search.
+// The candidates who can be added (the server's list: test PASS, newest registered first), shown as
+// soon as the dialog opens, paged and searchable (name, passport ID or NIC) on the server. Candidates
+// are ticked (kept across pages and searches; "Select all on this page" ticks the page) and added
+// together with "Add selected", one or many. The dialog stays open. A refusal
+// (already on this job, test not passed) is shown under the list, per candidate for a bulk add. The
+// list follows the search box while typing (a short pause after the last key, on the server); Search
+// or Enter runs it at once.
+const ADD_PAGE_SIZE = 20;
+const ADD_SEARCH_DEBOUNCE_MS = 300;
 function AddCandidateDialog({ token, job, onChanged, onClose }: { token: string; job: JobDetails; onChanged: (job: JobDetails) => void; onClose: () => void }) {
     const [text, setText] = useState("");
-    const [results, setResults] = useState<CandidateListItem[] | null>(null);
+    const [query, setQuery] = useState({ search: "", page: 1 });
+    const [list, setList] = useState<JobCandidateOptions | null>(null);
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const [attempt, setAttempt] = useState(0);
     const [added, setAdded] = useState<Set<string>>(() => new Set(job.candidates.map((c) => c.passportId)));
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
 
-    const search = async (event: FormEvent) => {
-        event.preventDefault();
+    useEffect(() => {
+        const controller = new AbortController();
+        setLoadError(null);
+        listJobCandidateOptions(token, { page: query.page, pageSize: ADD_PAGE_SIZE, search: query.search || undefined }, controller.signal)
+            .then(setList)
+            .catch((caught) => {
+                if (!controller.signal.aborted) setLoadError(message(caught));
+            });
+        return () => controller.abort();
+    }, [token, query, attempt]);
+    // While typing: the list (page 1) follows the text after a short pause. The rows shown stay until
+    // the new ones arrive (no flashing); the previous request is aborted by the list effect.
+    useEffect(() => {
         const term = text.trim();
-        if (!term) return;
+        if (term === query.search) return;
+        const timer = setTimeout(() => setQuery({ search: term, page: 1 }), ADD_SEARCH_DEBOUNCE_MS);
+        return () => clearTimeout(timer);
+    }, [text, query.search]);
+    const search = (event: FormEvent) => {
+        event.preventDefault();
+        setError(null);
+        setNotice(null);
+        if (text.trim() === query.search) return;
+        setList(null);
+        setQuery({ search: text.trim(), page: 1 });
+    };
+    const goTo = (page: number) => {
+        setList(null);
+        setQuery((q) => ({ ...q, page }));
+    };
+    // Ticked candidates, kept across pages and searches until they are added or unticked.
+    const [selected, setSelected] = useState<Map<string, JobCandidateOption>>(() => new Map());
+    const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+    const [failures, setFailures] = useState<{ name: string; reason: string }[]>([]);
+    const label = (candidate: JobCandidateOption) => candidate.name ?? candidate.passportId;
+    const toggle = (candidate: JobCandidateOption) => setSelected((previous) => {
+        const next = new Map(previous);
+        if (next.has(candidate.passportId)) next.delete(candidate.passportId);
+        else next.set(candidate.passportId, candidate);
+        return next;
+    });
+    const selectable = (list?.items ?? []).filter((candidate) => !added.has(candidate.passportId));
+    const pageSelected = selectable.filter((candidate) => selected.has(candidate.passportId)).length;
+    const allPageSelected = selectable.length > 0 && pageSelected === selectable.length;
+    const togglePage = () => setSelected((previous) => {
+        const next = new Map(previous);
+        for (const candidate of selectable) {
+            if (allPageSelected) next.delete(candidate.passportId);
+            else next.set(candidate.passportId, candidate);
+        }
+        return next;
+    });
+
+    // One request per candidate, one after the other, so the server checks each one under its own
+    // locks (test result, already on the job) exactly as a single Add does. A refusal for one
+    // candidate never stops the others; every refusal is listed with the server's reason.
+    const addMany = async (candidates: JobCandidateOption[]) => {
         setBusy(true);
         setError(null);
         setNotice(null);
+        setFailures([]);
+        const refused: { name: string; reason: string }[] = [];
+        const done: string[] = [];
+        let latest: JobDetails | null = null;
         try {
-            setResults((await listCandidates(token, { page: 1, pageSize: 100, search: term, testResult: "PASS" })).items.slice(0, 20));
-        } catch (caught) {
-            setError(message(caught));
+            for (const [index, candidate] of candidates.entries()) {
+                if (candidates.length > 1) setProgress({ done: index, total: candidates.length });
+                try {
+                    latest = await addCandidateToJob(token, job.jobId, candidate.passportId);
+                    done.push(candidate.passportId);
+                } catch (caught) {
+                    refused.push({ name: label(candidate), reason: message(caught) });
+                }
+            }
         } finally {
+            if (done.length) {
+                setAdded((previous) => new Set([...previous, ...done]));
+                setSelected((previous) => {
+                    const next = new Map(previous);
+                    for (const passportId of done) next.delete(passportId);
+                    return next;
+                });
+            }
+            if (latest) onChanged(latest);
+            if (candidates.length === 1) {
+                if (done.length) setNotice(`${label(candidates[0])} was added.`);
+                else setError(refused[0]?.reason ?? null);
+            } else {
+                if (done.length) setNotice(`${done.length} of ${candidates.length} candidates were added.`);
+                setFailures(refused);
+            }
+            setProgress(null);
             setBusy(false);
         }
     };
-    const add = async (candidate: CandidateListItem) => {
-        setBusy(true);
-        setError(null);
-        setNotice(null);
-        try {
-            const next = await addCandidateToJob(token, job.jobId, candidate.passportId);
-            setAdded((previous) => new Set(previous).add(candidate.passportId));
-            setNotice(`${candidate.name ?? candidate.passportId} was added.`);
-            onChanged(next);
-        } catch (caught) {
-            setError(message(caught));
-        } finally {
-            setBusy(false);
-        }
-    };
+    const addSelected = () => addMany([...selected.values()]);
 
     return (
-        <ActionDialog title={`Add candidates to ${job.jobCode}`} busy={busy} onClose={onClose}>
+        <ActionDialog title={`Add candidates to ${job.jobCode}`} busy={busy} onClose={onClose} size="lg">
             <form onSubmit={search} role="search" className="flex gap-2">
                 <label htmlFor="add-candidate-search" className="sr-only">Search candidates</label>
                 <input id="add-candidate-search" type="search" value={text} maxLength={100} placeholder="Name, passport ID or NIC" onChange={(event) => setText(event.target.value)} className={filterControl} />
-                <button type="submit" disabled={busy || !text.trim()} className={secondaryButton}>Search</button>
+                <button type="submit" disabled={busy} className={secondaryButton}>Search</button>
             </form>
             <p className="mt-2 text-label-sm text-ink-muted">Only candidates who passed the test can be added to a job.</p>
-            {results && results.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">No eligible candidates found.</p>}
-            {results && results.length > 0 && (
-                <ul aria-label="Candidates found" className="mt-3 divide-y divide-border rounded border border-border">
-                    {results.map((candidate) => (
-                        <li key={candidate.passportId} className="flex items-center justify-between gap-3 px-3 py-2">
-                            <div className="min-w-0">
-                                <p className="truncate text-body-sm text-ink">{candidate.name ?? candidate.passportId}</p>
-                                <p className="text-label-sm text-ink-muted">{[candidate.passportId, candidate.nic].filter(Boolean).join(" • ")}</p>
-                            </div>
-                            {added.has(candidate.passportId)
-                                ? <span className="text-label-sm text-ink-muted">On this job</span>
-                                : <button type="button" disabled={busy} onClick={() => add(candidate)} className={primaryButton} aria-label={`Add ${candidate.name ?? candidate.passportId}`}>Add</button>}
-                        </li>
-                    ))}
-                </ul>
+            {loadError && <ErrorState message={loadError} onRetry={() => setAttempt((n) => n + 1)} />}
+            {!loadError && !list && <LoadingState label="Loading candidates…" />}
+            {!loadError && list && list.items.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">{query.search ? "No eligible candidates found." : "No candidates can be added right now."}</p>}
+            {!loadError && list && list.items.length > 0 && (
+                <div className="mt-3 overflow-hidden rounded-lg border border-border">
+                    <div className="flex items-center justify-between gap-3 border-b border-border bg-canvas px-3 py-2">
+                        <label className="flex cursor-pointer items-center gap-3 text-label-sm text-ink">
+                            <input
+                                type="checkbox"
+                                checked={allPageSelected}
+                                ref={(box) => { if (box) box.indeterminate = pageSelected > 0 && !allPageSelected; }}
+                                disabled={busy || selectable.length === 0}
+                                onChange={togglePage}
+                                className="size-4 shrink-0 accent-primary"
+                            />
+                            Select all on this page
+                        </label>
+                        {selected.size > 0 && (
+                            <span className="flex items-center gap-3 text-label-sm text-ink-muted">
+                                {selected.size} selected
+                                <button type="button" disabled={busy} onClick={() => setSelected(new Map())} className="text-primary hover:underline disabled:text-ink-muted disabled:no-underline">Clear</button>
+                            </span>
+                        )}
+                    </div>
+                    <ul aria-label="Candidates found" className="max-h-[min(55vh,32rem)] divide-y divide-border overflow-y-auto">
+                        {list.items.map((candidate) => {
+                            const onJob = added.has(candidate.passportId);
+                            const id = `add-pick-${candidate.passportId}`;
+                            return (
+                                <li key={candidate.passportId} className="flex items-center gap-3 px-3 py-2.5">
+                                    <input id={id} type="checkbox" checked={!onJob && selected.has(candidate.passportId)} disabled={busy || onJob} onChange={() => toggle(candidate)} aria-label={`Select ${label(candidate)}`} className="size-4 shrink-0 accent-primary" />
+                                    <label htmlFor={id} className={`min-w-0 flex-1 ${onJob ? "" : "cursor-pointer"}`}>
+                                        <p className="truncate text-body-sm text-ink">{label(candidate)}</p>
+                                        <p className="text-label-sm text-ink-muted">{[candidate.passportId, candidate.nic].filter(Boolean).join(" • ")}</p>
+                                    </label>
+                                    {candidate.workflowStatus && <span className="hidden sm:block"><WorkflowStatusBadge status={candidate.workflowStatus} /></span>}
+                                    {onJob && <span className="shrink-0 text-label-sm text-ink-muted">On this job</span>}
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </div>
             )}
-            {notice && <p role="status" className="mt-3 rounded border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</p>}
+            {list && list.pagination.totalPages > 1 && (
+                <nav aria-label="Candidate pages" className="mt-2 flex items-center justify-between text-label-sm text-ink-muted">
+                    <button type="button" disabled={busy || query.page <= 1} onClick={() => goTo(query.page - 1)} className="text-primary hover:underline disabled:text-ink-muted disabled:no-underline">Previous</button>
+                    <span>Page {query.page} of {list.pagination.totalPages}</span>
+                    <button type="button" disabled={busy || query.page >= list.pagination.totalPages} onClick={() => goTo(query.page + 1)} className="text-primary hover:underline disabled:text-ink-muted disabled:no-underline">Next page</button>
+                </nav>
+            )}
+            {progress && <p role="status" className="mt-3 text-body-sm text-ink-muted">Adding {progress.done + 1} of {progress.total}…</p>}
+            {notice && <p role="status" className="mt-3 rounded-lg border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</p>}
+            {failures.length > 0 && (
+                <div role="alert" className="mt-3 rounded-lg border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">
+                    <p>{failures.length === 1 ? "1 candidate could not be added:" : `${failures.length} candidates could not be added:`}</p>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                        {failures.map((failure, index) => <li key={index}><span className="font-medium">{failure.name}</span>: {failure.reason}</li>)}
+                    </ul>
+                </div>
+            )}
             <DialogError message={error} />
-            <div className="mt-4 flex justify-end">
+            <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
                 <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Done</button>
+                <button type="button" disabled={busy || selected.size === 0} onClick={addSelected} className={primaryButton}>
+                    {selected.size > 0 ? `Add selected (${selected.size})` : "Add selected"}
+                </button>
             </div>
         </ActionDialog>
     );

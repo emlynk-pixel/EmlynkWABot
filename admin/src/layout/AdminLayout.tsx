@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router";
-import { BreadcrumbProvider, Breadcrumbs } from "../components/Breadcrumbs";
+import { BreadcrumbProvider } from "../components/Breadcrumbs";
 import { SyncProvider } from "../sync/SyncProvider";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
@@ -25,8 +25,8 @@ function writeCollapsed(value: boolean): void {
 }
 
 // Shared shell for every signed-in page: sidebar, header, content canvas.
-// Sync (header) reloads the data of the page inside it. The breadcrumb tops
-// the content canvas, above anything the page renders (its tabs included).
+// Sync (header) reloads the data of the page inside it. The breadcrumb is in
+// the header (BreadcrumbProvider wraps both, so a page can name its record).
 export function AdminLayout() {
     const [collapsed, setCollapsed] = useState(readCollapsed);
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -49,21 +49,19 @@ export function AdminLayout() {
                 <Sidebar
                     collapsed={collapsed}
                     mobileOpen={mobileOpen}
-                    onToggleCollapsed={toggleCollapsed}
                     onNavigate={() => setMobileOpen(false)}
                 />
                 {mobileOpen && (
                     <div
-                        className="fixed inset-0 z-40 bg-overlay md:hidden"
+                        className="fixed inset-0 z-40 bg-overlay backdrop-blur-xs md:hidden"
                         aria-hidden="true"
                         onClick={() => setMobileOpen(false)}
                     />
                 )}
 
                 <div className={`flex min-h-full flex-col transition-[padding] duration-200 ${collapsed ? "md:pl-sidebar-rail" : "md:pl-sidebar"}`}>
-                    <Header onOpenMenu={() => setMobileOpen(true)} menuOpen={mobileOpen} />
+                    <Header onOpenMenu={() => setMobileOpen(true)} menuOpen={mobileOpen} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
                     <main className="mx-auto w-full max-w-content flex-1 p-4 md:p-6">
-                        <Breadcrumbs />
                         <Outlet />
                     </main>
                 </div>

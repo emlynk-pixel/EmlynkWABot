@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import type { AgentDetails, AgentList, AgentListItem } from "../api/agents";
 import type { ClientDetails, ClientList, ClientListItem } from "../api/clientManagement";
-import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from "./helpers";
+import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
 const asRole = (role: string) => ({ "GET /auth/me": { status: 200, body: { user: { ...ADMIN, role } } } });
 const AGENT_ID = "00000000-0000-4000-8000-0000000000a1";
@@ -46,8 +46,8 @@ function backend(role: string, routes: FetchRoutes = {}) {
 }
 
 describe("navigation and roles", () => {
-    test("ADMIN and MANAGER see Agents and Client Management next to the legacy Clients-free sidebar", async () => {
-        for (const role of ["ADMIN", "MANAGER"]) {
+    test("ADMIN and OWNER see Agents and Client Management next to the legacy Clients-free sidebar", async () => {
+        for (const role of ["ADMIN", "OWNER"]) {
             backend(role);
             const { unmount } = renderApp("/");
             await screen.findByTestId("admin-name", {}, RENDER_STEP);
@@ -57,25 +57,25 @@ describe("navigation and roles", () => {
         }
     });
 
-    test.each(["ANALYST", "REGISTRATION_DESK"])("%s has neither entry and, by URL, gets a restricted page with no API call", async (role) => {
+    test.each(["ANALYST", "REGISTRATION_DESK"])("%s has neither entry and, by URL, is taken to its home page with no API call", async (role) => {
         const { calls } = backend(role);
         renderApp("/agents");
         await screen.findByTestId("admin-name", {}, RENDER_STEP);
         expect(screen.queryByRole("link", { name: "Agents" })).not.toBeInTheDocument();
         expect(screen.queryByRole("link", { name: "Client Management" })).not.toBeInTheDocument();
-        expect(await screen.findByText("Access Restricted", {}, RENDER_STEP)).toBeInTheDocument();
+        await expectRedirectedHome(role);
         expect(calls.some((c) => c.path.startsWith("/api/admin/agents"))).toBe(false);
     });
 
-    test.each(["ANALYST", "REGISTRATION_DESK"])("%s opening /client-management gets a restricted page with no API call", async (role) => {
+    test.each(["ANALYST", "REGISTRATION_DESK"])("%s opening /client-management is taken to its home page with no API call", async (role) => {
         const { calls } = backend(role);
         renderApp("/client-management");
-        expect(await screen.findByText("Access Restricted", {}, RENDER_STEP)).toBeInTheDocument();
+        await expectRedirectedHome(role);
         expect(calls.some((c) => c.path.startsWith("/api/admin/client-management"))).toBe(false);
     });
 
     test("the legacy candidate Clients route still opens its own page, not Client Management", async () => {
-        backend("MANAGER", { "GET /api/admin/clients": { status: 200, body: { items: [], pagination: PAGINATION, filters: { search: null } } } });
+        backend("OWNER", { "GET /api/admin/clients": { status: 200, body: { items: [], pagination: PAGINATION, filters: { search: null } } } });
         renderApp("/clients");
         expect(await screen.findByRole("heading", { name: "Clients", level: 1 }, RENDER_STEP)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Add client" })).not.toBeInTheDocument();
@@ -84,7 +84,7 @@ describe("navigation and roles", () => {
 
 describe("Agents list", () => {
     test("shows the agent, country, active clients, processing and completed jobs, status", async () => {
-        backend("MANAGER", { "GET /api/admin/agents": { status: 200, body: agentList([agent()]) } });
+        backend("OWNER", { "GET /api/admin/agents": { status: 200, body: agentList([agent()]) } });
         renderApp("/agents");
         const table = await screen.findByRole("table", { name: "Agents" }, RENDER_STEP);
         expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Agent", "Country", "Active clients", "Processing jobs", "Completed jobs", "Status", "Actions"]);
@@ -108,7 +108,7 @@ describe("Agents list", () => {
     });
 
     test("Add agent needs a name and a country, sends the normalised body, and reloads", async () => {
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             "GET /api/admin/agents": { status: 200, body: agentList([]) },
             "POST /api/admin/agents": { status: 201, body: agentDetails() },
         });
@@ -132,7 +132,7 @@ describe("Agents list", () => {
     });
 
     test("a server validation error is shown against the field and the dialog stays open", async () => {
-        backend("MANAGER", {
+        backend("OWNER", {
             "GET /api/admin/agents": { status: 200, body: agentList([]) },
             "POST /api/admin/agents": { status: 400, body: { message: "Invalid request body", errors: [{ field: "contactNumber", message: "must be a phone number (for example 0771234567 or +94771234567)" }] } },
         });
@@ -174,7 +174,7 @@ describe("Agents list", () => {
 
 describe("Agent details", () => {
     test("shows the agent, its clients and its jobs by status, linked to the Job record", async () => {
-        backend("MANAGER", { [`GET /api/admin/agents/${AGENT_ID}`]: { status: 200, body: agentDetails() } });
+        backend("OWNER", { [`GET /api/admin/agents/${AGENT_ID}`]: { status: 200, body: agentDetails() } });
         renderApp(`/agents/${AGENT_ID}`);
         expect(await screen.findByRole("heading", { name: "Nimal Perera" }, RENDER_STEP)).toBeInTheDocument();
         const user = userEvent.setup();
@@ -190,7 +190,7 @@ describe("Agent details", () => {
     });
 
     test("an unknown agent shows a not-found message", async () => {
-        backend("MANAGER", { [`GET /api/admin/agents/${AGENT_ID}`]: { status: 404, body: { message: "Agent not found", code: "AGENT_NOT_FOUND" } } });
+        backend("OWNER", { [`GET /api/admin/agents/${AGENT_ID}`]: { status: 404, body: { message: "Agent not found", code: "AGENT_NOT_FOUND" } } });
         renderApp(`/agents/${AGENT_ID}`);
         expect(await screen.findByText("Agent not found.", {}, RENDER_STEP)).toBeInTheDocument();
     });
@@ -198,7 +198,7 @@ describe("Agent details", () => {
 
 describe("Client Management list", () => {
     test("shows client, country, processing and completed jobs, status (no Responsible agent column)", async () => {
-        backend("MANAGER", { "GET /api/admin/client-management": { status: 200, body: clientList([client()]) } });
+        backend("OWNER", { "GET /api/admin/client-management": { status: 200, body: clientList([client()]) } });
         renderApp("/client-management");
         const table = await screen.findByRole("table", { name: "Clients" }, RENDER_STEP);
         expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Client", "Country", "Processing jobs", "Completed jobs", "Status", "Actions"]);
@@ -223,7 +223,7 @@ describe("Client Management list", () => {
     });
 
     test("Add client: ACTIVE agents can be ticked (inactive ones cannot) and their ids are sent, not names", async () => {
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             "GET /api/admin/client-management": { status: 200, body: clientList([]) },
             "POST /api/admin/client-management": { status: 201, body: clientDetails() },
         });
@@ -243,11 +243,12 @@ describe("Client Management list", () => {
         await user.click(within(dialog).getByRole("button", { name: "Add client" }));
         await waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({
             name: "Acme Builders", agentIds: [AGENT_ID], contactPerson: null, contactNumber: null, whatsappNumber: null, email: null, address: null,
+            registrationNumber: null,
         }));
     });
 
     test("editing a client starts with its agents and saves them as the full list", async () => {
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             "GET /api/admin/client-management": { status: 200, body: clientList([client()]) },
             [`PATCH /api/admin/client-management/${CLIENT_ID}`]: { status: 200, body: clientDetails() },
         });
@@ -279,7 +280,7 @@ describe("Client Management list", () => {
 
 describe("Client details", () => {
     test("shows the agents, the jobs by status and links to the Job record", async () => {
-        backend("MANAGER", { [`GET /api/admin/client-management/${CLIENT_ID}`]: { status: 200, body: clientDetails() } });
+        backend("OWNER", { [`GET /api/admin/client-management/${CLIENT_ID}`]: { status: 200, body: clientDetails() } });
         renderApp(`/client-management/${CLIENT_ID}`);
         expect(await screen.findByRole("heading", { name: "Acme Builders" }, RENDER_STEP)).toBeInTheDocument();
         const user = userEvent.setup();
@@ -294,7 +295,7 @@ describe("Client details", () => {
     });
 
     test("Edit agents (Agents tab) adds another ACTIVE agent and sends the full list of ids", async () => {
-        const { calls } = backend("MANAGER", {
+        const { calls } = backend("OWNER", {
             [`GET /api/admin/client-management/${CLIENT_ID}`]: { status: 200, body: clientDetails() },
             [`PATCH /api/admin/client-management/${CLIENT_ID}`]: { status: 200, body: clientDetails() },
         });

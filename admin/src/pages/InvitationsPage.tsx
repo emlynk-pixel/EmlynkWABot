@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { canInviteUsers, invitableRoles, isAdmin, useAuth } from "../auth/AuthProvider";
-import { ROLE_LABELS, ROLES, type Role } from "../auth/roles";
+import { canInviteUsers, invitableRoles, useAuth } from "../auth/AuthProvider";
+import { ROLE_LABELS, ROLES, canManageUser, roleLabel, type Role } from "../auth/roles";
+import { OwnerBadge } from "../components/OwnerBadge";
 import { Icon } from "../components/Icon";
 import { deactivateUser, inviteUser, listUsers, type UserSummary } from "../api/admin";
 import { ApiError } from "../api/client";
@@ -12,12 +13,17 @@ import { MAX_EMAIL_LENGTH, MAX_NAME_LENGTH, emailError, nameError } from "../com
 const dateFormat = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Colombo", day: "2-digit", month: "short", year: "numeric" });
 
 const ROLE_HELP: Record<Role, string> = {
-    ADMIN: "Everything, including user management and Settings.",
-    MANAGER: "Everything except user management and Settings.",
+    OWNER: "Everything an Admin does, plus managing Admin accounts.",
+    ADMIN: "Everything, including Settings, Work Allocation, verification and managing the users below Admin.",
+    TEAM_LEAD: "Candidates (all of them), Need Attention, Work Allocation, Jobs, Agents, Clients and the Daily Report. No Settings, user management or Admin-only actions.",
     ANALYST: "Reviews documents and works on candidates; no police-date corrections.",
     REGISTRATION_DESK: "Registers and looks up candidates only.",
     JOB_HANDLER: "Manages Jobs, Agents and Clients; views candidates without changing them.",
 };
+
+// Supabase invitation links expire (24 hours by default): older invitations need resending.
+const INVITATION_LINK_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const invitationExpired = (invitedAt: string) => Date.now() - new Date(invitedAt).getTime() > INVITATION_LINK_LIFETIME_MS;
 
 const STATUS_BADGE: Record<string, { label: string; icon: "schedule" | "check_circle" | "cancel"; className: string }> = {
     INVITED: { label: "Invitation sent", icon: "schedule", className: "bg-review-bg text-review border-review-border" },
@@ -25,16 +31,15 @@ const STATUS_BADGE: Record<string, { label: string; icon: "schedule" | "check_ci
     INACTIVE: { label: "Inactive", icon: "cancel", className: "bg-pending-bg text-pending border-pending-border" },
 };
 
-// Invite User. ADMIN invites any role and manages the users (the list, re-send,
-// deactivate); a MANAGER invites a new Job Handler only (no user list: that stays
-// ADMIN's; the server enforces both). Supabase Auth sends the invitation email and
+// Invite User. OWNER invites Admins and below, ADMIN the roles below Admin; both see
+// the users, and re-send / deactivate only the accounts they may manage (an ADMIN:
+// below Admin). The server enforces all of it. Supabase Auth sends the invitation email and
 // owns the password; the role chosen here is stored by the backend in the
 // application account, never in the invitation itself.
 // embedded: shown as a Settings tab (Settings owns the page title).
 export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {}) {
     const { user, token } = useAuth();
     const allowed = canInviteUsers(user);
-    const managesUsers = isAdmin(user);
     const roles = invitableRoles(user);
     const defaultRole: Role = roles.includes(ROLES.ANALYST) ? ROLES.ANALYST : roles[0] ?? ROLES.JOB_HANDLER;
 
@@ -54,7 +59,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
     const [pendingDeactivate, setPendingDeactivate] = useState<UserSummary | null>(null);
 
     const load = useCallback(async () => {
-        if (!managesUsers || !token) return;
+        if (!allowed || !token) return;
         setFetchError(null);
         try {
             setUsers((await listUsers(token)).users);
@@ -63,7 +68,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
         } finally {
             setLoading(false);
         }
-    }, [managesUsers, token]);
+    }, [allowed, token]);
 
     useEffect(() => {
         load();
@@ -72,7 +77,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
     async function sendInvite(payload: { name: string; email: string; role: string }) {
         const result = await inviteUser(token ?? "", payload);
         setFormSuccess(result.outcome === "REACTIVATED"
-            ? `${result.user.email} already had an account; it is active again as ${ROLE_LABELS[result.user.role as Role] ?? result.user.role}.`
+            ? `${result.user.email} already had an account; it is active again as ${roleLabel(result.user.role)}.`
             : `Invitation sent to ${result.user.email}. They set their password from the link in the email.`);
         await load();
     }
@@ -136,17 +141,17 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
     if (!allowed) {
         return (
             <div className="mx-auto max-w-4xl p-6">
-                <div className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+                <div className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                     <h2 className="text-headline-sm font-semibold">Access Restricted</h2>
-                    <p className="mt-1 text-body-sm text-ink-muted">Only users with the <strong>Admin</strong> role (or a <strong>Manager</strong>, for Job Handlers) can invite users.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Only users with the <strong>Owner</strong> or <strong>Admin</strong> role can invite users.</p>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="mx-auto max-w-6xl space-y-6">
+        <div className="space-y-6">
             <div>
                 {embedded
                     ? <h2 className="text-headline-md text-ink">Invite User</h2>
@@ -156,20 +161,20 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                 </p>
             </div>
 
-            <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
+            <div className="rounded-xl border border-border bg-surface p-6 shadow-sm">
                 <div className="mb-5 flex items-center gap-2 border-b border-border pb-4">
                     <Icon name="person_add" className="size-5 text-primary" />
                     <h2 className="text-headline-sm font-semibold text-ink">Invite a new user</h2>
                 </div>
 
                 {formSuccess && (
-                    <div className="mb-5 flex items-start gap-3 rounded border border-verified-border bg-verified-bg p-4 text-body-sm text-verified" role="status">
+                    <div className="mb-5 flex items-start gap-3 rounded-lg border border-verified-border bg-verified-bg p-4 text-body-sm text-verified" role="status">
                         <Icon name="check_circle" className="size-5 shrink-0" />
                         <p>{formSuccess}</p>
                     </div>
                 )}
                 {formError && (
-                    <div className="mb-5 flex items-start gap-3 rounded border border-critical-border bg-critical-bg p-4 text-body-sm text-critical" role="alert">
+                    <div className="mb-5 flex items-start gap-3 rounded-lg border border-critical-border bg-critical-bg p-4 text-body-sm text-critical" role="alert">
                         <Icon name="error" className="size-5 shrink-0" />
                         <div>
                             <p className="font-medium">Cannot send the invitation</p>
@@ -218,7 +223,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                         <button
                             type="submit"
                             disabled={submitting}
-                            className="flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-label-md font-medium text-on-primary hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+                            className="flex h-8 items-center gap-2 rounded-lg bg-primary px-2.5 text-label-md font-medium text-on-primary hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             <Icon name={submitting ? "progress_activity" : "send"} className={`size-4 ${submitting ? "animate-spin" : ""}`} />
                             <span>{submitting ? "Sending…" : "Send Invitation"}</span>
@@ -228,20 +233,20 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
             </div>
 
             {/* The users and their re-send / deactivate actions: ADMIN only. */}
-            {managesUsers && <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
+            {allowed && <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
                 <div className="mb-4 flex items-center justify-between border-b border-border pb-4">
                     <div>
                         <h2 className="text-headline-sm font-semibold text-ink">Users</h2>
                         <p className="text-body-sm text-ink-muted">Everyone invited to the console and their status.</p>
                     </div>
-                    <button type="button" onClick={() => load()} className="flex h-8 items-center gap-1 rounded border border-border-strong bg-surface px-3 text-label-sm text-ink hover:bg-canvas">
+                    <button type="button" onClick={() => load()} className="flex h-8 items-center gap-1 rounded-lg border border-border-strong bg-surface px-3 text-label-sm text-ink hover:bg-canvas">
                         <Icon name="refresh" className="size-4" />
                         <span>Refresh</span>
                     </button>
                 </div>
 
-                {fetchError && <div role="alert" className="mb-4 rounded border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">{fetchError}</div>}
-                {actionError && <div role="alert" className="mb-4 rounded border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">{actionError}</div>}
+                {fetchError && <div role="alert" className="mb-4 rounded-lg border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">{fetchError}</div>}
+                {actionError && <div role="alert" className="mb-4 rounded-lg border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">{actionError}</div>}
 
                 {loading ? (
                     <div className="py-12 text-center text-ink-muted">
@@ -251,7 +256,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-body-sm">
-                            <thead className="border-b border-border bg-canvas text-label-caps uppercase text-ink-muted">
+                            <thead className="border-b border-border text-label-md text-ink">
                                 <tr>
                                     <th className="px-4 py-3">User</th>
                                     <th className="px-4 py-3">Role</th>
@@ -263,28 +268,35 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                             <tbody className="divide-y divide-border">
                                 {users.map((entry) => {
                                     const badge = STATUS_BADGE[entry.status] ?? STATUS_BADGE.INACTIVE;
-                                    const self = entry.userId === user?.userId;
+                                    // Never your own account or an Owner's; an Admin: never an Admin's.
+                                    const manageable = canManageUser(user, entry);
                                     return (
                                         <tr key={entry.userId}>
                                             <td className="px-4 py-3">
-                                                <p className="font-medium text-ink">{entry.name}</p>
+                                                <p className="font-medium text-ink">{entry.name}{entry.role === ROLES.OWNER && <OwnerBadge />}</p>
                                                 <p className="text-label-sm text-ink-subtle">{entry.email}</p>
                                             </td>
-                                            <td className="px-4 py-3">{ROLE_LABELS[entry.role as Role] ?? entry.role}</td>
+                                            <td className="px-4 py-3">{roleLabel(entry.role)}</td>
                                             <td className="px-4 py-3">
-                                                <span className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-label-sm font-medium ${badge.className}`}>
+                                                <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-label-sm font-medium ${badge.className}`}>
                                                     <Icon name={badge.icon} className="size-3.5" />
                                                     {badge.label}
                                                 </span>
+                                                {entry.status === "INVITED" && entry.invitedAt && (
+                                                    <p className="mt-1 text-label-sm text-ink-subtle">
+                                                        Sent {dateFormat.format(new Date(entry.invitedAt))}
+                                                        {invitationExpired(entry.invitedAt) && <span className="text-review"> · link expired, resend</span>}
+                                                    </p>
+                                                )}
                                             </td>
                                             <td className="px-4 py-3 text-label-sm text-ink-subtle">{dateFormat.format(new Date(entry.createdDate))}</td>
                                             <td className="space-x-3 px-4 py-3 text-right">
-                                                {entry.status !== "ACTIVE" && (
+                                                {entry.status !== "ACTIVE" && manageable && roles.includes(entry.role as Role) && (
                                                     <button type="button" onClick={() => resend(entry)} disabled={busyId === entry.userId} className="text-label-sm text-primary hover:underline disabled:opacity-50">
                                                         {entry.status === "INVITED" ? "Resend invitation" : "Re-invite"}
                                                     </button>
                                                 )}
-                                                {entry.status !== "INACTIVE" && !self && (
+                                                {entry.status !== "INACTIVE" && manageable && (
                                                     <button type="button" onClick={() => deactivate(entry)} disabled={busyId === entry.userId} className="text-label-sm text-critical hover:underline disabled:opacity-50">
                                                         {entry.status === "INVITED" ? "Revoke invitation" : "Deactivate"}
                                                     </button>

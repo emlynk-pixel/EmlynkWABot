@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-import { CandidateError, TEST_RESULT_PASS, WORKFLOW_STATUS_SELECT, candidateWorkflowStatuses, listPagination, resolveCandidatePassportId } from "./candidateService.js";
+import { CandidateError, TEST_RESULT_PASS, WORKFLOW_STATUS_SELECT, candidateWorkflowStatuses, listCandidates, listPagination, resolveCandidatePassportId } from "./candidateService.js";
 import { candidateScope, isCandidateScoped } from "./candidateAccess.js";
 import { JOB_SELECT, JOB_STATUS, jobSummaryView } from "./jobAssignmentReader.js";
 import { candidateMatchesJobTypes } from "./jobTypeCatalog.js";
@@ -21,8 +21,9 @@ export { JOB_STATUS, candidateMatchesJobTypes };
 // and release that job's candidates only. Jobs are never deleted; reopening is not supported.
 //
 // Roles (the routes check them; the service applies the Analyst scope):
-//   ADMIN, MANAGER   manage jobs and reference data
-//   JOB_HANDLER      manages jobs (not job types: those stay ADMIN / MANAGER)
+//   ADMIN            manages jobs and reference data
+//   TEAM_LEAD        manages jobs and every candidate on them (not job types)
+//   JOB_HANDLER      manages jobs (not job types: those stay ADMIN only)
 //   ANALYST          read-only, and only jobs holding a candidate allocated to them
 //   REGISTRATION_DESK no access to the Jobs API
 
@@ -51,6 +52,8 @@ const COMPANY_JOB_ID_PATTERN = /^[A-Z0-9][A-Z0-9 ._/#-]{0,39}$/;
 const PASSPORT_ID_PATTERN = /^[A-Za-z0-9-]{1,20}$/;
 // A new job's From Country unless the request names another (Romania).
 export const DEFAULT_FROM_COUNTRY = "RO";
+// Job Sector (migration 20261108120000_job_sector): optional, one of a fixed list (CHECK in the database).
+export const JOB_SECTORS = Object.freeze(["CONSTRUCTION", "INDUSTRIAL"]);
 // The most candidates one New job request may assign (the vacancies never limit it).
 export const MAX_CREATE_CANDIDATES = 500;
 
@@ -91,6 +94,17 @@ function parseVacancies(value, errors) {
         return undefined;
     }
     return value;
+}
+
+// jobSector: a code from JOB_SECTORS, or null / "" for none.
+function parseJobSector(value, errors) {
+    if (value === null || value === "") return null;
+    const code = typeof value === "string" ? value.trim().toUpperCase() : "";
+    if (!JOB_SECTORS.includes(code)) {
+        errors.push({ field: "jobSector", message: `must be one of: ${JOB_SECTORS.join(", ")}, or empty` });
+        return undefined;
+    }
+    return code;
 }
 
 function parseFromCountry(value, errors) {
@@ -189,7 +203,7 @@ function parseJobTypeIds(body, errors) {
     return undefined;
 }
 
-// POST /api/admin/jobs { jobTypeIds? | jobTypeId, clientId, responsibleAgentId?, vacancies?, companyJobId?, fromCountryCode?, candidateIds? }
+// POST /api/admin/jobs { jobTypeIds? | jobTypeId, jobSector?, clientId, responsibleAgentId?, vacancies?, companyJobId?, fromCountryCode?, candidateIds? }
 // responsibleAgentId must be one of the Client's Agents; it may be omitted only when the
 // Client has exactly one (requireClientWithAgent). The To Country is never sent: it is
 // the responsible Agent's country. fromCountryCode defaults to RO.
@@ -200,6 +214,7 @@ export function parseCreateJobBody(body) {
     const values = {
         jobTypeIds,
         jobTypeId: jobTypeIds?.[0],
+        jobSector: body.jobSector === undefined ? null : parseJobSector(body.jobSector, errors),
         clientId: requiredId(body, "clientId", errors),
         responsibleAgentId: body.responsibleAgentId === undefined || body.responsibleAgentId === null ? undefined : requiredId(body, "responsibleAgentId", errors),
         vacancies: body.vacancies === undefined ? null : parseVacancies(body.vacancies, errors),
@@ -552,6 +567,20 @@ export async function getJob({ db, jobId, user }) {
     };
 }
 
+// GET /api/admin/job-candidate-options: the job candidate picker (New job, Add
+// candidates). Only the candidates a job may take (test PASS), searched and paged on
+// the database like the Candidates list, and only the fields the picker shows: never
+// the candidate's details, documents, stages or call logs. Job managers only (the
+// route); none of them is candidate-scoped, so every eligible candidate is listed.
+export async function listJobCandidateOptions({ db, params }) {
+    const list = await listCandidates({ db, params: { ...params, testResult: TEST_RESULT_PASS } });
+    return {
+        items: list.items.map(({ passportId, uniqueId, name, nic, workflowStatus }) => ({ passportId, uniqueId, name, nic, workflowStatus })),
+        pagination: list.pagination,
+        filters: { search: list.filters.search },
+    };
+}
+
 // ---------------------------------------------------------------- writing
 
 // Locks the job row (FOR SHARE for membership changes: they run side by side,
@@ -599,6 +628,8 @@ async function requireClientWithAgent(tx, clientId, agentId) {
     await tx.$queryRaw`SELECT "id" FROM "agent" WHERE "id" = ${chosen}::uuid FOR SHARE`;
     const agent = await tx.agent.findUnique({ where: { id: chosen }, select: { id: true, isActive: true, countryCode: true } });
     if (!agent.isActive) throw new CandidateError(409, "AGENT_INACTIVE", "The responsible agent is inactive. Choose an active agent of this client, or activate it first.");
+    // An Agent created by the bulk import has no country yet: the job's To Country would be a guess.
+    if (!agent.countryCode) throw new CandidateError(409, "AGENT_COUNTRY_MISSING", "The responsible agent has no country. Set the agent's country in Agents first.");
     return { client, agent };
 }
 
@@ -639,6 +670,7 @@ async function createJobInTransaction({ db, actor, values, passportIds, now }) {
                 jobCode,
                 companyJobId: values.companyJobId,
                 jobTypeId: typeIds[0],
+                jobSector: values.jobSector ?? null,
                 clientId: values.clientId,
                 responsibleAgentId: agent.id,
                 countryCode: agent.countryCode,

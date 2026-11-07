@@ -4,7 +4,7 @@ import { MemoryRouter, useNavigate } from "react-router";
 import { describe, expect, test } from "vitest";
 import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth/AuthProvider";
-import { ADMIN, renderApp, signedInBackend, userWithRole } from "./helpers";
+import { ADMIN, renderApp, signedInBackend, userWithRole, expectRedirectedHome } from "./helpers";
 
 // Settings tabs: Change Roles | Invite User | Google Sheet Sync (no
 // Configurations tab; /settings opens Change Roles). Invite User and Change Roles moved here from the sidebar; their
@@ -29,7 +29,7 @@ const activeTab = () => tabs().getAllByRole("link").find((l) => l.getAttribute("
 const sidebar = () => within(screen.getByRole("navigation", { name: "Main navigation" }));
 
 describe("Settings tabs", () => {
-    test("1-5, 17. the sidebar has Settings but no Invite User / Change Roles; Settings shows four tabs (no Configurations) and opens Change Roles; one page title", async () => {
+    test("1-5, 17. the sidebar has Settings but no Invite User / Change Roles; Settings shows five tabs (no Configurations) and opens Change Roles; one page title", async () => {
         signedInBackend(routes);
         renderApp("/settings");
         expect(await screen.findByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
@@ -38,7 +38,7 @@ describe("Settings tabs", () => {
         expect(sidebar().queryByRole("link", { name: "Invite User" })).toBeNull();
         expect(sidebar().queryByRole("link", { name: "Change Roles" })).toBeNull();
         expect(sidebar().getByRole("link", { name: "Audit Logs" })).toBeInTheDocument();
-        expect(tabLabels()).toEqual(["Change Roles", "Invite User", "Google Sheet Sync", "Job Types"]);
+        expect(tabLabels()).toEqual(["Change Roles", "Invite User", "Google Sheet Sync", "Job Types", "Candidate Form"]);
         expect(screen.queryByRole("link", { name: "Configurations" })).toBeNull();
         expect(screen.queryByText(/configuration options/i)).toBeNull();
         expect(activeTab()).toBe("Change Roles");
@@ -47,18 +47,20 @@ describe("Settings tabs", () => {
     });
 
     test("5, 8, 17. Change Roles tab: the existing role list and role change (PUT, confirmation, success); one page title", async () => {
-        const { calls } = signedInBackend({ ...routes, "PUT /api/admin/users/u-2/role": { status: 200, body: { user: { ...USERS[1], role: "MANAGER" } } } });
+        const { calls } = signedInBackend({ ...routes, "PUT /api/admin/users/u-2/role": { status: 200, body: { user: { ...USERS[1], role: "JOB_HANDLER" } } } });
         renderApp("/settings/invite");
         const user = userEvent.setup();
         await user.click(await screen.findByRole("link", { name: "Change Roles" }));
         expect(await screen.findByRole("heading", { name: "Change Roles", level: 2 })).toBeInTheDocument();
         expect(activeTab()).toBe("Change Roles");
         expect(screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent)).toEqual(["Settings"]);
-        await user.selectOptions(await screen.findByRole("combobox", { name: "Change role for Ann Analyst" }), "MANAGER");
+        const annRole = await screen.findByRole("combobox", { name: "Change role for Ann Analyst" });
+        expect(within(annRole).getAllByRole("option").map((o) => o.getAttribute("value"))).toEqual(["TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
+        await user.selectOptions(annRole, "JOB_HANDLER");
         const dialog = await screen.findByRole("dialog", { name: "Confirm Role Change" });
         await user.click(within(dialog).getByRole("button", { name: "Confirm Change" }));
         expect(await screen.findByText("Role updated successfully.")).toBeInTheDocument();
-        expect(calls.filter((c) => c.method === "PUT").map((c) => [c.path, c.body])).toEqual([["/api/admin/users/u-2/role", { role: "MANAGER" }]]);
+        expect(calls.filter((c) => c.method === "PUT").map((c) => [c.path, c.body])).toEqual([["/api/admin/users/u-2/role", { role: "JOB_HANDLER" }]]);
         expect(screen.getByRole("combobox", { name: "Change role for Test Admin" })).toBeDisabled();
     });
 
@@ -170,26 +172,37 @@ describe("Settings tabs", () => {
         expect(await screen.findByRole("heading", { name: "Invite User", level: 2 })).toBeInTheDocument();
     });
 
-    test("MANAGER: Settings shows the Google Sheet Sync tab only and opens it; every other tab URL is Access Restricted and requests nothing", async () => {
-        const manager = { ...routes, "GET /auth/me": { status: 200, body: { user: userWithRole("MANAGER") } } };
-        const first = signedInBackend(manager);
-        const { unmount } = renderApp("/settings");
-        expect(await screen.findByRole("heading", { name: "Google Sheet Sync" })).toBeInTheDocument();
-        expect(tabLabels()).toEqual(["Google Sheet Sync"]);
-        expect(activeTab()).toBe("Google Sheet Sync");
-        expect(sidebar().getByRole("link", { name: "Settings" })).toBeInTheDocument();
-        expect(sidebar().queryByRole("link", { name: "Change Roles" })).toBeNull();
-        expect(first.calls.some((c) => c.path.startsWith("/api/admin/users"))).toBe(false);
-        unmount();
-        for (const path of ["/settings/roles", "/settings/invite", "/settings/job-types", "/roles"]) {
-            const { calls } = signedInBackend(manager);
-            const view = renderApp(path);
-            expect(await screen.findByRole("heading", { name: "Access Restricted" }), path).toBeInTheDocument();
-            expect(screen.queryByRole("combobox", { name: /Change role for/ })).toBeNull();
-            expect(screen.queryByLabelText("Email Address")).toBeNull();
-            expect(calls.some((c) => c.path.startsWith("/api/admin/users") || c.path.startsWith("/api/admin/job-types")), path).toBe(false);
-            view.unmount();
-        }
+    // An account still holding the retired MANAGER role: it shows as "Manager (retired)", never as a choice.
+    const RETIRED = { userId: "u-7", name: "Old Manager", email: "old.manager@example.invalid", role: "MANAGER", status: "ACTIVE", createdDate: "2026-09-01T00:00:00.000Z" };
+    const withRetired = { ...routes, "GET /api/admin/users": { status: 200, body: { users: [...USERS, RETIRED] } } };
+
+    test("Change Roles: the OWNER converts a retired Manager account (to Admin); Manager is never offered", async () => {
+        const { calls } = signedInBackend({
+            ...withRetired,
+            "GET /auth/me": { status: 200, body: { user: userWithRole("OWNER") } },
+            "PUT /api/admin/users/u-7/role": { status: 200, body: { user: { ...RETIRED, role: "ADMIN" } } },
+        });
+        renderApp("/settings/roles");
+        const user = userEvent.setup();
+        const select = await screen.findByRole("combobox", { name: "Change role for Old Manager" });
+        expect(select).toBeEnabled();
+        expect(select).toHaveDisplayValue("Manager (retired)");
+        const options = within(select).getAllByRole("option") as HTMLOptionElement[];
+        expect(options.map((o) => [o.value, o.disabled])).toEqual([["MANAGER", true], ["ADMIN", false], ["TEAM_LEAD", false], ["ANALYST", false], ["REGISTRATION_DESK", false], ["JOB_HANDLER", false]]);
+        await user.selectOptions(select, "ADMIN");
+        const dialog = await screen.findByRole("dialog", { name: "Confirm Role Change" });
+        expect(dialog).toHaveTextContent("from Manager (retired) to Admin");
+        await user.click(within(dialog).getByRole("button", { name: "Confirm Change" }));
+        expect(await screen.findByText("Role updated successfully.")).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "PUT").map((c) => [c.path, c.body])).toEqual([["/api/admin/users/u-7/role", { role: "ADMIN" }]]);
+    });
+
+    test("Change Roles: an ADMIN sees a retired Manager account read only (the Owner decides)", async () => {
+        signedInBackend(withRetired);
+        renderApp("/settings/roles");
+        const select = await screen.findByRole("combobox", { name: "Change role for Old Manager" });
+        expect(select).toBeDisabled();
+        expect(select).toHaveDisplayValue("Manager (retired)");
     });
 
     for (const role of ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
@@ -198,7 +211,7 @@ describe("Settings tabs", () => {
             for (const path of paths) {
                 const { calls } = signedInBackend({ ...routes, "GET /auth/me": { status: 200, body: { user: userWithRole(role) } } });
                 const { unmount } = renderApp(path);
-                expect(await screen.findByRole("heading", { name: "Access Restricted" })).toBeInTheDocument();
+                await expectRedirectedHome(role);
                 for (const name of ["Settings", "Change Roles"]) expect(sidebar().queryByRole("link", { name })).toBeNull();
                 expect(sidebar().queryByRole("link", { name: "Invite User" })).toBeNull();
                 expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();

@@ -1,7 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { listCandidates } from "../api/candidates";
+import { cleanFilters, FILTER_KEYS, getCandidateFilterOptions, type CandidateFilters } from "../api/candidateFilters";
 import { jobTypeLabel } from "../api/jobs";
+import { FilterBar, FiltersButton, useFilterFields } from "../components/AdvancedFilters";
+import { CandidateSearchBox } from "../components/CandidateSearchBox";
+import { formatNumber } from "../components/format";
 import { useAdminResource } from "../api/useAdminResource";
 import { canRegisterCandidates, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
@@ -14,13 +18,14 @@ import { useRef } from "react";
 
 // The server returns one page at a time (at most 100 candidates).
 const PAGE_SIZE = 100;
-const th = "h-[34px] whitespace-nowrap border-b border-border bg-canvas px-4 text-left text-label-caps uppercase text-ink-subtle";
-const td = "h-11 border-b border-canvas-muted px-4 py-2 text-body-sm";
+const th = "h-10 whitespace-nowrap border-b border-border px-4 text-left text-label-md text-ink";
+const td = "h-10 border-b border-border px-4 py-2 text-body-sm";
 
 // Admin > Candidates: every candidate (users), newest first, 100 a page,
-// paged on the server. Search and page live in the URL (?page=2), so a
-// reload, Back and Forward keep the page. A row opens the candidate's
-// deployment process.
+// paged on the server. Search, advanced filters and page live in the URL
+// (?page=2&jobType=Welder), so a reload, Back and Forward keep them. The
+// server applies the search and every filter (AND) before paging. A row
+// opens the candidate's deployment process.
 export function CandidatesPage() {
     const { user } = useAuth();
     const navigate = useNavigate();
@@ -28,16 +33,39 @@ export function CandidatesPage() {
     const pageNumber = Number(searchParams.get("page"));
     const page = Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber : 1;
     const search = searchParams.get("search") || undefined;
-    const list = useAdminResource(`candidates?${searchParams.toString()}`, (token, signal) => listCandidates(token, { page, pageSize: PAGE_SIZE, search }, signal));
+    const filters = cleanFilters(Object.fromEntries(FILTER_KEYS.map((key) => [key, searchParams.get(key) ?? ""])));
+    const filtered = Object.keys(filters).length > 0;
+    const list = useAdminResource(`candidates?${searchParams.toString()}`, (token, signal) => listCandidates(token, { page, pageSize: PAGE_SIZE, search, filters }, signal));
+    const filterOptions = useAdminResource("candidate-filter-options", (token, signal) => getCandidateFilterOptions(token, signal));
     const [searchText, setSearchText] = useState(search ?? "");
     useEffect(() => setSearchText(search ?? ""), [search]);
 
-    const submitSearch = (event: FormEvent) => {
-        event.preventDefault();
-        const next = new URLSearchParams();
-        if (searchText.trim()) next.set("search", searchText.trim());
+    // A new search (typed, or a picked suggestion) or new filters start on page 1; the other one is kept.
+    const runSearch = (text: string) => {
+        const next = new URLSearchParams(searchParams);
+        if (text.trim()) next.set("search", text.trim());
+        else next.delete("search");
+        next.delete("page");
         setSearchParams(next);
     };
+    const submitSearch = (event: FormEvent) => {
+        event.preventDefault();
+        runSearch(searchText);
+    };
+    const clearSearch = () => {
+        const next = new URLSearchParams(searchParams);
+        next.delete("search");
+        next.delete("page");
+        setSearchParams(next);
+    };
+    const applyFilters = (nextFilters: CandidateFilters) => {
+        const next = new URLSearchParams(searchParams);
+        for (const key of FILTER_KEYS) next.delete(key);
+        for (const [key, value] of Object.entries(cleanFilters(nextFilters))) next.set(key, value);
+        next.delete("page");
+        setSearchParams(next);
+    };
+    const filterFields = useFilterFields({ value: filters, options: filterOptions.data, onChange: applyFilters });
     const open = (passportId: string) => navigate(`/candidates/${encodeURIComponent(passportId)}`);
     const listRef = useRef<HTMLDivElement>(null);
     const wasErrorRef = useRef(false);
@@ -72,20 +100,27 @@ export function CandidatesPage() {
                 )}
             </div>
 
-            <Card className="p-4">
-                <form role="search" onSubmit={submitSearch} className="flex gap-2 md:max-w-xl">
-                    <label htmlFor="candidate-search" className="sr-only">Search candidates</label>
-                    <input
-                        id="candidate-search"
-                        type="search"
-                        value={searchText}
-                        maxLength={100}
-                        onChange={(event) => setSearchText(event.target.value)}
-                        placeholder="Search by name, passport ID, NIC, contact or WhatsApp number…"
-                        className="h-9 w-full rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus:border-primary focus:shadow-focus focus:outline-none"
-                    />
-                    <button type="submit" className="h-9 rounded bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
-                </form>
+            <Card className="space-y-3 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                    <form role="search" onSubmit={submitSearch} className="flex min-w-0 flex-1 gap-2 md:max-w-xl">
+                        <label htmlFor="candidate-search" className="sr-only">Search candidates</label>
+                        <CandidateSearchBox
+                            id="candidate-search"
+                            value={searchText}
+                            onChange={setSearchText}
+                            onPick={runSearch}
+                            placeholder="Search by name, passport ID, NIC, contact or WhatsApp number…"
+                        />
+                        <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
+                    </form>
+                    <FiltersButton filters={filterFields} />
+                </div>
+                <FilterBar filters={filterFields} value={filters} options={filterOptions.data} onChange={applyFilters} idPrefix="candidate-filter" />
+                {filtered && data && (
+                    <p className="text-label-sm text-ink-muted" aria-live="polite">
+                        {formatNumber(data.pagination.total)} {data.pagination.total === 1 ? "candidate matches" : "candidates match"} the filters (all pages).
+                    </p>
+                )}
             </Card>
 
             <Card>
@@ -94,8 +129,10 @@ export function CandidatesPage() {
                 {((list.status === "loading" && !data) || pastLastPage) && <LoadingState label="Loading candidates…" />}
                 {data && data.items.length === 0 && !pastLastPage && (
                     <EmptyState
-                        title={search ? "No candidates match this search" : "No candidates yet"}
-                        action={search ? <button type="button" onClick={() => setSearchParams(new URLSearchParams())} className="text-label-md text-primary hover:underline">Clear search</button> : undefined}
+                        title={filtered ? "No candidates match the selected filters." : search ? "No candidates match this search" : "No candidates yet"}
+                        action={filtered
+                            ? <button type="button" onClick={() => applyFilters({})} className="text-label-md text-primary hover:underline">Clear filters</button>
+                            : search ? <button type="button" onClick={clearSearch} className="text-label-md text-primary hover:underline">Clear search</button> : undefined}
                     />
                 )}
                 {data && data.items.length > 0 && (
@@ -138,7 +175,7 @@ export function CandidatesPage() {
                                                     {item.jobTypes.length ? (
                                                         <span className="flex flex-wrap gap-1.5">
                                                             {item.jobTypes.map((jobType) => (
-                                                                <span key={jobType} className="rounded bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft">{jobTypeLabel(jobType)}</span>
+                                                                <span key={jobType} className="rounded-lg bg-canvas-muted px-2 py-0.5 text-label-sm text-ink-soft">{jobTypeLabel(jobType)}</span>
                                                             ))}
                                                         </span>
                                                     ) : "—"}

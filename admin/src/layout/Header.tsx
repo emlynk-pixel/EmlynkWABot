@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
-import { ROLE_LABELS, canRegisterCandidates, canViewDashboard, type Role } from "../auth/roles";
+import { canRegisterCandidates, notificationSource } from "../auth/roles";
+import { Breadcrumbs } from "../components/Breadcrumbs";
 import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
 import { useTheme } from "../theme/theme";
@@ -8,34 +9,52 @@ import { NotificationBell } from "../components/NotificationBell";
 
 const timeFormat = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Colombo", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
-// Top utility bar (Stitch: fixed 56px): Sync (reload the data
-// on screen), light/dark mode, the signed-in admin and Sign out (the
-// breadcrumb tops the content, AdminLayout). Candidate
+// Top utility bar (fixed 56px): the page's breadcrumb (the product name is
+// the sidebar's logo), Sync (reload the data on screen) and light/dark mode.
+// The account card is at the foot of the sidebar. Candidate
 // registration starts from the Candidates page ("Add candidate"), or from
 // the Register Candidate quick access shown here on every page.
-export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuOpen: boolean }) {
-    const { user, signOut } = useAuth();
+export function Header({ onOpenMenu, menuOpen, collapsed, onToggleCollapsed }: { onOpenMenu: () => void; menuOpen: boolean; collapsed: boolean; onToggleCollapsed: () => void }) {
+    const { user } = useAuth();
     const { syncing, result, sync } = useSync();
     const { theme, toggle } = useTheme();
     // Quick access to the registration form (the existing /candidates/new
     // route) on every page, for the roles that can register candidates.
     const showRegister = canRegisterCandidates(user);
-    const control = "flex h-9 items-center gap-2 rounded-md border border-border-strong bg-surface px-3 text-label-md text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-60";
+    // The bell's source for this role (roles.ts): the review queue, Need Attention, or none.
+    const bellSource = notificationSource(user);
+    const trigger = "-ml-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-muted transition-colors hover:bg-canvas-muted hover:text-ink";
+    const control = "flex h-8 items-center gap-1.5 rounded-lg border border-border-strong bg-surface px-2.5 text-label-md text-ink-soft transition-colors hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50";
 
     return (
-        <header className="sticky top-0 z-40 flex h-header shrink-0 items-center gap-3 border-b border-border bg-surface px-4 md:px-6">
+        <header className="sticky top-0 z-40 flex h-header shrink-0 items-center gap-2 border-b border-border bg-surface/95 px-4 backdrop-blur">
+            {/* The same panel icon as EMLYNK Talent: below md it opens the drawer,
+                from md up it collapses the sidebar to the icon rail. */}
             <button
                 type="button"
                 onClick={onOpenMenu}
                 aria-controls="admin-sidebar"
                 aria-expanded={menuOpen}
-                className="-ml-1 flex size-9 items-center justify-center rounded text-ink-muted hover:bg-canvas-muted hover:text-ink md:hidden"
+                className={`${trigger} md:hidden`}
             >
-                <Icon name="menu" className="size-5" />
+                <Icon name="panel_left" />
                 <span className="sr-only">Open navigation</span>
             </button>
+            <button
+                type="button"
+                onClick={onToggleCollapsed}
+                aria-controls="admin-sidebar"
+                aria-expanded={!collapsed}
+                className={`${trigger} hidden md:flex`}
+            >
+                <Icon name="panel_left" />
+                <span className="sr-only">Toggle sidebar</span>
+            </button>
+            <span aria-hidden="true" className="mr-1 hidden h-4 w-px bg-border sm:block" />
 
-            <div className="min-w-0 flex-1" />
+            <div className="min-w-0 flex-1">
+                <Breadcrumbs />
+            </div>
 
             <div className="flex items-center gap-2">
                 <span aria-live="polite" data-testid="sync-status" className="hidden text-label-sm lg:block">
@@ -67,29 +86,9 @@ export function Header({ onOpenMenu, menuOpen }: { onOpenMenu: () => void; menuO
                     <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} className="size-4" />
                     <span className="sr-only">Dark mode</span>
                 </button>
-                {/* The bell reads the Review Queue: only for the roles that can. */}
-                {canViewDashboard(user) && <NotificationBell />}
+                {/* Only data the role may already open: never the Review Queue for a role without it. */}
+                {bellSource && <NotificationBell source={bellSource} />}
             </div>
-
-            {user && (
-                <div className="flex items-center gap-3 border-l border-border pl-3">
-                    <div className="hidden text-right sm:block">
-                        <p className="text-label-md text-ink" data-testid="admin-name">{user.name}</p>
-                        <p className="text-label-sm text-ink-subtle">{ROLE_LABELS[user.role as Role] ?? user.role}</p>
-                    </div>
-                    <span className="flex size-8 items-center justify-center rounded-full bg-primary-soft text-label-md text-primary" aria-hidden="true">
-                        {user.name.trim().charAt(0).toUpperCase() || "A"}
-                    </span>
-                    <button
-                        type="button"
-                        onClick={signOut}
-                        className={control}
-                    >
-                        <Icon name="logout" className="size-4" />
-                        <span className="sr-only sm:not-sr-only">Sign out</span>
-                    </button>
-                </div>
-            )}
         </header>
     );
 }

@@ -3,12 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import { CANDIDATE_STAGES, type CandidateDetails, type CandidateList } from "../api/candidates";
 import type { JobDetails, JobList, JobOptions } from "../api/jobs";
-import { ADMIN, RENDER_STEP, renderApp, signedInBackend, userWithRole, type FetchRoutes } from "./helpers";
+import { ADMIN, RENDER_STEP, renderApp, signedInBackend, userWithRole, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
 // The JOB_HANDLER role in the Admin (UI-JH-001 to UI-JH-015): Jobs, Agents, Client Management
 // and Candidates (read only) in the sidebar, nothing else; candidate pages without a single
 // change control; Job, Agent and Client create / edit available; restricted URLs blocked; and
-// the Invite User page for ADMIN (any role) and MANAGER (Job Handler only). Synthetic data; the
+// Settings > Invite User for ADMIN (the roles below Admin). Synthetic data; the
 // backend is a stub (the rules themselves are in test/jobHandlerRole.test.js).
 
 const JH = userWithRole("JOB_HANDLER");
@@ -81,7 +81,7 @@ describe("navigation", () => {
         for (const path of ["/settings", "/settings/job-types", "/settings/invite", "/invitations", "/audit-logs", "/work-allocation", "/documents", "/review", "/police", "/missing-documents", "/reports/daily", "/clients", "/follow-ups", "/candidates/new"]) {
             const { calls } = backend();
             const { unmount } = renderApp(path);
-            expect(await screen.findByText(/Access Restricted|Candidate registration is done by/, {}, RENDER_STEP), path).toBeInTheDocument();
+            await expectRedirectedHome("JOB_HANDLER");
             expect(calls.some((c) => /\/api\/admin\/(users|settings|audit-logs|work-allocation|documents|review|police|reports|clients|follow-ups)/.test(c.path)), path).toBe(false);
             unmount();
         }
@@ -135,8 +135,8 @@ describe("Jobs, Agents and Clients: managed", () => {
         expect(screen.getByRole("button", { name: "Change From Country" })).toBeInTheDocument();
     });
 
-    test("ADMIN and MANAGER still get Add job type (unchanged)", async () => {
-        for (const role of ["ADMIN", "MANAGER"]) {
+    test("ADMIN and OWNER get Add job type (a Job Handler doesn't)", async () => {
+        for (const role of ["ADMIN", "OWNER"]) {
             backend(userWithRole(role));
             const { unmount } = renderApp("/jobs");
             const user = userEvent.setup();
@@ -163,53 +163,47 @@ describe("Jobs, Agents and Clients: managed", () => {
 describe("Invite User", () => {
     const USERS = { users: [{ userId: "u1", name: "Someone", email: "s@example.invalid", role: "ANALYST", status: "ACTIVE", createdDate: "2026-10-01T00:00:00.000Z" }] };
 
-    test("UI-JH-013: ADMIN's role list includes Job Handler (with the user list, unchanged)", async () => {
+    test("UI-JH-013: ADMIN's role list includes Job Handler (with the user list; Admin is an Owner's to give)", async () => {
         backend(ADMIN, { "GET /api/admin/users": { status: 200, body: USERS } });
         renderApp("/settings/invite");
         const select = await screen.findByRole("combobox", { name: /^Role/ }, RENDER_STEP);
-        expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Admin", "Manager", "Analyst", "Registration Desk", "Job Handler"]);
+        expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Team Lead", "Analyst", "Registration Desk", "Job Handler"]);
         expect(await screen.findByText("Someone")).toBeInTheDocument();
     });
 
-    test("UI-JH-014: MANAGER invites a Job Handler only, from its Invite User page; no user list is requested", async () => {
-        const { calls } = backend(userWithRole("MANAGER"), {
+    test("UI-JH-014: ADMIN invites a Job Handler from Settings > Invite User", async () => {
+        const { calls } = backend(ADMIN, {
+            "GET /api/admin/users": { status: 200, body: USERS },
             "POST /api/admin/users/invite": { status: 201, body: { outcome: "INVITED", user: { userId: "u9", name: "New Handler", email: "new@example.invalid", role: "JOB_HANDLER", status: "INVITED", createdDate: "2026-10-21T00:00:00.000Z" } } },
         });
-        renderApp("/");
+        renderApp("/settings/invite");
         const user = userEvent.setup();
-        await user.click(await screen.findByRole("link", { name: "Invite User" }, RENDER_STEP));
-        const select = await screen.findByRole("combobox", { name: /^Role/ });
-        expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Job Handler"]);
+        await user.selectOptions(await screen.findByRole("combobox", { name: /^Role/ }, RENDER_STEP), "JOB_HANDLER");
         await user.type(screen.getByPlaceholderText("e.g. Chaminda Silva"), "New Handler");
         await user.type(screen.getByPlaceholderText("e.g. chaminda@example.com"), "new@example.invalid");
         await user.click(screen.getByRole("button", { name: "Send Invitation" }));
         await waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ name: "New Handler", email: "new@example.invalid", role: "JOB_HANDLER" }));
-        expect(calls.some((c) => c.method === "GET" && c.path.startsWith("/api/admin/users"))).toBe(false);
-        expect(screen.queryByRole("heading", { name: "Users" })).not.toBeInTheDocument();
-        // Settings opens for the MANAGER with its Google Sheet Sync tab only (settingsTabs.test.tsx); no user management.
-        expect(within(screen.getByRole("navigation", { name: "Main navigation" })).queryByRole("link", { name: "Change Roles" })).not.toBeInTheDocument();
     });
 });
 
 describe("existing roles", () => {
-    test("UI-JH-015: ADMIN, MANAGER, ANALYST and REGISTRATION_DESK keep their sidebars (MANAGER plus its Invite User entry)", { timeout: 30_000 }, async () => {
+    test("UI-JH-015: ADMIN and ANALYST keep their sidebars; REGISTRATION_DESK has Add Candidate and Need Attention", { timeout: 30_000 }, async () => {
         const expected: Record<string, string[]> = {
-            ADMIN: ["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Agents", "Client Management", "Work Allocation", "Missing Documents", "Police Workflow", "Daily Report", "Audit Logs", "Settings"],
-            MANAGER: ["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Agents", "Client Management", "Work Allocation", "Missing Documents", "Police Workflow", "Daily Report", "Invite User", "Settings"],
-            ANALYST: ["Overview", "Documents", "Review Queue", "Candidates", "Need Attention", "Jobs", "Missing Documents", "Police Workflow", "Daily Report"],
-            REGISTRATION_DESK: ["Candidates", "Need Attention"],
+            ADMIN: ["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report", "Audit Logs", "Settings"],
+            ANALYST: ["Candidates", "Need Attention"],
+            REGISTRATION_DESK: ["Add Candidate", "Need Attention"],
         };
         for (const [role, links] of Object.entries(expected)) {
-            backend(userWithRole(role), { "GET /api/admin/follow-ups": { status: 200, body: { items: [], total: 0 } } });
+            backend(userWithRole(role));
             const { unmount } = renderApp("/candidates");
-            await screen.findByRole("table", { name: "Candidates" }, RENDER_STEP);
+            await screen.findByRole("navigation", { name: "Main navigation" }, RENDER_STEP);
             expect(navLinks(), role).toEqual(links);
             unmount();
         }
     });
 
     test("UI-JH-015: a candidate role still edits candidates (the read-only switch is the JOB_HANDLER's only)", { timeout: 20_000 }, async () => {
-        backend(userWithRole("REGISTRATION_DESK"));
+        backend(userWithRole("TEAM_LEAD"));
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS");
         expect(await screen.findByRole("heading", { name: "SAMAN SILVA" }, RENDER_STEP)).toBeInTheDocument();
         await waitFor(() => expect(screen.getAllByRole("textbox").some((box) => !(box as HTMLInputElement).disabled)).toBe(true));

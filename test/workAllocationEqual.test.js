@@ -15,7 +15,7 @@ const user = (adminId, role, name, status = "ACTIVE", n = 1) => ({
 
 const USERS = {
     ADMIN: user("u-admin", "ADMIN", "Ada Admin", "ACTIVE", 1),
-    MANAGER: user("u-manager", "MANAGER", "Max Manager", "ACTIVE", 2),
+    OWNER: user("u-owner", "OWNER", "Olive Owner", "ACTIVE", 2),
     DESK: user("u-desk", "REGISTRATION_DESK", "Dee Desk", "ACTIVE", 3),
     ANN: user("u-ann", "ANALYST", "Ann Analyst", "ACTIVE", 4),
     BEN: user("u-ben", "ANALYST", "Ben Analyst", "ACTIVE", 5),
@@ -114,7 +114,7 @@ describe("Equal Work Allocation: core rules and distribution", () => {
         const candidateIds = Array.from({ length: 103 }, (_, i) => pid(i + 1));
         const analystIds = [USERS.ANN.adminId, USERS.BEN.adminId, USERS.CAL.adminId, USERS.DAN.adminId];
 
-        const { status, body } = await autoAllocate(USERS.MANAGER, candidateIds, analystIds);
+        const { status, body } = await autoAllocate(USERS.OWNER, candidateIds, analystIds);
         assert.equal(status, 200);
         assert.equal(body.selectedCount, 103);
         assert.equal(body.eligibleCount, 103);
@@ -158,7 +158,7 @@ describe("Equal Work Allocation: core rules and distribution", () => {
         const candidateIds = [pid(1), pid(2), pid(3), pid(4)];
         const analystIds = [USERS.ANN.adminId];
 
-        const { status, body } = await autoAllocate(USERS.MANAGER, candidateIds, analystIds);
+        const { status, body } = await autoAllocate(USERS.OWNER, candidateIds, analystIds);
         assert.equal(status, 200);
         assert.equal(body.selectedCount, 4);
         assert.equal(body.eligibleCount, 4);
@@ -242,8 +242,8 @@ describe("Equal Work Allocation: core rules and distribution", () => {
         assert.equal(body.allocatedCount, 1);
     });
 
-    test("ALLOC-EQUAL-013: MANAGER => allowed", async () => {
-        const { status, body } = await autoAllocate(USERS.MANAGER, [pid(2)], [USERS.BEN.adminId]);
+    test("ALLOC-EQUAL-013: OWNER => allowed (an ADMIN permission)", async () => {
+        const { status, body } = await autoAllocate(USERS.OWNER, [pid(2)], [USERS.BEN.adminId]);
         assert.equal(status, 200);
         assert.equal(body.allocatedCount, 1);
     });
@@ -252,7 +252,7 @@ describe("Equal Work Allocation: core rules and distribution", () => {
         const candidateIds = [pid(10), pid(11), pid(12)];
         const [res1, res2] = await Promise.all([
             autoAllocate(USERS.ADMIN, candidateIds, [USERS.ANN.adminId]),
-            autoAllocate(USERS.MANAGER, candidateIds, [USERS.BEN.adminId]),
+            autoAllocate(USERS.OWNER, candidateIds, [USERS.BEN.adminId]),
         ]);
 
         // Both return 200 (or one gets 200 with 3 allocated and the second gets 200 with 3 skipped/0 allocated)

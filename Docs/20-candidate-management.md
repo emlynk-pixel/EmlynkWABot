@@ -161,7 +161,7 @@ flowchart LR
 | 7 | `VISA_APPROVAL` | Visa approval | Admin (checkbox) |
 | 8 | `FINALIZING_JOB` | Finalizing the job | Admin (checkbox) |
 
-**Jobs.** The candidate page has a **Job assignment** section (above the stepper) read from the Job relation: the current PROCESSING job (code, Client Job ID, type, client, responsible agent) and the history (completed, cancelled, removed). `GET /candidates/:passportId` returns it as `jobAssignments: { current, history }`. ADMIN and MANAGER can *Assign to Job* there (the same endpoint as Admin > Jobs > *Add to job*); the button is disabled until the Test result is PASS, and the server refuses others with `CANDIDATE_TEST_NOT_PASSED`. See `JOB_MANAGEMENT_IMPLEMENTATION.md`.
+**Jobs.** The candidate page has a **Job assignment** section (above the stepper) read from the Job relation: the current PROCESSING job (code, Client Job ID, type, client, responsible agent) and the history (completed, cancelled, removed). `GET /candidates/:passportId` returns it as `jobAssignments: { current, history }`. ADMIN can *Assign to Job* there (the same endpoint as Admin > Jobs > *Add to job*); the button is disabled until the Test result is PASS, and the server refuses others with `CANDIDATE_TEST_NOT_PASSED`. See `JOB_MANAGEMENT_IMPLEMENTATION.md`.
 
 **Test details** records: *Agent name* (free text: the agent associated with the test, `test_agent_name`), *Test ID* (the test's own reference, `test_id`), *Test result* (Pass / Fail), *Test date* and *Notes*. It used to hold "Client name" (the candidate's own name, read-only) and a free-text "Job ID"; the Job is no longer entered here.
 
@@ -179,17 +179,28 @@ The Candidates list has a **Status** column (it replaced the old *Progress* colu
 |---|---|---|
 | `REGISTERED` | Registered | default: the candidate exists and nothing below applies |
 | `STOPPED_WITH_TEST` | Stopped with Test | `candidate_stages.test_result = 'FAIL'` on `TEST_DETAILS` (the saved result, not stage completion) |
+| `TEST_PASSED` | Test Passed | `candidate_stages.test_result = 'PASS'` on `TEST_DETAILS` (the saved result), and nothing higher applies |
 | `JOB_ASSIGNED` | Job Assigned | an **active** `job_candidate` on a PROCESSING job (never `candidate_stages.job_id` or `candidate.job` text) |
 | `FORM_SUBMITTED` | Form Submitted | `candidate_form_access.status = 'SUBMITTED'` (Candidate Form, read-only, one query per page; see below) |
-| `DETAILS_VERIFIED` | Details Verified | an explicit manual **Verify details** by an ADMIN or MANAGER (`candidate_verification.details_verified_at/by`); possible only while the Candidate details stage is complete. Completing or saving details, or Additional details, never verifies them |
-| `DOCUMENTS_VERIFIED` | Documents Verified | an explicit manual **Verify documents** by an ADMIN or MANAGER (`candidate_verification.documents_verified_at/by`); possible once at least one required document is on record. An upload or an OCR-accepted document (`documents.verification_status = VERIFIED`, which the pipeline also sets automatically) is **not** a verification |
-| `VISA_DOCUMENT_READY` | Visa Document Ready | the **Document submission** stage is completed (every required document on record). The Visa submission stage is not needed and does not count |
+| `DETAILS_VERIFIED` | Details Verified | an explicit manual **Verify details** by an ADMIN (`candidate_verification.details_verified_at/by`); possible only while the Candidate details stage is complete. Completing or saving details, or Additional details, never verifies them |
+| `DOCUMENTS_VERIFIED` | Documents Verified | an explicit manual **Verify documents** by an ADMIN (`candidate_verification.documents_verified_at/by`); possible once at least one required document is on record. An upload or an OCR-accepted document (`documents.verification_status = VERIFIED`, which the pipeline also sets automatically) is **not** a verification |
+| `VISA_DOCUMENT_READY` | Visa Document Ready | the **Document submission** stage is completed (every required document on record) |
+| `VISA_SUBMITTED` | Visa Submitted | the **Visa submission** stage is completed (an admin completes it in the existing stage flow, or the bulk import's VISA STATUS `Submit`) |
+| `VISA_APPROVED` | Visa Approved | the **Visa approval** stage is completed (an admin completes it, or the bulk import's VISA STATUS `Got Visa` / `Got Visa Not Going`) |
+| `DEPARTED` | Departed | `candidate.departed_at` is set: the bulk import's VISA STATUS `Departed`, or an Admin's **Final status → Departed** on the candidate page |
+| `VISA_NOT_GOING` | Visa Not Going | `candidate.outcome = 'VISA_NOT_GOING'`: import `Got Visa Not Going`, or an Admin's final status |
+| `CANCELLED` | Cancelled | `candidate.outcome = 'CANCELLED'`: import `Cancelled`, or an Admin's final status |
+| `REJECTED` | Rejected | `candidate.outcome = 'REJECTED'`: import `Reject`, or an Admin's final status |
 
-**Precedence.** Test FAIL first (Stopped with Test); then, the first that holds: `VISA_DOCUMENT_READY` (Document submission complete) > `DOCUMENTS_VERIFIED` > `DETAILS_VERIFIED` > `FORM_SUBMITTED` > `JOB_ASSIGNED` > `REGISTERED`. The signals are independent. **Test FAIL is an override**, not a step: while the saved result is FAIL the status is *Stopped with Test* whatever else is true (verifications stay on record); when it is no longer FAIL the status is read again from the current data. A FAIL does not remove an existing Job assignment, and a FAIL candidate still cannot be newly assigned a Job (that needs PASS). Because Document submission outranks Documents Verified, *Documents Verified* shows while Document submission is still incomplete, and *Visa Document Ready* takes over once it completes.
+**Final status.** Departed and the three outcomes are recorded facts, not stages (migration `20261109120000_candidate_status_cleanup`). An ADMIN sets, changes or clears one on the candidate page (`POST /api/admin/candidates/:passportId/final-status { status: "DEPARTED" | "VISA_NOT_GOING" | "CANCELLED" | "REJECTED" | null }`, audited `SET_FINAL_STATUS`, `candidateFinalStatusService.js`). A candidate has at most one (database CHECK `candidate_departed_or_outcome_check`). The candidate page shows the same derived Status as every list (`GET /api/admin/candidates/:passportId` returns `workflowStatus` and `finalStatus`), and every save returns the new Status, so it changes on screen at once.
+
+**Stages.** Six: Test details, Job details, Candidate details, Document submission, Visa submission, Visa approval. The retired IVS interview and Finalizing the job stages were deleted from `candidate_stages` by the same migration, and a CHECK (`candidate_stages_stage_check`) refuses any other stage value. Their history stays in the audit log. Run `npm run db:audit-stages` (read-only) before deploying to see what will be removed.
+
+**Precedence.** A recorded outcome first (`VISA_NOT_GOING`, `CANCELLED`, `REJECTED`: final, they outrank everything, a failed test included); then Test FAIL (Stopped with Test); then, the first that holds: `DEPARTED` (recorded departed) > `VISA_APPROVED` (Visa approval complete) > `VISA_SUBMITTED` (Visa submission complete) > `VISA_DOCUMENT_READY` (Document submission complete) > `DOCUMENTS_VERIFIED` > `DETAILS_VERIFIED` > `FORM_SUBMITTED` > `JOB_ASSIGNED` > `TEST_PASSED` > `REGISTERED`. The signals are independent. **Test FAIL is an override**, not a step: while the saved result is FAIL the status is *Stopped with Test* whatever else is true (verifications stay on record); when it is no longer FAIL the status is read again from the current data. A FAIL does not remove an existing Job assignment, and a FAIL candidate still cannot be newly assigned a Job (that needs PASS). Because Document submission outranks Documents Verified, *Documents Verified* shows while Document submission is still incomplete, and *Visa Document Ready* takes over once it completes.
 
 **Form Submitted source.** The Candidate Form is a separate application; its table `candidate_form_access` exists only where its migrations ran (the shared database), not in this branch's migrations. The list reads it with one guarded raw query (`to_regclass` check first), modelling nothing of the form: where the table is missing, or cannot be read, nobody shows Form Submitted.
 
-**Manual verification.** `POST /api/admin/candidates/:passportId/verification { kind: "DETAILS" | "DOCUMENTS", verified: boolean }` (ADMIN and MANAGER; 409 `DETAILS_INCOMPLETE` / `DOCUMENTS_MISSING` when there is nothing to verify) writes `candidate_verification` (migration `20261021120000_candidate_verification`) and an audit entry (`VERIFY_DETAILS`, `UNVERIFY_DETAILS`, `VERIFY_DOCUMENTS`, `UNVERIFY_DOCUMENTS`). The candidate page shows a *Verify details* button on Candidate details and *Verify documents* on Document submission (and who verified, when). Repeating the current state does nothing. No Status field is stored or editable.
+**Manual verification.** `POST /api/admin/candidates/:passportId/verification { kind: "DETAILS" | "DOCUMENTS", verified: boolean }` (ADMIN only; 409 `DETAILS_INCOMPLETE` / `DOCUMENTS_MISSING` when there is nothing to verify) writes `candidate_verification` (migration `20261021120000_candidate_verification`) and an audit entry (`VERIFY_DETAILS`, `UNVERIFY_DETAILS`, `VERIFY_DOCUMENTS`, `UNVERIFY_DOCUMENTS`). The candidate page shows a *Verify details* button on Candidate details and *Verify documents* on Document submission (and who verified, when). Repeating the current state does nothing. No Status field is stored or editable.
 
 **Documents Verified** is the manager's sign-off on the required documents *currently on record* (it needs at least one; the whole set is not required). It is separate from the document-processing status: an OCR-accepted `VERIFIED` document is not a manual verification.
 
@@ -259,10 +270,10 @@ Limitations:
 - **Unattributed documents:** a document stored before submissions were linked (`temporary_id`) and without an upload audit entry has no "by" or "via" line.
 - **Activity limit:** the latest 100 activity entries are returned. *Showing the latest candidate activity only* appears when there are more. Call logs are not limited.
 
-**The Need Attention page** (sidebar, after Candidates; route `/follow-ups`) is the former *Priority Follow-Ups* page. Only what users read changed: the page, sidebar and dialog wording. The feature's internals keep their names (route, `/api/admin/follow-ups`, `call_log_follow_up`, the `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP` and `DELETE_FOLLOW_UP` audit actions), and so do the rules: the *Open* / *Completed* filter, grouping by candidate (one card per candidate, newest follow-up first), completing by every Candidates role, deleting by ADMIN and MANAGER only, and deleting or completing never touching the call log, the candidate or a document. What changed on the page:
+**The Need Attention page** (sidebar, after Candidates; route `/follow-ups`) is the former *Priority Follow-Ups* page. Only what users read changed: the page, sidebar and dialog wording. The feature's internals keep their names (route, `/api/admin/follow-ups`, `call_log_follow_up`, the `FLAG_FOLLOW_UP`, `COMPLETE_FOLLOW_UP` and `DELETE_FOLLOW_UP` audit actions), and so do the rules: the *Open* / *Completed* filter, grouping by candidate (one card per candidate, newest follow-up first), completing by every Candidates role, deleting by ADMIN only, and deleting or completing never touching the call log, the candidate or a document. What changed on the page:
 
 - The *Current documents* block is gone (the API still sends `documentStatus`; nothing renders it here).
-- The follow-up's state is a compact icon at the top right of each row, beside who called, like a call in Candidate History: a filled flag, *Needs attention*, while open; a muted check, *Follow-up completed*, once completed. Each has an accessible name and a tooltip, and the icon shape differs, so colour is not the only cue. It shows the state only; **Mark complete** (open follow-ups) and **Delete** (ADMIN, MANAGER) stay as buttons in the row's footer, next to who flagged it and when.
+- The follow-up's state is a compact icon at the top right of each row, beside who called, like a call in Candidate History: a filled flag, *Needs attention*, while open; a muted check, *Follow-up completed*, once completed. Each has an accessible name and a tooltip, and the icon shape differs, so colour is not the only cue. It shows the state only; **Mark complete** (open follow-ups) and **Delete** (ADMIN) stay as buttons in the row's footer, next to who flagged it and when.
 - The "Needs attention" text badge is removed. A flagged No Answer call shows a No Answer badge instead of a note.
 
 **Need Attention (flagging a call).** Each call shows a compact flag beside the caller's name, using the existing Priority Follow-Up:
@@ -319,7 +330,7 @@ Every role that manages candidates can edit the form, REGISTRATION_DESK included
 Staff send a candidate a personal link to the public Candidate Form (`candidate-form/`). Design: [CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md).
 
 - **Where:** the candidate page, Additional details, **Share Form** (shown to staff who can edit the candidate).
-- **Who:** ADMIN, MANAGER and REGISTRATION_DESK for any candidate; ANALYST only for candidates allocated to them (others are 404, as everywhere). VIEWER: no.
+- **Who:** ADMIN and REGISTRATION_DESK for any candidate; ANALYST only for candidates allocated to them (others are 404, as everywhere). VIEWER: no.
 - **Create share link:** makes a link valid for **3 days** and shows it **once**, with **Copy link** and **Share on WhatsApp**. It is never shown again; if it is lost, create a new one. A new link replaces the previous one at once (the old link and any open form session stop working).
 - **Revoke link:** stops the link at once (confirmation first).
 - **State:** *No active link*, *Link active until …*, *Locked after failed attempts* (10 wrong attempts lock the link for 1 hour), *Submitted on …*.
@@ -332,11 +343,11 @@ Staff send a candidate a personal link to the public Candidate Form (`candidate-
 
 ### 4.5 Work Allocation and candidate access
 
-Candidates are allocated to Analysts on the **Work Allocation** page (`/admin/work-allocation`, ADMIN and MANAGER only). Who may see and change which candidates:
+Candidates are allocated to Analysts on the **Work Allocation** page (`/admin/work-allocation`, ADMIN only). Who may see and change which candidates:
 
 | Role | Candidates | Work Allocation |
 |---|---|---|
-| ADMIN, MANAGER | all; can edit all | yes |
+| OWNER, ADMIN | all; can edit all | yes |
 | REGISTRATION_DESK | all; can edit all; registers new candidates | no (page hidden, API 403) |
 | ANALYST | **only the candidates allocated to them**; can edit only those | no (page hidden, API 403) |
 
@@ -355,12 +366,12 @@ Candidates are allocated to Analysts on the **Work Allocation** page (`/admin/wo
 
 **Analyst scoping** (`src/services/candidateAccess.js`) is applied on the server on every request, so a reassignment or role change applies to the very next one:
 
-- `candidateScope(user)`: `{}` for ADMIN, MANAGER and REGISTRATION_DESK; for an Analyst, only candidates whose allocation is theirs; for any other role, no candidate (fails closed).
+- `candidateScope(user)`: `{}` for ADMIN (and OWNER), REGISTRATION_DESK and JOB_HANDLER (read only); for an Analyst, only candidates whose allocation is theirs; for any other role, no candidate (fails closed).
 - **Lists:** the Candidates list (search and totals included: the scope is in the database query before paging), Need Attention, Clients, Documents, Missing Documents and Police Workflow.
 - **Single candidate:** every `/candidates/:passportId/...` route resolves the passport ID *within* the scope. Another Analyst's or an unallocated candidate answers **404 "Candidate not found"**, exactly like one that does not exist, before anything is read or changed. This covers details, update, stages, document upload target, finalize and remove, call logs (Candidate History), adding a call, flagging a follow-up, and additional details. `GET /clients/:passportId` and completing a follow-up follow the same rule.
 - **Review Queue → assign client:** an Analyst can only link a waiting file to one of their own candidates; any other passport ID gets the same 409 `CLIENT_NOT_FOUND` as an unknown one.
 - **Review items (detail, file preview, every action) and deleting a waiting file:** an item linked to a candidate outside the Analyst's scope answers **404 "Review item not found"** before anything is shown or changed (`router.param("reviewId")`, and the same check on `DELETE /temporary-documents/:id`). A waiting file not yet linked to any candidate stays open to every Analyst, because that is the review work.
-- **Review Queue list, Overview and Daily Report:** scoped in the database queries (`linkedScope`, `submissionScope`, `auditScope` in `candidateAccess.js`), not in the browser. An Analyst's Review Queue (list and summary counts), Overview (KPIs, recent files, review preview, police and completeness counts) and Daily Report (daily, Summary, incomplete-candidates drill-down, monthly) cover **their own candidates**, plus waiting files **not yet linked to any candidate** (that is the review work). Once a file is linked it follows the candidate's allocation. Audit-based counts (admin actions, uploads, removals) count the entries about their candidates. ADMIN, MANAGER and REGISTRATION_DESK are unchanged (global); Summary by Roles stays ADMIN and MANAGER only. Reassignment applies on the next request.
+- **Review Queue list, Overview and Daily Report:** scoped in the database queries (`linkedScope`, `submissionScope`, `auditScope` in `candidateAccess.js`), not in the browser. An Analyst's Review Queue (list and summary counts), Overview (KPIs, recent files, review preview, police and completeness counts) and Daily Report (daily, Summary, incomplete-candidates drill-down, monthly) cover **their own candidates**, plus waiting files **not yet linked to any candidate** (that is the review work). Once a file is linked it follows the candidate's allocation. Audit-based counts (admin actions, uploads, removals) count the entries about their candidates. ADMIN and REGISTRATION_DESK are unchanged (global); Summary by Roles stays ADMIN only. Reassignment applies on the next request.
 
 ## 5. Bug-Fix Release (2026-10-01)
 
@@ -514,7 +525,7 @@ All routes are mounted under `/api/admin/candidates` by `src/routes/admin.js`.
 
 | Method | Path | Role | Description |
 |---|---|---|---|
-Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANALYST, REGISTRATION_DESK. Any other role gets 403.
+Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, ANALYST, REGISTRATION_DESK. Any other role gets 403.
 
 | Method | Path | Description |
 |---|---|---|
@@ -531,12 +542,14 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, MANAGER, ANA
 | `POST` | `/candidates/:passportId/call-logs/:callLogId/follow-up` | Mark a call for follow-up |
 | `GET` | `/follow-ups?status` | Priority Follow-Ups grouped by candidate |
 | `POST` | `/follow-ups/:followUpId/complete` | Complete a follow-up |
-| `DELETE` | `/follow-ups/:followUpId` | Delete a follow-up (ADMIN, MANAGER) |
+| `DELETE` | `/follow-ups/:followUpId` | Delete a follow-up (ADMIN) |
 | `GET` | `/candidates/:passportId/additional-details` | Additional details, or suggestions from the candidate record when none are saved |
 | `PUT` | `/candidates/:passportId/additional-details` | Save additional details (full replacement; audited; never creates a candidate) |
 | `GET` | `/candidates/:passportId/form-submission` | What the candidate submitted through the Candidate Form (read only, from `candidate_form_response`): form status, submitted time, values by the form's paths, the original prefill and the changed answers. Shown on the Additional details tab as "Candidate Form submission"; never merged into the candidate record |
-| `POST` | `/candidates/:passportId/form-submission/confirm-field` | ADMIN and MANAGER. Confirm ONE candidate-submitted field into the record: `{ field, expectedCurrentValue, expectedSubmittedValue }` (an allowlisted field key plus the values the Admin saw, only to detect a stale screen). The new value is read from `candidate_form_response`; `409 FORM_FIELD_STALE` when the record changed meanwhile, `409 FORM_FIELD_NOT_PENDING` when nothing differs, `400 FIELD_NOT_CONFIRMABLE` for anything not on the allowlist. Audited as `CANDIDATE_FORM_FIELD_CONFIRMED`; the submission is never changed |
-| `POST` | `/candidates/:passportId/form-submission/reject-field` | ADMIN and MANAGER. Revoke (reject) ONE pending candidate-submitted field: same body and checks as confirm-field, but the record is not changed; the proposal is marked rejected for good in `candidate_form_field_review`. `409 FORM_FIELD_REVIEW_STALE` if the field was already decided. Audited as `CANDIDATE_FORM_FIELD_REJECTED` |
+| `POST` | `/candidates/:passportId/form-submission/confirm-field` | ADMIN only. Confirm ONE candidate-submitted field into the record: `{ field, expectedCurrentValue, expectedSubmittedValue }` (an allowlisted field key plus the values the Admin saw, only to detect a stale screen). The new value is read from `candidate_form_response`; `409 FORM_FIELD_STALE` when the record changed meanwhile, `409 FORM_FIELD_NOT_PENDING` when nothing differs, `400 FIELD_NOT_CONFIRMABLE` for anything not on the allowlist. Audited as `CANDIDATE_FORM_FIELD_CONFIRMED`; the submission is never changed |
+| `POST` | `/candidates/:passportId/form-submission/reject-field` | ADMIN only. Revoke (reject) ONE pending candidate-submitted field: same body and checks as confirm-field, but the record is not changed; the proposal is marked rejected for good in `candidate_form_field_review`. `409 FORM_FIELD_REVIEW_STALE` if the field was already decided. Audited as `CANDIDATE_FORM_FIELD_REJECTED` |
+| `POST` | `/candidates/:passportId/form-submission/confirm-all` | ADMIN only. Confirm EVERY pending candidate-submitted change in one transaction: `{ changes: [{ field, expectedCurrentValue, expectedSubmittedValue }] }`, which must be exactly the pending set the server finds (else `409 FORM_FIELD_STALE`, nothing decided). Same per-field rules as confirm-field, Civil Status first; if one field's rules refuse it, the whole request is rolled back (`409 FORM_FIELD_PREREQUISITE`, naming the field). One `CANDIDATE_FORM_FIELD_CONFIRMED` audit entry per field, its reason ending `(Confirm All)` |
+| `POST` | `/candidates/:passportId/form-submission/reject-all` | ADMIN only. Reject EVERY pending change in one transaction, same body and stale check as confirm-all; the record is not changed. One `CANDIDATE_FORM_FIELD_REJECTED` audit entry per field, its reason ending `(Reject All)` |
 | `GET` | `/candidates/:passportId/form-share` | Share Form state (§4.6) |
 | `POST` | `/candidates/:passportId/form-share` | Create a share link (201; replaces the active one; audited) |
 | `POST` | `/candidates/:passportId/form-share/revoke` | Revoke the active link (audited) |

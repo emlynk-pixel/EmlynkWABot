@@ -126,7 +126,7 @@ describe("no real-time synchronization: database changes wait for a scheduled or
         const { sheet, worker } = setup();
         const { passportId } = await register();
         await prisma.sheetSyncQueue.deleteMany();
-        await updateStage({ db: prisma, passportId, stage: "IVS_INTERVIEW", values: parseStageBody({ completed: true }, "IVS_INTERVIEW").values });
+        await updateStage({ db: prisma, passportId, stage: "VISA_APPROVAL", values: parseStageBody({ completed: true }, "VISA_APPROVAL").values });
         await worker.tick();
         assert.deepEqual(sheet.writes(), []);
         assert.equal((await queueRows())[0].status, "PENDING");
@@ -157,7 +157,7 @@ describe("scheduled and manual reconciliation", () => {
         const [item] = await queueRows();
         assert.deepEqual([item.status, item.lastResult], ["COMPLETED", "RECONCILED"]);
         const appendCall = sheet.writes().find((c) => c.method === "append");
-        assert.deepEqual([appendCall.range, appendCall.insertDataOption, appendCall.valueInputOption], [`'${TAB}'!A:CE`, "INSERT_ROWS", "RAW"]);
+        assert.deepEqual([appendCall.range, appendCall.insertDataOption, appendCall.valueInputOption], [`'${TAB}'!A:CC`, "INSERT_ROWS", "RAW"]);
         assert.ok((await state()).lastSyncSuccessAt);
     });
 
@@ -175,7 +175,7 @@ describe("scheduled and manual reconciliation", () => {
     test("several changes between runs: one write per run, with the latest state only", async () => {
         const { sheet, store, worker } = setup();
         const { passportId, uniqueId } = await register();
-        for (const stage of ["IVS_INTERVIEW", "VISA_APPROVAL", "FINALIZING_JOB"]) {
+        for (const stage of ["JOB_DETAILS", "VISA_SUBMISSION", "VISA_APPROVAL"]) {
             await updateStage({ db: prisma, passportId, stage, values: parseStageBody({ completed: true }, stage).values });
         }
         await prisma.candidate.update({ where: { passportId }, data: { firstName: "First" } });
@@ -185,7 +185,7 @@ describe("scheduled and manual reconciliation", () => {
         assert.equal(sheet.writes().length, 1);
         const [row] = rowFor(sheet, uniqueId);
         assert.equal(row[C], "Final");
-        assert.deepEqual([row[col("ivsInterviewStatus")], row[col("visaApprovalStatus")], row[col("finalizingJobStatus")]], ["COMPLETED", "COMPLETED", "COMPLETED"]);
+        assert.deepEqual([row[col("visaSubmissionStatus")], row[col("visaApprovalStatus")]], ["COMPLETED", "COMPLETED"]);
     });
 
     test("idempotent: running again (scheduled or manual) with no change writes nothing and keeps LAST MIRRORED AT", async () => {
@@ -394,7 +394,7 @@ describe("reconciliation and durable runs", () => {
             { updated: 1, unchanged: 1, appended: 0, markedInactive: 0 },
         );
         assert.equal(sheet.row(aRow)[C], "Anusha");
-        assert.deepEqual(sheet.writes().slice(writesBefore).map((c) => c.ranges ?? c.method), [[`'${TAB}'!A${aRow}:CE${aRow}`]], "only the drifted row is written");
+        assert.deepEqual(sheet.writes().slice(writesBefore).map((c) => c.ranges ?? c.method), [[`'${TAB}'!A${aRow}:CC${aRow}`]], "only the drifted row is written");
         assert.doesNotMatch(JSON.stringify(run), /Anusha|N1023757|Kamal/);
         assert.equal(rowFor(sheet, b.uniqueId).length, 1);
     });

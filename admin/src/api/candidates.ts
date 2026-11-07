@@ -9,10 +9,8 @@ export const CANDIDATE_STAGES = [
     "JOB_DETAILS",
     "CANDIDATE_DETAILS",
     "DOCUMENT_SUBMISSION",
-    "IVS_INTERVIEW",
     "VISA_SUBMISSION",
     "VISA_APPROVAL",
-    "FINALIZING_JOB",
 ] as const;
 export type CandidateStageKey = (typeof CANDIDATE_STAGES)[number];
 
@@ -21,11 +19,19 @@ export const STAGE_LABELS: Record<CandidateStageKey, string> = {
     JOB_DETAILS: "Job details",
     CANDIDATE_DETAILS: "Candidate details",
     DOCUMENT_SUBMISSION: "Document submission",
-    IVS_INTERVIEW: "IVS interview",
     VISA_SUBMISSION: "Visa submission",
     VISA_APPROVAL: "Visa approval",
+};
+
+// Stages retired with migration 20261109120000_candidate_status_cleanup: they are no longer
+// stages, but the audit log keeps who completed them, so past entries still read properly.
+const RETIRED_STAGE_LABELS: Record<string, string> = {
+    IVS_INTERVIEW: "IVS interview",
     FINALIZING_JOB: "Finalizing the job",
 };
+
+// Any stage code a screen may meet (a current stage, a retired one in history) -> its label.
+export const stageLabel = (stage: string): string => STAGE_LABELS[stage as CandidateStageKey] ?? RETIRED_STAGE_LABELS[stage] ?? stage;
 
 export type CandidateDocumentType = "PASSPORT" | "NIC" | "SKILL_VIDEO" | "MEDICAL" | "POLICE_SLIP" | "POLICE_REPORT" | "SCAN" | "VISA_SUBMISSION";
 
@@ -69,11 +75,23 @@ export type StageState = StageProgress & {
     jobStatus: "PROCESSING" | "COMPLETED" | "CANCELLED" | "REMOVED" | null;
 };
 
-// The derived workflow status of the candidate list (src/services/candidateWorkflowStatus.js): never edited, never stored.
-export type WorkflowStatus = {
-    code: "REGISTERED" | "STOPPED_WITH_TEST" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED" | "VISA_DOCUMENT_READY";
-    label: string;
-};
+// The derived workflow status (src/services/candidateWorkflowStatus.js): computed on every read from the
+// candidate data, never edited, never stored. VISA_NOT_GOING, CANCELLED and REJECTED are recorded final
+// outcomes (the import's VISA STATUS, or an Admin's final status) and outrank everything.
+export type WorkflowStatusCode =
+    | "REGISTERED" | "STOPPED_WITH_TEST" | "TEST_PASSED" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED"
+    | "VISA_DOCUMENT_READY" | "VISA_SUBMITTED" | "VISA_APPROVED" | "DEPARTED" | "VISA_NOT_GOING" | "CANCELLED" | "REJECTED";
+export type WorkflowStatus = { code: WorkflowStatusCode; label: string };
+
+// A recorded final status (src/services/candidateFinalStatusService.js): Departed, or an outcome. ADMIN only.
+export const FINAL_STATUS_OPTIONS = [
+    { value: "DEPARTED", label: "Departed" },
+    { value: "VISA_NOT_GOING", label: "Visa Not Going" },
+    { value: "CANCELLED", label: "Cancelled" },
+    { value: "REJECTED", label: "Rejected" },
+] as const;
+export type FinalStatusCode = (typeof FINAL_STATUS_OPTIONS)[number]["value"];
+export type FinalStatus = { code: FinalStatusCode; at: string | null };
 
 export type CandidateListItem = {
     passportId: string;
@@ -92,7 +110,8 @@ export type CandidateList = {
     items: CandidateListItem[];
     // Server-side paging (100 a page). total and totalItems are the same count.
     pagination: { page: number; pageSize: number; total: number; totalPages: number; totalItems?: number; hasNextPage?: boolean; hasPreviousPage?: boolean };
-    filters: { search: string | null };
+    // The search and the advanced filters applied (candidateFilters.ts), echoed back.
+    filters: { search: string | null } & Record<string, string | boolean | null>;
 };
 
 export type CandidateDocument = {
@@ -112,6 +131,9 @@ export type VerificationState = { at: string; by: string | null } | null;
 export type CandidateDetails = {
     // Manual verification (Verify details / Verify documents); null = not verified.
     verification: { details: VerificationState; documents: VerificationState };
+    // The same derived Status the lists show (absent from an older server), and the recorded final status (null: none).
+    workflowStatus?: WorkflowStatus | null;
+    finalStatus?: FinalStatus | null;
     candidate: {
         passportId: string;
         uniqueId: string;
@@ -247,12 +269,24 @@ export type CallLogList = { items: CallLogEntry[]; documentStatus?: DocumentStat
 const base = (passportId: string) => `/api/admin/candidates/${encodeURIComponent(passportId)}`;
 
 // available: only candidates not on any PROCESSING job (no longer used by the Job pages: a candidate may hold several jobs).
-export function listCandidates(token: string, params: { page: number; pageSize: number; search?: string; testResult?: "PASS"; available?: boolean }, signal?: AbortSignal): Promise<CandidateList> {
+// filters: the advanced filters (candidateFilters.ts CandidateFilters), sent as they are.
+export function listCandidates(token: string, params: { page: number; pageSize: number; search?: string; testResult?: "PASS"; available?: boolean; filters?: Partial<Record<string, string>> }, signal?: AbortSignal): Promise<CandidateList> {
     const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
     if (params.search) query.set("search", params.search);
+    for (const [key, value] of Object.entries(params.filters ?? {})) if (value) query.set(key, value);
     if (params.testResult) query.set("testResult", params.testResult);
     if (params.available) query.set("available", "true");
     return apiRequest<CandidateList>(`/api/admin/candidates?${query.toString()}`, { token, signal });
+}
+
+// Search-box suggestions (GET /api/admin/candidate-suggestions): the list's own search and scope,
+// a few candidates, best match first. allocation: Work Allocation's view.
+export type CandidateSuggestion = { passportId: string; name: string | null; nic: string | null };
+export const SUGGESTION_MIN_LENGTH = 2;
+export function getCandidateSuggestions(token: string, q: string, options: { allocation?: "ALLOCATED" | "UNALLOCATED" } = {}, signal?: AbortSignal): Promise<{ items: CandidateSuggestion[] }> {
+    const query = new URLSearchParams({ q });
+    if (options.allocation) query.set("allocation", options.allocation);
+    return apiRequest<{ items: CandidateSuggestion[] }>(`/api/admin/candidate-suggestions?${query.toString()}`, { token, signal });
 }
 
 export function getCandidate(token: string, passportId: string, signal?: AbortSignal): Promise<CandidateDetails> {
@@ -267,9 +301,14 @@ export function updateCandidate(token: string, passportId: string, body: Candida
     return apiRequest<CandidateDetails>(base(passportId), { method: "PUT", token, body });
 }
 
-// Explicit manual verification of a candidate's details or documents (ADMIN and MANAGER; audited).
+// Explicit manual verification of a candidate's details or documents (ADMIN only; audited).
 export function setCandidateVerification(token: string, passportId: string, kind: "DETAILS" | "DOCUMENTS", verified: boolean): Promise<CandidateDetails> {
     return apiRequest<CandidateDetails>(`${base(passportId)}/verification`, { method: "POST", token, body: { kind, verified } });
+}
+
+// Record (or clear, with null) the candidate's final status: Departed, Visa Not Going, Cancelled, Rejected (ADMIN only; audited).
+export function setCandidateFinalStatus(token: string, passportId: string, status: FinalStatusCode | null): Promise<CandidateDetails> {
+    return apiRequest<CandidateDetails>(`${base(passportId)}/final-status`, { method: "POST", token, body: { status } });
 }
 
 export function updateCandidateStage(
@@ -323,7 +362,8 @@ export function flagCallLog(token: string, passportId: string, callLogId: string
 // The same lists the server accepts (candidateAdditionalDetailsService.js).
 export const TSHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL"] as const;
 export const PANT_SIZE_PRESETS = ["28", "30", "32", "34", "36", "38", "40", "42", "44", "46"] as const;
-export const SHOE_SIZE_PRESETS = ["5", "6", "7", "8", "9", "10", "11", "12", "13"] as const;
+// European (EU) sizes only, as the Candidate Form asks for them.
+export const SHOE_SIZE_PRESETS = ["38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48"] as const;
 export const MARITAL_STATUS_OPTIONS = [
     { value: "SINGLE", label: "Single" },
     { value: "MARRIED", label: "Married" },
@@ -331,6 +371,9 @@ export const MARITAL_STATUS_OPTIONS = [
     { value: "WIDOWED", label: "Widowed" },
     { value: "SEPARATED", label: "Separated" },
 ] as const;
+// The Candidate Form's choices (candidateFormDataService.js), stored as these codes.
+export const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"] as const;
+export const ENGLISH_LEVELS = ["NO KNOWLEDGE", "BASIC", "FAIR", "GOOD", "VERY GOOD", "FLUENT"] as const;
 
 // Dates as YYYY-MM-DD; every field may be null (collected over time).
 export type AdditionalDetails = {
@@ -353,6 +396,37 @@ export type AdditionalDetails = {
     child2Name: string | null;
     child3Name: string | null;
     otherJobSkills: string | null;
+} & Partial<CandidateFormAnswerDetails>;
+
+// The Candidate Form's other answers, kept in the same row (a Confirm writes them; Admin edits them
+// here too). Optional: a server from before they were on this form does not send them, and a save
+// that leaves one out keeps its stored value. weightKg: kg as text ("70.5"); guardianPhone: "+94…".
+export type CandidateFormAnswerDetails = {
+    bloodGroup: string | null;
+    height: string | null;
+    weightKg: string | null;
+    drivingLicence: boolean | null;
+    canReadDrawings: boolean | null;
+    teamLeadingSkills: boolean | null;
+    otherLanguages: string | null;
+    email: string | null;
+    city: string | null;
+    district: string | null;
+    dsDivision: string | null;
+    gnDivision: string | null;
+    cityInRomania: string | null;
+    englishKnowledge: string | null;
+    otherJobCategory: string | null;
+    otherJobSkills2: string | null;
+    fatherPassportNumber: string | null;
+    motherPassportNumber: string | null;
+    spousePassportNumber: string | null;
+    guardianName: string | null;
+    guardianRelationship: string | null;
+    guardianNic: string | null;
+    guardianBirthday: string | null;
+    guardianPhone: string | null;
+    guardianAddress: string | null;
 };
 
 // details: null until saved. suggested: from the candidate's own record, to
@@ -416,6 +490,9 @@ export type FormSubmission = {
     pending: PendingChange[];
     // Staff decisions already taken on this submission (a field with one is no longer pending).
     reviews?: { field: string; status: "CONFIRMED" | "REJECTED" }[];
+    // The record's value of every reviewable field, keyed like `pending` (null: not recorded; the
+    // whole map is null when nothing was submitted).
+    current?: Record<string, string | null> | null;
 };
 
 // A candidate-submitted value that differs from the record, for a field the record has a place for.
@@ -426,7 +503,7 @@ export function getFormSubmission(token: string, passportId: string, signal?: Ab
     return apiRequest<FormSubmission>(`${base(passportId)}/form-submission`, { token, signal });
 }
 
-// Confirm ONE candidate-submitted field into the record (ADMIN, MANAGER). The server reads the new
+// Confirm ONE candidate-submitted field into the record (ADMIN only). The server reads the new
 // value from the stored submission; these values only detect a stale screen. Returns the refreshed state.
 export function confirmFormField(
     token: string,
@@ -437,11 +514,24 @@ export function confirmFormField(
 }
 
 // Reject ("Revoke") ONE candidate-submitted field: the record is left as it is and the proposal is marked
-// rejected for good (ADMIN, MANAGER). Same body as confirmFormField; returns the refreshed state.
+// rejected for good (ADMIN only). Same body as confirmFormField; returns the refreshed state.
 export function rejectFormField(
     token: string,
     passportId: string,
     body: { field: string; expectedCurrentValue: string | null; expectedSubmittedValue: string | null },
 ): Promise<FormSubmission> {
     return apiRequest<FormSubmission>(`${base(passportId)}/form-submission/reject-field`, { method: "POST", token, body });
+}
+
+// Confirm All / Reject All (ADMIN only): every pending change at once, in one server transaction.
+// `changes` is the pending list the Admin saw; the server refuses the whole request (409, nothing
+// decided) when it is no longer exactly the pending set, or when one Confirm breaks a field rule.
+export type ReviewAllBody = { changes: { field: string; expectedCurrentValue: string | null; expectedSubmittedValue: string | null }[] };
+
+export function confirmAllFormFields(token: string, passportId: string, body: ReviewAllBody): Promise<FormSubmission> {
+    return apiRequest<FormSubmission>(`${base(passportId)}/form-submission/confirm-all`, { method: "POST", token, body });
+}
+
+export function rejectAllFormFields(token: string, passportId: string, body: ReviewAllBody): Promise<FormSubmission> {
+    return apiRequest<FormSubmission>(`${base(passportId)}/form-submission/reject-all`, { method: "POST", token, body });
 }

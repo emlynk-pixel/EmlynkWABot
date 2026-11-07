@@ -41,7 +41,7 @@ const submission = (pending: PendingChange[], overrides: Partial<FormSubmission>
 });
 
 // The stub keeps the record and the pending list, and applies a confirmation like the server.
-function backend(role = "MANAGER", pending: PendingChange[] = [BIRTH, ADDRESS, SHIRT], extra: FetchRoutes = {}) {
+function backend(role = "OWNER", pending: PendingChange[] = [BIRTH, ADDRESS, SHIRT], extra: FetchRoutes = {}) {
     let record = baseDetails();
     let additional: AdditionalDetailsView = VIEW;
     let open = [...pending];
@@ -80,7 +80,7 @@ describe("Candidate submitted hints", () => {
         expect(screen.getByLabelText("Address")).toHaveValue("1 Main Street");
         // No change submitted for these (or no home in the record): no hint, no button.
         for (const field of ["basic.surname", "basic.sex", "passport.expiryDate", "contact.email", "guardian.name", "contact.district"]) expect(screen.queryByTestId(`submitted-hint-${field}`), field).toBeNull();
-        expect(screen.getAllByRole("button", { name: /^Confirm / })).toHaveLength(2);
+        expect(screen.getAllByRole("button", { name: /^Confirm (?!All$)/ })).toHaveLength(2);
     });
 
     test("additional-details fields get the hint too", async () => {
@@ -139,7 +139,7 @@ describe("Candidate submitted hints", () => {
     });
 
     test("a stale screen (409) shows the server's message and nothing is hidden or changed", async () => {
-        const ctl = backend("MANAGER", [ADDRESS], {
+        const ctl = backend("OWNER", [ADDRESS], {
             [`POST ${PATH}/form-submission/confirm-field`]: { status: 409, body: { message: "This value changed since you opened the page. Refresh and review again.", code: "FORM_FIELD_STALE" } },
         });
         const user = userEvent.setup();
@@ -154,7 +154,7 @@ describe("Candidate submitted hints", () => {
     });
 
     test("another server error is shown near the confirmation, in Admin-safe words", async () => {
-        backend("MANAGER", [ADDRESS], { [`POST ${PATH}/form-submission/confirm-field`]: { status: 400, body: { message: "This field cannot be confirmed from the Candidate Form.", code: "FIELD_NOT_CONFIRMABLE" } } });
+        backend("OWNER", [ADDRESS], { [`POST ${PATH}/form-submission/confirm-field`]: { status: 400, body: { message: "This field cannot be confirmed from the Candidate Form.", code: "FIELD_NOT_CONFIRMABLE" } } });
         const user = userEvent.setup();
         open();
         await user.click(within(await hint("contact.address")).getByRole("button", { name: "Confirm Address" }));
@@ -164,8 +164,8 @@ describe("Candidate submitted hints", () => {
 });
 
 describe("who can confirm (CONFIRM-013 / 014)", () => {
-    test("ADMIN and MANAGER get the Confirm button", async () => {
-        for (const role of ["ADMIN", "MANAGER"]) {
+    test("ADMIN and OWNER get the Confirm button", async () => {
+        for (const role of ["ADMIN", "OWNER"]) {
             backend(role);
             const view = open();
             expect(within(await hint("basic.birthDate")).getByRole("button", { name: "Confirm Date of birth" })).toBeInTheDocument();
@@ -173,8 +173,8 @@ describe("who can confirm (CONFIRM-013 / 014)", () => {
         }
     });
 
-    test("an Analyst and the Registration Desk see what was submitted but have no Confirm button", async () => {
-        for (const role of ["ANALYST", "REGISTRATION_DESK"]) {
+    test("an Analyst and a Team Lead see what was submitted but have no Confirm button", async () => {
+        for (const role of ["ANALYST", "TEAM_LEAD"]) {
             backend(role);
             const view = open();
             expect(await hint("basic.birthDate")).toHaveTextContent("Candidate submitted: 06 May 2003");
@@ -210,11 +210,11 @@ describe("the full submission panel is gone; only inline hints remain (CLEAN-001
         expect(address).toHaveTextContent("Candidate submitted: 12 GALLE ROAD");
         expect(within(address).getByRole("button", { name: "Confirm Address" })).toBeInTheDocument();
         expect(screen.queryByTestId("submitted-hint-basic.birthDate")).toBeNull();
-        expect(screen.getAllByRole("button", { name: /^Confirm / })).toHaveLength(1);
+        expect(screen.getAllByRole("button", { name: /^Confirm (?!All$)/ })).toHaveLength(1);
     });
 
     test("CLEAN-006 / 007 / 008 / 009 confirming updates the current field and removes only that hint; the others stay; only a GET and the one POST are sent", async () => {
-        const ctl = backend("MANAGER", [BIRTH, ADDRESS]);
+        const ctl = backend("OWNER", [BIRTH, ADDRESS]);
         const user = userEvent.setup();
         open();
         await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Confirm Date of birth" }));
@@ -229,8 +229,8 @@ describe("the full submission panel is gone; only inline hints remain (CLEAN-001
         expect(writes[0].body).toEqual({ field: "basic.birthDate", expectedCurrentValue: "2003-06-05", expectedSubmittedValue: "2003-05-06" });
     });
 
-    test("CLEAN-011 the roles are unchanged: Admin and Manager confirm; Analyst and Registration Desk see the hint only", async () => {
-        for (const [role, confirms] of [["ADMIN", true], ["MANAGER", true], ["ANALYST", false], ["REGISTRATION_DESK", false]] as const) {
+    test("CLEAN-011 the roles are unchanged: Admin and Owner confirm; Analyst and Team Lead see the hint only", async () => {
+        for (const [role, confirms] of [["ADMIN", true], ["OWNER", true], ["ANALYST", false], ["TEAM_LEAD", false]] as const) {
             backend(role, [ADDRESS]);
             const view = open();
             const address = await hint("contact.address");
@@ -241,7 +241,7 @@ describe("the full submission panel is gone; only inline hints remain (CLEAN-001
     });
 
     test("CLEAN-012 confirming one field keeps what the Admin has typed in another field (Candidate details)", async () => {
-        const ctl = backend("MANAGER", [BIRTH, ADDRESS]);
+        const ctl = backend("OWNER", [BIRTH, ADDRESS]);
         const user = userEvent.setup();
         open();
         await hint("basic.birthDate");

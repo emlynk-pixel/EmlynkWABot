@@ -37,7 +37,7 @@ import {
 // with (job.responsible_agent_id is the job's own record), so history is never
 // rewritten when links change.
 //
-// Roles (the routes check them): ADMIN, MANAGER manage; the other roles have no
+// Roles (the routes check them): ADMIN, TEAM_LEAD and JOB_HANDLER manage; the other roles have no
 // access to the Clients API.
 
 export const CLIENT_AUDIT_ACTION = Object.freeze({
@@ -48,6 +48,7 @@ export const CLIENT_AUDIT_ACTION = Object.freeze({
 });
 
 const MAX_NAME_LENGTH = 120;
+const MAX_REGISTRATION_NUMBER_LENGTH = 50;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DUPLICATE_MESSAGE = "A client with this name already exists.";
 
@@ -78,6 +79,7 @@ export function parseCreateClientBody(body) {
     values.whatsappNumber = parsePhone(body, "whatsappNumber", errors) ?? null;
     values.email = parseEmail(body, "email", errors) ?? null;
     values.address = parseText(body, "address", errors) ?? null;
+    values.registrationNumber = parseText(body, "registrationNumber", errors, { max: MAX_REGISTRATION_NUMBER_LENGTH }) ?? null;
     return errors.length ? { errors } : { values };
 }
 
@@ -94,6 +96,7 @@ export function parseUpdateClientBody(body) {
     if (body.whatsappNumber !== undefined) values.whatsappNumber = parsePhone(body, "whatsappNumber", errors);
     if (body.email !== undefined) values.email = parseEmail(body, "email", errors);
     if (body.address !== undefined) values.address = parseText(body, "address", errors);
+    if (body.registrationNumber !== undefined) values.registrationNumber = parseText(body, "registrationNumber", errors, { max: MAX_REGISTRATION_NUMBER_LENGTH });
     if (body.agentIds !== undefined) {
         const agentIds = parseIdList(body, "agentIds", errors, { min: 1 });
         if (agentIds !== undefined) values.agentIds = agentIds;
@@ -121,7 +124,7 @@ export function parseChangeAgentBody(body) {
 
 const CLIENT_SELECT = Object.freeze({
     id: true, name: true, isActive: true, contactPerson: true, contactNumber: true, whatsappNumber: true,
-    email: true, address: true, createdAt: true, updatedAt: true,
+    email: true, address: true, registrationNumber: true, createdAt: true, updatedAt: true,
     agentLinks: { select: { agent: { select: { id: true, name: true, countryCode: true, isActive: true } } } },
 });
 
@@ -136,12 +139,14 @@ const clientView = (row) => {
         status: statusOf(row.isActive),
         agents,
         // The distinct countries of its Agents (a Client has no country of its own); empty without Agents.
-        countryCodes: [...new Set(agents.map((agent) => agent.countryCode))].sort(),
+        // An Agent with no country yet (created by the bulk import) adds none.
+        countryCodes: [...new Set(agents.map((agent) => agent.countryCode).filter(Boolean))].sort(),
         contactPerson: row.contactPerson ?? null,
         contactNumber: row.contactNumber ?? null,
         whatsappNumber: row.whatsappNumber ?? null,
         email: row.email ?? null,
         address: row.address ?? null,
+        registrationNumber: row.registrationNumber ?? null,
         createdAt: iso(row.createdAt),
         updatedAt: iso(row.updatedAt),
     };
@@ -186,7 +191,7 @@ export async function listClients({ db, params }) {
         items: rows.map((row) => ({ ...clientView(row), ...counts(row.id) })),
         pagination: listPagination(params, total),
         filters: { search: params.search ?? null, country: params.country ?? null, status: params.status ?? null, agentId: params.agentId ?? null },
-        countries: countries.map((row) => row.countryCode),
+        countries: countries.map((row) => row.countryCode).filter(Boolean),
     };
 }
 
@@ -280,7 +285,7 @@ export async function createClient({ db, actor, values }) {
     }
 }
 
-const CLIENT_CHANGE_FIELDS = ["name", "contactPerson", "contactNumber", "whatsappNumber", "email", "address"];
+const CLIENT_CHANGE_FIELDS = ["name", "contactPerson", "contactNumber", "whatsappNumber", "email", "address", "registrationNumber"];
 const CLIENT_REDACTED = ["contactPerson", "contactNumber", "whatsappNumber", "email", "address"];
 
 // PATCH /api/admin/client-management/:clientId. Only the given fields change; agentIds (if

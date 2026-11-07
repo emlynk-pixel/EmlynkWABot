@@ -16,16 +16,16 @@ export function stepTones(stages: { completed: boolean }[]): StepTone[] {
 }
 
 const CIRCLE: Record<StepTone, string> = {
-    incomplete: "border-2 border-critical bg-stepper-white text-critical",
-    complete: "border-2 border-verified bg-stepper-white text-verified",
-    "complete-out-of-order": "border-2 border-verified bg-stepper-white text-verified",
+    incomplete: "border-2 border-critical bg-stepper-warn-fill text-critical",
+    complete: "border-2 border-verified bg-stepper-ok-fill text-verified",
+    "complete-out-of-order": "border-2 border-verified bg-stepper-ok-fill text-verified",
 };
 
 // The selected stage is filled in (colours inverted), so it stands out from the others.
 const ACTIVE_CIRCLE: Record<StepTone, string> = {
     incomplete: "border-2 border-critical bg-critical text-stepper-white",
-    complete: "border-2 border-verified bg-verified text-stepper-white",
-    "complete-out-of-order": "border-2 border-verified bg-verified text-stepper-white",
+    complete: "border-2 border-verified bg-verified text-stepper-ok-mark-active",
+    "complete-out-of-order": "border-2 border-verified bg-verified text-stepper-ok-mark-active",
 };
 
 const TONE_LABEL: Record<StepTone, string> = {
@@ -59,7 +59,7 @@ export function CandidateStepper({ steps, current, onSelect }: { steps: StepperS
                                 className="group relative z-10 flex flex-col items-center gap-2 px-1 focus:outline-none"
                             >
                                 <span className={`flex size-8 items-center justify-center rounded-full text-label-md tabular-nums ${circle} group-focus-visible:shadow-focus`}>
-                                    {stage.completed ? <Icon name="check" className="size-4" /> : <span aria-hidden="true" className="font-bold">!</span>}
+                                    {stage.completed ? <Icon name="check" className="size-4" /> : <span aria-hidden="true" className={`font-bold ${active ? "text-stepper-warn-mark-active" : "text-stepper-warn-mark"}`}>!</span>}
                                 </span>
                                 <span className={`text-center text-label-sm ${active ? "font-semibold text-ink" : "text-ink-muted"}`}>{stage.label}</span>
                             </button>

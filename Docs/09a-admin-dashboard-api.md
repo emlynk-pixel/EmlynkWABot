@@ -16,7 +16,7 @@ Status: **Final Phase 10 scope implemented and verified.** All Phase 10 migratio
 
 Not built (by decision): a reject action (business rule: there is none, §4c), uploads (including an admin upload of the actual police report), exports, WhatsApp messaging, reminders or warnings for police reports (Phase 11), scheduled jobs, a Settings page, global search, client editing, batch actions, roles (Phase 12).
 
-Visual source of truth: Stitch project **EmlynkWABot Admin Dashboard UI** (`13688778730186190970`), design system **Precision Enterprise Console**. The Stitch project is read-only for development; nothing is generated or changed there from the code.
+Visual source of truth: the EMLYNK design system (`emlynk-design-system/`). The Stitch project this dashboard started from is retired; references to it below are history.
 
 ## 1. Structure
 
@@ -31,7 +31,7 @@ admin/
 └── src/
     ├── main.tsx              # BrowserRouter (basename /admin) + AuthProvider
     ├── App.tsx               # Routes
-    ├── index.css             # Tailwind + Stitch design tokens (@theme)
+    ├── index.css             # Tailwind + EMLYNK design tokens (@theme)
     ├── api/
     │   ├── client.ts         # fetch wrapper, ApiError, safe error messages
     │   ├── auth.ts           # GET /auth/me, POST /auth/complete-invite (sign-in itself is Supabase Auth)
@@ -44,8 +44,9 @@ admin/
     │   └── roles.ts          # the four roles and what the UI shows each
     ├── layout/
     │   ├── AdminLayout.tsx   # shell: sidebar + header + content
-    │   ├── Sidebar.tsx       # dark sidebar, 240px, collapsible to 64px rail, mobile drawer
-    │   ├── Header.tsx        # 56px utility bar: breadcrumb, Sync, dark mode, admin, sign out
+    │   ├── Sidebar.tsx       # slate sidebar, 256px, collapsible to 48px rail, mobile drawer
+    │   ├── AccountMenu.tsx   # account card at the sidebar's foot, with Sign out
+    │   ├── Header.tsx        # 56px utility bar: Sync, dark mode, notifications
     │   └── navigation.ts     # sidebar entries
     ├── components/           # Icon, StatusBadge, Confidence, DocumentsTable, ClientTable, Dialog, States, format
     ├── pages/                # Login, Overview, Documents, Review Queue/Detail, Clients, Client Details,
@@ -104,7 +105,7 @@ Supabase Auth owns credentials and sessions; the backend maps the Supabase sessi
 3. **Reload / new visit in the same tab:** Supabase restores its stored session and the app checks it again with `GET /auth/me`. If the backend rejects it (signed out, user deactivated) or cannot be reached, the user is shown the login page.
 4. **Refresh:** Supabase refreshes the access token automatically; the app uses the new token for the next request. If the session cannot be refreshed, the app signs out.
 5. **Sign out:** `supabase.auth.signOut()` ends the session (refresh tokens revoked); the access token stops being accepted by the backend at once. The local session is cleared even if Supabase cannot be reached.
-6. **Route guard:** while the session is being restored, a "Checking your session" screen is shown; without a valid session every protected route redirects to `/admin/login`, which returns to the requested page after sign-in (only paths inside the app are followed). A role without dashboard access (REGISTRATION_DESK) lands on Candidates instead of the Overview.
+6. **Route guard:** while the session is being restored, a "Checking your session" screen is shown; without a valid session every protected route redirects to `/admin/login`, which returns to the requested page after sign-in (only paths inside the app are followed). A role without dashboard access lands on its own first area instead of the Overview: Candidates (TEAM_LEAD, ANALYST), Add Candidate (REGISTRATION_DESK), Jobs (JOB_HANDLER). Every page opens only to the roles listed for it (`App.tsx` `AllowRoles`, the same lists as the sidebar); anyone else, including a user returned after sign-in to a page left from an earlier session, is taken to their own home page instead, with no warning, and nothing of the page is requested.
 
 Error messages: Supabase's sign-in failures are shown as one generic message ("Invalid email or password"), whether or not the email exists; rate limiting and service errors get short fixed texts, never provider details.
 
@@ -374,7 +375,7 @@ Additive only: existing rows get `NULL`, nothing is updated, dropped or renamed.
 
 Where the date comes from:
 - **Pipeline:** a `POLICE_SLIP` filed under the client with a `RESOLVED` date (the existing rule of the police date reader, `policeReportDateService.js`) gets that date. Only slips; every other document keeps `NULL`. A slip in `pending/` has no stored date.
-- **Approve** (§4c): a police slip without a stored date needs `policeSubmittedDate` (400 `POLICE_DATE_REQUIRED` otherwise) — every waiting slip, and stored slips from before this migration. A stored slip whose date OCR read keeps it: the approval confirms it, and a different date is refused (409 `POLICE_DATE_ALREADY_SET`). Other types take no date (400 `POLICE_DATE_NOT_APPLICABLE`). The date must be a real date from 2000-01-01 up to today in Sri Lanka (400 otherwise). The date used is written to the document and to the audit entry in the same transaction. The one-verified-document-per-type rule is unchanged.
+- **Approve** (§4c): a police slip without a stored date needs `policeSubmittedDate` (400 `POLICE_DATE_REQUIRED` otherwise) — every waiting slip, and stored slips from before this migration. Entering the date is ADMIN only (like correcting it): a request from any other role that sends `policeSubmittedDate`, on Approve or Replace Verified, is refused before anything runs (403 `POLICE_DATE_ADMIN_ONLY`); an Analyst approves a slip whose date OCR read by sending no date. A stored slip whose date OCR read keeps it: the approval confirms it, and a different date is refused (409 `POLICE_DATE_ALREADY_SET`). Other types take no date (400 `POLICE_DATE_NOT_APPLICABLE`). The date must be a real date from 2000-01-01 up to today in Sri Lanka (400 otherwise). The date used is written to the document and to the audit entry in the same transaction. The one-verified-document-per-type rule is unchanged.
 
 ### Status (`src/services/policeCountdownService.js`)
 
@@ -494,9 +495,9 @@ The Daily Report page uses three read-only endpoints (`src/services/dailyReportS
 
 | Endpoint | Roles | Content |
 |---|---|---|
-| `GET /reports/daily/summary?date=` | ADMIN, MANAGER, ANALYST | `summary` (`candidatesRegistered`, `candidatesCompleted`, `visaCompleted`, `callsTaken`, `documentsSubmitted`), `documents` (`total`, `whatsapp`, `manual`, `byType`), `whatsappProcessing`, `adminActions`, `calls`, `registeredCandidates` and `completedCandidates` (lists of at most 200 with `total` and `truncated`), `current`: `incomplete` (per stage: count and reasons) and `police` |
-| `GET /reports/daily/incomplete?stage=&page=` | ADMIN, MANAGER, ANALYST | the candidates with that stage open now, with reasons, 25 per page |
-| `GET /reports/daily/roles?date=&role=` | ADMIN, MANAGER | `callsTaken`, `documentsUploaded`, `documentsByType`, `staff` (calls and uploads per staff member), `activity` (at most 200) |
+| `GET /reports/daily/summary?date=` | ADMIN, ANALYST | `summary` (`candidatesRegistered`, `candidatesCompleted`, `visaCompleted`, `callsTaken`, `documentsSubmitted`), `documents` (`total`, `whatsapp`, `manual`, `byType`), `whatsappProcessing`, `adminActions`, `calls`, `registeredCandidates` and `completedCandidates` (lists of at most 200 with `total` and `truncated`), `current`: `incomplete` (per stage: count and reasons) and `police` |
+| `GET /reports/daily/incomplete?stage=&page=` | ADMIN, ANALYST | the candidates with that stage open now, with reasons, 25 per page |
+| `GET /reports/daily/roles?date=&role=` | ADMIN | `callsTaken`, `documentsUploaded`, `documentsByType`, `staff` (calls and uploads per staff member), `activity` (at most 200) |
 
 | Figure | Source |
 |---|---|
@@ -658,7 +659,7 @@ Full-stack confirmation (throwaway PostgreSQL, real Express server, real headles
 
 ## 4o. Candidate additional details
 
-Extra details of a candidate (Admin > Candidates > **Additional Details** tab), stored in `candidate_additional_details` (migration `20261009150000_candidate_additional_details`; see `Docs/DATABASE_IMPLEMENTATION.md` §2.12). Service: `src/services/candidateAdditionalDetailsService.js`. Roles: ADMIN, MANAGER, ANALYST, REGISTRATION_DESK.
+Extra details of a candidate (Admin > Candidates > **Additional Details** tab), stored in `candidate_additional_details` (migration `20261009150000_candidate_additional_details`; see `Docs/03-database-design.md` Part 2, §2.12). Service: `src/services/candidateAdditionalDetailsService.js`. Roles: ADMIN, ANALYST, REGISTRATION_DESK.
 
 ### `GET /api/admin/candidates/:passportId/additional-details`
 
@@ -689,7 +690,7 @@ The body holds the fields `nameAsInPassport, permanentAddress, birthday, tshirtS
 
 ## 4q. Candidate Form share links
 
-Service: `src/services/candidateFormShareService.js`. Roles: ADMIN, MANAGER, ANALYST (allocated candidates only; others 404), REGISTRATION_DESK. Rules: `Docs/20-candidate-management.md` §4.6; design: `Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md`.
+Service: `src/services/candidateFormShareService.js`. Roles: ADMIN, ANALYST (allocated candidates only; others 404), REGISTRATION_DESK. Rules: `Docs/20-candidate-management.md` §4.6; design: `Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md`.
 
 ### `GET /api/admin/candidates/:passportId/form-share`
 
@@ -725,7 +726,7 @@ POST only, CORS for `CANDIDATE_FORM_ORIGIN` only, public rate limits, 503 when n
 
 ## 4p. Work Allocation
 
-ADMIN and MANAGER only (`requireRole`): every other role gets 403. Rules: `Docs/20-candidate-management.md` §4.5.
+ADMIN only (an OWNER too; `requireRole`): every other role gets 403. Rules: `Docs/20-candidate-management.md` §4.5.
 
 ### `GET /api/admin/work-allocation/candidates?status=&analystId=&search=&page=`
 
@@ -749,7 +750,7 @@ Body `{ candidateIds: [passportId…], confirm: true }`. Responds `{ unassigned,
 
 ### Analyst scoping of the other endpoints
 
-For `ANALYST` the server limits these to the candidates allocated to them: `GET /candidates` (search and totals included), every `/candidates/:passportId/...` route (404 *Candidate not found* otherwise), `GET /clients/:passportId` (404), `GET /follow-ups`, `POST /follow-ups/:id/complete` (404), `GET /clients`, `GET /documents`, `GET /documents/missing`, `GET /police`, and `POST /review/:id/assign-client` (409 `CLIENT_NOT_FOUND` for any other candidate). `POST /candidates` (registration) is ADMIN, MANAGER and REGISTRATION_DESK only. The review queue, overview and daily report endpoints are not scoped.
+An `ANALYST` reaches only the Candidates area and Need Attention (every dashboard, document, review, police, report and job route is 403), limited to the candidates allocated to them: `GET /candidates` (search and totals included), every `/candidates/:passportId/...` route (404 *Candidate not found* otherwise), `GET /clients/:passportId` (404), `GET /follow-ups`, `POST /follow-ups/:id/complete` (404), `GET /clients`, `GET /documents`, `GET /documents/missing`, `GET /police`, and `POST /review/:id/assign-client` (409 `CLIENT_NOT_FOUND` for any other candidate). `POST /candidates` (registration) is ADMIN, TEAM_LEAD and REGISTRATION_DESK only. The review queue (an item linked to another candidate is 404; files not yet linked to any candidate stay open to every Analyst), the overview, the daily and monthly reports and the jobs (`GET /jobs`, `GET /jobs/:jobId`: only jobs holding their candidates, and only those candidates on them) are scoped the same way. The scope is applied in the database before search, filters, paging and totals (`test/roleScopeRegression.test.js`).
 
 ## 5. Pages and data
 
@@ -769,13 +770,13 @@ The header has **Sync** and the dark-mode toggle on every page (§4j). Every pag
 
 ## 6. Design system
 
-`admin/src/index.css` defines the Stitch tokens as a Tailwind v4 `@theme`:
+`admin/src/index.css` defines the EMLYNK design tokens as a Tailwind v4 `@theme`:
 
 - **Colours:** primary `#2563eb` (hover `#1d4ed8`, active `#1e40af`); canvas `#f8fafc`; surfaces `#ffffff` with `#e2e8f0` borders; dark sidebar `#0f172a` / `#1e293b`; status sets for verified, review, pending, critical and duplicate (text / background / border). Dark mode redefines the same tokens (§4j).
-- **Typography:** Inter (self-hosted via `@fontsource-variable/inter`) with tabular figures; scale `headline-xl` … `label-sm` as in Stitch.
+- **Typography:** Inter and Montserrat (self-hosted via `@fontsource-variable`), tabular figures, and no text below 12px; the scale is in `index.css`.
 - **Shapes and depth:** radius 2 / 4 / 6 / 8 / 12 px; hairline borders with very light shadows; focus ring `0 0 0 3px rgba(37,99,235,.15)`.
 - **Layout:** sidebar 240px (rail 64px), header 56px, content max 1600px.
-- **Icons:** Material Symbols Outlined, imported one SVG at a time from `@material-symbols/svg-400` (a few hundred bytes each instead of a 1–1.5 MB icon font).
+- **Icons:** Lucide (`lucide-react`). Screens name an icon through `components/Icon.tsx`, the only file that imports the set.
 
 No external CDN or Google Fonts request is made, so the backend's Content Security Policy (`script-src 'self'`) applies unchanged.
 
@@ -913,30 +914,40 @@ Authentication is Supabase Auth; authorization is the application's. The full de
 
 ### 12.1 Roles
 
-The role is `public."user".role`, read from the database on every request (never from the token):
+The role is `public."user".role`, read from the database on every request (never from the token). Hierarchy: `OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER` (who manages whom; TEAM_LEAD inherits no ADMIN permission). The former `MANAGER` role is retired (its permissions are ADMIN's): it is not a valid role, and an account still holding it gets 403 `ROLE_NOT_SUPPORTED` on every route (`ROLES_AND_PERMISSIONS.md` §6).
 
-- **`ADMIN`**: everything, including user management (`/api/admin/users`) and Settings.
-- **`MANAGER`**: dashboard, review, corrections and candidates, including police slip date corrections; no user management or Settings.
+- **`OWNER`**: the single system owner. Inherits every ADMIN permission (a tier that admits ADMIN admits OWNER: `hasRole()` in `src/middleware/requireRole.js` and `admin/src/auth/roles.ts`), plus managing ADMIN accounts. Set in the database only; see section 13 and [`OWNER_ROLE.md`](OWNER_ROLE.md).
+- **`ADMIN`**: everything, including Settings, Work Allocation, verification, police slip date corrections and user management of the roles below ADMIN (`/api/admin/users`); never another ADMIN's or the OWNER's account.
+- **`TEAM_LEAD`**: exactly seven areas: the Candidates area for every candidate (`CANDIDATE_STAFF`, `CANDIDATE_READERS`, `REGISTRATION_STAFF`), Need Attention (list, flag, complete), Work Allocation, Jobs (`JOB_READERS`, `JOB_MANAGERS`), Agents and Clients, and the standard Daily Report. Every ADMIN-only action stays ADMIN only (verification, Candidate Form confirm / reject, follow-up delete, the job-group form link, Summary by Roles, Job Types); no dashboards, review, police, monthly overview, Settings, Audit Logs or user management.
 - **`ANALYST`**: dashboard reads, review actions, corrections and candidate work; cannot correct police slip dates.
-- **`REGISTRATION_DESK`**: candidate list, lookup, registration and details only.
+- **`REGISTRATION_DESK`**: the registration workflow only (`REGISTRATION_WORKFLOW`): the passport-ID lookup (`GET /candidates/:passportId`), `POST /candidates`, `PUT /candidates/:passportId`, the `CANDIDATE_DETAILS` stage (its note) and uploads of `PASSPORT`, `NIC` and `SKILL_VIDEO`, each answered with the registration view of the candidate only (`registrationView`); Need Attention read only (`GET /follow-ups`, `FOLLOW_UP_READERS`); every other candidate route, other stage or document type, and any follow-up action: 403.
+- **`JOB_HANDLER`**: Jobs, Agents and Clients; reads Candidates (list, the candidate's page and what it reads: `CANDIDATE_READERS`) and changes no candidate record; no dashboards, reports, review, Need Attention, Settings, Audit Logs or user management (`JOB_MANAGEMENT_IMPLEMENTATION.md`, `AGENT_CLIENT_MANAGEMENT.md`).
 
 ### 12.2 Authorization middleware
 
-- `createRequireActiveUser()` (`src/middleware/requireActiveUser.js`) authenticates the Supabase session and requires an `ACTIVE` application user (see "Authentication middleware" in section 3).
+- `createRequireActiveUser()` (`src/middleware/requireActiveUser.js`) authenticates the Supabase session and requires an `ACTIVE` application user with a supported role (see "Authentication middleware" in section 3); a role outside `ALL_ROLES` (the retired `MANAGER`) gets 403 `ROLE_NOT_SUPPORTED`.
 - `requireRole(allowedRoles)` (`src/middleware/requireRole.js`) is applied to every admin route after it. It checks `req.user.role` and refuses with HTTP 403 and a constant message that never reveals the role or user.
 
 Endpoint tiers (`src/routes/admin.js`):
 
 | Tier | Roles | Routes |
 |---|---|---|
-| Dashboard reads | ADMIN, MANAGER, ANALYST | overview, documents, clients, police, reports, review (read) |
-| Candidates (`CANDIDATE_STAFF`) | ADMIN, MANAGER, ANALYST, REGISTRATION_DESK | the whole Candidates area: list, registration, details, stages, candidate documents, call logs, additional details; Priority Follow-Ups: flag a call (`POST /candidates/:passportId/call-logs/:callLogId/follow-up`), list (`GET /follow-ups`) and complete (`POST /follow-ups/:id/complete`) |
-| Work Allocation | ADMIN, MANAGER | `/work-allocation/*` (section 4p) |
-| Registration | ADMIN, MANAGER, REGISTRATION_DESK | `POST /candidates` |
-| Follow-up delete (Need Attention page) | ADMIN, MANAGER | `DELETE /follow-ups/:id`: removes the follow-up row only (never the call log, candidate or documents); ANALYST and REGISTRATION_DESK get 403. The role is the signed-in user's, read from the database on every request |
-| Review and corrections | ADMIN, MANAGER, ANALYST | review actions, temporary document delete |
-| Police date correction | ADMIN, MANAGER | `POST /documents/:id/police-date` |
-| Users, Audit Logs and Settings | ADMIN | `/api/admin/users/*`, `/api/admin/audit-logs`, `/api/admin/settings/sheet-sync/*` |
+| Dashboard reads (`ALL_ACTIVE`) | ADMIN, ANALYST | overview, documents, clients, police, monthly overview, review (read) |
+| Daily Report (`REPORT_READERS`) | ADMIN, TEAM_LEAD, ANALYST | `GET /reports/daily`, `/reports/daily/summary`, `/reports/daily/incomplete` |
+| Summary by Roles | ADMIN | `GET /reports/daily/roles` |
+| Candidates (`CANDIDATE_STAFF`) | ADMIN, TEAM_LEAD, ANALYST | the Candidates area's changes: stages, candidate documents (remove), call logs, additional details, form links; Priority Follow-Ups: flag and complete (`POST /follow-ups/:id/complete`); the list (`GET /follow-ups`) also for REGISTRATION_DESK, read only (`FOLLOW_UP_READERS`) |
+| Candidate reads (`CANDIDATE_READERS`) | ADMIN, TEAM_LEAD, ANALYST, JOB_HANDLER | `GET /candidates`, `GET /candidates/:passportId` and its call logs, additional details and submitted form |
+| Registration workflow (`REGISTRATION_WORKFLOW`) | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | `GET /candidates/:passportId` (lookup), `PUT /candidates/:passportId`, `PUT …/stages/:stage` and `POST …/documents/upload-target` / `finalize`; REGISTRATION_DESK only for the `CANDIDATE_DETAILS` stage and `PASSPORT` / `NIC` / `SKILL_VIDEO` (otherwise 403) |
+| Job candidate picker (`JOB_MANAGERS`) | ADMIN, TEAM_LEAD, JOB_HANDLER | `GET /job-candidate-options?search=&page=&pageSize=`: test-PASS candidates only, `{ passportId, uniqueId, name, nic, workflowStatus }` per item, paged like `GET /candidates` |
+| Work Allocation (`ALLOCATION_MANAGERS`) | ADMIN, TEAM_LEAD | `/work-allocation/*` (section 4p); work goes to ACTIVE Analysts only |
+| Registration (`REGISTRATION_STAFF`) | ADMIN, TEAM_LEAD, REGISTRATION_DESK | `POST /candidates` |
+| Verification, Candidate Form confirm / reject | ADMIN | `POST /candidates/:id/verification`, `POST /candidates/:id/form-submission/*` |
+| Follow-up delete (Need Attention page) | ADMIN | `DELETE /follow-ups/:id`: removes the follow-up row only (never the call log, candidate or documents); TEAM_LEAD, ANALYST and REGISTRATION_DESK get 403. The role is the signed-in user's, read from the database on every request |
+| Review and corrections | ADMIN, ANALYST | review actions, temporary document delete |
+| Police date correction | ADMIN | `POST /documents/:id/police-date` |
+| Users, Audit Logs and Settings | OWNER, ADMIN | `/api/admin/users/*` (which accounts each may change: section 13), `/api/admin/audit-logs`, `/api/admin/settings/sheet-sync/*` (status, runs, Upload, Test Connection, Sync Now, destination) |
+
+The tiers in `src/routes/admin.js` name ADMIN only; OWNER passes each of them through `hasRole()`. TEAM_LEAD passes only the tiers that name it (it inherits nothing from ADMIN). Jobs, Agents and Clients have their own tiers (ADMIN, TEAM_LEAD, JOB_HANDLER; an ANALYST reads the jobs holding their own candidates; job types and the job-group form link: ADMIN only): see `JOB_MANAGEMENT_IMPLEMENTATION.md` and `AGENT_CLIENT_MANAGEMENT.md`.
 
 `GET /auth/me` and `POST /auth/complete-invite` need a Supabase session but not a particular role.
 
@@ -944,16 +955,28 @@ Endpoint tiers (`src/routes/admin.js`):
 
 Every request authenticates with `Authorization: Bearer <Supabase access token>`. No cookie authenticates a request, so CSRF protection does not apply (decision recorded in `SUPABASE_AUTH.md`).
 
-## 13. User management and invitations (ADMIN only)
+## 13. User management and invitations (OWNER and ADMIN)
 
-Routes in `src/routes/users.js`, mounted at `/api/admin/users`; every one needs the ADMIN role.
+Routes in `src/routes/users.js`, mounted at `/api/admin/users`; every one needs the OWNER or ADMIN role. Which accounts and roles each may touch is decided by `src/services/userAccountService.js` on the database rows: an OWNER manages every account but an OWNER's; an ADMIN only accounts below ADMIN and gives only roles below ADMIN. Nobody gives the OWNER role or changes an OWNER account through the API (403 `OWNER_LOCKED`): the OWNER is set in the database only. The full model, and how the first OWNER is made, is in [`OWNER_ROLE.md`](OWNER_ROLE.md).
+
+Summary of the rules (all enforced server-side on the database rows, inside the transaction and with the rows locked; hiding controls in the UI is not the security boundary):
+
+- **OWNER** is the highest role and inherits all ADMIN access. It changes the role of, deactivates and re-invites ADMIN accounts and every lower role, gives the ADMIN role, and invites ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK and JOB_HANDLER. It is the only role that changes an account still holding the retired MANAGER role.
+- **Nobody invites an OWNER**, and nobody gives the OWNER role or changes, deactivates or re-invites an OWNER account through the application, the OWNER included (403 `OWNER_LOCKED`). The single OWNER is created or changed in the database only (`OWNER_ROLE.md`, *Making the first OWNER* / *Changing the OWNER*).
+- **ADMIN cannot** change another ADMIN's role, deactivate another ADMIN, modify the OWNER, give the ADMIN or OWNER role, invite an ADMIN or OWNER, or use a re-invite to reactivate or change an ADMIN or OWNER account (403 `OWNER_REQUIRED` / `OWNER_LOCKED`). A requested role is refused, never silently downgraded.
+- **Nobody changes their own account** here (400 `SELF_CHANGE`).
+- **No automatic conversion:** existing ADMIN accounts stayed ADMIN when OWNER was introduced (no migration; `role` is `TEXT`).
+- **The retired MANAGER role is never given:** inviting or changing a user to `MANAGER` is refused with 400 (`INVALID_ROLE`, or an invitation `errors` entry for `role`), never replaced by another role. Existing MANAGER accounts are converted with `npm run user:migrate-manager` (`ROLES_AND_PERMISSIONS.md` §6).
+- **ADMIN** gives, invites, changes and deactivates **TEAM_LEAD** like the other roles below ADMIN.
+- **TEAM_LEAD** manages no account: every `/api/admin/users/*` route answers 403.
+- ANALYST, REGISTRATION_DESK and JOB_HANDLER keep their existing access.
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/admin/users` | List application users (profile fields only) |
-| `POST` | `/api/admin/users/invite` | Invite a user: `{ name, email, role }` (any of the four roles) |
-| `PUT` | `/api/admin/users/:userId/role` | Change a user's role (not your own) |
-| `POST` | `/api/admin/users/:userId/deactivate` | Deactivate a user (not your own account) |
+| `POST` | `/api/admin/users/invite` | Invite a user: `{ name, email, role }` (OWNER: ADMIN and below; ADMIN: below ADMIN; nobody invites an OWNER) |
+| `PUT` | `/api/admin/users/:userId/role` | Change a user's role (not your own; 403 `OWNER_LOCKED` for an OWNER account or the OWNER role; 403 `OWNER_REQUIRED` for an ADMIN touching an ADMIN or giving ADMIN) |
+| `POST` | `/api/admin/users/:userId/deactivate` | Deactivate a user (not your own account; same rules) |
 
 **Invitation flow.**
 
@@ -963,7 +986,7 @@ Routes in `src/routes/users.js`, mounted at `/api/admin/users`; every one needs 
 4. `public."user"` is created or updated by email, linked by `auth_user_id`, with status `INVITED`. An `ACTIVE` email is refused (409).
 5. The invitee opens the Supabase link, sets a password with Supabase on `/admin/setup-password`, and `POST /auth/complete-invite` turns the account `ACTIVE`.
 
-**User interface.** *Invite User* (`/admin/invitations`) and *Change Roles* (`/admin/roles`), both ADMIN only.
+**User interface.** *Invite User* (`/admin/invitations`) and *Change Roles* (`/admin/roles`), both OWNER and ADMIN. The role lists offer only the roles the signed-in user may give (never Owner), the Owner's row has no controls, and an ADMIN gets none on Admin rows either; the server enforces the same rules whatever the screen sends.
 
 ## 14. Password recovery
 

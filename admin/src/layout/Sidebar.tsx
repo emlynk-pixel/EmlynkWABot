@@ -1,19 +1,55 @@
 import { NavLink } from "react-router";
+import logo from "../assets/emops-on-dark.svg";
+import emMark from "../assets/em-mark-on-dark.svg";
 import { useAuth } from "../auth/AuthProvider";
 import { hasRole } from "../auth/roles";
 import { Icon } from "../components/Icon";
-import { NAV_ITEMS } from "./navigation";
+import { AccountMenu } from "./AccountMenu";
+import { NAV_ITEMS, type NavItem } from "./navigation";
 
 type SidebarProps = {
     collapsed: boolean;
     mobileOpen: boolean;
-    onToggleCollapsed: () => void;
     onNavigate: () => void;
 };
 
-// Dark workspace sidebar (Stitch: 240px, collapsible to a 64px icon rail).
-// Below md it becomes an off-canvas drawer opened from the header.
-export function Sidebar({ collapsed, mobileOpen, onToggleCollapsed, onNavigate }: SidebarProps) {
+function NavGroup({ label, items, railOnly, onNavigate }: { label: string; items: NavItem[]; railOnly: boolean; onNavigate: () => void }) {
+    if (items.length === 0) return null;
+    return (
+        <div className="p-2">
+            {!railOnly && <p className="flex h-8 items-center px-2 text-label-sm text-sidebar-text-muted">{label}</p>}
+            <ul>
+                {items.map((item) => (
+                    <li key={item.to}>
+                        <NavLink
+                            to={item.to}
+                            end={item.end}
+                            onClick={onNavigate}
+                            title={railOnly ? item.label : undefined}
+                            className={({ isActive }) =>
+                                [
+                                    "flex h-8 items-center gap-2 rounded-md px-2 text-body-sm transition-colors",
+                                    isActive
+                                        ? "bg-sidebar-hover font-medium text-sidebar-text-active"
+                                        : "hover:bg-sidebar-hover hover:text-sidebar-text-active",
+                                    railOnly ? "justify-center px-0" : "",
+                                ].join(" ")
+                            }
+                        >
+                            <Icon name={item.icon} />
+                            {railOnly ? <span className="sr-only">{item.label}</span> : <span className="truncate">{item.label}</span>}
+                        </NavLink>
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
+}
+
+// The slate sidebar: 256px, collapsible to a 48px icon rail with the EM mark.
+// The panel icon in the header collapses it (Header.tsx); below md it becomes an
+// off-canvas drawer opened from the same icon.
+export function Sidebar({ collapsed, mobileOpen, onNavigate }: SidebarProps) {
     const railOnly = collapsed && !mobileOpen;
     const { user } = useAuth();
     // Only the entries this role can use; the backend remains the authoritative gate.
@@ -23,62 +59,24 @@ export function Sidebar({ collapsed, mobileOpen, onToggleCollapsed, onNavigate }
         <aside
             id="admin-sidebar"
             className={[
-                "fixed inset-y-0 left-0 z-50 flex flex-col bg-sidebar text-sidebar-text transition-[width,transform] duration-200",
+                "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-text transition-[width,transform] duration-200 ease-linear",
                 mobileOpen ? "w-sidebar translate-x-0" : "-translate-x-full md:translate-x-0",
                 railOnly ? "md:w-sidebar-rail" : "md:w-sidebar",
             ].join(" ")}
         >
-            <div className="flex h-header shrink-0 items-center gap-3 border-b border-sidebar-hover px-4">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded bg-primary font-semibold text-on-primary">E</span>
-                {!railOnly && (
-                    <div className="min-w-0">
-                        <p className="truncate text-label-md text-sidebar-text-active">Data Collector</p>
-                        <p className="text-label-caps uppercase text-sidebar-text">Admin Console</p>
-                    </div>
-                )}
+            <div className="flex h-[4.5rem] shrink-0 items-center justify-center">
+                {railOnly
+                    ? <img src={emMark} alt="EM" width={28} height={16} className="h-auto w-7" />
+                    : <img src={logo} alt="EMOPS by EMLYNK" width={136} height={53} className="h-auto w-[136px]" />}
             </div>
 
-            <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-2 py-3">
-                <ul className="space-y-1">
-                    {visibleItems.map((item) => (
-                        <li key={item.to}>
-                            <NavLink
-                                to={item.to}
-                                end={item.end}
-                                onClick={onNavigate}
-                                title={railOnly ? item.label : undefined}
-                                className={({ isActive }) =>
-                                    [
-                                        "relative flex h-10 items-center gap-3 rounded-md px-3 text-label-md transition-colors",
-                                        isActive
-                                            ? "bg-sidebar-hover font-semibold text-sidebar-text-active before:absolute before:inset-y-1.5 before:left-0 before:w-1 before:rounded-full before:bg-primary"
-                                            : "hover:bg-sidebar-hover hover:text-sidebar-text-active",
-                                        railOnly ? "justify-center px-0" : "",
-                                    ].join(" ")
-                                }
-                            >
-                                <Icon name={item.icon} className="size-5" />
-                                {railOnly ? <span className="sr-only">{item.label}</span> : <span className="truncate">{item.label}</span>}
-                            </NavLink>
-                        </li>
-                    ))}
-                </ul>
+            <nav aria-label="Main navigation" className="flex-1 overflow-y-auto">
+                <NavGroup label="Workspace" items={visibleItems.filter((item) => !item.group)} railOnly={railOnly} onNavigate={onNavigate} />
+                <NavGroup label="Configuration" items={visibleItems.filter((item) => item.group === "Configuration")} railOnly={railOnly} onNavigate={onNavigate} />
             </nav>
 
-            <div className="hidden border-t border-sidebar-hover p-2 md:block">
-                <button
-                    type="button"
-                    onClick={onToggleCollapsed}
-                    aria-controls="admin-sidebar"
-                    aria-expanded={!collapsed}
-                    className={[
-                        "flex h-9 w-full items-center gap-3 rounded px-3 text-label-md hover:bg-sidebar-hover hover:text-sidebar-text-active",
-                        railOnly ? "justify-center px-0" : "",
-                    ].join(" ")}
-                >
-                    <Icon name="chevron_left" className={`size-5 transition-transform ${collapsed ? "rotate-180" : ""}`} />
-                    {railOnly ? <span className="sr-only">Expand sidebar</span> : <span>Collapse</span>}
-                </button>
+            <div className="border-t border-sidebar-border p-2">
+                <AccountMenu railOnly={railOnly} />
             </div>
         </aside>
     );

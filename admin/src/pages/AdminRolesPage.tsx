@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { isAdmin as hasAdminRole, useAuth } from "../auth/AuthProvider";
-import { ALL_ROLES, ROLE_LABELS, type Role } from "../auth/roles";
+import { assignableRoles, canManageUser, isOwner, roleLabel, type Role } from "../auth/roles";
+import { OwnerBadge } from "../components/OwnerBadge";
 import { Icon } from "../components/Icon";
 import { listUsers, updateUserRole, type UserSummary } from "../api/admin";
 import { ApiError } from "../api/client";
@@ -21,6 +22,8 @@ const dateFormat = new Intl.DateTimeFormat("en-GB", {
 export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}) {
     const { user, token } = useAuth();
     const isAdmin = hasAdminRole(user);
+    // The roles this user may give (an Admin: below Admin only; the server enforces it).
+    const assignable = assignableRoles(user);
 
     const [admins, setAdmins] = useState<UserSummary[]>([]);
     const [loading, setLoading] = useState(false);
@@ -72,11 +75,11 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
     if (!isAdmin) {
         return (
             <div className="mx-auto max-w-4xl p-6">
-                <div className="rounded border border-critical-border bg-critical-bg p-6 text-center text-critical">
+                <div className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto size-8 text-critical mb-2" />
                     <h2 className="text-headline-sm font-semibold">Access Restricted</h2>
                     <p className="mt-1 text-body-sm text-ink-muted">
-                        Only users with the <strong>Admin</strong> role can change user roles.
+                        Only users with the <strong>Owner</strong> or <strong>Admin</strong> role can change user roles.
                     </p>
                 </div>
             </div>
@@ -84,7 +87,7 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
     }
 
     return (
-        <div className="mx-auto max-w-6xl space-y-6">
+        <div className="space-y-6">
             <header className="flex flex-wrap items-end justify-between gap-4">
                 <div>
                     {embedded
@@ -92,19 +95,20 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                         : <h1 id="page-title" className="text-headline-lg text-ink">Change Roles</h1>}
                     <p className="mt-1 text-body-md text-ink-subtle">
                         Manage the roles of console users. A change applies to their very next request.
+                        {!isOwner(user) && " Admin accounts can be changed by an Owner only."}
                     </p>
                 </div>
             </header>
 
             {actionError && (
-                <div className="rounded border border-critical-border bg-critical-bg px-4 py-3 text-body-sm text-critical" role="alert">
+                <div className="rounded-lg border border-critical-border bg-critical-bg px-4 py-3 text-body-sm text-critical" role="alert">
                     <Icon name="error" className="mr-2 inline-block size-4 align-text-bottom" />
                     {actionError}
                 </div>
             )}
             
             {actionSuccess && (
-                <div className="rounded border border-verified-border bg-verified-bg px-4 py-3 text-body-sm text-verified" role="alert">
+                <div className="rounded-lg border border-verified-border bg-verified-bg px-4 py-3 text-body-sm text-verified" role="alert">
                     <Icon name="check_circle" className="mr-2 inline-block size-4 align-text-bottom" />
                     {actionSuccess}
                 </div>
@@ -113,7 +117,7 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
             <section aria-labelledby="admins-title">
                 <h2 id="admins-title" className="sr-only">Registered Admins</h2>
 
-                <div className="overflow-hidden rounded-lg border border-border bg-surface">
+                <div className="overflow-hidden rounded-xl border border-border bg-surface">
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-body-sm text-ink">
                             <thead className="bg-surface-raised text-label-sm text-ink-subtle">
@@ -146,10 +150,17 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                                         </td>
                                     </tr>
                                 )}
-                                {!loading && !fetchError && admins.map((account) => (
+                                {!loading && !fetchError && admins.map((account) => {
+                                    const manageable = canManageUser(user, account);
+                                    // An account this user can't change shows its own role only. One holding a role
+                                    // that is not given any more (a retired Manager, changeable by the Owner) shows it
+                                    // as the current value, never as a choice.
+                                    const options: readonly string[] = manageable ? assignable : [];
+                                    const showCurrent = !options.includes(account.role);
+                                    return (
                                     <tr key={account.userId} className="hover:bg-surface-hover">
                                         <td className="px-4 py-3 align-top">
-                                            <div className="font-medium">{account.name}</div>
+                                            <div className="font-medium">{account.name}{account.role === "OWNER" && <OwnerBadge />}</div>
                                             <div className="text-ink-subtle">{account.email}</div>
                                         </td>
                                         <td className="px-4 py-3 align-top">
@@ -165,7 +176,7 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                                                 aria-label={`Change role for ${account.name}`}
                                                 className={inputClass(false, { extra: "w-auto" })}
                                                 value={account.role}
-                                                disabled={updatingId === account.userId || account.userId === user?.userId}
+                                                disabled={updatingId === account.userId || !manageable}
                                                 onChange={(e) => {
                                                     const nextRole = e.target.value as Role;
                                                     if (nextRole !== account.role) {
@@ -173,11 +184,13 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                                                     }
                                                 }}
                                             >
-                                                {ALL_ROLES.map((role) => <option key={role} value={role}>{ROLE_LABELS[role]}</option>)}
+                                                {showCurrent && <option value={account.role} disabled={manageable}>{roleLabel(account.role)}</option>}
+                                                {options.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
                                             </select>
                                         </td>
                                     </tr>
-                                ))}
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
@@ -191,8 +204,8 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                     message={
                         <span>
                             Are you sure you want to change <strong>{pendingRoleChange.user.name}</strong>’s role from{" "}
-                            <strong>{ROLE_LABELS[pendingRoleChange.user.role as Role] ?? pendingRoleChange.user.role}</strong> to{" "}
-                            <strong>{ROLE_LABELS[pendingRoleChange.newRole] ?? pendingRoleChange.newRole}</strong>?
+                            <strong>{roleLabel(pendingRoleChange.user.role)}</strong> to{" "}
+                            <strong>{roleLabel(pendingRoleChange.newRole)}</strong>?
                         </span>
                     }
                     confirmLabel="Confirm Change"

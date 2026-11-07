@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
-import { getAgent, setAgentStatus, type AgentJobRow } from "../api/agents";
+import { AGENT_COUNTRY_NOT_SET, getAgent, setAgentStatus, type AgentJobRow } from "../api/agents";
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageMasterData, useAuth } from "../auth/AuthProvider";
 import { useBreadcrumbLabel } from "../components/Breadcrumbs";
@@ -58,7 +58,7 @@ function AgentDetailsView() {
     const rows: AgentJobRow[] = tab === "all" ? [...agent.jobs.processing, ...agent.jobs.completed, ...agent.jobs.cancelled].sort(newestFirst) : agent.jobs[tab];
 
     return (
-        <section aria-labelledby="page-title" className="mx-auto max-w-6xl space-y-4">
+        <section aria-labelledby="page-title" className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                     <h1 id="page-title" className="text-headline-lg text-ink">{agent.name}</h1>
@@ -87,7 +87,7 @@ function AgentDetailsView() {
                             <div role="tablist" aria-label="Job status" className="flex flex-wrap gap-1">
                                 {JOB_TABS.map((t) => (
                                     <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
-                                        className={`h-8 rounded px-3 text-label-md ${tab === t.key ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}>
+                                        className={`h-8 rounded-lg px-3 text-label-md ${tab === t.key ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}>
                                         {t.label} ({counts[t.key]})
                                     </button>
                                 ))}
@@ -130,7 +130,7 @@ function AgentDetailsView() {
                 <div role="tabpanel" id="agent-panel-details" aria-labelledby="agent-tab-details">
                     <Card className="p-4">
                         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                            <Detail label="Country">{countryName(agent.countryCode)}</Detail>
+                            <Detail label="Country">{agent.countryCode ? countryName(agent.countryCode) : AGENT_COUNTRY_NOT_SET}</Detail>
                             <Detail label="Contact number">{agent.contactNumber ?? "—"}</Detail>
                             <Detail label="WhatsApp number">{agent.whatsappNumber ?? "—"}</Detail>
                             <Detail label="Email">{agent.email ?? "—"}</Detail>

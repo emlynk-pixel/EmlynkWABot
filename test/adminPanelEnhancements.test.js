@@ -17,7 +17,7 @@ import { pendingConflictsByCandidate } from "../src/services/candidateFormSubmis
 import { CONFIRM_SELECT } from "../src/services/candidateFormFieldConfirmService.js";
 import { parseAllocationListQuery } from "../src/services/workAllocationService.js";
 
-const ROLES = ["ADMIN", "MANAGER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"];
+const ROLES = ["ADMIN", "OWNER", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"];
 const user = (role, n) => ({ adminId: `u-${role.toLowerCase()}`, role, name: `${role} user`, email: `${role.toLowerCase()}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, status: "ACTIVE" });
 const USERS = Object.fromEntries(ROLES.map((role, n) => [role, user(role, n + 1)]));
 
@@ -106,7 +106,7 @@ describe("Candidate Form conflict indicator (GET /candidates formConflicts)", ()
     test("CONFLICT-005 / 006: confirming one leaves the others; rejecting the rest clears the indicator (nothing is stored about it)", async () => {
         await prisma.candidate.create({ data: A });
         await submit(A.passportId, { birthPlace: "KANDY", address: "1 NEW ROAD" });
-        assert.equal((await review(USERS.MANAGER, "confirm-field", A.passportId, "basic.birthPlace", "NEGOMBO", "KANDY")).status, 200);
+        assert.equal((await review(USERS.OWNER, "confirm-field", A.passportId, "basic.birthPlace", "NEGOMBO", "KANDY")).status, 200);
         assert.deepEqual((await listItem(USERS.ADMIN, A.passportId)).formConflicts, ["contact.address"], "partial resolution leaves the rest");
         assert.equal((await prisma.candidate.findUnique({ where: { passportId: A.passportId } })).placeOfBirth, "KANDY");
         assert.equal((await review(USERS.ADMIN, "reject-field", A.passportId, "contact.address", "12 GALLE ROAD", "1 NEW ROAD")).status, 200);
@@ -122,7 +122,7 @@ describe("Candidate Form conflict indicator (GET /candidates formConflicts)", ()
         assert.deepEqual((await listItem(USERS.ADMIN, A.passportId)).formConflicts, []);
     });
 
-    test("CONFLICT-008 RBAC: only ADMIN and MANAGER may confirm or reject; JOB_HANDLER, ANALYST and REGISTRATION_DESK get 403 and nothing changes", async () => {
+    test("CONFLICT-008 RBAC: only ADMIN (an OWNER too) may confirm or reject; JOB_HANDLER, ANALYST and REGISTRATION_DESK get 403 and nothing changes", async () => {
         await prisma.candidate.create({ data: A });
         await prisma.candidateAllocation.create({ data: { passportId: A.passportId, analystId: USERS.ANALYST.adminId } });
         await submit(A.passportId, { birthPlace: "KANDY" });
@@ -311,7 +311,7 @@ async function seedAllocationCandidates() {
     ] });
     return rows.map((row) => row[0]);
 }
-const allocation = async (query = "") => (await api(USERS.MANAGER, "GET", `/work-allocation/candidates${query}`)).body;
+const allocation = async (query = "") => (await api(USERS.OWNER, "GET", `/work-allocation/candidates${query}`)).body;
 const ids = (body) => body.items.map((item) => item.passportId);
 
 describe("Work Allocation filters (server-side, before paging)", () => {
@@ -352,7 +352,8 @@ describe("Work Allocation filters (server-side, before paging)", () => {
     test("WA-004: Status and current stage filters use the Candidates list's own derivation", async () => {
         await seedAllocationCandidates();
         assert.deepEqual(ids(await allocation("?workflowStatus=STOPPED_WITH_TEST")), ["N0000002"]);
-        assert.deepEqual(ids(await allocation("?workflowStatus=REGISTERED")).sort(), ["N0000001", "N0000003", "N0000004", "N0000005"]);
+        assert.deepEqual(ids(await allocation("?workflowStatus=REGISTERED")).sort(), ["N0000001", "N0000004", "N0000005"]);
+        assert.deepEqual(ids(await allocation("?workflowStatus=TEST_PASSED")), ["N0000003"], "a saved PASS");
         assert.deepEqual(ids(await allocation("?stage=JOB_DETAILS")).sort(), ["N0000002", "N0000003"], "test details completed: the current stage is Job details");
         assert.deepEqual(ids(await allocation("?stage=TEST_DETAILS")).sort(), ["N0000001", "N0000004", "N0000005"]);
         assert.deepEqual(ids(await allocation("?stage=COMPLETE")), []);
@@ -391,7 +392,7 @@ describe("Work Allocation filters (server-side, before paging)", () => {
 
     test("WA-007: invalid filters are refused with 400; filters are echoed back", async () => {
         for (const query of ["registeredFrom=2026-13-01", "registeredTo=yesterday", "registeredFrom=2026-10-10&registeredTo=2026-10-01", "workflowStatus=NOPE", "stage=NOPE", `jobType=${"x".repeat(121)}`]) {
-            assert.equal((await api(USERS.MANAGER, "GET", `/work-allocation/candidates?${query}`)).status, 400, query);
+            assert.equal((await api(USERS.OWNER, "GET", `/work-allocation/candidates?${query}`)).status, 400, query);
         }
         const parsed = parseAllocationListQuery({ registeredFrom: "2026-10-01", jobType: " PLUMBER ", workflowStatus: "REGISTERED", stage: "COMPLETE" });
         assert.deepEqual([parsed.params.registeredFrom, parsed.params.jobType, parsed.params.workflowStatus, parsed.params.stage], ["2026-10-01", "PLUMBER", "REGISTERED", "COMPLETE"]);
@@ -399,7 +400,7 @@ describe("Work Allocation filters (server-side, before paging)", () => {
         assert.deepEqual((await allocation("?jobType=PLUMBER&stage=TEST_DETAILS")).filters, { status: "UNALLOCATED", analystId: null, search: null, registeredFrom: null, registeredTo: null, jobType: "PLUMBER", workflowStatus: null, stage: "TEST_DETAILS" });
     });
 
-    test("WA-008 RBAC: still ADMIN and MANAGER only", async () => {
+    test("WA-008 RBAC: ADMIN only (an OWNER too)", async () => {
         for (const role of ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             assert.equal((await api(USERS[role], "GET", "/work-allocation/candidates?jobType=PLUMBER")).status, 403, role);
         }

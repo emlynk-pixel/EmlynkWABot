@@ -3,11 +3,11 @@ import { apiRequest } from "./client";
 
 // Client Management (src/services/clientService.js, /api/admin/client-management).
 // A Client is the employer / customer organisation. It works with MANY Agents (and
-// an Agent with many Clients: agent_client) and has many Jobs. ADMIN and MANAGER
+// an Agent with many Clients: agent_client) and has many Jobs. ADMIN and JOB_HANDLER
 // only. Never deleted: ACTIVE or INACTIVE.
 // (The legacy candidate "Clients" area is /api/admin/clients, api/admin.ts.)
 
-export type ClientAgentRef = { agentId: string; name: string; countryCode: string; status: EntityStatus };
+export type ClientAgentRef = { agentId: string; name: string; countryCode: string | null; status: EntityStatus };
 
 export type ClientRecord = {
     clientId: string;
@@ -22,6 +22,8 @@ export type ClientRecord = {
     whatsappNumber: string | null;
     email: string | null;
     address: string | null;
+    // Company registration number (also filled by the bulk import's COMPANY NUMBER when blank).
+    registrationNumber?: string | null;
     createdAt: string | null;
     updatedAt: string | null;
 };
@@ -52,6 +54,7 @@ export type ClientInput = {
     whatsappNumber?: string | null;
     email?: string | null;
     address?: string | null;
+    registrationNumber?: string | null;
 };
 
 export type ClientOption = { clientId: string; name: string; status: EntityStatus };

@@ -122,8 +122,8 @@ describe("database", () => {
 
     test("bulk import: a number held in the older form is a WHATSAPP_CONFLICT (imported without it)", async () => {
         await legacy(1, "94771234567");
-        const rows = [{ rowNumber: 2, values: { "PASSPORT NUMBER": "N9200001", SURNAME: "SYNTH", "OTHER NAME": "SYNTH", "WHATSAPP NUMBER": "+94 77 123 4567" } }];
-        const p = await previewImport({ db: prisma, actor: ADMIN, fileName: "synthetic.xlsx", headers: ["PASSPORT NUMBER", "SURNAME", "OTHER NAME", "WHATSAPP NUMBER"], rows });
+        const rows = [{ rowNumber: 2, values: { "PASSPORT NUMBER": "N9200001", SURNAME: "SYNTH", "OTHER NAME": "SYNTH", "WHATSAPP NUMBER": "+94 77 123 4567", "JOB ROLE": "Plaster" } }];
+        const p = await previewImport({ db: prisma, actor: ADMIN, fileName: "synthetic.xlsx", headers: ["PASSPORT NUMBER", "SURNAME", "OTHER NAME", "WHATSAPP NUMBER", "JOB ROLE"], rows });
         assert.equal(p.summary.whatsappConflicts, 1);
         await commitChunk({ db: prisma, actor: ADMIN, importId: p.importId, chunkIndex: 0, rows });
         await finishImport({ db: prisma, actor: ADMIN, importId: p.importId });

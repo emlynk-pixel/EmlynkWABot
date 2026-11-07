@@ -41,8 +41,17 @@ describe("createAccessTokenVerifier", () => {
     test("a current session -> the Supabase user ID and email; never a role", async () => {
         const client = fakeClient({ data: { user: { id: USER_ID, email: "Person@Example.invalid", app_metadata: { role: "ADMIN" }, user_metadata: { role: "ADMIN" } } }, error: null });
         const identity = await createAccessTokenVerifier({ client })(TOKEN);
-        assert.deepEqual(identity, { authUserId: USER_ID, email: "person@example.invalid" });
+        assert.deepEqual(identity, { authUserId: USER_ID, email: "person@example.invalid", amr: [] });
         assert.deepEqual(client.calls, [TOKEN], "verified by Supabase itself");
+    });
+
+    test("how the session signed in (amr) is read from the verified token: a password sign-in says password", async () => {
+        const payload = Buffer.from(JSON.stringify({ sub: "x", amr: [{ method: "password", timestamp: 1 }] })).toString("base64url");
+        const token = `eyJhbGciOiJFUzI1NiJ9.${payload}.c2lnbmF0dXJl`;
+        const client = fakeClient({ data: { user: { id: USER_ID, email: "p@example.invalid" } }, error: null });
+        assert.deepEqual((await createAccessTokenVerifier({ client })(token)).amr, ["password"]);
+        const notVerified = createAccessTokenVerifier({ client: fakeClient({ data: { user: null }, error: { status: 401 } }) });
+        assert.equal(await notVerified(token), null, "never read from a token Supabase refused");
     });
 
     test("expired, forged or signed-out sessions -> null", async () => {

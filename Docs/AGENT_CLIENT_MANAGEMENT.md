@@ -199,7 +199,7 @@ Handled by `src/services/agentService.js` and routes in `src/routes/admin.js`.
 - **Client Protection Rule**: An Agent edit **cannot** orphan a Client. If removing a Client would leave that Client with zero linked Agents across the entire system, the request is rejected with `409 CLIENT_NEEDS_AGENT`.
 - **Inactive Agent Rule**: An inactive Agent cannot be given new clients (`409 AGENT_INACTIVE`). However, an existing linked Agent that later becomes inactive retains its existing links.
 
-### 6.2 Agent Endpoints (ADMIN and MANAGER only)
+### 6.2 Agent Endpoints (ADMIN, TEAM_LEAD and JOB_HANDLER only)
 
 | Method | Endpoint | Description | Request Body | Response |
 |---|---|---|---|---|
@@ -225,7 +225,7 @@ Handled by `src/services/clientService.js` and routes in `src/routes/admin.js`.
   - If an Agent already linked becomes inactive in the future, it may remain linked; however, new links cannot be formed to inactive Agents.
 - **Compatibility Endpoint**: `PATCH /api/admin/client-management/:clientId/agent` with `{ agentId }` is retained for backwards compatibility; it replaces the agent list with `agentIds: [agentId]`.
 
-### 7.2 Client Endpoints (ADMIN and MANAGER only)
+### 7.2 Client Endpoints (ADMIN, TEAM_LEAD and JOB_HANDLER only)
 
 | Method | Endpoint | Description | Request Body | Response |
 |---|---|---|---|---|
@@ -370,12 +370,12 @@ Access control is enforced strictly in the backend via `requireRole` middleware 
 
 | Role | Agents API (`/agents`) | Client Management API (`/client-management`) | Options Endpoints (`/agent-options`, `/client-options`, `/job-options`) | Admin UI Sidebar Access |
 |---|---|---|---|---|
-| **ADMIN** | Full (Read, Write, Status) | Full (Read, Write, Status) | Allowed | Visible |
-| **MANAGER** | Full (Read, Write, Status) | Full (Read, Write, Status) | Allowed | Visible |
+| **OWNER, ADMIN** | Full (Read, Write, Status) | Full (Read, Write, Status) | Allowed | Visible |
+| **JOB_HANDLER** | Full (Read, Write, Status) | Full (Read, Write, Status) | Allowed | Visible |
 | **ANALYST** | **403 Forbidden** | **403 Forbidden** | **403 Forbidden** | Hidden |
 | **REGISTRATION_DESK** | **403 Forbidden** | **403 Forbidden** | **403 Forbidden** | Hidden |
 
-*Analyst Note:* Analysts deal exclusively with candidate workflows and assigned candidate stages. Master entity configuration (Agents and Clients) is strictly reserved for `ADMIN` and `MANAGER`.
+*Analyst Note:* Analysts deal exclusively with candidate workflows and assigned candidate stages. Master entity configuration (Agents and Clients) is strictly reserved for `ADMIN` and `JOB_HANDLER` (the former `MANAGER` role is retired: `ROLES_AND_PERMISSIONS.md` §6).
 
 ---
 

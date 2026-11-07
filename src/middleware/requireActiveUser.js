@@ -1,5 +1,6 @@
 import { bearerToken, verifyWithSupabase } from "../auth/supabaseIdentity.js";
 import { resolveDb } from "../utils/resolveClients.js";
+import { isValidRole } from "./requireRole.js";
 
 // Application account status (public."user".status, a plain string).
 //   INVITED   invited through Supabase Auth, setup not completed yet
@@ -10,6 +11,8 @@ export const USER_STATUS = Object.freeze({ ACTIVE: "ACTIVE", INACTIVE: "INACTIVE
 export const AUTH_REQUIRED = Object.freeze({ message: "Authentication Token is required!" });
 export const INVALID_TOKEN = Object.freeze({ message: "Invalid or Expired Token" });
 export const ACCOUNT_NOT_ACTIVE = Object.freeze({ message: "Your account is not active. Contact an administrator.", code: "ACCOUNT_NOT_ACTIVE" });
+// An ACTIVE account whose role is not a supported one (a retired MANAGER that was not converted).
+export const ROLE_NOT_SUPPORTED = Object.freeze({ message: "Your account's role is no longer supported. Contact the Owner to update it.", code: "ROLE_NOT_SUPPORTED" });
 
 // What req.user holds: never a credential.
 export const USER_PROFILE_SELECT = Object.freeze({ adminId: true, authUserId: true, email: true, name: true, role: true, status: true });
@@ -37,7 +40,9 @@ export async function findUserByAuthId(db, authUserId) {
 // public."user" row whose status is ACTIVE. The row is read on every request,
 // so a deactivation or role change applies to the very next request; role
 // claims in the token are never used. A missing or inactive row fails closed
-// with 403 (the identity is genuine, the application account is not usable).
+// with 403 (the identity is genuine, the application account is not usable),
+// and so does a row whose role is not supported (requireRole.js ALL_ROLES): it
+// reaches no route, not even one without a role tier.
 // Express 5 forwards a rejected promise (Supabase or the database down) to
 // the error handler, which answers a generic 500.
 export function createRequireActiveUser({ db, verifyAccessToken } = {}) {
@@ -47,6 +52,7 @@ export function createRequireActiveUser({ db, verifyAccessToken } = {}) {
         if (!user || user.status !== USER_STATUS.ACTIVE) {
             return res.status(403).json(ACCOUNT_NOT_ACTIVE);
         }
+        if (!isValidRole(user.role)) return res.status(403).json(ROLE_NOT_SUPPORTED);
         req.user = user;
         return next();
     };
