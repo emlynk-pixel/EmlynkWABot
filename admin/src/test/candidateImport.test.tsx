@@ -15,6 +15,12 @@ vi.mock("../components/importWorkbook", async (importOriginal) => ({
     readWorkbook: readWorkbookMock,
 }));
 const { checkWorkbookFile, extractRows, WorkbookError } = await import("../components/importWorkbook");
+// The validation sheet is built from the chosen file in the browser (tested in validationWorkbook.test.ts).
+const downloadValidationMock = vi.hoisted(() => vi.fn());
+vi.mock("../components/validationWorkbook", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../components/validationWorkbook")>()),
+    downloadValidationWorkbook: downloadValidationMock,
+}));
 
 const STATUS = {
     worker: { online: true, lastHeartbeatAt: "2026-10-28T09:00:00.000Z" }, configured: true, writeGate: "ENABLED", target: "…id / Mirror",
@@ -30,7 +36,10 @@ const REQUIRED = ["PASSPORT NUMBER", "SURNAME", "OTHER NAME"];
 const asRole = (role: string, routes: FetchRoutes = {}) =>
     signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } }, [`GET ${BASE}/status`]: { status: 200, body: STATUS }, ...routes });
 
-beforeEach(() => readWorkbookMock.mockReset());
+beforeEach(() => {
+    readWorkbookMock.mockReset();
+    downloadValidationMock.mockReset();
+});
 
 describe("Upload button and roles", () => {
     test("1. ADMIN sees Upload (with its hint) next to Test Connection and Sync Now", async () => {
@@ -148,6 +157,106 @@ describe("the import flow", () => {
         expect(within(dialog).getByText(/Google Sheet sync was requested/)).toBeInTheDocument();
         await user.click(within(dialog).getByRole("button", { name: "Close" }));
         await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    });
+
+    test("Jobs from this upload: grouped by Interview date + Unique number; a NEW Job's last two digits are edited, saved and checked before the import", async () => {
+        readWorkbookMock.mockResolvedValue({ headers: ["PASSPORT NUMBER", "SURNAME", "OTHER NAME", "UNIQUE NUMBER"], rows: ROWS, missingRequired: [] });
+        const group = (from: number, suffix: string | null, state: "NEW" | "EXISTING" | "ERROR", extra = {}) => ({
+            key: `2026-07-11|${from / 100}`, interviewDate: "2026-07-11", from, to: from + 99, prefix: "JOB-2026-0711", suffix, jobCode: suffix ? `JOB-2026-0711${suffix}` : null,
+            state, codes: [], messages: [], candidates: 2, passed: 2, clientName: "Synth Builders", agentName: "Synth Agency", existingJobCode: state === "EXISTING" ? `JOB-2026-0711${suffix}` : null, edited: false, ...extra,
+        });
+        const groups = [group(3100, "01", "EXISTING"), group(3200, "02", "NEW"), group(3300, null, "ERROR", { messages: ["Candidates of this group name different companies: no Job"] })];
+        const { calls } = asRole("ADMIN", {
+            [`GET ${BASE}/import/source-columns`]: { status: 200, body: { allowed: ALLOWED, required: REQUIRED } },
+            [`POST ${BASE}/import/preview`]: { status: 200, body: { ...PREVIEW, summary: { ...PREVIEW.summary, jobsToCreate: 1, jobsReused: 1, jobMembers: 4 }, jobGroups: groups } },
+            [`PUT ${BASE}/import/${PREVIEW.importId}/job-groups`]: { status: 200, body: { jobGroups: [groups[0], { ...groups[1], suffix: "05", jobCode: "JOB-2026-071105", edited: true }, groups[2]] } },
+        });
+        renderApp("/settings/sheet-sync");
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /^Upload: import candidates/ });
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), new File(["x"], "legacy.xlsx"));
+
+        const table = await within(dialog).findByRole("table", { name: "Jobs from this upload" });
+        const rows = within(table).getAllByTestId("job-group");
+        expect(rows.map((r) => r.textContent)).toEqual([
+            expect.stringContaining("3100–3199JOB-2026-071101"), expect.stringContaining("3200–3299"), expect.stringContaining("Candidates of this group name different companies"),
+        ]);
+        expect(within(rows[0]).queryByRole("textbox"), "an existing Job keeps its ID").toBeNull();
+        const digits = within(rows[1]).getByRole("textbox", { name: /Last two digits of the Job for 3200–3299/ });
+        expect(within(rows[1]).getByText("JOB-2026-071102")).toBeInTheDocument();
+
+        await user.clear(digits);
+        await user.type(digits, "0x5");
+        expect(digits).toHaveValue("05");
+        expect(within(rows[1]).getByText("JOB-2026-071105")).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: /^Confirm import/ }), "the edit must be saved first").toBeDisabled();
+        await user.click(within(dialog).getByRole("button", { name: "Save Job IDs" }));
+        await waitFor(() => expect(calls.find((c) => c.path.endsWith("/job-groups"))?.body).toEqual({ suffixes: { "2026-07-11|32": "05" } }));
+        expect(await within(dialog).findByText(/\(changed\)/)).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Confirm import (2 candidates, 4 Job assignments)" })).toBeEnabled();
+    });
+
+    test("preview with issues: readable reasons, the automatic actions, and a validation sheet built from the chosen file (no server download)", async () => {
+        readWorkbookMock.mockResolvedValue({ headers: ["PASSPORT NUMBER", "SURNAME", "OTHER NAME", "OFFICER"], rows: ROWS, missingRequired: [] });
+        const rowIssues = [
+            { rowNumber: 3, errors: [], warnings: ["Passport number is in the old format (8 digits)"] },
+            { rowNumber: 4, errors: ["Other name is missing", "Officer does not match a system user"], warnings: ["NIC number is missing"] },
+        ];
+        const preview: ImportPreview = {
+            ...PREVIEW,
+            problems: [
+                { ...PREVIEW.problems[0], errors: [], warnings: rowIssues[0].warnings },
+                { ...PREVIEW.problems[1], errors: rowIssues[1].errors, warnings: rowIssues[1].warnings },
+            ],
+            rowIssues,
+            actions: {
+                officers: [{ sheetName: "John", userName: "John Silva", rows: 2 }], officerAssignments: [{ userName: "John Silva", rows: 2 }],
+                clients: [{ name: "ABC Construction Ltd", action: "CREATE", rows: 2 }], agents: [{ name: "XYZ Agency", action: "REUSE", rows: 2 }],
+                visa: { VISA_SUBMITTED: 1, DEPARTED: 0 }, tests: 2, testsBlankResultAsPass: 1,
+            },
+        };
+        const { calls } = asRole("ADMIN", {
+            [`GET ${BASE}/import/source-columns`]: { status: 200, body: { allowed: [...ALLOWED, "OFFICER"], required: REQUIRED } },
+            [`POST ${BASE}/import/preview`]: { status: 200, body: preview },
+        });
+        renderApp("/settings/sheet-sync");
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /^Upload: import candidates/ });
+        const file = new File(["x"], "legacy.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), file);
+
+        expect(await within(dialog).findByText("Other name is missing; Officer does not match a system user; NIC number is missing")).toBeInTheDocument();
+        const actions = within(dialog).getByRole("list", { name: "Automatic actions" });
+        expect(within(actions).getByText('Officer "John" → John Silva (2 rows)')).toBeInTheDocument();
+        expect(within(actions).getByText("2 candidates will be assigned to John Silva")).toBeInTheDocument();
+        expect(within(actions).getByText('Company "ABC Construction Ltd" → new Client will be created')).toBeInTheDocument();
+        expect(within(actions).getByText('Agent "XYZ Agency" → existing Agent matched')).toBeInTheDocument();
+        expect(within(actions).getByText('VISA STATUS "Submit" → Visa Submitted (1 candidate)')).toBeInTheDocument();
+        expect(within(actions).getByText("Interview result blank → PASS (1 candidate)")).toBeInTheDocument();
+
+        const requestsBefore = calls.length;
+        await user.click(within(dialog).getByRole("button", { name: "Download validation sheet" }));
+        expect(downloadValidationMock).toHaveBeenCalledTimes(1);
+        expect(downloadValidationMock.mock.calls[0][0]).toBe(file);
+        expect(downloadValidationMock.mock.calls[0][1]).toEqual(rowIssues);
+        expect(calls.length).toBe(requestsBefore);
+    });
+
+    test("no errors or warnings: no validation sheet is offered", async () => {
+        readWorkbookMock.mockResolvedValue({ headers: ["PASSPORT NUMBER", "SURNAME", "OTHER NAME"], rows: ROWS.slice(0, 1), missingRequired: [] });
+        asRole("ADMIN", {
+            [`GET ${BASE}/import/source-columns`]: { status: 200, body: { allowed: ALLOWED, required: REQUIRED } },
+            [`POST ${BASE}/import/preview`]: { status: 200, body: { ...PREVIEW, problems: [], rowIssues: [] } },
+        });
+        renderApp("/settings/sheet-sync");
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /^Upload: import candidates/ });
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), new File(["x"], "legacy.xlsx"));
+        expect(await within(dialog).findByLabelText("Import preview")).toBeInTheDocument();
+        expect(within(dialog).queryByRole("button", { name: "Download validation sheet" })).toBeNull();
     });
 
     test("6/7. a sheet without a required heading is refused in the browser: the problem is shown and nothing is sent", async () => {

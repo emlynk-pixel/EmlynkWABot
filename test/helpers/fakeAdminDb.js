@@ -7,16 +7,27 @@ import { authIdFor } from "./fakeSupabaseAuth.js";
 const KEYS = ["adminId", "email", "authUserId"];
 
 export function createFakeAdminDb(users = [], { auditLogs = [] } = {}) {
-    const rows = users.map((user) => ({
-        createdDate: new Date("2026-10-01T00:00:00Z"),
-        status: "ACTIVE",
-        ...user,
-        authUserId: user.authUserId === undefined ? authIdFor(user.adminId) : user.authUserId,
-    }));
+    const rows = users.map((user) => {
+        const row = {
+            createdDate: new Date("2026-10-01T00:00:00Z"),
+            status: "ACTIVE",
+            ...user,
+            authUserId: user.authUserId === undefined ? authIdFor(user.adminId) : user.authUserId,
+        };
+        // A fixture account that is (or was) in use completed its setup, as migration
+        // 20261110120000_user_activation_tracking backfills; an INVITED one did not.
+        if (row.activatedAt === undefined && row.status !== "INVITED") row.activatedAt = row.createdDate;
+        return row;
+    });
     const auditLogRows = auditLogs.map((log) => ({ ...log }));
 
     const pick = (row, select) => (select ? Object.fromEntries(Object.keys(select).map((key) => [key, row[key]])) : { ...row });
-    const matches = (row, where = {}) => Object.entries(where).every(([key, value]) => row[key] === value);
+    // Exact values; null also matches a missing field (as a NULL column); { in: [...] } lists.
+    const matches = (row, where = {}) => Object.entries(where).every(([key, value]) => {
+        if (value === null) return row[key] == null;
+        if (value && typeof value === "object" && Array.isArray(value.in)) return value.in.includes(row[key]);
+        return row[key] === value;
+    });
     const uniqueViolation = (field) => Object.assign(new Error(`Unique constraint failed on the fields: (\`${field}\`)`), { code: "P2002", meta: { target: [field] } });
     const assertUnique = (candidate, except = null) => {
         for (const field of KEYS) {

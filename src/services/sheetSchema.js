@@ -6,7 +6,8 @@
 // number of operator columns; readSheetLayout() reads row 1 and maps every
 // system column to where it is now. Header text stays strict (exact text, no
 // trimming, no case folding). The headers and the canonical order are those of
-// the latest approved "Emlynk Candidate Operational Mirror" (83 columns, A to CE).
+// the latest approved "Emlynk Candidate Operational Mirror" (81 columns, A to CC; the IVS
+// interview and Finalizing job stage columns were retired with those stages).
 //
 // Two orders exist, and only one is positional:
 //   - the CANONICAL order below (SHEET_COLUMNS): the order a new Sheet is set
@@ -82,58 +83,56 @@ const COLUMNS = [
     ["AE", "TEST DETAILS STATUS", "testDetailsStatus", STAGE],
     ["AF", "CANDIDATE DETAILS STATUS", "candidateDetailsStatus", STAGE],
     ["AG", "DOCUMENT SUBMISSION STATUS", "documentSubmissionStatus", STAGE],
-    ["AH", "IVS INTERVIEW STATUS", "ivsInterviewStatus", STAGE],
-    ["AI", "VISA SUBMISSION STATUS", "visaSubmissionStatus", STAGE],
-    ["AJ", "VISA APPROVAL STATUS", "visaApprovalStatus", STAGE],
-    ["AK", "FINALIZING JOB STATUS", "finalizingJobStatus", STAGE],
-    ["AL", "ACTIVE STATUS", "recordStatus", SYSTEM],
-    ["AM", "REGISTER DATE", "registeredAt", SYSTEM],
-    ["AN", "LAST MIRRORED AT", "lastMirroredAt", SYSTEM],
+    ["AH", "VISA SUBMISSION STATUS", "visaSubmissionStatus", STAGE],
+    ["AI", "VISA APPROVAL STATUS", "visaApprovalStatus", STAGE],
+    ["AJ", "ACTIVE STATUS", "recordStatus", SYSTEM],
+    ["AK", "REGISTER DATE", "registeredAt", SYSTEM],
+    ["AL", "LAST MIRRORED AT", "lastMirroredAt", SYSTEM],
     // Candidate Form answers, only once an Admin confirmed them into the record
     // (candidate_additional_details; candidateFormFieldConfirmService.js).
-    ["AO", "FULL NAME", "nameAsInPassport", DB],
-    ["AP", "CIVIL STATUS / MARITAL STATUS", "civilStatus", DB],
-    ["AQ", "BLOOD GROUP", "bloodGroup", DB],
-    ["AR", "HEIGHT", "height", DB],
-    ["AS", "WEIGHT (KG)", "weightKg", DB],
-    ["AT", "DRIVING LICENCE", "hasDrivingLicence", DB],
-    ["AU", "CAN READ DRAWINGS", "canReadDrawings", DB],
-    ["AV", "TEAM LEADING SKILLS", "teamLeadingSkills", DB],
-    ["AW", "OTHER LANGUAGES", "otherLanguages", DB],
-    ["AX", "EMAIL", "email", DB],
-    ["AY", "CITY", "city", DB],
-    ["AZ", "DISTRICT", "district", DB],
-    ["BA", "DS DIVISION", "dsDivision", DB],
-    ["BB", "GN DIVISION", "gnDivision", DB],
-    ["BC", "CITY IN ROMANIA", "cityInRomania", DB],
-    ["BD", "DISTANCE TO BUCHAREST (KM)", "distanceToBucharestKm", DERIVED],
-    ["BE", "OTHER JOB CATEGORY", "otherJobCategory", DB],
-    ["BF", "OTHER SKILLS 1", "otherSkills1", DB],
-    ["BG", "OTHER SKILLS 2", "otherSkills2", DB],
-    ["BH", "ENGLISH KNOWLEDGE", "englishKnowledge", DB],
-    ["BI", "SHIRT SIZE", "shirtSize", DB],
-    ["BJ", "WAIST SIZE", "waistSize", DB],
-    ["BK", "SHOE SIZE", "shoeSize", DB],
-    ["BL", "FATHER NAME", "fatherName", DB],
-    ["BM", "FATHER PASSPORT NUMBER", "fatherPassportNumber", DB],
-    ["BN", "FATHER BIRTHDAY", "fatherBirthday", DB],
-    ["BO", "FATHER ALIVE", "fatherAlive", DB],
-    ["BP", "MOTHER NAME", "motherName", DB],
-    ["BQ", "MOTHER PASSPORT NUMBER", "motherPassportNumber", DB],
-    ["BR", "MOTHER BIRTHDAY", "motherBirthday", DB],
-    ["BS", "MOTHER ALIVE", "motherAlive", DB],
-    ["BT", "SPOUSE NAME", "spouseName", DB],
-    ["BU", "SPOUSE PASSPORT NUMBER", "spousePassportNumber", DB],
-    ["BV", "SPOUSE BIRTHDAY", "spouseBirthday", DB],
-    ["BW", "CHILD 1 NAME", "child1Name", DB],
-    ["BX", "CHILD 2 NAME", "child2Name", DB],
-    ["BY", "CHILD 3 NAME", "child3Name", DB],
-    ["BZ", "GUARDIAN NAME", "guardianName", DB],
-    ["CA", "GUARDIAN RELATIONSHIP", "guardianRelationship", DB],
-    ["CB", "GUARDIAN NIC", "guardianNic", DB],
-    ["CC", "GUARDIAN BIRTHDAY", "guardianBirthday", DB],
-    ["CD", "GUARDIAN PHONE", "guardianPhone", DB],
-    ["CE", "GUARDIAN ADDRESS", "guardianAddress", DB],
+    ["AM", "FULL NAME", "nameAsInPassport", DB],
+    ["AN", "CIVIL STATUS / MARITAL STATUS", "civilStatus", DB],
+    ["AO", "BLOOD GROUP", "bloodGroup", DB],
+    ["AP", "HEIGHT", "height", DB],
+    ["AQ", "WEIGHT (KG)", "weightKg", DB],
+    ["AR", "DRIVING LICENCE", "hasDrivingLicence", DB],
+    ["AS", "CAN READ DRAWINGS", "canReadDrawings", DB],
+    ["AT", "TEAM LEADING SKILLS", "teamLeadingSkills", DB],
+    ["AU", "OTHER LANGUAGES", "otherLanguages", DB],
+    ["AV", "EMAIL", "email", DB],
+    ["AW", "CITY", "city", DB],
+    ["AX", "DISTRICT", "district", DB],
+    ["AY", "DS DIVISION", "dsDivision", DB],
+    ["AZ", "GN DIVISION", "gnDivision", DB],
+    ["BA", "CITY IN ROMANIA", "cityInRomania", DB],
+    ["BB", "DISTANCE TO BUCHAREST (KM)", "distanceToBucharestKm", DERIVED],
+    ["BC", "OTHER JOB CATEGORY", "otherJobCategory", DB],
+    ["BD", "OTHER SKILLS 1", "otherSkills1", DB],
+    ["BE", "OTHER SKILLS 2", "otherSkills2", DB],
+    ["BF", "ENGLISH KNOWLEDGE", "englishKnowledge", DB],
+    ["BG", "SHIRT SIZE", "shirtSize", DB],
+    ["BH", "WAIST SIZE", "waistSize", DB],
+    ["BI", "SHOE SIZE", "shoeSize", DB],
+    ["BJ", "FATHER NAME", "fatherName", DB],
+    ["BK", "FATHER PASSPORT NUMBER", "fatherPassportNumber", DB],
+    ["BL", "FATHER BIRTHDAY", "fatherBirthday", DB],
+    ["BM", "FATHER ALIVE", "fatherAlive", DB],
+    ["BN", "MOTHER NAME", "motherName", DB],
+    ["BO", "MOTHER PASSPORT NUMBER", "motherPassportNumber", DB],
+    ["BP", "MOTHER BIRTHDAY", "motherBirthday", DB],
+    ["BQ", "MOTHER ALIVE", "motherAlive", DB],
+    ["BR", "SPOUSE NAME", "spouseName", DB],
+    ["BS", "SPOUSE PASSPORT NUMBER", "spousePassportNumber", DB],
+    ["BT", "SPOUSE BIRTHDAY", "spouseBirthday", DB],
+    ["BU", "CHILD 1 NAME", "child1Name", DB],
+    ["BV", "CHILD 2 NAME", "child2Name", DB],
+    ["BW", "CHILD 3 NAME", "child3Name", DB],
+    ["BX", "GUARDIAN NAME", "guardianName", DB],
+    ["BY", "GUARDIAN RELATIONSHIP", "guardianRelationship", DB],
+    ["BZ", "GUARDIAN NIC", "guardianNic", DB],
+    ["CA", "GUARDIAN BIRTHDAY", "guardianBirthday", DB],
+    ["CB", "GUARDIAN PHONE", "guardianPhone", DB],
+    ["CC", "GUARDIAN ADDRESS", "guardianAddress", DB],
 ];
 
 // 0 -> "A", 25 -> "Z", 26 -> "AA", 52 -> "BA", 701 -> "ZZ", 702 -> "AAA".
@@ -151,10 +150,12 @@ export function columnLetter(index) {
 
 export const SHEET_COLUMNS = Object.freeze(COLUMNS.map(([column, header, field, kind], index) => Object.freeze({ index, column, header, field, kind })));
 
-// The system columns: 82 business columns and the technical identity. The
-// live Sheet may have more columns (operator columns), never fewer.
-export const SHEET_COLUMN_COUNT = 83;
-export const SHEET_BUSINESS_COLUMN_COUNT = 82;
+// The system columns: 80 business columns and the technical identity. The
+// live Sheet may have more columns (operator columns), never fewer. (The retired
+// "IVS INTERVIEW STATUS" and "FINALIZING JOB STATUS" columns of an older Sheet are
+// now ordinary operator columns: never written again, safe to delete from the Sheet.)
+export const SHEET_COLUMN_COUNT = 81;
+export const SHEET_BUSINESS_COLUMN_COUNT = 80;
 export const SHEET_HEADER_ROW = 1;
 export const SHEET_FIRST_DATA_ROW = 2;
 

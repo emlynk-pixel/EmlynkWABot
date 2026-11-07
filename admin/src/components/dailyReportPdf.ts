@@ -1,5 +1,5 @@
 import type { DailyRoleSummary, DailySummary } from "../api/admin";
-import { STAGE_LABELS, variantLabel, type CandidateStageKey } from "../api/candidates";
+import { stageLabel, variantLabel } from "../api/candidates";
 import { roleLabel } from "../auth/roles";
 import { documentTypeLabel, formatDateTime, formatDay, formatNumber, formatTime } from "./format";
 
@@ -15,7 +15,6 @@ const MARGIN = 16;
 const LINE = 4.6;
 // WhatsApp files the classifier could not type are "Unclassified" here.
 export const reportTypeLabel = (type: string) => (type === "UNKNOWN" ? "Unclassified" : documentTypeLabel(type));
-const stageLabel = (stage: string) => STAGE_LABELS[stage as CandidateStageKey] ?? stage;
 const generatedAt = () => new Date().toLocaleString("en-GB", { timeZone: "Asia/Colombo", dateStyle: "long", timeStyle: "short" });
 
 function createWriter(doc: Doc) {
@@ -138,7 +137,7 @@ export async function exportSummaryPdf(report: DailySummary) {
     w.heading("Key metrics");
     w.table([{ title: "Metric", width: 3 }, { title: "Count", width: 1, align: "right" }], [
         ["Candidates registered", formatNumber(summary.candidatesRegistered)],
-        ["Candidates completed (final stage completed)", formatNumber(summary.candidatesCompleted)],
+        ["Candidates completed (recorded as Departed)", formatNumber(summary.candidatesCompleted)],
         ["Visa completed (visa approval completed)", formatNumber(summary.visaCompleted)],
         ["Calls taken", formatNumber(summary.callsTaken)],
         ["Documents submitted", formatNumber(summary.documentsSubmitted)],
@@ -158,7 +157,7 @@ export async function exportSummaryPdf(report: DailySummary) {
     );
     if (registeredCandidates.truncated) w.text(`Showing the first ${formatNumber(registeredCandidates.items.length)} of ${formatNumber(registeredCandidates.total)}.`, { size: 8.5, color: 110 });
 
-    w.heading("Completed candidates", `${formatNumber(completedCandidates.total)} candidate(s) had their final stage (Finalizing the job) completed on this day.`);
+    w.heading("Completed candidates", `${formatNumber(completedCandidates.total)} candidate(s) were recorded as Departed on this day.`);
     w.table(
         [{ title: "Passport number", width: 1.4 }, { title: "Name", width: 2.4 }, { title: "Completed", width: 1.4 }, { title: "All stages now", width: 1.2 }],
         completedCandidates.items.map((c) => [c.passportId, c.name ?? "—", formatDateTime(c.completedAt), c.allStagesComplete ? "Complete" : "Some open"]),

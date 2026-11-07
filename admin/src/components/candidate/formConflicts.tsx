@@ -16,7 +16,7 @@ const ADDITIONAL_DETAILS_FIELDS = new Set([
     "family.fatherAlive", "family.motherAlive",
     "basic.civilStatus", "family.father.fullName", "family.mother.fullName", "family.spouse.fullName", "family.spouse.birthDate",
     "family.child1", "family.child2", "family.child3", "qualifications.otherSkills1",
-    // Confirmed from the "Submitted on the Candidate Form" card (Additional details tab).
+    // The Candidate Form's other answers (their own fields on the Additional details tab).
     "basic.bloodGroup", "basic.height", "basic.weight", "basic.drivingLicence", "basic.canReadDrawings", "basic.teamLeadingSkills", "basic.otherLanguages",
     "contact.email", "contact.city", "contact.district", "contact.dsDivision", "contact.gnDivision", "contact.cityInRomania",
     "qualifications.jobCategoryOther", "qualifications.otherSkills2", "qualifications.englishKnowledge",

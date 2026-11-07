@@ -192,6 +192,57 @@ describe("GET / PUT additional details", () => {
     });
 });
 
+describe("the Candidate Form's other answers on the Additional Details form", () => {
+    const ANSWERS = {
+        bloodGroup: "o+", height: "175 cm", weightKg: "70.5", drivingLicence: true, canReadDrawings: false, teamLeadingSkills: true, otherLanguages: "English, Romanian",
+        email: "anusha@example.com", city: "Negombo", district: "Gampaha", dsDivision: "Negombo", gnDivision: "Kurana", cityInRomania: "Cluj-Napoca", englishKnowledge: "good",
+        otherJobCategory: "Scaffolder", otherJobSkills2: "Forklift", fatherPassportNumber: "n1234567", motherPassportNumber: "N7654321", spousePassportNumber: "N1112223",
+        guardianName: "Kamal Perera", guardianRelationship: "Uncle", guardianNic: "901234567v", guardianBirthday: "1960-01-01", guardianPhone: "0771234567", guardianAddress: "45 Lake Road",
+    };
+
+    test("they are returned, saved with the same rules as their Confirm, and audited with the other fields", async () => {
+        await withServer("ADMIN", async (call) => {
+            const { status, body } = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, ...ANSWERS } });
+            assert.equal(status, 200, JSON.stringify(body));
+            assert.deepEqual(
+                [body.details.bloodGroup, body.details.weightKg, body.details.englishKnowledge, body.details.fatherPassportNumber, body.details.guardianNic, body.details.guardianPhone, body.details.guardianBirthday, body.details.drivingLicence],
+                ["O+", "70.5", "GOOD", "N1234567", "901234567V", "+94771234567", "1960-01-01", true],
+            );
+            assert.deepEqual((await call("/N1023757/additional-details")).body.details, body.details);
+        });
+        const [audit] = await auditRows();
+        const after = JSON.parse(audit.newValue);
+        assert.deepEqual([after.bloodGroup, after.guardianName, after.weightKg], ["O+", "Kamal Perera", "70.5"]);
+    });
+
+    test("a page that leaves them out (loaded before they were on the form) keeps them; null or empty clears one", async () => {
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: "N1023757", bloodGroup: "AB-", guardianName: "KAMAL PERERA", weightKg: "70.5", email: "old@example.com" } });
+        await withServer("ADMIN", async (call) => {
+            const view = (await call("/N1023757/additional-details")).body;
+            const kept = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, expectedUpdatedDate: view.updatedDate } });
+            assert.equal(kept.status, 200, JSON.stringify(kept.body));
+            assert.deepEqual([kept.body.details.bloodGroup, kept.body.details.guardianName, kept.body.details.weightKg, kept.body.details.email], ["AB-", "KAMAL PERERA", "70.5", "old@example.com"]);
+            const cleared = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, bloodGroup: null, email: "", expectedUpdatedDate: kept.body.updatedDate } });
+            assert.deepEqual([cleared.body.details.bloodGroup, cleared.body.details.email, cleared.body.details.guardianName], [null, null, "KAMAL PERERA"]);
+        });
+        // The first save changed only the original fields: the kept ones are not in its audit entry.
+        const [first] = await auditRows();
+        assert.equal(Object.hasOwn(JSON.parse(first.newValue), "bloodGroup"), false);
+    });
+
+    test("each is validated; the spouse's passport number only when married", async () => {
+        const bad = { bloodGroup: "Z+", weightKg: "5", email: "nope", englishKnowledge: "PERFECT", fatherPassportNumber: "N-1", guardianNic: "123", guardianPhone: "abc", guardianBirthday: "2999-01-01", height: "x".repeat(31) };
+        const { errors } = parseAdditionalDetailsBody({ ...FULL, ...bad });
+        assert.deepEqual(errors.map((e) => e.field).sort(), Object.keys(bad).sort());
+        const single = parseAdditionalDetailsBody({ ...FULL, maritalStatus: "SINGLE", wifeFullName: null, wifeBirthday: null, child1Name: null, child2Name: null, spousePassportNumber: "N1112223" });
+        assert.deepEqual(single.errors, [{ field: "spousePassportNumber", message: "is only recorded when married" }]);
+        await withServer("ADMIN", async (call) => {
+            assert.equal((await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, ...bad } })).status, 400);
+        });
+        assert.equal(await prisma.candidateAdditionalDetails.count(), 0);
+    });
+});
+
 describe("audit", () => {
     test("the first save is CREATE_ADDITIONAL_DETAILS with the fields given, by req.user", async () => {
         await withServer("ADMIN", async (call) => {

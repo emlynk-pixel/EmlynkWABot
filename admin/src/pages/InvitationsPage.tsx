@@ -21,6 +21,10 @@ const ROLE_HELP: Record<Role, string> = {
     JOB_HANDLER: "Manages Jobs, Agents and Clients; views candidates without changing them.",
 };
 
+// Supabase invitation links expire (24 hours by default): older invitations need resending.
+const INVITATION_LINK_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const invitationExpired = (invitedAt: string) => Date.now() - new Date(invitedAt).getTime() > INVITATION_LINK_LIFETIME_MS;
+
 const STATUS_BADGE: Record<string, { label: string; icon: "schedule" | "check_circle" | "cancel"; className: string }> = {
     INVITED: { label: "Invitation sent", icon: "schedule", className: "bg-review-bg text-review border-review-border" },
     ACTIVE: { label: "Active", icon: "check_circle", className: "bg-verified-bg text-verified border-verified-border" },
@@ -278,6 +282,12 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                                                     <Icon name={badge.icon} className="size-3.5" />
                                                     {badge.label}
                                                 </span>
+                                                {entry.status === "INVITED" && entry.invitedAt && (
+                                                    <p className="mt-1 text-label-sm text-ink-subtle">
+                                                        Sent {dateFormat.format(new Date(entry.invitedAt))}
+                                                        {invitationExpired(entry.invitedAt) && <span className="text-review"> · link expired, resend</span>}
+                                                    </p>
+                                                )}
                                             </td>
                                             <td className="px-4 py-3 text-label-sm text-ink-subtle">{dateFormat.format(new Date(entry.createdDate))}</td>
                                             <td className="space-x-3 px-4 py-3 text-right">

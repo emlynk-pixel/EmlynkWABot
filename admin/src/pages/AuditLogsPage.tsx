@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { listAuditLogs, type AuditCategory, type AuditChange, type AuditLogItem, type AuditLogParams } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
-import { STAGE_LABELS } from "../api/candidates";
+import { stageLabel } from "../api/candidates";
 import { isAdmin, useAuth } from "../auth/AuthProvider";
 import { roleLabel as labelOfRole } from "../auth/roles";
 import { secondaryButton } from "../components/Dialog";
@@ -77,6 +77,8 @@ const ACTION_LABELS: Record<string, string> = {
     UNVERIFY_DOCUMENTS: "Documents verification removed",
     DETAILS_VERIFICATION_RESET: "Details verification reset (details changed)",
     DOCUMENTS_VERIFICATION_RESET: "Documents verification reset (documents changed)",
+    SET_FINAL_STATUS: "Final status changed",
+    CANDIDATE_DEPARTED: "Candidate departed (bulk import)",
     SET_SHEET_DESTINATION: "Sheet sync destination changed",
     UPDATE_FORM_BRANDING: "Candidate form branding changed",
     UPLOAD_DOCUMENT: "Document uploaded",
@@ -146,7 +148,6 @@ const FIELD_LABELS: Record<string, string> = {
     otherJobSkills: "Other job skills",
 };
 const fieldLabelOf = (field: string) => FIELD_LABELS[field] ?? humanize(field);
-const stageLabel = (stage: string) => STAGE_LABELS[stage as keyof typeof STAGE_LABELS] ?? humanize(stage);
 const roleLabel = (role: string | null) => (role ? labelOfRole(role) : "—");
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;

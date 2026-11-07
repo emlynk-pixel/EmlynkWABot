@@ -26,7 +26,20 @@ export function bearerToken(req) {
 export const looksLikeAccessToken = (token) =>
     typeof token === "string" && token.length <= MAX_TOKEN_LENGTH && JWT_SHAPE.test(token);
 
-// Returns verifyAccessToken(token) -> { authUserId, email } | null.
+// How the session was signed in: the access token's `amr` claim (Supabase: [{ method, timestamp }],
+// e.g. "password", "otp", "invite", "recovery"). Read only AFTER Supabase verified the token, so the
+// payload is genuine; never used for authorization, only to recognise a password sign-in.
+export function amrMethods(token) {
+    try {
+        const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+        if (!Array.isArray(payload?.amr)) return [];
+        return payload.amr.map((entry) => (typeof entry === "string" ? entry : entry?.method)).filter((method) => typeof method === "string");
+    } catch {
+        return [];
+    }
+}
+
+// Returns verifyAccessToken(token) -> { authUserId, email, amr } | null.
 // null: the token is not a valid, current Supabase session. Any other failure
 // (Supabase unreachable, misconfigured) throws, so the request fails closed
 // with a 500 instead of being treated as anonymous or authenticated.
@@ -42,7 +55,7 @@ export function createAccessTokenVerifier({ client }) {
         }
         const user = data?.user;
         if (!user?.id) return null;
-        return { authUserId: user.id, email: typeof user.email === "string" ? user.email.toLowerCase() : null };
+        return { authUserId: user.id, email: typeof user.email === "string" ? user.email.toLowerCase() : null, amr: amrMethods(token) };
     };
 }
 

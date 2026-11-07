@@ -21,6 +21,13 @@ export const jobViewCount = (counts: Record<JobStatusView, number>, view: JobVie
 
 export type JobTypeRef = { id: string; code: string; name: string };
 
+// Job Sector: a fixed list (the server keeps the same codes, jobService.js JOB_SECTORS).
+export type JobSector = "CONSTRUCTION" | "INDUSTRIAL";
+export const JOB_SECTOR_OPTIONS: { value: JobSector; label: string }[] = [
+    { value: "CONSTRUCTION", label: "Construction" },
+    { value: "INDUSTRIAL", label: "Industrial" },
+];
+
 export type JobSummary = {
     jobId: string;
     jobCode: string;
@@ -29,6 +36,8 @@ export type JobSummary = {
     status: JobStatus;
     jobType: JobTypeRef;
     jobTypes?: JobTypeRef[];
+    // Job Sector (optional): null when not set, or from an older server.
+    jobSector?: JobSector | null;
     client: { id: string; name: string };
     responsibleAgent: { id: string; name: string; countryCode: string };
     // To Country: the client's country (its agent's) when the job was created.
@@ -40,7 +49,12 @@ export type JobSummary = {
     completedAt: string | null;
     cancelledAt: string | null;
     cancelReason: string | null;
+    // Set for a Job created by the Google Sheet upload (JOB-YYYY-MMDDNN): its Interview Date, its Unique
+    // Number range, and the code split into the fixed prefix and the editable last two digits.
+    importGroup?: ImportJobGroup | null;
 };
+
+export type ImportJobGroup = { interviewDate: string | null; from: number; to: number; prefix: string; suffix: string };
 
 // filled: at least as many assigned candidates as vacancies (derived on the server; more than the
 // vacancies is allowed and stays filled). Separate from the job's status.
@@ -67,13 +81,15 @@ export type JobOptions = {
     // job's responsible agent; with several, one must be chosen). The To Country is the chosen
     // agent's country (agents[].countryCode).
     clients: { id: string; name: string; agentIds: string[] }[];
-    agents: { id: string; name: string; countryCode: string }[];
+    // countryCode is absent for an Agent created by the bulk import until its country is set: such an
+    // Agent can't be a job's responsible agent (the server refuses, AGENT_COUNTRY_MISSING).
+    agents: { id: string; name: string; countryCode?: string }[];
 };
 
 // responsibleAgentId must be one of the client's agents (optional only when it has exactly one).
 // The To Country is never sent (the responsible agent's). candidateIds are assigned with the job in one
 // transaction (none, one or many; the vacancies never limit them).
-export type CreateJobInput = { jobTypeId?: string; jobTypeIds?: string[]; clientId: string; responsibleAgentId?: string; vacancies: number | null; companyJobId?: string | null; fromCountryCode?: string; candidateIds?: string[] };
+export type CreateJobInput = { jobTypeId?: string; jobTypeIds?: string[]; jobSector?: JobSector | null; clientId: string; responsibleAgentId?: string; vacancies: number | null; companyJobId?: string | null; fromCountryCode?: string; candidateIds?: string[] };
 export type UpdateJobInput = { vacancies?: number | null; jobTypeId?: string; jobTypeIds?: string[]; clientId?: string; companyJobId?: string | null; fromCountryCode?: string };
 
 // A new job's From Country unless changed (src/services/jobService.js DEFAULT_FROM_COUNTRY).
@@ -106,6 +122,10 @@ export const updateJob = (token: string, jobId: string, body: UpdateJobInput) =>
 export const addCandidateToJob = (token: string, jobId: string, passportId: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/candidates`, { method: "POST", token, body: { passportId } });
 export const removeCandidateFromJob = (token: string, jobId: string, passportId: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/candidates/${encodeURIComponent(passportId)}`, { method: "DELETE", token });
 export const completeJob = (token: string, jobId: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/complete`, { method: "POST", token, body: {} });
+// The last two digits of a sheet-upload Job (ADMIN, OWNER, JOB_HANDLER, and an ANALYST for a Job holding
+// one of their candidates; the server checks). Exactly two digits, 01-99; the code must stay unique.
+export const updateImportJobSuffix = (token: string, jobId: string, suffix: string) =>
+    apiRequest<{ jobId: string; jobCode: string }>(`${jobPath(jobId)}/import-suffix`, { method: "PATCH", token, body: { suffix } });
 export const cancelJob = (token: string, jobId: string, reason: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/cancel`, { method: "POST", token, body: { reason } });
 
 // Reference data a job needs (job types are created inline from the New job form;

@@ -105,8 +105,35 @@ const completeStage = (passportId, stage) => api(USERS.ADMIN, "PUT", `/candidate
 
 describe("the central derivation (STATUS-013 and the ladder)", () => {
     test("labels and codes are stable and complete", () => {
-        assert.deepEqual(Object.values(WORKFLOW_STATUS_LABELS), ["Registered", "Stopped with Test", "Job Assigned", "Form Submitted", "Details Verified", "Documents Verified", "Visa Document Ready"]);
+        assert.deepEqual(Object.values(WORKFLOW_STATUS_LABELS), [
+            "Registered", "Stopped with Test", "Test Passed", "Job Assigned", "Form Submitted", "Details Verified", "Documents Verified", "Visa Document Ready",
+            "Visa Submitted", "Visa Approved", "Departed", "Visa Not Going", "Cancelled", "Rejected",
+        ]);
         assert.deepEqual(Object.keys(WORKFLOW_STATUS), Object.keys(WORKFLOW_STATUS_LABELS));
+    });
+
+    test("Test Passed: a PASS with nothing higher; any later step outranks it; FAIL stays the override", () => {
+        const d = (signals) => deriveCandidateWorkflowStatus(signals).code;
+        assert.deepEqual(deriveCandidateWorkflowStatus({ testResult: "PASS" }), { code: "TEST_PASSED", label: "Test Passed" });
+        assert.equal(d({ testResult: null }), "REGISTERED");
+        assert.equal(d({ testResult: "PASS", hasCurrentJob: true }), "JOB_ASSIGNED");
+        assert.equal(d({ testResult: "PASS", formSubmitted: true }), "FORM_SUBMITTED");
+        assert.equal(d({ testResult: "PASS", departed: true }), "DEPARTED");
+        assert.equal(d({ testResult: "PASS", outcome: "CANCELLED" }), "CANCELLED");
+    });
+
+    test("Visa Approved sits between Visa Submitted and Departed; a recorded outcome outranks everything, the test result included", () => {
+        const d = (signals) => deriveCandidateWorkflowStatus(signals).code;
+        assert.equal(d({ visaApproved: true }), "VISA_APPROVED");
+        assert.equal(d({ visaSubmitted: true, visaApproved: true }), "VISA_APPROVED");
+        assert.equal(d({ visaApproved: true, departed: true }), "DEPARTED");
+        assert.equal(d({ visaApproved: true, testResult: "FAIL" }), "STOPPED_WITH_TEST");
+        for (const outcome of ["VISA_NOT_GOING", "CANCELLED", "REJECTED"]) {
+            assert.equal(d({ outcome }), outcome);
+            assert.equal(d({ outcome, testResult: "FAIL", visaApproved: true, departed: true }), outcome);
+        }
+        assert.deepEqual(deriveCandidateWorkflowStatus({ outcome: "VISA_NOT_GOING" }), { code: "VISA_NOT_GOING", label: "Visa Not Going" });
+        assert.equal(d({ outcome: "SOMETHING_ELSE" }), "REGISTERED", "only a known outcome counts");
     });
 
     test("the highest satisfied status wins; FAIL stops everything; a missing signal is false", () => {
@@ -123,6 +150,10 @@ describe("the central derivation (STATUS-013 and the ladder)", () => {
         assert.equal(d({ ...everything, testResult: "FAIL" }), "STOPPED_WITH_TEST");
         for (const testResult of ["PASS", null, undefined]) assert.equal(d({ ...everything, testResult }), "VISA_DOCUMENT_READY");
         assert.deepEqual(deriveCandidateWorkflowStatus({ testResult: "FAIL" }), { code: "STOPPED_WITH_TEST", label: "Stopped with Test" });
+        assert.equal(d({ ...everything, visaSubmitted: true }), "VISA_SUBMITTED");
+        assert.equal(d({ ...everything, visaSubmitted: true, departed: true }), "DEPARTED");
+        assert.equal(d({ departed: true }), "DEPARTED");
+        assert.equal(d({ visaSubmitted: true, departed: true, testResult: "FAIL" }), "STOPPED_WITH_TEST");
         // The old signal names mean nothing any more.
         assert.equal(d({ visaDocumentReady: true }), "REGISTERED");
     });
@@ -134,11 +165,11 @@ describe("registered, stopped with test, job assigned (STATUS-001 to 005, 014, 0
         assert.equal(await code(Q), "REGISTERED");
     });
 
-    test("STATUS-002: a saved FAIL is Stopped with Test; PASS or no result is not", async () => {
+    test("STATUS-002: a saved FAIL is Stopped with Test; a saved PASS is Test Passed; no result is Registered", async () => {
         await setResult(P, "FAIL");
         assert.deepEqual(await statusOf(), { code: "STOPPED_WITH_TEST", label: "Stopped with Test" });
         await setResult(P, "PASS");
-        assert.equal(await code(), "REGISTERED");
+        assert.deepEqual(await statusOf(), { code: "TEST_PASSED", label: "Test Passed" });
         assert.equal(await code(Q), "REGISTERED", "no test row at all");
     });
 
@@ -158,11 +189,11 @@ describe("registered, stopped with test, job assigned (STATUS-001 to 005, 014, 0
         assert.deepEqual(await statusOf(), { code: "JOB_ASSIGNED", label: "Job Assigned" });
     });
 
-    test("only a CURRENT Job counts: a completed Job, a removed candidate and legacy job_id / candidate.job text are Registered", async () => {
+    test("only a CURRENT Job counts: a completed Job, a removed candidate and legacy job_id / candidate.job text are not Job Assigned", async () => {
         await setResult(P, "PASS");
         const job = await assignJob();
         await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, {});
-        assert.equal(await code(), "REGISTERED");
+        assert.equal(await code(), "TEST_PASSED", "back to the test result once the Job is no longer current");
         await prisma.candidateStage.upsert({ where: { passportId_stage: { passportId: Q, stage: "TEST_DETAILS" } }, create: { passportId: Q, stage: "TEST_DETAILS", jobId: "Legacy-Job-1" }, update: { jobId: "Legacy-Job-1" } });
         await prisma.candidate.update({ where: { passportId: Q }, data: { job: "Welder" } });
         assert.equal(await code(Q), "REGISTERED");
@@ -308,15 +339,41 @@ describe("details and documents need an explicit manual verification; Visa Docum
         assert.equal(stages.find((s) => s.stage === "DOCUMENT_SUBMISSION").completed, true);
         assert.equal(stages.find((s) => s.stage === "VISA_SUBMISSION").completed, false, "Visa submission is not completed");
         assert.deepEqual(await statusOf(), { code: "VISA_DOCUMENT_READY", label: "Visa Document Ready" });
-        // Completing the Visa submission stage changes nothing, and is not required.
-        await completeStage(P, "VISA_SUBMISSION");
-        assert.equal(await code(), "VISA_DOCUMENT_READY");
-        // Only Visa submission (without Document submission) is not Visa Document Ready.
-        await completeStage(Q, "VISA_SUBMISSION");
-        assert.equal(await code(Q), "REGISTERED");
         // A document missing again steps back down.
         await prisma.document.updateMany({ where: { passportId: P, documentType: "SCAN" }, data: { verificationStatus: "SUPERSEDED" } });
         assert.equal(await code(), "REGISTERED");
+    });
+
+    test("completing Visa submission = Visa Submitted, Visa approval = Visa Approved; Departed is a recorded fact, never a stage", async () => {
+        await addDocument(P, "PASSPORT");
+        await completeDocumentSubmission(P, "REVIEW_REQUIRED");
+        assert.equal((await completeStage(P, "VISA_SUBMISSION")).status, 200);
+        assert.deepEqual(await statusOf(), { code: "VISA_SUBMITTED", label: "Visa Submitted" });
+        // Without Document submission too: the stage is the signal.
+        await completeStage(Q, "VISA_SUBMISSION");
+        assert.equal(await code(Q), "VISA_SUBMITTED");
+        // Visa approval (completed by hand, or the import's "Got Visa") = Visa Approved, at once.
+        const approved = await completeStage(P, "VISA_APPROVAL");
+        assert.equal(approved.status, 200);
+        assert.deepEqual(approved.body.workflowStatus, { code: "VISA_APPROVED", label: "Visa Approved" }, "the stage save returns the new Status");
+        assert.deepEqual(await statusOf(), { code: "VISA_APPROVED", label: "Visa Approved" });
+        // Departed is its own recorded fact (candidate.departed_at: the import's "Departed" or an Admin's final status).
+        await prisma.candidate.update({ where: { passportId: P }, data: { departedAt: new Date() } });
+        assert.deepEqual(await statusOf(), { code: "DEPARTED", label: "Departed" });
+        await setResult(P, "FAIL");
+        assert.equal(await code(), "STOPPED_WITH_TEST");
+        await setResult(P, "PASS");
+        await prisma.candidate.update({ where: { passportId: P }, data: { departedAt: null } });
+        // Reopening the stages steps back down.
+        await api(USERS.ADMIN, "PUT", `/candidates/${P}/stages/VISA_APPROVAL`, { completed: false });
+        assert.equal(await code(), "VISA_SUBMITTED");
+        await api(USERS.ADMIN, "PUT", `/candidates/${P}/stages/VISA_SUBMISSION`, { completed: false });
+        assert.equal(await code(), "VISA_DOCUMENT_READY");
+    });
+
+    test("the retired stages are gone: IVS interview and Finalizing the job are 404, and the database refuses them", async () => {
+        for (const stage of ["IVS_INTERVIEW", "FINALIZING_JOB"]) assert.equal((await completeStage(P, stage)).status, 404, stage);
+        await assert.rejects(pg.exec(`INSERT INTO "candidate_stages" ("passport_id","stage","updated_at") VALUES ('${P}','FINALIZING_JOB', now())`), /candidate_stages_stage_check/);
     });
 
     test("Visa Document Ready outranks Documents Verified, Details Verified, Form Submitted and Job Assigned (the specified ladder)", async () => {
@@ -355,11 +412,12 @@ describe("details and documents need an explicit manual verification; Visa Docum
         assert.equal(await code(), "DETAILS_VERIFIED");
     });
 
-    test("STATUS-FIX-012: the candidate details API keeps its stages and progress data exactly; only the verification state is added", async () => {
+    test("STATUS-FIX-012: the candidate details API keeps its stages; it carries the verification state, the derived Status and the final status", async () => {
         const body = (await api(USERS.ADMIN, "GET", `/candidates/${P}`)).body;
-        assert.deepEqual(body.stages.map((s) => s.stage), ["TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"]);
+        assert.deepEqual(body.stages.map((s) => s.stage), ["TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "VISA_SUBMISSION", "VISA_APPROVAL"]);
         assert.deepEqual(body.verification, { details: null, documents: null });
-        assert.equal(Object.hasOwn(body, "workflowStatus"), false, "the status lives on the list only");
+        assert.deepEqual(body.workflowStatus, { code: "REGISTERED", label: "Registered" }, "the same Status the lists show");
+        assert.equal(body.finalStatus, null);
     });
 
     test("the verification table is backend-only (RLS on, no API-role grants) and exists once per candidate", async () => {
@@ -451,7 +509,9 @@ describe("a verification resets when the data it covers changes (VERIFY-RESET-00
         await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, {});
         await assignJob();
         await api(USERS.ADMIN, "POST", `/candidates/${P}/call-logs`, { note: "Called" });
-        for (const stage of ["JOB_DETAILS", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"]) assert.equal((await completeStage(P, stage)).status, 200, stage);
+        for (const stage of ["JOB_DETAILS", "VISA_SUBMISSION", "VISA_APPROVAL"]) assert.equal((await completeStage(P, stage)).status, 200, stage);
+        // A final status is not a detail either.
+        assert.equal((await api(USERS.OWNER, "POST", `/candidates/${P}/final-status`, { status: "DEPARTED" })).status, 200);
         await api(USERS.ADMIN, "PUT", `/candidates/${P}/stages/CANDIDATE_DETAILS`, { notes: "A stage comment" });
         await addDocument(P, "NIC");
         await addDocument(P, "VISA_SUBMISSION");
@@ -651,7 +711,7 @@ describe("the list itself (STATUS-018) and RBAC", () => {
         const all = await api(USERS.ADMIN, "GET", "/candidates");
         assert.deepEqual(all.body.items.map((i) => i.passportId).sort(), [P, Q]);
         assert.equal(all.body.pagination.total, 2);
-        assert.ok(all.body.items.every((item) => item.workflowStatus.label && item.stages.length === 8));
+        assert.ok(all.body.items.every((item) => item.workflowStatus.label && item.stages.length === 6));
         const searched = await api(USERS.ADMIN, "GET", "/candidates?search=Perera");
         assert.deepEqual(searched.body.items.map((i) => i.passportId), [P]);
         const page2 = await api(USERS.ADMIN, "GET", "/candidates?pageSize=1&page=2");
@@ -670,9 +730,51 @@ describe("the list itself (STATUS-018) and RBAC", () => {
 
     test("Status is derived only: the stage API takes no status, and nothing is stored for it", async () => {
         const refused = await api(USERS.ADMIN, "PUT", `/candidates/${P}/stages/TEST_DETAILS`, { workflowStatus: "VISA_DOCUMENT_READY", testResult: "PASS" });
-        assert.equal(await code(), "REGISTERED");
         assert.ok([200, 400].includes(refused.status));
+        // Never the status that was sent: only what the saved data gives (the PASS, if it was saved).
+        assert.equal(await code(), refused.status === 200 ? "TEST_PASSED" : "REGISTERED");
         const columns = (await pg.query(`SELECT column_name FROM information_schema.columns WHERE table_name IN ('candidate','candidate_stages') AND column_name ILIKE '%status%'`)).rows;
         assert.deepEqual(columns, [], "no status column exists on candidate or candidate_stages");
+    });
+});
+
+describe("final status: Departed, Visa Not Going, Cancelled, Rejected (candidate page, ADMIN only)", () => {
+    const setFinal = (status, who = USERS.ADMIN, passportId = P) => api(who, "POST", `/candidates/${passportId}/final-status`, { status });
+    const audits = () => prisma.auditLog.findMany({ where: { action: "SET_FINAL_STATUS", passportId: P }, orderBy: { createdDate: "asc" } });
+
+    test("Mark departed shows Departed everywhere at once; an outcome replaces it; null clears it; each change is audited once", async () => {
+        const departed = await setFinal("DEPARTED");
+        assert.equal(departed.status, 200, JSON.stringify(departed.body));
+        assert.deepEqual(departed.body.workflowStatus, { code: "DEPARTED", label: "Departed" });
+        assert.equal(departed.body.finalStatus.code, "DEPARTED");
+        assert.equal(await code(), "DEPARTED", "the list agrees");
+        assert.equal((await setFinal("DEPARTED")).status, 200, "repeating it changes nothing");
+
+        const cancelled = await setFinal("CANCELLED");
+        assert.deepEqual(cancelled.body.workflowStatus, { code: "CANCELLED", label: "Cancelled" });
+        const row = await prisma.candidate.findUnique({ where: { passportId: P }, select: { departedAt: true, outcome: true, outcomeAt: true } });
+        assert.deepEqual([row.departedAt, row.outcome, Boolean(row.outcomeAt)], [null, "CANCELLED", true], "never both departed and an outcome");
+
+        await setResult(P, "FAIL");
+        assert.equal(await code(), "CANCELLED", "an outcome outranks a failed test");
+        for (const outcome of ["VISA_NOT_GOING", "REJECTED"]) assert.equal((await setFinal(outcome)).body.workflowStatus.code, outcome);
+
+        const none = await setFinal(null);
+        assert.equal(none.body.finalStatus, null);
+        assert.equal(await code(), "STOPPED_WITH_TEST", "cleared: the data decides again");
+        assert.deepEqual((await audits()).map((a) => [a.previousStatus, a.newStatus]), [
+            ["NONE", "DEPARTED"], ["DEPARTED", "CANCELLED"], ["CANCELLED", "VISA_NOT_GOING"], ["VISA_NOT_GOING", "REJECTED"], ["REJECTED", "NONE"],
+        ]);
+    });
+
+    test("ADMIN only; a bad value is 400; an unknown candidate is 404; the database refuses departed + outcome together", async () => {
+        assert.equal((await setFinal("DEPARTED", USERS.ANALYST)).status, 403);
+        assert.equal((await setFinal("DEPARTED", USERS.DESK)).status, 403);
+        assert.equal((await setFinal("FINISHED")).status, 400);
+        assert.equal((await api(USERS.ADMIN, "POST", `/candidates/${P}/final-status`, {})).status, 400, "status is required (null clears)");
+        assert.equal((await setFinal("DEPARTED", USERS.ADMIN, "N0000000")).status, 404);
+        assert.equal(await code(), "REGISTERED");
+        await assert.rejects(pg.exec(`UPDATE "candidate" SET "departed_at" = now(), "outcome" = 'CANCELLED', "outcome_at" = now() WHERE "passport_id" = '${P}'`), /candidate_departed_or_outcome_check/);
+        await assert.rejects(pg.exec(`UPDATE "candidate" SET "outcome" = 'FINISHED', "outcome_at" = now() WHERE "passport_id" = '${P}'`), /candidate_outcome_check/);
     });
 });

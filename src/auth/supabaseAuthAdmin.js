@@ -4,12 +4,14 @@
 // and never see the raw client:
 //
 //   inviteUserByEmail(email, { redirectTo }) -> { authUserId }
+//   sendPasswordSetupEmail(email, { redirectTo }) -> void (a confirmed identity that never set up)
 //   createUser({ email, password })          -> { authUserId }
 //   findUserByEmail(email)                   -> { authUserId, email } | null
 //   deleteUser(authUserId)                   -> void
 //
 // Errors are AuthAdminError with a code the services act on:
-//   EMAIL_EXISTS  the email already has a confirmed Supabase identity
+//   EMAIL_EXISTS  the email already has a confirmed Supabase identity. NOT proof that the person set a
+//                 password: opening the invite link (or an email scanner pre-fetching it) confirms it.
 //   WEAK_PASSWORD the password does not meet the project's policy
 //   RATE_LIMITED  Supabase refused the request for now
 //   FAILED        anything else (message never includes the email or password)
@@ -56,6 +58,16 @@ export function createSupabaseAuthAdmin({ client }) {
             const { data, error } = await admin.inviteUserByEmail(email, { redirectTo });
             if (error) throw toAuthAdminError(error);
             return { authUserId: data.user.id };
+        },
+
+        // For an identity whose email is already confirmed but that never finished setup (an invite
+        // link opened, by the person or an email scanner, without setting a password): Supabase
+        // refuses a new invitation (email_exists), so a password-setup email (Supabase's recovery
+        // email) is sent instead, to the same setup page. Supabase sends it; nothing is returned.
+        async sendPasswordSetupEmail(email, { redirectTo } = {}) {
+            if (typeof redirectTo !== "string" || redirectTo === "") throw new AuthAdminError("FAILED", "A password-setup email needs a redirect address");
+            const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo });
+            if (error) throw toAuthAdminError(error);
         },
 
         async createUser({ email, password }) {

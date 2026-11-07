@@ -402,7 +402,7 @@ describe("the legacy candidate_stages.job_id (migration)", () => {
         const old = await createTestDatabase({ upTo: names[target - 1] });
         try {
             await old.pg.exec(`INSERT INTO "candidate" ("passport_id","unique_id","first_name","updated_date") VALUES ('L0000001','9001','Legacy', now()), ('L0000002','9002','Legacy2', now());
-                INSERT INTO "candidate_stages" ("passport_id","stage","job_id","updated_at") VALUES ('L0000001','TEST_DETAILS','Job12', now()), ('L0000002','TEST_DETAILS','  job12 ', now()), ('L0000002','FINALIZING_JOB', NULL, now())`);
+                INSERT INTO "candidate_stages" ("passport_id","stage","job_id","updated_at") VALUES ('L0000001','TEST_DETAILS','Job12', now()), ('L0000002','TEST_DETAILS','  job12 ', now()), ('L0000002','VISA_APPROVAL', NULL, now())`);
             const before = (await old.pg.query(`SELECT "passport_id","stage","job_id" FROM "candidate_stages" ORDER BY 1,2`)).rows;
             await old.pg.exec(fs.readFileSync(path.join(import.meta.dirname, "..", "prisma", "migrations", names[target], "migration.sql"), "utf8"));
             const after = (await old.pg.query(`SELECT "passport_id","stage","job_id" FROM "candidate_stages" ORDER BY 1,2`)).rows;

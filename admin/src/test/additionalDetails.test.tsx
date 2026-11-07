@@ -2,7 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useNavigate } from "react-router";
 import { describe, expect, test, vi } from "vitest";
-import { CANDIDATE_STAGES, type AdditionalDetails, type AdditionalDetailsView, type CandidateDetails } from "../api/candidates";
+import { CANDIDATE_STAGES, SHOE_SIZE_PRESETS, type AdditionalDetails, type AdditionalDetailsView, type CandidateDetails } from "../api/candidates";
 import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth/AuthProvider";
 import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from "./helpers";
@@ -30,11 +30,15 @@ const EMPTY: AdditionalDetails = {
     nameAsInPassport: null, permanentAddress: null, birthday: null, tshirtSize: null, pantSize: null, shoeSize: null,
     fatherAlive: null, fatherFullName: null, fatherBirthday: null, motherAlive: null, motherFullName: null, motherBirthday: null,
     maritalStatus: null, wifeFullName: null, wifeBirthday: null, child1Name: null, child2Name: null, child3Name: null, otherJobSkills: null,
+    bloodGroup: null, height: null, weightKg: null, drivingLicence: null, canReadDrawings: null, teamLeadingSkills: null, otherLanguages: null,
+    email: null, city: null, district: null, dsDivision: null, gnDivision: null, cityInRomania: null, englishKnowledge: null, otherJobCategory: null, otherJobSkills2: null,
+    fatherPassportNumber: null, motherPassportNumber: null, spousePassportNumber: null,
+    guardianName: null, guardianRelationship: null, guardianNic: null, guardianBirthday: null, guardianPhone: null, guardianAddress: null,
 };
 
 const SUGGESTED = { nameAsInPassport: "SAMAN SILVA", permanentAddress: "1 Main Street", birthday: "1990-03-12" };
 const NEW_VIEW: AdditionalDetailsView = { passportId: "N0000002", details: null, suggested: SUGGESTED, updatedDate: null };
-const SAVED: AdditionalDetails = { ...EMPTY, nameAsInPassport: "SAMAN K SILVA", tshirtSize: "L", pantSize: "31", shoeSize: "9", fatherAlive: true, fatherFullName: "Sunil Silva", maritalStatus: "SINGLE" };
+const SAVED: AdditionalDetails = { ...EMPTY, nameAsInPassport: "SAMAN K SILVA", tshirtSize: "L", pantSize: "31", shoeSize: "42", fatherAlive: true, fatherFullName: "Sunil Silva", maritalStatus: "SINGLE" };
 const SAVED_VIEW: AdditionalDetailsView = { passportId: "N0000002", details: SAVED, suggested: SUGGESTED, updatedDate: "2026-10-09T05:00:00.000Z" };
 
 const PATH = "/api/admin/candidates/N0000002/additional-details";
@@ -102,8 +106,20 @@ describe("Additional Details", () => {
         expect(screen.getByLabelText("T-shirt size")).toHaveValue("L");
         expect(screen.getByLabelText("Pant size")).toHaveValue("__custom");
         expect(screen.getByLabelText("Custom pant size")).toHaveValue("31");
-        expect(screen.getByLabelText("Shoe size (UK)")).toHaveValue("9");
+        expect(screen.getByLabelText("Shoe size (EU)")).toHaveValue("42");
         expect(screen.getByLabelText("Father full name *")).toHaveValue("Sunil Silva");
+        expect(screen.getByRole("button", { name: "Save additional details" })).toBeDisabled();
+    });
+
+    test("SHOE-EU-ADMIN shoe size lists EU sizes only; any other size already on record is kept as entered (Other), never converted", async () => {
+        backend({ ...SAVED_VIEW, details: { ...SAVED, shoeSize: "9" } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const select = screen.getByLabelText("Shoe size (EU)");
+        expect(within(select).getAllByRole("option").map((option) => option.getAttribute("value"))).toEqual(["", ...SHOE_SIZE_PRESETS, "__custom"]);
+        expect(SHOE_SIZE_PRESETS).toEqual(["38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48"]);
+        expect(select).toHaveValue("__custom");
+        expect(screen.getByLabelText("Custom shoe size (eu)")).toHaveValue("9");
         expect(screen.getByRole("button", { name: "Save additional details" })).toBeDisabled();
     });
 
@@ -207,11 +223,84 @@ describe("Additional Details", () => {
         const user = userEvent.setup();
         await user.selectOptions(screen.getByLabelText("Is father alive?"), "no");
         await user.selectOptions(screen.getByLabelText("Pant size"), "34");
-        await user.selectOptions(screen.getByLabelText("Shoe size (UK)"), "__custom");
-        await user.type(screen.getByLabelText("Custom shoe size (uk)"), "EU 43");
+        await user.selectOptions(screen.getByLabelText("Shoe size (EU)"), "__custom");
+        await user.type(screen.getByLabelText("Custom shoe size (eu)"), "EU 43");
         await user.click(screen.getByRole("button", { name: "Save additional details" }));
         await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
         expect(puts(calls)[0].body).toMatchObject({ fatherAlive: false, fatherFullName: "Sunil Silva", pantSize: "34", shoeSize: "EU 43", tshirtSize: "L" });
+    });
+
+    test("FORM-FIELDS-001 every other Candidate Form answer has its own field here, shown from the record and saved with the rest", async () => {
+        const answers: Partial<AdditionalDetails> = {
+            bloodGroup: "O+", height: "175 cm", weightKg: "70.5", drivingLicence: true, canReadDrawings: false, teamLeadingSkills: true, otherLanguages: "ENGLISH, ROMANIAN",
+            email: "saman@example.com", city: "NEGOMBO", district: "GAMPAHA", dsDivision: "NEGOMBO", gnDivision: "KURANA", cityInRomania: "CLUJ-NAPOCA", englishKnowledge: "GOOD",
+            otherJobCategory: "SCAFFOLDER", otherJobSkills2: "FORKLIFT", fatherPassportNumber: "N1234567", motherPassportNumber: "N7654321",
+            guardianName: "KAMAL PERERA", guardianRelationship: "UNCLE", guardianNic: "901234567V", guardianBirthday: "1960-01-01", guardianPhone: "+94771234567", guardianAddress: "45 LAKE ROAD",
+        };
+        const view = { ...SAVED_VIEW, details: { ...SAVED, ...answers } };
+        const { calls } = backend(view, { [`PUT ${PATH}`]: { status: 200, body: view } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        for (const title of ["Physical details & skills", "Contact & location", "Guardian details"]) expect(screen.getByRole("group", { name: title })).toBeInTheDocument();
+        const shown: Record<string, string> = {
+            "Blood Group": "O+", Height: "175 cm", "Weight (kg)": "70.5", "Driving Licence": "yes", "Can Read Drawings": "no", "Team Leading Skills": "yes", "Other Languages": "ENGLISH, ROMANIAN",
+            "English Knowledge": "GOOD", Email: "saman@example.com", City: "NEGOMBO", District: "GAMPAHA", "DS Division": "NEGOMBO", "GN Division": "KURANA", "City in Romania": "CLUJ-NAPOCA",
+            "Other Skills 2": "FORKLIFT", "Other Job Category": "SCAFFOLDER", "Father Passport Number": "N1234567", "Mother Passport Number": "N7654321",
+            "Guardian Name": "KAMAL PERERA", "Guardian Relationship": "UNCLE", "Guardian NIC": "901234567V", "Guardian Birth Date": "1960-01-01", "Guardian Phone": "+94771234567", "Guardian Address": "45 LAKE ROAD",
+        };
+        for (const [label, value] of Object.entries(shown)) expect(screen.getByLabelText(label), label).toHaveValue(value);
+        // Spouse passport only with Married (the record is Single).
+        expect(screen.queryByLabelText("Spouse Passport Number")).toBeNull();
+        const user = userEvent.setup();
+        await user.selectOptions(screen.getByLabelText("Blood Group"), "A-");
+        await user.selectOptions(screen.getByLabelText("Driving Licence"), "no");
+        await user.clear(screen.getByLabelText("Guardian Name"));
+        await user.type(screen.getByLabelText("Guardian Name"), "NIMAL PERERA");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
+        expect(puts(calls)[0].body).toMatchObject({ ...answers, bloodGroup: "A-", drivingLicence: false, guardianName: "NIMAL PERERA", spousePassportNumber: null });
+    });
+
+    test("FORM-FIELDS-002 the new fields are checked before sending (weight, email, NIC, passport numbers, guardian birth date)", async () => {
+        const { calls } = backend(SAVED_VIEW);
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const user = userEvent.setup();
+        await user.type(screen.getByLabelText("Weight (kg)"), "5");
+        await user.type(screen.getByLabelText("Email"), "not-an-email");
+        await user.type(screen.getByLabelText("Guardian NIC"), "12345");
+        await user.type(screen.getByLabelText("Father Passport Number"), "N-123");
+        await user.type(screen.getByLabelText("Guardian Birth Date"), "2999-01-01");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        expect(await screen.findByText("Enter the weight in kg, from 20 to 300.")).toBeInTheDocument();
+        expect(screen.getByText("Enter an email address.")).toBeInTheDocument();
+        expect(screen.getByText("Enter a Sri Lankan NIC (9 digits and V or X, or 12 digits).")).toBeInTheDocument();
+        expect(screen.getByText("Letters and digits only (at most 20).")).toBeInTheDocument();
+        expect(screen.getByText("This date is in the future.")).toBeInTheDocument();
+        expect(puts(calls)).toHaveLength(0);
+    });
+
+    test("FORM-FIELDS-003 a candidate-submitted value shows its Confirm / Revoke hint under the new field, and the distance to Bucharest under City in Romania", async () => {
+        const pending = [
+            { field: "guardian.name", current: null, submitted: "KAMAL PERERA" },
+            { field: "basic.bloodGroup", current: null, submitted: "O+" },
+        ];
+        backend(SAVED_VIEW, {
+            "GET /api/admin/candidates/N0000002/form-submission": { status: 200, body: {
+                passportId: "N0000002", formStatus: "SUBMITTED", submittedAt: "2026-10-17T06:30:00.000Z",
+                submitted: { "guardian.name": "KAMAL PERERA", "basic.bloodGroup": "O+", "contact.cityInRomania": "Cluj-Napoca", "contact.distanceToBucharestKm": "323" },
+                original: null, changed: [], pending,
+            } },
+        }, { ...ADMIN, role: "OWNER" });
+        renderApp("/candidates/N0000002?tab=additional");
+        const guardian = await screen.findByTestId("submitted-hint-guardian.name", undefined, RENDER_STEP);
+        expect(guardian).toHaveTextContent("Candidate submitted: KAMAL PERERA");
+        expect(within(guardian).getByRole("button", { name: "Confirm Guardian Name" })).toBeInTheDocument();
+        expect(within(screen.getByTestId("submitted-hint-basic.bloodGroup")).getByRole("button", { name: "Revoke Blood Group" })).toBeInTheDocument();
+        expect(screen.getByTestId("distance-to-bucharest")).toHaveTextContent("approx. 323 km to Bucharest (straight line, not by road)");
+        // The old read-only card is gone: each submitted value is shown once, under its field.
+        expect(screen.queryByTestId("submitted-personal-details")).toBeNull();
+        expect(document.body.textContent?.match(/KAMAL PERERA/g) ?? []).toHaveLength(1);
     });
 
     test("children in order, and a future birthday is refused before sending", async () => {
@@ -321,11 +410,11 @@ describe("progress stepper", () => {
         await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName(/\(completed/));
     });
 
-    test("IVS interview and Finalizing the job stay reachable by link", async () => {
+    test("a link to a retired stage (IVS interview, Finalizing the job) opens the first open step instead", async () => {
         backend(NEW_VIEW);
         renderApp("/candidates/N0000002?stage=FINALIZING_JOB");
-        expect(await screen.findByRole("heading", { name: "Finalizing the job" }, RENDER_STEP)).toBeInTheDocument();
-        expect(stepper().queryByRole("button", { current: "step" })).toBeNull();
+        expect(await screen.findByRole("heading", { name: "Test details" }, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: "Finalizing the job" })).toBeNull();
     });
 });
 
@@ -338,7 +427,7 @@ describe("progress steps: one shared step UI", () => {
     // new step, or Additional details, can't get its own styling.
     const BUTTON = "group relative z-10 flex flex-col items-center gap-2 px-1 focus:outline-none";
     const CIRCLE_BASE = "flex size-8 items-center justify-center rounded-full text-label-md tabular-nums";
-    const INCOMPLETE = "border-2 border-critical bg-stepper-white text-critical";
+    const INCOMPLETE = "border-2 border-critical bg-stepper-warn-fill text-critical";
     const INCOMPLETE_CURRENT = "border-2 border-critical bg-critical text-stepper-white";
 
     test("Visa submission and Visa approval are visible; IVS interview and Finalizing the job are not", async () => {
@@ -483,12 +572,12 @@ describe("one load, versions and resets", () => {
         renderApp("/candidates/N0000002?tab=additional");
         await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
         const user = userEvent.setup();
-        expect(screen.getByLabelText("Shoe size (UK)")).toHaveValue("9");
-        await user.selectOptions(screen.getByLabelText("Shoe size (UK)"), "__custom");
-        await user.type(screen.getByLabelText("Custom shoe size (uk)"), "EU 43");
+        expect(screen.getByLabelText("Shoe size (EU)")).toHaveValue("42");
+        await user.selectOptions(screen.getByLabelText("Shoe size (EU)"), "__custom");
+        await user.type(screen.getByLabelText("Custom shoe size (eu)"), "EU 43");
         await user.click(screen.getByRole("button", { name: "Cancel" }));
-        expect(screen.getByLabelText("Shoe size (UK)")).toHaveValue("9");
-        expect(screen.queryByLabelText("Custom shoe size (uk)")).toBeNull();
+        expect(screen.getByLabelText("Shoe size (EU)")).toHaveValue("42");
+        expect(screen.queryByLabelText("Custom shoe size (eu)")).toBeNull();
     });
 
     test("another candidate's details never show on this one: the step stays incomplete until its own load arrives", async () => {

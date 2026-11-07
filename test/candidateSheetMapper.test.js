@@ -218,7 +218,7 @@ describe("candidate -> Sheet row", () => {
             C: "SYN000001", D: "TESTSURNAME", E: "TEST GIVEN", F: "2026-10-03", G: "1990-01-01", H: "2030-01-01",
             I: "Job One, Job Two", J: "000000000V", K: "1 Example Road, Example Town", L: "94700000001", M: "94700000002",
             Y: "EXAMPLE TOWN", Z: "M", AA: "EXAMPLE", AB: "2020-01-01", AC: "5 years, example", AD: "Example note",
-            AL: "ACTIVE", AM: "2026-10-01T10:30:00Z", AN: "2026-10-07T09:15:30Z", B: "0042",
+            AJ: "ACTIVE", AK: "2026-10-01T10:30:00Z", AL: "2026-10-07T09:15:30Z", B: "0042",
         };
         for (const [column, value] of Object.entries(expected)) {
             assert.equal(row[SHEET_COLUMNS.find((c) => c.column === column).index], value, column);
@@ -240,11 +240,11 @@ describe("candidate -> Sheet row", () => {
             doc("POLICE_REPORT", "VERIFIED", { documentVariant: "SL_VERIFIED" }),
             doc("POLICE_REPORT", "REVIEW_REQUIRED", { documentVariant: "ROMANIA" }),
         ];
-        const stages = [{ stage: "TEST_DETAILS", completed: true }, { stage: "VISA_SUBMISSION", completed: true }, { stage: "VISA_APPROVAL", completed: true }, { stage: "IVS_INTERVIEW", completed: false }];
+        const stages = [{ stage: "TEST_DETAILS", completed: true }, { stage: "VISA_SUBMISSION", completed: true }, { stage: "VISA_APPROVAL", completed: true }];
         const row = map({ user: user(), stages, documents: complete });
         assert.deepEqual(
-            ["testDetailsStatus", "candidateDetailsStatus", "documentSubmissionStatus", "ivsInterviewStatus", "visaSubmissionStatus", "visaApprovalStatus", "finalizingJobStatus"].map((f) => cell(row, f)),
-            ["COMPLETED", "COMPLETED", "COMPLETED", "INCOMPLETE", "COMPLETED", "COMPLETED", "INCOMPLETE"],
+            ["testDetailsStatus", "candidateDetailsStatus", "documentSubmissionStatus", "visaSubmissionStatus", "visaApprovalStatus"].map((f) => cell(row, f)),
+            ["COMPLETED", "COMPLETED", "COMPLETED", "COMPLETED", "COMPLETED"],
         );
         // Same rules as the Admin page: the address is optional; the passport dates are required.
         const noAddress = map({ user: user({ address: null }), documents: complete });
@@ -253,13 +253,13 @@ describe("candidate -> Sheet row", () => {
         assert.equal(cell(noIssueDate, "candidateDetailsStatus"), "INCOMPLETE");
     });
 
-    test("VISA SUBMISSION STATUS (AI) follows the Visa submission stage only", () => {
+    test("VISA SUBMISSION STATUS (AH) follows the Visa submission stage only", () => {
         const before = map({ user: user(), stages: [{ stage: "VISA_APPROVAL", completed: true }] });
         const after = map({ user: user(), stages: [{ stage: "VISA_APPROVAL", completed: true }, { stage: "VISA_SUBMISSION", completed: true }] });
         assert.equal(cell(before, "visaSubmissionStatus"), "INCOMPLETE");
-        assert.equal(atColumn(after, "AI"), "COMPLETED");
+        assert.equal(atColumn(after, "AH"), "COMPLETED");
         const changed = after.map((value, i) => (value === before[i] ? null : SHEET_COLUMNS[i].column)).filter(Boolean);
-        assert.deepEqual(changed, ["AI"]);
+        assert.deepEqual(changed, ["AH"]);
     });
 
     test("missing optional values are blank and never shift a column", () => {

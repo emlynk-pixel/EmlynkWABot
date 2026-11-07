@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
-import { createAgent, getAgent, listAgents, setAgentStatus, updateAgent, type AgentDetails, type AgentInput, type AgentListItem, type AgentRecord, type EntityStatus } from "../api/agents";
+import { AGENT_COUNTRY_NOT_SET, createAgent, getAgent, listAgents, setAgentStatus, updateAgent, type AgentDetails, type AgentInput, type AgentListItem, type AgentRecord, type EntityStatus } from "../api/agents";
 import { getClientOptions } from "../api/clientManagement";
 import { useAdminResource } from "../api/useAdminResource";
 import { canManageMasterData, useAuth } from "../auth/AuthProvider";
@@ -153,7 +153,7 @@ function AgentRow({ agent, onEdit, onStatus }: { agent: AgentListItem; onEdit: (
             <td className={tableCell}>
                 <Link to={`/agents/${agent.agentId}`} className="font-medium text-primary hover:underline">{agent.name}</Link>
             </td>
-            <td className={tableCell}>{countryName(agent.countryCode)}</td>
+            <td className={tableCell}>{agent.countryCode ? countryName(agent.countryCode) : AGENT_COUNTRY_NOT_SET}</td>
             <td className={`${tableCell} text-right tabular-nums`}>{formatNumber(agent.activeClients)}</td>
             <td className={`${tableCell} text-right tabular-nums`}>{formatNumber(agent.processingJobs)}</td>
             <td className={`${tableCell} text-right tabular-nums`}>{formatNumber(agent.completedJobs)}</td>

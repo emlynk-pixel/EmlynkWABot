@@ -6,10 +6,12 @@ import {
     createJobType,
     DEFAULT_FROM_COUNTRY,
     getJobOptions,
+    JOB_SECTOR_OPTIONS,
     JOB_VIEWS,
     jobViewCount,
     listJobCandidateOptions,
     listJobs,
+    type JobSector,
     type JobCandidateOption,
     type JobCandidateOptions,
     type JobOptions,
@@ -375,6 +377,8 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     const [step, setStep] = useState<Step>(1);
     const [created, setCreated] = useState<Partial<JobOptions>>({});
     const [jobTypeIds, setJobTypeIds] = useState<string[]>([]);
+    const [jobSector, setJobSector] = useState<JobSector | "">("");
+    const jobSectorField = useId();
     const [clientId, setClientId] = useState("");
     const [fromCountryCode, setFromCountryCode] = useState(DEFAULT_FROM_COUNTRY);
     const [vacancies, setVacancies] = useState("");
@@ -402,7 +406,8 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
     const agentField = useId();
     const vacanciesNumber = vacancies.trim() === "" ? null : Number(vacancies);
     const vacanciesValid = vacanciesNumber === null || (Number.isInteger(vacanciesNumber) && vacanciesNumber >= 1 && vacanciesNumber <= 100000);
-    const ready = Boolean(jobTypeIds.length > 0 && clientId && agent && fromCountryCode) && vacanciesValid;
+    const ready = Boolean(jobTypeIds.length > 0 && clientId && agent?.countryCode && fromCountryCode) && vacanciesValid;
+    const agentLabel = (a: { name: string; countryCode?: string }) => `${a.name} (${a.countryCode ?? "country not set"})`;
 
     const next = (event: FormEvent) => {
         event.preventDefault();
@@ -424,6 +429,7 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
             const job = await createJob(token, {
                 jobTypeId: jobTypeIds[0],
                 jobTypeIds,
+                jobSector: jobSector || null,
                 clientId,
                 responsibleAgentId: agent?.id,
                 vacancies: vacanciesNumber,
@@ -466,6 +472,13 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
                         }}
                     />
                     <div>
+                        <label htmlFor={jobSectorField} className="text-label-md text-ink">Job sector <span className="text-ink-muted">(optional)</span></label>
+                        <select id={jobSectorField} value={jobSector} disabled={busy} onChange={(event) => setJobSector(event.target.value as JobSector | "")} className={`${inputClass()} mt-1`}>
+                            <option value="">Select a sector…</option>
+                            {JOB_SECTOR_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                    </div>
+                    <div>
                         <label htmlFor={clientField} className="text-label-md text-ink">Client</label>
                         <select id={clientField} value={clientId} disabled={busy} onChange={(event) => { setClientId(event.target.value); setChosenAgentId(""); }} className={`${inputClass()} mt-1`}>
                             <option value="">Select a client…</option>
@@ -479,15 +492,18 @@ function NewJobDialog({ token, onClose, onCreated }: { token: string; onClose: (
                                 <label htmlFor={agentField} className="text-label-md text-ink">Responsible agent</label>
                                 <select id={agentField} value={chosenAgentId} disabled={busy} onChange={(event) => setChosenAgentId(event.target.value)} className={`${inputClass()} mt-1`}>
                                     <option value="">Select an agent…</option>
-                                    {clientAgents.map((a) => <option key={a.id} value={a.id}>{a.name} ({a.countryCode})</option>)}
+                                    {clientAgents.map((a) => <option key={a.id} value={a.id}>{agentLabel(a)}</option>)}
                                 </select>
                                 <p className="mt-1 text-label-sm text-ink-muted">This client works with several agents.</p>
                             </div>
                         ) : (
                             <div>
                                 <span className="text-label-md text-ink">Responsible agent</span>
-                                <p className="mt-1 text-body-sm text-ink" data-testid="job-agent">{agent ? `${agent.name} (${agent.countryCode})` : <span className="text-ink-muted">Taken from the selected client</span>}</p>
+                                <p className="mt-1 text-body-sm text-ink" data-testid="job-agent">{agent ? agentLabel(agent) : <span className="text-ink-muted">Taken from the selected client</span>}</p>
                             </div>
+                        )}
+                        {agent && !agent.countryCode && (
+                            <p className="text-label-sm text-critical sm:col-span-2">This agent has no country yet. Set the agent's country in Agents before creating a job.</p>
                         )}
                         <div>
                             <span className="text-label-md text-ink">To Country</span>

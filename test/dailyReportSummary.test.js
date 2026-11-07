@@ -99,14 +99,14 @@ async function seed() {
     await whatsapp("UNKNOWN", LAST_MS, "MANUAL_REVIEW");
     await whatsapp("PASSPORT", NEXT);
 
-    // Stages. A: final stage and visa approval completed on the day, IVS
-    // interview NOT complete (out of order is valid). B: visa approval on the
-    // day, test failed. C: final stage completed the day before.
-    await stage(A, "FINALIZING_JOB", { completed: true, completedAt: new Date("2026-10-10T10:00:00Z") });
+    // Stages and departures. A: departed and visa approval completed on the day, Visa
+    // submission NOT complete (out of order is valid). B: visa approval on the
+    // day, test failed. C: departed the day before.
+    await prisma.candidate.update({ where: { passportId: A }, data: { departedAt: new Date("2026-10-10T10:00:00Z") } });
     await stage(A, "VISA_APPROVAL", { completed: true, completedAt: new Date("2026-10-10T09:00:00Z") });
     await stage(B, "VISA_APPROVAL", { completed: true, completedAt: new Date(START) });
     await stage(B, "TEST_DETAILS", { testResult: "FAIL", testId: "T-1" });
-    await stage(C, "FINALIZING_JOB", { completed: true, completedAt: new Date(BEFORE) });
+    await prisma.candidate.update({ where: { passportId: C }, data: { departedAt: new Date(BEFORE) } });
     await stage(C, "VISA_APPROVAL", { completed: true, completedAt: new Date(BEFORE) });
 }
 
@@ -182,7 +182,7 @@ describe("Summary: daily figures on Sri Lanka day boundaries", () => {
         assert.equal(calls.items[0].candidateName, "Chamari Silva");
     });
 
-    test("19-20. completed candidates: the final stage completed that day, with passport number, name, time and whether every stage is complete now", async () => {
+    test("19-20. completed candidates: recorded as Departed that day, with passport number, name, time and whether every stage is complete now", async () => {
         const { completedCandidates } = await getDailySummary({ db: prisma, date: DAY, now: NOW });
         assert.equal(completedCandidates.total, 1);
         assert.deepEqual(completedCandidates.items.map((c) => [c.passportId, c.name, new Date(c.completedAt).toISOString(), c.allStagesComplete]), [
@@ -211,9 +211,8 @@ describe("Incomplete candidates (current snapshot)", () => {
         assert.equal(incomplete.totalCandidates, 3);
         assert.equal(incomplete.incompleteCandidates, 3);
         const byStage = Object.fromEntries(incomplete.byStage.map((s) => [s.stage, s]));
-        assert.deepEqual(incomplete.byStage.map((s) => s.stage), ["TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"]);
-        assert.equal(byStage.FINALIZING_JOB.count, 1, "A and C finalized (A out of order): only B");
-        assert.equal(byStage.IVS_INTERVIEW.count, 3, "nobody completed the interview, finalized or not");
+        assert.deepEqual(incomplete.byStage.map((s) => s.stage), ["TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "VISA_SUBMISSION", "VISA_APPROVAL"]);
+        assert.equal(byStage.VISA_SUBMISSION.count, 3, "nobody completed Visa submission, approved or not (out of order is valid)");
         assert.equal(byStage.VISA_APPROVAL.count, 0);
         assert.equal(byStage.JOB_DETAILS.count, 3, "nobody marked Job details complete");
         assert.equal(byStage.JOB_DETAILS.reasons[0].reason, "Not marked complete");
@@ -226,7 +225,7 @@ describe("Incomplete candidates (current snapshot)", () => {
         assert.equal(submission["Romania police report missing"], 3);
         assert.equal(submission["SL Verified police report missing"], 2, "A uploaded its SL Verified report");
         assert.equal(submission["Scan missing"], 2, "B uploaded its scan");
-        assert.equal(byStage.IVS_INTERVIEW.reasons[0].reason, "Not marked complete");
+        assert.equal(byStage.VISA_SUBMISSION.reasons[0].reason, "Not marked complete");
     });
 
     test("12. the candidates behind a stage, with their reasons, paged", async () => {

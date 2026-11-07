@@ -144,6 +144,35 @@ describe("who sees what", () => {
 });
 
 describe("New job", () => {
+    test("Y26S01 Job sector: right after Job type, optional, Construction or Industrial; the chosen code is sent", async () => {
+        const created = details(job(6, "PROCESSING", { candidateCount: 0 }));
+        const { calls } = backend("OWNER", {
+            ...NO_ELIGIBLE,
+            "POST /api/admin/jobs": { status: 201, body: created },
+            [`GET /api/admin/jobs/${created.jobId}`]: { status: 200, body: created },
+        });
+        renderApp("/jobs");
+        const user = userEvent.setup();
+        await table();
+        await user.click(screen.getByRole("button", { name: "New job" }));
+        const dialog = await screen.findByRole("dialog", { name: "New job" });
+        const sector = await within(dialog).findByLabelText(/Job sector/);
+        expect(within(dialog).getByText("(optional)", { selector: "label[for='" + sector.id + "'] span" })).toBeInTheDocument();
+        expect([...(sector as HTMLSelectElement).options].map((o) => o.textContent)).toEqual(["Select a sector…", "Construction", "Industrial"]);
+        expect(sector).toHaveValue("");
+        // Placed directly after the Job type field, before Client.
+        const controls = [...dialog.querySelectorAll("select, input")];
+        const typeIndex = controls.indexOf(within(dialog).getByLabelText("Job type"));
+        expect(controls.indexOf(sector)).toBe(typeIndex + 1);
+        expect(controls.indexOf(within(dialog).getByLabelText("Client"))).toBeGreaterThan(controls.indexOf(sector));
+        await user.selectOptions(within(dialog).getByLabelText("Job type"), "t1");
+        await user.selectOptions(sector, "Industrial");
+        await user.selectOptions(within(dialog).getByLabelText("Client"), "c1");
+        await user.click(within(dialog).getByRole("button", { name: "Next" }));
+        await user.click(await within(dialog).findByRole("button", { name: "Create job" }));
+        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ jobTypeIds: ["t1"], jobSector: "INDUSTRIAL", clientId: "c1" }));
+    });
+
     test("needs a type and client; the agent and the country come from the client; opens the new job", async () => {
         const created = details(job(5, "PROCESSING", { candidateCount: 0 }));
         const { calls } = backend("OWNER", {
@@ -164,7 +193,7 @@ describe("New job", () => {
         expect(within(dialog).getByTestId("job-to-country")).toHaveTextContent("Romania");
         await user.click(next);
         await user.click(await within(dialog).findByRole("button", { name: "Create job" }));
-        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", jobTypeIds: ["t1"], clientId: "c1", responsibleAgentId: "a1", vacancies: 5, companyJobId: null, fromCountryCode: "RO", candidateIds: [] }));
+        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", jobTypeIds: ["t1"], jobSector: null, clientId: "c1", responsibleAgentId: "a1", vacancies: 5, companyJobId: null, fromCountryCode: "RO", candidateIds: [] }));
         expect(await screen.findByRole("heading", { name: /JOB-2026-000005/ }, RENDER_STEP)).toBeInTheDocument();
     });
 
@@ -242,9 +271,93 @@ describe("Job details", () => {
         await user.click(within(dialog).getByRole("button", { name: "Search" }));
         expect(await within(dialog).findByText("No eligible candidates found.")).toBeInTheDocument();
         // The job-scoped picker: the server lists only candidates who passed the test (never the Candidates list).
-        const search = calls.find((c) => c.path.startsWith("/api/admin/job-candidate-options?"))!;
-        expect(Object.fromEntries(search.url.searchParams)).toMatchObject({ search: "failed person" });
+        const search = calls.filter((c) => c.path.startsWith("/api/admin/job-candidate-options?")).at(-1)!;
+        expect(Object.fromEntries(search.url.searchParams)).toMatchObject({ search: "failed person", page: "1" });
         expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(false);
+    });
+
+    test("Y26S01 Add to job: the list loads as soon as the dialog opens (no search), newest first as the server sends it, and pages on the server", async () => {
+        const option = (n: number) => ({ passportId: `N00000${String(n).padStart(2, "0")}`, uniqueId: String(n), name: `CANDIDATE ${n}`, nic: n === 30 ? "199012345678" : null, workflowStatus: { code: "REGISTERED" as const, label: "Registered" } });
+        const { calls } = backend("OWNER", {
+            ...getJob(details(base, [CAND])),
+            "GET /api/admin/job-candidate-options": (url) => {
+                const page = Number(url.searchParams.get("page"));
+                const ns = page === 1 ? Array.from({ length: 20 }, (_, i) => 30 - i) : [10, 9];
+                return { status: 200, body: { items: ns.map(option), pagination: { page, pageSize: 20, total: 22, totalPages: 2 }, filters: { search: url.searchParams.get("search") } } };
+            },
+        });
+        renderApp(path);
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
+        const list = await within(dialog).findByRole("list", { name: "Candidates found" });
+        const names = within(list).getAllByRole("listitem").map((li) => li.querySelector("p")!.textContent);
+        expect(names.slice(0, 3)).toEqual(["CANDIDATE 30", "CANDIDATE 29", "CANDIDATE 28"]);
+        expect(names).toHaveLength(20);
+        expect(within(list).getByText("N0000030 • 199012345678")).toBeInTheDocument();
+        const first = calls.filter((c) => c.path.startsWith("/api/admin/job-candidate-options?"))[0];
+        expect(Object.fromEntries(first.url.searchParams)).toEqual({ page: "1", pageSize: "20" });
+        expect(within(dialog).getByText("Page 1 of 2")).toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: "Next page" }));
+        expect(await within(dialog).findByText("CANDIDATE 9")).toBeInTheDocument();
+        expect(Object.fromEntries(calls.filter((c) => c.path.startsWith("/api/admin/job-candidate-options?")).at(-1)!.url.searchParams)).toEqual({ page: "2", pageSize: "20" });
+        // A search starts again on page 1, still on the server; an empty search is the full list again.
+        await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "  nimal  ");
+        await user.click(within(dialog).getByRole("button", { name: "Search" }));
+        await vi.waitFor(() => expect(Object.fromEntries(calls.filter((c) => c.path.startsWith("/api/admin/job-candidate-options?")).at(-1)!.url.searchParams)).toEqual({ page: "1", pageSize: "20", search: "nimal" }));
+        await user.clear(within(dialog).getByRole("searchbox", { name: "Search candidates" }));
+        await user.click(within(dialog).getByRole("button", { name: "Search" }));
+        await vi.waitFor(() => expect(Object.fromEntries(calls.filter((c) => c.path.startsWith("/api/admin/job-candidate-options?")).at(-1)!.url.searchParams)).toEqual({ page: "1", pageSize: "20" }));
+        // The candidate already on the job is marked, not offered again.
+        expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(false);
+    });
+
+    test("Y26S01 Add to job: typing filters the list on the server as you type (after a short pause, no Search click)", async () => {
+        const option = (passportId: string, name: string) => ({ passportId, uniqueId: passportId.slice(-2), name, nic: null, workflowStatus: { code: "REGISTERED" as const, label: "Registered" } });
+        const ALL = [option("N0000031", "MANJULA HERATH"), option("N0000032", "SAMPATH KUMARA"), option("N0000033", "MANOJ PERERA")];
+        const { calls } = backend("OWNER", {
+            ...getJob(details(base, [CAND])),
+            "GET /api/admin/job-candidate-options": (url) => {
+                const term = (url.searchParams.get("search") ?? "").toLowerCase();
+                const items = ALL.filter((c) => c.name.toLowerCase().includes(term));
+                return { status: 200, body: { items, pagination: { page: 1, pageSize: 20, total: items.length, totalPages: 1 }, filters: { search: term || null } } };
+            },
+        });
+        renderApp(path);
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
+        expect(await within(dialog).findByText("SAMPATH KUMARA")).toBeInTheDocument();
+        const optionCalls = () => calls.filter((c) => c.path.startsWith("/api/admin/job-candidate-options?"));
+        const before = optionCalls().length;
+        await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "man");
+        await vi.waitFor(() => expect(within(dialog).queryByText("SAMPATH KUMARA")).toBeNull());
+        expect(within(dialog).getByText("MANJULA HERATH")).toBeInTheDocument();
+        expect(within(dialog).getByText("MANOJ PERERA")).toBeInTheDocument();
+        // One request for the typed text (debounced), not one per key; on page 1.
+        const sent = optionCalls().slice(before).map((c) => Object.fromEntries(c.url.searchParams));
+        expect(sent).toEqual([{ page: "1", pageSize: "20", search: "man" }]);
+        await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "oj");
+        await vi.waitFor(() => expect(within(dialog).queryByText("MANJULA HERATH")).toBeNull());
+        expect(within(dialog).getByText("MANOJ PERERA")).toBeInTheDocument();
+        // Search / Enter on the same text asks nothing more.
+        const count = optionCalls().length;
+        await user.click(within(dialog).getByRole("button", { name: "Search" }));
+        expect(optionCalls().length).toBe(count);
+    });
+
+    test("Y26S01 Add to job: a candidate already on this job shows On this job and cannot be ticked", async () => {
+        backend("OWNER", {
+            ...getJob(details(base, [CAND])),
+            "GET /api/admin/job-candidate-options": { status: 200, body: { items: [{ passportId: CAND.passportId, uniqueId: "1", name: CAND.name, nic: null, workflowStatus: { code: "REGISTERED", label: "Registered" } }], pagination: { page: 1, pageSize: 20, total: 1, totalPages: 1 }, filters: { search: null } } },
+        });
+        renderApp(path);
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
+        expect(await within(dialog).findByText("On this job")).toBeInTheDocument();
+        expect(within(dialog).getByRole("checkbox", { name: `Select ${CAND.name}` })).toBeDisabled();
+        expect(within(dialog).queryByRole("navigation", { name: "Candidate pages" })).toBeNull();
     });
 
     test("JOB-PASS-008: if the server refuses a candidate who has not passed, its message is shown and nothing is added", async () => {
@@ -259,7 +372,8 @@ describe("Job details", () => {
         const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
         await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "saman");
         await user.click(within(dialog).getByRole("button", { name: "Search" }));
-        await user.click(await within(dialog).findByRole("button", { name: "Add SAMAN SILVA" }));
+        await user.click(await within(dialog).findByRole("checkbox", { name: "Select SAMAN SILVA" }));
+        await user.click(within(dialog).getByRole("button", { name: "Add selected (1)" }));
         expect(await within(dialog).findByRole("alert")).toHaveTextContent("Candidate must pass the test before being assigned to a job.");
         expect(screen.getByRole("tab", { name: "Assigned Candidates (1)" })).toBeInTheDocument();
         expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
@@ -281,15 +395,78 @@ describe("Job details", () => {
         const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
         await user.type(within(dialog).getByRole("searchbox", { name: "Search candidates" }), "saman");
         await user.click(within(dialog).getByRole("button", { name: "Search" }));
-        await user.click(await within(dialog).findByRole("button", { name: "Add SAMAN SILVA" }));
+        await user.click(await within(dialog).findByRole("checkbox", { name: "Select SAMAN SILVA" }));
+        await user.click(within(dialog).getByRole("button", { name: "Add selected (1)" }));
         expect(await within(dialog).findByRole("alert")).toHaveTextContent("already on the PROCESSING job JOB-2026-000007");
         expect(screen.getByRole("tab", { name: "Assigned Candidates (1)" })).toBeInTheDocument();
 
-        await user.click(within(dialog).getByRole("button", { name: "Add SAMAN SILVA" }));
+        // The refused candidate stays ticked: Add selected tries again.
+        await user.click(within(dialog).getByRole("button", { name: "Add selected (1)" }));
         expect(await within(dialog).findByRole("status")).toHaveTextContent("SAMAN SILVA was added.");
         expect(within(dialog).getByText("On this job")).toBeInTheDocument();
         expect(await screen.findByRole("tab", { name: "Assigned Candidates (2)" })).toBeInTheDocument();
         expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([{ passportId: "N0000002" }, { passportId: "N0000002" }]);
+    });
+
+    test("Add to job: tick several candidates (across pages) and add them together; a refusal is listed and the rest are still added", async () => {
+        const option = (n: number) => ({ passportId: `N00000${String(n).padStart(2, "0")}`, uniqueId: String(n), name: `CANDIDATE ${n}`, nic: null, workflowStatus: { code: "REGISTERED" as const, label: "Registered" } });
+        let assigned = [CAND];
+        const { calls } = backend("OWNER", {
+            ...getJob(details(base, [CAND])),
+            "GET /api/admin/job-candidate-options": (url) => {
+                const page = Number(url.searchParams.get("page"));
+                const ns = page === 1 ? [30, 29, 28] : [10];
+                return { status: 200, body: { items: ns.map(option), pagination: { page, pageSize: 20, total: 4, totalPages: 2 }, filters: { search: null } } };
+            },
+            // The request just recorded is this one (the stub records each call before answering it).
+            [`POST /api/admin/jobs/${base.jobId}/candidates`]: () => {
+                const { passportId } = calls.at(-1)!.body as { passportId: string };
+                if (passportId === "N0000029") return { status: 409, body: { message: "Candidate must pass the test before being assigned to a job.", code: "CANDIDATE_TEST_NOT_PASSED" } };
+                assigned = [...assigned, { ...CAND, passportId, name: `CANDIDATE ${Number(passportId.slice(-2))}` }];
+                return { status: 201, body: details(base, assigned) };
+            },
+        });
+        renderApp(path);
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
+        expect(within(dialog).getByRole("button", { name: "Add selected" })).toBeDisabled();
+        await user.click(await within(dialog).findByRole("checkbox", { name: "Select CANDIDATE 30" }));
+        await user.click(within(dialog).getByRole("checkbox", { name: "Select CANDIDATE 29" }));
+        // The selection is kept on another page.
+        await user.click(within(dialog).getByRole("button", { name: "Next page" }));
+        await user.click(await within(dialog).findByRole("checkbox", { name: "Select CANDIDATE 10" }));
+        expect(within(dialog).getByText("3 selected")).toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: "Add selected (3)" }));
+
+        expect(await within(dialog).findByText("2 of 3 candidates were added.")).toBeInTheDocument();
+        const alert = within(dialog).getByRole("alert");
+        expect(alert).toHaveTextContent("1 candidate could not be added:");
+        expect(alert).toHaveTextContent("CANDIDATE 29: Candidate must pass the test before being assigned to a job.");
+        expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([{ passportId: "N0000030" }, { passportId: "N0000029" }, { passportId: "N0000010" }]);
+        expect(await screen.findByRole("tab", { name: "Assigned Candidates (3)" })).toBeInTheDocument();
+        // The added ones leave the selection; the refused one stays ticked.
+        expect(within(dialog).getByRole("button", { name: "Add selected (1)" })).toBeEnabled();
+        expect(within(dialog).getByText("On this job")).toBeInTheDocument();
+    });
+
+    test("Add to job: Select all on this page ticks every candidate on the page who is not on the job yet", async () => {
+        const option = (passportId: string, name: string) => ({ passportId, uniqueId: passportId.slice(-2), name, nic: null, workflowStatus: { code: "REGISTERED" as const, label: "Registered" } });
+        backend("OWNER", {
+            ...getJob(details(base, [CAND])),
+            "GET /api/admin/job-candidate-options": { status: 200, body: { items: [option(CAND.passportId, CAND.name!), option("N0000041", "ONE"), option("N0000042", "TWO")], pagination: { page: 1, pageSize: 20, total: 3, totalPages: 1 }, filters: { search: null } } },
+        });
+        renderApp(path);
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Add to job" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /Add candidates to JOB-2026-000002/ });
+        await user.click(await within(dialog).findByRole("checkbox", { name: "Select all on this page" }));
+        expect(within(dialog).getByRole("checkbox", { name: "Select ONE" })).toBeChecked();
+        expect(within(dialog).getByRole("checkbox", { name: "Select TWO" })).toBeChecked();
+        expect(within(dialog).getByRole("checkbox", { name: `Select ${CAND.name}` })).toBeDisabled();
+        expect(within(dialog).getByRole("button", { name: "Add selected (2)" })).toBeEnabled();
+        await user.click(within(dialog).getByRole("checkbox", { name: "Select all on this page" }));
+        expect(within(dialog).getByRole("button", { name: "Add selected" })).toBeDisabled();
     });
 
     test("Cancel job needs a reason; Complete asks first", async () => {
@@ -433,7 +610,7 @@ describe("Client Job ID", () => {
         await user.type(within(dialog).getByLabelText(/Client Job ID/), "Y26S01");
         await user.click(within(dialog).getByRole("button", { name: "Next" }));
         await user.click(await within(dialog).findByRole("button", { name: "Create job" }));
-        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", jobTypeIds: ["t1"], clientId: "c1", responsibleAgentId: "a1", vacancies: null, companyJobId: "Y26S01", fromCountryCode: "RO", candidateIds: [] }));
+        await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ jobTypeId: "t1", jobTypeIds: ["t1"], jobSector: null, clientId: "c1", responsibleAgentId: "a1", vacancies: null, companyJobId: "Y26S01", fromCountryCode: "RO", candidateIds: [] }));
     });
 });
 
@@ -548,3 +725,44 @@ describe("Multiple Job Types UI", () => {
     });
 });
 
+
+describe("a Job created by the sheet upload (JOB-YYYY-MMDDNN)", () => {
+    const imported = job(7, "PROCESSING", {
+        jobCode: "JOB-2026-071101",
+        importGroup: { interviewDate: "2026-07-11", from: 3100, to: 3199, prefix: "JOB-2026-0711", suffix: "01" },
+    });
+
+    test("ADMIN / OWNER edits only the last two digits: the prefix is fixed, two digits are required, the new ID is sent", async () => {
+        let current = details(imported);
+        const { calls } = backend("OWNER", {
+            [`GET /api/admin/jobs/${imported.jobId}`]: () => ({ status: 200, body: current }),
+            [`PATCH /api/admin/jobs/${imported.jobId}/import-suffix`]: () => {
+                current = details({ ...imported, jobCode: "JOB-2026-071105", importGroup: { ...imported.importGroup!, suffix: "05" } });
+                return { status: 200, body: { jobId: imported.jobId, jobCode: "JOB-2026-071105" } };
+            },
+        });
+        renderApp(`/jobs/${imported.jobId}`);
+        const editor = await screen.findByTestId("import-job-suffix", undefined, RENDER_STEP);
+        expect(within(editor).getByText(/Interview date 11 Jul 2026 · Unique Numbers 3100–3199/)).toBeInTheDocument();
+        const input = within(editor).getByRole("textbox", { name: "Last two digits" });
+        const user = userEvent.setup();
+        await user.clear(input);
+        await user.type(input, "5");
+        expect(within(editor).getByRole("button", { name: "Save" })).toBeDisabled();
+        expect(within(editor).getByText(/Enter exactly two digits/)).toBeInTheDocument();
+        await user.type(input, "5");
+        await user.clear(input);
+        await user.type(input, "05");
+        expect(within(editor).getByText("JOB-2026-071105")).toBeInTheDocument();
+        await user.click(within(editor).getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(calls.find((c) => c.path.endsWith("/import-suffix"))?.body).toEqual({ suffix: "05" }));
+        expect(await screen.findByRole("heading", { name: /JOB-2026-071105/ })).toBeInTheDocument();
+    });
+
+    test("a TEAM_LEAD sees where the Job comes from but cannot edit; a manual Job has no editor", async () => {
+        backend("TEAM_LEAD", { [`GET /api/admin/jobs/${imported.jobId}`]: { status: 200, body: details(imported) } });
+        renderApp(`/jobs/${imported.jobId}`);
+        expect(await screen.findByText(/Sheet upload · Interview date 11 Jul 2026/, undefined, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.queryByTestId("import-job-suffix")).toBeNull();
+    });
+});

@@ -247,7 +247,7 @@ describe("the eligible candidates of Step 2 (GET /candidates?testResult=PASS&ava
         for (const i of [1, 2, FAILED, UNTESTED]) assert.ok(!listed.includes(pid(i)), pid(i));
         for (const i of [3, 30, NO_PREFERENCE]) assert.ok(listed.includes(pid(i)), pid(i));
         assert.equal(response.body.pagination.total, 29);
-        assert.deepEqual(response.body.items[0].workflowStatus, { code: "REGISTERED", label: "Registered" });
+        assert.deepEqual(response.body.items[0].workflowStatus, { code: "TEST_PASSED", label: "Test Passed" }, "every eligible candidate passed the test");
         assert.equal((await api(USERS.OWNER, "GET", "/candidates?available=yes")).status, 400);
     });
 

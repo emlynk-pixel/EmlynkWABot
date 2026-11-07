@@ -174,8 +174,8 @@ describe("Candidates: full operational access to every candidate", () => {
     });
 
     test("edits stages and records calls on an unallocated candidate (audited as the Team Lead)", async () => {
-        ok(await api(TL, "PUT", `/candidates/${FREE}/stages/IVS_INTERVIEW`, { completed: true }));
-        assert.equal((await prisma.candidateStage.findUnique({ where: { passportId_stage: { passportId: FREE, stage: "IVS_INTERVIEW" } } })).completed, true);
+        ok(await api(TL, "PUT", `/candidates/${FREE}/stages/VISA_APPROVAL`, { completed: true }));
+        assert.equal((await prisma.candidateStage.findUnique({ where: { passportId_stage: { passportId: FREE, stage: "VISA_APPROVAL" } } })).completed, true);
         ok(await api(TL, "POST", `/candidates/${FREE}/call-logs`, { note: "Called about the test" }), 201);
         assert.ok(await prisma.auditLog.findFirst({ where: { adminId: TL.adminId, passportId: FREE } }));
     });
@@ -302,7 +302,7 @@ const TEAM_LEAD_ROUTES = [
     ["POST", `/review/${REVIEW}/document-type`, false], ["POST", `/review/${REVIEW}/assign-client`, false],
     ["DELETE", `/temporary-documents/${NO_ID}`, false], ["POST", `/documents/${NO_ID}/police-date`, false],
     ["GET", "/candidates", true], ["POST", "/candidates", true], ["GET", `/candidates/${P}`, true], ["PUT", `/candidates/${P}`, true],
-    ["PUT", `/candidates/${P}/stages/IVS_INTERVIEW`, true], ["POST", `/candidates/${P}/verification`, false],
+    ["PUT", `/candidates/${P}/stages/VISA_APPROVAL`, true], ["POST", `/candidates/${P}/verification`, false],
     ["POST", `/candidates/${P}/documents/upload-target`, true], ["POST", `/candidates/${P}/documents/finalize`, true],
     ["POST", `/candidates/${P}/documents/${NO_ID}/remove`, true], ["GET", `/candidates/${P}/call-logs`, true],
     ["POST", `/candidates/${P}/call-logs`, true], ["POST", `/candidates/${P}/call-logs/${NO_ID}/follow-up`, true],

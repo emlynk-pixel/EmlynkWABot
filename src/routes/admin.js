@@ -60,6 +60,7 @@ import {
     parseFollowUpListQuery,
 } from "../services/callLogFollowUpService.js";
 import { accessiblePassportIds, canAccessCandidate, candidateScope, isCandidateScoped } from "../services/candidateAccess.js";
+import { filterAccess, listCandidateFilterOptions } from "../services/candidateListFilters.js";
 import {
     assignCandidates,
     autoAllocateCandidates,
@@ -96,7 +97,7 @@ import {
 } from "../services/jobService.js";
 import { getFormSubmission, pendingConflictsByCandidate } from "../services/candidateFormSubmissionService.js";
 import { activeJobTypeNames, NO_PREFERRED_JOB_TYPE, resolveCandidateJobTypes } from "../services/jobTypeCatalog.js";
-import { confirmFormField, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
+import { CONFIRMABLE_FIELDS, confirmAllFormFields, confirmFormField, isConfirmableField, rejectAllFormFields, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
 import { parseCandidateFormOrigin } from "../config/candidateForm.js";
@@ -126,6 +127,8 @@ import {
     updateClient,
 } from "../services/clientService.js";
 import { parseVerificationBody, setCandidateVerification } from "../services/candidateVerificationService.js";
+import { parseFinalStatusBody, setCandidateFinalStatus } from "../services/candidateFinalStatusService.js";
+import { SUFFIX_EDITOR_ROLES, updateImportJobSuffix } from "../services/importJobGroups.js";
 import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
@@ -142,6 +145,8 @@ import {
     isValidCandidateIdParam,
     listCallLogs,
     listCandidates,
+    listCandidateSuggestions,
+    parseSuggestionQuery,
     removeCandidateDocument,
     parseCallLogBody,
     formatJobTypes,
@@ -578,17 +583,39 @@ export function createAdminRouter({
     const candidateFor = (req, details) => (registrationOnly(req) ? registrationView(details) : details);
     const forbidden = (res) => res.status(403).json({ message: "Insufficient permissions" });
 
+    // The advanced filters (candidateListFilters.js) only ever narrow the user's own candidates: the
+    // scope is AND-ed with them in the database. A filter the role may not use is refused (400).
     router.get("/candidates", requireRole(CANDIDATE_READERS), async (req, res) => {
-        const parsed = parseCandidateListQuery(req.query);
+        const parsed = parseCandidateListQuery(req.query, { filterAccess: filterAccess(req.user) });
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        const list = await listCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) });
-        // formConflicts: the Candidate Form fields still waiting for review ([] = none), for the list's
-        // "!" indicator. Same rule as the candidate page's pending changes; derived, never stored.
-        const conflicts = await pendingConflictsByCandidate(client, list.items.map((item) => item.passportId));
-        return res.json({ ...list, items: list.items.map((item) => ({ ...item, formConflicts: conflicts.get(item.passportId) ?? [] })) });
+        return candidateAction(res, async () => {
+            const list = await listCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) });
+            // formConflicts: the Candidate Form fields still waiting for review ([] = none), for the list's
+            // "!" indicator. Same rule as the candidate page's pending changes; derived, never stored.
+            const conflicts = await pendingConflictsByCandidate(client, list.items.map((item) => item.passportId));
+            return res.json({ ...list, items: list.items.map((item) => ({ ...item, formConflicts: conflicts.get(item.passportId) ?? [] })) });
+        });
+    });
+
+    // The choices of the advanced filters' dropdowns, limited to the filters the role may use.
+    router.get("/candidate-filter-options", requireRole(CANDIDATE_READERS), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json(await listCandidateFilterOptions({ db: client, user: req.user }));
+    });
+
+    // Search-box suggestions: the list's own roles, search and scope (never a wider set), at most a
+    // few rows with only the name, passport number and NIC the list already shows. allocation
+    // (Work Allocation's view) only for the roles that may filter by it.
+    router.get("/candidate-suggestions", requireRole(CANDIDATE_READERS), async (req, res) => {
+        const parsed = parseSuggestionQuery(req.query, { filterAccess: filterAccess(req.user) });
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        return res.json(await listCandidateSuggestions({ db: client, params: parsed.params, scope: candidateScope(req.user) }));
     });
 
     // The job type preferences must come from the active list (Settings > Job Types) or be
@@ -662,6 +689,18 @@ export function createAdminRouter({
         if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await setCandidateVerification({
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), ...parsed.values,
+        })));
+    });
+
+    // A candidate's final status (candidateFinalStatusService.js): Departed, Visa Not Going,
+    // Cancelled or Rejected, or none. ADMIN only, explicit, audited. The derived Status reads it.
+    router.post("/candidates/:passportId/final-status", requireRole(ADMINS_ONLY), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseFinalStatusBody(req.body);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await setCandidateFinalStatus({
             db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), ...parsed.values,
         })));
     });
@@ -844,6 +883,30 @@ export function createAdminRouter({
         });
     }
 
+    // Confirm All / Reject All: every pending candidate-submitted change at once, in one transaction
+    // (ADMIN only, like the per-field actions). The body lists the changes the Admin saw; the server
+    // refuses the whole request unless they are exactly the pending set (candidateFormFieldConfirmService.js).
+    for (const [action, review] of [["confirm-all", confirmAllFormFields], ["reject-all", rejectAllFormFields]]) {
+        router.post(`/candidates/:passportId/form-submission/${action}`, requireRole(ADMINS_ONLY), async (req, res) => {
+            if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+            const body = req.body;
+            const allowed = new Set(["field", "expectedCurrentValue", "expectedSubmittedValue"]);
+            const textOrNull = (value) => value === null || value === undefined || typeof value === "string";
+            const validChange = (change) => change && typeof change === "object" && !Array.isArray(change) && Object.keys(change).every((key) => allowed.has(key))
+                && isConfirmableField(change.field) && textOrNull(change.expectedCurrentValue) && textOrNull(change.expectedSubmittedValue);
+            if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => key !== "changes")
+                || !Array.isArray(body.changes) || !body.changes.length || body.changes.length > Object.keys(CONFIRMABLE_FIELDS).length || !body.changes.every(validChange)) {
+                return res.status(400).json({ message: "Invalid request body", errors: [{ field: "changes", message: "must be a list of { field, expectedCurrentValue, expectedSubmittedValue }" }] });
+            }
+            const client = await resolveDb(db);
+            return candidateAction(res, async () => {
+                const passportId = await storedCandidateId(client, req.params.passportId, req.user);
+                await review({ db: client, actor: req.user, passportId, changes: body.changes });
+                return res.json(await getFormSubmission({ db: client, passportId }));
+            });
+        });
+    }
+
     router.get("/candidates/:passportId/form-share", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
@@ -878,7 +941,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.json(await listAllocationCandidates({ db: client, params: parsed.params })));
+        return candidateAction(res, async () => res.json(await listAllocationCandidates({ db: client, params: parsed.params, scope: candidateScope(req.user) })));
     });
 
     router.get("/work-allocation/analysts", requireRole(ALLOCATION_MANAGERS), async (req, res) => {
@@ -1031,6 +1094,13 @@ export function createAdminRouter({
         if (!jobParam(req, res)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await revokeJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase() })));
+    });
+
+    // The last two digits of a Job created by the sheet upload (JOB-YYYY-MMDDNN; importJobGroups.js).
+    // ADMIN (and OWNER), JOB_HANDLER and ANALYST (an Analyst: a Job holding one of their candidates).
+    router.patch("/jobs/:jobId/import-suffix", requireRole(SUFFIX_EDITOR_ROLES), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        return candidateAction(res, async () => res.json(await updateImportJobSuffix({ db: await resolveDb(db), actor: req.user, jobId: req.params.jobId, suffix: req.body?.suffix })));
     });
 
     router.post("/jobs/:jobId/complete", requireRole(JOB_MANAGERS), async (req, res) => {

@@ -579,7 +579,8 @@ describe("security and error handling", () => {
             "PATCH /client-management/:clientId",
             "PATCH /client-management/:clientId/agent",
             "PATCH /client-management/:clientId/status",
-            "PATCH /job-types/:id", // Settings > Job Types: rename / activate / deactivate, ADMIN only, audited (jobTypes.test.js)
+            "PATCH /job-types/:id",
+            "PATCH /jobs/:jobId/import-suffix", // last two digits of a sheet-upload Job: ADMIN, JOB_HANDLER, ANALYST (scoped), audited (importJobGroups.test.js) // Settings > Job Types: rename / activate / deactivate, ADMIN only, audited (jobTypes.test.js)
             "POST /agents",
             "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",
@@ -587,9 +588,12 @@ describe("security and error handling", () => {
             "POST /candidates/:passportId/documents/:documentId/remove", // reason required, audited
             "POST /candidates/:passportId/documents/finalize", // JSON only: the file goes browser -> storage
             "POST /candidates/:passportId/documents/upload-target",
+            "POST /candidates/:passportId/final-status", // Departed / Visa Not Going / Cancelled / Rejected: ADMIN only, audited (candidateWorkflowStatus.test.js)
             "POST /candidates/:passportId/form-share", // Candidate Form share link: create (replaces the old one), audited (candidateFormShare.test.js)
             "POST /candidates/:passportId/form-share/revoke",
+            "POST /candidates/:passportId/form-submission/confirm-all", // ADMIN only: every pending field in one transaction, audited per field (candidateFormBulkReview.test.js)
             "POST /candidates/:passportId/form-submission/confirm-field", // ADMIN only: one field, audited (candidateFormFieldConfirm.test.js)
+            "POST /candidates/:passportId/form-submission/reject-all", // ADMIN only: dismiss every pending value, record unchanged, audited per field
             "POST /candidates/:passportId/form-submission/reject-field", // ADMIN only: dismiss one proposed value, record unchanged, audited
             "POST /candidates/:passportId/verification", // Verify details / documents: ADMIN only, audited (candidateWorkflowStatus.test.js)
             "POST /client-management",

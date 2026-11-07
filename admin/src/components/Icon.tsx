@@ -1,9 +1,9 @@
 // Lucide, the EMLYNK design system's only icon set. Screens name an icon by
 // what it means here, so changing a glyph touches this file alone.
 import {
-    ArrowUpFromLine, Bell, BellRing, Briefcase, Building2, Calendar, Check, ChevronDown, ChevronLeft, ChevronsUpDown, ChevronUp, CircleAlert, CircleCheck, CircleCheckBig, CircleX,
+    ArrowUpFromLine, Bell, BellRing, Briefcase, Building2, Calendar, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, CircleAlert, CircleCheck, CircleCheckBig, CircleX,
     ClipboardCheck, ClipboardList, ClipboardX, Clock, Eye, EyeOff, FileDown, FileText, FileUp, Flag, Headset, History, LayoutDashboard, LoaderCircle, Lock, LogOut,
-    Mail, Moon, NotebookPen, PanelLeft, Pencil, Phone, PhoneMissed, RefreshCw, RotateCcw, Search, Send, Settings, ShieldCheck, Sun, Trash2, UserCheck, UserCog, UserPlus,
+    Mail, Moon, NotebookPen, PanelLeft, Pencil, Phone, PhoneMissed, RefreshCw, RotateCcw, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Sun, Trash2, UserCheck, UserCog, UserPlus,
     Users, UserSearch, X, type LucideIcon,
 } from "lucide-react";
 
@@ -13,6 +13,7 @@ const ICONS = {
     cancel: CircleX,
     check: Check,
     close: X,
+    filter: SlidersHorizontal,
     picture_as_pdf: FileDown,
     upload: ArrowUpFromLine,
     check_circle: CircleCheck,
@@ -40,6 +41,7 @@ const ICONS = {
     summarize: ClipboardList,
     sync: RefreshCw,
     chevron_left: ChevronLeft,
+    chevron_right: ChevronRight,
     dashboard: LayoutDashboard,
     description: FileText,
     error: CircleAlert,

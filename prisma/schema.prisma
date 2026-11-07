@@ -27,6 +27,11 @@ model User {
   email                 String                     @unique
   role                  String
   status                String                     @default("ACTIVE")
+  // When the account completed setup (invitation accepted with a password, or provisioned); null:
+  // never set up. Re-inviting reactivates only an account that was set up (userAccountService.js).
+  activatedAt           DateTime?                  @map("activated_at")
+  // When the latest invitation / password-setup email was sent (its age is shown; links expire).
+  invitedAt             DateTime?                  @map("invited_at")
   createdDate           DateTime                   @default(now()) @map("created_date")
   updatedDate           DateTime                   @updatedAt @map("updated_date")
   auditLogs             AuditLog[]
@@ -69,6 +74,8 @@ model CandidateImport {
   sourceFlags   Json      @default("{}") @map("source_flags")
   previewCounts Json      @default("{}") @map("preview_counts")
   chunkResults  Json      @default("{}") @map("chunk_results")
+  // The Job group plan of the preview (importJobGroups.js), with the user's suffix edits.
+  jobGroups     Json      @default("[]") @map("job_groups")
   resultCounts  Json?     @map("result_counts")
   syncRunId     String?   @map("sync_run_id")
   createdAt     DateTime  @default(now()) @map("created_at")
@@ -142,6 +149,14 @@ model Candidate {
   // Job types: a comma-separated list ("Construction Worker, Caregiver").
   // Older records hold a single value, which reads as a list of one.
   job                String?
+  // Recorded as Departed (bulk import VISA STATUS "Departed"; migration 20261106120000). Its own fact:
+  // the Finalizing job stage does not set it. Drives the derived Status DEPARTED.
+  departedAt         DateTime?       @map("departed_at")
+  // A recorded final outcome: VISA_NOT_GOING | CANCELLED | REJECTED (bulk import VISA STATUS, or an Admin
+  // on the candidate page; candidateFinalStatusService.js). Never together with departedAt (CHECK,
+  // migration 20261109120000_candidate_status_cleanup). Drives the derived Status, outranking everything.
+  outcome            String?
+  outcomeAt          DateTime?       @map("outcome_at")
   createdDate        DateTime        @default(now()) @map("created_date")
   updatedDate        DateTime        @updatedAt @map("updated_date")
   documents          Document[]
@@ -180,6 +195,9 @@ model Candidate {
   // Explicit details / documents verification (a relation only).
   verification      CandidateVerification?
 
+  // The candidate lists' order (newest registered first, passport ID for ties) and the
+  // Registered date filter (migration 20261107120000_candidate_created_date_index).
+  @@index([createdDate(sort: Desc), passportId], map: "candidate_created_date_passport_id_idx")
   @@map("candidate")
 }
 
@@ -520,6 +538,8 @@ model Client {
   whatsappNumber String?  @map("whatsapp_number")
   email          String?
   address        String?
+  // Company registration number (legacy sheet COMPANY NUMBER; migration 20261106120000).
+  registrationNumber String? @map("registration_number")
   isActive       Boolean  @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
@@ -548,11 +568,13 @@ model AgentClient {
 }
 
 // The agent responsible for a job; country_code (ISO 3166-1 alpha-2) is the
-// agent's country and is copied onto each new job.
+// agent's country and is copied onto each new job. NULL only for an Agent created
+// by the bulk import (the legacy sheet has no country): it can't be a Job's
+// responsible Agent until a country is set.
 model Agent {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name           String
-  countryCode    String   @map("country_code") @db.Char(2)
+  countryCode    String?  @map("country_code") @db.Char(2)
   isActive       Boolean  @default(true) @map("is_active")
   contactNumber  String?  @map("contact_number")
   whatsappNumber String?  @map("whatsapp_number")
@@ -598,6 +620,9 @@ model Job {
   // new job, editable; NULL for a job created before it was recorded.
   fromCountryCode    String?   @map("from_country_code") @db.Char(2)
   vacancies          Int?
+  // "Job Sector" (migration 20261108120000_job_sector): CONSTRUCTION | INDUSTRIAL (CHECK in the
+  // SQL migration). Optional; NULL for a job created without one.
+  jobSector          String?   @map("job_sector")
   status             String    @default("PROCESSING")
   createdById        String    @map("created_by")
   createdAt          DateTime  @default(now()) @map("created_at")
@@ -614,6 +639,8 @@ model Job {
   candidates       JobCandidate[]
   // Candidate Form job-group links bound to this job's immutable id.
   formLinks        CandidateFormLink[]
+  // Set when the Job was created by the Google Sheet upload (its code is JOB-YYYY-MMDDNN).
+  importGroup      ImportJobGroup?
 
   @@index([status, createdAt])
   @@index([clientId])
@@ -818,8 +845,9 @@ model CandidateAdditionalDetails {
   updatedDate      DateTime  @updatedAt @map("updated_date")
 
   // Candidate Form answers confirmed by an Admin (candidateFormFieldConfirmService.js),
-  // migration 20261102120000_candidate_form_finalized_details. NULL until confirmed. Never
-  // written by the public form, and not part of the Additional Details form (its save leaves them).
+  // migration 20261102120000_candidate_form_finalized_details. NULL until confirmed or entered by
+  // staff on the Additional Details form (a save that leaves one out keeps it). Never written by the
+  // public form.
   // A+ | A- | B+ | B- | AB+ | AB- | O+ | O-
   bloodGroup           String?   @map("blood_group")
   // In the candidate's own unit, tidied ("175 cm", "5'9\"").
@@ -858,7 +886,7 @@ model CandidateAdditionalDetails {
 model CandidateStage {
   passportId     String    @map("passport_id")
   // TEST_DETAILS | JOB_DETAILS | CANDIDATE_DETAILS | DOCUMENT_SUBMISSION
-  // | IVS_INTERVIEW | VISA_SUBMISSION | VISA_APPROVAL | FINALIZING_JOB
+  // | VISA_SUBMISSION | VISA_APPROVAL (CHECK candidate_stages_stage_check)
   stage          String
   completed      Boolean   @default(false)
   completedAt    DateTime? @map("completed_at")
@@ -1065,4 +1093,25 @@ model SheetSyncState {
   updatedAt               DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
 
   @@map("sheet_sync_state")
+}
+
+// A Job created by the Google Sheet upload (importJobGroups.js): the candidates of one Interview Date
+// whose UNIQUE NUMBER falls in one hundreds block (floor(n / 100)). The Job's code is
+// JOB-YYYY-MMDD + suffix; the suffix (two digits, 01-99) is assigned per date and only its value may be
+// edited later. Re-uploads reuse the group, so its Job and suffix never change by themselves.
+// Migration 20261111120000_import_job_groups.
+model ImportJobGroup {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  interviewDate DateTime @map("interview_date") @db.Date
+  hundredsBlock Int      @map("hundreds_block")
+  suffix        String   @db.Char(2)
+  jobId         String   @unique @map("job_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([interviewDate, hundredsBlock], map: "import_job_group_date_block_key")
+  @@unique([interviewDate, suffix], map: "import_job_group_date_suffix_key")
+  @@map("import_job_group")
 }

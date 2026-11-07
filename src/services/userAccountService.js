@@ -19,15 +19,19 @@
 //     -> role validated here (never taken from Supabase user metadata)
 //     -> Supabase Auth Admin inviteUserByEmail (Supabase sends the email)
 //     -> public."user" upserted by email, linked by auth_user_id, INVITED
-//   invitee -> Supabase invite link -> sets a password -> POST /auth/complete-invite
-//     -> INVITED becomes ACTIVE (completeInvitation below)
+//   invitee -> Supabase invite link -> GET /auth/invitation (still valid?) -> sets a password
+//     -> POST /auth/complete-invite -> INVITED becomes ACTIVE, activated_at set (completeInvitation)
+//   If that last call never happens (network, closed tab, or the password was set through "Forgot
+//   password"), the first PASSWORD sign-in completes it (activateOnPasswordSignIn, GET /auth/me).
 //
-// Re-inviting:
-//   no row / INVITED / INACTIVE (never set up)  Supabase re-sends the invite; INVITED
-//   INACTIVE (account already set up)           Supabase refuses (identity confirmed);
-//                                               the existing identity is reactivated: ACTIVE
-//   confirmed Supabase identity without a row   linked by email (the address is confirmed): ACTIVE
-//   ACTIVE                                      refused (409)
+// Re-inviting. "Set up" means activated_at is set: the person accepted an invitation with a password
+// (or was provisioned). A confirmed Supabase identity is NOT proof of that: opening the invite link,
+// or an email scanner pre-fetching it, confirms the address before any password exists.
+//   no row / INVITED / INACTIVE, identity not confirmed   Supabase re-sends the invite; INVITED
+//   INVITED / INACTIVE / no row, identity confirmed,      Supabase refuses a new invite (email_exists):
+//     never set up                                        a password-setup email is sent instead; INVITED
+//   INACTIVE, set up before                               reactivated (they have a password): ACTIVE
+//   ACTIVE                                                refused (409)
 // One row per email (unique) and per Supabase identity (unique), so two
 // concurrent invites of one person converge on the same row.
 
@@ -61,6 +65,8 @@ export const toUserSummary = (user) => ({
     role: user.role,
     status: user.status,
     createdDate: user.createdDate,
+    // When the latest invitation email was sent (null: none); Supabase invitation links expire.
+    invitedAt: user.invitedAt ?? null,
 });
 
 const forbidden = () => new UserAccountError(403, "FORBIDDEN", "Insufficient permissions");
@@ -131,7 +137,7 @@ export function parseInviteBody(body) {
 
 export async function listUsers({ db }) {
     const users = await db.user.findMany({
-        select: { adminId: true, name: true, email: true, role: true, status: true, createdDate: true },
+        select: { adminId: true, name: true, email: true, role: true, status: true, createdDate: true, invitedAt: true },
         orderBy: [{ status: "asc" }, { createdDate: "desc" }],
     });
     return users.map(toUserSummary);
@@ -152,34 +158,52 @@ export async function inviteUser({ db, authAdmin, actor, values, redirectTo }) {
         throw new UserAccountError(409, "USER_ALREADY_ACTIVE", "An active user with this email already exists.");
     }
 
+    const sendFailed = (error) => {
+        if (!(error instanceof AuthAdminError)) return error;
+        if (error.code === "RATE_LIMITED") return new UserAccountError(429, "RATE_LIMITED", "Too many invitations right now. Please try again later.");
+        return new UserAccountError(502, "INVITE_FAILED", "The invitation could not be sent. Please try again.");
+    };
+    // A row is bound to one Supabase identity for good: never re-pointed.
+    const assertSameIdentity = (authUserId) => {
+        if (existing?.authUserId && existing.authUserId !== authUserId) {
+            throw new UserAccountError(409, "IDENTITY_MISMATCH", "This email is linked to a different sign-in account. Contact support.");
+        }
+    };
+
     let authUserId;
     let status;
+    let via = "invitation";
     try {
         ({ authUserId } = await authAdmin.inviteUserByEmail(email, { redirectTo }));
         status = USER_STATUS.INVITED;
     } catch (error) {
-        if (!(error instanceof AuthAdminError)) throw error;
-        if (error.code === "RATE_LIMITED") throw new UserAccountError(429, "RATE_LIMITED", "Too many invitations right now. Please try again later.");
-        if (error.code !== "EMAIL_EXISTS") throw new UserAccountError(502, "INVITE_FAILED", "The invitation could not be sent. Please try again.");
-        // The person already completed a Supabase sign-up with this confirmed
-        // address: reactivate / link that identity instead of inviting again.
-        authUserId = existing?.authUserId ?? (await authAdmin.findUserByEmail(email))?.authUserId;
+        if (!(error instanceof AuthAdminError) || error.code !== "EMAIL_EXISTS") throw sendFailed(error);
+        // The address is already confirmed at Supabase. That does NOT mean the person set a password
+        // (opening the invite link confirms it): only an account that completed setup is reactivated.
+        authUserId = existing?.authUserId ?? (await authAdmin.findUserByEmail(email).catch((e) => { throw sendFailed(e); }))?.authUserId;
         if (!authUserId) throw new UserAccountError(502, "INVITE_FAILED", "The invitation could not be sent. Please try again.");
-        status = USER_STATUS.ACTIVE;
+        assertSameIdentity(authUserId);
+        if (existing?.activatedAt) {
+            status = USER_STATUS.ACTIVE;
+        } else {
+            try {
+                await authAdmin.sendPasswordSetupEmail(email, { redirectTo });
+            } catch (sendError) {
+                throw sendFailed(sendError);
+            }
+            status = USER_STATUS.INVITED;
+            via = "password-setup email";
+        }
     }
+    assertSameIdentity(authUserId);
 
-    // A row is bound to one Supabase identity for good: never re-pointed.
-    if (existing?.authUserId && existing.authUserId !== authUserId) {
-        throw new UserAccountError(409, "IDENTITY_MISMATCH", "This email is linked to a different sign-in account. Contact support.");
-    }
-
-    const user = await upsertInvitedUser(db, { email, name, role, authUserId, status, actor });
+    const user = await upsertInvitedUser(db, { email, name, role, authUserId, status, actor, via });
     return { user: toUserSummary(user), outcome: status === USER_STATUS.ACTIVE ? "REACTIVATED" : "INVITED" };
 }
 
 const isUniqueViolation = (error) => error?.code === "P2002";
 
-async function upsertInvitedUser(db, { email, name, role, authUserId, status, actor }) {
+async function upsertInvitedUser(db, { email, name, role, authUserId, status, actor, via = "invitation" }) {
     // A concurrent invite of the same person can win the INSERT: the retry
     // then finds that row and updates it (same email, same identity).
     for (let attempt = 0; ; attempt++) {
@@ -190,18 +214,24 @@ async function upsertInvitedUser(db, { email, name, role, authUserId, status, ac
                 const current = await lockUserRows(tx, { actorId: actor.adminId, email });
                 assertCanInvite(current.actor, role, current.target);
                 if (current.target?.status === USER_STATUS.ACTIVE) throw new UserAccountError(409, "USER_ALREADY_ACTIVE", "An active user with this email already exists.");
+                // Reactivation only for an account that completed setup (re-checked on the locked row).
+                if (status === USER_STATUS.ACTIVE && !current.target?.activatedAt) {
+                    throw new UserAccountError(409, "CONFLICT", "This user was changed at the same time. Please try again.");
+                }
                 const previousStatus = current.target?.status ?? "NONE";
+                // An invitation (or password-setup email) was just sent: its time is the invitation's age.
+                const sent = status === USER_STATUS.INVITED ? { invitedAt: new Date() } : {};
                 const user = await tx.user.upsert({
                     where: { email },
-                    create: { adminId: crypto.randomUUID(), authUserId, email, name, role, status },
-                    update: { authUserId, name, role, status },
+                    create: { adminId: crypto.randomUUID(), authUserId, email, name, role, status, ...sent },
+                    update: { authUserId, name, role, status, ...sent },
                 });
                 await audit(tx, {
                     actor,
                     action: status === USER_STATUS.ACTIVE ? "REACTIVATE_USER" : "INVITE_USER",
                     previousStatus,
                     newStatus: status,
-                    reason: `Invited as ${role}`,
+                    reason: status === USER_STATUS.ACTIVE ? `Reactivated as ${role}` : via === "invitation" ? `Invited as ${role}` : `Invited as ${role} (password-setup email: the address was already confirmed)`,
                     newValue: email,
                 });
                 return user;
@@ -216,19 +246,46 @@ async function upsertInvitedUser(db, { email, name, role, authUserId, status, ac
 // POST /auth/complete-invite: the invitee's own Supabase session (set up from
 // the invite link) turns their INVITED row ACTIVE. Idempotent for ACTIVE;
 // anything else (revoked, unknown) is refused.
-export async function completeInvitation({ db, authUserId }) {
+export async function completeInvitation({ db, authUserId, reason = "Invitation accepted" }) {
     const user = await db.user.findUnique({ where: { authUserId } });
-    if (user?.status === USER_STATUS.ACTIVE) return toUserSummary(user);
+    if (user?.status === USER_STATUS.ACTIVE) {
+        // An account made ACTIVE without setup (the old re-invite rule) is set up now.
+        if (!user.activatedAt) await db.user.updateMany({ where: { authUserId, activatedAt: null }, data: { activatedAt: new Date() } });
+        return toUserSummary(user);
+    }
     if (user?.status !== USER_STATUS.INVITED) {
         throw new UserAccountError(403, "ACCOUNT_NOT_ACTIVE", "This invitation is no longer valid. Ask an administrator to invite you again.");
     }
     return runInTransaction(db, async (tx) => {
         // Conditional: a concurrent deactivation wins over the activation.
-        const { count } = await tx.user.updateMany({ where: { authUserId, status: USER_STATUS.INVITED }, data: { status: USER_STATUS.ACTIVE } });
+        const { count } = await tx.user.updateMany({ where: { authUserId, status: USER_STATUS.INVITED }, data: { status: USER_STATUS.ACTIVE, activatedAt: new Date() } });
         if (count !== 1) throw new UserAccountError(403, "ACCOUNT_NOT_ACTIVE", "This invitation is no longer valid. Ask an administrator to invite you again.");
-        await audit(tx, { actor: user, action: "COMPLETE_INVITATION", previousStatus: USER_STATUS.INVITED, newStatus: USER_STATUS.ACTIVE, reason: "Invitation accepted", newValue: user.email });
+        await audit(tx, { actor: user, action: "COMPLETE_INVITATION", previousStatus: USER_STATUS.INVITED, newStatus: USER_STATUS.ACTIVE, reason, newValue: user.email });
         return toUserSummary({ ...user, status: USER_STATUS.ACTIVE });
     });
+}
+
+// GET /auth/invitation: the status of the signed-in identity's own account, so the setup page can
+// refuse a revoked invitation BEFORE a password is set. null: no account for this identity.
+export async function invitationStatus({ db, authUserId }) {
+    const user = await db.user.findUnique({ where: { authUserId }, select: { status: true } });
+    return user?.status ?? null;
+}
+
+// The first sign-in WITH A PASSWORD of an INVITED account completes the invitation: a password can
+// only exist if the person set it from the invite link or a password email (both prove the address)
+// and the account is still invited (not revoked). Repairs an activation call that never arrived.
+// Never applies to INACTIVE (revoked) or unknown accounts. Returns true when it activated.
+export async function activateOnPasswordSignIn({ db, authUserId }) {
+    const user = await db.user.findUnique({ where: { authUserId }, select: { status: true } });
+    if (user?.status !== USER_STATUS.INVITED) return false;
+    try {
+        await completeInvitation({ db, authUserId, reason: "Invitation completed at the first password sign-in" });
+        return true;
+    } catch (error) {
+        if (error instanceof UserAccountError) return false; // revoked meanwhile: stays out
+        throw error;
+    }
 }
 
 // The checks run on the rows read under lockUserRows, inside the transaction that changes them.

@@ -92,10 +92,10 @@ export async function provisionUser(input, { db, authAdmin, newId = () => crypto
             // A row from before Supabase Auth: link it, keep its role unless one was given.
             ? await db.user.update({
                 where: { adminId: existing.adminId },
-                data: { authUserId, status: USER_STATUS.ACTIVE, ...(user.role ? { role: user.role } : {}), ...(user.name ? { name: user.name } : {}) },
+                data: { authUserId, status: USER_STATUS.ACTIVE, activatedAt: existing.activatedAt ?? new Date(), ...(user.role ? { role: user.role } : {}), ...(user.name ? { name: user.name } : {}) },
             })
             : await db.user.create({
-                data: { adminId: newId(), authUserId, email: user.email, name: user.name, role: user.role ?? DEFAULT_BOOTSTRAP_ROLE, status: USER_STATUS.ACTIVE },
+                data: { adminId: newId(), authUserId, email: user.email, name: user.name, role: user.role ?? DEFAULT_BOOTSTRAP_ROLE, status: USER_STATUS.ACTIVE, activatedAt: new Date() },
             });
         return { userId: row.adminId, status: row.status, created };
     } catch (error) {

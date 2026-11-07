@@ -59,16 +59,40 @@ Code: `src/auth/supabaseIdentity.js`, `src/middleware/requireActiveUser.js`,
 retired MANAGER; see `OWNER_ROLE.md`): `POST /api/admin/users/invite {email, name, role}`
 → role validated server-side → `auth.admin.inviteUserByEmail()` (Supabase sends
 the email; no role or metadata is sent) → `public."user"` upserted by email,
-linked by `auth_user_id`, status `INVITED`. Re-inviting: a pending invitee gets
-the invite again; a deactivated user who had set up their account, or a
-confirmed Supabase identity without a row, is linked/reactivated (`ACTIVE`); an
-`ACTIVE` email is refused (409). One row per email and per identity, so
-concurrent invites converge.
+linked by `auth_user_id`, status `INVITED`, `invited_at` set. Re-inviting
+("set up" = `user.activated_at` is set: the person accepted an invitation with a
+password, or was provisioned):
+
+| Account | Supabase identity | Result |
+|---|---|---|
+| none / `INVITED` / `INACTIVE` | not confirmed | the invite is sent again; `INVITED` |
+| none / `INVITED` / `INACTIVE`, never set up | confirmed (Supabase refuses a new invite: `email_exists`) | a **password-setup email** (Supabase recovery email to the same setup page); `INVITED` |
+| `INACTIVE`, set up before | confirmed | reactivated: `ACTIVE` (they have a password) |
+| `ACTIVE` | — | refused (409) |
+
+A confirmed identity is **not** proof that a password exists: opening the invite
+link (or an email scanner pre-fetching it) confirms the address. One row per email
+and per identity, so concurrent invites converge.
 
 **Invitation setup**: the invite link opens `/admin/setup-password` with a
-Supabase session → the invitee sets a password (`auth.updateUser`) →
-`POST /auth/complete-invite` turns `INVITED` into `ACTIVE`. Deactivating an
-`INVITED` user revokes the invitation.
+Supabase session → `GET /auth/invitation` (must be `INVITED`; a revoked invitation
+is refused here, before any password is set) → the invitee sets a password
+(`auth.updateUser`) → `POST /auth/complete-invite` turns `INVITED` into `ACTIVE`
+and sets `activated_at`. If that call fails, the page offers **Retry activation**
+(the password is not asked again). If it never arrives (closed tab, network), or the
+password was set through *Forgot password*, the **first password sign-in** completes
+the invitation (`GET /auth/me`, only for an `INVITED` account and only when the
+session's `amr` says `password`; audited `COMPLETE_INVITATION`). Deactivating an
+`INVITED` user revokes the invitation; a revoked account is never activated by a
+sign-in. Supabase invitation links expire (24 h by default): the users page shows
+when each invitation was sent and flags expired ones.
+
+**Invitation bugs fixed (migration `20261110120000_user_activation_tracking`)**:
+(1) re-inviting a never-set-up account whose invite link had been opened made it
+`ACTIVE` without a password; (2) a password set from a revoked link, or an
+activation call that never arrived, left the person with a password and a
+non-active account. `npm run auth:audit-users` (read-only) lists the accounts these
+affected.
 
 **Password recovery**: `/admin/forgot-password` → `auth.resetPasswordForEmail()`
 (same confirmation whether or not the email exists) → recovery link opens

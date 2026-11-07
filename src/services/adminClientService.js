@@ -14,6 +14,7 @@ import { loadRequiredDocumentTypes } from "../config/requiredDocuments.js";
 import { VERIFICATION_STATUS } from "./clientDocumentService.js";
 import { REVIEW_PENDING_WHERE } from "./adminReviewService.js";
 import { clientName } from "../utils/clientName.js";
+import { searchTokens } from "../utils/searchText.js";
 
 // Resolved once at startup (the startup check has already validated it).
 export const REQUIRED_DOCUMENT_TYPES = loadRequiredDocumentTypes();
@@ -61,11 +62,12 @@ const MAX_SEARCH_WORDS = 5;
 const PHONE_PATTERN = /^\+?[\d\s-]{4,}$/;
 
 // Every word must match one of: passport ID, unique ID, first name, other
-// name, WhatsApp number ("kamal perera" finds KAMAL NIMAL / PERERA). A
-// number also matches in the other Sri Lankan format (07… and 947…),
-// because stored numbers are kept as they were entered.
+// name, WhatsApp number ("kamal perera" finds KAMAL NIMAL / PERERA; each word
+// may be in a different column, in any order). A number also matches in the
+// other Sri Lankan format (07… and 947…), because stored numbers are kept as
+// they were entered. The words are normalised once (utils/searchText.js).
 export function clientSearchWhere(search) {
-    const words = search.trim().split(/\s+/).filter(Boolean).slice(0, MAX_SEARCH_WORDS);
+    const words = searchTokens(search, MAX_SEARCH_WORDS);
     if (!words.length) return {};
     return {
         AND: words.map((word) => {

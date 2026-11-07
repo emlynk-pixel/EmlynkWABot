@@ -139,6 +139,7 @@ function ClientDetailsView() {
                             <Detail label="WhatsApp number">{client.whatsappNumber ?? "—"}</Detail>
                             <Detail label="Email">{client.email ?? "—"}</Detail>
                             <Detail label="Address">{client.address ?? "—"}</Detail>
+                            <Detail label="Company number">{client.registrationNumber ?? "—"}</Detail>
                             <Detail label="Created">{formatDate(client.createdAt)}</Detail>
                         </dl>
                     </Card>

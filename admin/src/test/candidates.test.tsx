@@ -78,9 +78,9 @@ function directUploadRoutes(passportId: string, finalized: CandidateDetails, { s
 
 describe("stepper colours", () => {
     test("stages completed after an incomplete one are 'out of order'", () => {
-        expect(stepTones(stages([false, false, false, false, true, true, true, true]))).toEqual(["incomplete", "incomplete", "incomplete", "incomplete", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order", "complete-out-of-order"]);
-        expect(stepTones(stages([true, true, true, false, true, false, false, false]))).toEqual(["complete", "complete", "complete", "incomplete", "complete-out-of-order", "incomplete", "incomplete", "incomplete"]);
-        expect(stepTones(stages([true, true, true, true, true, true, true, true]))).toEqual(Array(8).fill("complete"));
+        expect(stepTones(stages([false, false, false, false, true, true]))).toEqual(["incomplete", "incomplete", "incomplete", "incomplete", "complete-out-of-order", "complete-out-of-order"]);
+        expect(stepTones(stages([true, true, true, false, true, false]))).toEqual(["complete", "complete", "complete", "incomplete", "complete-out-of-order", "incomplete"]);
+        expect(stepTones(stages([true, true, true, true, true, true]))).toEqual(Array(6).fill("complete"));
     });
 });
 
@@ -292,8 +292,8 @@ describe("Candidates list", () => {
             expect(header.getAllByRole("link", { name: "Register Candidate" })).toHaveLength(1);
             expect(header.getByRole("link", { name: "Register Candidate" })).toHaveAttribute("href", "/candidates/new");
             for (const name of ["Sync", "Dark mode"]) expect(header.getByRole("button", { name })).toBeInTheDocument();
-            // The one breadcrumb tops the content, not the header.
-            expect(header.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
+            // The one breadcrumb is in the header, not a row of the content.
+            expect(header.getByRole("navigation", { name: "Breadcrumb" })).toBeInTheDocument();
             expect(screen.getAllByRole("navigation", { name: "Breadcrumb" })).toHaveLength(1);
             expect(screen.getAllByRole("link", { name: "Register Candidate" })).toHaveLength(1);
         });
@@ -413,8 +413,8 @@ describe("Candidate deployment", () => {
 
         test("the other admin-completed stages stay notes and completion only", async () => {
             signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS } });
-            renderApp("/candidates/N0000002?stage=IVS_INTERVIEW");
-            expect(await screen.findByRole("heading", { name: "IVS interview" })).toBeInTheDocument();
+            renderApp("/candidates/N0000002?stage=VISA_APPROVAL");
+            expect(await screen.findByRole("heading", { name: "Visa approval" })).toBeInTheDocument();
             expect(screen.getByLabelText("Notes")).toBeInTheDocument();
             for (const label of ["Test result", "Test date", "Agent name", "Test ID", "Client name", "Job ID"]) expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
         });
@@ -423,6 +423,54 @@ describe("Candidate deployment", () => {
             const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: VIEWER } } });
             renderApp("/candidates/N0000002?stage=TEST_DETAILS");
             await expectNoCandidateAccess(calls);
+        });
+    });
+
+    describe("Status and final status on the candidate page", () => {
+        const withStatus = (code: string, label: string, finalStatus: CandidateDetails["finalStatus"] = null): CandidateDetails =>
+            ({ ...DETAILS, workflowStatus: { code, label } as CandidateDetails["workflowStatus"], finalStatus });
+
+        test("the page shows the server's Status; an Admin records a final status and the page shows the new Status at once", async () => {
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withStatus("VISA_APPROVED", "Visa Approved") },
+                "POST /api/admin/candidates/N0000002/final-status": { status: 200, body: withStatus("DEPARTED", "Departed", { code: "DEPARTED", at: "2026-11-07T08:00:00.000Z" }) },
+            });
+            renderApp("/candidates/N0000002");
+            const panel = within(await screen.findByTestId("candidate-status"));
+            expect(panel.getByText("Visa Approved")).toBeInTheDocument();
+            const save = panel.getByRole("button", { name: "Save" });
+            expect(save).toBeDisabled();
+            const user = userEvent.setup();
+            await user.selectOptions(panel.getByLabelText("Final status"), "DEPARTED");
+            await user.click(save);
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ status: "DEPARTED" }));
+            expect(await panel.findByText("Departed", { selector: "span" })).toBeInTheDocument();
+            expect(panel.getByLabelText("Final status")).toHaveValue("DEPARTED");
+        });
+
+        test("choosing None clears the final status (null)", async () => {
+            const { calls } = signedInBackend({
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withStatus("CANCELLED", "Cancelled", { code: "CANCELLED", at: "2026-11-01T08:00:00.000Z" }) },
+                "POST /api/admin/candidates/N0000002/final-status": { status: 200, body: withStatus("REGISTERED", "Registered") },
+            });
+            renderApp("/candidates/N0000002");
+            const panel = within(await screen.findByTestId("candidate-status"));
+            const user = userEvent.setup();
+            await user.selectOptions(panel.getByLabelText("Final status"), "");
+            await user.click(panel.getByRole("button", { name: "Save" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ status: null }));
+            expect(await panel.findByText("Registered")).toBeInTheDocument();
+        });
+
+        test("a non-Admin sees the Status but not the final status control", async () => {
+            signedInBackend({
+                "GET /auth/me": { status: 200, body: { user: userWithRole("ANALYST") } },
+                "GET /api/admin/candidates/N0000002": { status: 200, body: withStatus("VISA_SUBMITTED", "Visa Submitted") },
+            });
+            renderApp("/candidates/N0000002");
+            const panel = within(await screen.findByTestId("candidate-status"));
+            expect(panel.getByText("Visa Submitted")).toBeInTheDocument();
+            expect(panel.queryByLabelText("Final status")).not.toBeInTheDocument();
         });
     });
 
@@ -629,7 +677,7 @@ describe("Candidate deployment", () => {
             const user = userEvent.setup();
 
             await screen.findByRole("region", { name: "Police report" });
-            expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+            expect(within(screen.getByRole("region", { name: "Police report" })).queryByRole("combobox")).not.toBeInTheDocument();
             const police = groupOf("Police report");
             expect(police.getByText("SL Verified")).toBeInTheDocument();
             expect(police.getByText("Romania")).toBeInTheDocument();

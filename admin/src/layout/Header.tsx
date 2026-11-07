@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
 import { canRegisterCandidates, notificationSource } from "../auth/roles";
+import { Breadcrumbs } from "../components/Breadcrumbs";
 import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
 import { useTheme } from "../theme/theme";
@@ -8,9 +9,9 @@ import { NotificationBell } from "../components/NotificationBell";
 
 const timeFormat = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Colombo", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
-// Top utility bar (fixed 56px): the product name, Sync (reload the data
-// on screen) and light/dark mode. The breadcrumb tops the content
-// (AdminLayout), and the account card is at the foot of the sidebar. Candidate
+// Top utility bar (fixed 56px): the page's breadcrumb (the product name is
+// the sidebar's logo), Sync (reload the data on screen) and light/dark mode.
+// The account card is at the foot of the sidebar. Candidate
 // registration starts from the Candidates page ("Add candidate"), or from
 // the Register Candidate quick access shown here on every page.
 export function Header({ onOpenMenu, menuOpen, collapsed, onToggleCollapsed }: { onOpenMenu: () => void; menuOpen: boolean; collapsed: boolean; onToggleCollapsed: () => void }) {
@@ -51,8 +52,9 @@ export function Header({ onOpenMenu, menuOpen, collapsed, onToggleCollapsed }: {
             </button>
             <span aria-hidden="true" className="mr-1 hidden h-4 w-px bg-border sm:block" />
 
-            <p className="hidden min-w-0 flex-1 truncate text-body-sm text-ink-muted sm:block">EMOPS <span className="opacity-60">by EMLYNK</span></p>
-            <div className="min-w-0 flex-1 sm:hidden" />
+            <div className="min-w-0 flex-1">
+                <Breadcrumbs />
+            </div>
 
             <div className="flex items-center gap-2">
                 <span aria-live="polite" data-testid="sync-status" className="hidden text-label-sm lg:block">

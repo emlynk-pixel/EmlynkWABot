@@ -148,15 +148,15 @@ describe("candidate activity is audited", () => {
 
     test("a stage completed records the stage and its completion before and after", async () => {
         await register();
-        await updateStage({ db: prisma, passportId: "N1023757", stage: "IVS_INTERVIEW", values: stage("IVS_INTERVIEW", { completed: true, notes: "Passed the interview" }), actor: profile("ANALYST") });
+        await updateStage({ db: prisma, passportId: "N1023757", stage: "VISA_APPROVAL", values: stage("VISA_APPROVAL", { completed: true, notes: "Passed the interview" }), actor: profile("ANALYST") });
         const row = (await auditRows()).at(-1);
         assert.equal(row.action, "UPDATE_STAGE");
         assert.equal(row.adminId, USERS.ANALYST.adminId);
         assert.equal(row.previousStatus, "NOT_COMPLETED");
         assert.equal(row.newStatus, "COMPLETED");
         assert.equal(row.reason, "Passed the interview");
-        assert.deepEqual(JSON.parse(row.previousValue), { stage: "IVS_INTERVIEW", completed: false, notes: null });
-        assert.deepEqual(JSON.parse(row.newValue), { stage: "IVS_INTERVIEW", completed: true, notes: "Passed the interview" });
+        assert.deepEqual(JSON.parse(row.previousValue), { stage: "VISA_APPROVAL", completed: false, notes: null });
+        assert.deepEqual(JSON.parse(row.newValue), { stage: "VISA_APPROVAL", completed: true, notes: "Passed the interview" });
     });
 
     test("test details record only what changed; a no-op stage save is not audited", async () => {
@@ -197,7 +197,7 @@ describe("candidate activity is audited", () => {
         // An Analyst works on the candidates allocated to them (Work Allocation).
         await prisma.candidateAllocation.create({ data: { passportId: "N1023757", analystId: USERS.ANALYST.adminId } });
         await withServer("ANALYST", async (call) => {
-            assert.equal((await call("/candidates/N1023757/stages/FINALIZING_JOB", { method: "PUT", body: { completed: true } })).status, 200);
+            assert.equal((await call("/candidates/N1023757/stages/VISA_SUBMISSION", { method: "PUT", body: { completed: true } })).status, 200);
         });
         assert.deepEqual((await auditRows()).map((r) => [r.action, r.adminId]), [
             ["CREATE_CANDIDATE", USERS.REGISTRATION_DESK.adminId],
@@ -211,7 +211,7 @@ describe("candidate activity is audited", () => {
             const secretish = { password: "hunter2-secret", accessToken: "eyJhbGciOi.secret", sessionId: "sess-123" };
             assert.equal((await call("/candidates", { method: "POST", body: { ...REGISTRATION, ...secretish } })).status, 201);
             assert.equal((await call("/candidates/N1023757", { method: "PUT", body: { ...REGISTRATION, ...secretish, address: "Kandy" } })).status, 200);
-            assert.equal((await call("/candidates/N1023757/stages/IVS_INTERVIEW", { method: "PUT", body: { notes: "ok", ...secretish } })).status, 200);
+            assert.equal((await call("/candidates/N1023757/stages/VISA_APPROVAL", { method: "PUT", body: { notes: "ok", ...secretish } })).status, 200);
         });
         const stored = JSON.stringify(await auditRows());
         for (const forbidden of ["hunter2", "eyJhbGciOi", "sess-123", "password", "accessToken", USERS.ADMIN.authUserId, USERS.ADMIN.email]) {
@@ -230,7 +230,7 @@ describe("GET /api/admin/audit-logs", () => {
         await register({ passportId: "P2000001", surname: "Perera", otherNames: "Kamal", nic: "200012345678", whatsappNumber: "+94770000001" }, profile("REGISTRATION_DESK"));
         await register({ passportId: "P2000002", surname: "Silva", otherNames: "Nimal", nic: "200012345679", whatsappNumber: "+94770000002" }, profile("REGISTRATION_DESK"));
         await updateCandidateDetails({ db: prisma, passportId: "P2000001", values: details({ passportId: undefined, surname: "Perera", otherNames: "Kamal", nic: "200012345678", whatsappNumber: "+94770000001", address: "Colombo 05" }), actor: profile("OWNER") });
-        await updateStage({ db: prisma, passportId: "N1023757", stage: "IVS_INTERVIEW", values: stage("IVS_INTERVIEW", { completed: true, notes: "Interview passed" }), actor: profile("ANALYST") });
+        await updateStage({ db: prisma, passportId: "N1023757", stage: "VISA_APPROVAL", values: stage("VISA_APPROVAL", { completed: true, notes: "Interview passed" }), actor: profile("ANALYST") });
         await updateStage({ db: prisma, passportId: "P2000002", stage: "VISA_APPROVAL", values: stage("VISA_APPROVAL", { completed: true }), actor: profile("ANALYST") });
         for (let i = 0; i < 6; i++) {
             await prisma.auditLog.create({

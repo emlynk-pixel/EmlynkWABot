@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import { CANDIDATE_STAGES, type CandidateList } from "../api/candidates";
@@ -154,11 +154,11 @@ describe("Work Allocation: selecting and assigning", () => {
         expect(screen.queryByText(/^Allocated \d/)).toBeNull();
     });
 
-    test("a 409 conflict keeps its message, refreshes the list and Analysts, and the stale row shows its new state", async () => {
+    test("a 409 conflict keeps its message, refreshes the list and Analysts, and the stale row leaves the Unallocated list", async () => {
         // Another manager allocated CANDIDATE 1 while this page was open.
         let allocatedElsewhere = false;
         const { calls } = backend("OWNER", {
-            "GET /api/admin/work-allocation/candidates": () => ({ status: 200, body: page([candidate(2), allocatedElsewhere ? candidate(1, ANN) : candidate(1)]) }),
+            "GET /api/admin/work-allocation/candidates": () => ({ status: 200, body: page(allocatedElsewhere ? [candidate(2)] : [candidate(2), candidate(1)]) }),
             "POST /api/admin/work-allocation/assign": () => {
                 allocatedElsewhere = true;
                 return { status: 409, body: { message: "1 selected candidate is already allocated. Nothing was changed; confirm a reassignment to move them.", code: "ALREADY_ALLOCATED" } };
@@ -167,8 +167,7 @@ describe("Work Allocation: selecting and assigning", () => {
         renderApp("/work-allocation");
         await table();
         const user = userEvent.setup();
-        const row = (name: string) => within(screen.getByText(name).closest("tr")!);
-        expect(row("CANDIDATE 1").getByText("Unallocated")).toBeInTheDocument();
+        expect(screen.getByText("CANDIDATE 1")).toBeInTheDocument();
         const listCalls = () => calls.filter((c) => c.method === "GET" && c.path.startsWith("/api/admin/work-allocation/candidates")).length;
         const analystCalls = () => calls.filter((c) => c.method === "GET" && c.path.startsWith("/api/admin/work-allocation/analysts")).length;
         const [listBefore, analystsBefore] = [listCalls(), analystCalls()];
@@ -179,9 +178,8 @@ describe("Work Allocation: selecting and assigning", () => {
 
         // The message stays, the data is fetched again, and the row is current.
         expect(await screen.findByText(/already allocated\. Nothing was changed/, {}, RENDER_STEP)).toBeInTheDocument();
-        await screen.findByText("Allocated", { selector: "span" }, RENDER_STEP);
-        expect(row("CANDIDATE 1").getByText("Allocated")).toBeInTheDocument();
-        expect(row("CANDIDATE 1").getByText("Ann Analyst")).toBeInTheDocument();
+        await waitFor(() => expect(screen.queryByText("CANDIDATE 1")).toBeNull(), RENDER_STEP);
+        expect(screen.getByText("CANDIDATE 2")).toBeInTheDocument();
         expect(listCalls()).toBeGreaterThan(listBefore);
         expect(analystCalls()).toBeGreaterThan(analystsBefore);
         // The selection made from the old state is dropped; the message is still there.

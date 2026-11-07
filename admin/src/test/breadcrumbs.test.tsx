@@ -6,8 +6,8 @@ import type { JobDetails } from "../api/jobs";
 import { breadcrumbTrail } from "../components/Breadcrumbs";
 import { CLIENT_DETAILS, RENDER_STEP, renderApp, signedInBackend } from "./helpers";
 
-// The one breadcrumb of the admin shell (components/Breadcrumbs.tsx): above
-// every page and its tabs, clickable back to the section and to Admin.
+// The one breadcrumb of the admin shell (components/Breadcrumbs.tsx): in the
+// header on every page, clickable back to the section and to Admin.
 
 const AGENT_ID = "00000000-0000-4000-8000-0000000000a1";
 const JOB_ID = "00000000-0000-4000-8000-000000000001";
@@ -59,7 +59,8 @@ describe("BREADCRUMB-001: only one breadcrumb per page", () => {
             renderApp(path);
             await screen.findByRole("heading", { level: 1 }, RENDER_STEP);
             expect(screen.getAllByRole("navigation", { name: "Breadcrumb" })).toHaveLength(1);
-            expect(within(screen.getByRole("banner")).queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
+            expect(within(screen.getByRole("banner")).getByRole("navigation", { name: "Breadcrumb" })).toBeInTheDocument();
+            expect(within(screen.getByRole("main")).queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
         });
     }
 

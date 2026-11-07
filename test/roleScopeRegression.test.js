@@ -144,7 +144,7 @@ describe("ANALYST: only the candidates allocated to them", () => {
         for (const path of ["call-logs", "additional-details", "form-submission", "form-share"]) notFound(await api(A, "GET", `/candidates/${C3}/${path}`), path);
         const before = JSON.stringify(await prisma.candidate.findUnique({ where: { passportId: C3 }, include: { stages: true } }));
         notFound(await api(A, "PUT", `/candidates/${C3}`, { surname: "Perera", otherNames: "Changed", nic: "199012340003", jobExperience: "5 years", passportIssueDate: "2020-01-01", passportExpiryDate: "2030-01-01", jobTypes: ["Welder"] }), "edit");
-        notFound(await api(A, "PUT", `/candidates/${C3}/stages/IVS_INTERVIEW`, { completed: true }), "stage");
+        notFound(await api(A, "PUT", `/candidates/${C3}/stages/VISA_APPROVAL`, { completed: true }), "stage");
         notFound(await api(A, "POST", `/candidates/${C3}/call-logs`, { note: "x" }), "call log");
         notFound(await api(A, "POST", `/candidates/${C3}/form-share`, {}), "form link");
         assert.equal(JSON.stringify(await prisma.candidate.findUnique({ where: { passportId: C3 }, include: { stages: true } })), before, "Candidate 3 is unchanged");
@@ -242,7 +242,7 @@ describe("JOB_HANDLER: views candidates, changes none", () => {
         for (const [method, path, body] of [
             ["PUT", `/candidates/${C1}`, { surname: "Perera", otherNames: "Changed", nic: "199012340001", jobTypes: ["Welder"] }],
             ["PUT", `/candidates/${C1}/stages/CANDIDATE_DETAILS`, { notes: "x" }],
-            ["PUT", `/candidates/${C1}/stages/IVS_INTERVIEW`, { completed: true }],
+            ["PUT", `/candidates/${C1}/stages/VISA_APPROVAL`, { completed: true }],
             ["POST", `/candidates/${C1}/documents/upload-target`, { type: "PASSPORT", mimeType: "application/pdf", fileSize: 1000 }],
             ["POST", `/candidates/${C1}/call-logs`, { note: "x" }],
             ["PUT", `/candidates/${C1}/additional-details`, {}],
@@ -283,7 +283,7 @@ describe("REGISTRATION_DESK: the registration workflow, and Need Attention read 
 
     test("the lookup shows only what registration needs: details, the Candidate Details note, the registration documents", async () => {
         const job = ok(await api(USERS.ADMIN, "POST", "/jobs", { jobTypeId: ids.jobType, clientId: ids.client, candidateIds: [C1] }), 201);
-        ok(await api(USERS.ADMIN, "PUT", `/candidates/${C1}/stages/IVS_INTERVIEW`, { completed: true, notes: "Interview booked" }));
+        ok(await api(USERS.ADMIN, "PUT", `/candidates/${C1}/stages/VISA_APPROVAL`, { completed: true, notes: "Interview booked" }));
         const full = ok(await api(USERS.ADMIN, "GET", `/candidates/${C1}`));
         assert.ok(full.stages.length > 1 && full.jobAssignments.active.some((a) => a.jobId === job.jobId), "ADMIN sees everything");
         assert.ok(ok(await api(USERS.JOB_HANDLER, "GET", `/candidates/${C1}`)).stages.length > 1, "JOB_HANDLER reads the whole page");
@@ -327,7 +327,7 @@ describe("REGISTRATION_DESK: the registration workflow, and Need Attention read 
         const followUpId = await flag(C1);
         for (const [method, path, body] of [
             ["GET", "/candidates"], ["GET", `/candidates?search=${C3}`],
-            ["PUT", `/candidates/${C1}/stages/IVS_INTERVIEW`, { completed: true }], ["PUT", `/candidates/${C1}/stages/TEST_DETAILS`, { testResult: "PASS" }],
+            ["PUT", `/candidates/${C1}/stages/VISA_APPROVAL`, { completed: true }], ["PUT", `/candidates/${C1}/stages/TEST_DETAILS`, { testResult: "PASS" }],
             ["GET", `/candidates/${C1}/call-logs`], ["POST", `/candidates/${C1}/call-logs`, { note: "x" }],
             ["GET", `/candidates/${C1}/additional-details`], ["PUT", `/candidates/${C1}/additional-details`, {}],
             ["GET", `/candidates/${C1}/form-submission`], ["GET", `/candidates/${C1}/form-share`], ["POST", `/candidates/${C1}/form-share`, {}],

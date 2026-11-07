@@ -7,11 +7,13 @@ const INVITEE = { userId: "u-9", email: "invitee@example.invalid", name: "Invite
 
 // The Supabase invite link signs the invitee in: a session is present when
 // the page loads (detectSessionInUrl).
+// GET /auth/invitation says INVITED (asked before any password is set).
 // GET /auth/me answers 403 (INVITED) until POST /auth/complete-invite succeeds.
 function arriveFromInvite(routes = {}) {
     fakeAuth.setSession(SESSION_TOKEN, INVITEE.email);
     let activated = false;
     return stubBackend({
+        "GET /auth/invitation": { status: 200, body: { status: "INVITED" } },
         "GET /auth/me": () => (activated
             ? { status: 200, body: { user: INVITEE } }
             : { status: 403, body: { message: "Your account is not active. Contact an administrator.", code: "ACCOUNT_NOT_ACTIVE" } }),
@@ -72,12 +74,37 @@ describe("Setup Password page (Supabase invitation)", () => {
         expect(await screen.findByText("Invitation Problem")).toBeInTheDocument();
     });
 
-    test("a revoked invitation is refused after the password step", async () => {
+    test("BUG 2: a revoked invitation is refused BEFORE any password is set (no form, Supabase never asked)", async () => {
+        arriveFromInvite({ "GET /auth/invitation": { status: 200, body: { status: "INACTIVE" } } });
+        renderApp("/setup-password");
+        expect(await screen.findByText("Invitation Problem")).toBeInTheDocument();
+        expect(screen.getByText(/no longer valid/)).toBeInTheDocument();
+        expect(screen.queryByLabelText("New Password")).not.toBeInTheDocument();
+        expect(fakeAuth.calls.some((c) => c.method === "updateUser")).toBe(false);
+    });
+
+    test("revoked between opening the page and submitting -> refused at activation", async () => {
         arriveFromInvite({ "POST /auth/complete-invite": { status: 403, body: { message: "x", code: "ACCOUNT_NOT_ACTIVE" } } });
         renderApp("/setup-password");
         await screen.findByRole("heading", { name: "Set Your Password" });
         await submit();
         expect(await screen.findByRole("alert")).toHaveTextContent("This invitation is no longer valid");
+    });
+
+    test("BUG 2: the password is saved but activation fails -> Retry activation only (the password is not asked or set again)", async () => {
+        let attempts = 0;
+        const { calls } = arriveFromInvite({
+            "POST /auth/complete-invite": () => (++attempts === 1 ? { status: 500, body: { message: "Internal server error" } } : { status: 200, body: { user: INVITEE } }),
+        });
+        renderApp("/setup-password");
+        await screen.findByRole("heading", { name: "Set Your Password" });
+        await submit();
+        expect(await screen.findByRole("alert")).toHaveTextContent("Your password is saved");
+        expect(screen.queryByLabelText("New Password")).not.toBeInTheDocument();
+        await userEvent.setup().click(screen.getByRole("button", { name: "Retry activation" }));
+        expect(await screen.findByText("Account Activated!")).toBeInTheDocument();
+        expect(fakeAuth.calls.filter((c) => c.method === "updateUser")).toHaveLength(1);
+        expect(calls.filter((c) => c.path === "/auth/complete-invite")).toHaveLength(2);
     });
 
     test("mismatched passwords are caught before Supabase is called", async () => {

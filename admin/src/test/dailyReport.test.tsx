@@ -35,7 +35,7 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------- fixtures
 
-const STAGES = ["TEST_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "IVS_INTERVIEW", "VISA_SUBMISSION", "VISA_APPROVAL", "FINALIZING_JOB"];
+const STAGES = ["TEST_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "VISA_SUBMISSION", "VISA_APPROVAL"];
 const DATE = "2026-10-10";
 
 const summary = (date = DATE, overrides: Partial<DailySummary> = {}): DailySummary => ({
@@ -306,7 +306,7 @@ describe("Daily Report: PDF", () => {
         expect(text).toContain("Daily Report — Summary");
         expect(text).toContain("10 Oct 2026");
         expect(text).toContain("Asia/Colombo");
-        for (const label of ["Candidates registered", "Registered candidates", "R0000001", "Nimal Perera", "No documents", "Ann Analyst", "Candidates completed (final stage completed)", "Visa completed (visa approval completed)", "Calls taken", "Documents submitted", "Passport", "Unclassified", "N1000001", "Anil Silva", "Incomplete candidates (current state)", "Police reports (current state)"]) {
+        for (const label of ["Candidates registered", "Registered candidates", "R0000001", "Nimal Perera", "No documents", "Ann Analyst", "Candidates completed (recorded as Departed)", "Visa completed (visa approval completed)", "Calls taken", "Documents submitted", "Passport", "Unclassified", "N1000001", "Anil Silva", "Incomplete candidates (current state)", "Police reports (current state)"]) {
             expect(text).toContain(label);
         }
         expect(text).not.toMatch(/client/i);

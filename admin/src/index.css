@@ -26,6 +26,13 @@
     --color-stepper-white: #ffffff;
     /* Candidate stepper: the "!" on an unselected circle, the same in both themes */
     --color-stepper-ink: #1c2126;
+    /* Candidate stepper warning circle: fill, and the "!" when unselected / selected (dark theme overrides these) */
+    --color-stepper-warn-fill: #ffffff;
+    --color-stepper-warn-mark: #c10007;
+    --color-stepper-warn-mark-active: #ffffff;
+    /* Candidate stepper completed circle: fill when unselected, and the tick when selected (dark theme overrides these) */
+    --color-stepper-ok-fill: #ffffff;
+    --color-stepper-ok-mark-active: #ffffff;
     /* The brand red, for urgent icons and rings. Small red text uses critical. */
     --color-accent: #ef4444;
 
@@ -148,6 +155,11 @@
     --color-primary-soft-border: #4a5360;
     --color-on-primary: #171717;
     --color-on-critical: #171717;
+    --color-stepper-warn-fill: #262c34;
+    --color-stepper-warn-mark: #ff8a8c;
+    --color-stepper-warn-mark-active: #1c2126;
+    --color-stepper-ok-fill: #262c34;
+    --color-stepper-ok-mark-active: #1c2126;
 
     --color-page: #1f242b;
     --color-canvas: #2c333c;
@@ -206,6 +218,16 @@
 
     button:not(:disabled), [role="button"]:not(:disabled) {
         cursor: pointer;
+    }
+
+    /* The open list of a native <select>: some browsers (Chrome on Windows)
+       draw it with the select's text colour on their own white background, so a
+       transparent select (the job-type picker) showed white-on-white options in
+       dark mode. The options take the theme's colours instead. */
+    option,
+    optgroup {
+        background-color: var(--color-surface);
+        color: var(--color-ink);
     }
 
     :focus-visible {

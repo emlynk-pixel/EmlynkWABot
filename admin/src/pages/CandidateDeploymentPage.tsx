@@ -9,8 +9,8 @@ import { CONFLICT_FIELD_PARAM, useConflictFocus } from "../components/candidate/
 import { AdditionalDetailsPanel } from "../components/candidate/AdditionalDetailsPanel";
 import { CallLogDialog } from "../components/candidate/CallLogDialog";
 import { CandidateStepper, type StepperStep } from "../components/candidate/CandidateStepper";
+import { CandidateStatusPanel } from "../components/candidate/CandidateStatusPanel";
 import { SubmittedChangesProvider } from "../components/candidate/submittedChanges";
-import { SubmittedPersonalDetails } from "../components/candidate/SubmittedPersonalDetails";
 import { JobAssignmentPanel } from "../components/candidate/JobAssignmentPanel";
 import { CandidateDetailsStage, DocumentSubmissionStage, NotesStage } from "../components/candidate/StagePanels";
 import { secondaryButton } from "../components/Dialog";
@@ -24,10 +24,8 @@ const isStage = (value: string | null): value is CandidateStageKey => CANDIDATE_
 // Additional details form (?tab=additional, opened from its step).
 type TabKey = "deployment" | "additional";
 
-// The progress stepper shows these stages, with Additional details right
-// after Candidate details. IVS interview and Finalizing the job have no
-// circle; their data and panels (?stage=…) are unchanged.
-const STEPPER_HIDDEN_STAGES: CandidateStageKey[] = ["IVS_INTERVIEW", "FINALIZING_JOB"];
+// The progress stepper shows every stage, with Additional details right
+// after Candidate details.
 const ADDITIONAL_STEP = "ADDITIONAL_DETAILS";
 
 // A candidate's page: who they are, the progress stepper, then the selected
@@ -81,7 +79,8 @@ export function CandidateDeploymentPage() {
             : <Card><LoadingState label="Loading candidate…" /></Card>;
     }
 
-    const stepperStages = details.stages.filter((s) => !STEPPER_HIDDEN_STAGES.includes(s.stage));
+    // Only the stages this app knows (a newer or older server's other stages are not shown).
+    const stepperStages = details.stages.filter((s) => isStage(s.stage));
     const requested = searchParams.get("stage");
     const current: CandidateStageKey = isStage(requested) ? requested : (stepperStages.find((s) => !s.completed)?.stage ?? stepperStages[0]?.stage ?? CANDIDATE_STAGES[0]);
     const tab: TabKey = searchParams.get("tab") === "additional" ? "additional" : "deployment";
@@ -118,6 +117,7 @@ export function CandidateDeploymentPage() {
                 <div className="min-w-0">
                     <h1 id="page-title" className="truncate text-headline-lg text-ink">{c.name ?? c.passportId}</h1>
                     <p className="text-body-sm text-ink-muted">{[c.passportId, c.nic].filter(Boolean).join(" • ")}</p>
+                    <div className="mt-2"><CandidateStatusPanel details={details} onChange={setUpdated} /></div>
                 </div>
                 <button type="button" onClick={() => setCallLogOpen(true)} className={`${secondaryButton} inline-flex items-center gap-1.5`}>
                     <Icon name="call" className="size-4" />Call log
@@ -156,8 +156,8 @@ export function CandidateDeploymentPage() {
                         currentJob={details.jobAssignments.current}
                         activeJobs={activeJobsOf(details.jobAssignments)}
                         onSaved={setSavedAdditional}
+                        distanceToBucharestKm={submittedAt ? submission.data?.submitted?.["contact.distanceToBucharestKm"] ?? null : null}
                     />
-                    {submittedAt && <SubmittedPersonalDetails submitted={submission.data?.submitted} />}
                 </Card>
             )}
 

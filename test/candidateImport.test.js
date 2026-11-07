@@ -135,7 +135,7 @@ describe("preview", () => {
         assert.equal(result.summary.new, 3);
         assert.equal(result.summary.existing, 1);
         assert.equal(result.summary.willFill, 1);
-        assert.equal(result.summary.ignoredSourceColumns, 4, "LOAN APPLY AMOUNT, ACTIVE STATUS, UNIQUE NUMBER, FATHER NAME");
+        assert.equal(result.summary.ignoredSourceColumns, 3, "LOAN APPLY AMOUNT, ACTIVE STATUS, FATHER NAME (UNIQUE NUMBER is read: it groups Jobs)");
     });
 
     test("the import record holds no candidate data", async () => {
@@ -220,13 +220,17 @@ describe("existing, duplicate and conflicting candidates", () => {
         assert.equal(await prisma.candidate.count(), 0);
     });
 
-    test("29. an unknown job role leaves the job unset with UNKNOWN_JOB_TYPE; no job type is created", async () => {
+    test("29. a job role that is not a job type is added as one (preview creates nothing); aliases map to existing types", async () => {
         const typesBefore = await prisma.jobType.count();
-        const { preview: p } = await importRows(renumber([legacyRow(1, { "Job Role": "Welder" }), legacyRow(2, { "Job Role": "plaster" })]));
-        assert.equal(p.summary.unknownJobRoles, 1);
-        assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(1) } })).job, null);
+        const rows = renumber([legacyRow(1, { "Job Role": "Welder" }), legacyRow(2, { "Job Role": "plaster" }), legacyRow(3, { "Job Role": "Formwork Carpenter" })]);
+        const previewOnly = await preview(rows);
+        assert.equal(previewOnly.summary.unknownJobRoles, 0);
+        assert.equal(await prisma.jobType.count(), typesBefore, "preview creates nothing");
+        await importRows(rows);
+        assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(1) } })).job, "WELDER");
         assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(2) } })).job, "PLASTER");
-        assert.equal(await prisma.jobType.count(), typesBefore);
+        assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(3) } })).job, "SHUTTERING CARPENTER");
+        assert.equal(await prisma.jobType.count(), typesBefore + 1, "only WELDER is new");
     });
 });
 
@@ -332,7 +336,9 @@ describe("chunked commit", () => {
         const results = await commitAll(p, rows, { db: poisoned });
         assert.equal(results[0].status, "COMMITTED");
         assert.equal(results[1].status, "PARTIAL");
-        assert.deepEqual(results[1].failures, [{ rowNumber: IMPORT_CHUNK_SIZE + 3, passport: "N9****02", codes: ["NIC_CONFLICT"] }]);
+        assert.deepEqual(results[1].failures, [{
+            rowNumber: IMPORT_CHUNK_SIZE + 3, passport: "N9****02", codes: ["NIC_CONFLICT"], errors: ["NIC number belongs to another candidate, or differs from this candidate's NIC"],
+        }]);
         assert.equal(await prisma.candidate.count(), IMPORT_CHUNK_SIZE + 2, "chunk 1 kept; chunk 2 imported all but the bad row");
         // Retrying the partial chunk later (the problem fixed) writes only the missing row, once.
         const retry = await commitChunk({ db: prisma, actor: ADMIN, importId: p.importId, chunkIndex: 1, rows: rows.slice(IMPORT_CHUNK_SIZE) });

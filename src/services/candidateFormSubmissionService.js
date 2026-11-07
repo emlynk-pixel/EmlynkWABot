@@ -36,6 +36,10 @@ function valuesOf(row, { derived = false } = {}) {
 // text, so a record's "12 galle road" and the submitted "12 GALLE ROAD" are not a change.
 const normal = (value) => (value === null || value === undefined ? "" : String(value).trim().toUpperCase());
 
+const recordValues = (candidate, details) => Object.fromEntries(Object.entries(CONFIRMABLE_FIELDS).map(([field, mapping]) => [
+    field, mapping.fromDb((mapping.table === "candidate" ? candidate : details)?.[mapping.column] ?? null),
+]));
+
 export async function getFormSubmission({ db, passportId }) {
     const [access, response, snapshot, candidate, details, reviews] = await Promise.all([
         db.candidateFormAccess.findUnique({ where: { passportId }, select: { status: true, submittedAt: true } }),
@@ -64,6 +68,9 @@ export async function getFormSubmission({ db, passportId }) {
         // confirmed on its own (candidateFormFieldConfirmService.js). Others are read only.
         // (a field with a decision, CONFIRMED or REJECTED, is no longer pending).
         pending: confirmable ? pendingChanges({ candidate, details, submitted: confirmable }, new Set(reviews.map((review) => review.fieldKey))) : [],
+        // The record's value of every reviewable field, as the form represents it (null: not recorded),
+        // so Admin shows current -> submitted even for fields with no form of their own in Admin.
+        current: response ? recordValues(candidate, details) : null,
         // Staff decisions already taken on this submission: { field, status: CONFIRMED | REJECTED }.
         reviews: reviews.map((review) => ({ field: review.fieldKey, status: review.status })),
     };

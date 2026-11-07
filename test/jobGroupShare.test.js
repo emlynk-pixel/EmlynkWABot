@@ -491,7 +491,7 @@ describe("legacy and isolation", () => {
     test("the legacy candidate_stages.job_id, the job code and the Client Job ID never authorise anything", async () => {
         const job = await newJob({ companyJobId: "Y26S01" });
         await prisma.candidateStage.update({ where: { passportId_stage: { passportId: D.passportId, stage: "TEST_DETAILS" } }, data: { jobId: job.jobCode } });
-        await prisma.candidateStage.create({ data: { passportId: D.passportId, stage: "FINALIZING_JOB", jobId: "Y26S01" } }).catch(() => null);
+        await prisma.candidateStage.create({ data: { passportId: D.passportId, stage: "VISA_APPROVAL", jobId: "Y26S01" } }).catch(() => null);
         const secret = await groupLink(job);
         expectGeneric(await verify(secret, D), "legacy text is not membership");
         assert.equal(await prisma.candidateFormLink.count({ where: { OR: [{ tokenHash: job.jobCode }, { tokenHash: "Y26S01" }] } }), 0);
