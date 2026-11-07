@@ -198,5 +198,20 @@ export function analyzeSourceHeaders(headers) {
 // Job role aliases: a legacy role name -> an Emlynk job type name, used ONLY for
 // business-confirmed mappings. A legacy role equal to an active job type's name
 // (case-insensitive) needs no alias. Never guessed: a generic "Welder" is not
-// mapped to a specific TIG / MIG / ARC type. Empty until mappings are confirmed.
-export const JOB_ROLE_ALIASES = Object.freeze({});
+// mapped to a specific TIG / MIG / ARC type. A role with neither a match nor an alias is
+// added as a new job type by the import (candidateImportService.js).
+export const JOB_ROLE_ALIASES = Object.freeze({
+    "STEEL FIXER": "BARBENDER",
+    "FORMWORK CARPENTER": "SHUTTERING CARPENTER",
+    "DRYWALL WORKER": "GYPSUM WORKER",
+    "EXCAVATOR": "EXCAVATOR OPERATOR",
+    "JCB": "JCB OPERATOR",
+    "WHEEL LOADER": "WHEEL LOADER OPERATOR",
+    "BOBCAT": "BOBCAT OPERATOR",
+    "MOTORGRADER": "MOTOR GRADER OPERATOR",
+    "MOTOR GRADER": "MOTOR GRADER OPERATOR",
+    "PLASTERER": "PLASTER",
+    "PLASTERING": "PLASTER",
+    "PLUMBING": "PLUMBER",
+    "BLOCKMASON": "BLOCK MASON",
+});

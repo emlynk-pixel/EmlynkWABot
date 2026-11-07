@@ -259,12 +259,33 @@ const MAX_JOB_TYPES = 10;
 // the list's spelling) or a confirmed alias. Unknown roles are reported, never created.
 // activeJobTypes: the active job type names. aliases: legacy name (upper case) -> job type name.
 // Returns { value: [names] | null, warning? }.
+// The roles in a cell: split on , / ; & (and "+"), whitespace (incl. no-break spaces) collapsed.
+export function splitJobRoles(raw) {
+    return clean(raw).split(/[,/;&+]/).map((r) => r.replace(/[\s ]+/g, " ").trim()).filter(Boolean);
+}
+
+// The roles in a cell that match no active job type and no alias, as upper-case names (what the
+// import adds as new job types). Longer than MAX_JOB_TYPE_NAME characters are left out.
+const MAX_JOB_TYPE_NAME = 100;
+export function unknownJobRoles(raw, { activeJobTypes, aliases = {} }) {
+    if (blank(raw)) return [];
+    const active = new Set(activeJobTypes.map((name) => name.toUpperCase()));
+    const found = [];
+    for (const role of splitJobRoles(raw)) {
+        const key = role.toUpperCase();
+        const alias = aliases[key];
+        if (active.has(key) || (alias && active.has(alias.toUpperCase())) || key.length > MAX_JOB_TYPE_NAME || found.includes(key)) continue;
+        found.push(key);
+    }
+    return found;
+}
+
 export function normalizeJobRoles(raw, { activeJobTypes, aliases = {} }) {
     if (blank(raw)) return none();
     const active = new Map(activeJobTypes.map((name) => [name.toUpperCase(), name]));
     const resolved = [];
     let unknown = false;
-    for (const role of clean(raw).split(",").map((r) => r.trim()).filter(Boolean)) {
+    for (const role of splitJobRoles(raw)) {
         const key = role.toUpperCase();
         const alias = aliases[key];
         const name = active.get(key) ?? (alias ? active.get(alias.toUpperCase()) : undefined);

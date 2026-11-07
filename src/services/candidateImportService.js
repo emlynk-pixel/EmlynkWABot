@@ -18,9 +18,9 @@
 
 import crypto from "node:crypto";
 
-import { SUPPORTED_SOURCE_COLUMNS, analyzeSourceHeaders, sourceColumnFor, sourceColumnsForClient, sourceHeaderKey } from "./candidateImportSourceMapping.js";
-import { ROW_STATUS, validateLegacyRow } from "./candidateImportRowValidator.js";
-import { maskIdentifier, normalizePassport } from "./candidateImportNormalizers.js";
+import { JOB_ROLE_ALIASES, SUPPORTED_SOURCE_COLUMNS, analyzeSourceHeaders, sourceColumnFor, sourceColumnsForClient, sourceHeaderKey } from "./candidateImportSourceMapping.js";
+import { ROW_STATUS, sourceCells, validateLegacyRow } from "./candidateImportRowValidator.js";
+import { maskIdentifier, normalizePassport, unknownJobRoles } from "./candidateImportNormalizers.js";
 import {
     ROW_ACTION, findAgentsByKeys, findClientsByKeys, findSourceFlags, importActions, loadImportSnapshot, planRows, summarizePlans,
 } from "./candidateImportClassifier.js";
@@ -159,6 +159,24 @@ const isProblem = (plan) => plan.status !== ROW_STATUS.VALID || plan.action === 
 // Row numbers and messages only: no cell value.
 const rowIssuesOf = (plans) => plans.filter((plan) => plan.issues.length).map((plan) => ({ rowNumber: plan.rowNumber, ...describeIssues(plan.issues) }));
 
+// A Job Role in the sheet that is not a job type (and has no alias) becomes a new job type, so no
+// role is lost. Preview (create = false) only counts them as if they existed; the commit creates them.
+// Returns the active job type names to validate with.
+async function jobTypesWithSheetRoles(db, canonical, { create }) {
+    const activeJobTypes = await activeJobTypeNames(db);
+    const fresh = new Set();
+    for (const row of canonical) {
+        for (const name of unknownJobRoles(sourceCells(row.values).jobRole, { activeJobTypes, aliases: JOB_ROLE_ALIASES })) fresh.add(name);
+    }
+    if (!fresh.size) return activeJobTypes;
+    const added = [...fresh].map((name) => ({ name, code: name.replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") })).filter((type) => type.code);
+    if (!create) return [...activeJobTypes, ...added.map((type) => type.name)];
+    // One statement; only the rows actually created come back (a code that already exists, e.g. an
+    // inactive type, is skipped and its role stays unmatched, as an inactive type should).
+    const created = await db.jobType.createManyAndReturn({ data: added.map((type) => ({ ...type, isActive: true })), skipDuplicates: true, select: { name: true } });
+    return [...activeJobTypes, ...created.map((row) => row.name)];
+}
+
 // The allow-list for the browser.
 export const importSourceColumns = () => sourceColumnsForClient();
 
@@ -170,7 +188,7 @@ export async function previewImport({ db, actor, fileName, headers, rows, now = 
         throw new CandidateImportError(422, "MISSING_REQUIRED_HEADINGS", `The sheet is missing required headings: ${columns.missingRequired.join(", ")}.`, { missing: columns.missingRequired });
     }
     const canonical = canonicalRows(rows);
-    const activeJobTypes = await activeJobTypeNames(db);
+    const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: false });
     const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
     const sourceFlags = findSourceFlags(validated);
     const snapshot = await loadImportSnapshot(db, validated, { activeJobTypes });
@@ -487,7 +505,7 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
     const previous = record.chunkResults?.[chunkIndex];
     if (previous?.status === "COMMITTED") return present(chunkIndex, previous, canonical, { alreadyCommitted: true });
 
-    const activeJobTypes = await activeJobTypeNames(db);
+    const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: true });
     const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
     const context = { importId, actor, now };
 

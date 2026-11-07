@@ -7,7 +7,7 @@ import {
     LEGACY_SOURCE_COLUMNS, REQUIRED_SOURCE_HEADERS, SOURCE_CLASSIFICATION, analyzeSourceHeaders, sourceColumnFor, sourceColumnsForClient,
 } from "../src/services/candidateImportSourceMapping.js";
 import {
-    isNotApplicable, maskIdentifier, normalizeBloodGroup, normalizeDate, normalizeEmail, normalizeFamilyPassport, normalizeHeight, normalizeJobRoles,
+    isNotApplicable, maskIdentifier, normalizeBloodGroup, normalizeDate, normalizeEmail, normalizeFamilyPassport, normalizeHeight, normalizeJobRoles, unknownJobRoles,
     normalizeMaritalStatus, normalizeNic, normalizePassport, normalizePhones, normalizeSex, normalizeShirtSize, normalizeShoeSize,
     normalizeWaistSize, normalizeWeight, normalizeYesNo, parseLegacyDate,
 } from "../src/services/candidateImportNormalizers.js";
@@ -224,6 +224,10 @@ describe("normalizers", () => {
         // A confirmed alias maps to an active type.
         assert.deepEqual(normalizeJobRoles("Excavator", { activeJobTypes: ACTIVE, aliases: { EXCAVATOR: "EXCAVATOR OPERATOR" } }), { value: ["EXCAVATOR OPERATOR"] });
         assert.deepEqual(normalizeJobRoles("Plaster, Foreman", { activeJobTypes: ACTIVE }), { value: ["PLASTER"], warning: "UNKNOWN_JOB_TYPE" });
+        // Roles split on , / ; & + and odd spaces.
+        assert.deepEqual(normalizeJobRoles("Plaster / Plumber;Electrician  ", { activeJobTypes: ACTIVE }), { value: ["PLASTER", "PLUMBER", "ELECTRICIAN"] });
+        // What the import adds as new job types.
+        assert.deepEqual(unknownJobRoles("plaster, Welder / steel  fixer", { activeJobTypes: ACTIVE, aliases: { "STEEL FIXER": "PLASTER" } }), ["WELDER"]);
     });
 
     test("masking shows only the first and last two characters", () => {

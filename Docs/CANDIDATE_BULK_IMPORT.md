@@ -177,7 +177,7 @@ No document rows are created. The only stages the import completes are Visa subm
 
 Ignored, unresolved and system columns never leave the browser. The server also drops any such column it does receive.
 
-**Job role aliases.** `JOB_ROLE_ALIASES` is empty until mappings are confirmed. A legacy role equal to an active job type's name (Plaster, Plumber, Electrician, Tiler, Block Mason) needs no alias. Proposed aliases, backed by the legacy Job Sector column, awaiting confirmation:
+**Job role aliases.** A legacy role equal to an active job type's name (Plaster, Plumber, Electrician, Tiler, Block Mason) needs no alias. `JOB_ROLE_ALIASES` (candidateImportSourceMapping.js) maps the other known names (plus Plasterer, Plastering, Plumbing, Blockmason, Motor Grader):
 - Excavator → EXCAVATOR OPERATOR
 - JCB → JCB OPERATOR
 - Wheel Loader → WHEEL LOADER OPERATOR
@@ -187,9 +187,9 @@ Ignored, unresolved and system columns never leave the browser. The server also 
 - Steel Fixer → BARBENDER
 - Drywall worker → GYPSUM WORKER
 
-A generic `Welder` is never mapped to TIG / MIG / ARC. Job types are never created by an import.
+A generic `Welder` is never mapped to TIG / MIG / ARC.
 
-**Known limitation.** Until aliases are approved, unmatched legacy roles import with `job` left blank and WARNING `UNKNOWN_JOB_TYPE`. In the current legacy file that is about 600 rows. `candidate.job` is nullable, so this does not block an import. Staff add the job type later in Candidate Details.
+**Unknown roles become job types.** A role with no matching job type and no alias is added as a new active job type (upper-case name) when the import is committed, so no role is lost. The preview creates nothing and treats such roles as known. Multiple roles in one cell are split on `,` `/` `;` `&` `+`. Rename or deactivate an added type in Settings > Job Types. (`UNKNOWN_JOB_TYPE` now only appears if a type cannot be created, e.g. its code belongs to an inactive type.)
 
 ## 5a. Officer, visa, Test, Client and Agent (`candidateImportClassifier.js`)
 

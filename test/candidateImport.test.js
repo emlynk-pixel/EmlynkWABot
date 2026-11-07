@@ -220,13 +220,17 @@ describe("existing, duplicate and conflicting candidates", () => {
         assert.equal(await prisma.candidate.count(), 0);
     });
 
-    test("29. an unknown job role leaves the job unset with UNKNOWN_JOB_TYPE; no job type is created", async () => {
+    test("29. a job role that is not a job type is added as one (preview creates nothing); aliases map to existing types", async () => {
         const typesBefore = await prisma.jobType.count();
-        const { preview: p } = await importRows(renumber([legacyRow(1, { "Job Role": "Welder" }), legacyRow(2, { "Job Role": "plaster" })]));
-        assert.equal(p.summary.unknownJobRoles, 1);
-        assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(1) } })).job, null);
+        const rows = renumber([legacyRow(1, { "Job Role": "Welder" }), legacyRow(2, { "Job Role": "plaster" }), legacyRow(3, { "Job Role": "Formwork Carpenter" })]);
+        const previewOnly = await preview(rows);
+        assert.equal(previewOnly.summary.unknownJobRoles, 0);
+        assert.equal(await prisma.jobType.count(), typesBefore, "preview creates nothing");
+        await importRows(rows);
+        assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(1) } })).job, "WELDER");
         assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(2) } })).job, "PLASTER");
-        assert.equal(await prisma.jobType.count(), typesBefore);
+        assert.equal((await prisma.candidate.findUnique({ where: { passportId: passportOf(3) } })).job, "SHUTTERING CARPENTER");
+        assert.equal(await prisma.jobType.count(), typesBefore + 1, "only WELDER is new");
     });
 });
 
