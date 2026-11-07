@@ -79,7 +79,7 @@ export type StageState = StageProgress & {
 // candidate data, never edited, never stored. VISA_NOT_GOING, CANCELLED and REJECTED are recorded final
 // outcomes (the import's VISA STATUS, or an Admin's final status) and outrank everything.
 export type WorkflowStatusCode =
-    | "REGISTERED" | "STOPPED_WITH_TEST" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED"
+    | "REGISTERED" | "STOPPED_WITH_TEST" | "TEST_PASSED" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED"
     | "VISA_DOCUMENT_READY" | "VISA_SUBMITTED" | "VISA_APPROVED" | "DEPARTED" | "VISA_NOT_GOING" | "CANCELLED" | "REJECTED";
 export type WorkflowStatus = { code: WorkflowStatusCode; label: string };
 

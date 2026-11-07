@@ -206,7 +206,8 @@ describe("Work Allocation filters (server-side, before paging)", () => {
     test("WA-004: Status and current stage filters use the Candidates list's own derivation", async () => {
         await seedAllocationCandidates();
         assert.deepEqual(ids(await allocation("?workflowStatus=STOPPED_WITH_TEST")), ["N0000002"]);
-        assert.deepEqual(ids(await allocation("?workflowStatus=REGISTERED")).sort(), ["N0000001", "N0000003", "N0000004", "N0000005"]);
+        assert.deepEqual(ids(await allocation("?workflowStatus=REGISTERED")).sort(), ["N0000001", "N0000004", "N0000005"]);
+        assert.deepEqual(ids(await allocation("?workflowStatus=TEST_PASSED")), ["N0000003"], "a saved PASS");
         assert.deepEqual(ids(await allocation("?stage=JOB_DETAILS")).sort(), ["N0000002", "N0000003"], "test details completed: the current stage is Job details");
         assert.deepEqual(ids(await allocation("?stage=TEST_DETAILS")).sort(), ["N0000001", "N0000004", "N0000005"]);
         assert.deepEqual(ids(await allocation("?stage=COMPLETE")), []);

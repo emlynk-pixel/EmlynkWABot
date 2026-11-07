@@ -19,12 +19,14 @@
 //        DETAILS_VERIFIED    an Admin verified the details
 //        FORM_SUBMITTED      the candidate submitted the Candidate Form
 //        JOB_ASSIGNED        an active job assignment
+//        TEST_PASSED         the saved Test details result is PASS
 //        REGISTERED          otherwise
 // Docs/20-candidate-management.md §4.0 has the signals.
 
 export const WORKFLOW_STATUS = Object.freeze({
     REGISTERED: "REGISTERED",
     STOPPED_WITH_TEST: "STOPPED_WITH_TEST",
+    TEST_PASSED: "TEST_PASSED",
     JOB_ASSIGNED: "JOB_ASSIGNED",
     FORM_SUBMITTED: "FORM_SUBMITTED",
     DETAILS_VERIFIED: "DETAILS_VERIFIED",
@@ -41,6 +43,7 @@ export const WORKFLOW_STATUS = Object.freeze({
 export const WORKFLOW_STATUS_LABELS = Object.freeze({
     REGISTERED: "Registered",
     STOPPED_WITH_TEST: "Stopped with Test",
+    TEST_PASSED: "Test Passed",
     JOB_ASSIGNED: "Job Assigned",
     FORM_SUBMITTED: "Form Submitted",
     DETAILS_VERIFIED: "Details Verified",
@@ -91,5 +94,6 @@ export function deriveCandidateWorkflowStatus({
     if (detailsVerified) return status(WORKFLOW_STATUS.DETAILS_VERIFIED);
     if (formSubmitted) return status(WORKFLOW_STATUS.FORM_SUBMITTED);
     if (hasCurrentJob) return status(WORKFLOW_STATUS.JOB_ASSIGNED);
+    if (testResult === "PASS") return status(WORKFLOW_STATUS.TEST_PASSED);
     return status(WORKFLOW_STATUS.REGISTERED);
 }

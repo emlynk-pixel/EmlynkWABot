@@ -6,6 +6,7 @@ import { ToneBadge, type Tone } from "../StatusBadge";
 const TONES: Record<WorkflowStatus["code"], Tone> = {
     REGISTERED: "pending",
     STOPPED_WITH_TEST: "critical",
+    TEST_PASSED: "review",
     JOB_ASSIGNED: "review",
     FORM_SUBMITTED: "review",
     DETAILS_VERIFIED: "verified",

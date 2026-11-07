@@ -101,7 +101,8 @@ Each candidate has six stages (`candidate_stages`; the database refuses any othe
 ```mermaid
 flowchart LR
     R["Registration"] --> T["Test details"]
-    T -->|"result PASS"| J["Job details"]
+    T -->|"result PASS"| TP["Test Passed"]
+    TP --> J["Job details"]
     T -->|"result FAIL"| S["Stopped with Test"]
     J --> C["Candidate details"]
     C --> D["Document submission"]
@@ -112,7 +113,7 @@ flowchart LR
 
 The stages are **not strictly linear** in the code: staff can open and update any stage, and a stage's completion is independent of the others. The **Status** (every candidate list and the candidate page) is a single value derived from existing data on every read, so it changes as soon as a stage, verification, Candidate Form submission or import changes the data (nothing stores or edits it):
 
-`Registered` < `Job Assigned` < `Form Submitted` < `Details Verified` < `Documents Verified` < `Visa Document Ready` < `Visa Submitted` < `Visa Approved` < `Departed`, with `Stopped with Test` overriding them while the Test result is FAIL, and a recorded final outcome (`Visa Not Going`, `Cancelled`, `Rejected`: from the uploaded sheet's VISA STATUS or an Admin) overriding everything.
+`Registered` < `Test Passed` < `Job Assigned` < `Form Submitted` < `Details Verified` < `Documents Verified` < `Visa Document Ready` < `Visa Submitted` < `Visa Approved` < `Departed`, with `Stopped with Test` overriding them while the Test result is FAIL, and a recorded final outcome (`Visa Not Going`, `Cancelled`, `Rejected`: from the uploaded sheet's VISA STATUS or an Admin) overriding everything.
 
 Details: [Docs/20-candidate-management.md](Docs/20-candidate-management.md).
 

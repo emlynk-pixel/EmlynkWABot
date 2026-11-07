@@ -49,6 +49,7 @@ export type Choice = { value: string; label: string };
 export const WORKFLOW_STATUS_CHOICES: { value: WorkflowStatus["code"]; label: string }[] = [
     { value: "REGISTERED", label: "Registered" },
     { value: "STOPPED_WITH_TEST", label: "Stopped with Test" },
+    { value: "TEST_PASSED", label: "Test Passed" },
     { value: "JOB_ASSIGNED", label: "Job Assigned" },
     { value: "FORM_SUBMITTED", label: "Form Submitted" },
     { value: "DETAILS_VERIFIED", label: "Details Verified" },
