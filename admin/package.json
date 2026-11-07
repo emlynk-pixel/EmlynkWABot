@@ -40,6 +40,7 @@
     "vitest": "5.0.5"
   },
   "overrides": {
-    "worker-f": "0.1.20"
+    "worker-f": "0.1.20",
+    "uuid": "^11.1.1"
   }
 }
