@@ -135,7 +135,7 @@ describe("preview", () => {
         assert.equal(result.summary.new, 3);
         assert.equal(result.summary.existing, 1);
         assert.equal(result.summary.willFill, 1);
-        assert.equal(result.summary.ignoredSourceColumns, 4, "LOAN APPLY AMOUNT, ACTIVE STATUS, UNIQUE NUMBER, FATHER NAME");
+        assert.equal(result.summary.ignoredSourceColumns, 3, "LOAN APPLY AMOUNT, ACTIVE STATUS, FATHER NAME (UNIQUE NUMBER is read: it groups Jobs)");
     });
 
     test("the import record holds no candidate data", async () => {

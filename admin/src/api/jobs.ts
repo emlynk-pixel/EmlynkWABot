@@ -49,7 +49,12 @@ export type JobSummary = {
     completedAt: string | null;
     cancelledAt: string | null;
     cancelReason: string | null;
+    // Set for a Job created by the Google Sheet upload (JOB-YYYY-MMDDNN): its Interview Date, its Unique
+    // Number range, and the code split into the fixed prefix and the editable last two digits.
+    importGroup?: ImportJobGroup | null;
 };
+
+export type ImportJobGroup = { interviewDate: string | null; from: number; to: number; prefix: string; suffix: string };
 
 // filled: at least as many assigned candidates as vacancies (derived on the server; more than the
 // vacancies is allowed and stays filled). Separate from the job's status.
@@ -117,6 +122,10 @@ export const updateJob = (token: string, jobId: string, body: UpdateJobInput) =>
 export const addCandidateToJob = (token: string, jobId: string, passportId: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/candidates`, { method: "POST", token, body: { passportId } });
 export const removeCandidateFromJob = (token: string, jobId: string, passportId: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/candidates/${encodeURIComponent(passportId)}`, { method: "DELETE", token });
 export const completeJob = (token: string, jobId: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/complete`, { method: "POST", token, body: {} });
+// The last two digits of a sheet-upload Job (ADMIN, OWNER, JOB_HANDLER, and an ANALYST for a Job holding
+// one of their candidates; the server checks). Exactly two digits, 01-99; the code must stay unique.
+export const updateImportJobSuffix = (token: string, jobId: string, suffix: string) =>
+    apiRequest<{ jobId: string; jobCode: string }>(`${jobPath(jobId)}/import-suffix`, { method: "PATCH", token, body: { suffix } });
 export const cancelJob = (token: string, jobId: string, reason: string) => apiRequest<JobDetails>(`${jobPath(jobId)}/cancel`, { method: "POST", token, body: { reason } });
 
 // Reference data a job needs (job types are created inline from the New job form;

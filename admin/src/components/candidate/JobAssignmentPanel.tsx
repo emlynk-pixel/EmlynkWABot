@@ -8,6 +8,7 @@ import { canAssignJobFromCandidatePage, canManageCandidates, canManageJobs, canV
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { formatDate } from "../format";
 import { Detail, JobStatusBadge, NO_COMPANY_JOB_ID } from "../job/JobParts";
+import { ImportJobSuffixEditor } from "../job/ImportJobSuffixEditor";
 import { Card, EmptyState, ErrorState, LoadingState } from "../States";
 import { filterControl } from "../ui";
 
@@ -21,7 +22,7 @@ import { filterControl } from "../ui";
 // Only a candidate whose Test result is PASS can be assigned (the server also
 // refuses others with CANDIDATE_TEST_NOT_PASSED), so the button stays disabled until then.
 
-function JobLine({ job, historic = false }: { job: CandidateJobAssignment; historic?: boolean }) {
+function JobLine({ job, historic = false, onSuffixSaved }: { job: CandidateJobAssignment; historic?: boolean; onSuffixSaved?: () => void }) {
     const { user } = useAuth();
     const code = canViewJobs(user) ? <Link to={`/jobs/${job.jobId}`} className="font-medium text-primary hover:underline">{job.jobCode}</Link> : <span className="font-medium">{job.jobCode}</span>;
     return (
@@ -35,6 +36,9 @@ function JobLine({ job, historic = false }: { job: CandidateJobAssignment; histo
             {historic && <Detail label="Status">{job.removed ? "Removed" : <JobStatusBadge status={job.status} />}</Detail>}
             {historic && <Detail label="Assigned">{formatDate(job.assignedAt)}</Detail>}
             {historic && job.status === "CANCELLED" && job.cancelReason && <Detail label="Cancel reason">{job.cancelReason}</Detail>}
+            {!historic && job.importGroup && onSuffixSaved && (
+                <div className="col-span-2 sm:col-span-4"><ImportJobSuffixEditor jobId={job.jobId} group={job.importGroup} onSaved={onSuffixSaved} /></div>
+            )}
         </dl>
     );
 }
@@ -54,6 +58,8 @@ export function JobAssignmentPanel({ assignments, candidate, testPassed = false,
     // (like a JOB_HANDLER) assigns candidates from the Job's own page (the Jobs feature).
     const canAssign = canAssignJobFromCandidatePage(user) && canManageJobs(user) && canManageCandidates(user) && Boolean(candidate && onChanged && token);
     const active = activeJobsOf(assignments);
+    // After the last two digits of a sheet-upload Job change: the candidate is read again, so the code updates here.
+    const refresh = candidate && onChanged && token ? async () => onChanged(await getCandidate(token, candidate.passportId)) : undefined;
     return (
         <Card className="p-5">
             <section aria-label="Job assignment" className="space-y-4">
@@ -68,7 +74,7 @@ export function JobAssignmentPanel({ assignments, candidate, testPassed = false,
                         {active.length > 0
                             ? (
                                 <ul aria-label="Current processing jobs" className="divide-y divide-border">
-                                    {active.map((job) => <li key={job.jobId} className="py-3 first:pt-0 last:pb-0"><JobLine job={job} /></li>)}
+                                    {active.map((job) => <li key={job.jobId} className="py-3 first:pt-0 last:pb-0"><JobLine job={job} onSuffixSaved={refresh} /></li>)}
                                 </ul>
                             )
                             : <p className="text-body-sm text-ink-muted">Not assigned to a processing job.{canAssign && !testPassed && " Only a candidate whose Test result is PASS can be assigned."}</p>}

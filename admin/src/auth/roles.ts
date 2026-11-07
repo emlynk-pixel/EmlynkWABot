@@ -108,6 +108,9 @@ export const JOB_MANAGE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, 
 // Creating a job type (the New job dialog's "Add job type"): ADMIN only, not JOB_HANDLER.
 export const canCreateJobTypes = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 export const canViewJobs = (user: WithRole) => hasRole(user, JOB_VIEW_ROLES);
+// The last two digits of a Job created by the sheet upload (the server also limits an Analyst to a Job
+// holding one of their candidates).
+export const canEditImportJobSuffix = (user: WithRole) => hasRole(user, [ROLES.ADMIN, ROLES.JOB_HANDLER, ROLES.ANALYST]);
 export const canManageJobs = (user: WithRole) => hasRole(user, JOB_MANAGE_ROLES);
 // Confirming a candidate-submitted Candidate Form value into the candidate's record (one field at a time):
 // ADMIN only. TEAM_LEAD, Analysts and the Registration Desk see the submitted change but cannot apply it.

@@ -299,6 +299,17 @@ export function normalizeJobRoles(raw, { activeJobTypes, aliases = {} }) {
 
 // ---------------------------------------------------------------- process columns
 
+// UNIQUE NUMBER: a whole number from 0 (a spreadsheet may give "3100", " 3100 " or "3100.0"). Anything
+// else (text, a negative or decimal number) is reported and ignored: no Job is guessed from it.
+const MAX_UNIQUE_NUMBER = 999_999_999;
+export function normalizeUniqueNumber(raw) {
+    if (blank(raw)) return none();
+    const text = clean(raw);
+    if (!/^[0-9]{1,9}(\.0+)?$/.test(text)) return drop("INVALID_UNIQUE_NUMBER");
+    const value = Number(text);
+    return Number.isSafeInteger(value) && value <= MAX_UNIQUE_NUMBER ? { value } : drop("INVALID_UNIQUE_NUMBER");
+}
+
 // VISA STATUS (the legacy sheet's values, confirmed from the sample workbook and by the business),
 // case-insensitive. Every value becomes the candidate's Status (candidateWorkflowStatus.js):
 //   Submit             -> "VISA_SUBMITTED" (completes the Visa submission stage)        Visa Submitted

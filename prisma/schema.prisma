@@ -74,6 +74,8 @@ model CandidateImport {
   sourceFlags   Json      @default("{}") @map("source_flags")
   previewCounts Json      @default("{}") @map("preview_counts")
   chunkResults  Json      @default("{}") @map("chunk_results")
+  // The Job group plan of the preview (importJobGroups.js), with the user's suffix edits.
+  jobGroups     Json      @default("[]") @map("job_groups")
   resultCounts  Json?     @map("result_counts")
   syncRunId     String?   @map("sync_run_id")
   createdAt     DateTime  @default(now()) @map("created_at")
@@ -637,6 +639,8 @@ model Job {
   candidates       JobCandidate[]
   // Candidate Form job-group links bound to this job's immutable id.
   formLinks        CandidateFormLink[]
+  // Set when the Job was created by the Google Sheet upload (its code is JOB-YYYY-MMDDNN).
+  importGroup      ImportJobGroup?
 
   @@index([status, createdAt])
   @@index([clientId])
@@ -1089,4 +1093,25 @@ model SheetSyncState {
   updatedAt               DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
 
   @@map("sheet_sync_state")
+}
+
+// A Job created by the Google Sheet upload (importJobGroups.js): the candidates of one Interview Date
+// whose UNIQUE NUMBER falls in one hundreds block (floor(n / 100)). The Job's code is
+// JOB-YYYY-MMDD + suffix; the suffix (two digits, 01-99) is assigned per date and only its value may be
+// edited later. Re-uploads reuse the group, so its Job and suffix never change by themselves.
+// Migration 20261111120000_import_job_groups.
+model ImportJobGroup {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  interviewDate DateTime @map("interview_date") @db.Date
+  hundredsBlock Int      @map("hundreds_block")
+  suffix        String   @db.Char(2)
+  jobId         String   @unique @map("job_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([interviewDate, hundredsBlock], map: "import_job_group_date_block_key")
+  @@unique([interviewDate, suffix], map: "import_job_group_date_suffix_key")
+  @@map("import_job_group")
 }

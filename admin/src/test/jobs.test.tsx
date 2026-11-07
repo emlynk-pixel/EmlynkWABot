@@ -725,3 +725,44 @@ describe("Multiple Job Types UI", () => {
     });
 });
 
+
+describe("a Job created by the sheet upload (JOB-YYYY-MMDDNN)", () => {
+    const imported = job(7, "PROCESSING", {
+        jobCode: "JOB-2026-071101",
+        importGroup: { interviewDate: "2026-07-11", from: 3100, to: 3199, prefix: "JOB-2026-0711", suffix: "01" },
+    });
+
+    test("ADMIN / OWNER edits only the last two digits: the prefix is fixed, two digits are required, the new ID is sent", async () => {
+        let current = details(imported);
+        const { calls } = backend("OWNER", {
+            [`GET /api/admin/jobs/${imported.jobId}`]: () => ({ status: 200, body: current }),
+            [`PATCH /api/admin/jobs/${imported.jobId}/import-suffix`]: () => {
+                current = details({ ...imported, jobCode: "JOB-2026-071105", importGroup: { ...imported.importGroup!, suffix: "05" } });
+                return { status: 200, body: { jobId: imported.jobId, jobCode: "JOB-2026-071105" } };
+            },
+        });
+        renderApp(`/jobs/${imported.jobId}`);
+        const editor = await screen.findByTestId("import-job-suffix", undefined, RENDER_STEP);
+        expect(within(editor).getByText(/Interview date 11 Jul 2026 · Unique Numbers 3100–3199/)).toBeInTheDocument();
+        const input = within(editor).getByRole("textbox", { name: "Last two digits" });
+        const user = userEvent.setup();
+        await user.clear(input);
+        await user.type(input, "5");
+        expect(within(editor).getByRole("button", { name: "Save" })).toBeDisabled();
+        expect(within(editor).getByText(/Enter exactly two digits/)).toBeInTheDocument();
+        await user.type(input, "5");
+        await user.clear(input);
+        await user.type(input, "05");
+        expect(within(editor).getByText("JOB-2026-071105")).toBeInTheDocument();
+        await user.click(within(editor).getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(calls.find((c) => c.path.endsWith("/import-suffix"))?.body).toEqual({ suffix: "05" }));
+        expect(await screen.findByRole("heading", { name: /JOB-2026-071105/ })).toBeInTheDocument();
+    });
+
+    test("a TEAM_LEAD sees where the Job comes from but cannot edit; a manual Job has no editor", async () => {
+        backend("TEAM_LEAD", { [`GET /api/admin/jobs/${imported.jobId}`]: { status: 200, body: details(imported) } });
+        renderApp(`/jobs/${imported.jobId}`);
+        expect(await screen.findByText(/Sheet upload · Interview date 11 Jul 2026/, undefined, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.queryByTestId("import-job-suffix")).toBeNull();
+    });
+});

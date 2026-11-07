@@ -41,6 +41,7 @@ import { USER_STATUS } from "../middleware/requireActiveUser.js";
 import { ROW_STATUS, toColumns } from "./candidateImportRowValidator.js";
 import { firstNameKey, orgKey, phoneDigits } from "./candidateImportNormalizers.js";
 import { activeJobTypeNames } from "./jobTypeCatalog.js";
+import { jobMembership } from "./importJobGroups.js";
 import { formatTestId } from "./testId.js";
 
 export const ROW_ACTION = Object.freeze({ CREATE: "CREATE", FILL: "FILL", NO_CHANGE: "NO_CHANGE", SKIP_VERIFIED: "SKIP_VERIFIED", NONE: "NONE" });
@@ -415,6 +416,16 @@ export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
         const orgPlan = planOrg(row.values, snapshot, numberConflicts.has(row.rowNumber));
         orgPlan.codes.forEach((code) => note(code, code.startsWith("COMPANY_NUMBER") ? "companyNumber" : code.startsWith("AGENT") ? "agent" : "company"));
         plan.org = orgPlan.org;
+
+        // The Job group (importJobGroups.js): Interview Date + the UNIQUE NUMBER's hundreds block. Only a
+        // candidate whose Test result is PASS (the one already saved wins, as the import never overwrites
+        // it) is put on the Job; the others are imported and reported.
+        const { testDate, uniqueNumber } = row.values;
+        if (testDate && uniqueNumber !== undefined) {
+            const pass = (stageOf(existing, "TEST_DETAILS")?.testResult ?? row.values.testResult ?? null) === "PASS";
+            plan.job = jobMembership({ testDate, uniqueNumber, pass, passportId: existing?.passportId ?? row.passport, values: row.values });
+            if (!pass) note("NOT_PASSED_NO_JOB", "testResult");
+        }
 
         // Allocation, Test and visa stages: fill-only.
         const extras = { allocation: null, test: planTest(row.values, existing), stages: [], departed: false, outcome: null };

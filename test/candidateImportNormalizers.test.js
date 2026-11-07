@@ -30,12 +30,18 @@ describe("legacy source mapping (centralized)", () => {
     });
 
     test("system-owned columns (statuses, documents, legacy IDs) are never accepted from a file", () => {
-        for (const header of ["UNIQUE NUMBER", "ACTIVE STATUS", "REGISTER DATE", "PASSPORT", "MEDICAL", "SCAN", "POLICE REPORT", "VIDEO"]) {
+        for (const header of ["ACTIVE STATUS", "REGISTER DATE", "PASSPORT", "MEDICAL", "SCAN", "POLICE REPORT", "VIDEO"]) {
             assert.equal(sourceColumnFor(header).classification, SOURCE_CLASSIFICATION.SYSTEM_GENERATED, header);
             assert.equal(sourceColumnFor(header).field, undefined);
         }
         const { allowed } = sourceColumnsForClient();
-        assert.ok(!allowed.includes("ACTIVE STATUS") && !allowed.includes("UNIQUE NUMBER"));
+        assert.ok(!allowed.includes("ACTIVE STATUS"));
+    });
+
+    test("UNIQUE NUMBER is read for the Job group only (never the candidate's Emlynk ID)", () => {
+        assert.deepEqual([sourceColumnFor("UNIQUE NUMBER").classification, sourceColumnFor("UNIQUE NUMBER").field], [SOURCE_CLASSIFICATION.TRANSFORM, "uniqueNumber"]);
+        assert.ok(sourceColumnsForClient().allowed.includes("UNIQUE NUMBER"));
+        assert.equal(toColumns({ uniqueNumber: 3100 }).candidate.uniqueId, undefined, "never a candidate column");
     });
 
     test("the process columns are imported: OFFICER, VISA STATUS, INTERVIEW DATE / PASS FAIL, COMPANY, COMPANY NUMBER, AGENT; ERRORS / WARNINGS ignored", () => {
@@ -98,7 +104,7 @@ describe("legacy source mapping (centralized)", () => {
         assert.deepEqual(result.systemGenerated, ["ACTIVE STATUS"]);
         assert.deepEqual(result.unresolved, ["FATHER NAME"]);
         // A cell of an ignored column is dropped before validation, whatever the browser sent.
-        assert.deepEqual(Object.keys(sourceCells({ ...BASE, "LOAN APPLY AMOUNT": "1", "ACTIVE STATUS": "INACTIVE", "UNIQUE NUMBER": "12" })).sort(), ["jobRole", "nic", "otherNames", "passport", "surname", "whatsapp"]);
+        assert.deepEqual(Object.keys(sourceCells({ ...BASE, "LOAN APPLY AMOUNT": "1", "ACTIVE STATUS": "INACTIVE" })).sort(), ["jobRole", "nic", "otherNames", "passport", "surname", "whatsapp"]);
     });
 });
 

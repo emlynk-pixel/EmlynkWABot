@@ -87,6 +87,9 @@ const SUPPORTED = [
     { header: "COMPANY", classification: TRANSFORM, field: "company", target: "client.name", meaning: "The Client (employer): reused by name, or created with an Agent", transform: "orgName" },
     { header: "COMPANY NUMBER", classification: TRANSFORM, field: "companyNumber", target: "client.registration_number", meaning: "The Client's company registration number (filled when blank, never overwritten)", transform: "text" },
     { header: "AGENT", classification: TRANSFORM, field: "agent", target: "agent.name", meaning: "The Client's Agent: reused by name, or created (country not set)", transform: "orgName" },
+    // The legacy UNIQUE NUMBER is NOT the candidate's ID (Emlynk generates its own): with the INTERVIEW DATE it
+    // decides the candidate's Job (importJobGroups.js: one Job per date and hundreds block).
+    { header: "UNIQUE NUMBER", classification: TRANSFORM, field: "uniqueNumber", target: "job (JOB-YYYY-MMDDNN, import_job_group)", meaning: "Groups the candidate into a Job with the Interview Date: one Job per date and hundreds block (3100-3199, 3200-3299, ...)", transform: "uniqueNumber" },
 ];
 
 // Ambiguous columns: not imported until the business confirms their meaning.
@@ -105,7 +108,6 @@ const UNRESOLVED = [
 
 // Emlynk owns these values: never taken from a file.
 const SYSTEM = [
-    ["UNIQUE NUMBER", "Legacy ID; the Emlynk unique ID is generated"],
     ["REGISTER NUMBER", "Legacy registration number"],
     ["REGISTER DATE", "The registration date is when the record is created in Emlynk"],
     ["ACTIVE STATUS", "Record status is system-owned"],

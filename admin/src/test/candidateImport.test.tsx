@@ -159,6 +159,44 @@ describe("the import flow", () => {
         await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     });
 
+    test("Jobs from this upload: grouped by Interview date + Unique number; a NEW Job's last two digits are edited, saved and checked before the import", async () => {
+        readWorkbookMock.mockResolvedValue({ headers: ["PASSPORT NUMBER", "SURNAME", "OTHER NAME", "UNIQUE NUMBER"], rows: ROWS, missingRequired: [] });
+        const group = (from: number, suffix: string | null, state: "NEW" | "EXISTING" | "ERROR", extra = {}) => ({
+            key: `2026-07-11|${from / 100}`, interviewDate: "2026-07-11", from, to: from + 99, prefix: "JOB-2026-0711", suffix, jobCode: suffix ? `JOB-2026-0711${suffix}` : null,
+            state, codes: [], messages: [], candidates: 2, passed: 2, clientName: "Synth Builders", agentName: "Synth Agency", existingJobCode: state === "EXISTING" ? `JOB-2026-0711${suffix}` : null, edited: false, ...extra,
+        });
+        const groups = [group(3100, "01", "EXISTING"), group(3200, "02", "NEW"), group(3300, null, "ERROR", { messages: ["Candidates of this group name different companies: no Job"] })];
+        const { calls } = asRole("ADMIN", {
+            [`GET ${BASE}/import/source-columns`]: { status: 200, body: { allowed: ALLOWED, required: REQUIRED } },
+            [`POST ${BASE}/import/preview`]: { status: 200, body: { ...PREVIEW, summary: { ...PREVIEW.summary, jobsToCreate: 1, jobsReused: 1, jobMembers: 4 }, jobGroups: groups } },
+            [`PUT ${BASE}/import/${PREVIEW.importId}/job-groups`]: { status: 200, body: { jobGroups: [groups[0], { ...groups[1], suffix: "05", jobCode: "JOB-2026-071105", edited: true }, groups[2]] } },
+        });
+        renderApp("/settings/sheet-sync");
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /^Upload: import candidates/ });
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), new File(["x"], "legacy.xlsx"));
+
+        const table = await within(dialog).findByRole("table", { name: "Jobs from this upload" });
+        const rows = within(table).getAllByTestId("job-group");
+        expect(rows.map((r) => r.textContent)).toEqual([
+            expect.stringContaining("3100–3199JOB-2026-071101"), expect.stringContaining("3200–3299"), expect.stringContaining("Candidates of this group name different companies"),
+        ]);
+        expect(within(rows[0]).queryByRole("textbox"), "an existing Job keeps its ID").toBeNull();
+        const digits = within(rows[1]).getByRole("textbox", { name: /Last two digits of the Job for 3200–3299/ });
+        expect(within(rows[1]).getByText("JOB-2026-071102")).toBeInTheDocument();
+
+        await user.clear(digits);
+        await user.type(digits, "0x5");
+        expect(digits).toHaveValue("05");
+        expect(within(rows[1]).getByText("JOB-2026-071105")).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: /^Confirm import/ }), "the edit must be saved first").toBeDisabled();
+        await user.click(within(dialog).getByRole("button", { name: "Save Job IDs" }));
+        await waitFor(() => expect(calls.find((c) => c.path.endsWith("/job-groups"))?.body).toEqual({ suffixes: { "2026-07-11|32": "05" } }));
+        expect(await within(dialog).findByText(/\(changed\)/)).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Confirm import (2 candidates, 4 Job assignments)" })).toBeEnabled();
+    });
+
     test("preview with issues: readable reasons, the automatic actions, and a validation sheet built from the chosen file (no server download)", async () => {
         readWorkbookMock.mockResolvedValue({ headers: ["PASSPORT NUMBER", "SURNAME", "OTHER NAME", "OFFICER"], rows: ROWS, missingRequired: [] });
         const rowIssues = [

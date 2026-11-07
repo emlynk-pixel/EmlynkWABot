@@ -34,6 +34,20 @@ export type ImportSummary = {
     clientsToCreate?: number;
     agentsToCreate?: number;
     companyNumbersToFill?: number;
+    // Jobs from Interview Date + UNIQUE NUMBER (absent from an older server).
+    jobsToCreate?: number;
+    jobsReused?: number;
+    jobGroupProblems?: number;
+    jobMembers?: number;
+};
+
+// One Job of the upload: the candidates of one Interview Date whose UNIQUE NUMBER is in one hundreds block.
+// state: NEW (created by the import; its last two digits can be chosen), EXISTING (an earlier upload
+// created it: reused, ID unchanged), SKIPPED (nobody passed the test: no Job yet), ERROR (no Job).
+export type ImportJobGroup = {
+    key: string; interviewDate: string; from: number; to: number; prefix: string; suffix: string | null; jobCode: string | null;
+    state: "NEW" | "EXISTING" | "SKIPPED" | "ERROR"; codes: string[]; messages?: string[]; candidates: number; passed: number;
+    clientName: string | null; agentName: string | null; existingJobCode: string | null; edited: boolean;
 };
 
 // A row that is not plainly valid: the passport number is masked, the reasons are codes, and
@@ -66,12 +80,14 @@ export type ImportPreview = {
     problemsTruncated: boolean;
     rowIssues?: ImportRowIssues[];
     actions?: ImportActions;
+    jobGroups?: ImportJobGroup[];
 };
 
 export type ImportCounts = {
     rows?: number; created?: number; filled?: number; noChange?: number; skippedVerified?: number; invalid?: number;
     duplicates?: number; conflicts?: number; failed?: number; warnings?: number; uncommittedChunks?: number; uncommittedRows?: number;
     allocated?: number; testsSet?: number; stagesCompleted?: number; departed?: number; outcomes?: number; clientsCreated?: number; agentsCreated?: number;
+    jobsCreated?: number; jobAssignments?: number;
 };
 
 export type ImportChunkResult = {
@@ -104,6 +120,11 @@ export function previewImport(token: string, body: { fileName: string; headers: 
 
 export function commitImportChunk(token: string, importId: string, chunkIndex: number, rows: ImportRow[]): Promise<ImportChunkResult> {
     return apiRequest<ImportChunkResult>(`${BASE}/${encodeURIComponent(importId)}/chunks/${chunkIndex}`, { method: "POST", token, body: { rows } });
+}
+
+// The last two digits of the NEW Jobs, chosen before the import ({ [group key]: "05" }); checked by the server.
+export function updateImportJobGroups(token: string, importId: string, suffixes: Record<string, string>): Promise<{ jobGroups: ImportJobGroup[] }> {
+    return apiRequest<{ jobGroups: ImportJobGroup[] }>(`${BASE}/${encodeURIComponent(importId)}/job-groups`, { method: "PUT", token, body: { suffixes } });
 }
 
 export function finishImport(token: string, importId: string): Promise<ImportFinish> {

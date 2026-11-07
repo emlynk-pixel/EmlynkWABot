@@ -579,7 +579,8 @@ describe("security and error handling", () => {
             "PATCH /client-management/:clientId",
             "PATCH /client-management/:clientId/agent",
             "PATCH /client-management/:clientId/status",
-            "PATCH /job-types/:id", // Settings > Job Types: rename / activate / deactivate, ADMIN only, audited (jobTypes.test.js)
+            "PATCH /job-types/:id",
+            "PATCH /jobs/:jobId/import-suffix", // last two digits of a sheet-upload Job: ADMIN, JOB_HANDLER, ANALYST (scoped), audited (importJobGroups.test.js) // Settings > Job Types: rename / activate / deactivate, ADMIN only, audited (jobTypes.test.js)
             "POST /agents",
             "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",

@@ -218,6 +218,25 @@ All of these are **fill-only** for an existing candidate, and none is written fo
 
 **Re-import (idempotency).** The same sheet again writes nothing: every candidate is `NO_CHANGE`, Clients and Agents are reused, allocations, Test details and stages are already there, and no audit row is added.
 
+## 5b. Jobs from the upload (Interview Date + UNIQUE NUMBER, `importJobGroups.js`)
+
+The upload creates and fills Jobs. Manual Job creation is unchanged and keeps `JOB-YYYY-NNNNNN` from `job_code_counter`.
+
+- **Group:** the Interview Date and the hundreds block of UNIQUE NUMBER, `floor(n / 100)` (3100–3199 → 31). One group is one Job. The legacy UNIQUE NUMBER is never the candidate's Emlynk ID.
+- **Job ID:** `JOB-YYYY-MMDD` from the Interview Date plus a two-digit suffix. On a date with no Job yet, the date's blocks in ascending order get 01, 02, 03 (3100, 3300, 3500 → 01, 02, 03). Each date starts again at 01. Row order never matters.
+- **Stable:** a created group is stored (`import_job_group`, unique per date + block, per date + suffix, and per Job). Every later upload reuses it, so the same date and range always go to the same Job, and an edited suffix is never recalculated. A block that first appears on a date that already has Jobs gets the lowest unused suffix (warning `JOB_GROUP_ADDED_LATER`). A suffix whose full code is used by any Job, manual ones included, is skipped.
+- **The Job:** Client = the group's COMPANY, responsible Agent = its AGENT, Job Types = its Job roles, From Country RO. To Country = the Agent's country, or **RO** when the Agent has none (new Agents from the upload have none).
+- **Who joins it:** only candidates whose Test result is PASS. The others are imported and reported (`NOT_PASSED_NO_JOB`). A candidate a user removed from the Job is not added back (`JOB_MEMBER_REMOVED_KEPT`).
+- **Problems (the group gets no Job; its rows are still imported):**
+  - different companies or agents in one group;
+  - no company;
+  - no usable Client and Agent;
+  - an existing Job for another Client.
+  - A group where nobody passed gets no Job yet (SKIPPED).
+- **Preview:** the "Jobs from this upload" table shows date, range, Job ID, candidates passed and the result. Only a NEW Job's last two digits can be changed (`PUT /import/:id/job-groups`). The change is checked before any chunk is committed: 01–99, unique in the upload and against every job code. The plan is stored on `candidate_import.job_groups` and every chunk applies it.
+- **Commit:** inside each chunk's transaction, under a per-date advisory lock: the group is read (reused if a concurrent or earlier upload created it) or its Job is created, and the PASS candidates are added in one batch. This adds about 15 operations per new group and 6 per existing group touched by a chunk, never per row. Audited: `CREATE_JOB` and `ADD_CANDIDATE_TO_JOB`.
+- **After the import:** `PATCH /api/admin/jobs/:jobId/import-suffix { suffix }` changes only the last two digits. Allowed for ADMIN, OWNER and JOB_HANDLER, and for an ANALYST on a Job holding one of their candidates. Audited `UPDATE_JOB`. It is shown on the Job page and in the candidate's job panel.
+
 ## 6. Validation (import only; registration unchanged)
 
 Normal registration keeps `^[PN]\d{7}$`, a required NIC and a required WhatsApp number.

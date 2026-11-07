@@ -14,6 +14,7 @@ import { Detail, JobStatusBadge, NO_COMPANY_JOB_ID, VacancyFill, jobCountry } fr
 import { CountrySelect } from "../components/master/MasterParts";
 import { Card, ErrorState, LoadingState } from "../components/States";
 import { filterControl, inputClass, tableCell, tableHead, tableRow, textareaClass } from "../components/ui";
+import { ImportJobSuffixEditor } from "../components/job/ImportJobSuffixEditor";
 
 // Admin > Jobs > one job, in two tabs: Job Details (the default) and Assigned
 // Candidates. The tab is page state only (no route): switching keeps every open
@@ -100,6 +101,11 @@ function JobDetailsView() {
             {tab === "details" && (
                 <div role="tabpanel" id="job-panel-details" aria-labelledby="job-tab-details">
                     <Card className="p-5">
+                        {job.importGroup && (
+                            <div className="mb-4 border-b border-border pb-4">
+                                <ImportJobSuffixEditor jobId={job.jobId} group={job.importGroup} onSaved={() => resource.reload()} />
+                            </div>
+                        )}
                         <dl aria-label="Job details" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                             <Detail label="Internal job code">{job.jobCode}</Detail>
                             <Detail label="Client Job ID">

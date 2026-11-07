@@ -16,6 +16,8 @@ export const JOB_SELECT = Object.freeze({
     },
     client: { select: { id: true, name: true } },
     responsibleAgent: { select: { id: true, name: true, countryCode: true } },
+    // A Job created by the Google Sheet upload (importJobGroups.js): its date and Unique Number range.
+    importGroup: { select: { interviewDate: true, hundredsBlock: true, suffix: true } },
 });
 
 const iso = (value) => (value ? value.toISOString() : null);
@@ -45,6 +47,16 @@ export function jobSummaryView(job) {
         completedAt: iso(job.completedAt),
         cancelledAt: iso(job.cancelledAt),
         cancelReason: job.cancelReason ?? null,
+        // Set for a Job created by the sheet upload: only its last two digits (suffix) can be edited.
+        importGroup: job.importGroup
+            ? {
+                interviewDate: iso(job.importGroup.interviewDate)?.slice(0, 10) ?? null,
+                from: job.importGroup.hundredsBlock * 100,
+                to: job.importGroup.hundredsBlock * 100 + 99,
+                prefix: job.jobCode.slice(0, -2),
+                suffix: job.importGroup.suffix,
+            }
+            : null,
     };
 }
 

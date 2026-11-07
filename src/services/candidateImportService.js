@@ -25,6 +25,7 @@ import {
     ROW_ACTION, VISA_OUTCOMES, findAgentsByKeys, findClientsByKeys, findSourceFlags, importActions, loadImportSnapshot, planRows, summarizePlans,
 } from "./candidateImportClassifier.js";
 import { describeIssues } from "./candidateImportIssues.js";
+import { applySuffixEdits, buildJobGroupPlan, executeJobGroups, GROUP_STATE, jobGroupView, loadJobGroupContext, noteGroupOutcomes, plannedJobMembers } from "./importJobGroups.js";
 import { activeJobTypeNames } from "./jobTypeCatalog.js";
 import { setAuditActor } from "./auditActor.js";
 import { RUN_KIND, RUN_TRIGGER } from "./sheetSyncStore.js";
@@ -193,8 +194,13 @@ export async function previewImport({ db, actor, fileName, headers, rows, now = 
     const sourceFlags = findSourceFlags(validated);
     const snapshot = await loadImportSnapshot(db, validated, { activeJobTypes });
     const plans = planRows(validated, snapshot, sourceFlags);
+    // Jobs (Interview Date + UNIQUE NUMBER hundreds block): planned for the whole file, stored for the commit.
+    const jobGroups = buildJobGroupPlan(plans, await loadJobGroupContext(db, [...new Set(plans.filter((p) => p.job).map((p) => p.job.interviewDate))]));
+    noteGroupOutcomes(plans, jobGroups);
     const summary = {
         ...summarizePlans(plans),
+        ...jobGroupCounts(jobGroups),
+        jobMembers: plannedJobMembers(plans, jobGroups),
         ignoredSourceColumns: columns.ignored.length + columns.systemGenerated.length + columns.unresolved.length + columns.unknown.length,
     };
     const chunks = chunkRows(canonical);
@@ -202,15 +208,36 @@ export async function previewImport({ db, actor, fileName, headers, rows, now = 
     await db.candidateImport.create({
         data: {
             importId, adminId: actor.adminId, fileName, status: IMPORT_STATUS.PREVIEWED, totalRows: canonical.length, chunkSize: IMPORT_CHUNK_SIZE,
-            chunkHashes: chunks.map(hashChunk), sourceFlags, previewCounts: summary, chunkResults: {}, createdAt: now, updatedAt: now,
+            chunkHashes: chunks.map(hashChunk), sourceFlags, previewCounts: summary, chunkResults: {}, jobGroups, createdAt: now, updatedAt: now,
         },
     });
     const problems = plans.filter(isProblem);
     return {
         importId, chunkSize: IMPORT_CHUNK_SIZE, chunkCount: chunks.length, expiresAt: new Date(now.getTime() + IMPORT_PREVIEW_TTL_MS).toISOString(),
         summary, columns, problems: problems.slice(0, MAX_PROBLEM_ROWS).map(problemOf), problemsTruncated: problems.length > MAX_PROBLEM_ROWS,
-        rowIssues: rowIssuesOf(plans), actions: importActions(plans),
+        rowIssues: rowIssuesOf(plans), actions: importActions(plans), jobGroups: jobGroups.map(jobGroupView),
     };
+}
+
+const jobGroupCounts = (groups) => ({
+    jobsToCreate: groups.filter((g) => g.state === GROUP_STATE.NEW).length,
+    jobsReused: groups.filter((g) => g.state === GROUP_STATE.EXISTING).length,
+    jobGroupProblems: groups.filter((g) => g.state === GROUP_STATE.ERROR).length,
+});
+
+// PUT /import/:importId/job-groups { suffixes: { [group key]: "05" } }: the user chooses the last two
+// digits of a NEW Job before the import (only before any chunk is committed). Checked again here against
+// the database (codes and suffixes taken since the preview); nothing is saved on an error (409).
+export async function updateImportJobGroups({ db, actor, importId, suffixes, now = new Date() }) {
+    const record = await requireImport(db, { importId, actor, now });
+    if (record.status !== IMPORT_STATUS.PREVIEWED) throw new CandidateImportError(409, "IMPORT_STARTED", "The import has started: Job IDs can no longer be chosen here.");
+    if (!suffixes || typeof suffixes !== "object" || Array.isArray(suffixes)) throw new CandidateImportError(400, "INVALID_BODY", "suffixes must be an object of group -> two digits.");
+    const groups = Array.isArray(record.jobGroups) ? record.jobGroups : [];
+    const context = await loadJobGroupContext(db, [...new Set(groups.map((g) => g.interviewDate))]);
+    const result = applySuffixEdits(groups, suffixes, context);
+    if (result.errors) throw new CandidateImportError(409, "JOB_GROUP_SUFFIX_INVALID", result.errors[0].message, { errors: result.errors });
+    await db.candidateImport.update({ where: { importId }, data: { jobGroups: result.groups, updatedAt: now } });
+    return { jobGroups: result.groups.map(jobGroupView) };
 }
 
 // ---------------------------------------------------------------- unique IDs
@@ -233,7 +260,7 @@ export async function allocateUniqueIds(tx, count) {
 const auditEntry = (actor, data) => ({ auditId: crypto.randomUUID(), adminId: actor.adminId, ...data });
 
 // The plans' writes, inside the caller's transaction. Returns the plans' outcomes.
-async function executePlans(tx, plans, { importId, actor, now = new Date() }) {
+async function executePlans(tx, plans, { importId, actor, now = new Date(), jobGroups = [] }) {
     const audits = [];
     const creates = plans.filter((p) => p.action === ROW_ACTION.CREATE);
     if (creates.length) {
@@ -273,6 +300,8 @@ async function executePlans(tx, plans, { importId, actor, now = new Date() }) {
     const effects = new Map(plans.map((plan) => [plan.rowNumber, {}]));
     await executeOrg(tx, plans, { importId, actor, audits, effects });
     await executeExtras(tx, plans, { importId, actor, audits, effects, now });
+    // After the Test details (this chunk may have just saved the PASS) and the Clients / Agents.
+    await executeJobGroups(tx, plans, jobGroups, { actor, importId, audits, effects });
     if (audits.length) await tx.auditLog.createMany({ data: audits });
     return plans.map((plan) => outcomeOf(plan, effects.get(plan.rowNumber)));
 }
@@ -447,7 +476,7 @@ export function countOutcomes(rows) {
 
 // Result count -> the per-row effect it adds up (outcomeOf).
 const EFFECT_COUNTS = Object.freeze({
-    allocated: "allocated", testsSet: "testSet", stagesCompleted: "stagesCompleted", departed: "departed", outcomes: "outcome", clientsCreated: "clientCreated", agentsCreated: "agentCreated",
+    allocated: "allocated", testsSet: "testSet", stagesCompleted: "stagesCompleted", departed: "departed", outcomes: "outcome", jobsCreated: "jobCreated", jobAssignments: "jobAssigned", clientsCreated: "clientCreated", agentsCreated: "agentCreated",
 });
 
 const chunkResult = (rows) => {
@@ -522,7 +551,7 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
 
     const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: true });
     const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
-    const context = { importId, actor, now };
+    const context = { importId, actor, now, jobGroups: Array.isArray(record.jobGroups) ? record.jobGroups : [] };
 
     // The whole chunk in one transaction; a unique-ID race is retried with fresh numbers.
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {

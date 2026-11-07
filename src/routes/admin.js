@@ -128,6 +128,7 @@ import {
 } from "../services/clientService.js";
 import { parseVerificationBody, setCandidateVerification } from "../services/candidateVerificationService.js";
 import { parseFinalStatusBody, setCandidateFinalStatus } from "../services/candidateFinalStatusService.js";
+import { SUFFIX_EDITOR_ROLES, updateImportJobSuffix } from "../services/importJobGroups.js";
 import { createUsersRouter } from "./users.js";
 import { createSheetSyncSettingsRouter } from "./sheetSyncSettings.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
@@ -1093,6 +1094,13 @@ export function createAdminRouter({
         if (!jobParam(req, res)) return undefined;
         const client = await resolveDb(db);
         return candidateAction(res, async () => res.json(await revokeJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase() })));
+    });
+
+    // The last two digits of a Job created by the sheet upload (JOB-YYYY-MMDDNN; importJobGroups.js).
+    // ADMIN (and OWNER), JOB_HANDLER and ANALYST (an Analyst: a Job holding one of their candidates).
+    router.patch("/jobs/:jobId/import-suffix", requireRole(SUFFIX_EDITOR_ROLES), async (req, res) => {
+        if (!jobParam(req, res)) return undefined;
+        return candidateAction(res, async () => res.json(await updateImportJobSuffix({ db: await resolveDb(db), actor: req.user, jobId: req.params.jobId, suffix: req.body?.suffix })));
     });
 
     router.post("/jobs/:jobId/complete", requireRole(JOB_MANAGERS), async (req, res) => {

@@ -15,7 +15,7 @@ import { JOB_ROLE_ALIASES, sourceColumnFor } from "./candidateImportSourceMappin
 import {
     clean, isNotApplicable, maskIdentifier, normalizeBloodGroup, normalizeDate, normalizeEmail, normalizeEnglishKnowledge,
     normalizeFamilyPassport, normalizeHeight, normalizeJobRoles, normalizeMaritalStatus, normalizeNic, normalizeOrgName, normalizePassport,
-    normalizePhones, normalizeSex, normalizeShirtSize, normalizeShoeSize, normalizeTestResult, normalizeText, normalizeVisaStatus,
+    normalizePhones, normalizeSex, normalizeShirtSize, normalizeShoeSize, normalizeTestResult, normalizeText, normalizeUniqueNumber, normalizeVisaStatus,
     normalizeWaistSize, normalizeWeight, normalizeYesNo,
 } from "./candidateImportNormalizers.js";
 
@@ -193,6 +193,12 @@ export function validateLegacyRow({ rowNumber, values }, { activeJobTypes, alias
     take("company", normalizeOrgName(cells.company));
     take("companyNumber", normalizeText(cells.companyNumber, { max: MAX_COMPANY_NUMBER }));
     take("agent", normalizeOrgName(cells.agent));
+    // With the Interview Date: the candidate's Job group (candidateImportClassifier.js, importJobGroups.js).
+    // Only reported when the sheet HAS the column (a sheet without it is not about Jobs), like OFFICER.
+    if (cells.uniqueNumber !== undefined) {
+        take("uniqueNumber", normalizeUniqueNumber(cells.uniqueNumber));
+        if (out.testDate && out.uniqueNumber === undefined && !issues.some((i) => i.code === "INVALID_UNIQUE_NUMBER")) note("uniqueNumber", "JOB_GROUP_INCOMPLETE");
+    }
 
     const status = errors.length ? ROW_STATUS.INVALID : issues.length ? ROW_STATUS.WARNING : ROW_STATUS.VALID;
     return {

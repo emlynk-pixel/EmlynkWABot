@@ -1,9 +1,9 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { ApiError } from "../api/client";
-import { commitImportChunk, finishImport, getImportSourceColumns, previewImport, type ImportActions, type ImportChunkResult, type ImportCounts, type ImportFinish, type ImportPreview, type ImportRow } from "../api/candidateImport";
+import { commitImportChunk, finishImport, getImportSourceColumns, previewImport, updateImportJobGroups, type ImportActions, type ImportJobGroup, type ImportChunkResult, type ImportCounts, type ImportFinish, type ImportPreview, type ImportRow } from "../api/candidateImport";
 import { useAuth } from "../auth/AuthProvider";
 import { DialogError, primaryButton, secondaryButton } from "./Dialog";
-import { formatNumber, humanize } from "./format";
+import { formatDate, formatNumber, humanize } from "./format";
 import { ToneBadge, type Tone } from "./StatusBadge";
 import { readWorkbook, WorkbookError } from "./importWorkbook";
 import { downloadValidationWorkbook } from "./validationWorkbook";
@@ -80,6 +80,80 @@ function AutomaticActions({ actions }: { actions: ImportActions }) {
     );
 }
 
+const GROUP_LABEL: Record<ImportJobGroup["state"], { label: string; tone: Tone }> = {
+    NEW: { label: "New Job", tone: "verified" },
+    EXISTING: { label: "Existing Job", tone: "pending" },
+    SKIPPED: { label: "No Job yet", tone: "review" },
+    ERROR: { label: "No Job", tone: "critical" },
+};
+const validSuffix = (value: string) => /^[0-9]{2}$/.test(value) && value !== "00";
+
+// The Jobs this upload creates or reuses: one per Interview Date and UNIQUE NUMBER hundreds block, ID
+// JOB-YYYY-MMDDNN. A NEW Job's last two digits can be changed here (the date part never); every
+// candidate of the group follows. "Save Job IDs" has the server check them (unique, two digits) before
+// the import; an existing Job keeps its ID. edits: the unsaved changes, owned by the dialog.
+function JobGroupsTable({ groups, edits, onEdit, onSave, saving }: {
+    groups: ImportJobGroup[];
+    edits: Record<string, string>;
+    onEdit: (key: string, value: string) => void;
+    onSave: () => void;
+    saving: boolean;
+}) {
+    if (!groups.length) return null;
+    const dirty = Object.keys(edits).length > 0;
+    const invalid = Object.values(edits).some((value) => !validSuffix(value));
+    return (
+        <div className="mt-4">
+            <h3 className="text-label-sm text-ink-muted">Jobs from this upload (Interview date + Unique number, 100 per Job)</h3>
+            <div className="mt-2 max-h-72 overflow-auto rounded-lg border border-border">
+                <table aria-label="Jobs from this upload" className="w-full text-left text-body-sm">
+                    <thead className="sticky top-0 bg-surface text-label-md text-ink">
+                        <tr><th className="px-3 py-1.5">Interview date</th><th className="px-3 py-1.5">Unique numbers</th><th className="px-3 py-1.5">Job ID</th><th className="px-3 py-1.5">Candidates</th><th className="px-3 py-1.5">Result</th></tr>
+                    </thead>
+                    <tbody>
+                        {groups.map((g) => {
+                            const value = edits[g.key] ?? g.suffix ?? "";
+                            const editable = g.state === "NEW";
+                            return (
+                                <tr key={g.key} data-testid="job-group" className="border-t border-border align-top">
+                                    <td className="px-3 py-1.5 tabular-nums">{formatDate(g.interviewDate)}</td>
+                                    <td className="px-3 py-1.5 tabular-nums">{g.from}–{g.to}</td>
+                                    <td className="px-3 py-1.5">
+                                        {editable ? (
+                                            <span className="inline-flex items-center gap-0.5 font-mono">
+                                                <span aria-hidden="true">{g.prefix}</span>
+                                                <input
+                                                    aria-label={`Last two digits of the Job for ${g.from}–${g.to} on ${formatDate(g.interviewDate)}`}
+                                                    value={value}
+                                                    inputMode="numeric"
+                                                    maxLength={2}
+                                                    aria-invalid={!validSuffix(value)}
+                                                    onChange={(event) => onEdit(g.key, event.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
+                                                    className="h-7 w-10 rounded-md border border-border-strong bg-surface px-1 text-center text-body-sm text-ink focus:border-border-focus focus:outline-none aria-[invalid=true]:border-critical"
+                                                />
+                                            </span>
+                                        ) : <span className="font-mono">{g.jobCode ?? "—"}</span>}
+                                        {editable && validSuffix(value) && <p className="mt-0.5 text-label-sm text-ink-muted">Final: <span className="font-mono text-ink">{g.prefix}{value}</span>{g.edited && !edits[g.key] ? " (changed)" : ""}</p>}
+                                    </td>
+                                    <td className="px-3 py-1.5 tabular-nums">{g.passed} of {g.candidates} passed</td>
+                                    <td className="px-3 py-1.5">
+                                        <ToneBadge tone={GROUP_LABEL[g.state].tone}>{GROUP_LABEL[g.state].label}</ToneBadge>
+                                        {(g.messages ?? []).map((m) => <p key={m} className="mt-0.5 text-label-sm text-ink-muted">{m}</p>)}
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-end gap-3">
+                <p className="min-w-0 flex-1 text-label-sm text-ink-muted">Only a new Job's last two digits can be changed; each must be 01–99 and unused. Only candidates who passed the test are put on a Job.</p>
+                {dirty && <button type="button" className={secondaryButton} disabled={saving || invalid} onClick={onSave}>{saving ? "Saving…" : "Save Job IDs"}</button>}
+            </div>
+        </div>
+    );
+}
+
 const errorText = (error: unknown, fallback: string) => (error instanceof WorkbookError || error instanceof ApiError ? error.message : fallback);
 const sum = (a: ImportCounts, b: ImportCounts): ImportCounts => Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map((k) => [k, (a[k as keyof ImportCounts] ?? 0) + (b[k as keyof ImportCounts] ?? 0)]));
 
@@ -89,6 +163,9 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
     const [step, setStep] = useState<Step>({ kind: "choose" });
     const [error, setError] = useState<string | null>(null);
     const [downloading, setDownloading] = useState(false);
+    // Unsaved last-two-digit edits of NEW Jobs (group key -> digits), and their save.
+    const [suffixEdits, setSuffixEdits] = useState<Record<string, string>>({});
+    const [savingSuffixes, setSavingSuffixes] = useState(false);
     const busy = step.kind === "reading" || step.kind === "committing";
 
     async function downloadValidationSheet() {
@@ -118,6 +195,21 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
         } catch (e) {
             setError(errorText(e, "The sheet could not be checked."));
             setStep({ kind: "choose" });
+        }
+    }
+
+    async function saveSuffixes() {
+        if (step.kind !== "preview" || !token) return;
+        setError(null);
+        setSavingSuffixes(true);
+        try {
+            const { jobGroups } = await updateImportJobGroups(token, step.preview.importId, suffixEdits);
+            setStep({ ...step, preview: { ...step.preview, jobGroups } });
+            setSuffixEdits({});
+        } catch (e) {
+            setError(errorText(e, "The Job IDs could not be saved."));
+        } finally {
+            setSavingSuffixes(false);
         }
     }
 
@@ -177,8 +269,11 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
     }
 
     if (step.kind === "preview") {
-        const { summary, problems, problemsTruncated, columns, rowIssues = [], actions } = step.preview;
+        const { summary, problems, problemsTruncated, columns, rowIssues = [], actions, jobGroups = [] } = step.preview;
         const importable = summary.new + summary.willFill;
+        // Existing candidates who only join a Job are worth an import too.
+        const jobMembers = summary.jobMembers ?? 0;
+        const unsavedSuffixes = Object.keys(suffixEdits).length > 0;
         const reasons = (p: (typeof problems)[number]) => (p.errors || p.warnings ? [...(p.errors ?? []), ...(p.warnings ?? [])] : p.codes.map(humanize));
         return (
             <Shell title={title} busy={false} onClose={onClose}>
@@ -196,6 +291,8 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                     <Tile label="Skipped (details verified)" value={summary.skippedVerified} tone="review" />
                     <Tile label="Unknown job roles" value={summary.unknownJobRoles} tone="review" />
                     <Tile label="Ignored source columns" value={summary.ignoredSourceColumns} />
+                    {jobGroups.length > 0 && <Tile label="Jobs to create" value={summary.jobsToCreate ?? 0} />}
+                    {jobGroups.length > 0 && <Tile label="Existing Jobs reused" value={summary.jobsReused ?? 0} />}
                 </dl>
                 <p className="mt-3 text-body-sm text-ink-muted">
                     Existing candidates only get empty fields filled; nothing already recorded is overwritten
@@ -205,6 +302,18 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                 </p>
 
                 {actions && <AutomaticActions actions={actions} />}
+
+                <JobGroupsTable
+                    groups={jobGroups}
+                    edits={suffixEdits}
+                    onEdit={(key, value) => setSuffixEdits((current) => {
+                        const original = jobGroups.find((g) => g.key === key)?.suffix ?? "";
+                        const { [key]: _previous, ...rest } = current; // eslint-disable-line @typescript-eslint/no-unused-vars
+                        return value === original ? rest : { ...rest, [key]: value };
+                    })}
+                    onSave={() => void saveSuffixes()}
+                    saving={savingSuffixes}
+                />
 
                 {rowIssues.length > 0 && (
                     <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-canvas px-3 py-2">
@@ -244,8 +353,8 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                 <DialogError message={error} />
                 <div className="mt-5 flex flex-wrap justify-end gap-2">
                     <button type="button" className={secondaryButton} onClick={onClose}>Cancel</button>
-                    <button type="button" className={primaryButton} disabled={!importable} onClick={() => void confirm()}>
-                        Confirm import ({formatNumber(importable)} candidates)
+                    <button type="button" className={primaryButton} disabled={(!importable && !jobMembers) || unsavedSuffixes} title={unsavedSuffixes ? "Save the Job IDs first" : undefined} onClick={() => void confirm()}>
+                        Confirm import ({formatNumber(importable)} candidates{jobMembers ? `, ${plural(jobMembers, "Job assignment")}` : ""})
                     </button>
                 </div>
             </Shell>
@@ -282,6 +391,8 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                 <Tile label="Visa stages completed" value={c.stagesCompleted ?? 0} />
                 <Tile label="Departed" value={c.departed ?? 0} />
                 <Tile label="Not going / cancelled / rejected" value={c.outcomes ?? 0} />
+                <Tile label="Jobs created" value={c.jobsCreated ?? 0} />
+                <Tile label="Added to Jobs" value={c.jobAssignments ?? 0} />
                 <Tile label="Clients created" value={c.clientsCreated ?? 0} />
                 <Tile label="Agents created" value={c.agentsCreated ?? 0} />
             </dl>

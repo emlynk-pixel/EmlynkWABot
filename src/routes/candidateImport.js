@@ -19,7 +19,7 @@ import express from "express";
 import { requireRole, ROLES } from "../middleware/requireRole.js";
 import { resolveDb } from "../utils/resolveClients.js";
 import {
-    CandidateImportError, commitChunk, finishImport, getImport, importSourceColumns, isValidImportId, parseChunkBody, parsePreviewBody, previewImport,
+    CandidateImportError, commitChunk, finishImport, getImport, importSourceColumns, isValidImportId, parseChunkBody, parsePreviewBody, previewImport, updateImportJobGroups,
 } from "../services/candidateImportService.js";
 
 export const CANDIDATE_IMPORT_ROLES = Object.freeze([ROLES.ADMIN]);
@@ -33,7 +33,7 @@ export function createCandidateImportRouter({ db, log = console } = {}) {
 
     const fail = (res, error) => {
         if (error instanceof CandidateImportError) {
-            return res.status(error.status).json({ message: error.message, code: error.code, ...(error.missing ? { missing: error.missing } : {}) });
+            return res.status(error.status).json({ message: error.message, code: error.code, ...(error.missing ? { missing: error.missing } : {}), ...(error.errors ? { errors: error.errors } : {}) });
         }
         throw error;
     };
@@ -62,6 +62,16 @@ export function createCandidateImportRouter({ db, log = console } = {}) {
             const result = await commitChunk({ db: await resolveDb(db), actor: req.user, importId: req.params.importId, chunkIndex: index, rows: parsed.values.rows });
             event("chunk_committed", { importId: req.params.importId, chunkIndex: index, status: result.status, ...result.counts, adminId: req.user.adminId });
             return res.json(result);
+        } catch (error) {
+            return fail(res, error);
+        }
+    });
+
+    // The last two digits of the NEW Jobs this upload will create (importJobGroups.js), before the commit.
+    router.put("/:importId/job-groups", async (req, res) => {
+        if (!isValidImportId(req.params.importId)) return res.status(400).json({ message: "Invalid import" });
+        try {
+            return res.json(await updateImportJobGroups({ db: await resolveDb(db), actor: req.user, importId: req.params.importId, suffixes: req.body?.suffixes }));
         } catch (error) {
             return fail(res, error);
         }
