@@ -15,8 +15,9 @@ export function authIdFor(adminId) {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-export const tokenForAuthId = (authUserId) => `${PREFIX}${authUserId}`;
-export const tokenFor = (adminId) => tokenForAuthId(authIdFor(adminId));
+// amr: how the session signed in (e.g. ["password"], ["invite"]); default none.
+export const tokenForAuthId = (authUserId, { amr = [] } = {}) => `${PREFIX}${authUserId}${amr.length ? `|amr=${amr.join(",")}` : ""}`;
+export const tokenFor = (adminId, options) => tokenForAuthId(authIdFor(adminId), options);
 
 // verifyAccessToken stand-in. revoke(token) simulates a signed-out session;
 // calls records every token checked.
@@ -26,7 +27,8 @@ export function createFakeVerifier() {
     async function verifyAccessToken(token) {
         calls.push(token);
         if (typeof token !== "string" || !token.startsWith(PREFIX) || revoked.has(token)) return null;
-        return { authUserId: token.slice(PREFIX.length), email: null };
+        const [authUserId, amrPart] = token.slice(PREFIX.length).split("|amr=");
+        return { authUserId, email: null, amr: amrPart ? amrPart.split(",") : [] };
     }
     verifyAccessToken.revoke = (token) => revoked.add(token);
     verifyAccessToken.calls = calls;
@@ -79,6 +81,10 @@ export function createFakeAuthAdmin({ identities = {} } = {}) {
         async deleteUser(authUserId) {
             calls.push({ method: "deleteUser", authUserId });
             for (const [email, value] of users) if (value.authUserId === authUserId) users.delete(email);
+        },
+        async sendPasswordSetupEmail(email, options = {}) {
+            calls.push({ method: "sendPasswordSetupEmail", email, options });
+            takeFailure();
         },
     };
 }

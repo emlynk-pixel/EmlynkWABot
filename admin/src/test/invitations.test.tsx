@@ -25,6 +25,22 @@ describe("Invite User page", () => {
         expect(screen.queryByText(/VIEWER/i)).not.toBeInTheDocument();
     });
 
+    test("a pending invitation shows when it was sent, and says to resend once its link has expired (24 h)", async () => {
+        const fresh = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        const stale = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+        signedInBackend({ "GET /api/admin/users": { status: 200, body: { users: [
+            USERS[0],
+            { ...USERS[1], invitedAt: fresh },
+            { userId: "u-5", name: "Stale Invite", email: "stale@example.invalid", role: "ANALYST", status: "INVITED", createdDate: stale, invitedAt: stale },
+        ] } } });
+        renderApp("/invitations");
+        const pending = (await screen.findByText("Pending Person")).closest("tr") as HTMLElement;
+        expect(within(pending).getByText(/^Sent /)).toBeInTheDocument();
+        expect(within(pending).queryByText(/link expired/)).not.toBeInTheDocument();
+        const staleRow = screen.getByText("Stale Invite").closest("tr") as HTMLElement;
+        expect(within(staleRow).getByText(/link expired, resend/)).toBeInTheDocument();
+    });
+
     test("ANALYST, REGISTRATION_DESK and JOB_HANDLER see Access Restricted and request nothing", async () => {
         for (const role of ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
             const { calls } = signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } } });

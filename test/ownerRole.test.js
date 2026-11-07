@@ -19,7 +19,11 @@ import { errorHandler } from "../src/middleware/errorHandler.js";
 import { ASSIGNABLE_ROLES, canAssignRole, canManageAccount, hasRole } from "../src/middleware/requireRole.js";
 import { deactivateUser, updateUserRole } from "../src/services/userAccountService.js";
 
-const user = (adminId, role, n, status = "ACTIVE") => ({ adminId, role, status, name: `${adminId} user`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
+// An account in use (not INVITED) completed its setup (activatedAt), as the migration backfills.
+const user = (adminId, role, n, status = "ACTIVE") => ({
+    adminId, role, status, name: `${adminId} user`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+    ...(status === "INVITED" ? {} : { activatedAt: new Date("2026-10-01T00:00:00Z") }),
+});
 const FIXTURES = [
     user("owner", "OWNER", 1),
     user("admin", "ADMIN", 2),

@@ -63,7 +63,8 @@ describe("POST /api/admin/users/invite", () => {
         const result = await invite({ email: "  New.Person@Example.invalid ", name: " New Person ", role: "analyst" });
         assert.equal(result.status, 201);
         assert.equal(result.body.outcome, "INVITED");
-        assert.deepEqual(Object.keys(result.body.user).sort(), ["createdDate", "email", "name", "role", "status", "userId"]);
+        assert.deepEqual(Object.keys(result.body.user).sort(), ["createdDate", "email", "invitedAt", "name", "role", "status", "userId"]);
+        assert.ok(result.body.user.invitedAt, "the invitation's sending time is recorded");
         assert.deepEqual([result.body.user.email, result.body.user.name, result.body.user.role, result.body.user.status], ["new.person@example.invalid", "New Person", "ANALYST", "INVITED"]);
 
         assert.deepEqual(authAdmin.calls, [{ method: "inviteUserByEmail", email: "new.person@example.invalid", options: { redirectTo: REDIRECT } }], "only email + redirect go to Supabase: no role");
@@ -127,10 +128,12 @@ describe("POST /api/admin/users/invite", () => {
         assert.equal(rowOf("p@example.invalid").role, "JOB_HANDLER");
     });
 
-    test("re-inviting a deactivated user who had set up their account reactivates them (no new identity)", async () => {
+    test("re-inviting a deactivated user who had SET UP their account reactivates them (no new identity)", async () => {
         await invite({ email: "r@example.invalid", name: "R", role: "ANALYST" });
         authAdmin.confirm("r@example.invalid");
-        rowOf("r@example.invalid").status = "INACTIVE";
+        assert.equal((await request("POST", "/auth/complete-invite", { token: sessionOf("r@example.invalid") })).status, 200, "accepted with a password");
+        assert.ok(rowOf("r@example.invalid").activatedAt);
+        assert.equal((await request("POST", `/api/admin/users/${rowOf("r@example.invalid").adminId}/deactivate`)).status, 200);
         const result = await invite({ email: "r@example.invalid", name: "R", role: "ANALYST" });
         assert.equal(result.status, 200);
         assert.equal(result.body.outcome, "REACTIVATED");
@@ -138,13 +141,38 @@ describe("POST /api/admin/users/invite", () => {
         assert.equal(db.auditLogRows.at(-1).action, "REACTIVATE_USER");
     });
 
-    test("an existing confirmed Supabase identity without an application row is linked, not duplicated", async () => {
+    test("BUG 1: invite link opened (address confirmed) but never set up, revoked, re-invited -> stays INVITED with a password-setup email, never ACTIVE", async () => {
+        await invite({ email: "b1@example.invalid", name: "B1", role: "ANALYST" });
+        authAdmin.confirm("b1@example.invalid"); // the link was opened (or pre-fetched by an email scanner)
+        assert.equal((await request("POST", `/api/admin/users/${rowOf("b1@example.invalid").adminId}/deactivate`)).status, 200);
+        const result = await invite({ email: "b1@example.invalid", name: "B1", role: "ANALYST" });
+        assert.equal(result.status, 201);
+        assert.equal(result.body.outcome, "INVITED");
+        assert.equal(rowOf("b1@example.invalid").status, "INVITED", "not ACTIVE: no password was ever set");
+        assert.deepEqual(authAdmin.calls.at(-1), { method: "sendPasswordSetupEmail", email: "b1@example.invalid", options: { redirectTo: REDIRECT } });
+        assert.deepEqual([db.auditLogRows.at(-1).action, db.auditLogRows.at(-1).newStatus], ["INVITE_USER", "INVITED"]);
+        assert.equal((await request("GET", "/auth/me", { token: sessionOf("b1@example.invalid") })).status, 403, "still no access until setup");
+    });
+
+    test("a password-setup email that Supabase refuses -> 429 / 502 and nothing changes", async () => {
+        await invite({ email: "b2@example.invalid", name: "B2", role: "ANALYST" });
+        authAdmin.confirm("b2@example.invalid");
+        rowOf("b2@example.invalid").status = "INACTIVE";
+        const realSend = authAdmin.sendPasswordSetupEmail;
+        authAdmin.sendPasswordSetupEmail = async () => { throw new (await import("../src/auth/supabaseAuthAdmin.js")).AuthAdminError("RATE_LIMITED", "x"); };
+        assert.equal((await invite({ email: "b2@example.invalid", name: "B2", role: "ANALYST" })).status, 429);
+        authAdmin.sendPasswordSetupEmail = realSend;
+        assert.equal(rowOf("b2@example.invalid").status, "INACTIVE");
+    });
+
+    test("an existing confirmed Supabase identity without an application row is linked (not duplicated) and sent a password-setup email, INVITED", async () => {
         server.close();
         await start([ADMIN], { "linked@example.invalid": { authUserId: "11111111-2222-4333-8444-555555555555", confirmed: true } });
         const result = await invite({ email: "linked@example.invalid", name: "Linked", role: "REGISTRATION_DESK" });
-        assert.equal(result.status, 200);
+        assert.equal(result.status, 201);
         assert.equal(rowOf("linked@example.invalid").authUserId, "11111111-2222-4333-8444-555555555555");
-        assert.equal(rowOf("linked@example.invalid").status, "ACTIVE");
+        assert.equal(rowOf("linked@example.invalid").status, "INVITED");
+        assert.equal(authAdmin.calls.at(-1).method, "sendPasswordSetupEmail");
     });
 
     test("an email whose row is bound to another Supabase identity is refused", async () => {
@@ -234,6 +262,52 @@ describe("invited user setup: POST /auth/complete-invite", () => {
     test("a Supabase identity that was never invited gets nothing", async () => {
         const result = await request("POST", "/auth/complete-invite", { token: tokenForAuthId("00000000-1111-4222-8333-444444444444") });
         assert.equal(result.status, 403);
+    });
+
+    test("completing an invitation records when the account was set up", async () => {
+        await invite({ email: "t@example.invalid", name: "T", role: "ANALYST" });
+        assert.equal(rowOf("t@example.invalid").activatedAt, undefined);
+        await request("POST", "/auth/complete-invite", { token: sessionOf("t@example.invalid") });
+        assert.ok(rowOf("t@example.invalid").activatedAt instanceof Date);
+    });
+});
+
+describe("GET /auth/invitation: is this invitation still valid (asked BEFORE a password is set)", () => {
+    test("INVITED, then INACTIVE once revoked; unknown identity -> null; no session -> 401", async () => {
+        await invite({ email: "s@example.invalid", name: "S", role: "ANALYST" });
+        const token = sessionOf("s@example.invalid");
+        assert.deepEqual((await request("GET", "/auth/invitation", { token })).body, { status: "INVITED" });
+        await request("POST", `/api/admin/users/${rowOf("s@example.invalid").adminId}/deactivate`);
+        assert.deepEqual((await request("GET", "/auth/invitation", { token })).body, { status: "INACTIVE" });
+        assert.deepEqual((await request("GET", "/auth/invitation", { token: tokenForAuthId("00000000-1111-4222-8333-444444444444") })).body, { status: null });
+        assert.equal((await request("GET", "/auth/invitation", { token: null })).status, 401);
+    });
+});
+
+describe("BUG 2: a password was set but the activation call never arrived -> the first password sign-in completes it", () => {
+    test("an INVITED account signing in WITH A PASSWORD becomes ACTIVE (audited, once)", async () => {
+        await invite({ email: "p2@example.invalid", name: "P2", role: "ANALYST" });
+        const authUserId = rowOf("p2@example.invalid").authUserId;
+        const me = await request("GET", "/auth/me", { token: tokenForAuthId(authUserId, { amr: ["password"] }) });
+        assert.equal(me.status, 200, JSON.stringify(me.body));
+        assert.equal(me.body.user.status, "ACTIVE");
+        assert.equal(rowOf("p2@example.invalid").status, "ACTIVE");
+        assert.ok(rowOf("p2@example.invalid").activatedAt);
+        const completions = db.auditLogRows.filter((r) => r.action === "COMPLETE_INVITATION" && r.newValue === "p2@example.invalid");
+        assert.equal(completions.length, 1);
+        assert.equal(completions[0].reason, "Invitation completed at the first password sign-in");
+        await request("GET", "/auth/me", { token: tokenForAuthId(authUserId, { amr: ["password"] }) });
+        assert.equal(db.auditLogRows.filter((r) => r.action === "COMPLETE_INVITATION" && r.newValue === "p2@example.invalid").length, 1, "not again");
+    });
+
+    test("never for a revoked (INACTIVE) account, and never for a session from the invite link itself", async () => {
+        await invite({ email: "p3@example.invalid", name: "P3", role: "ANALYST" });
+        const authUserId = rowOf("p3@example.invalid").authUserId;
+        assert.equal((await request("GET", "/auth/me", { token: tokenForAuthId(authUserId, { amr: ["invite"] }) })).status, 403, "the link session is not a password");
+        assert.equal(rowOf("p3@example.invalid").status, "INVITED");
+        await request("POST", `/api/admin/users/${rowOf("p3@example.invalid").adminId}/deactivate`);
+        assert.equal((await request("GET", "/auth/me", { token: tokenForAuthId(authUserId, { amr: ["password"] }) })).status, 403);
+        assert.equal(rowOf("p3@example.invalid").status, "INACTIVE", "a revoked person stays out");
     });
 });
 

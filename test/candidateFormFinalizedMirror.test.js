@@ -464,7 +464,8 @@ describe(`migration ${MIGRATION}`, () => {
         const old = await createTestDatabase({ upTo: previous });
         try {
             const { pg: oldPg, prisma: oldPrisma } = old;
-            await oldPrisma.user.create({ data: USERS.ADMIN });
+            // select: only columns that exist in this older schema (later migrations add user columns).
+            await oldPrisma.user.create({ data: USERS.ADMIN, select: { adminId: true } });
             // A database as it is before this migration: candidates, an older submission, an existing details row, a queued sync.
             await oldPg.exec(`
                 INSERT INTO "candidate" ("passport_id", "unique_id", "nic", "first_name", "other_name", "updated_date") VALUES

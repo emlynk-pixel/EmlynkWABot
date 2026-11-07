@@ -27,6 +27,11 @@ model User {
   email                 String                     @unique
   role                  String
   status                String                     @default("ACTIVE")
+  // When the account completed setup (invitation accepted with a password, or provisioned); null:
+  // never set up. Re-inviting reactivates only an account that was set up (userAccountService.js).
+  activatedAt           DateTime?                  @map("activated_at")
+  // When the latest invitation / password-setup email was sent (its age is shown; links expire).
+  invitedAt             DateTime?                  @map("invited_at")
   createdDate           DateTime                   @default(now()) @map("created_date")
   updatedDate           DateTime                   @updatedAt @map("updated_date")
   auditLogs             AuditLog[]

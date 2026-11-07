@@ -578,6 +578,8 @@ export type UserSummary = {
     role: string;
     status: UserStatus;
     createdDate: string;
+    // When the latest invitation email was sent (null / absent: none, or an older server).
+    invitedAt?: string | null;
 };
 
 export type InviteUserPayload = { name: string; email: string; role: string };
