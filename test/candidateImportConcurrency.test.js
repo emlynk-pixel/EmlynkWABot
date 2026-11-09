@@ -2,11 +2,12 @@
 // 20261112120000_import_hardening) on a real PostgreSQL (PGlite, every migration). SYNTHETIC rows only.
 //
 // Covered: the same chunk sent twice, a repeated / retried preview (Idempotency-Key), the same file
-// previewed again while it is being committed, only one import committing at a time (service + the
+// previewed again while it is being committed, one import committing at a time PER ADMINISTRATOR (service + the
 // database index), stale imports and who may abort them, finish and abort being safe to repeat, and the
 // API (GET /active, POST /abort, 409 details, roles).
 // PGlite is one session, so "at the same time" requests are queued one behind the other: the tests
 // assert the invariants that must hold in either order.
+import "./helpers/importLedgerKey.js";
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -171,8 +172,8 @@ describe("the same file previewed again while it is being committed", () => {
     });
 });
 
-describe("only one import commits at a time", () => {
-    test("a second import cannot start while the first is committing: nothing written, no job type created", async () => {
+describe("each administrator has one import committing at a time", () => {
+    test("a second import cannot start while your first is committing: nothing written, no job type created", async () => {
         const a = rowsFor(TWO_CHUNKS);
         const pa = await preview(a);
         await commit(pa, a, 0);
@@ -198,12 +199,15 @@ describe("only one import commits at a time", () => {
         assert.equal((await commit(pb, b, 0)).status, "COMMITTED");
     });
 
-    test("the database index is the backstop: a second COMMITTING import cannot exist", async () => {
+    test("the database index is the backstop: a second COMMITTING import of the SAME admin cannot exist; another admin's can", async () => {
         const a = rowsFor(TWO_CHUNKS);
         const pa = await preview(a);
         await commit(pa, a, 0);
         const pb = await preview(rowsFor(3, 1000));
         await assert.rejects(prisma.candidateImport.update({ where: { importId: pb.importId }, data: { status: "COMMITTING" } }), (error) => error.code === "P2002");
+        const theirs = await preview(rowsFor(3, 2000), { actor: ADMIN2 });
+        await prisma.candidateImport.update({ where: { importId: theirs.importId }, data: { status: "COMMITTING" } });
+        assert.equal(await prisma.candidateImport.count({ where: { status: "COMMITTING" } }), 2, "one per administrator");
     });
 
     test("two imports starting at the same moment: exactly one commits, the other is told IMPORT_IN_PROGRESS", async () => {
@@ -222,15 +226,15 @@ describe("only one import commits at a time", () => {
 describe("stale imports", () => {
     const later = (ms) => new Date(Date.now() + ms);
 
-    test("an idle COMMITTING import is reported stale after 15 minutes, and visible to every ADMIN", async () => {
+    test("an idle COMMITTING import is reported stale after 15 minutes, to its owner only (other admins are not blocked by it)", async () => {
         const rows = rowsFor(TWO_CHUNKS);
         const p = await preview(rows);
         await commit(p, rows, 0);
-        const fresh = (await getActiveImport({ db: prisma, actor: ADMIN2 })).active;
-        assert.deepEqual([fresh.importId, fresh.ownedByYou, fresh.stale, fresh.committedChunks], [p.importId, false, false, [0]]);
+        const fresh = (await getActiveImport({ db: prisma, actor: ADMIN })).active;
+        assert.deepEqual([fresh.importId, fresh.ownedByYou, fresh.stale, fresh.committedChunks, fresh.fileName], [p.importId, true, false, [0], "legacy.xlsx"]);
+        assert.deepEqual(await getActiveImport({ db: prisma, actor: ADMIN2 }), { active: null }, "another administrator has no import in progress");
         const stale = (await getActiveImport({ db: prisma, actor: ADMIN, now: later(IMPORT_STALE_MS + 60_000) })).active;
         assert.deepEqual([stale.ownedByYou, stale.stale], [true, true]);
-        assert.deepEqual(await getActiveImport({ db: prisma, actor: ADMIN }).then(async () => (await getActiveImport({ db: prisma, actor: ADMIN })).active.fileName), "legacy.xlsx");
     });
 
     test("another admin cannot abort a running import, but can abort a stale one; the audit entry says so", async () => {
@@ -332,10 +336,11 @@ describe("API", () => {
         const again = await call("POST", "/preview", "ADMIN", previewBody(rows));
         assert.deepEqual([again.status, again.body.code, again.body.details.importId, again.body.details.committedChunks], [409, "IMPORT_ALREADY_ACTIVE", p.body.importId, [0]]);
 
-        const active = await call("GET", "/active", "ADMIN2");
-        assert.equal(active.status, 200);
-        assert.deepEqual([active.body.active.importId, active.body.active.ownedByYou], [p.body.importId, false]);
-        assert.doesNotMatch(JSON.stringify(active.body), /N9\d{6}|SYNTH/);
+        const mine = await call("GET", "/active", "ADMIN");
+        assert.deepEqual([mine.status, mine.body.active.importId, mine.body.active.ownedByYou], [200, p.body.importId, true]);
+        assert.doesNotMatch(JSON.stringify(mine.body), /N9\d{6}|SYNTH/);
+        const theirs = await call("GET", "/active", "ADMIN2");
+        assert.deepEqual([theirs.status, theirs.body.active], [200, null], "another administrator sees none of it");
 
         const denied = await call("POST", `/${p.body.importId}/abort`, "ADMIN2");
         assert.deepEqual([denied.status, denied.body.code], [403, "NOT_YOUR_IMPORT"]);

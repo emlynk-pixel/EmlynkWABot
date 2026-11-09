@@ -79,7 +79,7 @@ model CandidateImport {
   resultCounts  Json?     @map("result_counts")
   syncRunId     String?   @map("sync_run_id")
   // Client key per file choice (header Idempotency-Key). Unique per admin (partial unique index in
-  // migration 20261112120000, which also allows only one COMMITTING import at a time).
+  // migration 20261112120000, which also allows each admin only one COMMITTING import at a time).
   idempotencyKey String?  @map("idempotency_key")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @default(now()) @map("updated_at")
@@ -95,7 +95,7 @@ model CandidateImport {
 // The per-import change ledger (candidateImportLedger.js, migration 20261112130000_import_change_ledger):
 // one row per change an import made to one entity, written in the same transaction as the change, so a
 // rollback can reverse exactly what the import did and only where the record is unchanged. Internal ids
-// only; candidate / Client / Agent values are stored as hashes (see the migration's header).
+// only; candidate / Client / Agent values are stored as keyed HMACs (see the migration header).
 model CandidateImportChange {
   changeId           String    @id @default(dbgenerated("gen_random_uuid()")) @map("change_id") @db.Uuid
   importId           String    @map("import_id") @db.Uuid

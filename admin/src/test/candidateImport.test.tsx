@@ -412,21 +412,18 @@ describe("duplicate upload protection", () => {
         expect(calls.filter((c) => c.path.endsWith("/abort"))).toHaveLength(1);
     });
 
-    test("another administrator's running import blocks starting one: no file choice, no Abort", async () => {
-        asRole("ADMIN", { ...SOURCE, [`GET ${BASE}/import/active`]: { status: 200, body: { active: { ...ACTIVE, ownedByYou: false } } } });
+    test("another administrator's import never blocks yours: with none of your own, no notice and the file chooser is enabled", async () => {
+        asRole("ADMIN", { ...SOURCE, [`GET ${BASE}/import/active`]: { status: 200, body: { active: null } } });
         const { dialog } = await openDialog();
-        const notice = await within(dialog).findByRole("alert", { name: "Import in progress" });
-        expect(notice).toHaveTextContent("Another administrator's import is in progress");
-        expect(notice).toHaveTextContent("Wait for it to finish");
-        expect(within(dialog).getByLabelText("Candidate sheet (.xlsx)")).toBeDisabled();
-        expect(within(notice).queryByRole("button", { name: "Abort that import" })).toBeNull();
+        expect(within(dialog).getByLabelText("Candidate sheet (.xlsx)")).toBeEnabled();
+        expect(within(dialog).queryByRole("alert", { name: "Import in progress" })).toBeNull();
     });
 
-    test("a stopped import of another administrator offers Abort", async () => {
-        asRole("ADMIN", { ...SOURCE, [`GET ${BASE}/import/active`]: { status: 200, body: { active: { ...ACTIVE, ownedByYou: false, stale: true } } } });
+    test("your own stopped import says it has stopped and can be aborted", async () => {
+        asRole("ADMIN", { ...SOURCE, [`GET ${BASE}/import/active`]: { status: 200, body: { active: { ...ACTIVE, stale: true } } } });
         const { dialog } = await openDialog();
         const notice = await within(dialog).findByRole("alert", { name: "Import in progress" });
-        expect(notice).toHaveTextContent("it has stopped");
+        expect(notice).toHaveTextContent("and it has stopped");
         expect(within(notice).getByRole("button", { name: "Abort that import" })).toBeEnabled();
     });
 
@@ -456,13 +453,13 @@ describe("duplicate upload protection", () => {
         const { calls } = asRole("ADMIN", {
             ...SOURCE,
             [`POST ${BASE}/import/preview`]: PREVIEW_OK(2),
-            [`POST ${BASE}/import/${IMPORT_ID}/chunks/0`]: { status: 409, body: { message: "Another import is in progress. Wait for it to finish; if it has stopped, an administrator can abort it.", code: "IMPORT_IN_PROGRESS", details: {} } },
+            [`POST ${BASE}/import/${IMPORT_ID}/chunks/0`]: { status: 409, body: { message: "You have another import in progress. Resume it or abort it first.", code: "IMPORT_IN_PROGRESS", details: {} } },
         });
         const { user, dialog } = await openDialog();
         await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), xlsx());
         await within(dialog).findByLabelText("Import preview");
         await user.click(within(dialog).getByRole("button", { name: /^Confirm import/ }));
-        expect(await within(dialog).findByText(/Another import is in progress/)).toBeInTheDocument();
+        expect(await within(dialog).findByText(/You have another import in progress/)).toBeInTheDocument();
         expect(within(dialog).getByLabelText("Import preview")).toBeInTheDocument();
         expect(calls.filter((c) => c.path.endsWith("/finish"))).toEqual([]);
     });

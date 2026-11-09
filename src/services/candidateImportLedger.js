@@ -12,20 +12,30 @@
 //                              AGENT_CLIENT "<agentId>:<clientId>"; JOB_CANDIDATE "<jobId>:<unique_id>"
 //   op                         CREATE (made by the import), FILL (blank fields of an existing entity filled),
 //                              LINK (a relationship made by the import)
-//   changes                    { field: { before, after } }. Personal and business values (candidate, details,
-//                              Client, Agent) are written as { h: sha256 }; before is the blank that was there.
-//                              Everything else (ids, flags, statuses, stage and Job values) is stored as it is.
+//   changes                    { field: { before, after } }
 //   rollback_action            DELETE_IF_UNCHANGED | CLEAR_IF_UNCHANGED | NONE: what a rollback may do, and only
 //                              if the record is unchanged since (assessImportLedger tells which entries are)
 //
-// Why hashes: the ledger must not become a second copy of candidate data (backups, exports), yet a rollback
-// must know "is this still exactly what the import wrote". A hash answers that. Imports are fill-only
-// (blank -> value), so the previous value is always the blank itself, which is stored as it was.
+// The two values of a change:
+//   before   the EXACT previous value, as it was: null, "" (empty string) and any other value are different
+//            things and stay different (an import only fills blanks, so it is null or ""; a rollback restores
+//            exactly that, never "some blank"). A personal value that was not blank would be stored as an HMAC
+//            and could not be restored: assessImportLedger flags such an entry (PREVIOUS_VALUE_NOT_RESTORABLE).
+//   after    what the import wrote. Personal and business values (candidate, details, Client, Agent) are NOT
+//            stored: an entry holds { m: "hmac-sha256", k: <key id>, h: <HMAC> } (importLedgerKeys.js), a keyed
+//            digest bound to the entry, so the ledger is no second copy of personal data and cannot be reversed
+//            by guessing NICs or phone numbers; the server recomputes it from the current value to check "is this
+//            still what the import wrote". Ids, flags, statuses and stage / Job / allocation values are stored
+//            as they are. Entries from before the key existed hold { h: <plain sha256> } with no method: they
+//            are still verifiable (compareWritten) and are re-signed by rekeyImportLedger.
 //
-// Nothing here writes to a candidate table, deletes anything, or reverses anything. Reversing is a separate,
-// explicit action (rollback) that consumes these entries.
+// Nothing here writes to a candidate table, deletes anything, or reverses anything, except rekeyImportLedger,
+// which only replaces a digest in the ledger by a stronger one. Reversing is a separate, explicit action
+// (rollback) that consumes these entries.
 
 import crypto from "node:crypto";
+
+import { HMAC_METHOD, LedgerKeyConfigError, hmacMessage, readLedgerKeyring } from "./importLedgerKeys.js";
 
 export const LEDGER_ENTITY = Object.freeze({
     CANDIDATE: "CANDIDATE", DETAILS: "CANDIDATE_ADDITIONAL_DETAILS", STAGE: "CANDIDATE_STAGE", ALLOCATION: "CANDIDATE_ALLOCATION",
@@ -35,13 +45,13 @@ export const LEDGER_OP = Object.freeze({ CREATE: "CREATE", FILL: "FILL", LINK: "
 export const ROLLBACK_ACTION = Object.freeze({ DELETE_IF_UNCHANGED: "DELETE_IF_UNCHANGED", CLEAR_IF_UNCHANGED: "CLEAR_IF_UNCHANGED", NONE: "NONE" });
 export const LEDGER_STATUS = Object.freeze({ APPLIED: "APPLIED", REVERTED: "REVERTED", CONFLICT: "CONFLICT", SKIPPED: "SKIPPED" });
 
-// ---------------------------------------------------------------- values and hashes
+// ---------------------------------------------------------------- values and digests
 
 const isBlank = (value) => value === null || value === undefined || value === "";
 const isoOf = (date) => (Number.isNaN(date.getTime()) ? "" : date.toISOString());
 
-// One text form per value, whatever the representation (a Date from the database or the date string the
-// import wrote; a Decimal or a number): what is hashed and what a later comparison hashes again.
+// One text form per value, whatever the representation (a Date from the database or the date text the import
+// wrote; a Decimal or a number): what is digested and what a later comparison digests again.
 export function canonicalValue(value) {
     if (isBlank(value)) return "";
     if (value instanceof Date) {
@@ -49,47 +59,83 @@ export function canonicalValue(value) {
         return iso.endsWith("T00:00:00.000Z") ? iso.slice(0, 10) : iso;
     }
     if (typeof value === "boolean") return value ? "true" : "false";
-    if (typeof value === "number" || typeof value === "bigint") return String(value);
     return String(value);
 }
 
-export const digestOf = (field, value) => crypto.createHash("sha256").update(`${field}\u0000${canonicalValue(value)}`).digest("hex");
+// The PLAIN sha256 of earlier ledger entries. Used only to VERIFY such an entry; nothing new is ever written with it.
+export const legacyDigestOf = (field, value) => crypto.createHash("sha256").update(`${field}\u0000${canonicalValue(value)}`).digest("hex");
 
-// A value as the ledger stores it: blank as it was, hashed when it is personal / business data.
-export function ledgerValue(field, value, { hash }) {
+export const entryContext = (entry) => `${entry.importId}|${entry.entityType}|${entry.entityKey}`;
+
+// A value as the ledger stores it. before / after: a blank stays EXACTLY what it was (null or ""), a personal value
+// becomes { m, k, h } under the current key, anything else is kept (dates as canonical text).
+export function ledgerValue(field, value, { hash, keyring = null, ctx = "" }) {
     if (value === null || value === undefined) return null;
     if (value === "") return "";
-    if (hash) return { h: digestOf(field, value) };
-    // A date in its canonical text (YYYY-MM-DD for a date, ISO for a timestamp): what matchesWritten compares.
+    if (hash) {
+        if (!keyring) throw new LedgerKeyConfigError(["MISSING_KEYRING"]); // never a plain-hash fallback
+        return keyring.digest(field, canonicalValue(value), ctx);
+    }
     return value instanceof Date ? canonicalValue(value) : typeof value === "object" ? String(value) : value;
 }
 
-// { field: { before, after } } for the fields an import wrote. `written`: the values written; `previous`: the
-// entity's values before (undefined for a new entity: before is null).
+// What the writers describe (raw, in memory only): { field: { before, after, hash } }. `previous` is the entity's
+// values before the write (undefined for an entity that did not exist: before is null).
 export function changesOf(written, previous, { hash }) {
     const out = {};
     for (const [field, value] of Object.entries(written ?? {})) {
         if (value === undefined) continue;
-        out[field] = { before: ledgerValue(field, previous?.[field], { hash }), after: ledgerValue(field, value, { hash }) };
+        // ?? keeps "" as it is: only null / undefined (no previous value) become null.
+        out[field] = { before: previous?.[field] ?? null, after: value, hash };
     }
     return out;
 }
 
-// Does the entity's CURRENT value still equal what the import wrote? entry: { before, after } as stored.
-export function matchesWritten(field, current, entry) {
-    const after = entry?.after;
-    if (after && typeof after === "object" && typeof after.h === "string") return digestOf(field, current) === after.h;
-    return canonicalValue(current) === canonicalValue(after);
+// raw descriptors -> the stored { field: { before, after } }, under the current key, bound to the entry (ctx).
+export function finalizeChanges(raw, { keyring, ctx }) {
+    const out = {};
+    for (const [field, change] of Object.entries(raw ?? {})) {
+        const hash = change.hash === true;
+        out[field] = { before: ledgerValue(field, change.before, { hash, keyring, ctx }), after: ledgerValue(field, change.after, { hash, keyring, ctx }) };
+    }
+    return out;
 }
 
+export const COMPARE = Object.freeze({ MATCH: "MATCH", MISMATCH: "MISMATCH", KEY_UNAVAILABLE: "KEY_UNAVAILABLE" });
+
+const safeEqualHex = (a, b) => {
+    const [x, y] = [Buffer.from(String(a), "hex"), Buffer.from(String(b), "hex")];
+    return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y);
+};
+
+// Does the entity's CURRENT value still equal what the import wrote? `after` as stored. KEY_UNAVAILABLE: the
+// entry was signed with a key this server no longer has (nothing is guessed).
+export function compareWritten(field, current, after, { keyring = null, ctx = "" } = {}) {
+    if (after && typeof after === "object" && typeof after.h === "string") {
+        if (after.m === HMAC_METHOD) {
+            const expected = keyring?.hmac(after.k, hmacMessage(field, canonicalValue(current), ctx));
+            if (expected === null || expected === undefined) return COMPARE.KEY_UNAVAILABLE;
+            return safeEqualHex(expected, after.h) ? COMPARE.MATCH : COMPARE.MISMATCH;
+        }
+        // An earlier entry: a plain sha256 (no method).
+        return safeEqualHex(legacyDigestOf(field, current), after.h) ? COMPARE.MATCH : COMPARE.MISMATCH;
+    }
+    return canonicalValue(current) === canonicalValue(after) ? COMPARE.MATCH : COMPARE.MISMATCH;
+}
+export const matchesWritten = (field, current, change, options) => compareWritten(field, current, change?.after, options) === COMPARE.MATCH;
+
+const isDigest = (value) => Boolean(value) && typeof value === "object" && typeof value.h === "string";
+const isLegacyDigest = (value) => isDigest(value) && value.m !== HMAC_METHOD;
+
 const stable = (value) => (Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((k) => [k, stable(value[k])])) : value);
-const digestOfEntry = (entry) => crypto.createHash("sha256").update(JSON.stringify(stable({ changes: entry.changes, jobId: entry.relatedJobId ?? null }))).digest("hex");
+const digestOfEntry = (changes, relatedJobId) => crypto.createHash("sha256").update(JSON.stringify(stable({ changes, jobId: relatedJobId ?? null }))).digest("hex");
 
 // ---------------------------------------------------------------- recording (one per chunk transaction)
 
-// ledger = createLedger({ importId, chunkIndex }); the writers call add / addCandidateFields next to the
-// write they record; flush(tx) stores everything in one statement inside the chunk's transaction.
-export function createLedger({ importId, chunkIndex }) {
+// ledger = createLedger({ importId, chunkIndex, keyring }); the writers call add / addCandidateFields next to the
+// write they record; flush(tx) stores everything in one statement inside the chunk's transaction. keyring:
+// the loaded importLedgerKeys keyring; without it an entry holding personal values cannot be written (no fallback).
+export function createLedger({ importId, chunkIndex, keyring = null }) {
     const entries = new Map();
     const uniqueIds = new Map();
     const keyOf = (entry) => `${entry.entityType}|${entry.entityKey}|${entry.op}`;
@@ -136,10 +182,14 @@ export function createLedger({ importId, chunkIndex }) {
         list: () => [...entries.values()],
 
         // One statement, inside the caller's transaction. skipDuplicates: an entry already recorded (same
-        // import, entity, op and content) is not recorded twice.
+        // import, entity, op and content) is not recorded twice. Throws LedgerKeyConfigError (before writing
+        // anything) when an entry holds a personal value and there is no key.
         async flush(tx) {
             if (!entries.size) return 0;
-            const data = [...entries.values()].map((entry) => ({ ...entry, changesDigest: digestOfEntry(entry) }));
+            const data = [...entries.values()].map((entry) => {
+                const changes = finalizeChanges(entry.changes, { keyring, ctx: entryContext(entry) });
+                return { ...entry, changes, changesDigest: digestOfEntry(changes, entry.relatedJobId) };
+            });
             const { count } = await tx.candidateImportChange.createMany({ data, skipDuplicates: true });
             return count;
         },
@@ -147,24 +197,9 @@ export function createLedger({ importId, chunkIndex }) {
     return ledger;
 }
 
-// ---------------------------------------------------------------- eligibility (read-only)
+// ---------------------------------------------------------------- the current record of an entry (read-only)
 
-export const ASSESSMENT = Object.freeze({ ELIGIBLE: "ELIGIBLE", CONFLICT: "CONFLICT", MISSING: "MISSING", ALREADY_REVERTED: "ALREADY_REVERTED" });
-
-const changedFields = (changes, current) => Object.entries(changes ?? {}).filter(([field, entry]) => !matchesWritten(field, current?.[field], entry)).map(([field]) => field);
-
-// For every ledger entry of an import: can it still be reversed safely? Read-only: writes nothing, reverses
-// nothing. ELIGIBLE = the record is exactly as the import left it (and, for what the import created, nothing
-// else depends on it). CONFLICT = something changed it since, or depends on it, with the reasons (codes).
-// MISSING = the record is gone. ALREADY_REVERTED = a rollback already did it. Phase 6 (rollback) applies only
-// the ELIGIBLE entries and reports the others.
-export async function assessImportLedger({ db, importId }) {
-    const rows = await db.candidateImportChange.findMany({ where: { importId }, orderBy: [{ chunkIndex: "asc" }, { createdAt: "asc" }, { changeId: "asc" }] });
-    const ledgered = (type) => new Set(rows.filter((r) => r.entityType === type).map((r) => r.entityKey));
-    const ledgeredJobs = ledgered(LEDGER_ENTITY.JOB);
-    const ledgeredLinks = ledgered(LEDGER_ENTITY.AGENT_CLIENT);
-    const ledgeredMembers = ledgered(LEDGER_ENTITY.JOB_CANDIDATE);
-    const ledgeredStages = ledgered(LEDGER_ENTITY.STAGE);
+function createResolver(db) {
     const passportCache = new Map();
     const passportOf = async (uniqueId) => {
         if (!passportCache.has(uniqueId)) passportCache.set(uniqueId, (await db.candidate.findFirst({ where: { uniqueId }, select: { passportId: true } }))?.passportId ?? null);
@@ -172,20 +207,98 @@ export async function assessImportLedger({ db, importId }) {
     };
     const select = (entry) => Object.fromEntries(Object.keys(entry.changes ?? {}).map((f) => [f, true]));
 
+    // The fields an entry recorded, as they are now (null when the record is gone).
+    async function fetchCurrent(entry) {
+        switch (entry.entityType) {
+            case LEDGER_ENTITY.CANDIDATE:
+                return db.candidate.findFirst({ where: { uniqueId: entry.entityKey }, select: { ...select(entry), passportId: true } });
+            case LEDGER_ENTITY.DETAILS: {
+                const passportId = await passportOf(entry.entityKey);
+                return passportId ? db.candidateAdditionalDetails.findUnique({ where: { passportId }, select: select(entry) }) : null;
+            }
+            case LEDGER_ENTITY.STAGE: {
+                const [uniqueId, stage] = entry.entityKey.split(":");
+                const passportId = await passportOf(uniqueId);
+                return passportId ? db.candidateStage.findUnique({ where: { passportId_stage: { passportId, stage } }, select: select(entry) }) : null;
+            }
+            case LEDGER_ENTITY.ALLOCATION: {
+                const passportId = await passportOf(entry.entityKey);
+                return passportId ? db.candidateAllocation.findUnique({ where: { passportId }, select: select(entry) }) : null;
+            }
+            case LEDGER_ENTITY.CLIENT:
+                return db.client.findUnique({ where: { id: entry.entityKey }, select: select(entry) });
+            case LEDGER_ENTITY.AGENT:
+                return db.agent.findUnique({ where: { id: entry.entityKey }, select: select(entry) });
+            case LEDGER_ENTITY.JOB:
+                return db.job.findUnique({ where: { id: entry.entityKey }, select: { ...select(entry), status: true } });
+            case LEDGER_ENTITY.JOB_GROUP:
+                return db.importJobGroup.findUnique({ where: { id: entry.entityKey }, select: select(entry) });
+            default:
+                return null;
+        }
+    }
+    return { passportOf, fetchCurrent };
+}
+
+// ---------------------------------------------------------------- eligibility (read-only)
+
+export const ASSESSMENT = Object.freeze({ ELIGIBLE: "ELIGIBLE", CONFLICT: "CONFLICT", MISSING: "MISSING", ALREADY_REVERTED: "ALREADY_REVERTED" });
+
+// The keyring for a check: the one passed, else the configured one, else none (then an entry signed with an HMAC
+// is reported KEY_UNAVAILABLE, never guessed).
+function keyringFor(keyring) {
+    if (keyring !== undefined) return keyring;
+    try { return readLedgerKeyring(); } catch { return null; }
+}
+
+// For every ledger entry of an import: can it still be reversed safely? Read-only: writes nothing, reverses
+// nothing. ELIGIBLE = the record is exactly as the import left it (and, for what the import created, nothing
+// else depends on it). CONFLICT = something changed it since, or depends on it, with the reasons (codes).
+// MISSING = the record is gone. ALREADY_REVERTED = a rollback already did it. Phase 6 (rollback) applies only
+// the ELIGIBLE entries and reports the others. Reasons:
+//   FIELD_CHANGED:<fields>        a value the import wrote is not what is there now
+//   KEY_UNAVAILABLE:<key ids>     the entry was signed with a key this server does not have (cannot be verified)
+//   PREVIOUS_VALUE_NOT_RESTORABLE the value before the import cannot be restored exactly (it was not stored in clear)
+//   HAS_DOCUMENTS, HAS_OTHER_JOB_MEMBERSHIP, HAS_OTHER_STAGES, CHANGED_AFTER_IMPORT, HAS_OTHER_MEMBERS,
+//   HAS_OTHER_JOBS, HAS_OTHER_AGENT_LINKS, JOB_STATUS_CHANGED, MEMBERSHIP_CHANGED
+// notes (not conflicts): LEGACY_PLAIN_SHA256 (re-sign it with rekeyImportLedger).
+export async function assessImportLedger({ db, importId, keyring }) {
+    const keys = keyringFor(keyring);
+    const rows = await db.candidateImportChange.findMany({ where: { importId }, orderBy: [{ chunkIndex: "asc" }, { createdAt: "asc" }, { changeId: "asc" }] });
+    const ledgered = (type) => new Set(rows.filter((r) => r.entityType === type).map((r) => r.entityKey));
+    const ledgeredJobs = ledgered(LEDGER_ENTITY.JOB);
+    const ledgeredLinks = ledgered(LEDGER_ENTITY.AGENT_CLIENT);
+    const ledgeredMembers = ledgered(LEDGER_ENTITY.JOB_CANDIDATE);
+    const ledgeredStages = ledgered(LEDGER_ENTITY.STAGE);
+    const { passportOf, fetchCurrent } = createResolver(db);
+
     async function assess(entry) {
         const reasons = [];
+        const notes = [];
         const created = entry.op !== LEDGER_OP.FILL;
-        const finish = (state) => ({ changeId: entry.changeId, entityType: entry.entityType, entityKey: entry.entityKey, op: entry.op, rowNumber: entry.rowNumber, state, reasons });
-        const compare = (current) => {
-            const fields = changedFields(entry.changes, current);
-            if (fields.length) reasons.push(`FIELD_CHANGED:${fields.join(",")}`);
-        };
+        const finish = (state) => ({ changeId: entry.changeId, entityType: entry.entityType, entityKey: entry.entityKey, op: entry.op, rowNumber: entry.rowNumber, state, reasons, notes });
         const verdict = () => finish(reasons.length ? ASSESSMENT.CONFLICT : ASSESSMENT.ELIGIBLE);
         if (entry.status === LEDGER_STATUS.REVERTED) return finish(ASSESSMENT.ALREADY_REVERTED);
 
+        const compare = (current) => {
+            const ctx = entryContext(entry);
+            const changed = [];
+            const unavailable = new Set();
+            for (const [field, change] of Object.entries(entry.changes ?? {})) {
+                if (isLegacyDigest(change.after) && !notes.includes("LEGACY_PLAIN_SHA256")) notes.push("LEGACY_PLAIN_SHA256");
+                const result = compareWritten(field, current?.[field], change.after, { keyring: keys, ctx });
+                if (result === COMPARE.MISMATCH) changed.push(field);
+                else if (result === COMPARE.KEY_UNAVAILABLE) unavailable.add(change.after.k);
+                // To restore a FILL exactly, the value before must be stored in clear (a blank always is).
+                if (entry.op === LEDGER_OP.FILL && isDigest(change.before) && !reasons.includes("PREVIOUS_VALUE_NOT_RESTORABLE")) reasons.push("PREVIOUS_VALUE_NOT_RESTORABLE");
+            }
+            if (changed.length) reasons.push(`FIELD_CHANGED:${changed.join(",")}`);
+            if (unavailable.size) reasons.push(`KEY_UNAVAILABLE:${[...unavailable].join(",")}`);
+        };
+
         switch (entry.entityType) {
             case LEDGER_ENTITY.CANDIDATE: {
-                const current = await db.candidate.findFirst({ where: { uniqueId: entry.entityKey }, select: { ...select(entry), passportId: true } });
+                const current = await fetchCurrent(entry);
                 if (!current) return finish(ASSESSMENT.MISSING);
                 compare(current);
                 if (created) {
@@ -206,30 +319,17 @@ export async function assessImportLedger({ db, importId }) {
                 }
                 return verdict();
             }
-            case LEDGER_ENTITY.DETAILS: {
-                const passportId = await passportOf(entry.entityKey);
-                const current = passportId ? await db.candidateAdditionalDetails.findUnique({ where: { passportId }, select: select(entry) }) : null;
-                if (!current) return finish(ASSESSMENT.MISSING);
-                compare(current);
-                return verdict();
-            }
-            case LEDGER_ENTITY.STAGE: {
-                const [uniqueId, stage] = entry.entityKey.split(":");
-                const passportId = await passportOf(uniqueId);
-                const current = passportId ? await db.candidateStage.findUnique({ where: { passportId_stage: { passportId, stage } }, select: select(entry) }) : null;
-                if (!current) return finish(ASSESSMENT.MISSING);
-                compare(current);
-                return verdict();
-            }
-            case LEDGER_ENTITY.ALLOCATION: {
-                const passportId = await passportOf(entry.entityKey);
-                const current = passportId ? await db.candidateAllocation.findUnique({ where: { passportId }, select: select(entry) }) : null;
+            case LEDGER_ENTITY.DETAILS:
+            case LEDGER_ENTITY.STAGE:
+            case LEDGER_ENTITY.ALLOCATION:
+            case LEDGER_ENTITY.JOB_GROUP: {
+                const current = await fetchCurrent(entry);
                 if (!current) return finish(ASSESSMENT.MISSING);
                 compare(current);
                 return verdict();
             }
             case LEDGER_ENTITY.CLIENT: {
-                const current = await db.client.findUnique({ where: { id: entry.entityKey }, select: select(entry) });
+                const current = await fetchCurrent(entry);
                 if (!current) return finish(ASSESSMENT.MISSING);
                 compare(current);
                 if (created) {
@@ -243,7 +343,7 @@ export async function assessImportLedger({ db, importId }) {
                 return verdict();
             }
             case LEDGER_ENTITY.AGENT: {
-                const current = await db.agent.findUnique({ where: { id: entry.entityKey }, select: select(entry) });
+                const current = await fetchCurrent(entry);
                 if (!current) return finish(ASSESSMENT.MISSING);
                 compare(current);
                 if (created) {
@@ -261,18 +361,12 @@ export async function assessImportLedger({ db, importId }) {
                 return (await db.agentClient.findUnique({ where: { agentId_clientId: { agentId, clientId } }, select: { agentId: true } })) ? verdict() : finish(ASSESSMENT.MISSING);
             }
             case LEDGER_ENTITY.JOB: {
-                const current = await db.job.findUnique({ where: { id: entry.entityKey }, select: { ...select(entry), status: true } });
+                const current = await fetchCurrent(entry);
                 if (!current) return finish(ASSESSMENT.MISSING);
                 compare(current);
                 if (current.status !== "PROCESSING") reasons.push("JOB_STATUS_CHANGED");
                 const members = await db.jobCandidate.findMany({ where: { jobId: entry.entityKey }, select: { passportId: true, candidate: { select: { uniqueId: true } } } });
                 if (members.some((m) => !ledgeredMembers.has(`${entry.entityKey}:${m.candidate.uniqueId}`))) reasons.push("HAS_OTHER_MEMBERS");
-                return verdict();
-            }
-            case LEDGER_ENTITY.JOB_GROUP: {
-                const current = await db.importJobGroup.findUnique({ where: { id: entry.entityKey }, select: select(entry) });
-                if (!current) return finish(ASSESSMENT.MISSING);
-                compare(current);
                 return verdict();
             }
             case LEDGER_ENTITY.JOB_CANDIDATE: {
@@ -294,7 +388,44 @@ export async function assessImportLedger({ db, importId }) {
     const count = (state) => entries.filter((e) => e.state === state).length;
     return {
         importId,
-        summary: { total: entries.length, eligible: count(ASSESSMENT.ELIGIBLE), conflicts: count(ASSESSMENT.CONFLICT), missing: count(ASSESSMENT.MISSING), alreadyReverted: count(ASSESSMENT.ALREADY_REVERTED) },
+        summary: {
+            total: entries.length, eligible: count(ASSESSMENT.ELIGIBLE), conflicts: count(ASSESSMENT.CONFLICT), missing: count(ASSESSMENT.MISSING),
+            alreadyReverted: count(ASSESSMENT.ALREADY_REVERTED), legacyPlainSha256: entries.filter((e) => e.notes.includes("LEGACY_PLAIN_SHA256")).length,
+        },
         entries,
     };
+}
+
+// ---------------------------------------------------------------- re-signing (legacy entries, key rotation)
+
+// Replaces, in this import's entries, every digest that is a plain sha256 (made before the key existed) or was
+// signed with a key other than the current one, by an HMAC under the CURRENT key. A digest is replaced only when
+// the record's current value still matches it (so the new digest says exactly what the old one did); one that
+// no longer matches (changed since: a conflict anyway), whose record is gone, or whose key this server does
+// not have is left as it is and counted. Writes only candidate_import_change.changes / changes_digest.
+// Returns { entries, rekeyed, unverified } (fields).
+export async function rekeyImportLedger({ db, importId, keyring }) {
+    if (!keyring) throw new LedgerKeyConfigError(["MISSING_KEYRING"]);
+    const { fetchCurrent } = createResolver(db);
+    const rows = await db.candidateImportChange.findMany({ where: { importId } });
+    const result = { entries: 0, rekeyed: 0, unverified: 0 };
+    for (const row of rows) {
+        const stale = Object.entries(row.changes ?? {}).filter(([, change]) => isDigest(change.after) && (change.after.m !== HMAC_METHOD || change.after.k !== keyring.currentId));
+        if (!stale.length) continue;
+        const current = await fetchCurrent(row);
+        const ctx = entryContext(row);
+        const changes = { ...row.changes };
+        let changed = 0;
+        for (const [field, change] of stale) {
+            if (current && compareWritten(field, current[field], change.after, { keyring, ctx }) === COMPARE.MATCH) {
+                changes[field] = { ...change, after: keyring.digest(field, canonicalValue(current[field]), ctx) };
+                changed += 1;
+            } else result.unverified += 1;
+        }
+        if (!changed) continue;
+        await db.candidateImportChange.update({ where: { changeId: row.changeId }, data: { changes, changesDigest: digestOfEntry(changes, row.relatedJobId) } });
+        result.entries += 1;
+        result.rekeyed += changed;
+    }
+    return result;
 }

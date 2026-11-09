@@ -2,6 +2,7 @@
 // PostgreSQL (PGlite, every migration incl. the sheet-sync and verification triggers): preview,
 // classification, chunked commit, merge, audit, the existing reconciliation, and the API's roles.
 // SYNTHETIC candidates only. Google is an in-memory Sheet (test/helpers/fakeGoogleSheet.js).
+import "./helpers/importLedgerKey.js";
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";

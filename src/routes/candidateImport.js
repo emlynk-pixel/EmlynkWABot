@@ -6,9 +6,10 @@
 //                                   (writes nothing to a candidate table). Optional header
 //                                   Idempotency-Key: the same key + file returns the same import; a file
 //                                   already being committed gets 409 IMPORT_ALREADY_ACTIVE (+ details to resume)
-//   GET  /active                    the import committing now (at most one), for Resume / Abort
+//   GET  /active                    YOUR import that is committing now (at most one per administrator), for Resume / Abort
 //   POST /:importId/chunks/:index   { rows } -> one previewed chunk committed (idempotent); 409
-//                                   IMPORT_IN_PROGRESS while another import is committing
+//                                   IMPORT_IN_PROGRESS while YOU have another import committing (other
+//                                   administrators' imports do not matter: they run side by side)
 //   POST /:importId/finish          totals, audit, and the existing RECONCILE run (idempotent)
 //   POST /:importId/abort           stop on purpose, keep the rows imported so far (owner; any ADMIN if stale)
 //   GET  /:importId                 the import's state (counts only)

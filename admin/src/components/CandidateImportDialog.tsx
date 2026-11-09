@@ -343,17 +343,11 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                 {activeImport && (
                     <div role="alert" aria-label="Import in progress" className="mt-3 rounded-lg border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
                         <p>
-                            {activeImport.ownedByYou ? "You have an import in progress" : "Another administrator's import is in progress"}: {activeImport.fileName},{" "}
+                            You have an import in progress: {activeImport.fileName},{" "}
                             {formatNumber(activeImport.committedChunks.length)} of {formatNumber(activeImport.chunkCount)} parts saved{activeImport.stale ? ", and it has stopped." : "."}
                         </p>
-                        <p className="mt-1">
-                            {activeImport.ownedByYou
-                                ? "Choose the same file again to continue it, or abort it (the rows already imported are kept)."
-                                : activeImport.stale ? "It has stopped. You can abort it to start your own import." : "Wait for it to finish before starting another import."}
-                        </p>
-                        {(activeImport.ownedByYou || activeImport.stale) && (
-                            <button type="button" className={`${secondaryButton} mt-2`} disabled={aborting} onClick={() => void abortActive()}>{aborting ? "Aborting…" : "Abort that import"}</button>
-                        )}
+                        <p className="mt-1">Choose the same file again to continue it, or abort it (the rows already imported are kept).</p>
+                        <button type="button" className={`${secondaryButton} mt-2`} disabled={aborting} onClick={() => void abortActive()}>{aborting ? "Aborting…" : "Abort that import"}</button>
                     </div>
                 )}
                 <label htmlFor={fileId} className="mt-4 block text-label-md text-ink-muted">Candidate sheet (.xlsx)</label>
@@ -361,7 +355,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                     id={fileId}
                     type="file"
                     accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    disabled={reading || Boolean(activeImport && !activeImport.ownedByYou)}
+                    disabled={reading}
                     onChange={(event) => { void choose(event.target.files?.[0]); event.target.value = ""; }}
                     className="mt-1 block w-full text-body-sm text-ink file:mr-3 file:h-8 file:rounded-lg file:border file:border-border-strong file:bg-surface file:px-3 file:text-label-md file:text-ink-soft"
                 />

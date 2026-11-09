@@ -4,6 +4,7 @@
 // operation counts, heap) and the existing reconciliation writing the mirror (in-memory Sheet).
 // PGlite has no network latency and one connection: absolute times are a lower bound; the
 // operation counts are what carries over to Supabase.
+import "./helpers/importLedgerKey.js";
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 

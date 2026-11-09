@@ -13,10 +13,14 @@
 --                             an entity that already existed), LINK (the import created a relationship)
 --   pre_existing              false = created by this import, true = existed before it
 --   changes                   { field: { before, after } }. Candidate / details / Client / Agent values are
---                             personal or business data: before is the blank that was there (null / ""),
---                             after is { "h": sha256 } so the ledger holds no personal data and a rollback can
---                             still check "is the current value still what this import wrote". Ids, flags,
---                             statuses and dates of stages / Jobs / allocations are stored as they are.
+--                             personal or business data: before is the EXACT previous value (null and "" are
+--                             different and stay different); after is { "m": "hmac-sha256", "k": <key id>,
+--                             "h": <HMAC> }, a keyed digest (secret in the server environment, never in the
+--                             database) bound to the entry, so the ledger holds no personal data, cannot be
+--                             reversed by guessing NICs or phone numbers, and a rollback can still check "is the
+--                             current value still what this import wrote". An entry from before the key
+--                             existed holds { "h": sha256 } without "m" and is still verifiable (and re-signed).
+--                             Ids, flags, statuses and dates of stages / Jobs / allocations are stored as they are.
 --   related_job_id / job_created_by_import   the Job a membership belongs to, and whether this import made it
 --   audit_ids                 the audit_logs rows written for this change (same transaction)
 --   rollback_action           what a rollback may do, and only if the record is unchanged:
