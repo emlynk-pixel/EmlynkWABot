@@ -85,10 +85,45 @@ model CandidateImport {
   updatedAt     DateTime  @default(now()) @map("updated_at")
   completedAt   DateTime? @map("completed_at")
 
-  admin User @relation(fields: [adminId], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  admin   User                    @relation(fields: [adminId], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  changes CandidateImportChange[]
 
   @@index([adminId, createdAt])
   @@map("candidate_import")
+}
+
+// The per-import change ledger (candidateImportLedger.js, migration 20261112130000_import_change_ledger):
+// one row per change an import made to one entity, written in the same transaction as the change, so a
+// rollback can reverse exactly what the import did and only where the record is unchanged. Internal ids
+// only; candidate / Client / Agent values are stored as hashes (see the migration's header).
+model CandidateImportChange {
+  changeId           String    @id @default(dbgenerated("gen_random_uuid()")) @map("change_id") @db.Uuid
+  importId           String    @map("import_id") @db.Uuid
+  chunkIndex         Int       @map("chunk_index")
+  rowNumber          Int?      @map("row_number")
+  entityType         String    @map("entity_type")
+  entityKey          String    @map("entity_key")
+  candidateUniqueId  String?   @map("candidate_unique_id")
+  op                 String
+  preExisting        Boolean   @map("pre_existing")
+  changes            Json      @default("{}")
+  relatedJobId       String?   @map("related_job_id") @db.Uuid
+  jobCreatedByImport Boolean?  @map("job_created_by_import")
+  auditIds           String[]  @default([]) @map("audit_ids")
+  rollbackAction     String    @map("rollback_action")
+  status             String    @default("APPLIED")
+  revertDetail       Json?     @map("revert_detail")
+  revertedAt         DateTime? @map("reverted_at") @db.Timestamptz(3)
+  changesDigest      String    @map("changes_digest")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  import CandidateImport @relation(fields: [importId], references: [importId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([importId, entityType, entityKey, op, changesDigest], map: "candidate_import_change_unique_entry")
+  @@index([importId, chunkIndex], map: "candidate_import_change_import_chunk_idx")
+  @@index([entityType, entityKey], map: "candidate_import_change_entity_idx")
+  @@index([candidateUniqueId], map: "candidate_import_change_candidate_idx")
+  @@map("candidate_import_change")
 }
 
 // Review actions taken by admins (Phase 10). Append-only: rows are never

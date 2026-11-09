@@ -24,6 +24,7 @@ import { CandidateError } from "./candidateService.js";
 import { candidateScope, isCandidateScoped } from "./candidateAccess.js";
 import { findAgentsByKeys, findClientsByKeys } from "./candidateImportClassifier.js";
 import { orgKey } from "./candidateImportNormalizers.js";
+import { LEDGER_ENTITY, LEDGER_OP, changesOf } from "./candidateImportLedger.js";
 import { describeIssue } from "./candidateImportIssues.js";
 
 export const IMPORT_JOB_DEFAULT_COUNTRY = "RO";
@@ -239,18 +240,23 @@ async function createGroupJob(tx, group, { actor, importId, audits }) {
         },
         select: { id: true, jobCode: true, status: true },
     });
-    await tx.importJobGroup.create({ data: { interviewDate: new Date(`${group.interviewDate}T00:00:00.000Z`), hundredsBlock: group.block, suffix: group.suffix, jobId: job.id } });
-    audits.push(auditRow(actor, {
+    const groupRow = await tx.importJobGroup.create({ data: { interviewDate: new Date(`${group.interviewDate}T00:00:00.000Z`), hundredsBlock: group.block, suffix: group.suffix, jobId: job.id }, select: { id: true } });
+    const audit = auditRow(actor, {
         action: "CREATE_JOB", previousStatus: "NONE", newStatus: PROCESSING,
         reason: `Job ${job.jobCode} created by a sheet upload (bulk import ${importId}): Interview Date ${group.interviewDate}, Unique Numbers ${group.from}-${group.to}`,
         newValue: JSON.stringify({ jobId: job.id, jobCode: job.jobCode, clientId: org.client.id, jobTypeIds: types.map((t) => t.id), responsibleAgentId: org.agent.id, countryCode, countryDefaulted: !org.agent.countryCode, importId }),
-    }));
-    return { job };
+    });
+    audits.push(audit);
+    // What the change ledger records about the new Job and its group row (internal ids and codes only).
+    return {
+        job, groupId: groupRow.id, auditId: audit.auditId,
+        fields: { jobCode: job.jobCode, jobTypeId: types[0].id, clientId: org.client.id, responsibleAgentId: org.agent.id, countryCode, status: PROCESSING },
+    };
 }
 
 // The chunk's rows put on their group's Job. storedGroups: the import's plan (candidate_import.job_groups).
 // Adds codes to the plans it can't place, and effects { jobCreated, jobAssigned }. Batched per group.
-export async function executeJobGroups(tx, plans, storedGroups, { actor, importId, audits, effects }) {
+export async function executeJobGroups(tx, plans, storedGroups, { actor, importId, audits, effects, ledger = null }) {
     const byKey = new Map((storedGroups ?? []).map((g) => [g.key, g]));
     const members = new Map();
     for (const plan of plans) {
@@ -270,11 +276,26 @@ export async function executeJobGroups(tx, plans, storedGroups, { actor, importI
             select: { job: { select: { id: true, jobCode: true, status: true } } },
         });
         let job = stored?.job ?? null;
+        // Whether THIS import made the Job (in this chunk, or in an earlier chunk of it): a rollback may delete only those.
+        let jobCreatedByImport = false;
         if (!job) {
             const created = await createGroupJob(tx, group, { actor, importId, audits });
             if (!created.job) { rows.forEach((p) => note(p, created.code)); continue; }
             job = created.job;
+            jobCreatedByImport = true;
             effects.get(rows[0].rowNumber).jobCreated = 1;
+            ledger?.add({
+                entityType: LEDGER_ENTITY.JOB, entityKey: job.id, op: LEDGER_OP.CREATE, rowNumber: rows[0].rowNumber, relatedJobId: job.id, jobCreatedByImport: true,
+                changes: changesOf(created.fields, null, { hash: false }), auditIds: [created.auditId],
+            });
+            ledger?.add({
+                entityType: LEDGER_ENTITY.JOB_GROUP, entityKey: created.groupId, op: LEDGER_OP.CREATE, rowNumber: rows[0].rowNumber, relatedJobId: job.id, jobCreatedByImport: true,
+                changes: changesOf({ interviewDate: group.interviewDate, hundredsBlock: group.block, suffix: group.suffix, jobId: job.id }, null, { hash: false }),
+            });
+        } else if (ledger && group.state === GROUP_STATE.NEW) {
+            // The plan said this import creates the Job: an earlier chunk of it did (its ledger entry says so);
+            // otherwise another import or a person made it first and it is not this import's to remove.
+            jobCreatedByImport = Boolean(await tx.candidateImportChange.findFirst({ where: { importId, entityType: LEDGER_ENTITY.JOB, entityKey: job.id }, select: { changeId: true } }));
         }
         if (job.status !== PROCESSING) { rows.forEach((p) => note(p, "JOB_GROUP_JOB_CLOSED")); continue; }
 
@@ -296,10 +317,23 @@ export async function executeJobGroups(tx, plans, storedGroups, { actor, importI
         }
         if (!toAdd.length) continue;
         await tx.jobCandidate.createMany({ data: toAdd.map((passportId) => ({ jobId: job.id, passportId, assignedBy: actor.adminId, isActive: true })), skipDuplicates: true });
-        toAdd.forEach((passportId) => audits.push(auditRow(actor, {
-            action: "ADD_CANDIDATE_TO_JOB", passportId, previousStatus: "NOT_ASSIGNED", newStatus: "ASSIGNED",
-            reason: `Assigned to ${job.jobCode} by a sheet upload (bulk import ${importId})`, newValue: JSON.stringify({ jobId: job.id, jobCode: job.jobCode }),
-        })));
+        const rowOf = new Map(rows.map((p) => [p.job.passportId, p.rowNumber]));
+        toAdd.forEach((passportId) => {
+            const audit = auditRow(actor, {
+                action: "ADD_CANDIDATE_TO_JOB", passportId, previousStatus: "NOT_ASSIGNED", newStatus: "ASSIGNED",
+                reason: `Assigned to ${job.jobCode} by a sheet upload (bulk import ${importId})`, newValue: JSON.stringify({ jobId: job.id, jobCode: job.jobCode }),
+            });
+            audits.push(audit);
+            // The membership the import created (an existing one is never recorded, so never removed), with
+            // the Job it belongs to and whether the import made that Job.
+            const uniqueId = ledger?.uniqueIdOf(passportId);
+            if (ledger && uniqueId) {
+                ledger.add({
+                    entityType: LEDGER_ENTITY.JOB_CANDIDATE, entityKey: `${job.id}:${uniqueId}`, candidateUniqueId: uniqueId, op: LEDGER_OP.CREATE, rowNumber: rowOf.get(passportId) ?? null,
+                    relatedJobId: job.id, jobCreatedByImport, changes: changesOf({ isActive: true, assignedBy: actor.adminId }, null, { hash: false }), auditIds: [audit.auditId],
+                });
+            }
+        });
     }
 }
 

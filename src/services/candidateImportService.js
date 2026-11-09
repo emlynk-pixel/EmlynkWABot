@@ -33,6 +33,7 @@ import { requestSheetSyncRun } from "./sheetSyncStatusService.js";
 import { allocateImportedCandidates } from "./workAllocationService.js";
 import { AGENT_AUDIT_ACTION, ENTITY_STATUS, auditRow as entityAuditRow } from "./agentService.js";
 import { CLIENT_AUDIT_ACTION } from "./clientService.js";
+import { LEDGER_ENTITY, LEDGER_OP, changesOf, createLedger } from "./candidateImportLedger.js";
 
 export const IMPORT_CHUNK_SIZE = 100;
 export const MAX_IMPORT_ROWS = 3000;
@@ -341,67 +342,125 @@ export async function allocateUniqueIds(tx, count) {
 
 const auditEntry = (actor, data) => ({ auditId: crypto.randomUUID(), adminId: actor.adminId, ...data });
 
-// The plans' writes, inside the caller's transaction. Returns the plans' outcomes.
-async function executePlans(tx, plans, { importId, actor, now = new Date(), jobGroups = [] }) {
+// The plans' writes, inside the caller's transaction. Returns the plans' outcomes. Every change is also
+// recorded in the import's change ledger (candidateImportLedger.js), in this same transaction.
+async function executePlans(tx, plans, { importId, actor, now = new Date(), jobGroups = [], chunkIndex = 0 }) {
     const audits = [];
+    const ledger = createLedger({ importId, chunkIndex });
+    // Every candidate these rows touch, by its internal unique_id (the ledger names no passport number).
+    for (const plan of plans) if (plan.prior?.uniqueId) ledger.registerCandidate(plan.prior.passportId, plan.prior.uniqueId);
     const creates = plans.filter((p) => p.action === ROW_ACTION.CREATE);
     if (creates.length) {
         const ids = await allocateUniqueIds(tx, creates.length);
         await tx.candidate.createMany({ data: creates.map((p, i) => ({ ...p.write.candidate, uniqueId: ids[i] })) });
         const details = creates.filter((p) => Object.keys(p.write.details).length).map((p) => ({ passportId: p.write.candidate.passportId, ...p.write.details }));
         if (details.length) await tx.candidateAdditionalDetails.createMany({ data: details });
-        creates.forEach((p, i) => audits.push(auditEntry(actor, {
-            action: "CREATE_CANDIDATE", passportId: p.write.candidate.passportId, previousStatus: "NONE", newStatus: "CREATED",
-            reason: `Candidate imported from a legacy sheet (bulk import ${importId}, ${ids[i]})`,
-            // Which fields were given, never their values.
-            newValue: JSON.stringify({ uniqueId: ids[i], importId, fields: Object.keys(p.write.candidate).filter((f) => f !== "passportId"), details: Object.keys(p.write.details) }),
-        })));
+        creates.forEach((p, i) => {
+            const audit = auditEntry(actor, {
+                action: "CREATE_CANDIDATE", passportId: p.write.candidate.passportId, previousStatus: "NONE", newStatus: "CREATED",
+                reason: `Candidate imported from a legacy sheet (bulk import ${importId}, ${ids[i]})`,
+                // Which fields were given, never their values.
+                newValue: JSON.stringify({ uniqueId: ids[i], importId, fields: Object.keys(p.write.candidate).filter((f) => f !== "passportId"), details: Object.keys(p.write.details) }),
+            });
+            audits.push(audit);
+            ledger.registerCandidate(p.write.candidate.passportId, ids[i]);
+            ledger.add({
+                entityType: LEDGER_ENTITY.CANDIDATE, entityKey: ids[i], candidateUniqueId: ids[i], op: LEDGER_OP.CREATE, rowNumber: p.rowNumber,
+                changes: changesOf(p.write.candidate, null, { hash: true }), auditIds: [audit.auditId],
+            });
+            if (Object.keys(p.write.details).length) {
+                ledger.add({
+                    entityType: LEDGER_ENTITY.DETAILS, entityKey: ids[i], candidateUniqueId: ids[i], op: LEDGER_OP.CREATE, rowNumber: p.rowNumber,
+                    changes: changesOf(p.write.details, null, { hash: true }), auditIds: [audit.auditId],
+                });
+            }
+        });
     }
     for (const plan of plans.filter((p) => p.action === ROW_ACTION.FILL)) {
         const { passportId, candidate, details, detailsExists } = plan.write;
+        const uniqueId = ledger.uniqueIdOf(passportId);
         if (Object.keys(candidate).length) {
             await tx.candidate.update({ where: { passportId }, data: candidate });
-            audits.push(auditEntry(actor, {
+            const audit = auditEntry(actor, {
                 action: "UPDATE_CANDIDATE", passportId, previousStatus: "CREATED", newStatus: "UPDATED",
                 reason: `Blank fields filled from a legacy sheet (bulk import ${importId})`,
                 // The candidate history lists these keys; the values are never recorded.
                 newValue: JSON.stringify(Object.fromEntries(Object.keys(candidate).map((f) => [f, null]))),
-            }));
+            });
+            audits.push(audit);
+            // before = the blank that was there (the import only fills blanks); after = hashed.
+            ledger.add({
+                entityType: LEDGER_ENTITY.CANDIDATE, entityKey: uniqueId, candidateUniqueId: uniqueId, op: LEDGER_OP.FILL, rowNumber: plan.rowNumber,
+                changes: changesOf(candidate, plan.prior, { hash: true }), auditIds: [audit.auditId],
+            });
         }
         if (Object.keys(details).length) {
             if (detailsExists) await tx.candidateAdditionalDetails.update({ where: { passportId }, data: details });
             else await tx.candidateAdditionalDetails.create({ data: { passportId, ...details } });
-            audits.push(auditEntry(actor, {
+            const audit = auditEntry(actor, {
                 action: detailsExists ? "UPDATE_ADDITIONAL_DETAILS" : "CREATE_ADDITIONAL_DETAILS", passportId,
                 previousStatus: detailsExists ? "EXISTS" : "NONE", newStatus: detailsExists ? "UPDATED" : "CREATED",
                 reason: `Blank additional details filled from a legacy sheet (bulk import ${importId})`,
                 newValue: JSON.stringify({ importId, fields: Object.keys(details) }),
-            }));
+            });
+            audits.push(audit);
+            // A details row that did not exist is CREATED by the import (a rollback may delete it); an existing one is FILLED.
+            ledger.add({
+                entityType: LEDGER_ENTITY.DETAILS, entityKey: uniqueId, candidateUniqueId: uniqueId, op: detailsExists ? LEDGER_OP.FILL : LEDGER_OP.CREATE, rowNumber: plan.rowNumber,
+                changes: changesOf(details, detailsExists ? plan.prior?.additionalDetails : null, { hash: true }), auditIds: [audit.auditId],
+            });
         }
     }
     const effects = new Map(plans.map((plan) => [plan.rowNumber, {}]));
-    await executeOrg(tx, plans, { importId, actor, audits, effects });
-    await executeExtras(tx, plans, { importId, actor, audits, effects, now });
+    await executeOrg(tx, plans, { importId, actor, audits, effects, ledger });
+    await executeExtras(tx, plans, { importId, actor, audits, effects, now, ledger });
     // After the Test details (this chunk may have just saved the PASS) and the Clients / Agents.
-    await executeJobGroups(tx, plans, jobGroups, { actor, importId, audits, effects });
+    await executeJobGroups(tx, plans, jobGroups, { actor, importId, audits, effects, ledger });
     if (audits.length) await tx.auditLog.createMany({ data: audits });
+    // The ledger with the writes: one statement, same transaction (a chunk that fails leaves no entry).
+    await ledger.flush(tx);
     return plans.map((plan) => outcomeOf(plan, effects.get(plan.rowNumber)));
 }
 
 const passportOfPlan = (plan) => plan.write.passportId ?? plan.write.candidate.passportId;
+// The stage row an existing candidate already had (read with the plan), or null.
+const stageOf = (existing, stage) => existing?.stages?.find((row) => row.stage === stage) ?? null;
 const isoDayOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 10) : value ?? null);
 
 // Allocation (to the OFFICER), the Test details, the visa stage and Departed of the CREATE / FILL rows, all
 // fill-only (planned in candidateImportClassifier.js against this transaction's own snapshot).
-async function executeExtras(tx, plans, { importId, actor, audits, effects, now }) {
+async function executeExtras(tx, plans, { importId, actor, audits, effects, now, ledger }) {
     const writing = plans.filter((plan) => plan.write?.extras && (plan.action === ROW_ACTION.CREATE || plan.action === ROW_ACTION.FILL));
     const entries = writing.filter((plan) => plan.write.extras.allocation).map((plan) => ({ passportId: passportOfPlan(plan), analystId: plan.write.extras.allocation.analystId }));
     const allocated = new Set(await allocateImportedCandidates(tx, { actor, entries }));
-    const stageAudit = (passportId, stage, { from, to, before, after }) => audits.push(auditEntry(actor, {
-        action: "UPDATE_STAGE", passportId, previousStatus: from ? "COMPLETED" : "NOT_COMPLETED", newStatus: to ? "COMPLETED" : "NOT_COMPLETED",
-        reason: `Set from a legacy sheet (bulk import ${importId})`,
-        previousValue: JSON.stringify({ stage, ...before }), newValue: JSON.stringify({ stage, ...after }),
-    }));
+    // Each allocation made (an existing holder is never replaced: only the candidates allocated here are recorded).
+    for (const plan of writing) {
+        const passportId = passportOfPlan(plan);
+        if (!plan.write.extras.allocation || !allocated.has(passportId)) continue;
+        const uniqueId = ledger.uniqueIdOf(passportId);
+        ledger.add({
+            entityType: LEDGER_ENTITY.ALLOCATION, entityKey: uniqueId, candidateUniqueId: uniqueId, op: LEDGER_OP.CREATE, rowNumber: plan.rowNumber,
+            changes: changesOf({ analystId: plan.write.extras.allocation.analystId }, null, { hash: false }),
+        });
+    }
+    const stageAudit = (passportId, stage, { from, to, before, after }) => {
+        const audit = auditEntry(actor, {
+            action: "UPDATE_STAGE", passportId, previousStatus: from ? "COMPLETED" : "NOT_COMPLETED", newStatus: to ? "COMPLETED" : "NOT_COMPLETED",
+            reason: `Set from a legacy sheet (bulk import ${importId})`,
+            previousValue: JSON.stringify({ stage, ...before }), newValue: JSON.stringify({ stage, ...after }),
+        });
+        audits.push(audit);
+        return audit;
+    };
+    // A stage row the import made is CREATED (a rollback may delete it); one that existed is FILLED (only the
+    // fields written, back to the blank that was there). `previous` is the stored row, null when there was none.
+    const ledgerStage = (plan, passportId, stage, written, previous, audit) => {
+        const uniqueId = ledger.uniqueIdOf(passportId);
+        ledger.add({
+            entityType: LEDGER_ENTITY.STAGE, entityKey: `${uniqueId}:${stage}`, candidateUniqueId: uniqueId, op: previous ? LEDGER_OP.FILL : LEDGER_OP.CREATE, rowNumber: plan.rowNumber,
+            changes: changesOf(written, previous, { hash: false }), auditIds: [audit.auditId],
+        });
+    };
     // A new candidate has no stage rows: its rows are inserted together. An existing one's are upserted.
     const inserts = [];
     const write = (plan, stage, create, update) => {
@@ -420,12 +479,15 @@ async function executeExtras(tx, plans, { importId, actor, audits, effects, now 
             await write(plan, "TEST_DETAILS", { passportId, stage: "TEST_DETAILS", ...test.fill, completed, completedAt: completed ? now : null }, test.fill);
             const after = Object.fromEntries(Object.entries(test.fill).map(([field, value]) => [field, isoDayOf(value)]));
             const before = Object.fromEntries(Object.keys(test.fill).map((field) => [field, null]));
-            stageAudit(passportId, "TEST_DETAILS", { from: false, to: completed, before, after: completed ? { ...after, completed: true } : after });
+            const audit = stageAudit(passportId, "TEST_DETAILS", { from: false, to: completed, before, after: completed ? { ...after, completed: true } : after });
+            const stored = stageOf(plan.prior, "TEST_DETAILS");
+            ledgerStage(plan, passportId, "TEST_DETAILS", stored ? test.fill : { ...test.fill, completed, completedAt: completed ? now : null }, stored, audit);
             effect.testSet = 1;
         }
         for (const stage of stages) {
             await write(plan, stage, { passportId, stage, completed: true, completedAt: now }, { completed: true, completedAt: now });
-            stageAudit(passportId, stage, { from: false, to: true, before: { completed: false }, after: { completed: true } });
+            const audit = stageAudit(passportId, stage, { from: false, to: true, before: { completed: false }, after: { completed: true } });
+            ledgerStage(plan, passportId, stage, { completed: true, completedAt: now }, stageOf(plan.prior, stage), audit);
             effect.stagesCompleted = (effect.stagesCompleted ?? 0) + 1;
         }
     }
@@ -439,10 +501,13 @@ async function executeExtras(tx, plans, { importId, actor, audits, effects, now 
         await tx.candidate.updateMany({ where: { passportId: { in: passportIds }, departedAt: null, outcome: null }, data: { departedAt: now } });
         for (const plan of departing) {
             effects.get(plan.rowNumber).departed = 1;
-            audits.push(auditEntry(actor, {
+            const audit = auditEntry(actor, {
                 action: "CANDIDATE_DEPARTED", passportId: passportOfPlan(plan), previousStatus: "NOT_DEPARTED", newStatus: "DEPARTED",
                 reason: `Visa status Departed in a legacy sheet (bulk import ${importId})`, newValue: JSON.stringify({ importId }),
-            }));
+            });
+            audits.push(audit);
+            // Part of the candidate's own entry (created or filled by this import), written as a blank filled.
+            ledger.addCandidateFields(passportOfPlan(plan), { rowNumber: plan.rowNumber, changes: changesOf({ departedAt: now }, null, { hash: true }), auditIds: [audit.auditId] });
         }
     }
 
@@ -453,10 +518,12 @@ async function executeExtras(tx, plans, { importId, actor, audits, effects, now 
         await tx.candidate.updateMany({ where: { passportId: { in: recording.map(passportOfPlan) }, departedAt: null, outcome: null }, data: { outcome, outcomeAt: now } });
         for (const plan of recording) {
             effects.get(plan.rowNumber).outcome = 1;
-            audits.push(auditEntry(actor, {
+            const audit = auditEntry(actor, {
                 action: "SET_FINAL_STATUS", passportId: passportOfPlan(plan), previousStatus: "NONE", newStatus: outcome,
                 reason: `Visa status in a legacy sheet (bulk import ${importId})`, newValue: JSON.stringify({ importId }),
-            }));
+            });
+            audits.push(audit);
+            ledger.addCandidateFields(passportOfPlan(plan), { rowNumber: plan.rowNumber, changes: changesOf({ outcome, outcomeAt: now }, null, { hash: true }), auditIds: [audit.auditId] });
         }
     }
 }
@@ -466,7 +533,7 @@ async function executeExtras(tx, plans, { importId, actor, audits, effects, now 
 // chunk may have created one since the preview), else created, then linked; a blank registration
 // number filled. Through the same audit actions as Admin > Clients / Agents. A name created twice at
 // the same time fails on the unique indexes and the chunk is retried row by row (it then finds it).
-async function executeOrg(tx, plans, { importId, actor, audits, effects }) {
+async function executeOrg(tx, plans, { importId, actor, audits, effects, ledger }) {
     const agentIds = new Map();
     const clientIds = new Map();
     const reason = (what) => `${what} by a legacy sheet (bulk import ${importId})`;
@@ -483,10 +550,13 @@ async function executeOrg(tx, plans, { importId, actor, audits, effects }) {
                     const row = await tx.agent.create({ data: { name: agent.name, countryCode: null }, select: { id: true } });
                     agentId = row.id;
                     effect.agentCreated = 1;
-                    audits.push(entityAuditRow({
+                    const audit = entityAuditRow({
                         actor, action: AGENT_AUDIT_ACTION.CREATED, previousStatus: "NONE", newStatus: ENTITY_STATUS.ACTIVE, reason: reason("Agent created"),
                         newValue: JSON.stringify({ agentId, name: agent.name, countryCode: null, clientIds: [] }),
-                    }));
+                    });
+                    audits.push(audit);
+                    // An Agent the import created (a name is business data: hashed).
+                    ledger.add({ entityType: LEDGER_ENTITY.AGENT, entityKey: agentId, op: LEDGER_OP.CREATE, rowNumber: plan.rowNumber, changes: changesOf({ name: agent.name, countryCode: null }, null, { hash: true }), auditIds: [audit.auditId] });
                 }
                 agentIds.set(agent.key, agentId);
             }
@@ -500,30 +570,42 @@ async function executeOrg(tx, plans, { importId, actor, audits, effects }) {
                 clientId = (await tx.client.create({ data: { name: company.name, registrationNumber: companyNumber }, select: { id: true } })).id;
                 created = true;
                 effect.clientCreated = 1;
-                audits.push(entityAuditRow({
+                const audit = entityAuditRow({
                     actor, action: CLIENT_AUDIT_ACTION.CREATED, previousStatus: "NONE", newStatus: ENTITY_STATUS.ACTIVE, reason: reason("Client created"),
                     newValue: JSON.stringify({ clientId, name: company.name, agentIds: [agentId] }),
-                }));
+                });
+                audits.push(audit);
+                ledger.add({ entityType: LEDGER_ENTITY.CLIENT, entityKey: clientId, op: LEDGER_OP.CREATE, rowNumber: plan.rowNumber, changes: changesOf({ name: company.name, registrationNumber: companyNumber }, null, { hash: true }), auditIds: [audit.auditId] });
             }
             clientIds.set(company.key, clientId);
         }
         if (agentId) {
             const { count } = await tx.agentClient.createMany({ data: [{ agentId, clientId }], skipDuplicates: true });
-            if (count && !created) {
-                audits.push(entityAuditRow({
-                    actor, action: CLIENT_AUDIT_ACTION.AGENT_CHANGED, previousStatus: ENTITY_STATUS.ACTIVE, newStatus: ENTITY_STATUS.ACTIVE,
-                    reason: reason("Client's agents changed: 1 added, 0 removed"), newValue: JSON.stringify({ clientId, added: [agentId], removed: [] }),
-                }));
+            // A link only when this import made it (an existing link is never recorded, so never removed).
+            if (count) {
+                let auditIdsOfLink = [];
+                if (!created) {
+                    const audit = entityAuditRow({
+                        actor, action: CLIENT_AUDIT_ACTION.AGENT_CHANGED, previousStatus: ENTITY_STATUS.ACTIVE, newStatus: ENTITY_STATUS.ACTIVE,
+                        reason: reason("Client's agents changed: 1 added, 0 removed"), newValue: JSON.stringify({ clientId, added: [agentId], removed: [] }),
+                    });
+                    audits.push(audit);
+                    auditIdsOfLink = [audit.auditId];
+                }
+                ledger.add({ entityType: LEDGER_ENTITY.AGENT_CLIENT, entityKey: `${agentId}:${clientId}`, op: LEDGER_OP.LINK, rowNumber: plan.rowNumber, auditIds: auditIdsOfLink });
             }
         }
         if (companyNumber && !created) {
             const { count } = await tx.client.updateMany({ where: { id: clientId, OR: [{ registrationNumber: null }, { registrationNumber: "" }] }, data: { registrationNumber: companyNumber } });
             if (count) {
-                audits.push(entityAuditRow({
+                const audit = entityAuditRow({
                     actor, action: CLIENT_AUDIT_ACTION.UPDATED, previousStatus: ENTITY_STATUS.ACTIVE, newStatus: ENTITY_STATUS.ACTIVE,
                     reason: reason("Client updated: registrationNumber"), previousValue: JSON.stringify({ clientId, registrationNumber: null }),
                     newValue: JSON.stringify({ clientId, registrationNumber: companyNumber }),
-                }));
+                });
+                audits.push(audit);
+                // Only the filled blank (before: blank, after: hashed): the Client itself existed before the import.
+                ledger.add({ entityType: LEDGER_ENTITY.CLIENT, entityKey: clientId, op: LEDGER_OP.FILL, rowNumber: plan.rowNumber, changes: changesOf({ registrationNumber: companyNumber }, null, { hash: true }), auditIds: [audit.auditId] });
             }
         }
     }
@@ -653,7 +735,7 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
     const beforeCreate = record.status === IMPORT_STATUS.PREVIEWED ? () => assertNoOtherCommitting(db, { importId, actor, now }) : null;
     const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: true, beforeCreate });
     const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
-    const context = { importId, actor, now, jobGroups: Array.isArray(record.jobGroups) ? record.jobGroups : [] };
+    const context = { importId, actor, now, chunkIndex, jobGroups: Array.isArray(record.jobGroups) ? record.jobGroups : [] };
 
     // The whole chunk in one transaction; a unique-ID race is retried with fresh numbers.
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -692,7 +774,11 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
             outcomes.push({ r: row.rowNumber, o: ROW_OUTCOME.FAILED, c: [failureCode(error)], w: false });
         }
     }
-    const result = await db.$transaction(async (tx) => recordChunk(tx, await lockImport(tx, importId), { importId, chunkIndex, actor, rows: outcomes, now }), CHUNK_TRANSACTION);
+    const result = await db.$transaction(async (tx) => {
+        const locked = await lockImport(tx, importId);
+        await guardCommit(tx, locked, { importId, actor, now });
+        return recordChunk(tx, locked, { importId, chunkIndex, actor, rows: outcomes, now });
+    }, CHUNK_TRANSACTION);
     return present(chunkIndex, result, canonical);
 }
 

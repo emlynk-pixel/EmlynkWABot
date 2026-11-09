@@ -71,7 +71,7 @@ export const EXISTING_CANDIDATE_SELECT = Object.freeze({
     allocation: { select: { analystId: true } },
     stages: {
         where: { stage: { in: ["TEST_DETAILS", "VISA_SUBMISSION", "VISA_APPROVAL"] } },
-        select: { stage: true, completed: true, testId: true, jobId: true, testDate: true, testResult: true },
+        select: { stage: true, completed: true, completedAt: true, testId: true, jobId: true, testDate: true, testResult: true },
     },
 });
 
@@ -394,6 +394,9 @@ export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
 
         const existing = snapshot.byPassport.get(upper(row.passport)) ?? null;
         plan.existing = Boolean(existing);
+        // The existing candidate as read (internal: never sent to the browser or logged). The commit records
+        // its unique_id and the values it fills in the change ledger (candidateImportLedger.js).
+        plan.prior = existing;
         const self = upper(existing?.passportId ?? row.passport);
         const { candidate, details } = toColumns(row.values);
 
