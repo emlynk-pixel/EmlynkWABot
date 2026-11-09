@@ -65,8 +65,8 @@ function setup({ enabled = true, rows = [], header, env = {} } = {}) {
     const log = { log: (l) => lines.push(l), warn: (l) => lines.push(l), error: (l) => lines.push(l) };
     // Another worker process on the same Sheet, clock and database; its store
     // can be wrapped (e.g. to simulate a crash).
-    const newWorker = (workerStore = store) => createSheetSyncWorker({
-        store: workerStore, engine, config, tuning, clock, log, random: () => 0.5, targetHint: "…id / tab",
+    const newWorker = (workerStore = store, extra = {}) => createSheetSyncWorker({
+        store: workerStore, engine, config, tuning, clock, log, random: () => 0.5, targetHint: "…id / tab", ...extra,
         healthCheck: () => runSheetHealthCheck({ env: configEnv, sheetsClient: sheet.client, clock }),
     });
     const worker = newWorker();
@@ -366,6 +366,92 @@ describe("failures: the database stays authoritative and unaffected", () => {
         assert.ok(lines.length > 0);
         for (const line of lines) assert.doesNotThrow(() => JSON.parse(line));
         assert.doesNotMatch(text, /N1023757|Anusha|De Soysa|94771234567|965404378V|ya29|Fake Tab|fake Google error/);
+    });
+});
+
+describe("a missing sheet_sync_state row is reported, not hidden as WRITER_BUSY", () => {
+    // The row is seeded by a migration; production lost (or never got) it. Restored after each test.
+    const dropRow = () => pg.exec(`DELETE FROM "sheet_sync_state"`);
+    const restoreRow = () => pg.exec(`INSERT INTO "sheet_sync_state" ("state_id") VALUES ('sheet-sync') ON CONFLICT DO NOTHING`);
+
+    test("the run fails with STATE_ROW_MISSING (never SKIPPED/WRITER_BUSY), nothing is written, the problem is logged", async () => {
+        const { sheet, store, worker, lines } = setup();
+        await register();
+        await dropRow();
+        try {
+            const run = await sync(store, worker);
+            assert.deepEqual([run.status, run.errorClass], ["FAILED", "STATE_ROW_MISSING"]);
+            assert.deepEqual(sheet.writes(), []);
+            assert.equal(await store.stateExists(), false);
+            assert.ok(lines.some((l) => l.includes('"sheet_sync.state_row_missing"')), "logged");
+            assert.ok(!lines.some((l) => l.includes("WRITER_BUSY")), "not reported as busy");
+            assert.equal((await queueRows())[0].status, "PENDING", "the queue is untouched");
+        } finally {
+            await restoreRow();
+        }
+    });
+
+    test("the log is rate-limited: many ticks, one sheet_sync.state_row_missing line", async () => {
+        const { worker, lines } = setup();
+        await dropRow();
+        try {
+            for (let i = 0; i < 5; i++) await worker.tick();
+            assert.equal(lines.filter((l) => l.includes('"sheet_sync.state_row_missing"')).length, 1);
+        } finally {
+            await restoreRow();
+        }
+    });
+
+    test("heartbeat() reports whether the row was updated", async () => {
+        const { store } = setup();
+        const beat = () => store.heartbeat({ writeGate: "ENABLED", configured: true, targetHint: null, now: new Date() });
+        assert.equal(await beat(), true);
+        await dropRow();
+        try {
+            assert.equal(await beat(), false);
+            assert.equal(await store.ensureStateRow(), true);
+            assert.equal(await store.ensureStateRow(), false, "never touches an existing row");
+            assert.equal(await beat(), true);
+        } finally {
+            await restoreRow();
+        }
+    });
+
+    test("autoInitState (opt-in) recreates the row; the heartbeat is stored and the next run works", async () => {
+        const { sheet, store, newWorker } = setup();
+        await register();
+        await dropRow();
+        try {
+            const worker = newWorker(store, { autoInitState: true });
+            const run = await sync(store, worker);
+            assert.equal(run.status, "SUCCEEDED");
+            const row = await state();
+            assert.ok(row?.workerHeartbeatAt, "heartbeat stored");
+            assert.ok(sheet.writes().length > 0);
+        } finally {
+            await restoreRow();
+        }
+    });
+
+    test("without autoInitState the worker never creates the row", async () => {
+        const { store, worker } = setup();
+        await dropRow();
+        try {
+            await worker.tick();
+            assert.equal(await store.stateExists(), false);
+        } finally {
+            await restoreRow();
+        }
+    });
+
+    test("a streak of real WRITER_BUSY skips is reported as sheet_sync.reconcile_stuck", async () => {
+        const { store, newWorker, lines } = setup();
+        const worker = newWorker(store, { stuckAfterSkips: 2 });
+        await prisma.sheetSyncState.update({ where: { stateId: "sheet-sync" }, data: { writerLeaseOwner: "other-process", writerLeaseExpiresAt: new Date(Date.now() + 60_000) } });
+        assert.equal((await sync(store, worker)).errorClass, "WRITER_BUSY");
+        assert.ok(!lines.some((l) => l.includes('"sheet_sync.reconcile_stuck"')), "one skip is not a streak");
+        assert.equal((await sync(store, worker)).errorClass, "WRITER_BUSY");
+        assert.ok(lines.some((l) => l.includes('"sheet_sync.reconcile_stuck"')));
     });
 });
 

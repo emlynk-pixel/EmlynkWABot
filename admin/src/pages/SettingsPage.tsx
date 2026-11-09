@@ -409,7 +409,11 @@ function GoogleSheetSyncSection() {
                     {status.status === "error" && (
                         <p role="alert" className="text-body-sm text-critical">The status could not be refreshed: {status.error.message}</p>
                     )}
-                    {!data.worker.online && (
+                    {data.worker.problem === "STATE_ROW_MISSING" ? (
+                        <div role="alert" className="rounded-lg border border-critical-border bg-critical-bg px-4 py-3 text-body-sm text-critical">
+                            The sheet-sync status record is missing from the database, so the worker cannot report or sync. This is a database setup problem, not an outage of the worker itself: ask the administrator who manages the database.
+                        </div>
+                    ) : !data.worker.online && (
                         <div role="alert" className="rounded-lg border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
                             The sheet-sync worker is not reporting{data.worker.lastHeartbeatAt ? ` (last seen ${formatDateTime(data.worker.lastHeartbeatAt)})` : ""}. Requests stay queued until it runs.
                         </div>

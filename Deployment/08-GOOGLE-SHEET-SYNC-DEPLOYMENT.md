@@ -202,3 +202,17 @@ Candidate operations in the application are unaffected: the outbox keeps queuein
 - [ ] Admin → Settings → Test Connection succeeds; Sync Now is a dry run
 - [ ] Scheduler job exists with the right cron, time zone and OIDC settings
 - [ ] Exactly one worker instance, one Sheet, one authoritative database
+
+## Troubleshooting: "worker not reporting" / every run `SKIPPED` or `FAILED STATE_ROW_MISSING`
+
+The worker keeps its heartbeat and the writer lease in the **single row** `sheet_sync_state('sheet-sync')`, which only migration `20261006120000` creates (an `INSERT`). A database whose schema was applied by hand (no `_prisma_migrations` table) can lack it. Without the row, every state write is a no-op: Settings shows the worker as not reporting and, in older workers, every reconcile was logged `WRITER_BUSY` although nobody held the lease.
+
+Current workers log `sheet_sync.state_row_missing`, fail the run with `STATE_ROW_MISSING`, and Settings says the status record is missing. Check any database read-only (a read-only role; the script never loads `.env` files and runs in a READ ONLY transaction):
+
+```bash
+DATABASE_URL=<read-only URL> npm run sheet:verify-schema
+```
+
+Restoring the row is a **production data write**: take and verify a Sheet backup first, because the first successful reconcile after it writes the full mirror to the live Sheet (the deletion guard limits inactive-marking only). The statement is `INSERT INTO sheet_sync_state (state_id) VALUES ('sheet-sync') ON CONFLICT DO NOTHING;`. `SHEET_SYNC_AUTO_INIT_STATE=true` makes the worker create it itself; leave it unset (default) in production.
+
+Alert definitions for this and related failures: [`deploy/monitoring/sheet-sync-alerts.yaml`](../deploy/monitoring/sheet-sync-alerts.yaml). If the database has no migration history, baseline it once the schema is verified (`prisma migrate resolve --applied <migration>` per applied migration) so later migrations are tracked.

@@ -92,7 +92,8 @@ try {
             return formAdapters.get(key);
         },
     });
-    const worker = createSheetSyncWorker({ store, forDestination, destinations: config.destinations, config, tuning, formSubmissions });
+    // SHEET_SYNC_AUTO_INIT_STATE=true lets the worker create a missing sheet_sync_state row; off by default.
+    const worker = createSheetSyncWorker({ store, forDestination, destinations: config.destinations, config, tuning, formSubmissions, autoInitState: process.env.SHEET_SYNC_AUTO_INIT_STATE === "true" });
 
     let verifyScheduler = null;
     if (process.env.SHEET_SYNC_SCHEDULER_AUDIENCE && process.env.SHEET_SYNC_SCHEDULER_INVOKER) {

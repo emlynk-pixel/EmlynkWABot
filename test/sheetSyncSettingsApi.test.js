@@ -120,6 +120,18 @@ describe("ADMIN", () => {
         assert.equal((await call("GET", "/status", "admin-ADMIN")).body.worker.online, false);
     });
 
+    test("a missing sheet_sync_state row is reported as worker.problem STATE_ROW_MISSING, not just offline", async () => {
+        assert.equal((await call("GET", "/status", "admin-ADMIN")).body.worker.problem, null);
+        await prisma.sheetSyncState.deleteMany();
+        try {
+            const { status, body } = await call("GET", "/status", "admin-ADMIN");
+            assert.equal(status, 200);
+            assert.deepEqual([body.worker.online, body.worker.problem], [false, "STATE_ROW_MISSING"]);
+        } finally {
+            await prisma.sheetSyncState.createMany({ data: [{ stateId: "sheet-sync" }], skipDuplicates: true });
+        }
+    });
+
     test("POST /run (Sync Now) returns 202 at once with a durable QUEUED run; a second request returns the same run", async () => {
         const first = await call("POST", "/run", "admin-ADMIN");
         assert.equal(first.status, 202);

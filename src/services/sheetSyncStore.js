@@ -299,10 +299,23 @@ export function createSheetSyncStore({ db } = {}) {
 
     // destinations: the configured Sync Destinations' public metadata (key,
     // name, short hint, tab name; never a full spreadsheet ID).
+    // Returns whether the single state row exists and was updated. Every state write here is an
+    // updateMany on that row: when the row is missing (a migration's seed INSERT was never applied)
+    // they all change nothing and raise nothing, so the caller must look at this result.
     async function heartbeat({ writeGate, configured, targetHint, destinations, now }) {
         const data = { writeGate, configured, targetHint, workerHeartbeatAt: now, updatedAt: now };
         if (destinations !== undefined) data.destinations = destinations;
-        await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID }, data });
+        const { count } = await db.sheetSyncState.updateMany({ where: { stateId: STATE_ID }, data });
+        return count === 1;
+    }
+
+    const stateExists = async () => (await db.sheetSyncState.count({ where: { stateId: STATE_ID } })) === 1;
+
+    // The seed row of migration 20261006120000, created only when absent (never changes an existing
+    // row). The worker calls this only when SHEET_SYNC_AUTO_INIT_STATE=true.
+    async function ensureStateRow({ now = new Date() } = {}) {
+        const { count } = await db.sheetSyncState.createMany({ data: [{ stateId: STATE_ID, updatedAt: now }], skipDuplicates: true });
+        return count === 1;
     }
 
     // ------------------------------------------------------------ Sync Destination
@@ -364,7 +377,7 @@ export function createSheetSyncStore({ db } = {}) {
     return Object.freeze({
         claimQueueBatch, completeQueueItem, failQueueItem, retryQueueItem, queueCounts, resolveFailedBefore, openQueueItems, settleReconciled, pruneCompleted,
         requestRun, claimRun, renewRun, finishRun, setRunDestination, getRun, latestRun, recentRuns,
-        getState, acquireWriterLease, releaseWriterLease, heartbeat, setIntegrationState, recordTransientError, recordSyncSuccess,
+        getState, stateExists, ensureStateRow, acquireWriterLease, releaseWriterLease, heartbeat, setIntegrationState, recordTransientError, recordSyncSuccess,
         requestDestination, clearRequestedDestination, promoteDestination,
     });
 }
