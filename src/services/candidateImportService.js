@@ -922,6 +922,7 @@ export async function getImport({ db, actor, importId, now = new Date() }) {
 // the Upload dialog to offer Resume / Abort instead of starting another. Other administrators' imports are
 // theirs and do not block this one. File name, counts and ids only.
 export async function getActiveImport({ db, actor, now = new Date() }) {
-    const active = await db.candidateImport.findFirst({ where: { status: IMPORT_STATUS.COMMITTING, adminId: actor.adminId }, orderBy: { updatedAt: "desc" } });
+    // Also a rollback of one of your imports that was interrupted (status ROLLING_BACK): to continue it.
+    const active = await db.candidateImport.findFirst({ where: { status: { in: [IMPORT_STATUS.COMMITTING, IMPORT_STATUS.ROLLING_BACK] }, adminId: actor.adminId }, orderBy: { updatedAt: "desc" } });
     return { active: active ? activeDetails(active, actor, now) : null };
 }

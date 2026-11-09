@@ -277,6 +277,24 @@ export function createSheetSyncStore({ db } = {}) {
 
     const latestRun = (kind, where = {}) => db.sheetSyncRun.findFirst({ where: { kind, ...where }, orderBy: { createdAt: "desc" } });
 
+    // ------------------------------------------------------------ deletion approvals (a rollback of a bulk import)
+
+    // The unique IDs of candidates a rollback deleted whose Sheet rows may be marked inactive beyond the deletion guard
+    // (see migration 20261112140000). Read before the engine reads the database. A Set; empty when the table is absent.
+    async function openDeletionApprovals() {
+        if (!db.sheetSyncDeletionApproval) return new Set();
+        const rows = await db.sheetSyncDeletionApproval.findMany({ where: { consumedAt: null }, select: { uniqueId: true } });
+        return new Set(rows.map((row) => row.uniqueId));
+    }
+
+    // After a successful write reconciliation: the approvals it was given are used up.
+    async function consumeDeletionApprovals(uniqueIds, { now }) {
+        const ids = [...uniqueIds]; // a Set or an array
+        if (!db.sheetSyncDeletionApproval || !ids.length) return 0;
+        const { count } = await db.sheetSyncDeletionApproval.updateMany({ where: { uniqueId: { in: ids }, consumedAt: null }, data: { consumedAt: now } });
+        return count;
+    }
+
     // ------------------------------------------------------------ state
 
     const getState = () => db.sheetSyncState.findUnique({ where: { stateId: STATE_ID } });
@@ -377,7 +395,7 @@ export function createSheetSyncStore({ db } = {}) {
     return Object.freeze({
         claimQueueBatch, completeQueueItem, failQueueItem, retryQueueItem, queueCounts, resolveFailedBefore, openQueueItems, settleReconciled, pruneCompleted,
         requestRun, claimRun, renewRun, finishRun, setRunDestination, getRun, latestRun, recentRuns,
-        getState, stateExists, ensureStateRow, acquireWriterLease, releaseWriterLease, heartbeat, setIntegrationState, recordTransientError, recordSyncSuccess,
+        openDeletionApprovals, consumeDeletionApprovals, getState, stateExists, ensureStateRow, acquireWriterLease, releaseWriterLease, heartbeat, setIntegrationState, recordTransientError, recordSyncSuccess,
         requestDestination, clearRequestedDestination, promoteDestination,
     });
 }

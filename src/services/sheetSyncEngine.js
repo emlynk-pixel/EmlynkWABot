@@ -167,8 +167,13 @@ export function createSheetSyncEngine({ reader, sheets, clock = () => new Date()
     // stops the run. onlyUniqueIds (the first-write pilot): only these
     // candidates are appended/updated; every other candidate is left as it
     // is (counted outsideScope) and no row is marked inactive.
+    // approvedInactive (a Set of unique IDs, from sheet_deletion_approval): candidates a ROLLBACK of a bulk import
+    // deleted. A Sheet row whose candidate is absent from this complete snapshot AND is in that set is marked inactive
+    // WITHOUT counting against the deletion guard (a rollback of a whole import would otherwise always exceed it).
+    // It is the only way past the guard: every other absent row is judged by the unchanged guard, and an approved
+    // ID that is still in the database, or an empty snapshot, approves nothing.
     // Returns a summary of counts (no candidate data).
-    async function reconcile({ dryRun = false, guard, chunkSize = DEFAULT_WRITE_CHUNK, beforeWrite, onlyUniqueIds = null } = {}) {
+    async function reconcile({ dryRun = false, guard, chunkSize = DEFAULT_WRITE_CHUNK, beforeWrite, onlyUniqueIds = null, approvedInactive = null } = {}) {
         if (!guard || !Number.isFinite(guard.max) || !Number.isFinite(guard.fraction)) throw new Error("A deletion guard is required");
         const layout = await sheets.readLayout();
 
@@ -223,17 +228,24 @@ export function createSheetSyncEngine({ reader, sheets, clock = () => new Date()
             if (inDatabase.has(uniqueId)) continue;
             const cells = cellsByRow.get(rowNumber);
             if (isInactive(cells)) summary.alreadyInactive += 1;
-            else toMark.push({ rowNumber, cells });
+            else toMark.push({ uniqueId, rowNumber, cells });
         }
         if (scope) {
             // A scoped (pilot) run never marks rows inactive.
             summary.notInDatabase = toMark.length;
-        } else if (deletionGuardAllows({ count: toMark.length, identifiedRows: index.size, snapshotCount, ...guard })) {
-            for (const { rowNumber, cells } of toMark) updates.push({ rowNumber, cells: inactiveRow(cells, mirroredAt) });
-            summary.markedInactive = toMark.length;
         } else {
-            summary.deletionGuardTriggered = true;
-            summary.notInDatabase = toMark.length;
+            const approved = approvedInactive && snapshotCount > 0 ? toMark.filter((m) => approvedInactive.has(m.uniqueId)) : [];
+            const judged = approved.length ? toMark.filter((m) => !approvedInactive.has(m.uniqueId)) : toMark;
+            for (const { rowNumber, cells } of approved) updates.push({ rowNumber, cells: inactiveRow(cells, mirroredAt) });
+            summary.markedInactive = approved.length;
+            summary.approvedInactive = approved.length;
+            if (deletionGuardAllows({ count: judged.length, identifiedRows: index.size, snapshotCount, ...guard })) {
+                for (const { rowNumber, cells } of judged) updates.push({ rowNumber, cells: inactiveRow(cells, mirroredAt) });
+                summary.markedInactive += judged.length;
+            } else {
+                summary.deletionGuardTriggered = true;
+                summary.notInDatabase = judged.length;
+            }
         }
 
         await write({ updates, appends, dryRun, chunkSize, beforeWrite, layout });

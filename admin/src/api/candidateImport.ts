@@ -149,3 +149,56 @@ export function updateImportJobGroups(token: string, importId: string, suffixes:
 export function finishImport(token: string, importId: string): Promise<ImportFinish> {
     return apiRequest<ImportFinish>(`${BASE}/${encodeURIComponent(importId)}/finish`, { method: "POST", token, body: {} });
 }
+
+// ---------------------------------------------------------------- rollback (src/routes/candidateImport.js)
+// Counts, entity kinds, sheet row numbers and reason codes only: never a candidate's data.
+
+export type RollbackItem = { entityType: string; op: string; rowNumber: number | null; reasons: string[] };
+export type RollbackCounts = { eligible: number; conflicts: number; missing: number; alreadyReverted: number };
+
+// What a rollback would do now (writes nothing). canStart false: blockedReason says why
+// (IMPORT_STILL_COMMITTING, NOTHING_TO_ROLL_BACK, ALREADY_ROLLED_BACK, ROLLBACK_IN_PROGRESS, NOTHING_TO_REVERT, NOT_ALLOWED).
+export type RollbackPreview = {
+    importId: string;
+    status: string;
+    canStart: boolean;
+    blockedReason: string | null;
+    // false: the server cannot verify personal values (the ledger key is not configured): they are kept, not reverted.
+    keyAvailable: boolean;
+    summary: RollbackCounts & { total: number };
+    willDelete: { candidates: number; jobs: number; clients: number; agents: number };
+    byType: Record<string, Partial<RollbackCounts>>;
+    reasons: Record<string, number>;
+    conflicts: RollbackItem[];
+    missing: RollbackItem[];
+};
+
+// The report of a rollback in progress or finished. done false: call again to continue.
+export type RollbackReport = {
+    importId: string;
+    status: string;
+    previousStatus: string | null;
+    done: boolean;
+    startedAt: string | null;
+    completedAt: string | null;
+    counts: { total: number; reverted: number; conflicts: number; skipped: number; remaining: number };
+    byType: Record<string, { reverted: number; conflicts: number; skipped: number; remaining: number }>;
+    reasons: Record<string, number>;
+    conflicts: RollbackItem[];
+    sync: { requested: boolean; runId: string | null; alreadyActive: boolean } | null;
+    lastError: { code: string; at: string } | null;
+};
+
+export function previewImportRollback(token: string, importId: string, signal?: AbortSignal): Promise<RollbackPreview> {
+    return apiRequest<RollbackPreview>(`${BASE}/${encodeURIComponent(importId)}/rollback/preview`, { token, signal });
+}
+
+export function getImportRollback(token: string, importId: string, signal?: AbortSignal): Promise<RollbackReport> {
+    return apiRequest<RollbackReport>(`${BASE}/${encodeURIComponent(importId)}/rollback`, { token, signal });
+}
+
+// Runs (or continues) the rollback within the server's time budget. expectedEligible: the number the administrator
+// confirmed (a fresh run is refused with 409 ROLLBACK_PREVIEW_CHANGED if it no longer matches); null when continuing.
+export function runImportRollback(token: string, importId: string, expectedEligible: number | null): Promise<RollbackReport> {
+    return apiRequest<RollbackReport>(`${BASE}/${encodeURIComponent(importId)}/rollback`, { method: "POST", token, body: { confirm: true, expectedEligible } });
+}

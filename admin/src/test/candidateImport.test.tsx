@@ -464,3 +464,145 @@ describe("duplicate upload protection", () => {
         expect(calls.filter((c) => c.path.endsWith("/finish"))).toEqual([]);
     });
 });
+
+// Rolling back an import: review, explicit confirmation, run, report. Counts, record kinds, sheet rows and codes only.
+describe("rollback of an import", () => {
+    const IMPORT_ID = "6f1e0c3a-8b7d-4c2e-9a41-5d3b2f9e7a10";
+    const ACTIVE = { importId: IMPORT_ID, status: "COMMITTING", fileName: "legacy.xlsx", totalRows: 250, chunkSize: 100, chunkCount: 3, committedChunks: [0], ownedByYou: true, stale: false, updatedAt: "2026-11-09T04:00:00.000Z" };
+    const SOURCE = { [`GET ${BASE}/import/source-columns`]: { status: 200, body: { allowed: ALLOWED, required: REQUIRED } } };
+    const ROLLBACK = `${BASE}/import/${IMPORT_ID}/rollback`;
+    const PREVIEW = {
+        importId: IMPORT_ID, status: "ABORTED", canStart: true, blockedReason: null, keyAvailable: true,
+        summary: { total: 14, eligible: 12, conflicts: 2, missing: 0, alreadyReverted: 0 },
+        willDelete: { candidates: 4, jobs: 1, clients: 1, agents: 1 },
+        byType: {}, reasons: { FIELD_CHANGED: 1, PARENT_NOT_REVERTED: 1 },
+        conflicts: [
+            { entityType: "CANDIDATE", op: "CREATE", rowNumber: 7, reasons: ["FIELD_CHANGED:address"] },
+            { entityType: "CANDIDATE_STAGE", op: "CREATE", rowNumber: 7, reasons: ["PARENT_NOT_REVERTED"] },
+        ],
+        missing: [],
+    };
+    const report = (over: Record<string, unknown> = {}) => ({
+        importId: IMPORT_ID, status: "ROLLED_BACK_WITH_CONFLICTS", previousStatus: "ABORTED", done: true, startedAt: "2026-11-09T05:00:00.000Z", completedAt: "2026-11-09T05:01:00.000Z",
+        counts: { total: 14, reverted: 12, conflicts: 2, skipped: 0, remaining: 0 }, byType: {}, reasons: { FIELD_CHANGED: 1, PARENT_NOT_REVERTED: 1 }, conflicts: PREVIEW.conflicts,
+        sync: { requested: true, runId: "run-1", alreadyActive: false }, lastError: null, ...over,
+    });
+    // Your own import in progress -> Abort -> Review rollback…
+    async function openReview(routes: FetchRoutes = {}) {
+        const backend = asRole("ADMIN", {
+            ...SOURCE,
+            [`GET ${BASE}/import/active`]: { status: 200, body: { active: ACTIVE } },
+            [`POST ${BASE}/import/${IMPORT_ID}/abort`]: { status: 200, body: { importId: IMPORT_ID, status: "ABORTED", totalRows: 250, counts: { created: 100 }, syncRunId: null } },
+            [`GET ${ROLLBACK}/preview`]: { status: 200, body: PREVIEW },
+            ...routes,
+        });
+        renderApp("/settings/sheet-sync");
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /^Upload: import candidates/ });
+        await user.click(await within(dialog).findByRole("button", { name: "Abort that import" }));
+        await user.click(await within(dialog).findByRole("button", { name: "Review rollback…" }));
+        return { ...backend, user, dialog: await screen.findByRole("dialog", { name: "Roll back an import" }) };
+    }
+
+    test("the review shows what would be reversed and what stays and why, changes nothing, and asks for confirmation", async () => {
+        const { calls, dialog } = await openReview();
+        const preview = await within(dialog).findByRole("group", { name: "Rollback preview" }).catch(() => within(dialog).getByLabelText("Rollback preview"));
+        expect(within(preview).getByText("Will be reversed").nextSibling).toHaveTextContent("12");
+        expect(within(preview).getByText("Cannot be reversed").nextSibling).toHaveTextContent("2");
+        expect(within(dialog).getByText(/delete 4 candidates, 1 Job, 1 Client and 1 Agent/)).toBeInTheDocument();
+        const reasons = within(dialog).getByLabelText("Why changes are kept");
+        expect(within(reasons).getByText(/A value the import wrote was changed afterwards\. \(1 change\)/)).toBeInTheDocument();
+        const table = within(dialog).getByLabelText("Changes that stay");
+        expect(within(table).getByText("Candidate")).toBeInTheDocument();
+        expect(within(table).getAllByText("7", { selector: "td" })).toHaveLength(2);
+        expect(within(table).getByText("Stage")).toBeInTheDocument();
+        // Nothing but the review request has been sent, and the button waits for the checkbox.
+        expect(calls.filter((c) => c.method === "POST" && c.path.endsWith("/rollback"))).toEqual([]);
+        expect(within(dialog).getByRole("button", { name: "Roll back 12 changes" })).toBeDisabled();
+        expect(dialog.textContent).not.toMatch(/N9\d{6}|SYNTH/);
+    });
+
+    test("confirm -> the server is called until it reports done (progress), with the number that was confirmed; then the report", async () => {
+        const answers = [report({ done: false, status: "ROLLING_BACK", counts: { total: 14, reverted: 5, conflicts: 0, skipped: 0, remaining: 9 } }), report()];
+        const { calls, user, dialog } = await openReview({ [`POST ${ROLLBACK}`]: () => ({ status: 200, body: answers.shift() }) });
+        await user.click(await within(dialog).findByRole("checkbox"));
+        await user.click(within(dialog).getByRole("button", { name: "Roll back 12 changes" }));
+        expect(await within(dialog).findByText("The import was rolled back, except for the changes listed below.")).toBeInTheDocument();
+        const posts = calls.filter((c) => c.method === "POST" && c.path === `${ROLLBACK}`);
+        expect(posts.map((c) => c.body)).toEqual([{ confirm: true, expectedEligible: 12 }, { confirm: true, expectedEligible: null }]);
+        const result = within(dialog).getByLabelText("Rollback report");
+        expect(within(result).getByText("Reversed").nextSibling).toHaveTextContent("12");
+        expect(within(result).getByText("Kept (could not be reversed safely)").nextSibling).toHaveTextContent("2");
+        expect(within(dialog).getByText(/A Google Sheet sync was requested/)).toBeInTheDocument();
+    });
+
+    test("a double click sends one rollback; the button and the dialog are locked while it runs", async () => {
+        let release: (value: { status: number; body: unknown }) => void = () => {};
+        const held = new Promise<{ status: number; body: unknown }>((resolve) => { release = resolve; });
+        const { calls, user, dialog } = await openReview({ [`POST ${ROLLBACK}`]: () => held });
+        await user.click(await within(dialog).findByRole("checkbox"));
+        const button = within(dialog).getByRole("button", { name: "Roll back 12 changes" });
+        await user.dblClick(button);
+        expect(await within(dialog).findByText(/Rolling back…/)).toBeInTheDocument();
+        expect(calls.filter((c) => c.method === "POST" && c.path === ROLLBACK)).toHaveLength(1);
+        expect(within(dialog).queryByRole("button", { name: "Close" })).toBeNull();
+        await user.keyboard("{Escape}");
+        expect(screen.getByRole("dialog", { name: "Roll back an import" })).toBeInTheDocument();
+        release({ status: 200, body: report({ status: "ROLLED_BACK", counts: { total: 14, reverted: 14, conflicts: 0, skipped: 0, remaining: 0 }, reasons: {}, conflicts: [] }) });
+        expect(await within(dialog).findByText("The import was rolled back.")).toBeInTheDocument();
+    });
+
+    test("an import that changed after the review is refused: nothing was rolled back, the new numbers are shown", async () => {
+        const previews = [PREVIEW, { ...PREVIEW, summary: { ...PREVIEW.summary, eligible: 9, conflicts: 5 } }];
+        const { user, dialog } = await openReview({
+            [`GET ${ROLLBACK}/preview`]: () => ({ status: 200, body: previews.shift() ?? PREVIEW }),
+            [`POST ${ROLLBACK}`]: { status: 409, body: { message: "The import changed since you reviewed it. Review it again before rolling back.", code: "ROLLBACK_PREVIEW_CHANGED", details: {} } },
+        });
+        await user.click(await within(dialog).findByRole("checkbox"));
+        await user.click(within(dialog).getByRole("button", { name: "Roll back 12 changes" }));
+        expect(await within(dialog).findByText(/changed after you reviewed it, so nothing was rolled back/)).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Roll back 9 changes" })).toBeDisabled();
+        expect(within(dialog).getByRole("checkbox")).not.toBeChecked();
+    });
+
+    test("an interrupted rollback says nothing is half done and offers to continue", async () => {
+        const { user, dialog } = await openReview({ [`POST ${ROLLBACK}`]: { status: 409, body: { message: "The rollback was interrupted. Nothing is half done. Continue it to retry.", code: "ROLLBACK_INTERRUPTED", details: {} } } });
+        await user.click(await within(dialog).findByRole("checkbox"));
+        await user.click(within(dialog).getByRole("button", { name: "Roll back 12 changes" }));
+        expect(await within(dialog).findByText(/The rollback was interrupted/)).toBeInTheDocument();
+        expect(within(dialog).getByText(/Nothing is left half done/)).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Review and continue" })).toBeEnabled();
+    });
+
+    test("a second rollback, one still committing, or another caller's is explained and cannot be confirmed", async () => {
+        const { dialog } = await openReview({ [`GET ${ROLLBACK}/preview`]: { status: 200, body: { ...PREVIEW, canStart: false, blockedReason: "ROLLBACK_IN_PROGRESS" } } });
+        expect(await within(dialog).findByText(/being rolled back right now/)).toBeInTheDocument();
+        expect(within(dialog).queryByRole("checkbox")).toBeNull();
+        expect(within(dialog).queryByRole("button", { name: /^Roll back/ })).toBeNull();
+    });
+
+    test("without the server's ledger key the review says personal records are kept", async () => {
+        const { dialog } = await openReview({ [`GET ${ROLLBACK}/preview`]: { status: 200, body: { ...PREVIEW, keyAvailable: false } } });
+        expect(await within(dialog).findByText(/cannot verify personal data right now/)).toBeInTheDocument();
+    });
+
+    test("an interrupted rollback of yours is offered when the dialog opens, and continuing it shows how far it got", async () => {
+        const interrupted = { ...ACTIVE, status: "ROLLING_BACK" };
+        asRole("ADMIN", {
+            ...SOURCE,
+            [`GET ${BASE}/import/active`]: { status: 200, body: { active: interrupted } },
+            [`GET ${ROLLBACK}/preview`]: { status: 200, body: { ...PREVIEW, status: "ROLLING_BACK" } },
+            [`GET ${ROLLBACK}`]: { status: 200, body: report({ done: false, status: "ROLLING_BACK" }) },
+        });
+        renderApp("/settings/sheet-sync");
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /^Upload: import candidates/ });
+        expect(within(dialog).queryByRole("button", { name: "Abort that import" })).toBeNull();
+        await user.click(await within(dialog).findByRole("button", { name: "Continue rollback" }));
+        const panel = await screen.findByRole("dialog", { name: "Roll back an import" });
+        expect(await within(panel).findByText(/12 changes were already reversed before it was interrupted/)).toBeInTheDocument();
+        expect(within(panel).getByRole("button", { name: "Continue rollback" })).toBeDisabled();
+    });
+});

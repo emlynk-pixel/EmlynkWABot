@@ -199,31 +199,97 @@ export function createLedger({ importId, chunkIndex, keyring = null }) {
 
 // ---------------------------------------------------------------- the current record of an entry (read-only)
 
-function createResolver(db) {
-    const passportCache = new Map();
-    const passportOf = async (uniqueId) => {
-        if (!passportCache.has(uniqueId)) passportCache.set(uniqueId, (await db.candidate.findFirst({ where: { uniqueId }, select: { passportId: true } }))?.passportId ?? null);
-        return passportCache.get(uniqueId);
-    };
+// A reader of the CURRENT state of what an import changed. It loads in bulk (prefetch: a handful of queries for a
+// few hundred candidates, so assessing or rolling back a 3,000-row import does not cost thousands of queries) and
+// falls back to a single query for anything not prefetched. A rollback creates one per batch INSIDE the batch's
+// transaction, after the rows are locked, so what it reads is what it then changes.
+export function createResolver(db, importId) {
+    const candidates = new Map(); // unique_id -> the candidate row (all columns) | null
+    const details = new Map(); // passport -> row | null
+    const stages = new Map(); // passport -> rows[]
+    const allocations = new Map(); // passport -> row | null
+    const memberships = new Map(); // passport -> job_candidate rows[]
+    const documents = new Map(); // passport -> count
+    const audits = new Map(); // passport -> dates of audit rows by anything other than this import, after the entries
     const select = (entry) => Object.fromEntries(Object.keys(entry.changes ?? {}).map((f) => [f, true]));
+
+    const uniqueIdOf = (entry) => {
+        switch (entry.entityType) {
+            case LEDGER_ENTITY.CANDIDATE: case LEDGER_ENTITY.DETAILS: case LEDGER_ENTITY.ALLOCATION: return entry.entityKey;
+            case LEDGER_ENTITY.STAGE: return entry.entityKey.split(":")[0];
+            case LEDGER_ENTITY.JOB_CANDIDATE: return entry.entityKey.split(":")[1];
+            default: return null;
+        }
+    };
+    const groupBy = (rows, key) => {
+        const out = new Map();
+        for (const row of rows) {
+            if (!out.has(row[key])) out.set(row[key], []);
+            out.get(row[key]).push(row);
+        }
+        return out;
+    };
+
+    async function prefetch(entries) {
+        const ids = [...new Set(entries.map(uniqueIdOf).filter(Boolean))].filter((id) => !candidates.has(id));
+        if (!ids.length) return;
+        const found = await db.candidate.findMany({ where: { uniqueId: { in: ids } } });
+        for (const id of ids) candidates.set(id, found.find((c) => c.uniqueId === id) ?? null);
+        const passportIds = found.map((c) => c.passportId);
+        if (!passportIds.length) return;
+        const [detailRows, stageRows, allocationRows, memberRows, documentCounts] = await Promise.all([
+            db.candidateAdditionalDetails.findMany({ where: { passportId: { in: passportIds } } }),
+            db.candidateStage.findMany({ where: { passportId: { in: passportIds } } }),
+            db.candidateAllocation.findMany({ where: { passportId: { in: passportIds } } }),
+            db.jobCandidate.findMany({ where: { passportId: { in: passportIds } } }),
+            db.document.groupBy({ by: ["passportId"], where: { passportId: { in: passportIds } }, _count: { _all: true } }),
+        ]);
+        const [stageBy, memberBy] = [groupBy(stageRows, "passportId"), groupBy(memberRows, "passportId")];
+        const counts = new Map(documentCounts.map((row) => [row.passportId, row._count._all]));
+        for (const passportId of passportIds) {
+            details.set(passportId, detailRows.find((d) => d.passportId === passportId) ?? null);
+            stages.set(passportId, stageBy.get(passportId) ?? []);
+            allocations.set(passportId, allocationRows.find((a) => a.passportId === passportId) ?? null);
+            memberships.set(passportId, memberBy.get(passportId) ?? []);
+            documents.set(passportId, counts.get(passportId) ?? 0);
+        }
+        // Anything recorded about these candidates after the import's entries, by something other than this import.
+        const since = entries.filter((e) => e.createdAt).reduce((min, e) => (!min || e.createdAt < min ? e.createdAt : min), null);
+        if (since) {
+            const later = await db.auditLog.findMany({
+                where: { passportId: { in: passportIds }, createdDate: { gt: since }, OR: [{ reason: null }, { NOT: { reason: { contains: importId } } }] },
+                select: { passportId: true, createdDate: true },
+            });
+            const laterBy = groupBy(later, "passportId");
+            for (const passportId of passportIds) audits.set(passportId, (laterBy.get(passportId) ?? []).map((a) => a.createdDate));
+        }
+    }
+    const ensure = async (uniqueId) => {
+        if (!candidates.has(uniqueId)) await prefetch([{ entityType: LEDGER_ENTITY.CANDIDATE, entityKey: uniqueId, changes: {}, createdAt: new Date(0) }]);
+    };
+    const passportOf = async (uniqueId) => {
+        await ensure(uniqueId);
+        return candidates.get(uniqueId)?.passportId ?? null;
+    };
 
     // The fields an entry recorded, as they are now (null when the record is gone).
     async function fetchCurrent(entry) {
         switch (entry.entityType) {
             case LEDGER_ENTITY.CANDIDATE:
-                return db.candidate.findFirst({ where: { uniqueId: entry.entityKey }, select: { ...select(entry), passportId: true } });
+                await ensure(entry.entityKey);
+                return candidates.get(entry.entityKey);
             case LEDGER_ENTITY.DETAILS: {
                 const passportId = await passportOf(entry.entityKey);
-                return passportId ? db.candidateAdditionalDetails.findUnique({ where: { passportId }, select: select(entry) }) : null;
+                return passportId ? details.get(passportId) : null;
             }
             case LEDGER_ENTITY.STAGE: {
                 const [uniqueId, stage] = entry.entityKey.split(":");
                 const passportId = await passportOf(uniqueId);
-                return passportId ? db.candidateStage.findUnique({ where: { passportId_stage: { passportId, stage } }, select: select(entry) }) : null;
+                return passportId ? (stages.get(passportId) ?? []).find((s) => s.stage === stage) ?? null : null;
             }
             case LEDGER_ENTITY.ALLOCATION: {
                 const passportId = await passportOf(entry.entityKey);
-                return passportId ? db.candidateAllocation.findUnique({ where: { passportId }, select: select(entry) }) : null;
+                return passportId ? allocations.get(passportId) : null;
             }
             case LEDGER_ENTITY.CLIENT:
                 return db.client.findUnique({ where: { id: entry.entityKey }, select: select(entry) });
@@ -237,7 +303,15 @@ function createResolver(db) {
                 return null;
         }
     }
-    return { passportOf, fetchCurrent };
+    return {
+        prefetch, passportOf, fetchCurrent,
+        membershipsOf: (passportId) => memberships.get(passportId) ?? [],
+        stagesOf: (passportId) => stages.get(passportId) ?? [],
+        allocationOf: (passportId) => allocations.get(passportId) ?? null,
+        detailsOf: (passportId) => details.get(passportId) ?? null,
+        documentCount: (passportId) => documents.get(passportId) ?? 0,
+        laterAuditAfter: (passportId, createdAt) => (audits.get(passportId) ?? []).some((date) => date > createdAt),
+    };
 }
 
 // ---------------------------------------------------------------- eligibility (read-only)
@@ -263,14 +337,40 @@ function keyringFor(keyring) {
 //   HAS_OTHER_JOBS, HAS_OTHER_AGENT_LINKS, JOB_STATUS_CHANGED, MEMBERSHIP_CHANGED
 // notes (not conflicts): LEGACY_PLAIN_SHA256 (re-sign it with rekeyImportLedger).
 export async function assessImportLedger({ db, importId, keyring }) {
-    const keys = keyringFor(keyring);
     const rows = await db.candidateImportChange.findMany({ where: { importId }, orderBy: [{ chunkIndex: "asc" }, { createdAt: "asc" }, { changeId: "asc" }] });
+    const { assess, prefetch } = createAssessor({ db, importId, rows, keyring });
+    const entries = [];
+    for (let i = 0; i < rows.length; i += 500) {
+        await prefetch(rows.slice(i, i + 500)); // a few queries for 500 entries, not several per entry
+        for (const row of rows.slice(i, i + 500)) entries.push(await assess(row));
+    }
+    return summarizeAssessment(importId, entries);
+}
+
+export function summarizeAssessment(importId, entries) {
+    const count = (state) => entries.filter((e) => e.state === state).length;
+    return {
+        importId,
+        summary: {
+            total: entries.length, eligible: count(ASSESSMENT.ELIGIBLE), conflicts: count(ASSESSMENT.CONFLICT), missing: count(ASSESSMENT.MISSING),
+            alreadyReverted: count(ASSESSMENT.ALREADY_REVERTED), legacyPlainSha256: entries.filter((e) => e.notes.includes("LEGACY_PLAIN_SHA256")).length,
+        },
+        entries,
+    };
+}
+
+// The checks of assessImportLedger, bound to a database client (the database, or a rollback's transaction, so the
+// rollback re-checks every entry inside the transaction that reverts it) and to the import's entries (the
+// context: what the import itself made).
+export function createAssessor({ db, importId, rows, keyring }) {
+    const keys = keyringFor(keyring);
     const ledgered = (type) => new Set(rows.filter((r) => r.entityType === type).map((r) => r.entityKey));
     const ledgeredJobs = ledgered(LEDGER_ENTITY.JOB);
     const ledgeredLinks = ledgered(LEDGER_ENTITY.AGENT_CLIENT);
     const ledgeredMembers = ledgered(LEDGER_ENTITY.JOB_CANDIDATE);
     const ledgeredStages = ledgered(LEDGER_ENTITY.STAGE);
-    const { passportOf, fetchCurrent } = createResolver(db);
+    const resolver = createResolver(db, importId);
+    const { passportOf, fetchCurrent } = resolver;
 
     async function assess(entry) {
         const reasons = [];
@@ -302,20 +402,12 @@ export async function assessImportLedger({ db, importId, keyring }) {
                 if (!current) return finish(ASSESSMENT.MISSING);
                 compare(current);
                 if (created) {
-                    const [documents, members, stages, later] = await Promise.all([
-                        db.document.count({ where: { passportId: current.passportId } }),
-                        db.jobCandidate.findMany({ where: { passportId: current.passportId }, select: { jobId: true } }),
-                        db.candidateStage.findMany({ where: { passportId: current.passportId }, select: { stage: true } }),
-                        // Anything recorded about this candidate after the import, by something other than this import.
-                        db.auditLog.findFirst({
-                            where: { passportId: current.passportId, createdDate: { gt: entry.createdAt }, OR: [{ reason: null }, { NOT: { reason: { contains: importId } } }] },
-                            select: { auditId: true },
-                        }),
-                    ]);
-                    if (documents) reasons.push("HAS_DOCUMENTS");
-                    if (members.some((m) => !ledgeredMembers.has(`${m.jobId}:${entry.entityKey}`))) reasons.push("HAS_OTHER_JOB_MEMBERSHIP");
-                    if (stages.some((s) => !ledgeredStages.has(`${entry.entityKey}:${s.stage}`))) reasons.push("HAS_OTHER_STAGES");
-                    if (later) reasons.push("CHANGED_AFTER_IMPORT");
+                    const passportId = current.passportId;
+                    if (resolver.documentCount(passportId)) reasons.push("HAS_DOCUMENTS");
+                    if (resolver.membershipsOf(passportId).some((m) => !ledgeredMembers.has(`${m.jobId}:${entry.entityKey}`))) reasons.push("HAS_OTHER_JOB_MEMBERSHIP");
+                    if (resolver.stagesOf(passportId).some((s) => !ledgeredStages.has(`${entry.entityKey}:${s.stage}`))) reasons.push("HAS_OTHER_STAGES");
+                    // Anything recorded about this candidate after the import, by something other than this import.
+                    if (resolver.laterAuditAfter(passportId, entry.createdAt)) reasons.push("CHANGED_AFTER_IMPORT");
                 }
                 return verdict();
             }
@@ -372,7 +464,7 @@ export async function assessImportLedger({ db, importId, keyring }) {
             case LEDGER_ENTITY.JOB_CANDIDATE: {
                 const [jobId, uniqueId] = entry.entityKey.split(":");
                 const passportId = await passportOf(uniqueId);
-                const current = passportId ? await db.jobCandidate.findUnique({ where: { jobId_passportId: { jobId, passportId } }, select: { isActive: true, releasedAt: true } }) : null;
+                const current = passportId ? resolver.membershipsOf(passportId).find((m) => m.jobId === jobId) ?? null : null;
                 if (!current) return finish(ASSESSMENT.MISSING);
                 if (!current.isActive || current.releasedAt) reasons.push("MEMBERSHIP_CHANGED");
                 return verdict();
@@ -383,17 +475,7 @@ export async function assessImportLedger({ db, importId, keyring }) {
         }
     }
 
-    const entries = [];
-    for (const row of rows) entries.push(await assess(row));
-    const count = (state) => entries.filter((e) => e.state === state).length;
-    return {
-        importId,
-        summary: {
-            total: entries.length, eligible: count(ASSESSMENT.ELIGIBLE), conflicts: count(ASSESSMENT.CONFLICT), missing: count(ASSESSMENT.MISSING),
-            alreadyReverted: count(ASSESSMENT.ALREADY_REVERTED), legacyPlainSha256: entries.filter((e) => e.notes.includes("LEGACY_PLAIN_SHA256")).length,
-        },
-        entries,
-    };
+    return { assess, prefetch: resolver.prefetch, resolver, passportOf, fetchCurrent };
 }
 
 // ---------------------------------------------------------------- re-signing (legacy entries, key rotation)
@@ -406,7 +488,7 @@ export async function assessImportLedger({ db, importId, keyring }) {
 // Returns { entries, rekeyed, unverified } (fields).
 export async function rekeyImportLedger({ db, importId, keyring }) {
     if (!keyring) throw new LedgerKeyConfigError(["MISSING_KEYRING"]);
-    const { fetchCurrent } = createResolver(db);
+    const { fetchCurrent } = createResolver(db, importId);
     const rows = await db.candidateImportChange.findMany({ where: { importId } });
     const result = { entries: 0, rekeyed: 0, unverified: 0 };
     for (const row of rows) {

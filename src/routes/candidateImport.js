@@ -12,6 +12,12 @@
 //                                   administrators' imports do not matter: they run side by side)
 //   POST /:importId/finish          totals, audit, and the existing RECONCILE run (idempotent)
 //   POST /:importId/abort           stop on purpose, keep the rows imported so far (owner; any ADMIN if stale)
+//   GET  /:importId/rollback/preview  what a rollback would do now (eligible / conflicts and why / missing / already
+//                                   reverted); writes nothing. The administrator who ran the import, or an Owner.
+//   POST /:importId/rollback        { confirm: true, expectedEligible } -> runs the rollback within a time budget and
+//                                   answers the report; done = false means call again (a long import takes several
+//                                   calls, each safe to repeat). 409 ROLLBACK_IN_PROGRESS while another call holds it.
+//   GET  /:importId/rollback        the rollback's report (counts and codes only)
 //   GET  /:importId                 the import's state (counts only)
 //
 // ADMIN only (an OWNER too; requireRole, the role is re-read from the database on every request).
@@ -27,6 +33,7 @@ import { resolveDb } from "../utils/resolveClients.js";
 import {
     CandidateImportError, abortImport, commitChunk, finishImport, getActiveImport, getImport, importSourceColumns, isValidImportId, parseChunkBody, parsePreviewBody, previewImport, updateImportJobGroups,
 } from "../services/candidateImportService.js";
+import { executeRollback, getRollback, previewRollback } from "../services/candidateImportRollback.js";
 
 export const CANDIDATE_IMPORT_ROLES = Object.freeze([ROLES.ADMIN]);
 // A preview of MAX_IMPORT_ROWS allow-listed rows stays well under this (and under Vercel's 4.5 MB).
@@ -112,6 +119,38 @@ export function createCandidateImportRouter({ db, log = console } = {}) {
             const result = await finishImport({ db: await resolveDb(db), actor: req.user, importId: req.params.importId });
             event("finished", { importId: result.importId, status: result.status, ...result.counts, syncRunId: result.syncRunId, adminId: req.user.adminId });
             return res.json(result);
+        } catch (error) {
+            return fail(res, error);
+        }
+    });
+
+    router.get("/:importId/rollback/preview", async (req, res) => {
+        if (!isValidImportId(req.params.importId)) return res.status(400).json({ message: "Invalid import" });
+        try {
+            return res.json(await previewRollback({ db: await resolveDb(db), actor: req.user, importId: req.params.importId }));
+        } catch (error) {
+            return fail(res, error);
+        }
+    });
+
+    router.get("/:importId/rollback", async (req, res) => {
+        if (!isValidImportId(req.params.importId)) return res.status(400).json({ message: "Invalid import" });
+        try {
+            return res.json(await getRollback({ db: await resolveDb(db), actor: req.user, importId: req.params.importId }));
+        } catch (error) {
+            return fail(res, error);
+        }
+    });
+
+    router.post("/:importId/rollback", async (req, res) => {
+        if (!isValidImportId(req.params.importId)) return res.status(400).json({ message: "Invalid import" });
+        const { confirm, expectedEligible } = req.body ?? {};
+        if (confirm !== true) return res.status(400).json({ message: "Confirm the rollback to run it.", code: "CONFIRMATION_REQUIRED" });
+        if (expectedEligible !== undefined && expectedEligible !== null && !Number.isSafeInteger(expectedEligible)) return res.status(400).json({ message: "expectedEligible must be a whole number." });
+        try {
+            const report = await executeRollback({ db: await resolveDb(db), actor: req.user, importId: req.params.importId, confirm: true, expectedEligible: expectedEligible ?? null });
+            event("rollback_step", { importId: report.importId, status: report.status, done: report.done, ...report.counts, adminId: req.user.adminId });
+            return res.json(report);
         } catch (error) {
             return fail(res, error);
         }

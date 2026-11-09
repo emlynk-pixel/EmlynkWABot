@@ -7,6 +7,7 @@ import { formatDate, formatNumber, humanize } from "./format";
 import { ToneBadge, type Tone } from "./StatusBadge";
 import { readWorkbook, WorkbookError } from "./importWorkbook";
 import { downloadValidationWorkbook } from "./validationWorkbook";
+import { ImportRollbackPanel } from "./ImportRollbackPanel";
 
 // Settings -> Google Sheet Sync -> Upload: upload a legacy candidate sheet, preview, confirm.
 //   1. choose a .xlsx: read HERE (the file never leaves the browser)
@@ -23,6 +24,8 @@ type Step =
     | { kind: "preview"; file: File; fileName: string; rows: ImportRow[]; preview: ImportPreview }
     // The chosen file is the one an earlier import of yours was still committing: continue that import.
     | { kind: "resume"; fileName: string; rows: ImportRow[]; details: ResumableImport; totalRows: number }
+    // Review and run the rollback of a finished, aborted or interrupted-rollback import (ImportRollbackPanel.tsx).
+    | { kind: "rollback"; importId: string }
     | { kind: "committing"; done: number; total: number }
     | { kind: "done"; result: ImportFinish; failures: ImportChunkResult["failures"] };
 
@@ -179,7 +182,8 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
     const [savingSuffixes, setSavingSuffixes] = useState(false);
     // Only the commit blocks Cancel and Esc. Reading can be cancelled: the answer of an abandoned
     // read, check or preview is ignored (readSeq), so a stalled reader can never trap the dialog.
-    const busy = step.kind === "committing";
+    const [rollbackBusy, setRollbackBusy] = useState(false); // a rollback is running: Esc and Close wait
+    const busy = step.kind === "committing" || (step.kind === "rollback" && rollbackBusy);
     const reading = step.kind === "reading";
     const readSeq = useRef(0);
     const closeReading = () => { readSeq.current += 1; onClose(); };
@@ -187,6 +191,8 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
     // that cannot start is explained, and a stopped one can be aborted.
     const [activeImport, setActiveImport] = useState<ActiveImport | null>(null);
     const [aborting, setAborting] = useState(false);
+    // An import just aborted from here: its rows were kept, and it can be rolled back.
+    const [aborted, setAborted] = useState<{ importId: string; fileName: string } | null>(null);
     useEffect(() => {
         if (!token) return;
         const controller = new AbortController();
@@ -200,6 +206,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
         setAborting(true);
         try {
             await abortImport(token, activeImport.importId);
+            setAborted({ importId: activeImport.importId, fileName: activeImport.fileName });
             setActiveImport(null);
         } catch (e) {
             setError(errorText(e, "The import could not be aborted."));
@@ -324,6 +331,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
         setError(null);
         try {
             await abortImport(token, step.details.importId);
+            setAborted({ importId: step.details.importId, fileName: step.fileName });
             setActiveImport(null);
             setStep({ kind: "choose" });
         } catch (e) {
@@ -340,7 +348,19 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                     Choose the existing candidate sheet (.xlsx). It is read on this computer; only the columns Emlynk uses are checked by the server.
                     Nothing is saved until you confirm the preview.
                 </p>
-                {activeImport && (
+                {activeImport?.status === "ROLLING_BACK" && (
+                    <div role="alert" aria-label="Rollback in progress" className="mt-3 rounded-lg border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
+                        <p>A rollback of your import {activeImport.fileName} was interrupted. Nothing is half done: continue it to finish.</p>
+                        <button type="button" className={`${secondaryButton} mt-2`} onClick={() => setStep({ kind: "rollback", importId: activeImport.importId })}>Continue rollback</button>
+                    </div>
+                )}
+                {aborted && (
+                    <div role="status" aria-label="Import aborted" className="mt-3 rounded-lg border border-border bg-canvas px-4 py-3 text-body-sm text-ink">
+                        <p>The import {aborted.fileName} was aborted. The rows already imported were kept.</p>
+                        <button type="button" className={`${secondaryButton} mt-2`} onClick={() => setStep({ kind: "rollback", importId: aborted.importId })}>Review rollback…</button>
+                    </div>
+                )}
+                {activeImport && activeImport.status !== "ROLLING_BACK" && (
                     <div role="alert" aria-label="Import in progress" className="mt-3 rounded-lg border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
                         <p>
                             You have an import in progress: {activeImport.fileName},{" "}
@@ -481,6 +501,14 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
         );
     }
 
+    if (step.kind === "rollback") {
+        return (
+            <Shell title="Roll back an import" busy={busy} onClose={onClose}>
+                <ImportRollbackPanel importId={step.importId} onClose={onClose} onBusyChange={setRollbackBusy} />
+            </Shell>
+        );
+    }
+
     if (step.kind === "committing") {
         return (
             <Shell title={title} busy onClose={onClose}>
@@ -527,7 +555,10 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                 </ul>
             )}
             <DialogError message={error} />
-            <div className="mt-5 flex justify-end">
+            <div className="mt-5 flex justify-end gap-2">
+                {(c.created ?? 0) + (c.filled ?? 0) + (c.jobAssignments ?? 0) > 0 && (
+                    <button type="button" className={secondaryButton} onClick={() => setStep({ kind: "rollback", importId: result.importId })}>Roll back this import…</button>
+                )}
                 <button type="button" className={primaryButton} onClick={onClose}>Close</button>
             </div>
         </Shell>

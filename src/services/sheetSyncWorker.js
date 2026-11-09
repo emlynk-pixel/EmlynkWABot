@@ -320,6 +320,7 @@ export function createSheetSyncWorker({
         const onlyUniqueIds = tuning.pilotCandidateIds ?? null;
         emit("info", "sheet_sync.reconcile_started", { runId: run.runId, trigger: run.triggerSource, dryRun, pilot: Boolean(onlyUniqueIds) });
         let covered = [];
+        let approved = new Set();
         let destination = null;
         const execute = async () => {
             // The active destination, resolved now (inside the writer lease
@@ -330,9 +331,13 @@ export function createSheetSyncWorker({
             // Read before the engine reads the database: every change these
             // rows stand for is in the snapshot the engine mirrors.
             if (!dryRun) covered = await store.openQueueItems({ onlyUniqueIds });
+            // Candidates a rollback of a bulk import deleted: their Sheet rows may be marked inactive beyond the
+            // deletion guard (only these, only when absent from the complete snapshot).
+            if (!dryRun && !onlyUniqueIds) approved = await store.openDeletionApprovals();
             return runnerFor(destination).engine.reconcile({
                 dryRun,
                 onlyUniqueIds,
+                approvedInactive: approved,
                 guard: { max: tuning.deletionGuardMax, fraction: tuning.deletionGuardFraction },
                 beforeWrite: async () => {
                     await renewWriterLease();
@@ -351,6 +356,9 @@ export function createSheetSyncWorker({
             consecutiveSkips = 0;
             const summary = outcome.value;
             if (!dryRun) summary.queueSettled = await store.settleReconciled(covered, { now });
+            // The approvals this run was given are used up (a candidate still in the database was approved for nothing),
+            // but only when the engine could judge them: against an empty snapshot it approves nothing, so they wait.
+            if (!dryRun && approved.size && summary.databaseCandidates > 0) await store.consumeDeletionApprovals(approved, { now });
             await store.finishRun(run, { status: RUN_STATUS.SUCCEEDED, summary, dryRun, now });
             await store.setIntegrationState({ state: INTEGRATION_STATE.OK, now });
             if (!dryRun) {

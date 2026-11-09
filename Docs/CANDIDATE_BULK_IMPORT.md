@@ -384,3 +384,22 @@ The WhatsApp webhook writes only `temporary_data`. Agents' and clients' phones a
    - candidates whose details are verified, because changing the column would clear the verification. They keep the older form, which still compares correctly.
    
    Each rewrite queues the candidate for the mirror through the existing triggers.
+
+
+## 13. Concurrency, the change ledger and rollback
+
+**One import per administrator.** Each administrator may have one import `COMMITTING`; different administrators import side by side (database index on `admin_id`). What they share is protected in the database: a chunk's unique IDs are allocated under one advisory lock, a Job group is read and written under a per-date advisory lock, and passports, NICs, Client / Agent names and Job-group keys are unique constraints.
+
+**The change ledger** (`candidate_import_change`, `src/services/candidateImportLedger.js`). Every change an import makes is recorded in the same transaction as the change: what was created or filled, by internal id, with the exact previous value (`null` and `""` stay different) and what was written. Personal values are never stored: they are a keyed HMAC-SHA256 (`IMPORT_LEDGER_HMAC_SECRET`, see `Deployment/02-ENVIRONMENT-VARIABLES.md`). Without that key an import is refused (503) and nothing is written.
+
+**Rollback** (`src/services/candidateImportRollback.js`, Upload dialog: "Roll back this import…"). An administrator who ran an import, or an Owner, reviews what a rollback would do (nothing is changed by looking), confirms explicitly, and the server reverses it in short batches:
+
+| Entry | Reversed only if |
+|---|---|
+| Created record (candidate, Job, Client, Agent) | every value the import wrote is still there, nothing has been recorded about it since by anything else, and nothing else depends on it (documents, Job memberships, forms, other Jobs ... found from the database's own foreign keys) |
+| Filled blank | the filled fields still hold what the import wrote; they go back to the exact previous value |
+| Link / membership | it is still as the import made it |
+
+A candidate the import created is deleted together with what the import gave it (details, stages, allocation, Job memberships), or kept together: someone who has attached a document or changed a stage keeps the candidate. A Job is deleted only when no member is left. Everything that cannot be reversed safely stays and is reported with the reason; once the cause is gone, rolling back again retries it. One call holds a lease (a second administrator or a double click is refused); a long import takes several calls; an interrupted rollback is continued, never repeated. Entries are `APPLIED` -> `REVERTED` / `CONFLICT` / `SKIPPED` (the record was already gone). The audit log has `BULK_IMPORT_ROLLBACK_STARTED`, `_ENTRY`, `_COMPLETED`, `_FAILED`. Nothing rolls back by itself, and a failed import is never rolled back automatically.
+
+**Google Sheet.** Deleting many candidates would exceed the mirror's deletion guard (10 rows / 5 %), which stays. A rollback records an approval (`sheet_deletion_approval`) for exactly each candidate it deletes; the sheet worker marks the Sheet row of an **approved** candidate that is absent from its complete database snapshot inactive beyond the guard, then marks the approval consumed. Every other absent row is judged by the unchanged guard. **This needs the sheet-sync worker to be redeployed**; until then the database is rolled back but the guard keeps the Sheet rows as they are.
