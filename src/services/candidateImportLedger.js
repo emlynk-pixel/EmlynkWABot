@@ -9,7 +9,7 @@
 // What an entry says (internal ids only, never a passport number):
 //   entity_type / entity_key   CANDIDATE and its details / allocation: the candidate's unique_id; CANDIDATE_STAGE
 //                              "<unique_id>:<STAGE>"; CLIENT, AGENT, JOB, IMPORT_JOB_GROUP: the row's uuid;
-//                              AGENT_CLIENT "<agentId>:<clientId>"; JOB_CANDIDATE "<jobId>:<unique_id>"
+//                              AGENT_CLIENT "<agentId>:<clientId>"; JOB_CANDIDATE "<jobId>:<unique_id>"; JOB_TYPE: its uuid
 //   op                         CREATE (made by the import), FILL (blank fields of an existing entity filled),
 //                              LINK (a relationship made by the import)
 //   changes                    { field: { before, after } }
@@ -40,6 +40,9 @@ import { HMAC_METHOD, LedgerKeyConfigError, hmacMessage, readLedgerKeyring } fro
 export const LEDGER_ENTITY = Object.freeze({
     CANDIDATE: "CANDIDATE", DETAILS: "CANDIDATE_ADDITIONAL_DETAILS", STAGE: "CANDIDATE_STAGE", ALLOCATION: "CANDIDATE_ALLOCATION",
     CLIENT: "CLIENT", AGENT: "AGENT", AGENT_CLIENT: "AGENT_CLIENT", JOB: "JOB", JOB_GROUP: "IMPORT_JOB_GROUP", JOB_CANDIDATE: "JOB_CANDIDATE",
+    // A Job Type a chunk created for a sheet Job Role that was not a type yet (migration 20261113120000). Its name and
+    // code are catalog values, not personal data: stored as they are.
+    JOB_TYPE: "JOB_TYPE",
 });
 export const LEDGER_OP = Object.freeze({ CREATE: "CREATE", FILL: "FILL", LINK: "LINK" });
 export const ROLLBACK_ACTION = Object.freeze({ DELETE_IF_UNCHANGED: "DELETE_IF_UNCHANGED", CLEAR_IF_UNCHANGED: "CLEAR_IF_UNCHANGED", NONE: "NONE" });
@@ -299,6 +302,8 @@ export function createResolver(db, importId) {
                 return db.job.findUnique({ where: { id: entry.entityKey }, select: { ...select(entry), status: true } });
             case LEDGER_ENTITY.JOB_GROUP:
                 return db.importJobGroup.findUnique({ where: { id: entry.entityKey }, select: select(entry) });
+            case LEDGER_ENTITY.JOB_TYPE:
+                return db.jobType.findUnique({ where: { id: entry.entityKey }, select: select(entry) });
             default:
                 return null;
         }
@@ -414,7 +419,10 @@ export function createAssessor({ db, importId, rows, keyring }) {
             case LEDGER_ENTITY.DETAILS:
             case LEDGER_ENTITY.STAGE:
             case LEDGER_ENTITY.ALLOCATION:
-            case LEDGER_ENTITY.JOB_GROUP: {
+            case LEDGER_ENTITY.JOB_GROUP:
+            // A Job Type: its name, code and active flag must still be what the import made. Whether anything uses it is
+            // judged by the rollback (Jobs through the foreign keys, candidate preferences by name).
+            case LEDGER_ENTITY.JOB_TYPE: {
                 const current = await fetchCurrent(entry);
                 if (!current) return finish(ASSESSMENT.MISSING);
                 compare(current);

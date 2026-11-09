@@ -463,6 +463,46 @@ describe("duplicate upload protection", () => {
         expect(within(dialog).getByLabelText("Import preview")).toBeInTheDocument();
         expect(calls.filter((c) => c.path.endsWith("/finish"))).toEqual([]);
     });
+
+    test("an import that stops part way is NOT finished from the dialog (all or nothing): it stays open to continue, or is undone automatically", async () => {
+        readWorkbookMock.mockResolvedValue({ headers, rows: rowsOf(250), missingRequired: [] });
+        const { calls } = asRole("ADMIN", {
+            ...SOURCE,
+            [`POST ${BASE}/import/preview`]: { status: 200, body: { ...PREVIEW_OK(250).body, chunkSize: 100, chunkCount: 3 } },
+            [`POST ${BASE}/import/${IMPORT_ID}/chunks/0`]: { status: 200, body: { chunkIndex: 0, status: "COMMITTED", counts: { rows: 100, created: 100 }, failures: [] } },
+            [`POST ${BASE}/import/${IMPORT_ID}/chunks/1`]: { status: 503, body: { message: "Service unavailable" } },
+        });
+        const { user, dialog } = await openDialog();
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), xlsx());
+        await within(dialog).findByLabelText("Import preview");
+        await user.click(within(dialog).getByRole("button", { name: /^Confirm import/ }));
+        expect(await within(dialog).findByText(/otherwise everything it imported is undone automatically/)).toBeInTheDocument();
+        expect(calls.filter((c) => c.path.endsWith("/finish"))).toEqual([]);
+        expect(within(dialog).getByLabelText("Candidate sheet (.xlsx)")).toBeEnabled();
+    });
+
+    test("an import the server is already undoing: the reason is shown, nothing is finished, and the notice says it is being undone", async () => {
+        readWorkbookMock.mockResolvedValue({ headers, rows: rowsOf(2), missingRequired: [] });
+        const { calls } = asRole("ADMIN", {
+            ...SOURCE,
+            [`POST ${BASE}/import/preview`]: PREVIEW_OK(2),
+            [`POST ${BASE}/import/${IMPORT_ID}/chunks/0`]: { status: 409, body: { message: "This import stopped before it finished, so it is being undone automatically. Nothing from it is kept. Upload the sheet again to import it.", code: "IMPORT_RECOVERY_STARTED" } },
+        });
+        const { user, dialog } = await openDialog();
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), xlsx());
+        await within(dialog).findByLabelText("Import preview");
+        await user.click(within(dialog).getByRole("button", { name: /^Confirm import/ }));
+        expect(await within(dialog).findByText(/it is being undone automatically/)).toBeInTheDocument();
+        expect(calls.filter((c) => c.path.endsWith("/finish"))).toEqual([]);
+    });
+
+    test("an import under automatic recovery is announced as being undone (not as a rollback to continue)", async () => {
+        asRole("ADMIN", { ...SOURCE, [`GET ${BASE}/import/active`]: { status: 200, body: { active: { ...ACTIVE, status: "ROLLING_BACK", recovery: "ROLLING_BACK" } } } });
+        const { dialog } = await openDialog();
+        const notice = await within(dialog).findByRole("alert", { name: "Rollback in progress" });
+        expect(notice).toHaveTextContent("stopped before it finished, so it is being undone automatically");
+        expect(within(notice).getByRole("button", { name: "View progress" })).toBeEnabled();
+    });
 });
 
 // Rolling back an import: review, explicit confirmation, run, report. Counts, record kinds, sheet rows and codes only.

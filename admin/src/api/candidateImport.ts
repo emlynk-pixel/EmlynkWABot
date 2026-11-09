@@ -102,6 +102,8 @@ export type ImportChunkResult = {
 export type ActiveImport = {
     importId: string; status: string; fileName: string; totalRows: number; chunkSize: number; chunkCount: number; committedChunks: number[];
     ownedByYou: boolean; stale: boolean; updatedAt: string;
+    // Set when the import stopped before it finished and is being undone automatically (the server's recovery).
+    recovery?: string | null;
 };
 
 // What a 409 IMPORT_ALREADY_ACTIVE (same file already being imported) carries, to resume that import.
@@ -144,6 +146,12 @@ export function commitImportChunk(token: string, importId: string, chunkIndex: n
 // The last two digits of the NEW Jobs, chosen before the import ({ [group key]: "05" }); checked by the server.
 export function updateImportJobGroups(token: string, importId: string, suffixes: Record<string, string>): Promise<{ jobGroups: ImportJobGroup[] }> {
     return apiRequest<{ jobGroups: ImportJobGroup[] }>(`${BASE}/${encodeURIComponent(importId)}/job-groups`, { method: "PUT", token, body: { suffixes } });
+}
+
+// "Still here", about every 20 s while the import is committing. It never keeps an import alive on its own: only the
+// chunks do. 409 IMPORT_RECOVERY_STARTED once the server has started undoing an import that stopped.
+export function sendImportHeartbeat(token: string, importId: string): Promise<{ status: string; recorded: boolean }> {
+    return apiRequest<{ status: string; recorded: boolean }>(`${BASE}/${encodeURIComponent(importId)}/heartbeat`, { method: "POST", token, body: {} });
 }
 
 export function finishImport(token: string, importId: string): Promise<ImportFinish> {

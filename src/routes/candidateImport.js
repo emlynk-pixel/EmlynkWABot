@@ -11,6 +11,10 @@
 //                                   IMPORT_IN_PROGRESS while YOU have another import committing (other
 //                                   administrators' imports do not matter: they run side by side)
 //   POST /:importId/finish          totals, audit, and the existing RECONCILE run (idempotent)
+//   GET  /recovery                  the automatic recovery of interrupted imports: in progress, needing attention,
+//                                   committing now (states, counts, codes; importRecoveryService.js)
+//   POST /:importId/heartbeat       the dialog's "still here" while committing (~20 s); 409 IMPORT_RECOVERY_STARTED
+//                                   once the recovery has taken the import over. Never renews the commit lease.
 //   POST /:importId/abort           stop on purpose, keep the rows imported so far (owner; any ADMIN if stale)
 //   GET  /:importId/rollback/preview  what a rollback would do now (eligible / conflicts and why / missing / already
 //                                   reverted); writes nothing. The administrator who ran the import, or an Owner.
@@ -31,9 +35,10 @@ import express from "express";
 import { requireRole, ROLES } from "../middleware/requireRole.js";
 import { resolveDb } from "../utils/resolveClients.js";
 import {
-    CandidateImportError, abortImport, commitChunk, finishImport, getActiveImport, getImport, importSourceColumns, isValidImportId, parseChunkBody, parsePreviewBody, previewImport, updateImportJobGroups,
+    CandidateImportError, abortImport, commitChunk, finishImport, getActiveImport, getImport, importSourceColumns, isValidImportId, parseChunkBody, parsePreviewBody, previewImport, recordImportHeartbeat, updateImportJobGroups,
 } from "../services/candidateImportService.js";
 import { executeRollback, getRollback, previewRollback } from "../services/candidateImportRollback.js";
+import { listImportRecoveries } from "../services/importRecoveryService.js";
 
 export const CANDIDATE_IMPORT_ROLES = Object.freeze([ROLES.ADMIN]);
 // A preview of MAX_IMPORT_ROWS allow-listed rows stays well under this (and under Vercel's 4.5 MB).
@@ -73,6 +78,26 @@ export function createCandidateImportRouter({ db, log = console } = {}) {
     router.get("/active", async (req, res) => {
         try {
             return res.json(await getActiveImport({ db: await resolveDb(db), actor: req.user }));
+        } catch (error) {
+            return fail(res, error);
+        }
+    });
+
+    // The automatic recovery of interrupted imports (importRecoveryService.js): what is being recovered, what needs an
+    // administrator, the imports committing now. States, counts and codes only.
+    router.get("/recovery", async (req, res) => {
+        try {
+            return res.json(await listImportRecoveries({ db: await resolveDb(db) }));
+        } catch (error) {
+            return fail(res, error);
+        }
+    });
+
+    // The Upload dialog's "still here" while it commits (about every 20 s). Never renews the commit lease.
+    router.post("/:importId/heartbeat", async (req, res) => {
+        if (!isValidImportId(req.params.importId)) return res.status(400).json({ message: "Invalid import" });
+        try {
+            return res.json(await recordImportHeartbeat({ db: await resolveDb(db), actor: req.user, importId: req.params.importId }));
         } catch (error) {
             return fail(res, error);
         }
