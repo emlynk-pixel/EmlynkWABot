@@ -98,9 +98,18 @@ export type ImportChunkResult = {
     alreadyCommitted?: boolean;
 };
 
+// The import that is committing now (at most one): for Resume / Abort. No candidate data.
+export type ActiveImport = {
+    importId: string; status: string; fileName: string; totalRows: number; chunkSize: number; chunkCount: number; committedChunks: number[];
+    ownedByYou: boolean; stale: boolean; updatedAt: string;
+};
+
+// What a 409 IMPORT_ALREADY_ACTIVE (same file already being imported) carries, to resume that import.
+export type ResumableImport = { importId: string; chunkSize: number; chunkCount: number; committedChunks: number[]; stale?: boolean };
+
 export type ImportFinish = {
     importId: string;
-    status: "COMPLETED" | "COMPLETED_WITH_ERRORS" | "FAILED";
+    status: "COMPLETED" | "COMPLETED_WITH_ERRORS" | "FAILED" | "ABORTED";
     totalRows: number;
     counts: ImportCounts;
     syncRunId: string | null;
@@ -114,8 +123,18 @@ export function getImportSourceColumns(token: string, signal?: AbortSignal): Pro
     return apiRequest<ImportSourceColumns>(`${BASE}/source-columns`, { token, signal });
 }
 
-export function previewImport(token: string, body: { fileName: string; headers: string[]; rows: ImportRow[] }): Promise<ImportPreview> {
-    return apiRequest<ImportPreview>(`${BASE}/preview`, { method: "POST", token, body });
+// idempotencyKey: one per file choice. The server returns the same import for a repeated or retried request.
+export function previewImport(token: string, body: { fileName: string; headers: string[]; rows: ImportRow[] }, idempotencyKey?: string): Promise<ImportPreview> {
+    return apiRequest<ImportPreview>(`${BASE}/preview`, { method: "POST", token, body, ...(idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : {}) });
+}
+
+export function getActiveImport(token: string, signal?: AbortSignal): Promise<{ active: ActiveImport | null }> {
+    return apiRequest<{ active: ActiveImport | null }>(`${BASE}/active`, { token, signal });
+}
+
+// Stops an import on purpose; the rows already imported are kept.
+export function abortImport(token: string, importId: string): Promise<ImportFinish> {
+    return apiRequest<ImportFinish>(`${BASE}/${encodeURIComponent(importId)}/abort`, { method: "POST", token, body: {} });
 }
 
 export function commitImportChunk(token: string, importId: string, chunkIndex: number, rows: ImportRow[]): Promise<ImportChunkResult> {

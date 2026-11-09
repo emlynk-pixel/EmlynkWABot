@@ -3,9 +3,14 @@
 //
 //   GET  /source-columns            the allow-listed legacy headers the browser may send
 //   POST /preview                   { fileName, headers, rows } -> counts, masked problem rows, importId
-//                                   (writes nothing to a candidate table)
-//   POST /:importId/chunks/:index   { rows } -> one previewed chunk committed (idempotent)
-//   POST /:importId/finish          totals, audit, and the existing RECONCILE run
+//                                   (writes nothing to a candidate table). Optional header
+//                                   Idempotency-Key: the same key + file returns the same import; a file
+//                                   already being committed gets 409 IMPORT_ALREADY_ACTIVE (+ details to resume)
+//   GET  /active                    the import committing now (at most one), for Resume / Abort
+//   POST /:importId/chunks/:index   { rows } -> one previewed chunk committed (idempotent); 409
+//                                   IMPORT_IN_PROGRESS while another import is committing
+//   POST /:importId/finish          totals, audit, and the existing RECONCILE run (idempotent)
+//   POST /:importId/abort           stop on purpose, keep the rows imported so far (owner; any ADMIN if stale)
 //   GET  /:importId                 the import's state (counts only)
 //
 // ADMIN only (an OWNER too; requireRole, the role is re-read from the database on every request).
@@ -19,7 +24,7 @@ import express from "express";
 import { requireRole, ROLES } from "../middleware/requireRole.js";
 import { resolveDb } from "../utils/resolveClients.js";
 import {
-    CandidateImportError, commitChunk, finishImport, getImport, importSourceColumns, isValidImportId, parseChunkBody, parsePreviewBody, previewImport, updateImportJobGroups,
+    CandidateImportError, abortImport, commitChunk, finishImport, getActiveImport, getImport, importSourceColumns, isValidImportId, parseChunkBody, parsePreviewBody, previewImport, updateImportJobGroups,
 } from "../services/candidateImportService.js";
 
 export const CANDIDATE_IMPORT_ROLES = Object.freeze([ROLES.ADMIN]);
@@ -33,7 +38,10 @@ export function createCandidateImportRouter({ db, log = console } = {}) {
 
     const fail = (res, error) => {
         if (error instanceof CandidateImportError) {
-            return res.status(error.status).json({ message: error.message, code: error.code, ...(error.missing ? { missing: error.missing } : {}), ...(error.errors ? { errors: error.errors } : {}) });
+            return res.status(error.status).json({
+                message: error.message, code: error.code, ...(error.missing ? { missing: error.missing } : {}), ...(error.errors ? { errors: error.errors } : {}),
+                ...(error.details ? { details: error.details } : {}),
+            });
         }
         throw error;
     };
@@ -45,8 +53,28 @@ export function createCandidateImportRouter({ db, log = console } = {}) {
         const parsed = parsePreviewBody(req.body);
         if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         try {
-            const result = await previewImport({ db: await resolveDb(db), actor: req.user, ...parsed.values });
+            const idempotencyKey = req.get("Idempotency-Key") ?? null;
+            const result = await previewImport({ db: await resolveDb(db), actor: req.user, ...parsed.values, idempotencyKey });
             event("previewed", { importId: result.importId, adminId: req.user.adminId, rows: result.summary.totalRows, chunks: result.chunkCount });
+            return res.json(result);
+        } catch (error) {
+            return fail(res, error);
+        }
+    });
+
+    router.get("/active", async (req, res) => {
+        try {
+            return res.json(await getActiveImport({ db: await resolveDb(db), actor: req.user }));
+        } catch (error) {
+            return fail(res, error);
+        }
+    });
+
+    router.post("/:importId/abort", async (req, res) => {
+        if (!isValidImportId(req.params.importId)) return res.status(400).json({ message: "Invalid import" });
+        try {
+            const result = await abortImport({ db: await resolveDb(db), actor: req.user, importId: req.params.importId });
+            event("aborted", { importId: result.importId, status: result.status, ...result.counts, syncRunId: result.syncRunId, adminId: req.user.adminId });
             return res.json(result);
         } catch (error) {
             return fail(res, error);

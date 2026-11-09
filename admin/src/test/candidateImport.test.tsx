@@ -352,3 +352,118 @@ describe("the import flow", () => {
         expect(calls.some((c) => c.path.endsWith("/import/preview"))).toBe(false);
     });
 });
+
+// Duplicate-upload protection as the person sees it (the server's own protection is tested in
+// test/candidateImportConcurrency.test.js).
+describe("duplicate upload protection", () => {
+    const IMPORT_ID = "6f1e0c3a-8b7d-4c2e-9a41-5d3b2f9e7a10";
+    const rowsOf = (count: number) => Array.from({ length: count }, (_, k) => ({ rowNumber: k + 2, values: { "PASSPORT NUMBER": `N9${String(k).padStart(6, "0")}`, SURNAME: "S", "OTHER NAME": "O" } }));
+    const ACTIVE = { importId: IMPORT_ID, status: "COMMITTING", fileName: "legacy.xlsx", totalRows: 250, chunkSize: 100, chunkCount: 3, committedChunks: [0], ownedByYou: true, stale: false, updatedAt: "2026-11-09T04:00:00.000Z" };
+    const SOURCE = { [`GET ${BASE}/import/source-columns`]: { status: 200, body: { allowed: ALLOWED, required: REQUIRED } } };
+    const SUMMARY = { new: 1, existing: 0, willFill: 0, noChange: 0, valid: 1, warnings: 0, invalid: 0, duplicates: 0, conflicts: 0, skippedVerified: 0, unknownJobRoles: 0, legacyPassportFormat: 0, whatsappConflicts: 0, fieldsDiffering: 0, ignoredSourceColumns: 0 };
+    const PREVIEW_OK = (rows: number) => ({
+        status: 200,
+        body: {
+            importId: IMPORT_ID, chunkSize: 100, chunkCount: 1, expiresAt: "2026-11-10T00:00:00.000Z", summary: { ...SUMMARY, totalRows: rows, new: rows, valid: rows },
+            columns: { missingRequired: [], supported: [], ignored: [], systemGenerated: [], unresolved: [], unknown: [] }, problems: [], problemsTruncated: false,
+        },
+    });
+    const openDialog = async () => {
+        renderApp("/settings/sheet-sync");
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+        return { user, dialog: await screen.findByRole("dialog", { name: /^Upload: import candidates/ }) };
+    };
+    const xlsx = () => new File(["x"], "legacy.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const headers = ["PASSPORT NUMBER", "SURNAME", "OTHER NAME"];
+
+    test("each file choice sends one Idempotency-Key with the preview request", async () => {
+        readWorkbookMock.mockResolvedValue({ headers, rows: rowsOf(1), missingRequired: [] });
+        const { calls } = asRole("ADMIN", { ...SOURCE, [`POST ${BASE}/import/preview`]: PREVIEW_OK(1) });
+        const { user, dialog } = await openDialog();
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), xlsx());
+        await within(dialog).findByLabelText("Import preview");
+        const previews = calls.filter((c) => c.path.endsWith("/import/preview"));
+        expect(previews).toHaveLength(1);
+        expect(previews[0].headers["Idempotency-Key"]).toMatch(/^[A-Za-z0-9_-]{8,100}$/);
+    });
+
+    test("while a sheet is being checked the file chooser is disabled: a second choice cannot send a second request", async () => {
+        readWorkbookMock.mockImplementation(() => new Promise(() => {}));
+        asRole("ADMIN", SOURCE);
+        const { user, dialog } = await openDialog();
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), xlsx());
+        await within(dialog).findByText("Reading and checking the sheet…");
+        expect(within(dialog).getByLabelText("Candidate sheet (.xlsx)")).toBeDisabled();
+    });
+
+    test("your own import in progress is explained; Abort that import stops it and clears the notice", async () => {
+        const { calls } = asRole("ADMIN", {
+            ...SOURCE,
+            [`GET ${BASE}/import/active`]: { status: 200, body: { active: ACTIVE } },
+            [`POST ${BASE}/import/${IMPORT_ID}/abort`]: { status: 200, body: { importId: IMPORT_ID, status: "ABORTED", totalRows: 250, counts: { created: 100 }, syncRunId: null } },
+        });
+        const { user, dialog } = await openDialog();
+        const notice = await within(dialog).findByRole("alert", { name: "Import in progress" });
+        expect(notice).toHaveTextContent("You have an import in progress: legacy.xlsx, 1 of 3 parts saved.");
+        expect(within(dialog).getByLabelText("Candidate sheet (.xlsx)")).toBeEnabled();
+        await user.click(within(notice).getByRole("button", { name: "Abort that import" }));
+        await waitFor(() => expect(within(dialog).queryByRole("alert", { name: "Import in progress" })).toBeNull());
+        expect(calls.filter((c) => c.path.endsWith("/abort"))).toHaveLength(1);
+    });
+
+    test("another administrator's running import blocks starting one: no file choice, no Abort", async () => {
+        asRole("ADMIN", { ...SOURCE, [`GET ${BASE}/import/active`]: { status: 200, body: { active: { ...ACTIVE, ownedByYou: false } } } });
+        const { dialog } = await openDialog();
+        const notice = await within(dialog).findByRole("alert", { name: "Import in progress" });
+        expect(notice).toHaveTextContent("Another administrator's import is in progress");
+        expect(notice).toHaveTextContent("Wait for it to finish");
+        expect(within(dialog).getByLabelText("Candidate sheet (.xlsx)")).toBeDisabled();
+        expect(within(notice).queryByRole("button", { name: "Abort that import" })).toBeNull();
+    });
+
+    test("a stopped import of another administrator offers Abort", async () => {
+        asRole("ADMIN", { ...SOURCE, [`GET ${BASE}/import/active`]: { status: 200, body: { active: { ...ACTIVE, ownedByYou: false, stale: true } } } });
+        const { dialog } = await openDialog();
+        const notice = await within(dialog).findByRole("alert", { name: "Import in progress" });
+        expect(notice).toHaveTextContent("it has stopped");
+        expect(within(notice).getByRole("button", { name: "Abort that import" })).toBeEnabled();
+    });
+
+    test("choosing the file of your unfinished import offers to continue it: only the remaining parts are sent, then finish", async () => {
+        readWorkbookMock.mockResolvedValue({ headers, rows: rowsOf(250), missingRequired: [] });
+        const chunk = (n: number, rows: number) => ({ status: 200, body: { chunkIndex: n, status: "COMMITTED", counts: { rows, created: rows }, failures: [] } });
+        const { calls } = asRole("ADMIN", {
+            ...SOURCE,
+            [`POST ${BASE}/import/preview`]: { status: 409, body: { message: "This file is already being imported. Resume that import or abort it first.", code: "IMPORT_ALREADY_ACTIVE", details: { importId: IMPORT_ID, status: "COMMITTING", chunkSize: 100, chunkCount: 3, committedChunks: [0], stale: false } } },
+            [`POST ${BASE}/import/${IMPORT_ID}/chunks/1`]: chunk(1, 100),
+            [`POST ${BASE}/import/${IMPORT_ID}/chunks/2`]: chunk(2, 50),
+            [`POST ${BASE}/import/${IMPORT_ID}/finish`]: { status: 200, body: { importId: IMPORT_ID, status: "COMPLETED", totalRows: 250, counts: { created: 250 }, syncRunId: "run-1", sync: { requested: true, runId: "run-1", alreadyActive: false } } },
+        });
+        const { user, dialog } = await openDialog();
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), xlsx());
+        expect(await within(dialog).findByText(/This file is already being imported: 1 of 3 parts are saved/)).toBeInTheDocument();
+        expect(calls.filter((c) => c.path.includes("/chunks/"))).toEqual([]);
+        await user.click(within(dialog).getByRole("button", { name: "Continue import" }));
+        expect(await within(dialog).findByText("Import completed.")).toBeInTheDocument();
+        const sent = calls.filter((c) => c.path.includes("/chunks/"));
+        expect(sent.map((c) => [c.path.split("/").pop(), (c.body as { rows: unknown[] }).rows.length])).toEqual([["1", 100], ["2", 50]]);
+        expect(calls.filter((c) => c.path.endsWith("/finish"))).toHaveLength(1);
+    });
+
+    test("another import started first: the confirm is refused with the reason, nothing is finished, and the preview stays", async () => {
+        readWorkbookMock.mockResolvedValue({ headers, rows: rowsOf(2), missingRequired: [] });
+        const { calls } = asRole("ADMIN", {
+            ...SOURCE,
+            [`POST ${BASE}/import/preview`]: PREVIEW_OK(2),
+            [`POST ${BASE}/import/${IMPORT_ID}/chunks/0`]: { status: 409, body: { message: "Another import is in progress. Wait for it to finish; if it has stopped, an administrator can abort it.", code: "IMPORT_IN_PROGRESS", details: {} } },
+        });
+        const { user, dialog } = await openDialog();
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), xlsx());
+        await within(dialog).findByLabelText("Import preview");
+        await user.click(within(dialog).getByRole("button", { name: /^Confirm import/ }));
+        expect(await within(dialog).findByText(/Another import is in progress/)).toBeInTheDocument();
+        expect(within(dialog).getByLabelText("Import preview")).toBeInTheDocument();
+        expect(calls.filter((c) => c.path.endsWith("/finish"))).toEqual([]);
+    });
+});

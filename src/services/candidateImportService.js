@@ -46,13 +46,25 @@ const MAX_ROW_KEYS = 200;
 const UNIQUE_ID_LOCK = 724_310_001;
 const PASSPORT_HEADER = SUPPORTED_SOURCE_COLUMNS.find((c) => c.field === "passport").header;
 
+// ABORTED: stopped on purpose, the rows already imported are kept. ROLLING_BACK / ROLLED_BACK /
+// ROLLED_BACK_WITH_CONFLICTS belong to the rollback of an import (not used before that work).
 export const IMPORT_STATUS = Object.freeze({
     PREVIEWED: "PREVIEWED", COMMITTING: "COMMITTING", COMPLETED: "COMPLETED", COMPLETED_WITH_ERRORS: "COMPLETED_WITH_ERRORS", FAILED: "FAILED",
+    ABORTED: "ABORTED", ROLLING_BACK: "ROLLING_BACK", ROLLED_BACK: "ROLLED_BACK", ROLLED_BACK_WITH_CONFLICTS: "ROLLED_BACK_WITH_CONFLICTS",
 });
-const FINISHED = new Set([IMPORT_STATUS.COMPLETED, IMPORT_STATUS.COMPLETED_WITH_ERRORS, IMPORT_STATUS.FAILED]);
+// Every state in which no more chunks may be committed.
+const FINISHED = new Set([
+    IMPORT_STATUS.COMPLETED, IMPORT_STATUS.COMPLETED_WITH_ERRORS, IMPORT_STATUS.FAILED, IMPORT_STATUS.ABORTED,
+    IMPORT_STATUS.ROLLING_BACK, IMPORT_STATUS.ROLLED_BACK, IMPORT_STATUS.ROLLED_BACK_WITH_CONFLICTS,
+]);
+// A COMMITTING import with no chunk for this long has stopped (closed tab, lost network): its owner may
+// resume it, and an ADMIN may abort it. Nothing is aborted automatically.
+export const IMPORT_STALE_MS = 15 * 60_000;
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,100}$/;
+export const isValidIdempotencyKey = (value) => typeof value === "string" && IDEMPOTENCY_KEY.test(value);
 
 export const IMPORT_AUDIT_ACTION = Object.freeze({
-    STARTED: "BULK_IMPORT_STARTED", COMPLETED: "BULK_IMPORT_COMPLETED", FAILED: "BULK_IMPORT_FAILED",
+    STARTED: "BULK_IMPORT_STARTED", COMPLETED: "BULK_IMPORT_COMPLETED", FAILED: "BULK_IMPORT_FAILED", ABORTED: "BULK_IMPORT_ABORTED",
 });
 
 // A row's outcome in a commit (stored per chunk, by row number).
@@ -70,6 +82,43 @@ export class CandidateImportError extends Error {
         this.code = code;
         Object.assign(this, extra);
     }
+}
+
+// ---------------------------------------------------------------- active imports
+
+const committedChunkIndexes = (record) => Object.entries(record.chunkResults ?? {}).filter(([, result]) => result?.status === "COMMITTED").map(([index]) => Number(index)).sort((a, b) => a - b);
+export const isStaleImport = (record, now = new Date()) => record.status === IMPORT_STATUS.COMMITTING && now.getTime() - new Date(record.updatedAt).getTime() > IMPORT_STALE_MS;
+
+// What the browser needs to resume or abort an import (counts and ids only).
+const activeDetails = (record, actor, now) => ({
+    importId: record.importId, status: record.status, fileName: record.fileName, totalRows: record.totalRows, chunkSize: record.chunkSize,
+    chunkCount: Array.isArray(record.chunkHashes) ? record.chunkHashes.length : 0, committedChunks: committedChunkIndexes(record),
+    ownedByYou: record.adminId === actor?.adminId, stale: isStaleImport(record, now), updatedAt: new Date(record.updatedAt).toISOString(),
+});
+
+// A request for a file that already has an import: still committing (resume it) or already finished.
+function importActiveError(record, now) {
+    const committing = record.status === IMPORT_STATUS.COMMITTING;
+    return new CandidateImportError(
+        409, committing ? "IMPORT_ALREADY_ACTIVE" : "IMPORT_ALREADY_FINISHED",
+        committing ? "This file is already being imported. Resume that import or abort it first." : "This request was already used by an import that has finished.",
+        { details: { importId: record.importId, status: record.status, chunkSize: record.chunkSize, chunkCount: Array.isArray(record.chunkHashes) ? record.chunkHashes.length : 0, committedChunks: committedChunkIndexes(record), stale: isStaleImport(record, now) } },
+    );
+}
+
+// Only one import commits at a time (a database index enforces it too): imports share the unique-ID and
+// Job-group locks and race on passports, so two at once only produce conflicts. Called before an import's
+// first chunk; `client` is the database or the transaction.
+async function assertNoOtherCommitting(client, { importId, actor, now }) {
+    const other = await client.candidateImport.findFirst({ where: { status: IMPORT_STATUS.COMMITTING, NOT: { importId } } });
+    if (!other) return;
+    throw new CandidateImportError(
+        409, "IMPORT_IN_PROGRESS",
+        other.adminId === actor.adminId
+            ? "You have another import in progress. Resume it or abort it first."
+            : "Another import is in progress. Wait for it to finish; if it has stopped, an administrator can abort it.",
+        { details: activeDetails(other, actor, now) },
+    );
 }
 
 // ---------------------------------------------------------------- request bodies
@@ -163,7 +212,7 @@ const rowIssuesOf = (plans) => plans.filter((plan) => plan.issues.length).map((p
 // A Job Role in the sheet that is not a job type (and has no alias) becomes a new job type, so no
 // role is lost. Preview (create = false) only counts them as if they existed; the commit creates them.
 // Returns the active job type names to validate with.
-async function jobTypesWithSheetRoles(db, canonical, { create }) {
+async function jobTypesWithSheetRoles(db, canonical, { create, beforeCreate = null }) {
     const activeJobTypes = await activeJobTypeNames(db);
     const fresh = new Set();
     for (const row of canonical) {
@@ -172,6 +221,7 @@ async function jobTypesWithSheetRoles(db, canonical, { create }) {
     if (!fresh.size) return activeJobTypes;
     const added = [...fresh].map((name) => ({ name, code: name.replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") })).filter((type) => type.code);
     if (!create) return [...activeJobTypes, ...added.map((type) => type.name)];
+    await beforeCreate?.();
     // One statement; only the rows actually created come back (a code that already exists, e.g. an
     // inactive type, is skipped and its role stays unmatched, as an inactive type should).
     const created = await db.jobType.createManyAndReturn({ data: added.map((type) => ({ ...type, isActive: true })), skipDuplicates: true, select: { name: true } });
@@ -183,19 +233,41 @@ export const importSourceColumns = () => sourceColumnsForClient();
 
 // Validates and classifies the rows; writes nothing to a candidate table. Returns the counts, the
 // problem rows (masked) and the importId the commit refers to.
-export async function previewImport({ db, actor, fileName, headers, rows, now = new Date() }) {
+//
+// idempotencyKey (header Idempotency-Key, one per file choice in the browser): the same key from the same
+// admin and file names the same import, so a repeated or retried request never makes a second one (a
+// PREVIEWED import is returned again, with its Job ID edits). A file the admin is already committing is
+// refused with IMPORT_ALREADY_ACTIVE and the details to resume it, not previewed again.
+export async function previewImport({ db, actor, fileName, headers, rows, idempotencyKey = null, now = new Date() }) {
+    if (idempotencyKey !== null && !isValidIdempotencyKey(idempotencyKey)) {
+        throw new CandidateImportError(400, "INVALID_IDEMPOTENCY_KEY", "The request key is not valid.");
+    }
     const columns = analyzeSourceHeaders(headers);
     if (columns.missingRequired.length) {
         throw new CandidateImportError(422, "MISSING_REQUIRED_HEADINGS", `The sheet is missing required headings: ${columns.missingRequired.join(", ")}.`, { missing: columns.missingRequired });
     }
     const canonical = canonicalRows(rows);
+    const chunks = chunkRows(canonical);
+    const chunkHashes = chunks.map(hashChunk);
+    const sameFile = (record) => JSON.stringify(record.chunkHashes) === JSON.stringify(chunkHashes);
+    const forKey = () => (idempotencyKey ? db.candidateImport.findFirst({ where: { adminId: actor.adminId, idempotencyKey } }) : null);
+    let reuse = await forKey();
+    if (reuse) {
+        if (!sameFile(reuse)) throw new CandidateImportError(409, "IDEMPOTENCY_KEY_REUSED", "This request key was already used for a different file.");
+        if (reuse.status !== IMPORT_STATUS.PREVIEWED) throw importActiveError(reuse, now);
+    } else {
+        const running = await db.candidateImport.findFirst({ where: { adminId: actor.adminId, status: IMPORT_STATUS.COMMITTING } });
+        if (running && sameFile(running)) throw importActiveError(running, now);
+    }
     const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: false });
     const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
     const sourceFlags = findSourceFlags(validated);
     const snapshot = await loadImportSnapshot(db, validated, { activeJobTypes });
     const plans = planRows(validated, snapshot, sourceFlags);
     // Jobs (Interview Date + UNIQUE NUMBER hundreds block): planned for the whole file, stored for the commit.
-    const jobGroups = buildJobGroupPlan(plans, await loadJobGroupContext(db, [...new Set(plans.filter((p) => p.job).map((p) => p.job.interviewDate))]));
+    const plannedGroups = buildJobGroupPlan(plans, await loadJobGroupContext(db, [...new Set(plans.filter((p) => p.job).map((p) => p.job.interviewDate))]));
+    // A repeated request keeps the Job IDs the admin already chose.
+    const jobGroups = reuse && Array.isArray(reuse.jobGroups) && reuse.jobGroups.length ? reuse.jobGroups : plannedGroups;
     noteGroupOutcomes(plans, jobGroups);
     const summary = {
         ...summarizePlans(plans),
@@ -203,17 +275,27 @@ export async function previewImport({ db, actor, fileName, headers, rows, now = 
         jobMembers: plannedJobMembers(plans, jobGroups),
         ignoredSourceColumns: columns.ignored.length + columns.systemGenerated.length + columns.unresolved.length + columns.unknown.length,
     };
-    const chunks = chunkRows(canonical);
-    const importId = crypto.randomUUID();
-    await db.candidateImport.create({
-        data: {
-            importId, adminId: actor.adminId, fileName, status: IMPORT_STATUS.PREVIEWED, totalRows: canonical.length, chunkSize: IMPORT_CHUNK_SIZE,
-            chunkHashes: chunks.map(hashChunk), sourceFlags, previewCounts: summary, chunkResults: {}, jobGroups, createdAt: now, updatedAt: now,
-        },
-    });
+    let record = reuse;
+    if (!record) {
+        try {
+            record = await db.candidateImport.create({
+                data: {
+                    importId: crypto.randomUUID(), adminId: actor.adminId, fileName, status: IMPORT_STATUS.PREVIEWED, totalRows: canonical.length, chunkSize: IMPORT_CHUNK_SIZE,
+                    chunkHashes, sourceFlags, previewCounts: summary, chunkResults: {}, jobGroups, idempotencyKey, createdAt: now, updatedAt: now,
+                },
+            });
+        } catch (error) {
+            // Two requests with the same key at the same moment: the other one created it.
+            if (!isUniqueViolation(error) || !idempotencyKey) throw error;
+            record = await forKey();
+            if (!record || !sameFile(record)) throw error;
+            if (record.status !== IMPORT_STATUS.PREVIEWED) throw importActiveError(record, now);
+        }
+    }
+    const importId = record.importId;
     const problems = plans.filter(isProblem);
     return {
-        importId, chunkSize: IMPORT_CHUNK_SIZE, chunkCount: chunks.length, expiresAt: new Date(now.getTime() + IMPORT_PREVIEW_TTL_MS).toISOString(),
+        importId, chunkSize: IMPORT_CHUNK_SIZE, chunkCount: chunks.length, expiresAt: new Date(new Date(record.createdAt).getTime() + IMPORT_PREVIEW_TTL_MS).toISOString(),
         summary, columns, problems: problems.slice(0, MAX_PROBLEM_ROWS).map(problemOf), problemsTruncated: problems.length > MAX_PROBLEM_ROWS,
         rowIssues: rowIssuesOf(plans), actions: importActions(plans), jobGroups: jobGroups.map(jobGroupView),
     };
@@ -517,10 +599,22 @@ const failureCode = (error) => {
 
 // The import row, locked for the rest of the transaction: two requests for the same import never
 // interleave (the second waits, then finds the first one's result).
+// otherCommitting (same query, no extra round trip): the id of another import that is COMMITTING, if any.
 async function lockImport(tx, importId) {
-    const [locked] = await tx.$queryRaw`SELECT "status", "chunk_results" AS "chunkResults" FROM "candidate_import" WHERE "import_id" = ${importId}::uuid FOR UPDATE`;
+    const [locked] = await tx.$queryRaw`
+        SELECT "status", "chunk_results" AS "chunkResults",
+               (SELECT o."import_id"::text FROM "candidate_import" o WHERE o."status" = 'COMMITTING' AND o."import_id" <> ${importId}::uuid LIMIT 1) AS "otherCommitting"
+        FROM "candidate_import" WHERE "import_id" = ${importId}::uuid FOR UPDATE`;
     const chunkResults = typeof locked.chunkResults === "string" ? JSON.parse(locked.chunkResults) : locked.chunkResults ?? {};
-    return { status: locked.status, chunkResults };
+    return { status: locked.status, chunkResults, otherCommitting: locked.otherCommitting ?? null };
+}
+
+// Under the import row's lock: the import must still accept chunks (it may have been finished or
+// aborted since the request was checked), and an import that has not started may start only when no
+// other import is committing.
+async function guardCommit(tx, locked, { importId, actor, now }) {
+    if (FINISHED.has(locked.status)) throw new CandidateImportError(409, "IMPORT_FINISHED", "This import is already finished.");
+    if (locked.status === IMPORT_STATUS.PREVIEWED && locked.otherCommitting) await assertNoOtherCommitting(tx, { importId, actor, now });
 }
 
 // The chunk's result written to the (locked) import row, with BULK_IMPORT_STARTED on the first commit.
@@ -530,10 +624,16 @@ async function recordChunk(tx, locked, { importId, chunkIndex, actor, rows, now 
     if (locked.status === IMPORT_STATUS.PREVIEWED) {
         await tx.auditLog.create({ data: auditEntry(actor, { action: IMPORT_AUDIT_ACTION.STARTED, previousStatus: IMPORT_STATUS.PREVIEWED, newStatus: IMPORT_STATUS.COMMITTING, reason: `Bulk candidate import ${importId} started`, newValue: JSON.stringify({ importId }) }) });
     }
-    await tx.candidateImport.update({
-        where: { importId },
-        data: { status: IMPORT_STATUS.COMMITTING, chunkResults: { ...results, [chunkIndex]: result }, updatedAt: now },
-    });
+    try {
+        await tx.candidateImport.update({
+            where: { importId },
+            data: { status: IMPORT_STATUS.COMMITTING, chunkResults: { ...results, [chunkIndex]: result }, updatedAt: now },
+        });
+    } catch (error) {
+        // Only the one-COMMITTING-import index can refuse this update: another import started at the same moment.
+        if (isUniqueViolation(error)) throw new CandidateImportError(409, "IMPORT_IN_PROGRESS", "Another import is in progress. Wait for it to finish; if it has stopped, an administrator can abort it.");
+        throw error;
+    }
     return result;
 }
 
@@ -548,8 +648,10 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
     }
     const previous = record.chunkResults?.[chunkIndex];
     if (previous?.status === "COMMITTED") return present(chunkIndex, previous, canonical, { alreadyCommitted: true });
-
-    const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: true });
+    // The one write made outside the chunk's transaction (new job types for unknown roles) is not made
+    // for an import that another committing import blocks; the lock below decides authoritatively.
+    const beforeCreate = record.status === IMPORT_STATUS.PREVIEWED ? () => assertNoOtherCommitting(db, { importId, actor, now }) : null;
+    const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: true, beforeCreate });
     const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
     const context = { importId, actor, now, jobGroups: Array.isArray(record.jobGroups) ? record.jobGroups : [] };
 
@@ -559,6 +661,7 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
             const result = await db.$transaction(async (tx) => {
                 const locked = await lockImport(tx, importId);
                 if (locked.chunkResults[chunkIndex]?.status === "COMMITTED") return { ...locked.chunkResults[chunkIndex], alreadyCommitted: true };
+                await guardCommit(tx, locked, { importId, actor, now });
                 await setAuditActor(tx, actor);
                 const snapshot = await loadImportSnapshot(tx, validated, { activeJobTypes });
                 const outcomes = await executePlans(tx, planRows(validated, snapshot, record.sourceFlags), context);
@@ -566,6 +669,8 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
             }, CHUNK_TRANSACTION);
             return present(chunkIndex, result, canonical, result.alreadyCommitted ? { alreadyCommitted: true } : {});
         } catch (error) {
+            // A refusal (finished, aborted, another import running) is the answer, not a row problem.
+            if (error instanceof CandidateImportError) throw error;
             if (failureCode(error) === "UNIQUE_ID_COLLISION" && attempt < maxAttempts) continue;
             break;
         }
@@ -574,6 +679,8 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
     // The chunk failed as a whole (and rolled back alone): each row on its own, so a single bad or
     // conflicting row is isolated and the others are still written.
     const outcomes = [];
+    // Still allowed? (finished or aborted, or another import started, while the chunk was failing)
+    await db.$transaction(async (tx) => guardCommit(tx, await lockImport(tx, importId), { importId, actor, now }), CHUNK_TRANSACTION);
     for (const row of validated) {
         try {
             outcomes.push(...await db.$transaction(async (tx) => {
@@ -606,43 +713,58 @@ function present(chunkIndex, result, canonical, extra = {}) {
 const addCounts = (a, b) => Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map((k) => [k, (a[k] ?? 0) + (b[k] ?? 0)]));
 
 // Totals, final status, lifecycle audit, and (when anything was written) the existing RECONCILE run.
-export async function finishImport({ db, actor, importId, now = new Date() }) {
-    const existing = await db.candidateImport.findUnique({ where: { importId } });
-    if (!existing) throw new CandidateImportError(404, "IMPORT_NOT_FOUND", "Import not found.");
-    if (existing.adminId !== actor.adminId) throw new CandidateImportError(403, "NOT_YOUR_IMPORT", "This import was started by another user.");
-    if (FINISHED.has(existing.status)) return finishedView(existing, { alreadyFinished: true });
+// Idempotent and safe against a second request at the same moment: the import row is locked, so only
+// the call that moves it out of PREVIEWED / COMMITTING writes the audit entry and asks for the sync;
+// the other one gets the finished result (alreadyFinished).
+export const finishImport = (args) => closeImport({ ...args, abort: false });
 
-    const chunkCount = Array.isArray(existing.chunkHashes) ? existing.chunkHashes.length : 0;
-    const results = existing.chunkResults ?? {};
-    const counts = Object.values(results).reduce((sum, result) => addCounts(sum, result.counts ?? {}), {});
-    counts.uncommittedChunks = chunkCount - Object.keys(results).length;
-    counts.uncommittedRows = existing.totalRows - (counts.rows ?? 0);
-    const written = (counts.created ?? 0) + (counts.filled ?? 0);
-    const errors = (counts.failed ?? 0) + counts.uncommittedRows;
-    const status = errors && !written ? IMPORT_STATUS.FAILED : errors ? IMPORT_STATUS.COMPLETED_WITH_ERRORS : IMPORT_STATUS.COMPLETED;
+// Stops an import on purpose: no more chunks are accepted, the rows already imported are KEPT, the status
+// becomes ABORTED (a rollback is a separate, explicit action). The owner may abort their import; any ADMIN
+// may abort one that has gone stale (15 minutes without a chunk), which frees the single committing slot.
+export const abortImport = (args) => closeImport({ ...args, abort: true });
 
-    // The mirror is updated by the existing reconciliation (a queued or running one is reused).
-    let sync = { requested: false, runId: null, alreadyActive: false };
-    if (written) {
-        const { run, created } = await requestSheetSyncRun({ db, kind: RUN_KIND.RECONCILE, triggerSource: RUN_TRIGGER.ADMIN, requestedBy: actor.adminId, now });
-        sync = { requested: true, runId: run.runId, alreadyActive: !created };
-    }
-    const record = await db.$transaction(async (tx) => {
-        const updated = await tx.candidateImport.update({
-            where: { importId },
-            data: { status, resultCounts: counts, syncRunId: sync.runId, completedAt: now, updatedAt: now },
-        });
+async function closeImport({ db, actor, importId, abort, now = new Date() }) {
+    const outcome = await db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "candidate_import" WHERE "import_id" = ${importId}::uuid FOR UPDATE`;
+        const existing = await tx.candidateImport.findUnique({ where: { importId } });
+        if (!existing) throw new CandidateImportError(404, "IMPORT_NOT_FOUND", "Import not found.");
+        if (existing.adminId !== actor.adminId && !(abort && isStaleImport(existing, now))) {
+            throw new CandidateImportError(403, "NOT_YOUR_IMPORT", abort ? "This import belongs to another user and has not stopped yet." : "This import was started by another user.");
+        }
+        if (FINISHED.has(existing.status)) return { record: existing, transitioned: false };
+
+        const chunkCount = Array.isArray(existing.chunkHashes) ? existing.chunkHashes.length : 0;
+        const results = existing.chunkResults ?? {};
+        const counts = Object.values(results).reduce((sum, result) => addCounts(sum, result.counts ?? {}), {});
+        counts.uncommittedChunks = chunkCount - Object.keys(results).length;
+        counts.uncommittedRows = existing.totalRows - (counts.rows ?? 0);
+        const written = (counts.created ?? 0) + (counts.filled ?? 0);
+        const errors = (counts.failed ?? 0) + counts.uncommittedRows;
+        const status = abort ? IMPORT_STATUS.ABORTED
+            : errors && !written ? IMPORT_STATUS.FAILED : errors ? IMPORT_STATUS.COMPLETED_WITH_ERRORS : IMPORT_STATUS.COMPLETED;
+        const record = await tx.candidateImport.update({ where: { importId }, data: { status, resultCounts: counts, completedAt: now, updatedAt: now } });
         await tx.auditLog.create({
             data: auditEntry(actor, {
-                action: status === IMPORT_STATUS.FAILED ? IMPORT_AUDIT_ACTION.FAILED : IMPORT_AUDIT_ACTION.COMPLETED,
+                action: abort ? IMPORT_AUDIT_ACTION.ABORTED : status === IMPORT_STATUS.FAILED ? IMPORT_AUDIT_ACTION.FAILED : IMPORT_AUDIT_ACTION.COMPLETED,
                 previousStatus: existing.status, newStatus: status,
-                reason: `Bulk candidate import ${importId} finished`,
+                reason: abort ? `Bulk candidate import ${importId} aborted${existing.adminId === actor.adminId ? "" : " (stopped import, aborted by another administrator)"}` : `Bulk candidate import ${importId} finished`,
                 // Counts only: never a row.
-                newValue: JSON.stringify({ importId, totalRows: existing.totalRows, ...counts, syncRequested: sync.requested }),
+                newValue: JSON.stringify({ importId, totalRows: existing.totalRows, ...counts, syncRequested: written > 0 }),
             }),
         });
-        return updated;
-    });
+        return { record, transitioned: true, written };
+    }, CHUNK_TRANSACTION);
+    if (!outcome.transitioned) return finishedView(outcome.record, { alreadyFinished: true });
+
+    // The mirror is updated by the existing reconciliation (a queued or running one is reused). Requested
+    // after the status commit, by the one call that made the transition.
+    let sync = { requested: false, runId: null, alreadyActive: false };
+    let record = outcome.record;
+    if (outcome.written) {
+        const { run, created } = await requestSheetSyncRun({ db, kind: RUN_KIND.RECONCILE, triggerSource: RUN_TRIGGER.ADMIN, requestedBy: actor.adminId, now });
+        sync = { requested: true, runId: run.runId, alreadyActive: !created };
+        record = await db.candidateImport.update({ where: { importId }, data: { syncRunId: run.runId } });
+    }
     return finishedView(record, { sync });
 }
 
@@ -651,7 +773,7 @@ function finishedView(record, extra = {}) {
 }
 
 // The import's state (for a page reload): counts and statuses only.
-export async function getImport({ db, actor, importId }) {
+export async function getImport({ db, actor, importId, now = new Date() }) {
     const record = await db.candidateImport.findUnique({ where: { importId } });
     if (!record || record.adminId !== actor.adminId) throw new CandidateImportError(404, "IMPORT_NOT_FOUND", "Import not found.");
     const results = record.chunkResults ?? {};
@@ -659,6 +781,15 @@ export async function getImport({ db, actor, importId }) {
         importId: record.importId, status: record.status, fileName: record.fileName, totalRows: record.totalRows, chunkSize: record.chunkSize,
         chunkCount: Array.isArray(record.chunkHashes) ? record.chunkHashes.length : 0, previewCounts: record.previewCounts,
         chunks: Object.fromEntries(Object.entries(results).map(([index, result]) => [index, { status: result.status, counts: result.counts }])),
+        committedChunks: committedChunkIndexes(record), stale: isStaleImport(record, now),
         resultCounts: record.resultCounts ?? null, syncRunId: record.syncRunId ?? null, createdAt: record.createdAt, completedAt: record.completedAt,
     };
+}
+
+// The import that is committing right now, if any (there is at most one): for the Upload dialog to offer
+// Resume / Abort instead of starting another. Any ADMIN sees it (a stopped import blocks everybody);
+// ownedByYou says who may resume it. File name, counts and ids only.
+export async function getActiveImport({ db, actor, now = new Date() }) {
+    const active = await db.candidateImport.findFirst({ where: { status: IMPORT_STATUS.COMMITTING }, orderBy: { updatedAt: "desc" } });
+    return { active: active ? activeDetails(active, actor, now) : null };
 }

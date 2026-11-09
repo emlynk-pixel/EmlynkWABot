@@ -78,6 +78,9 @@ model CandidateImport {
   jobGroups     Json      @default("[]") @map("job_groups")
   resultCounts  Json?     @map("result_counts")
   syncRunId     String?   @map("sync_run_id")
+  // Client key per file choice (header Idempotency-Key). Unique per admin (partial unique index in
+  // migration 20261112120000, which also allows only one COMMITTING import at a time).
+  idempotencyKey String?  @map("idempotency_key")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @default(now()) @map("updated_at")
   completedAt   DateTime? @map("completed_at")

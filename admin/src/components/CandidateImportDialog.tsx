@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../api/client";
-import { commitImportChunk, finishImport, getImportSourceColumns, previewImport, updateImportJobGroups, type ImportActions, type ImportJobGroup, type ImportChunkResult, type ImportCounts, type ImportFinish, type ImportPreview, type ImportRow } from "../api/candidateImport";
+import { abortImport, commitImportChunk, finishImport, getActiveImport, getImportSourceColumns, previewImport, updateImportJobGroups, type ActiveImport, type ImportActions, type ImportJobGroup, type ImportChunkResult, type ImportCounts, type ImportFinish, type ImportPreview, type ImportRow, type ResumableImport } from "../api/candidateImport";
 import { useAuth } from "../auth/AuthProvider";
 import { DialogError, primaryButton, secondaryButton } from "./Dialog";
 import { formatDate, formatNumber, humanize } from "./format";
@@ -21,6 +21,8 @@ type Step =
     | { kind: "choose" }
     | { kind: "reading" }
     | { kind: "preview"; file: File; fileName: string; rows: ImportRow[]; preview: ImportPreview }
+    // The chosen file is the one an earlier import of yours was still committing: continue that import.
+    | { kind: "resume"; fileName: string; rows: ImportRow[]; details: ResumableImport; totalRows: number }
     | { kind: "committing"; done: number; total: number }
     | { kind: "done"; result: ImportFinish; failures: ImportChunkResult["failures"] };
 
@@ -155,6 +157,15 @@ function JobGroupsTable({ groups, edits, onEdit, onSave, saving }: {
 }
 
 const errorText = (error: unknown, fallback: string) => (error instanceof WorkbookError || error instanceof ApiError ? error.message : fallback);
+// One key per file choice: a repeated or retried preview request is the same import on the server.
+const newRequestKey = () => globalThis.crypto?.randomUUID?.() ?? `k${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+const asResumable = (error: unknown): ResumableImport | null => {
+    if (!(error instanceof ApiError) || error.code !== "IMPORT_ALREADY_ACTIVE") return null;
+    const d = error.details as Partial<ResumableImport> | undefined;
+    return d && typeof d.importId === "string" && Number.isInteger(d.chunkSize) && Number.isInteger(d.chunkCount) && Array.isArray(d.committedChunks)
+        ? { importId: d.importId, chunkSize: d.chunkSize as number, chunkCount: d.chunkCount as number, committedChunks: d.committedChunks, stale: d.stale }
+        : null;
+};
 const sum = (a: ImportCounts, b: ImportCounts): ImportCounts => Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map((k) => [k, (a[k as keyof ImportCounts] ?? 0) + (b[k as keyof ImportCounts] ?? 0)]));
 
 export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
@@ -172,6 +183,30 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
     const reading = step.kind === "reading";
     const readSeq = useRef(0);
     const closeReading = () => { readSeq.current += 1; onClose(); };
+    // The import committing now (one at most, anybody's): shown before a file is chosen so an Upload
+    // that cannot start is explained, and a stopped one can be aborted.
+    const [activeImport, setActiveImport] = useState<ActiveImport | null>(null);
+    const [aborting, setAborting] = useState(false);
+    useEffect(() => {
+        if (!token) return;
+        const controller = new AbortController();
+        getActiveImport(token, controller.signal).then((r) => setActiveImport(r.active), () => {});
+        return () => controller.abort();
+    }, [token]);
+
+    async function abortActive() {
+        if (!activeImport || !token) return;
+        setError(null);
+        setAborting(true);
+        try {
+            await abortImport(token, activeImport.importId);
+            setActiveImport(null);
+        } catch (e) {
+            setError(errorText(e, "The import could not be aborted."));
+        } finally {
+            setAborting(false);
+        }
+    }
 
     async function downloadValidationSheet() {
         if (step.kind !== "preview") return;
@@ -191,18 +226,25 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
         setError(null);
         const seq = ++readSeq.current;
         setStep({ kind: "reading" });
+        let sheetRows: ImportRow[] = [];
         try {
             const columns = await getImportSourceColumns(token);
             if (seq !== readSeq.current) return;
             const { headers, rows, missingRequired } = await readWorkbook(file, columns);
             if (seq !== readSeq.current) return;
+            sheetRows = rows;
             if (missingRequired.length) throw new WorkbookError(`The sheet is missing required headings: ${missingRequired.join(", ")}.`);
             if (!rows.length) throw new WorkbookError("The sheet has no candidate rows.");
-            const preview = await previewImport(token, { fileName: file.name, headers, rows });
+            const preview = await previewImport(token, { fileName: file.name, headers, rows }, newRequestKey());
             if (seq !== readSeq.current) return;
             setStep({ kind: "preview", file, fileName: file.name, rows, preview });
         } catch (e) {
             if (seq !== readSeq.current) return;
+            const resumable = asResumable(e);
+            if (resumable) {
+                setStep({ kind: "resume", fileName: file.name, rows: sheetRows, details: resumable, totalRows: sheetRows.length });
+                return;
+            }
             setError(errorText(e, "The sheet could not be checked."));
             setStep({ kind: "choose" });
         }
@@ -223,31 +265,69 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
         }
     }
 
-    async function confirm() {
-        if (step.kind !== "preview" || !token) return;
-        const { preview, rows } = step;
+    // Commits the chunks one at a time (the server writes each in one short transaction), skipping the
+    // ones already committed (a resumed import), then finishes. `back` is the screen to return to when
+    // the import could not even start.
+    async function runCommit({ importId, chunkSize, chunkCount, rows, totalRows, skip = [], back }: {
+        importId: string; chunkSize: number; chunkCount: number; rows: ImportRow[]; totalRows: number; skip?: number[]; back: Step;
+    }) {
+        if (!token) return;
         setError(null);
         const failures: ImportChunkResult["failures"] = [];
         let counts: ImportCounts = {};
-        setStep({ kind: "committing", done: 0, total: preview.chunkCount });
+        const skipped = new Set(skip);
+        let done = skipped.size;
+        setStep({ kind: "committing", done, total: chunkCount });
         try {
-            // One chunk at a time: the server writes each in one short transaction.
-            for (let index = 0; index < preview.chunkCount; index++) {
-                const chunk = rows.slice(index * preview.chunkSize, (index + 1) * preview.chunkSize);
-                const result = await commitImportChunk(token, preview.importId, index, chunk);
+            for (let index = 0; index < chunkCount; index++) {
+                if (skipped.has(index)) continue;
+                const chunk = rows.slice(index * chunkSize, (index + 1) * chunkSize);
+                const result = await commitImportChunk(token, importId, index, chunk);
                 failures.push(...result.failures);
                 counts = sum(counts, result.counts);
-                setStep({ kind: "committing", done: index + 1, total: preview.chunkCount });
+                done += 1;
+                setStep({ kind: "committing", done, total: chunkCount });
             }
         } catch (e) {
-            setError(`${errorText(e, "The import stopped.")} The rows already imported are kept.`);
+            // Refused before anything was written (another import is committing, or this one was
+            // aborted from elsewhere): nothing to finish, go back and say why.
+            if (e instanceof ApiError && (e.code === "IMPORT_IN_PROGRESS" || e.code === "IMPORT_FINISHED") && done === skipped.size) {
+                setError(e.message);
+                setStep(back);
+                return;
+            }
+            setError(`${errorText(e, "The import stopped.")} The rows already imported are kept. Choose the same file again to continue.`);
         }
         try {
-            const result = await finishImport(token, preview.importId);
+            const result = await finishImport(token, importId);
             setStep({ kind: "done", result, failures });
         } catch (e) {
             setError(errorText(e, "The import result could not be recorded."));
-            setStep({ kind: "done", result: { importId: preview.importId, status: "COMPLETED_WITH_ERRORS", totalRows: preview.summary.totalRows, counts, syncRunId: null }, failures });
+            setStep({ kind: "done", result: { importId, status: "COMPLETED_WITH_ERRORS", totalRows, counts, syncRunId: null }, failures });
+        }
+    }
+
+    async function confirm() {
+        if (step.kind !== "preview") return;
+        const { preview, rows } = step;
+        await runCommit({ importId: preview.importId, chunkSize: preview.chunkSize, chunkCount: preview.chunkCount, rows, totalRows: preview.summary.totalRows, back: step });
+    }
+
+    async function resume() {
+        if (step.kind !== "resume") return;
+        const { details, rows, totalRows } = step;
+        await runCommit({ importId: details.importId, chunkSize: details.chunkSize, chunkCount: details.chunkCount, rows, totalRows, skip: details.committedChunks, back: { kind: "choose" } });
+    }
+
+    async function abortResumable() {
+        if (step.kind !== "resume" || !token) return;
+        setError(null);
+        try {
+            await abortImport(token, step.details.importId);
+            setActiveImport(null);
+            setStep({ kind: "choose" });
+        } catch (e) {
+            setError(errorText(e, "The import could not be aborted."));
         }
     }
 
@@ -260,12 +340,28 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                     Choose the existing candidate sheet (.xlsx). It is read on this computer; only the columns Emlynk uses are checked by the server.
                     Nothing is saved until you confirm the preview.
                 </p>
+                {activeImport && (
+                    <div role="alert" aria-label="Import in progress" className="mt-3 rounded-lg border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
+                        <p>
+                            {activeImport.ownedByYou ? "You have an import in progress" : "Another administrator's import is in progress"}: {activeImport.fileName},{" "}
+                            {formatNumber(activeImport.committedChunks.length)} of {formatNumber(activeImport.chunkCount)} parts saved{activeImport.stale ? ", and it has stopped." : "."}
+                        </p>
+                        <p className="mt-1">
+                            {activeImport.ownedByYou
+                                ? "Choose the same file again to continue it, or abort it (the rows already imported are kept)."
+                                : activeImport.stale ? "It has stopped. You can abort it to start your own import." : "Wait for it to finish before starting another import."}
+                        </p>
+                        {(activeImport.ownedByYou || activeImport.stale) && (
+                            <button type="button" className={`${secondaryButton} mt-2`} disabled={aborting} onClick={() => void abortActive()}>{aborting ? "Aborting…" : "Abort that import"}</button>
+                        )}
+                    </div>
+                )}
                 <label htmlFor={fileId} className="mt-4 block text-label-md text-ink-muted">Candidate sheet (.xlsx)</label>
                 <input
                     id={fileId}
                     type="file"
                     accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    disabled={reading}
+                    disabled={reading || Boolean(activeImport && !activeImport.ownedByYou)}
                     onChange={(event) => { void choose(event.target.files?.[0]); event.target.value = ""; }}
                     className="mt-1 block w-full text-body-sm text-ink file:mr-3 file:h-8 file:rounded-lg file:border file:border-border-strong file:bg-surface file:px-3 file:text-label-md file:text-ink-soft"
                 />
@@ -366,6 +462,26 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                     <button type="button" className={primaryButton} disabled={(!importable && !jobMembers) || unsavedSuffixes} title={unsavedSuffixes ? "Save the Job IDs first" : undefined} onClick={() => void confirm()}>
                         Confirm import ({formatNumber(importable)} candidates{jobMembers ? `, ${plural(jobMembers, "Job assignment")}` : ""})
                     </button>
+                </div>
+            </Shell>
+        );
+    }
+
+    if (step.kind === "resume") {
+        const { details } = step;
+        return (
+            <Shell title={title} busy={false} onClose={onClose}>
+                <p role="status" className="text-body-sm text-ink">
+                    This file is already being imported: {formatNumber(details.committedChunks.length)} of {formatNumber(details.chunkCount)} parts are saved.
+                </p>
+                <p className="mt-2 text-body-sm text-ink-muted">
+                    Continue to import the remaining parts. Or abort that import: the rows already imported are kept, and you can upload the file again.
+                </p>
+                <DialogError message={error} />
+                <div className="mt-5 flex flex-wrap justify-end gap-2">
+                    <button type="button" className={secondaryButton} onClick={onClose}>Cancel</button>
+                    <button type="button" className={secondaryButton} onClick={() => void abortResumable()}>Abort that import</button>
+                    <button type="button" className={primaryButton} onClick={() => void resume()}>Continue import</button>
                 </div>
             </Shell>
         );

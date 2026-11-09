@@ -23,13 +23,19 @@ export class ApiError extends Error {
     readonly status: number;
     readonly resetTime?: Date;
     readonly fieldErrors: FieldError[];
+    // A 409 of the import API: a machine code (e.g. IMPORT_ALREADY_ACTIVE) and the details to act on it
+    // (import id, committed chunks); undefined elsewhere.
+    readonly code?: string;
+    readonly details?: Record<string, unknown>;
 
-    constructor(status: number, message: string, resetTime?: Date, fieldErrors: FieldError[] = []) {
+    constructor(status: number, message: string, resetTime?: Date, fieldErrors: FieldError[] = [], code?: string, details?: Record<string, unknown>) {
         super(message);
         this.name = "ApiError";
         this.status = status;
         this.resetTime = resetTime;
         this.fieldErrors = fieldErrors;
+        this.code = code;
+        this.details = details;
     }
 }
 
@@ -38,28 +44,33 @@ type RequestOptions = {
     body?: unknown;
     signal?: AbortSignal;
     token?: string;
+    // Extra request headers (e.g. Idempotency-Key). Never Authorization or Content-Type.
+    headers?: Record<string, string>;
 };
 
 const FALLBACK_MESSAGE = "Something went wrong. Please try again.";
 
-type ErrorData = { message: string | null; resetTime?: string; fieldErrors?: FieldError[] };
+type ErrorData = { message: string | null; resetTime?: string; fieldErrors?: FieldError[]; code?: string; details?: Record<string, unknown> };
 const isFieldError = (value: unknown): value is FieldError =>
     typeof (value as FieldError)?.field === "string" && typeof (value as FieldError)?.message === "string";
 async function readErrorData(response: Response): Promise<ErrorData> {
     try {
-        const data = (await response.json()) as { message?: unknown; resetTime?: unknown; errors?: unknown };
+        const data = (await response.json()) as { message?: unknown; resetTime?: unknown; errors?: unknown; code?: unknown; details?: unknown };
+        const details = data?.details && typeof data.details === "object" && !Array.isArray(data.details) ? (data.details as Record<string, unknown>) : undefined;
         return {
             message: typeof data?.message === "string" && data.message.length <= 200 ? data.message : null,
             resetTime: typeof data?.resetTime === "string" ? data.resetTime : undefined,
             fieldErrors: Array.isArray(data?.errors) ? data.errors.filter(isFieldError).slice(0, 50) : [],
+            code: typeof data?.code === "string" && /^[A-Z_]{1,64}$/.test(data.code) ? data.code : undefined,
+            details,
         };
     } catch {
         return { message: null };
     }
 }
 
-export async function apiRequest<T>(path: string, { method = "GET", body, signal, token }: RequestOptions = {}): Promise<T> {
-    const headers: Record<string, string> = { Accept: "application/json" };
+export async function apiRequest<T>(path: string, { method = "GET", body, signal, token, headers: extraHeaders }: RequestOptions = {}): Promise<T> {
+    const headers: Record<string, string> = { ...extraHeaders, Accept: "application/json" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
 
     const effectiveToken = authorizationToken(token);
@@ -85,7 +96,7 @@ export async function apiRequest<T>(path: string, { method = "GET", body, signal
     if (!response.ok) {
         const data = await readErrorData(response);
         const message = response.status >= 500 && response.status !== 502 ? FALLBACK_MESSAGE : data.message ?? FALLBACK_MESSAGE;
-        throw new ApiError(response.status, message, data.resetTime ? new Date(data.resetTime) : undefined, response.status === 400 ? data.fieldErrors : []);
+        throw new ApiError(response.status, message, data.resetTime ? new Date(data.resetTime) : undefined, response.status === 400 ? data.fieldErrors : [], data.code, data.details);
     }
 
     return (await response.json()) as T;
