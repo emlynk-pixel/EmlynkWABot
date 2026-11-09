@@ -35,8 +35,12 @@
 // the sheet worker mark that row inactive beyond its deletion guard (and nothing else). A reconciliation is
 // requested when anything was reverted.
 //
-// Nothing here runs by itself and nothing runs when an import fails: a rollback is an explicit action (confirmed
-// in the browser) on one import.
+// Nothing here runs by itself: a rollback is an explicit action (confirmed in the browser) on one import, or the
+// automatic recovery of an import that stopped before it finished (importRecoveryService.js), which calls this same
+// executeRollback (same units, leases, batches and finalization) from a scheduled backend task.
+//
+// A Job Type the import created (entity JOB_TYPE) is a unit of its own, last: deleted only if its name, code and active
+// flag are as the import made them and nothing uses it (no Job through any foreign key, no candidate preference naming it).
 
 import crypto from "node:crypto";
 
@@ -115,7 +119,8 @@ async function dependentTables(db, { table, keyType, ids, ignore = [] }) {
 // ---------------------------------------------------------------- units
 
 const FIRST_SINGLES = [E.JOB_CANDIDATE, E.STAGE, E.ALLOCATION, E.DETAILS, E.CANDIDATE];
-const LAST_SINGLES = [E.AGENT_CLIENT, E.CLIENT, E.AGENT];
+// A Job Type last: by then the Jobs and candidates of this import that used it have been reverted (or have stayed).
+const LAST_SINGLES = [E.AGENT_CLIENT, E.CLIENT, E.AGENT, E.JOB_TYPE];
 const DATE_FIELDS = { [E.STAGE]: new Set(["testDate", "completedAt"]) };
 
 // The entries still to be reverted (status APPLIED), grouped into units and ordered (see the header).
@@ -181,7 +186,7 @@ const restorable = (entry) => Object.values(entry.changes ?? {}).every((change) 
 // What earlier units WOULD remove, for a preview (it writes nothing, so those rows are still there when a later unit
 // is judged): memberships ("jobId:passportId"), Jobs and Agent-Client links. A rollback itself starts each unit from
 // the database as it really is, where they are already gone, so its record stays empty.
-const newVirtual = () => ({ members: new Set(), jobs: new Set(), links: new Set() });
+const newVirtual = () => ({ members: new Set(), jobs: new Set(), links: new Set(), candidates: new Set() });
 
 // What still points at a Job / Client / Agent, other than what is being reverted before it.
 async function jobBlockers(db, jobId, virtual) {
@@ -196,6 +201,24 @@ async function orgBlockers(db, kind, id, virtual) {
     return [...(jobs.length ? ["job"] : []), ...(links.length ? ["agent_client"] : []), ...others];
 }
 
+// What still uses a Job Type the import created: any row pointing at it through a foreign key (a Job's types, a Job's
+// legacy type, a table added later), and any candidate whose preferences (candidate.job, a comma-separated list of
+// names) name it. A shared or since-used type therefore always stays. virtual.candidates: candidates a preview counts
+// as already deleted or restored by an earlier unit.
+async function jobTypeBlockers(db, id, virtual) {
+    const current = await db.jobType.findUnique({ where: { id }, select: { name: true } });
+    if (!current) return [];
+    const reasons = [];
+    const tables = (await dependentTables(db, { table: "job_type", keyType: "uuid", ids: [id] })).get(id) ?? [];
+    if (tables.length) reasons.push(`HAS_DEPENDENT_RECORDS:${tables.join(",")}`);
+    const [{ n }] = await db.$queryRaw`
+        SELECT count(*)::int AS "n" FROM "candidate" c
+        WHERE c."job" IS NOT NULL AND NOT (c."passport_id" = ANY(${[...virtual.candidates]}::text[]))
+          AND EXISTS (SELECT 1 FROM unnest(string_to_array(c."job", ',')) AS p("v") WHERE lower(btrim(p."v")) = lower(${current.name}))`;
+    if (n) reasons.push("HAS_CANDIDATE_PREFERENCES");
+    return reasons;
+}
+
 // A preview records, for the units after it, what a unit that is going to be reverted takes with it.
 function recordVirtual(unit, verdicts, context) {
     if (verdicts.some((v) => v.state === CONFLICT) || !verdicts.some((v) => v.state === REVERT)) return;
@@ -203,7 +226,13 @@ function recordVirtual(unit, verdicts, context) {
     if (unit.kind === "candidate") {
         const passportId = context.passportByUnit?.get(unit.key);
         for (const m of resolver.membershipsOf(passportId)) virtual.members.add(`${m.jobId}:${passportId}`);
+        if (passportId) virtual.candidates.add(passportId);
     } else if (unit.kind === "job") virtual.jobs.add(unit.key);
+    else if (unit.entries[0].entityType === E.CANDIDATE && unit.entries[0].changes?.job) {
+        // A filled Job Role put back to its blank: the candidate no longer names the type.
+        const passportId = context.passportByUnit?.get(unit.entries[0].entityKey);
+        if (passportId) virtual.candidates.add(passportId);
+    }
     else if (unit.entries[0].entityType === E.JOB_CANDIDATE) {
         const [jobId, uniqueId] = unit.entries[0].entityKey.split(":");
         virtual.members.add(`${jobId}:${context.passportByUnit?.get(uniqueId)}`);
@@ -282,6 +311,7 @@ async function decide(db, unit, context) {
         const dependents = await orgBlockers(db, table, entry.entityKey, context.virtual);
         if (dependents.length) reasons.push(`HAS_DEPENDENT_RECORDS:${dependents.join(",")}`);
     }
+    if (entry.entityType === E.JOB_TYPE && entry.op === LEDGER_OP.CREATE) reasons.push(...await jobTypeBlockers(db, entry.entityKey, context.virtual));
     return [reasons.length ? verdict(entry, CONFLICT, reasons) : verdict(entry, REVERT)];
 }
 
@@ -293,10 +323,11 @@ async function lockRows(tx, units) {
     const uniqueIds = [...new Set(units.flatMap((u) => u.entries.map((e) => e.candidateUniqueId ?? (u.kind === "single" && [E.CANDIDATE, E.DETAILS, E.ALLOCATION].includes(e.entityType) ? e.entityKey : null))).filter(Boolean))];
     if (uniqueIds.length) await tx.$queryRaw`SELECT "unique_id" FROM "candidate" WHERE "unique_id" = ANY(${uniqueIds}::text[]) ORDER BY "unique_id" FOR UPDATE`;
     const idsOf = (type) => [...new Set(units.flatMap((u) => u.entries.filter((e) => e.entityType === type).map((e) => e.entityKey)))].sort();
-    const [jobs, clients, agents] = [idsOf(E.JOB), idsOf(E.CLIENT), idsOf(E.AGENT)];
+    const [jobs, clients, agents, jobTypes] = [idsOf(E.JOB), idsOf(E.CLIENT), idsOf(E.AGENT), idsOf(E.JOB_TYPE)];
     if (jobs.length) await tx.$queryRaw`SELECT "id" FROM "job" WHERE "id" = ANY(${jobs}::uuid[]) ORDER BY "id" FOR UPDATE`;
     if (clients.length) await tx.$queryRaw`SELECT "id" FROM "client" WHERE "id" = ANY(${clients}::uuid[]) ORDER BY "id" FOR UPDATE`;
     if (agents.length) await tx.$queryRaw`SELECT "id" FROM "agent" WHERE "id" = ANY(${agents}::uuid[]) ORDER BY "id" FOR UPDATE`;
+    if (jobTypes.length) await tx.$queryRaw`SELECT "id" FROM "job_type" WHERE "id" = ANY(${jobTypes}::uuid[]) ORDER BY "id" FOR UPDATE`;
 }
 
 // Writes one unit's reversal. Returns { action, passportId? } for the report and the audit entry.
@@ -358,6 +389,9 @@ async function apply(tx, unit, context, { importId }) {
             return { action: entry.op === LEDGER_OP.FILL ? "RESTORED" : "DELETED" };
         case E.AGENT:
             await tx.agent.delete({ where: { id: entry.entityKey } });
+            return { action: "DELETED" };
+        case E.JOB_TYPE: // created by this import, unchanged and used by nothing (checked above, rows locked)
+            await tx.jobType.delete({ where: { id: entry.entityKey } });
             return { action: "DELETED" };
         default:
             throw new Error("UNSUPPORTED_ENTRY");
@@ -443,6 +477,13 @@ async function reportOf(db, record) {
     const reasons = {};
     for (const row of rows.filter((r) => r.status === LEDGER_STATUS.CONFLICT)) for (const reason of conflictCodes(row)) reasons[codeOf(reason)] = (reasons[codeOf(reason)] ?? 0) + 1;
     const result = record.rollbackResult ?? {};
+    // The database rollback and the Google Sheet are two things: the deleted candidates' Sheet rows are marked inactive
+    // only by the sheet worker's next successful reconciliation, which consumes their approvals. Until then the
+    // rollback is not complete everywhere (complete = false), whatever the status says about the database.
+    const approvals = db.sheetSyncDeletionApproval
+        ? await db.sheetSyncDeletionApproval.groupBy({ by: ["importId"], where: { importId: record.importId, consumedAt: null }, _count: { _all: true } })
+        : [];
+    const pendingApprovals = approvals[0]?._count._all ?? 0;
     return {
         importId: record.importId, status: record.status, previousStatus: record.rollbackPreviousStatus ?? null,
         done: record.status === IMPORT_STATUS.ROLLED_BACK || record.status === IMPORT_STATUS.ROLLED_BACK_WITH_CONFLICTS,
@@ -451,6 +492,11 @@ async function reportOf(db, record) {
         byType, reasons,
         conflicts: rows.filter((r) => r.status === LEDGER_STATUS.CONFLICT).slice(0, PREVIEW_SAMPLE).map((r) => ({ entityType: r.entityType, op: r.op, rowNumber: r.rowNumber, reasons: conflictCodes(r) })),
         sync: result.sync ?? null, lastError: result.lastError ?? null,
+        sheet: { pendingApprovals, complete: pendingApprovals === 0 && (record.recoveryStatus ? record.recoveryStatus === "COMPLETED" : true) },
+        // Set when the automatic recovery (importRecoveryService.js) runs this rollback: its state, codes only.
+        recovery: record.recoveryStatus
+            ? { status: record.recoveryStatus, reason: record.recoveryReason, attempts: record.recoveryAttempts, lastError: record.recoveryLastError, startedAt: record.recoveryStartedAt, completedAt: record.recoveryCompletedAt }
+            : null,
     };
 }
 
@@ -475,7 +521,8 @@ export async function previewRollback({ db, actor, importId, keyring, now = new 
         context.virtual = virtual; // shared by the whole preview: later batches see what earlier ones would remove
         context.passportByUnit = new Map();
         for (const unit of batch) {
-            const uniqueId = unit.kind === "candidate" ? unit.key : unit.entries[0].entityType === E.JOB_CANDIDATE ? unit.entries[0].entityKey.split(":")[1] : null;
+            const first = unit.entries[0];
+            const uniqueId = unit.kind === "candidate" ? unit.key : first.entityType === E.JOB_CANDIDATE ? first.entityKey.split(":")[1] : first.entityType === E.CANDIDATE ? first.entityKey : null;
             if (uniqueId) context.passportByUnit.set(uniqueId, await context.assessor.passportOf(uniqueId));
             const decided = await decide(db, unit, context);
             verdicts.push(...decided);

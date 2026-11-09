@@ -117,11 +117,13 @@ describe("Step 5D: routing", () => {
         // The mounts in src/createApp.js, except /admin (static on Vercel).
         const source = read("src/createApp.js");
         const mounts = [...source.matchAll(/app\.(?:use|get)\("(\/[a-z/]+)"/g)].map((m) => m[1]).filter((m) => m !== "/admin");
-        assert.deepEqual(mounts.sort(), ["/api/admin", "/auth", "/health", "/whatsapp"]);
+        assert.deepEqual(mounts.sort(), ["/api/admin", "/api/tasks", "/auth", "/health", "/whatsapp"]);
 
         for (const path of [
             "/auth/login", "/auth/me", "/auth/logout", "/auth/forgot-password",
             "/api/admin/overview", "/api/admin/review/DOC-1/file", "/api/admin/temporary-documents/abc",
+            // The scheduled recovery of interrupted imports (routes/tasks.js), through the existing /api rewrite.
+            "/api/tasks/import-recovery",
             "/whatsapp/webhook", "/health",
         ]) {
             assert.equal(route(path), "function", path);

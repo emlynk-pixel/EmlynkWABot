@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../api/client";
-import { abortImport, commitImportChunk, finishImport, getActiveImport, getImportSourceColumns, previewImport, updateImportJobGroups, type ActiveImport, type ImportActions, type ImportJobGroup, type ImportChunkResult, type ImportCounts, type ImportFinish, type ImportPreview, type ImportRow, type ResumableImport } from "../api/candidateImport";
+import { abortImport, commitImportChunk, finishImport, getActiveImport, getImportSourceColumns, previewImport, sendImportHeartbeat, updateImportJobGroups, type ActiveImport, type ImportActions, type ImportJobGroup, type ImportChunkResult, type ImportCounts, type ImportFinish, type ImportPreview, type ImportRow, type ResumableImport } from "../api/candidateImport";
 import { useAuth } from "../auth/AuthProvider";
 import { DialogError, primaryButton, secondaryButton } from "./Dialog";
 import { formatDate, formatNumber, humanize } from "./format";
@@ -161,6 +161,8 @@ function JobGroupsTable({ groups, edits, onEdit, onSave, saving }: {
 
 const errorText = (error: unknown, fallback: string) => (error instanceof WorkbookError || error instanceof ApiError ? error.message : fallback);
 // One key per file choice: a repeated or retried preview request is the same import on the server.
+// The committing dialog's heartbeat (POST .../heartbeat): well inside the server's grace period.
+const HEARTBEAT_MS = 20_000;
 const newRequestKey = () => globalThis.crypto?.randomUUID?.() ?? `k${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 const asResumable = (error: unknown): ResumableImport | null => {
     if (!(error instanceof ApiError) || error.code !== "IMPORT_ALREADY_ACTIVE") return null;
@@ -285,6 +287,8 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
         const skipped = new Set(skip);
         let done = skipped.size;
         setStep({ kind: "committing", done, total: chunkCount });
+        // "Still here" while this window commits: if it closes, the server undoes the import after a few minutes.
+        const heartbeat = setInterval(() => { void sendImportHeartbeat(token, importId).catch(() => {}); }, HEARTBEAT_MS);
         try {
             for (let index = 0; index < chunkCount; index++) {
                 if (skipped.has(index)) continue;
@@ -303,7 +307,16 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                 setStep(back);
                 return;
             }
-            setError(`${errorText(e, "The import stopped.")} The rows already imported are kept. Choose the same file again to continue.`);
+            // An import is all or nothing: one that stopped part way is NOT finished from here (that would keep half
+            // of it). It stays open to be continued with the same file; if it is not, the server undoes it.
+            setError(e instanceof ApiError && e.code === "IMPORT_RECOVERY_STARTED"
+                ? e.message
+                : `${errorText(e, "The import stopped.")} Nothing is final until the import finishes: choose the same file again within a few minutes to continue it, otherwise everything it imported is undone automatically.`);
+            setStep({ kind: "choose" });
+            getActiveImport(token).then((r) => setActiveImport(r.active), () => {});
+            return;
+        } finally {
+            clearInterval(heartbeat);
         }
         try {
             const result = await finishImport(token, importId);
@@ -350,8 +363,12 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                 </p>
                 {activeImport?.status === "ROLLING_BACK" && (
                     <div role="alert" aria-label="Rollback in progress" className="mt-3 rounded-lg border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
-                        <p>A rollback of your import {activeImport.fileName} was interrupted. Nothing is half done: continue it to finish.</p>
-                        <button type="button" className={`${secondaryButton} mt-2`} onClick={() => setStep({ kind: "rollback", importId: activeImport.importId })}>Continue rollback</button>
+                        {activeImport.recovery ? (
+                            <p>Your import {activeImport.fileName} stopped before it finished, so it is being undone automatically. Nothing from it is kept.</p>
+                        ) : (
+                            <p>A rollback of your import {activeImport.fileName} was interrupted. Nothing is half done: continue it to finish.</p>
+                        )}
+                        <button type="button" className={`${secondaryButton} mt-2`} onClick={() => setStep({ kind: "rollback", importId: activeImport.importId })}>{activeImport.recovery ? "View progress" : "Continue rollback"}</button>
                     </div>
                 )}
                 {aborted && (
