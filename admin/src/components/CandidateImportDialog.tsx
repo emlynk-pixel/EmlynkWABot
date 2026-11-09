@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../api/client";
 import { commitImportChunk, finishImport, getImportSourceColumns, previewImport, updateImportJobGroups, type ImportActions, type ImportJobGroup, type ImportChunkResult, type ImportCounts, type ImportFinish, type ImportPreview, type ImportRow } from "../api/candidateImport";
 import { useAuth } from "../auth/AuthProvider";
@@ -166,7 +166,12 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
     // Unsaved last-two-digit edits of NEW Jobs (group key -> digits), and their save.
     const [suffixEdits, setSuffixEdits] = useState<Record<string, string>>({});
     const [savingSuffixes, setSavingSuffixes] = useState(false);
-    const busy = step.kind === "reading" || step.kind === "committing";
+    // Only the commit blocks Cancel and Esc. Reading can be cancelled: the answer of an abandoned
+    // read, check or preview is ignored (readSeq), so a stalled reader can never trap the dialog.
+    const busy = step.kind === "committing";
+    const reading = step.kind === "reading";
+    const readSeq = useRef(0);
+    const closeReading = () => { readSeq.current += 1; onClose(); };
 
     async function downloadValidationSheet() {
         if (step.kind !== "preview") return;
@@ -184,15 +189,20 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
     async function choose(file: File | undefined) {
         if (!file || !token) return;
         setError(null);
+        const seq = ++readSeq.current;
         setStep({ kind: "reading" });
         try {
             const columns = await getImportSourceColumns(token);
+            if (seq !== readSeq.current) return;
             const { headers, rows, missingRequired } = await readWorkbook(file, columns);
+            if (seq !== readSeq.current) return;
             if (missingRequired.length) throw new WorkbookError(`The sheet is missing required headings: ${missingRequired.join(", ")}.`);
             if (!rows.length) throw new WorkbookError("The sheet has no candidate rows.");
             const preview = await previewImport(token, { fileName: file.name, headers, rows });
+            if (seq !== readSeq.current) return;
             setStep({ kind: "preview", file, fileName: file.name, rows, preview });
         } catch (e) {
+            if (seq !== readSeq.current) return;
             setError(errorText(e, "The sheet could not be checked."));
             setStep({ kind: "choose" });
         }
@@ -245,7 +255,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
 
     if (step.kind === "choose" || step.kind === "reading") {
         return (
-            <Shell title={title} busy={busy} onClose={onClose}>
+            <Shell title={title} busy={busy} onClose={closeReading}>
                 <p className="text-body-sm text-ink-muted">
                     Choose the existing candidate sheet (.xlsx). It is read on this computer; only the columns Emlynk uses are checked by the server.
                     Nothing is saved until you confirm the preview.
@@ -255,14 +265,14 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                     id={fileId}
                     type="file"
                     accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    disabled={busy}
+                    disabled={reading}
                     onChange={(event) => { void choose(event.target.files?.[0]); event.target.value = ""; }}
                     className="mt-1 block w-full text-body-sm text-ink file:mr-3 file:h-8 file:rounded-lg file:border file:border-border-strong file:bg-surface file:px-3 file:text-label-md file:text-ink-soft"
                 />
                 {step.kind === "reading" && <p role="status" className="mt-3 text-body-sm text-ink-muted">Reading and checking the sheet…</p>}
                 <DialogError message={error} />
                 <div className="mt-5 flex justify-end">
-                    <button type="button" className={secondaryButton} disabled={busy} onClick={onClose}>Cancel</button>
+                    <button type="button" className={secondaryButton} onClick={closeReading}>Cancel</button>
                 </div>
             </Shell>
         );

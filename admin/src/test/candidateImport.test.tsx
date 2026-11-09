@@ -14,7 +14,7 @@ vi.mock("../components/importWorkbook", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../components/importWorkbook")>()),
     readWorkbook: readWorkbookMock,
 }));
-const { checkWorkbookFile, extractRows, WorkbookError } = await import("../components/importWorkbook");
+const { checkWorkbookFile, extractRows, guardWorkbookRead, WorkbookError } = await import("../components/importWorkbook");
 // The validation sheet is built from the chosen file in the browser (tested in validationWorkbook.test.ts).
 const downloadValidationMock = vi.hoisted(() => vi.fn());
 vi.mock("../components/validationWorkbook", async (importOriginal) => ({
@@ -101,6 +101,87 @@ describe("the workbook file (read in the browser)", () => {
         expect(JSON.stringify(rows)).not.toMatch(/999|INACTIVE/);
         expect(extractRows([["PASSPORT NUMBER", "OTHER NAME"], ["N9000001", "X"]], { allowed: ALLOWED, required: REQUIRED }).missingRequired).toEqual(["SURNAME"]);
         expect(() => extractRows([["PASSPORT NUMBER"], ["a"], ["b"], ["c"]], { allowed: ALLOWED, required: REQUIRED, maxRows: 2 })).toThrow(WorkbookError);
+    });
+});
+
+// The reader's Web Worker is blocked by a page policy without worker-src blob: (the 2026-11 production
+// hang): it must fail with a readable message, never wait for ever.
+describe("the workbook reader guard (stalled or blocked reader)", () => {
+    test("a result passes through; the reader's own error passes through", async () => {
+        await expect(guardWorkbookRead(async () => 42, { target: null })).resolves.toBe(42);
+        await expect(guardWorkbookRead(async () => { throw new Error("boom"); }, { target: null })).rejects.toThrow("boom");
+    });
+
+    test("a reader that never answers is stopped with a readable message after the timeout", async () => {
+        vi.useFakeTimers();
+        try {
+            const result = guardWorkbookRead(() => new Promise(() => {}), { timeoutMs: 1000, target: null });
+            const assertion = expect(result).rejects.toThrow(/took too long.*Nothing was uploaded/);
+            await vi.advanceTimersByTimeAsync(1000);
+            await assertion;
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test("a securitypolicyviolation for the blob worker fails at once, naming the page policy", async () => {
+        const target = new EventTarget();
+        const result = guardWorkbookRead(() => new Promise(() => {}), { timeoutMs: 60_000, target });
+        const violation = Object.assign(new Event("securitypolicyviolation"), { blockedURI: "blob", effectiveDirective: "worker-src" });
+        target.dispatchEvent(violation);
+        await expect(result).rejects.toThrow(/security policy/);
+    });
+
+    test("a violation of an unrelated directive is ignored; a late result after a timeout is ignored", async () => {
+        const target = new EventTarget();
+        const result = guardWorkbookRead(async () => "ok", { target });
+        target.dispatchEvent(Object.assign(new Event("securitypolicyviolation"), { blockedURI: "https://x.test/img.png", effectiveDirective: "img-src" }));
+        await expect(result).resolves.toBe("ok");
+        vi.useFakeTimers();
+        try {
+            let finish: (value: string) => void = () => {};
+            const late = guardWorkbookRead(() => new Promise<string>((resolve) => { finish = resolve; }), { timeoutMs: 10, target: null });
+            const assertion = expect(late).rejects.toBeInstanceOf(WorkbookError);
+            await vi.advanceTimersByTimeAsync(10);
+            await assertion;
+            finish("too late");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe("the dialog while a sheet is being read", () => {
+    test("Cancel and Esc work while reading; the abandoned read cannot reopen or change anything", async () => {
+        let finishRead: (value: unknown) => void = () => {};
+        readWorkbookMock.mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
+        const { calls } = asRole("ADMIN", { [`GET ${BASE}/import/source-columns`]: { status: 200, body: { allowed: ALLOWED, required: REQUIRED } } });
+        renderApp("/settings/sheet-sync");
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /^Upload: import candidates/ });
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), new File(["x"], "legacy.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+        expect(await within(dialog).findByText("Reading and checking the sheet…")).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeEnabled();
+        await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        finishRead({ headers: ["PASSPORT NUMBER", "SURNAME", "OTHER NAME"], rows: [{ rowNumber: 2, values: { "PASSPORT NUMBER": "N1", SURNAME: "S", "OTHER NAME": "O" } }], missingRequired: [] });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(calls.filter((c) => c.path.endsWith("/import/preview"))).toEqual([]);
+        expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    test("a read error is shown in the dialog (not an endless wait) and another file can be chosen", async () => {
+        readWorkbookMock.mockRejectedValue(new WorkbookError("This browser blocked the spreadsheet reader (a page security policy). Nothing was uploaded."));
+        asRole("ADMIN", { [`GET ${BASE}/import/source-columns`]: { status: 200, body: { allowed: ALLOWED, required: REQUIRED } } });
+        renderApp("/settings/sheet-sync");
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+        const dialog = await screen.findByRole("dialog", { name: /^Upload: import candidates/ });
+        await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), new File(["x"], "legacy.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+        expect(await within(dialog).findByText(/blocked the spreadsheet reader/)).toBeInTheDocument();
+        expect(within(dialog).getByLabelText("Candidate sheet (.xlsx)")).toBeEnabled();
+        expect(within(dialog).queryByText("Reading and checking the sheet…")).toBeNull();
     });
 });
 

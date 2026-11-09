@@ -42,6 +42,9 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
     // blob: is allowed for images and frames only: the admin Review Detail
     // shows a document it fetched with the admin's token as a local blob: URL
     // (no storage URL or credential in the page). Scripts stay 'self' only.
+    // worker-src: the Upload dialog's xlsx reader unzips in a Web Worker started from a blob: URL; without
+    // this the browser blocks it and the dialog hangs. Same value as vercel.json (vercelConfig.test.js);
+    // it is last, as helmet appends custom directives in this order.
     // connect-src: see STORAGE_CONNECT_SRC.
     app.use(helmet({
         contentSecurityPolicy: {
@@ -49,6 +52,7 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
                 "img-src": ["'self'", "data:", "blob:"],
                 "frame-src": ["'self'", "blob:"],
                 "connect-src": ["'self'", STORAGE_CONNECT_SRC],
+                "worker-src": ["'self'", "blob:"],
             },
         },
     }));
